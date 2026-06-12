@@ -257,7 +257,7 @@ export interface LessonApplication {
 
 export interface ActivityEntry {
   id: string;
-  kind: "event" | "execution" | "decision_action";
+  kind: "event" | "execution" | "decision_action" | "action_run" | "outcome";
   type: string;
   label: string;
   status?: string;
@@ -316,10 +316,54 @@ export interface Omega {
     rules: string[];
     applied?: LessonApplication[];
   };
+  decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
 }
 
+export type DecisionMethod =
+  | "robust_baseline_v0"
+  | "insufficient_history"
+  | "deterministic_guardrail"
+  | "dataset_unavailable"
+  | "future_reserved_bayesian"
+  | "future_reserved_conformal"
+  | "future_reserved_state_space";
+
+export type DecisionOptionName = "act_now" | "investigate" | "wait" | "monitor";
+export type DecisionRecommendation = DecisionOptionName | "insufficient_data";
+export type DecisionLevel = "low" | "medium" | "high" | "unknown";
+export type DecisionQualityStatus = "sufficient" | "thin" | "insufficient";
+
+export interface DecisionIntelligence {
+  method: DecisionMethod;
+  anomaly_probability?: number | null;
+  probability_basis: string;
+  uncertainty_level: DecisionLevel;
+  confidence_interval: { lower?: number | null; upper?: number | null; unit?: string | null };
+  expected_impact: { value?: number | null; currency?: string | null; basis: string };
+  cost_of_delay: { value_per_day?: number | null; currency?: string | null; basis: string };
+  downside_risk: { value?: number | null; currency?: string | null; basis: string };
+  value_of_information: { level: DecisionLevel; rationale: string };
+  recommended_decision: DecisionRecommendation;
+  recommended_next_step: string;
+  rationale: string;
+  options: Array<{
+    option: DecisionOptionName;
+    expected_utility?: number | null;
+    utility_basis: string;
+    risk: DecisionLevel;
+    explanation: string;
+  }>;
+  data_quality: {
+    history_points: number;
+    minimum_required: number;
+    status: DecisionQualityStatus;
+    missing_fields: string[];
+  };
+}
+
 export interface IntelligencePack {
+  decision_intelligence?: DecisionIntelligence;
   baseline?: {
     method?: string;
     actual_value?: number;
@@ -341,6 +385,7 @@ export interface IntelligencePack {
     prediction_method?: string | null;
     confidence?: number;
     summary?: string;
+    decision_intelligence?: DecisionIntelligence;
   };
   evidence_pack?: {
     summary?: string;
@@ -402,6 +447,7 @@ export interface ControlItem {
   lesson_count?: number;
   lesson_applications?: LessonApplication[];
   action_templates?: ActionTemplate[];
+  decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
   omega: Omega;
 }

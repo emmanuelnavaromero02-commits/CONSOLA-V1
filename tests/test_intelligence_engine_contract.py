@@ -23,7 +23,9 @@ def test_intelligence_migration_is_workspace_scoped_and_self_registered():
         "decision_options",
         "prediction_outcomes",
     ):
-        table_block = migration.split(f"CREATE TABLE IF NOT EXISTS {table}", 1)[1].split(");", 1)[0]
+        table_block = migration.split(f"CREATE TABLE IF NOT EXISTS {table}", 1)[
+            1
+        ].split(");", 1)[0]
         assert "tenant_id" in table_block
         assert "workspace_id" in table_block
     assert "98_intelligence_engine.sql" in migration
@@ -35,7 +37,9 @@ def test_intelligence_external_predictive_migration_is_workspace_scoped():
     assert "ADD COLUMN IF NOT EXISTS prediction_horizon_days" in migration
     assert "ADD COLUMN IF NOT EXISTS predicted_value" in migration
     for table in ("external_intelligence_sources", "external_evidence_cache"):
-        table_block = migration.split(f"CREATE TABLE IF NOT EXISTS {table}", 1)[1].split(");", 1)[0]
+        table_block = migration.split(f"CREATE TABLE IF NOT EXISTS {table}", 1)[
+            1
+        ].split(");", 1)[0]
         assert "tenant_id" in table_block
         assert "workspace_id" in table_block
     assert "99_intelligence_external_predictive.sql" in migration
@@ -64,9 +68,13 @@ def test_intelligence_native_rls_migration_is_fail_closed():
 def test_priority_cartridges_have_valid_intelligence_contracts():
     for cartridge_id in ("hubspot", "replicon", "salesforce", "sap_hcm"):
         path = ROOT / "cartridges" / cartridge_id / "app/config/intelligence.yaml"
-        packaged = ROOT / "console/app/config/intelligence_contracts" / f"{cartridge_id}.yaml"
+        packaged = (
+            ROOT / "console/app/config/intelligence_contracts" / f"{cartridge_id}.yaml"
+        )
         assert path.exists(), f"missing intelligence contract for {cartridge_id}"
-        assert packaged.exists(), f"missing packaged console intelligence contract for {cartridge_id}"
+        assert (
+            packaged.exists()
+        ), f"missing packaged console intelligence contract for {cartridge_id}"
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         packaged_data = yaml.safe_load(packaged.read_text(encoding="utf-8"))
         assert data["cartridge"] == cartridge_id
@@ -112,7 +120,7 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert '@router.get("/external/sources"' in router
     assert '"/external/sources/{source_id}"' in router
     assert '"/external/run"' in router
-    assert '@router.post(' in router
+    assert "@router.post(" in router
     assert 'Depends(require_permission("datasets.read"))' in router
     assert 'Depends(require_permission("control_room.write"))' in router
     assert "Depends(require_csrf)" in router
@@ -148,7 +156,9 @@ def test_intelligence_employee_owner_filters_are_enforced():
         "record_outcome",
         "_latest_evidence_pack",
     ):
-        block = persistence.split(f"async def {function_name}", 1)[1].split("\nasync def ", 1)[0]
+        block = persistence.split(f"async def {function_name}", 1)[1].split(
+            "\nasync def ", 1
+        )[0]
         assert "_can_read_workspace_wide(user)" in block
         assert "_owner_user_id(user)" in block
         assert "owner_user_id" in block
@@ -166,7 +176,9 @@ def test_pipeline_run_save_rejects_missing_scope_before_db_insert():
 
 def test_mcp_pipeline_scope_guard_has_no_unscoped_admin_bypass():
     source = read("mcp-infra/app/main.py")
-    guard = source.split("def _validate_pipeline_run_save_scope", 1)[1].split("\ndef _require_dag_registered", 1)[0]
+    guard = source.split("def _validate_pipeline_run_save_scope", 1)[1].split(
+        "\ndef _require_dag_registered", 1
+    )[0]
     assert 'if cartridge_id == "platform":' in guard
     assert "_is_unscoped_admin_context" not in guard
     assert "pipeline run tenant/workspace scope is required" in guard
@@ -201,7 +213,7 @@ def test_console_vault_proxy_forwards_signed_security_context():
     assert "_tenant_vault_conn_id" in vault_section
     assert 'f"{prefix}{clean}"' not in vault_section
     assert "headers=_vault_headers_for_user(user)" in vault_section
-    assert "headers=_hdr_for(\"VAULT\")" not in v1_source
+    assert 'headers=_hdr_for("VAULT")' not in v1_source
     assert "headers=_vault_headers_for_user(user)" in v1_source
 
 
@@ -223,13 +235,24 @@ def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     ui = read("console-next/src/app/(shell)/control-room/page.tsx")
     assert "item_kind = 'intelligence_signal'" in service
     assert "_persisted_intelligence_items" in service
-    assert '"intelligence": metadata.get("intelligence")' in state
+    assert '"decision_intelligence": decision_intelligence' in state
+    assert '"omega":' in state
     assert '"intelligence_signal"' in ui
     assert "function IntelligencePanel" in ui
+    assert "function DecisionIntelligencePanel" in ui
+    assert "function isDecisionIntelligence" in ui
+    assert "Decisión bajo incertidumbre" in ui
+    assert "Probabilidad" in ui
+    assert "Impacto esperado" in ui
+    assert "Costo de esperar" in ui
+    assert "Valor de información" in ui
     assert "Registrar resultado" in ui
     assert "Evidencia considerada" in ui
 
 
 def test_service_readiness_defaults_to_private_beta_golden_path():
     readiness = read("console/app/services/intelligence/readiness.py")
-    assert 'os.environ.get("INTELLIGENCE_READINESS_CARTRIDGES", "hubspot,replicon")' in readiness
+    assert (
+        'os.environ.get("INTELLIGENCE_READINESS_CARTRIDGES", "hubspot,replicon")'
+        in readiness
+    )

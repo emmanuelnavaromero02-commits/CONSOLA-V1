@@ -5,7 +5,15 @@ import types
 from app.services.control_room import core as _core
 
 
-_RESERVED_GLOBALS = {"__name__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__"}
+_RESERVED_GLOBALS = {
+    "__name__",
+    "__package__",
+    "__loader__",
+    "__spec__",
+    "__file__",
+    "__cached__",
+    "__builtins__",
+}
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
@@ -31,7 +39,10 @@ def _bind_to_core(fn):
 # External API/data access and item aggregation.
 @_bind_to_core
 def _is_production_env() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 @_bind_to_core
@@ -54,7 +65,9 @@ def _internal_headers(server: str) -> dict[str, str]:
     if pair:
         key = pair
     elif _is_production_env():
-        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production")
+        raise RuntimeError(
+            f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production"
+        )
     else:
         key = get_internal_api_key()
     return {"x-api-key": key, "x-internal-service": "console"}
@@ -69,7 +82,9 @@ def _mcp_payload(tool: str, args: dict[str, Any], user: dict | None) -> dict[str
 
 
 @_bind_to_core
-async def query_dataset_rows(dataset: str, user: dict | None, limit: int = 1000) -> list[dict[str, Any]]:
+async def query_dataset_rows(
+    dataset: str, user: dict | None, limit: int = 1000
+) -> list[dict[str, Any]]:
     try:
         from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
 
@@ -80,12 +95,18 @@ async def query_dataset_rows(dataset: str, user: dict | None, limit: int = 1000)
     except Exception:
         pass
 
-    async with httpx.AsyncClient(headers=_internal_headers("REFINEMENT"), timeout=45) as client:
+    async with httpx.AsyncClient(
+        headers=_internal_headers("REFINEMENT"), timeout=45
+    ) as client:
         response = await client.post(
             f"{REFINEMENT_URL}/mcp/invoke",
             json=_mcp_payload(
                 "query_dataset",
-                {"name": dataset, "limit": limit, "user_context": rls_user_context(user)},
+                {
+                    "name": dataset,
+                    "limit": limit,
+                    "user_context": rls_user_context(user),
+                },
                 user,
             ),
         )
@@ -93,12 +114,20 @@ async def query_dataset_rows(dataset: str, user: dict | None, limit: int = 1000)
         raise HTTPException(response.status_code, f"dataset unavailable: {dataset}")
     payload = response.json()
     if isinstance(payload, dict) and payload.get("error") and "data" not in payload:
-        detail = payload.get("error") or payload.get("code") or f"dataset unavailable: {dataset}"
+        detail = (
+            payload.get("error")
+            or payload.get("code")
+            or f"dataset unavailable: {dataset}"
+        )
         raise HTTPException(503, str(detail))
     data = payload.get("data", payload.get("result", payload))
     if isinstance(data, dict):
         if data.get("error") and "data" not in data:
-            detail = data.get("error") or data.get("code") or f"dataset unavailable: {dataset}"
+            detail = (
+                data.get("error")
+                or data.get("code")
+                or f"dataset unavailable: {dataset}"
+            )
             raise HTTPException(503, str(detail))
         data = data.get("data", [])
     if not isinstance(data, list):
@@ -128,7 +157,15 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             return value
         if value is None:
             return False
-        return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "activo", "active"}
+        return str(value).strip().lower() in {
+            "1",
+            "true",
+            "t",
+            "yes",
+            "y",
+            "activo",
+            "active",
+        }
 
     def public_value(value: Any) -> Any:
         if value is None or isinstance(value, (str, int, float, bool)):
@@ -151,24 +188,26 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             f"&datasets={dataset}"
         )
 
-    def top_headcount_rows(rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5) -> list[dict[str, Any]]:
+    def top_headcount_rows(
+        rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5
+    ) -> list[dict[str, Any]]:
         id_key, name_key = label_keys
         top: list[dict[str, Any]] = []
         for row in rows:
             label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
-            top.append({
-                "label": label,
-                "id": public_value(row.get(id_key)),
-                "headcount": int(row.get("headcount") or 0),
-            })
-        return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[:limit]
+            top.append(
+                {
+                    "label": label,
+                    "id": public_value(row.get(id_key)),
+                    "headcount": int(row.get("headcount") or 0),
+                }
+            )
+        return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[
+            :limit
+        ]
 
     def status_error(results: list[dict[str, Any]]) -> str | None:
-        errors = [
-            str(result.get("error"))
-            for result in results
-            if result.get("error")
-        ]
+        errors = [str(result.get("error")) for result in results if result.get("error")]
         return "; ".join(errors) if errors else None
 
     def usable_rows(result: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -180,7 +219,9 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     def combine_widget_status(results: list[dict[str, Any]]) -> str:
         statuses = {str(result.get("status") or "unavailable") for result in results}
         usable = any(status in {"ready", "empty"} for status in statuses)
-        if usable and any(status in {"no_permission", "unavailable", "missing"} for status in statuses):
+        if usable and any(
+            status in {"no_permission", "unavailable", "missing"} for status in statuses
+        ):
             return "partial"
         for status in ("no_permission", "unavailable", "missing", "empty", "ready"):
             if status in statuses:
@@ -217,15 +258,25 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     employee_result = await gold_result(sf_gold_datasets["employee_360"], 5000)
     company_result = await gold_result(sf_gold_datasets["headcount_by_company"], 1000)
     location_result = await gold_result(sf_gold_datasets["headcount_by_location"], 1000)
-    department_result = await gold_result(sf_gold_datasets["headcount_by_department"], 1000)
+    department_result = await gold_result(
+        sf_gold_datasets["headcount_by_department"], 1000
+    )
 
     employee_rows = usable_rows(employee_result)
     company_rows = usable_rows(company_result)
     location_rows = usable_rows(location_result)
     department_rows = usable_rows(department_result)
 
-    company_headcount_total = None if company_rows is None else sum(int(row.get("headcount") or 0) for row in company_rows)
-    employee_active_total = None if employee_rows is None else sum(1 for row in employee_rows if truthy(row.get("is_active")))
+    company_headcount_total = (
+        None
+        if company_rows is None
+        else sum(int(row.get("headcount") or 0) for row in company_rows)
+    )
+    employee_active_total = (
+        None
+        if employee_rows is None
+        else sum(1 for row in employee_rows if truthy(row.get("is_active")))
+    )
     if company_headcount_total and company_headcount_total > 0:
         active_headcount = company_headcount_total
     elif employee_active_total is not None:
@@ -252,27 +303,37 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             "value": company_headcount_total,
             "dataset": sf_gold_datasets["headcount_by_company"],
             "href": dataset_href(sf_gold_datasets["headcount_by_company"]),
-            "rows": top_headcount_rows(company_rows or [], ("company_id", "company_name")),
+            "rows": top_headcount_rows(
+                company_rows or [], ("company_id", "company_name")
+            ),
             "status": company_result["status"],
             "error": company_result.get("error"),
         },
         {
             "id": "sf_headcount_by_location",
             "title": "Headcount por ubicacion",
-            "value": None if location_rows is None else sum(int(row.get("headcount") or 0) for row in location_rows),
+            "value": None
+            if location_rows is None
+            else sum(int(row.get("headcount") or 0) for row in location_rows),
             "dataset": sf_gold_datasets["headcount_by_location"],
             "href": dataset_href(sf_gold_datasets["headcount_by_location"]),
-            "rows": top_headcount_rows(location_rows or [], ("location_id", "location_name")),
+            "rows": top_headcount_rows(
+                location_rows or [], ("location_id", "location_name")
+            ),
             "status": location_result["status"],
             "error": location_result.get("error"),
         },
         {
             "id": "sf_headcount_by_department",
             "title": "Headcount por departamento",
-            "value": None if department_rows is None else sum(int(row.get("headcount") or 0) for row in department_rows),
+            "value": None
+            if department_rows is None
+            else sum(int(row.get("headcount") or 0) for row in department_rows),
             "dataset": sf_gold_datasets["headcount_by_department"],
             "href": dataset_href(sf_gold_datasets["headcount_by_department"]),
-            "rows": top_headcount_rows(department_rows or [], ("department_id", "department_name")),
+            "rows": top_headcount_rows(
+                department_rows or [], ("department_id", "department_name")
+            ),
             "status": department_result["status"],
             "error": department_result.get("error"),
         },
@@ -334,7 +395,8 @@ def _copy_for(anomaly_type: str) -> dict[str, str]:
     return ANOMALY_COPY.get(
         anomaly_type,
         {
-            "title": anomaly_type.replace("_", " ").strip().title() or "Senal operativa",
+            "title": anomaly_type.replace("_", " ").strip().title()
+            or "Senal operativa",
             "recommendation": "Revisar el registro, asignar responsable y documentar la decision tomada.",
             "root_cause": "La fuente genero una senal fuera de regla que requiere investigacion.",
         },
@@ -343,7 +405,9 @@ def _copy_for(anomaly_type: str) -> dict[str, str]:
 
 @_bind_to_core
 def _workspace_scope(user: dict | None) -> tuple[str | None, str]:
-    workspace_id = (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id")
+    workspace_id = (user or {}).get("active_workspace_id") or (user or {}).get(
+        "workspace_id"
+    )
     tenant_id = (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id")
     if not workspace_id:
         raise HTTPException(400, "active workspace is required")
@@ -353,6 +417,28 @@ def _workspace_scope(user: dict | None) -> tuple[str | None, str]:
 @_bind_to_core
 def _workspace_id(user: dict | None) -> str:
     return _workspace_scope(user)[1]
+
+
+@_bind_to_core
+def _actor_id(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    return int(text) if text.isdigit() else None
+
+
+@_bind_to_core
+def _can_read_workspace_wide(user: dict | None) -> bool:
+    role = str((user or {}).get("role") or "").strip()
+    scoped = str(
+        (user or {}).get("workspace_role") or (user or {}).get("platform_role") or ""
+    ).strip()
+    return role in {"admin", "owner", "super_admin"} or scoped in {
+        "workspace_admin",
+        "tenant_admin",
+    }
 
 
 @_bind_to_core
@@ -390,7 +476,9 @@ def _allowed_from_user(user: dict | None) -> set[str] | None:
 def _vault_headers_for_user(user: dict | None) -> dict[str, str]:
     return {
         **_internal_headers("VAULT"),
-        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
+        "x-security-context": json.dumps(
+            build_security_context(user), ensure_ascii=False
+        ),
     }
 
 
@@ -408,10 +496,16 @@ def _safe_connection_summary(connection: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-async def _vault_connections_for_cartridge(cartridge_id: str, user: dict | None) -> list[dict[str, Any]]:
+async def _vault_connections_for_cartridge(
+    cartridge_id: str, user: dict | None
+) -> list[dict[str, Any]]:
     try:
-        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=6.0) as client:
-            response = await client.get(f"{VAULT_URL}/connections/{quote(cartridge_id, safe='')}")
+        async with httpx.AsyncClient(
+            headers=_vault_headers_for_user(user), timeout=6.0
+        ) as client:
+            response = await client.get(
+                f"{VAULT_URL}/connections/{quote(cartridge_id, safe='')}"
+            )
     except Exception:
         return []
     if response.status_code in {404, 204}:
@@ -453,28 +547,32 @@ async def _filter_installations_by_scoped_connections(
             continue
         # Keep an unscoped candidate (no connection metadata) so the cockpit
         # can fall back to the installed catalog when nothing is connected yet.
-        candidates.append({
-            **row,
-            "installation_status": status,
-            "connections": [],
-            "connection_count": 0,
-            "active_connection_ids": [],
-            "connection_id": None,
-            "auth_method": None,
-        })
+        candidates.append(
+            {
+                **row,
+                "installation_status": status,
+                "connections": [],
+                "connection_count": 0,
+                "active_connection_ids": [],
+                "connection_id": None,
+                "auth_method": None,
+            }
+        )
         connections = await _vault_connections_for_cartridge(cartridge_id, user)
         if not connections:
             continue
         first = connections[0]
-        filtered.append({
-            **row,
-            "installation_status": status,
-            "connections": connections,
-            "connection_count": len(connections),
-            "active_connection_ids": [conn["conn_id"] for conn in connections],
-            "connection_id": first.get("conn_id"),
-            "auth_method": first.get("auth_method"),
-        })
+        filtered.append(
+            {
+                **row,
+                "installation_status": status,
+                "connections": connections,
+                "connection_count": len(connections),
+                "active_connection_ids": [conn["conn_id"] for conn in connections],
+                "connection_id": first.get("conn_id"),
+                "auth_method": first.get("auth_method"),
+            }
+        )
     if filtered:
         return filtered
     # Fallback: no installed cartridge has an active scoped Vault connection
@@ -493,7 +591,11 @@ def _attach_thresholds(
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
     item["thresholds_applied"] = thresholds_applied
     item["threshold_state"] = state
-    item["details"] = {**details, "thresholds": thresholds_applied, "threshold_state": state}
+    item["details"] = {
+        **details,
+        "thresholds": thresholds_applied,
+        "threshold_state": state,
+    }
     return item
 
 
@@ -532,7 +634,9 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
             workspace_id,
             (user or {}).get("id"),
         )
-        return await _filter_installations_by_scoped_connections([_row_to_public(row) for row in rows], user)
+        return await _filter_installations_by_scoped_connections(
+            [_row_to_public(row) for row in rows], user
+        )
     except Exception:
         allowed = _allowed_from_user(user)
         fallback: dict[str, dict[str, Any]] = {}
@@ -549,7 +653,9 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
                     "category": "platform" if module.operational else "cartridge",
                 },
             )
-        return await _filter_installations_by_scoped_connections(list(fallback.values()), user)
+        return await _filter_installations_by_scoped_connections(
+            list(fallback.values()), user
+        )
 
 
 @_bind_to_core
@@ -602,10 +708,18 @@ async def _fetch_source(
 
 
 @_bind_to_core
-def _base_item(source: ControlRoomSource, row: dict[str, Any], item_type: str, entity_id: str, label: str) -> dict[str, Any]:
+def _base_item(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    item_type: str,
+    entity_id: str,
+    label: str,
+) -> dict[str, Any]:
     severity = _severity(row.get("severity"))
     details = _details(row.get("details"))
-    detected_at = str(row.get("detected_at") or row.get("mes") or row.get("semana") or "")
+    detected_at = str(
+        row.get("detected_at") or row.get("mes") or row.get("semana") or ""
+    )
     escaped_entity = str(entity_id or label).replace("'", "''")
     technical_sql = (
         f"SELECT * FROM {source.dataset} "
@@ -613,11 +727,13 @@ def _base_item(source: ControlRoomSource, row: dict[str, Any], item_type: str, e
         f"LIMIT 50"
     )
     return {
-        "id": _encode_id({
-            "dataset": source.dataset,
-            "type": item_type,
-            "entity": entity_id or label,
-        }),
+        "id": _encode_id(
+            {
+                "dataset": source.dataset,
+                "type": item_type,
+                "entity": entity_id or label,
+            }
+        ),
         "kind": source.kind,
         "domain": source.domain,
         "module": source.module_label,
@@ -642,7 +758,9 @@ def _base_item(source: ControlRoomSource, row: dict[str, Any], item_type: str, e
 
 
 @_bind_to_core
-def _normalize_standard_anomaly(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any]:
+def _normalize_standard_anomaly(
+    source: ControlRoomSource, row: dict[str, Any]
+) -> dict[str, Any]:
     anomaly_type = str(row.get("anomaly_type") or "unknown").strip()
     entity_id = str(row.get(source.entity_id_field) or "").strip()
     label = str(row.get(source.entity_label_field) or entity_id or "Sin nombre").strip()
@@ -650,13 +768,18 @@ def _normalize_standard_anomaly(source: ControlRoomSource, row: dict[str, Any]) 
     copy = _copy_for(anomaly_type)
     item = _base_item(source, row, anomaly_type, entity_id, label)
     reason = str(details.get("reason") or "").strip()
-    item.update({
-        "title": copy["title"],
-        "description": reason or f"{source.entity_kind} {label} requiere revision operativa.",
-        "recommendation": copy["recommendation"],
-        "root_cause": str(details.get("root_cause") or copy["root_cause"]),
-        "impact": str(details.get("impact") or f"Riesgo operativo en {source.domain}."),
-    })
+    item.update(
+        {
+            "title": copy["title"],
+            "description": reason
+            or f"{source.entity_kind} {label} requiere revision operativa.",
+            "recommendation": copy["recommendation"],
+            "root_cause": str(details.get("root_cause") or copy["root_cause"]),
+            "impact": str(
+                details.get("impact") or f"Riesgo operativo en {source.domain}."
+            ),
+        }
+    )
     return item
 
 
@@ -667,51 +790,93 @@ def _normalize_replicon_allocation(
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
     pct = _num(row.get("pct_asignacion"))
-    over_warning = _threshold_value(thresholds, "replicon", "over_allocation", "pct_asignacion", "warning_value", 110)
-    over_critical = _threshold_value(thresholds, "replicon", "over_allocation", "pct_asignacion", "critical_value", 130)
-    under_warning = _threshold_value(thresholds, "replicon", "under_allocation", "pct_asignacion", "warning_value", 40)
-    under_critical = _threshold_value(thresholds, "replicon", "under_allocation", "pct_asignacion", "critical_value", 20)
+    over_warning = _threshold_value(
+        thresholds,
+        "replicon",
+        "over_allocation",
+        "pct_asignacion",
+        "warning_value",
+        110,
+    )
+    over_critical = _threshold_value(
+        thresholds,
+        "replicon",
+        "over_allocation",
+        "pct_asignacion",
+        "critical_value",
+        130,
+    )
+    under_warning = _threshold_value(
+        thresholds,
+        "replicon",
+        "under_allocation",
+        "pct_asignacion",
+        "warning_value",
+        40,
+    )
+    under_critical = _threshold_value(
+        thresholds,
+        "replicon",
+        "under_allocation",
+        "pct_asignacion",
+        "critical_value",
+        20,
+    )
     if pct is None or under_warning <= pct <= over_warning:
         return None
     consultor = str(row.get("consultor") or "Sin consultor").strip()
-    proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
+    proyecto = str(
+        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
+    ).strip()
     item_type = "over_allocation" if pct > 110 else "under_allocation"
     if pct > over_warning:
         item_type = "over_allocation"
         threshold_state = "critical" if pct >= over_critical else "warning"
         severity = "high" if threshold_state == "critical" else "medium"
-        threshold_refs = [_threshold_ref(
-            thresholds,
-            "replicon",
-            "over_allocation",
-            "pct_asignacion",
-            warning_default=110,
-            critical_default=130,
-            currency="PCT",
-        )]
+        threshold_refs = [
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "over_allocation",
+                "pct_asignacion",
+                warning_default=110,
+                critical_default=130,
+                currency="PCT",
+            )
+        ]
     else:
         item_type = "under_allocation"
         threshold_state = "critical" if pct <= under_critical else "warning"
         severity = "high" if threshold_state == "critical" else "medium"
-        threshold_refs = [_threshold_ref(
-            thresholds,
-            "replicon",
-            "under_allocation",
-            "pct_asignacion",
-            warning_default=40,
-            critical_default=20,
-            currency="PCT",
-        )]
-    item = _base_item(source, {**row, "severity": severity}, item_type, f"{consultor}:{proyecto}", consultor)
+        threshold_refs = [
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "under_allocation",
+                "pct_asignacion",
+                warning_default=40,
+                critical_default=20,
+                currency="PCT",
+            )
+        ]
+    item = _base_item(
+        source,
+        {**row, "severity": severity},
+        item_type,
+        f"{consultor}:{proyecto}",
+        consultor,
+    )
     direction = "sobreasignacion" if item_type == "over_allocation" else "subasignacion"
-    item.update({
-        "title": f"{consultor} con {direction} operativa",
-        "description": f"{consultor} registra {pct:.1f}% de asignacion en {proyecto}.",
-        "recommendation": "Rebalancear carga con el revenue manager y documentar excepcion si la asignacion es temporal.",
-        "root_cause": "Diferencia entre capacidad mensual esperada y horas asignadas.",
-        "impact": "Riesgo de capacidad, margen o entrega del proyecto.",
-        "details": {**item["details"], **row},
-    })
+    item.update(
+        {
+            "title": f"{consultor} con {direction} operativa",
+            "description": f"{consultor} registra {pct:.1f}% de asignacion en {proyecto}.",
+            "recommendation": "Rebalancear carga con el revenue manager y documentar excepcion si la asignacion es temporal.",
+            "root_cause": "Diferencia entre capacidad mensual esperada y horas asignadas.",
+            "impact": "Riesgo de capacidad, margen o entrega del proyecto.",
+            "details": {**item["details"], **row},
+        }
+    )
     return _attach_thresholds(item, threshold_refs, threshold_state)
 
 
@@ -745,31 +910,43 @@ def _normalize_replicon_timesheet(
     if ratio < warning_ratio:
         return None
     consultor = str(row.get("consultor") or "Sin consultor").strip()
-    proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
+    proyecto = str(
+        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
+    ).strip()
     threshold_state = "critical" if ratio >= critical_ratio else "warning"
     severity = "high" if threshold_state == "critical" else "medium"
-    item = _base_item(source, {**row, "severity": severity}, "non_billable_ratio", f"{consultor}:{proyecto}", consultor)
+    item = _base_item(
+        source,
+        {**row, "severity": severity},
+        "non_billable_ratio",
+        f"{consultor}:{proyecto}",
+        consultor,
+    )
     period = row.get("semana") or row.get("mes")
     period_text = f" en {period}" if period else ""
-    item.update({
-        "title": "Horas no facturables fuera de rango",
-        "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{period_text}.",
-        "recommendation": "Validar causa con PM/RM, reclasificar si procede y ajustar forecast de margen.",
-        "root_cause": "Registro de tiempo no facturable alto frente al total reportado.",
-        "impact": "Puede erosionar margen y ocultar demanda no planificada.",
-        "details": {**item["details"], **row},
-    })
+    item.update(
+        {
+            "title": "Horas no facturables fuera de rango",
+            "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{period_text}.",
+            "recommendation": "Validar causa con PM/RM, reclasificar si procede y ajustar forecast de margen.",
+            "root_cause": "Registro de tiempo no facturable alto frente al total reportado.",
+            "impact": "Puede erosionar margen y ocultar demanda no planificada.",
+            "details": {**item["details"], **row},
+        }
+    )
     return _attach_thresholds(
         item,
-        [_threshold_ref(
-            thresholds,
-            "replicon",
-            "non_billable_ratio",
-            "horas_no_facturables_ratio",
-            warning_default=0.35,
-            critical_default=0.55,
-            currency="PCT",
-        )],
+        [
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "non_billable_ratio",
+                "horas_no_facturables_ratio",
+                warning_default=0.35,
+                critical_default=0.55,
+                currency="PCT",
+            )
+        ],
         threshold_state,
     )
 
@@ -782,15 +959,25 @@ def _normalize_replicon_pnl(
 ) -> dict[str, Any] | None:
     margin = _num(row.get("margen_bruto_pct"))
     wip = _num(row.get("wip_usd")) or 0
-    margin_warning = _threshold_value(thresholds, "replicon", "low_margin", "margen_bruto_pct", "warning_value", 20)
-    margin_critical = _threshold_value(thresholds, "replicon", "low_margin", "margen_bruto_pct", "critical_value", 0)
-    wip_warning = _threshold_value(thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000)
-    wip_critical = _threshold_value(thresholds, "replicon", "wip_variance", "wip_usd", "critical_value", 25000)
+    margin_warning = _threshold_value(
+        thresholds, "replicon", "low_margin", "margen_bruto_pct", "warning_value", 20
+    )
+    margin_critical = _threshold_value(
+        thresholds, "replicon", "low_margin", "margen_bruto_pct", "critical_value", 0
+    )
+    wip_warning = _threshold_value(
+        thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000
+    )
+    wip_critical = _threshold_value(
+        thresholds, "replicon", "wip_variance", "wip_usd", "critical_value", 25000
+    )
     margin_breached = margin is not None and margin < margin_warning
     wip_breached = abs(wip) >= wip_warning
     if not margin_breached and not wip_breached:
         return None
-    proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
+    proyecto = str(
+        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
+    ).strip()
     manager = str(row.get("revenue_manager") or "Sin RM").strip()
     if margin is not None and margin < margin_critical:
         severity = "critical"
@@ -805,55 +992,77 @@ def _normalize_replicon_pnl(
         severity = "medium"
         threshold_state = "warning"
     item_type = "low_margin" if margin_breached else "wip_variance"
-    item = _base_item(source, {**row, "severity": severity}, item_type, proyecto, str(row.get("project_name") or proyecto))
-    item.update({
-        "title": "Proyecto con margen o WIP fuera de control",
-        "description": f"{proyecto} esta bajo {manager}; margen={margin if margin is not None else 'N/D'}%, WIP={wip:,.0f} USD.",
-        "recommendation": "Revisar revenue, facturacion, costo hundido y compromiso de remediacion con finanzas.",
-        "root_cause": "Desviacion entre ingreso reconocido, facturacion y costo total.",
-        "impact": "Riesgo financiero directo en margen, cash flow o forecast.",
-        "details": {**item["details"], **row},
-    })
+    item = _base_item(
+        source,
+        {**row, "severity": severity},
+        item_type,
+        proyecto,
+        str(row.get("project_name") or proyecto),
+    )
+    item.update(
+        {
+            "title": "Proyecto con margen o WIP fuera de control",
+            "description": f"{proyecto} esta bajo {manager}; margen={margin if margin is not None else 'N/D'}%, WIP={wip:,.0f} USD.",
+            "recommendation": "Revisar revenue, facturacion, costo hundido y compromiso de remediacion con finanzas.",
+            "root_cause": "Desviacion entre ingreso reconocido, facturacion y costo total.",
+            "impact": "Riesgo financiero directo en margen, cash flow o forecast.",
+            "details": {**item["details"], **row},
+        }
+    )
     refs = []
     if margin_breached:
-        refs.append(_threshold_ref(
-            thresholds,
-            "replicon",
-            "low_margin",
-            "margen_bruto_pct",
-            warning_default=20,
-            critical_default=0,
-            currency="PCT",
-        ))
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "low_margin",
+                "margen_bruto_pct",
+                warning_default=20,
+                critical_default=0,
+                currency="PCT",
+            )
+        )
     if wip_breached:
-        refs.append(_threshold_ref(
-            thresholds,
-            "replicon",
-            "wip_variance",
-            "wip_usd",
-            warning_default=5000,
-            critical_default=25000,
-        ))
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "wip_variance",
+                "wip_usd",
+                warning_default=5000,
+                critical_default=25000,
+            )
+        )
     return _attach_thresholds(item, refs, threshold_state)
 
 
 @_bind_to_core
-def _normalize_replicon_skill_gap(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_replicon_skill_gap(
+    source: ControlRoomSource, row: dict[str, Any]
+) -> dict[str, Any] | None:
     level = str(row.get("brecha_nivel") or "").strip().upper()
     if level not in {"CRITICA", "MODERADA"}:
         return None
     manager = str(row.get("manager_name") or "Sin manager").strip()
     category = str(row.get("skill_category") or "Sin categoria").strip()
     severity = "high" if level == "CRITICA" else "medium"
-    item = _base_item(source, {**row, "severity": severity}, "skill_gap", f"{manager}:{category}", manager)
-    item.update({
-        "title": "Brecha de skills en equipo",
-        "description": f"{manager} tiene brecha {level.lower()} en {category}.",
-        "recommendation": "Priorizar capacitacion, mentorias o staffing alterno antes de nuevas asignaciones criticas.",
-        "root_cause": "Cobertura de habilidades insuficiente para la demanda operativa.",
-        "impact": "Riesgo de delivery, calidad o dependencia de pocos expertos.",
-        "details": {**item["details"], **row},
-    })
+    item = _base_item(
+        source,
+        {**row, "severity": severity},
+        "skill_gap",
+        f"{manager}:{category}",
+        manager,
+    )
+    item.update(
+        {
+            "title": "Brecha de skills en equipo",
+            "description": f"{manager} tiene brecha {level.lower()} en {category}.",
+            "recommendation": "Priorizar capacitacion, mentorias o staffing alterno antes de nuevas asignaciones criticas.",
+            "root_cause": "Cobertura de habilidades insuficiente para la demanda operativa.",
+            "impact": "Riesgo de delivery, calidad o dependencia de pocos expertos.",
+            "details": {**item["details"], **row},
+        }
+    )
     return item
 
 
@@ -864,7 +1073,9 @@ def _normalize_s4_revenue(
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
     revenue = _num(row.get("revenue"))
-    warning_revenue = _threshold_value(thresholds, "sap_s4hana", "negative_revenue", "revenue", "warning_value", 0)
+    warning_revenue = _threshold_value(
+        thresholds, "sap_s4hana", "negative_revenue", "revenue", "warning_value", 0
+    )
     critical_revenue = _threshold_value(
         thresholds,
         "sap_s4hana",
@@ -885,24 +1096,28 @@ def _normalize_s4_revenue(
         f"{customer}:{month}",
         customer,
     )
-    item.update({
-        "title": "Revenue negativo en ventas",
-        "description": f"{customer} registra revenue negativo por {abs(revenue):,.0f} en {month or 'el periodo'}.",
-        "recommendation": "Revisar notas de credito, anulaciones y conciliacion de facturacion antes del cierre.",
-        "root_cause": "La facturacion neta del periodo quedo por debajo de cero.",
-        "impact": "Riesgo de distorsion de revenue, forecast y margen comercial.",
-        "details": {**item["details"], **row},
-    })
+    item.update(
+        {
+            "title": "Revenue negativo en ventas",
+            "description": f"{customer} registra revenue negativo por {abs(revenue):,.0f} en {month or 'el periodo'}.",
+            "recommendation": "Revisar notas de credito, anulaciones y conciliacion de facturacion antes del cierre.",
+            "root_cause": "La facturacion neta del periodo quedo por debajo de cero.",
+            "impact": "Riesgo de distorsion de revenue, forecast y margen comercial.",
+            "details": {**item["details"], **row},
+        }
+    )
     return _attach_thresholds(
         item,
-        [_threshold_ref(
-            thresholds,
-            "sap_s4hana",
-            "negative_revenue",
-            "revenue",
-            warning_default=0,
-            critical_default=-100000,
-        )],
+        [
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "negative_revenue",
+                "revenue",
+                warning_default=0,
+                critical_default=-100000,
+            )
+        ],
         "critical" if severity == "critical" else "warning",
     )
 
@@ -915,16 +1130,46 @@ def _normalize_s4_backlog(
 ) -> dict[str, Any] | None:
     age = _num(row.get("oldest_age_days")) or 0
     open_value = _num(row.get("open_value")) or 0
-    age_warning = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "oldest_age_days", "warning_value", 45)
-    age_critical = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "oldest_age_days", "critical_value", 90)
-    value_warning = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "open_value", "warning_value", 50000)
-    value_critical = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "open_value", "critical_value", 250000)
+    age_warning = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "aged_sales_backlog",
+        "oldest_age_days",
+        "warning_value",
+        45,
+    )
+    age_critical = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "aged_sales_backlog",
+        "oldest_age_days",
+        "critical_value",
+        90,
+    )
+    value_warning = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "aged_sales_backlog",
+        "open_value",
+        "warning_value",
+        50000,
+    )
+    value_critical = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "aged_sales_backlog",
+        "open_value",
+        "critical_value",
+        250000,
+    )
     age_breached = age >= age_warning
     value_breached = open_value >= value_warning
     if not age_breached and not value_breached:
         return None
     customer = str(row.get("customer_code") or "Sin cliente").strip()
-    threshold_state = "critical" if age >= age_critical or open_value >= value_critical else "warning"
+    threshold_state = (
+        "critical" if age >= age_critical or open_value >= value_critical else "warning"
+    )
     severity = "critical" if threshold_state == "critical" else "high"
     item = _base_item(
         source,
@@ -933,34 +1178,40 @@ def _normalize_s4_backlog(
         customer,
         customer,
     )
-    item.update({
-        "title": "Backlog comercial envejecido",
-        "description": f"{customer} tiene pedidos abiertos por {open_value:,.0f} con antiguedad maxima de {age:.0f} dias.",
-        "recommendation": "Validar bloqueo, entrega, facturacion pendiente y responsable comercial.",
-        "root_cause": "Pedidos abiertos permanecen sin completar fuera del ciclo normal.",
-        "impact": "Riesgo de cash flow, cumplimiento de entrega y forecast de ventas.",
-        "details": {**item["details"], **row},
-    })
+    item.update(
+        {
+            "title": "Backlog comercial envejecido",
+            "description": f"{customer} tiene pedidos abiertos por {open_value:,.0f} con antiguedad maxima de {age:.0f} dias.",
+            "recommendation": "Validar bloqueo, entrega, facturacion pendiente y responsable comercial.",
+            "root_cause": "Pedidos abiertos permanecen sin completar fuera del ciclo normal.",
+            "impact": "Riesgo de cash flow, cumplimiento de entrega y forecast de ventas.",
+            "details": {**item["details"], **row},
+        }
+    )
     refs = []
     if age_breached:
-        refs.append(_threshold_ref(
-            thresholds,
-            "sap_s4hana",
-            "aged_sales_backlog",
-            "oldest_age_days",
-            warning_default=45,
-            critical_default=90,
-            currency="DAYS",
-        ))
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "aged_sales_backlog",
+                "oldest_age_days",
+                warning_default=45,
+                critical_default=90,
+                currency="DAYS",
+            )
+        )
     if value_breached:
-        refs.append(_threshold_ref(
-            thresholds,
-            "sap_s4hana",
-            "aged_sales_backlog",
-            "open_value",
-            warning_default=50000,
-            critical_default=250000,
-        ))
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "aged_sales_backlog",
+                "open_value",
+                warning_default=50000,
+                critical_default=250000,
+            )
+        )
     return _attach_thresholds(item, refs, threshold_state)
 
 
@@ -1000,24 +1251,28 @@ def _normalize_s4_supplier_spend(
         f"{supplier}:{month}",
         supplier,
     )
-    item.update({
-        "title": "Gasto alto concentrado en proveedor",
-        "description": f"{supplier} concentra {spend:,.0f} de gasto en {month or 'el periodo'}.",
-        "recommendation": "Revisar aprobaciones, categoria, contrato vigente y comparativo contra presupuesto.",
-        "root_cause": "Concentracion de gasto relevante en compras del periodo.",
-        "impact": "Riesgo de sobrepresupuesto, dependencia de proveedor o control de aprobaciones.",
-        "details": {**item["details"], **row},
-    })
+    item.update(
+        {
+            "title": "Gasto alto concentrado en proveedor",
+            "description": f"{supplier} concentra {spend:,.0f} de gasto en {month or 'el periodo'}.",
+            "recommendation": "Revisar aprobaciones, categoria, contrato vigente y comparativo contra presupuesto.",
+            "root_cause": "Concentracion de gasto relevante en compras del periodo.",
+            "impact": "Riesgo de sobrepresupuesto, dependencia de proveedor o control de aprobaciones.",
+            "details": {**item["details"], **row},
+        }
+    )
     return _attach_thresholds(
         item,
-        [_threshold_ref(
-            thresholds,
-            "sap_s4hana",
-            "supplier_spend_concentration",
-            "total_spend",
-            warning_default=250000,
-            critical_default=750000,
-        )],
+        [
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "supplier_spend_concentration",
+                "total_spend",
+                warning_default=250000,
+                critical_default=750000,
+            )
+        ],
         threshold_state,
     )
 
@@ -1076,7 +1331,8 @@ def _financial_metrics(
             "cartridge": source.get("cartridge"),
         }
         for source in sources
-        if source["dataset"] in {
+        if source["dataset"]
+        in {
             "pnl_mensual",
             "revenue_by_customer",
             "open_sales_orders",
@@ -1093,26 +1349,43 @@ def _financial_metrics(
     backlog_value = _money_sum(backlog_rows, "open_value")
     purchase_spend = _money_sum(purchase_rows, "total_spend")
     open_orders = int(_money_sum(backlog_rows, "open_orders"))
-    oldest_backlog_days = int(max((_num(row.get("oldest_age_days")) or 0 for row in backlog_rows), default=0))
+    oldest_backlog_days = int(
+        max((_num(row.get("oldest_age_days")) or 0 for row in backlog_rows), default=0)
+    )
 
     risk_rows: list[dict[str, Any]] = []
     for row in pnl_rows:
         margin_pct = _num(row.get("margen_bruto_pct"))
         wip = _num(row.get("wip_usd")) or 0
         if (margin_pct is not None and margin_pct < 20) or abs(wip) >= 5000:
-            risk_rows.append({
-                "label": str(row.get("project_name") or row.get("proyecto") or "Proyecto"),
-                "owner": str(row.get("revenue_manager") or "N/D"),
-                "margin_pct": margin_pct,
-                "wip_usd": round(wip, 2),
-                "margin_usd": round(_num(row.get("margen_bruto_usd")) or 0, 2),
-            })
-    risk_rows.sort(key=lambda row: (row["margin_pct"] if row["margin_pct"] is not None else 999, -abs(row["wip_usd"])))
+            risk_rows.append(
+                {
+                    "label": str(
+                        row.get("project_name") or row.get("proyecto") or "Proyecto"
+                    ),
+                    "owner": str(row.get("revenue_manager") or "N/D"),
+                    "margin_pct": margin_pct,
+                    "wip_usd": round(wip, 2),
+                    "margin_usd": round(_num(row.get("margen_bruto_usd")) or 0, 2),
+                }
+            )
+    risk_rows.sort(
+        key=lambda row: (
+            row["margin_pct"] if row["margin_pct"] is not None else 999,
+            -abs(row["wip_usd"]),
+        )
+    )
 
-    available = any(source["status"] == "ok" and source.get("count", 0) for source in relevant.values())
+    available = any(
+        source["status"] == "ok" and source.get("count", 0)
+        for source in relevant.values()
+    )
     if available:
         status = "ok"
-    elif any(source["status"] in {"unavailable", "invalid_schema"} for source in relevant.values()):
+    elif any(
+        source["status"] in {"unavailable", "invalid_schema"}
+        for source in relevant.values()
+    ):
         status = "unavailable"
     elif any(source["status"] == "missing" for source in relevant.values()):
         status = "missing"
@@ -1149,7 +1422,11 @@ def _cycle_counts(items: Iterable[dict[str, Any]]) -> dict[str, int]:
             counts["investigation"] += 1
         if status == "in_review" or item.get("selected_option_id"):
             counts["options"] += 1
-        if item.get("decision_id") or status in {"decision_created", "approved", "resolved"}:
+        if item.get("decision_id") or status in {
+            "decision_created",
+            "approved",
+            "resolved",
+        }:
             counts["decision"] += 1
         if status in {"approved", "resolved"}:
             counts["execution"] += 1
@@ -1187,6 +1464,13 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         if tenant_id:
             params.append(tenant_id)
             tenant_clause = f"AND tenant_id::text = ${len(params)}"
+        owner_clause = ""
+        if not _can_read_workspace_wide(user):
+            owner_id = _actor_id((user or {}).get("id"))
+            if owner_id is None:
+                return []
+            params.append(owner_id)
+            owner_clause = f"AND owner_user_id = ${len(params)}"
         pool = await auth.pool()
         rows = await pool.fetch(
             f"""
@@ -1198,6 +1482,7 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
               FROM control_room_items
              WHERE workspace_id = $1
                {tenant_clause}
+               {owner_clause}
                AND item_kind = 'intelligence_signal'
              ORDER BY priority_score DESC, last_seen_at DESC
              LIMIT 200
@@ -1216,38 +1501,73 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
             status = "open"
         item_id = str(public_row.get("item_id") or "")
         escaped_item_id = item_id.replace("'", "''")
+        intelligence = (
+            metadata.get("intelligence")
+            if isinstance(metadata.get("intelligence"), dict)
+            else {}
+        )
+        decision_intelligence = metadata.get("decision_intelligence")
+        if not isinstance(decision_intelligence, dict):
+            decision_intelligence = intelligence.get("decision_intelligence")
+        if not isinstance(decision_intelligence, dict):
+            decision_intelligence = {}
+        if decision_intelligence:
+            intelligence = {
+                **intelligence,
+                "decision_intelligence": decision_intelligence,
+            }
         items.append(
             {
                 "id": item_id,
                 "kind": public_row.get("item_kind") or "intelligence_signal",
                 "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
-                "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
+                "workspace_id": public_row.get("workspace_id")
+                or metadata.get("workspace_id"),
                 "domain": public_row.get("domain") or "Operacion",
                 "module": metadata.get("module") or "Intelligence Engine",
                 "cartridge": public_row.get("cartridge_id") or "platform",
-                "source_dataset": public_row.get("source_dataset") or "intelligence_signals",
-                "source_system": metadata.get("source_system") or public_row.get("cartridge_id") or "platform",
-                "dataset": metadata.get("dataset") or public_row.get("source_dataset") or "intelligence_signals",
+                "source_dataset": public_row.get("source_dataset")
+                or "intelligence_signals",
+                "source_system": metadata.get("source_system")
+                or public_row.get("cartridge_id")
+                or "platform",
+                "dataset": metadata.get("dataset")
+                or public_row.get("source_dataset")
+                or "intelligence_signals",
                 "gold_table": metadata.get("gold_table"),
                 "freshness_at": metadata.get("freshness_at"),
                 "freshness_field": metadata.get("freshness_field"),
                 "data_status": metadata.get("data_status") or "gold_ready",
                 "evidence_pack_id": metadata.get("evidence_pack_id"),
-                "evidence_pack": metadata.get("evidence_pack") if isinstance(metadata.get("evidence_pack"), dict) else {},
+                "evidence_pack": metadata.get("evidence_pack")
+                if isinstance(metadata.get("evidence_pack"), dict)
+                else {},
                 "entity_kind": public_row.get("entity_kind") or "Entidad",
                 "entity_id": public_row.get("entity_id") or "",
-                "entity_label": public_row.get("entity_label") or public_row.get("entity_id") or "Entidad",
+                "entity_label": public_row.get("entity_label")
+                or public_row.get("entity_id")
+                or "Entidad",
                 "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
                 "severity": severity,
                 "severity_weight": SEVERITY_WEIGHT[severity],
-                "detected_at": public_row.get("last_seen_at") or public_row.get("first_seen_at") or "",
-                "details": metadata.get("details") if isinstance(metadata.get("details"), dict) else {},
+                "detected_at": public_row.get("last_seen_at")
+                or public_row.get("first_seen_at")
+                or "",
+                "details": metadata.get("details")
+                if isinstance(metadata.get("details"), dict)
+                else {},
                 "title": public_row.get("title") or "Senal de inteligencia operativa",
-                "description": metadata.get("description") or public_row.get("title") or "Senal de inteligencia operativa",
-                "recommendation": metadata.get("recommendation") or "Revisar evidencia y seleccionar una opcion supervisada.",
-                "root_cause": metadata.get("root_cause") or "Desviacion contra baseline.",
-                "impact": metadata.get("impact") or "Impacto operativo pendiente de validar.",
-                "sql": metadata.get("sql") or f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'",
+                "description": metadata.get("description")
+                or public_row.get("title")
+                or "Senal de inteligencia operativa",
+                "recommendation": metadata.get("recommendation")
+                or "Revisar evidencia y seleccionar una opcion supervisada.",
+                "root_cause": metadata.get("root_cause")
+                or "Desviacion contra baseline.",
+                "impact": metadata.get("impact")
+                or "Impacto operativo pendiente de validar.",
+                "sql": metadata.get("sql")
+                or f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'",
                 "status": status,
                 "decision_id": public_row.get("decision_id"),
                 "impact_estimate": public_row.get("impact_estimate"),
@@ -1256,14 +1576,23 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                 "priority_score": public_row.get("priority_score"),
                 "thresholds_applied": metadata.get("thresholds_applied") or [],
                 "threshold_state": metadata.get("threshold_state") or "default",
-                "selected_option_id": public_row.get("selected_option_id") or metadata.get("selected_option_id"),
-                "execution_status": public_row.get("execution_status") or metadata.get("execution_status"),
-                "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else {},
-                "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else {},
+                "selected_option_id": public_row.get("selected_option_id")
+                or metadata.get("selected_option_id"),
+                "execution_status": public_row.get("execution_status")
+                or metadata.get("execution_status"),
+                "alert_state": metadata.get("alert_state")
+                if isinstance(metadata.get("alert_state"), dict)
+                else {},
+                "control_state": metadata.get("control_state")
+                if isinstance(metadata.get("control_state"), dict)
+                else {},
                 "lessons": metadata.get("lessons"),
                 "learned_rules": metadata.get("learned_rules"),
-                "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
-                "intelligence": metadata.get("intelligence") if isinstance(metadata.get("intelligence"), dict) else {},
+                "lesson_applications": metadata.get("lesson_applications")
+                if isinstance(metadata.get("lesson_applications"), list)
+                else [],
+                "decision_intelligence": decision_intelligence,
+                "intelligence": intelligence,
                 "first_seen_at": public_row.get("first_seen_at"),
                 "last_seen_at": public_row.get("last_seen_at"),
                 "resolved_at": public_row.get("resolved_at"),
@@ -1281,18 +1610,24 @@ async def _cleanup_obsolete_source_state_items(
 ) -> None:
     by_cartridge: dict[str, set[str]] = {}
     for source in sources:
-        cartridge_id = str(source.get("cartridge") or source.get("connector_id") or "").strip()
+        cartridge_id = str(
+            source.get("cartridge") or source.get("connector_id") or ""
+        ).strip()
         dataset = str(source.get("dataset") or "").strip()
         if cartridge_id and dataset:
             by_cartridge.setdefault(cartridge_id, set()).add(dataset)
     if not by_cartridge:
         return
 
-    state_ids_by_cartridge: dict[str, set[str]] = {cartridge_id: set() for cartridge_id in by_cartridge}
+    state_ids_by_cartridge: dict[str, set[str]] = {
+        cartridge_id: set() for cartridge_id in by_cartridge
+    }
     for item in current_items:
         if item.get("kind") != "source_state":
             continue
-        cartridge_id = str(item.get("cartridge") or item.get("connector_id") or "").strip()
+        cartridge_id = str(
+            item.get("cartridge") or item.get("connector_id") or ""
+        ).strip()
         item_id = str(item.get("id") or "").strip()
         if cartridge_id in state_ids_by_cartridge and item_id:
             state_ids_by_cartridge[cartridge_id].add(item_id)
@@ -1354,14 +1689,19 @@ async def _collect_items(
     active = {
         cartridge_id
         for cartridge_id, row in installation_by_cartridge.items()
-        if str(row.get("installation_status") or "ready") in ACTIVE_INSTALLATION_STATUSES
+        if str(row.get("installation_status") or "ready")
+        in ACTIVE_INSTALLATION_STATUSES
     }
     modules = [module for module in MODULES if module.cartridge in installed]
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
-    threshold_rows = await _load_threshold_rows(user) if use_catalog and (persist or include_source_state_items) else []
+    threshold_rows = (
+        await _load_threshold_rows(user)
+        if use_catalog and (persist or include_source_state_items)
+        else []
+    )
     thresholds = _threshold_map(threshold_rows)
     for module in modules:
         installation = installation_by_cartridge.get(module.cartridge, {})
@@ -1372,7 +1712,11 @@ async def _collect_items(
                     "blocked",
                     count=0,
                     checked_at=datetime.now(UTC).isoformat(),
-                    error=str(installation.get("error_message") or installation.get("current_step") or ""),
+                    error=str(
+                        installation.get("error_message")
+                        or installation.get("current_step")
+                        or ""
+                    ),
                 )
                 rows_by_dataset[source.dataset] = []
                 sources.append(source_status)
@@ -1389,7 +1733,9 @@ async def _collect_items(
                         items.append(source_item)
             continue
         for source in module.sources:
-            if not _show_known_non_ready_sources() and not _source_has_ready_contract(source):
+            if not _show_known_non_ready_sources() and not _source_has_ready_contract(
+                source
+            ):
                 source_status = _source_status_payload(
                     source,
                     "ok",
@@ -1410,8 +1756,12 @@ async def _collect_items(
                     if source_item:
                         items.append(source_item)
                 continue
-            rows, source_status = await _fetch_source(source, user, fetcher, limit_per_source)
-            rows_by_dataset[source.dataset] = rows if source_status["status"] == "ok" else []
+            rows, source_status = await _fetch_source(
+                source, user, fetcher, limit_per_source
+            )
+            rows_by_dataset[source.dataset] = (
+                rows if source_status["status"] == "ok" else []
+            )
             sources.append(source_status)
             if include_source_state_items:
                 source_item = _source_state_item(
@@ -1466,7 +1816,9 @@ def _source_rollup_status(module_sources: list[dict[str, Any]]) -> str:
         "ok",
     ]
     statuses = {
-        "ok" if source.get("operationally_ready") else str(source.get("data_readiness") or source.get("status") or "no_sources")
+        "ok"
+        if source.get("operationally_ready")
+        else str(source.get("data_readiness") or source.get("status") or "no_sources")
         for source in module_sources
     }
     if statuses == {"ok"}:
@@ -1487,10 +1839,13 @@ def _domain_payload(
     domain_items = [item for item in items if item["domain"] == domain]
     domain_modules = []
     for module in modules:
-        if module.domain != domain and not any(source.domain == domain for source in module.sources):
+        if module.domain != domain and not any(
+            source.domain == domain for source in module.sources
+        ):
             continue
         module_has_sources = any(
-            source.get("module_id") == module.visible_id and source.get("domain") == domain
+            source.get("module_id") == module.visible_id
+            and source.get("domain") == domain
             for source in sources
         )
         module_has_items = any(
@@ -1504,7 +1859,8 @@ def _domain_payload(
         module_sources = [
             source
             for source in sources
-            if source.get("module_id") == module.visible_id and source.get("domain") == domain
+            if source.get("module_id") == module.visible_id
+            and source.get("domain") == domain
         ]
         module_items = [
             item
@@ -1514,44 +1870,59 @@ def _domain_payload(
         source_count = sum(int(source.get("count") or 0) for source in module_sources)
         source_status = _source_rollup_status(module_sources)
         data_readiness = _module_data_readiness(module_sources)
-        module_payload.append({
-            "id": module.visible_id,
-            "connector_id": module.cartridge,
-            "label": module.label,
-            "domain": domain,
-            "accent": module.accent,
-            "description": module.description,
-            "item_count": len(module_items),
-            "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
-            "source_status": source_status,
-            "data_readiness": data_readiness,
-            "operationally_ready": data_readiness == "ready",
-            "kpis": [
-                {
-                    "label": "Registros fuente",
-                    "value": source_count,
-                    "tone": "neutral",
-                    "bad": data_readiness != "ready" and source_status != "no_sources",
-                    "sql": " UNION ALL ".join(
-                        f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
-                        for source in module_sources
-                    ) or "-- sin fuente materializada",
-                },
-                {
-                    "label": "Items abiertos",
-                    "value": sum(1 for item in module_items if item["status"] not in TERMINAL_ITEM_STATUSES),
-                    "tone": "attention",
-                    "bad": any(item["status"] not in TERMINAL_ITEM_STATUSES for item in module_items),
-                    "sql": f"SELECT * FROM control_room_items WHERE cartridge_id = '{module.cartridge}' AND domain = '{domain}' AND status NOT IN ('approved','dismissed','resolved')",
-                },
-            ],
-        })
+        module_payload.append(
+            {
+                "id": module.visible_id,
+                "connector_id": module.cartridge,
+                "label": module.label,
+                "domain": domain,
+                "accent": module.accent,
+                "description": module.description,
+                "item_count": len(module_items),
+                "critical_count": sum(
+                    1 for item in module_items if item["severity"] == "critical"
+                ),
+                "source_status": source_status,
+                "data_readiness": data_readiness,
+                "operationally_ready": data_readiness == "ready",
+                "kpis": [
+                    {
+                        "label": "Registros fuente",
+                        "value": source_count,
+                        "tone": "neutral",
+                        "bad": data_readiness != "ready"
+                        and source_status != "no_sources",
+                        "sql": " UNION ALL ".join(
+                            f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
+                            for source in module_sources
+                        )
+                        or "-- sin fuente materializada",
+                    },
+                    {
+                        "label": "Items abiertos",
+                        "value": sum(
+                            1
+                            for item in module_items
+                            if item["status"] not in TERMINAL_ITEM_STATUSES
+                        ),
+                        "tone": "attention",
+                        "bad": any(
+                            item["status"] not in TERMINAL_ITEM_STATUSES
+                            for item in module_items
+                        ),
+                        "sql": f"SELECT * FROM control_room_items WHERE cartridge_id = '{module.cartridge}' AND domain = '{domain}' AND status NOT IN ('approved','dismissed','resolved')",
+                    },
+                ],
+            }
+        )
     return {
         "id": domain.lower().replace(" ", "_"),
         "label": domain,
         "accent": DOMAIN_ACCENTS.get(domain, "#64748b"),
         "item_count": len(domain_items),
-        "critical_count": sum(1 for item in domain_items if item["severity"] == "critical"),
+        "critical_count": sum(
+            1 for item in domain_items if item["severity"] == "critical"
+        ),
         "cartridge_count": len({module.visible_id for module in domain_modules}),
         "modules": module_payload,
     }
@@ -1583,7 +1954,8 @@ async def dashboard(
         str(row.get("cartridge_id") or "").strip()
         for row in installations
         if str(row.get("cartridge_id") or "").strip()
-        and str(row.get("installation_status") or "ready").strip().lower() in ACTIVE_INSTALLATION_STATUSES
+        and str(row.get("installation_status") or "ready").strip().lower()
+        in ACTIVE_INSTALLATION_STATUSES
     }
     lesson_rows = await _load_lesson_rows(user, limit=200)
     lesson_summary = _lesson_insights(lesson_rows)
@@ -1613,10 +1985,13 @@ async def dashboard(
     workspace_id = _workspace_id(user)
     open_decisions = 0
     try:
-        open_decisions = int(await pool.fetchval(
-            "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-            workspace_id,
-        ) or 0)
+        open_decisions = int(
+            await pool.fetchval(
+                "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                workspace_id,
+            )
+            or 0
+        )
     except Exception:
         open_decisions = 0
 
@@ -1634,9 +2009,11 @@ async def dashboard(
         for item in items
         if str(item.get("module_id") or item.get("cartridge") or "").strip()
     }
-    modules_for_payload = modules if _show_known_non_ready_sources() else [
-        module for module in modules if module.visible_id in visible_module_ids
-    ]
+    modules_for_payload = (
+        modules
+        if _show_known_non_ready_sources()
+        else [module for module in modules if module.visible_id in visible_module_ids]
+    )
     cartridges = []
     for module in modules_for_payload:
         row = installation_by_cartridge.get(module.cartridge, {})
@@ -1646,29 +2023,35 @@ async def dashboard(
             for item in items
             if item.get("module_id", item.get("cartridge")) == module.visible_id
         ]
-        module_sources = [source for source in sources if source.get("module_id") == module.visible_id]
+        module_sources = [
+            source for source in sources if source.get("module_id") == module.visible_id
+        ]
         source_status = _source_rollup_status(module_sources)
         data_readiness = _module_data_readiness(module_sources)
         installation_status = str(row.get("installation_status") or "ready")
-        cartridges.append({
-            "id": cartridge_id,
-            "connector_id": module.cartridge,
-            "connector_label": row.get("label") or module.cartridge,
-            "label": module.label,
-            "domain": module.domain,
-            "accent": module.accent,
-            "description": module.description,
-            "status": installation_status,
-            "current_step": row.get("current_step"),
-            "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
-            "operational": bool(module.operational),
-            "item_count": len(module_items),
-            "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
-            "source_status": source_status,
-            "data_readiness": data_readiness,
-            "operationally_ready": data_readiness == "ready",
-            "datasets": module_sources,
-        })
+        cartridges.append(
+            {
+                "id": cartridge_id,
+                "connector_id": module.cartridge,
+                "connector_label": row.get("label") or module.cartridge,
+                "label": module.label,
+                "domain": module.domain,
+                "accent": module.accent,
+                "description": module.description,
+                "status": installation_status,
+                "current_step": row.get("current_step"),
+                "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
+                "operational": bool(module.operational),
+                "item_count": len(module_items),
+                "critical_count": sum(
+                    1 for item in module_items if item["severity"] == "critical"
+                ),
+                "source_status": source_status,
+                "data_readiness": data_readiness,
+                "operationally_ready": data_readiness == "ready",
+                "datasets": module_sources,
+            }
+        )
 
     domain_labels = list(DOMAIN_ORDER)
     for module in modules_for_payload:
@@ -1677,7 +2060,10 @@ async def dashboard(
         for source in module.sources:
             if source.domain not in domain_labels:
                 domain_labels.append(source.domain)
-    domains = [_domain_payload(domain, modules_for_payload, items, sources) for domain in domain_labels]
+    domains = [
+        _domain_payload(domain, modules_for_payload, items, sources)
+        for domain in domain_labels
+    ]
     if not _show_known_non_ready_sources():
         domains = [
             domain
@@ -1685,9 +2071,19 @@ async def dashboard(
             if domain.get("modules") or int(domain.get("item_count") or 0) > 0
         ]
     data_readiness = _readiness_counts(sources)
-    data_ready_modules = [row for row in cartridges if row["active"] and row.get("operationally_ready")]
-    partial_modules = [row for row in cartridges if row["active"] and row.get("data_readiness") == "partial"]
-    stub_modules = [row for row in cartridges if row["active"] and row.get("data_readiness") == "stub"]
+    data_ready_modules = [
+        row for row in cartridges if row["active"] and row.get("operationally_ready")
+    ]
+    partial_modules = [
+        row
+        for row in cartridges
+        if row["active"] and row.get("data_readiness") == "partial"
+    ]
+    stub_modules = [
+        row
+        for row in cartridges
+        if row["active"] and row.get("data_readiness") == "stub"
+    ]
 
     return {
         "meta": {
@@ -1706,7 +2102,8 @@ async def dashboard(
             "write_back_enabled": _external_writeback_enabled(),
         },
         "workspace": {
-            "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
+            "tenant_id": (user or {}).get("active_tenant_id")
+            or (user or {}).get("tenant_id"),
             "workspace_id": workspace_id,
         },
         "period": generated_at.strftime("%B %Y"),
@@ -1721,17 +2118,33 @@ async def dashboard(
             "critical": by_severity.get("critical", 0),
             "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
             "open_decisions": open_decisions,
-            "active_connectors": len({
-                row["connector_id"]
-                for row in cartridges
-                if row["active"] and not row["operational"]
-            }),
-            "active_modules": len([row for row in cartridges if row["active"] and not row["operational"]]),
-            "active_cartridges": len([row for row in cartridges if row["active"] and not row["operational"]]),
-            "operational_cartridges": len([row for row in cartridges if row["active"] and row["operational"]]),
+            "active_connectors": len(
+                {
+                    row["connector_id"]
+                    for row in cartridges
+                    if row["active"] and not row["operational"]
+                }
+            ),
+            "active_modules": len(
+                [row for row in cartridges if row["active"] and not row["operational"]]
+            ),
+            "active_cartridges": len(
+                [row for row in cartridges if row["active"] and not row["operational"]]
+            ),
+            "operational_cartridges": len(
+                [row for row in cartridges if row["active"] and row["operational"]]
+            ),
             "source_states": {
                 status: sum(1 for source in sources if source["status"] == status)
-                for status in ["ok", "empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"]
+                for status in [
+                    "ok",
+                    "empty",
+                    "missing",
+                    "unavailable",
+                    "invalid_schema",
+                    "blocked",
+                    "no_permission",
+                ]
             },
             "data_readiness": data_readiness,
             "data_ready_sources": data_readiness.get("ready", 0),
@@ -1744,14 +2157,22 @@ async def dashboard(
                 "active": sum(1 for row in thresholds if row.get("enabled", True)),
                 "total": len(thresholds),
                 "by_cartridge": {
-                    cartridge_id: sum(1 for row in thresholds if row.get("cartridge_id") == cartridge_id)
-                    for cartridge_id in sorted({
-                        str(row.get("cartridge_id") or "").strip()
+                    cartridge_id: sum(
+                        1
                         for row in thresholds
-                        if str(row.get("cartridge_id") or "").strip()
-                    })
+                        if row.get("cartridge_id") == cartridge_id
+                    )
+                    for cartridge_id in sorted(
+                        {
+                            str(row.get("cartridge_id") or "").strip()
+                            for row in thresholds
+                            if str(row.get("cartridge_id") or "").strip()
+                        }
+                    )
                 },
-                "items_with_thresholds": sum(1 for item in items if item.get("thresholds_applied")),
+                "items_with_thresholds": sum(
+                    1 for item in items if item.get("thresholds_applied")
+                ),
             },
             "lessons": lesson_summary,
             "alerts": alert_summary,
@@ -1784,7 +2205,9 @@ async def list_anomalies(
 
 
 @_bind_to_core
-async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows) -> dict[str, Any]:
+async def summary(
+    user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows
+) -> dict[str, Any]:
     collected = await _collect_items(
         user,
         fetcher=fetcher,
@@ -1803,10 +2226,13 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
     workspace_id = _workspace_id(user)
     open_decisions = 0
     if workspace_id:
-        open_decisions = int(await pool.fetchval(
-            "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-            workspace_id,
-        ) or 0)
+        open_decisions = int(
+            await pool.fetchval(
+                "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                workspace_id,
+            )
+            or 0
+        )
     lesson_rows = await _load_lesson_rows(user, limit=100)
     items = _attach_lessons_to_items(items, lesson_rows)
     alert_summary = _alert_payload(items)["summary"]
@@ -1819,7 +2245,9 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
         "sources": collected["sources"],
         "financial": collected["financial"],
         "thresholds": {
-            "active": sum(1 for row in collected.get("thresholds", []) if row.get("enabled", True)),
+            "active": sum(
+                1 for row in collected.get("thresholds", []) if row.get("enabled", True)
+            ),
             "total": len(collected.get("thresholds", [])),
         },
         "lessons": _lesson_insights(lesson_rows),
@@ -1827,7 +2255,14 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
     }
 
 
-_ITEM_STATUSES = ("open", "in_review", "decision_created", "approved", "dismissed", "resolved")
+_ITEM_STATUSES = (
+    "open",
+    "in_review",
+    "decision_created",
+    "approved",
+    "dismissed",
+    "resolved",
+)
 _ITEM_SEVERITIES = ("critical", "high", "medium", "low")
 
 
@@ -1876,14 +2311,20 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
     )
     executions_by_status = {str(row["status"]): int(row["n"]) for row in exec_rows}
 
-    lessons_total = int(await pool.fetchval(
-        "SELECT COUNT(*) FROM control_room_lessons WHERE workspace_id = $1",
-        workspace_id,
-    ) or 0)
-    thresholds_total = int(await pool.fetchval(
-        "SELECT COUNT(*) FROM control_room_thresholds WHERE workspace_id = $1 AND enabled = TRUE",
-        workspace_id,
-    ) or 0)
+    lessons_total = int(
+        await pool.fetchval(
+            "SELECT COUNT(*) FROM control_room_lessons WHERE workspace_id = $1",
+            workspace_id,
+        )
+        or 0
+    )
+    thresholds_total = int(
+        await pool.fetchval(
+            "SELECT COUNT(*) FROM control_room_thresholds WHERE workspace_id = $1 AND enabled = TRUE",
+            workspace_id,
+        )
+        or 0
+    )
     last_item_at = await pool.fetchval(
         "SELECT MAX(last_seen_at) FROM control_room_items WHERE workspace_id = $1",
         workspace_id,
@@ -1908,12 +2349,15 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
         "write_back_enabled": writeback_enabled,
         "writeback_blocked_by_default": not writeback_enabled,
         "external_writeback_blocked_by_default": not writeback_enabled,
-        "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower() in {"1", "true", "yes", "on"},
+        "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower()
+        in {"1", "true", "yes", "on"},
     }
 
 
 @_bind_to_core
-async def get_item(item_id: str, user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows) -> dict[str, Any]:
+async def get_item(
+    item_id: str, user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows
+) -> dict[str, Any]:
     payload = await dashboard(user, fetcher=fetcher, persist=True)
     for item in payload["items"]:
         if item["id"] == item_id:
@@ -1922,7 +2366,9 @@ async def get_item(item_id: str, user: dict | None, *, fetcher: DatasetFetcher =
 
 
 @_bind_to_core
-async def get_anomaly(anomaly_id: str, user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows) -> dict[str, Any]:
+async def get_anomaly(
+    anomaly_id: str, user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows
+) -> dict[str, Any]:
     item = await get_item(anomaly_id, user, fetcher=fetcher)
     if item["kind"] != "anomaly":
         raise HTTPException(404, "anomaly not found")
@@ -1995,57 +2441,60 @@ async def list_alerts(
     payload = await dashboard(user, fetcher=fetcher, persist=True)
     return {
         "alerts": payload.get("alerts") or [],
-        "summary": payload.get("summary", {}).get("alerts") or _alert_payload(payload.get("items") or [])["summary"],
+        "summary": payload.get("summary", {}).get("alerts")
+        or _alert_payload(payload.get("items") or [])["summary"],
         "generated_at": payload.get("meta", {}).get("generated_at"),
     }
 
 
 __all__ = (
-    '_ITEM_STATUSES',
-    '_ITEM_SEVERITIES',
-    '_is_production_env',
-    '_internal_headers',
-    '_mcp_payload',
-    'query_dataset_rows',
-    '_details',
-    '_encode_id',
-    '_severity',
-    '_num',
-    '_copy_for',
-    '_workspace_scope',
-    '_workspace_id',
-    '_module_by_cartridge',
-    '_module_by_visible_id',
-    '_all_sources',
-    '_allowed_from_user',
-    '_attach_thresholds',
-    '_installed_cartridges',
-    '_fetch_source',
-    '_base_item',
-    '_normalize_standard_anomaly',
-    '_normalize_replicon_allocation',
-    '_normalize_replicon_timesheet',
-    '_normalize_replicon_pnl',
-    '_normalize_replicon_skill_gap',
-    '_normalize_s4_revenue',
-    '_normalize_s4_backlog',
-    '_normalize_s4_supplier_spend',
-    '_normalize_row',
-    '_money_sum',
-    '_ratio',
-    '_financial_metrics',
-    '_cycle_counts',
-    '_lessons_for_item',
-    '_collect_items',
-    '_severity_counts',
-    '_source_rollup_status',
-    '_domain_payload',
-    'dashboard',
-    'list_anomalies',
-    'summary',
-    'ops_summary',
-    'get_item',
-    'get_anomaly',
-    '_record_action_execution',
-    'list_alerts'
+    "_ITEM_STATUSES",
+    "_ITEM_SEVERITIES",
+    "_is_production_env",
+    "_internal_headers",
+    "_mcp_payload",
+    "query_dataset_rows",
+    "_details",
+    "_encode_id",
+    "_severity",
+    "_num",
+    "_copy_for",
+    "_workspace_scope",
+    "_workspace_id",
+    "_actor_id",
+    "_can_read_workspace_wide",
+    "_module_by_cartridge",
+    "_module_by_visible_id",
+    "_all_sources",
+    "_allowed_from_user",
+    "_attach_thresholds",
+    "_installed_cartridges",
+    "_fetch_source",
+    "_base_item",
+    "_normalize_standard_anomaly",
+    "_normalize_replicon_allocation",
+    "_normalize_replicon_timesheet",
+    "_normalize_replicon_pnl",
+    "_normalize_replicon_skill_gap",
+    "_normalize_s4_revenue",
+    "_normalize_s4_backlog",
+    "_normalize_s4_supplier_spend",
+    "_normalize_row",
+    "_money_sum",
+    "_ratio",
+    "_financial_metrics",
+    "_cycle_counts",
+    "_lessons_for_item",
+    "_collect_items",
+    "_severity_counts",
+    "_source_rollup_status",
+    "_domain_payload",
+    "dashboard",
+    "list_anomalies",
+    "summary",
+    "ops_summary",
+    "get_item",
+    "get_anomaly",
+    "_record_action_execution",
+    "list_alerts",
 )

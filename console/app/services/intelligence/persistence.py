@@ -31,7 +31,10 @@ def _actor_id(value: Any) -> int | None:
 def _can_read_workspace_wide(user: dict) -> bool:
     role = permissions.user_role(user)
     scoped = permissions.workspace_role(user)
-    return role in {"admin", "owner", "super_admin"} or scoped in {"workspace_admin", "tenant_admin"}
+    return role in {"admin", "owner", "super_admin"} or scoped in {
+        "workspace_admin",
+        "tenant_admin",
+    }
 
 
 def _owner_user_id(user: dict) -> int | None:
@@ -65,16 +68,27 @@ async def persist_artifacts(
             evidence_pack = artifact["evidence_pack"]
             hypotheses = artifact["hypotheses"]
             options = artifact["options"]
-            baseline_id = await persist_baseline(conn, tenant_id, workspace_id, signal, baseline)
+            baseline_id = await persist_baseline(
+                conn, tenant_id, workspace_id, signal, baseline
+            )
+            decision_intelligence = artifact.get("decision_intelligence")
+            if isinstance(decision_intelligence, dict):
+                signal["decision_intelligence"] = decision_intelligence
             signal["baseline_id"] = baseline_id
-            pack_id = await persist_evidence(conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id)
+            pack_id = await persist_evidence(
+                conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id
+            )
             evidence_pack["id"] = pack_id
             signal["evidence_pack_id"] = pack_id
             for hypothesis in hypotheses:
                 hypothesis["evidence_pack_id"] = pack_id
             await persist_signal(conn, tenant_id, workspace_id, signal, owner_user_id)
-            await persist_hypotheses(conn, tenant_id, workspace_id, signal, hypotheses, owner_user_id)
-            await persist_options(conn, tenant_id, workspace_id, signal, options, owner_user_id)
+            await persist_hypotheses(
+                conn, tenant_id, workspace_id, signal, hypotheses, owner_user_id
+            )
+            await persist_options(
+                conn, tenant_id, workspace_id, signal, options, owner_user_id
+            )
             await publish_control_room_item(
                 conn,
                 tenant_id,
@@ -90,7 +104,13 @@ async def persist_artifacts(
             )
 
 
-async def persist_baseline(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], baseline: dict[str, Any]) -> int:
+async def persist_baseline(
+    pool: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    signal: dict[str, Any],
+    baseline: dict[str, Any],
+) -> int:
     row = await pool.fetchrow(
         """
         INSERT INTO metric_baselines (
@@ -130,7 +150,13 @@ async def persist_baseline(pool: Any, tenant_id: str | None, workspace_id: str, 
     return int(row["id"])
 
 
-async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], owner_user_id: int | None) -> None:
+async def persist_signal(
+    pool: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    signal: dict[str, Any],
+    owner_user_id: int | None,
+) -> None:
     await pool.execute(
         """
         INSERT INTO intelligence_signals (
@@ -202,13 +228,18 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
                 "metric_name": signal.get("metric_name"),
                 "expected_behavior": signal.get("expected_behavior"),
                 "signal_subtype": signal.get("signal_subtype") or "observed",
-                "source_system": signal.get("source_system") or signal.get("cartridge_id"),
+                "source_system": signal.get("source_system")
+                or signal.get("cartridge_id"),
                 "source_dataset": signal.get("source_dataset") or signal.get("dataset"),
                 "dataset": signal.get("dataset"),
-                "gold_table": signal.get("gold_table") or f"gold_{signal.get('dataset')}",
+                "gold_table": signal.get("gold_table")
+                or f"gold_{signal.get('dataset')}",
                 "freshness_at": signal.get("freshness_at") or signal.get("period_key"),
                 "freshness_field": signal.get("freshness_field"),
                 "evidence_pack_id": signal.get("evidence_pack_id"),
+                "decision_intelligence": signal.get("decision_intelligence")
+                if isinstance(signal.get("decision_intelligence"), dict)
+                else None,
             }
         ),
         sorted(TERMINAL_SIGNAL_STATUSES),
@@ -240,11 +271,18 @@ async def persist_evidence(
                 "metric": signal["metric"],
                 "dataset": signal["dataset"],
                 "signal_subtype": signal.get("signal_subtype") or "observed",
-                "source_system": signal.get("source_system") or signal.get("cartridge_id"),
+                "source_system": signal.get("source_system")
+                or signal.get("cartridge_id"),
                 "source_dataset": signal.get("source_dataset") or signal.get("dataset"),
-                "gold_table": signal.get("gold_table") or f"gold_{signal.get('dataset')}",
+                "gold_table": signal.get("gold_table")
+                or f"gold_{signal.get('dataset')}",
                 "freshness_at": signal.get("freshness_at") or signal.get("period_key"),
                 "freshness_field": signal.get("freshness_field"),
+                "decision_intelligence_method": (
+                    signal.get("decision_intelligence") or {}
+                ).get("method")
+                if isinstance(signal.get("decision_intelligence"), dict)
+                else None,
             }
         ),
     )
@@ -368,14 +406,38 @@ async def publish_control_room_item(
     signal = artifact["signal"]
     top_hypothesis = (artifact.get("hypotheses") or [{}])[0]
     top_option = (artifact.get("options") or [{}])[0]
-    evidence_pack = artifact.get("evidence_pack") if isinstance(artifact.get("evidence_pack"), dict) else {}
-    evidence_items = evidence_pack.get("items") if isinstance(evidence_pack.get("items"), list) else []
+    evidence_pack = (
+        artifact.get("evidence_pack")
+        if isinstance(artifact.get("evidence_pack"), dict)
+        else {}
+    )
+    evidence_items = (
+        evidence_pack.get("items")
+        if isinstance(evidence_pack.get("items"), list)
+        else []
+    )
     evidence_pack_id = evidence_pack.get("id") or signal.get("evidence_pack_id")
     source_system = signal.get("source_system") or signal.get("cartridge_id")
     source_dataset = signal.get("source_dataset") or signal.get("dataset")
     gold_table = signal.get("gold_table") or f"gold_{source_dataset}"
     freshness_at = signal.get("freshness_at") or signal.get("period_key")
     freshness_field = signal.get("freshness_field")
+    decision_intelligence = signal.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = (
+            artifact.get("decision_intelligence")
+            if isinstance(artifact.get("decision_intelligence"), dict)
+            else {}
+        )
+    expected_impact = (
+        decision_intelligence.get("expected_impact")
+        if isinstance(decision_intelligence.get("expected_impact"), dict)
+        else {}
+    )
+    impact_estimate = num(expected_impact.get("value"))
+    if impact_estimate is None:
+        impact_estimate = abs(float(signal["deviation_value"]))
+    impact_currency = str(expected_impact.get("currency") or "USD")
     metadata = {
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
@@ -393,9 +455,11 @@ async def publish_control_room_item(
             "confidence": evidence_pack.get("confidence"),
             "items": public_json(evidence_items),
         },
+        "decision_intelligence": public_json(decision_intelligence),
         "module": "Intelligence Engine",
         "description": signal["summary"],
-        "recommendation": top_option.get("label") or "Revisar evidencia y decidir siguiente paso.",
+        "recommendation": top_option.get("label")
+        or "Revisar evidencia y decidir siguiente paso.",
         "root_cause": top_hypothesis.get("title") or "Desviacion contra baseline.",
         "impact": f"Desviacion {signal['deviation_value']:.2f} en {signal['metric_name']}.",
         "details": {
@@ -411,11 +475,24 @@ async def publish_control_room_item(
             "freshness_at": freshness_at,
             "freshness_field": freshness_field,
             "source": "intelligence_engine",
+            "decision_intelligence_method": decision_intelligence.get("method"),
+            "recommended_decision": decision_intelligence.get("recommended_decision"),
         },
         "sql": (evidence_items or [{}])[0].get("query_text"),
         "intelligence": public_json(artifact),
     }
-    priority_score = int(max(0, min(100, round(float(signal["confidence"]) * 45 + abs(float(signal["deviation_pct"])) * 55))))
+    priority_score = int(
+        max(
+            0,
+            min(
+                100,
+                round(
+                    float(signal["confidence"]) * 45
+                    + abs(float(signal["deviation_pct"])) * 55
+                ),
+            ),
+        )
+    )
     await pool.execute(
         """
         INSERT INTO control_room_items (
@@ -429,7 +506,7 @@ async def publish_control_room_item(
             $1, $2, $3, $4, $5, $6, $7,
             $8, $9, $10, 'open', $11, $12,
             $13, $14, $15::jsonb, $16,
-            'USD', $17, $18, NULL,
+            $17, $18, $19, NULL,
             'not_started', NOW(), NOW()
         )
         ON CONFLICT (workspace_id, item_id) DO UPDATE
@@ -445,12 +522,13 @@ async def publish_control_room_item(
             anomaly_type = EXCLUDED.anomaly_type,
             metadata = control_room_items.metadata || EXCLUDED.metadata,
             impact_estimate = EXCLUDED.impact_estimate,
+            impact_currency = EXCLUDED.impact_currency,
             confidence = EXCLUDED.confidence,
             priority_score = EXCLUDED.priority_score,
             owner_user_id = COALESCE(control_room_items.owner_user_id, EXCLUDED.owner_user_id),
             last_seen_at = NOW(),
             status = CASE
-                WHEN control_room_items.status = ANY($19::text[])
+                WHEN control_room_items.status = ANY($20::text[])
                 THEN control_room_items.status
                 ELSE 'open'
             END
@@ -470,7 +548,8 @@ async def publish_control_room_item(
         signal["entity_label"],
         signal["metric"],
         json_dumps(metadata),
-        abs(float(signal["deviation_value"])),
+        impact_estimate,
+        impact_currency,
         signal["confidence"],
         priority_score,
         sorted(TERMINAL_SIGNAL_STATUSES),
@@ -669,7 +748,12 @@ async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str,
             """,
             *params,
         )
-        item_params: list[Any] = [workspace_id, signal_id, option_id, json_dumps({"selected_option_id": option_id})]
+        item_params: list[Any] = [
+            workspace_id,
+            signal_id,
+            option_id,
+            json_dumps({"selected_option_id": option_id}),
+        ]
         item_owner_clause = ""
         if not can_read_all:
             item_params.append(owner_id)
@@ -693,12 +777,18 @@ async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str,
         "intelligence.option.select",
         "intelligence_signal",
         signal_id,
-        metadata={"tenant_id": tenant_id, "workspace_id": workspace_id, "option_id": option_id},
+        metadata={
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "option_id": option_id,
+        },
     )
     return {"selected": public_json(dict(option))}
 
 
-async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> dict[str, Any]:
+async def record_outcome(
+    user: dict, signal_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
     can_read_all = _can_read_workspace_wide(user)
     owner_id = _owner_user_id(user)
@@ -731,14 +821,21 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
         actual_value = num(body.get("actual_value"))
         predicted_value = num(body.get("predicted_value"))
         if predicted_value is None:
-            predicted_value = num(signal_data.get("predicted_value")) or num(signal_data.get("actual_value"))
+            predicted_value = num(signal_data.get("predicted_value")) or num(
+                signal_data.get("actual_value")
+            )
         prediction_error = None
         if actual_value is not None and predicted_value is not None:
             prediction_error = round(actual_value - predicted_value, 4)
         learned_rule = str(body.get("learned_rule") or "").strip() or None
         if not learned_rule and prediction_error is not None:
             learned_rule = f"Resultado medido con error {prediction_error:.2f} para {signal_data['metric']}."
-        outcome_summary = str(body.get("outcome_summary") or body.get("summary") or learned_rule or "Outcome registrado.").strip()
+        outcome_summary = str(
+            body.get("outcome_summary")
+            or body.get("summary")
+            or learned_rule
+            or "Outcome registrado."
+        ).strip()
         row = await conn.fetchrow(
             """
             INSERT INTO prediction_outcomes (
@@ -781,7 +878,12 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
         item_params: list[Any] = [
             workspace_id,
             signal_id,
-            json_dumps({"intelligence_outcome": public_json(dict(row)), "lessons": [learned_rule] if learned_rule else []}),
+            json_dumps(
+                {
+                    "intelligence_outcome": public_json(dict(row)),
+                    "lessons": [learned_rule] if learned_rule else [],
+                }
+            ),
         ]
         item_owner_clause = ""
         if not can_read_all:
@@ -804,12 +906,18 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
         "intelligence.outcome.record",
         "intelligence_signal",
         signal_id,
-        metadata={"tenant_id": tenant_id, "workspace_id": workspace_id, "option_id": option_id},
+        metadata={
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "option_id": option_id,
+        },
     )
     return {"outcome": public_json(dict(row))}
 
 
-async def _latest_evidence_pack(pool: Any, workspace_id: str, signal_id: str, user: dict) -> dict[str, Any] | None:
+async def _latest_evidence_pack(
+    pool: Any, workspace_id: str, signal_id: str, user: dict
+) -> dict[str, Any] | None:
     can_read_all = _can_read_workspace_wide(user)
     owner_id = _owner_user_id(user)
     params: list[Any] = [workspace_id, signal_id]
@@ -857,4 +965,11 @@ async def _latest_evidence_pack(pool: Any, workspace_id: str, signal_id: str, us
 def row_to_signal(row: Any) -> dict[str, Any]:
     data = dict(row)
     data["metadata"] = coerce_json_metadata(data.get("metadata"))
+    decision_intelligence = data["metadata"].get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        intelligence = data["metadata"].get("intelligence")
+        if isinstance(intelligence, dict):
+            decision_intelligence = intelligence.get("decision_intelligence")
+    if isinstance(decision_intelligence, dict):
+        data["decision_intelligence"] = decision_intelligence
     return public_json(data)
