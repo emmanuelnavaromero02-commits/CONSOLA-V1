@@ -2,7 +2,7 @@
 
 Current status: NOT APPROVED for public v1.0.
 
-Current `VERSION`: `1.45.3-beta`.
+Current `VERSION`: `1.45.68-beta`.
 
 ## Hard Rule
 
@@ -23,6 +23,8 @@ v1.0 approval.
   Secrets Manager/SSM, OIDC-protected deploy, and tag rollback rehearsal.
 - P2-22 Copilot/MCP threat model mapped to controls and tests.
 - Full-stack release gate green on the final release tag.
+- `make beta-smoke` green against a running stack, including strict data
+  readiness, Gold RLS, lineage, Superset health, and release identity.
 
 ## Current Blockers
 
