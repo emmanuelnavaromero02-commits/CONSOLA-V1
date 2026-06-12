@@ -3571,9 +3571,163 @@ def _filter_apps_payload_to_scoped_connections(payload: Any, active_cartridges: 
     return normalized
 
 
-@app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
-async def api_apps(user: dict = Depends(require_permission("apps.read"))):
-    """List published analytic apps visible to the active scoped connections."""
+def _app_declared_datasets(app: dict) -> set[str]:
+    datasets: set[str] = set()
+    for key in ("datasets_used", "datasets", "dataset"):
+        raw = app.get(key)
+        if isinstance(raw, (list, tuple, set)):
+            values = raw
+        elif isinstance(raw, str):
+            values = [raw]
+        else:
+            values = []
+        for item in values:
+            dataset = str(item or "").strip()
+            if DATASET_NAME_RE.fullmatch(dataset):
+                datasets.add(dataset)
+    return datasets
+
+
+def _app_datasets_from_payload(payload: Any) -> set[str]:
+    datasets: set[str] = set()
+    for app in _apps_from_payload(payload):
+        datasets.update(_app_declared_datasets(app))
+    return datasets
+
+
+def _gold_dsn_for_readiness() -> str:
+    return (
+        os.environ.get("GOLD_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+        or ""
+    ).replace("postgresql+psycopg2://", "postgresql://")
+
+
+async def _gold_ready_datasets_for_apps(user: dict | None, apps_payload: Any) -> tuple[set[str] | None, str]:
+    requested = _app_datasets_from_payload(apps_payload)
+    if not requested:
+        return None, "no_dataset_metadata"
+    dsn = _gold_dsn_for_readiness()
+    if not dsn:
+        return None, "gold_dsn_missing"
+    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
+    if not workspace_id:
+        return set(), "workspace_scope_missing"
+    try:
+        import asyncpg as _asyncpg
+
+        conn = await _asyncpg.connect(dsn, command_timeout=5)
+    except Exception:
+        logger.debug("Failed to connect to Gold for app readiness", exc_info=True)
+        return None, "gold_unreachable"
+    ready: set[str] = set()
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id or "",
+                workspace_id,
+            )
+            for dataset in sorted(requested):
+                table = f"gold_{dataset}"
+                exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+                if not exists:
+                    continue
+                columns = {
+                    str(row["column_name"])
+                    for row in await conn.fetch(
+                        """
+                        SELECT column_name
+                          FROM information_schema.columns
+                         WHERE table_schema = 'public'
+                           AND table_name = $1
+                        """,
+                        table,
+                    )
+                }
+                if "workspace_id" not in columns:
+                    continue
+                if "tenant_id" in columns and tenant_id:
+                    has_row = await conn.fetchval(
+                        f'SELECT 1 FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT 1',
+                        workspace_id,
+                        tenant_id,
+                    )
+                else:
+                    has_row = await conn.fetchval(
+                        f'SELECT 1 FROM public."{table}" WHERE workspace_id::text = $1 LIMIT 1',
+                        workspace_id,
+                    )
+                if has_row:
+                    ready.add(dataset)
+    except Exception:
+        logger.debug("Failed to verify Gold readiness for apps", exc_info=True)
+        return None, "gold_check_failed"
+    finally:
+        await conn.close()
+    return ready, "checked"
+
+
+def _filter_apps_payload_to_ready_datasets(
+    payload: Any,
+    ready_datasets: set[str] | None,
+    *,
+    mode: str = "checked",
+) -> dict[str, Any]:
+    if isinstance(payload, list):
+        normalized: dict[str, Any] = {"apps": payload}
+    elif isinstance(payload, dict):
+        normalized = dict(payload)
+    else:
+        normalized = {"apps": []}
+
+    apps = normalized.get("apps")
+    result = normalized.get("result")
+    apps_key = "apps"
+    if not isinstance(apps, list) and isinstance(result, list):
+        apps = result
+        apps_key = "result"
+    if not isinstance(apps, list):
+        apps = []
+    normalized["apps"] = apps
+
+    if ready_datasets is None:
+        normalized["apps_readiness"] = {
+            "mode": mode,
+            "hidden_unready_count": 0,
+            "unavailable_datasets": [],
+            "message": "No se pudo verificar Gold; apps filtradas solo por conexiones activas.",
+        }
+        return normalized
+
+    visible_apps: list[dict] = []
+    unavailable: set[str] = set()
+    for app in apps:
+        if not isinstance(app, dict):
+            continue
+        required = _app_declared_datasets(app)
+        missing = required - ready_datasets
+        if required and not missing:
+            visible_apps.append({**app, "data_status": "ready", "datasets_used": sorted(required)})
+        else:
+            unavailable.update(missing or required)
+
+    normalized[apps_key] = visible_apps
+    normalized["apps"] = visible_apps
+    normalized["apps_readiness"] = {
+        "mode": "gold_ready",
+        "hidden_unready_count": max(0, len(apps) - len(visible_apps)),
+        "unavailable_datasets": sorted(unavailable),
+        "message": (
+            "Apps filtradas por datasets Gold disponibles para el workspace."
+            if visible_apps
+            else "No hay apps con datasets Gold materializados para este workspace."
+        ),
+    }
+    return normalized
+
+
+async def _apps_payload_visible_and_ready(user: dict) -> dict[str, Any]:
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("list_apps", {}, user))
@@ -3584,7 +3738,19 @@ async def api_apps(user: dict = Depends(require_permission("apps.read"))):
         user,
         _app_payload_cartridge_candidates(payload),
     )
-    return _filter_apps_payload_to_scoped_connections(payload, active_cartridges)
+    scoped_payload = _filter_apps_payload_to_scoped_connections(payload, active_cartridges)
+    ready_datasets, readiness_mode = await _gold_ready_datasets_for_apps(user, scoped_payload)
+    return _filter_apps_payload_to_ready_datasets(
+        scoped_payload,
+        ready_datasets,
+        mode=readiness_mode,
+    )
+
+
+@app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
+async def api_apps(user: dict = Depends(require_permission("apps.read"))):
+    """List published analytic apps visible to the active scoped connections."""
+    return await _apps_payload_visible_and_ready(user)
 
 
 @app.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])

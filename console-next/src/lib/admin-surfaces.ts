@@ -31,10 +31,23 @@ export interface AnalyticsApp {
   title?: string | null;
   description?: string | null;
   updated_at?: string | null;
+  data_status?: string | null;
+  datasets_used?: string[];
 }
 
 export interface AppsResponse {
   apps: AnalyticsApp[];
+  apps_scope?: {
+    mode?: string;
+    hidden_unconfigured_count?: number;
+    message?: string;
+  };
+  apps_readiness?: {
+    mode?: string;
+    hidden_unready_count?: number;
+    unavailable_datasets?: string[];
+    message?: string;
+  };
 }
 
 export interface ExplorerBucket {
@@ -254,9 +267,9 @@ export async function rotateSetting(key: string): Promise<SystemSetting> {
   return data;
 }
 
-export async function listApps(): Promise<AnalyticsApp[]> {
+export async function listApps(): Promise<AppsResponse> {
   const { data } = await api.get<AppsResponse>("/api/apps");
-  return data.apps ?? [];
+  return { ...data, apps: data.apps ?? [] };
 }
 
 export async function deleteApp(name: string): Promise<void> {

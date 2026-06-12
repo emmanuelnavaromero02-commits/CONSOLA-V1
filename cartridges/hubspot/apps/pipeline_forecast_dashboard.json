@@ -4,6 +4,7 @@
   "description": "Pipeline abierto ponderado y forecast mensual por vendedor, con lo ya ganado del mes.",
   "cartridge": "hubspot",
   "dataset": "forecast_mensual",
+  "datasets_used": ["forecast_mensual"],
   "layout": "table",
   "default_filters": {},
   "columns": [

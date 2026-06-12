@@ -274,6 +274,63 @@ async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_run_intelligence_rejects_requested_cartridge_outside_user_scope(monkeypatch):
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{"cartridge": "replicon", "domain": "Rentabilidad", "metrics": [_metric()]}],
+    )
+
+    with pytest.raises(Exception) as exc:
+        await intelligence_engine.run_intelligence(USER, {"cartridge_id": "replicon"}, persist=False)
+
+    assert getattr(exc.value, "status_code", None) == 403
+    assert "replicon" in str(getattr(exc.value, "detail", exc.value))
+
+
+@pytest.mark.asyncio
+async def test_run_intelligence_can_target_allowed_replicon_gold(monkeypatch):
+    replicon_user = {**USER, "allowed_cartridges": ["replicon"]}
+
+    async def fake_fetcher(dataset: str, user: dict | None, limit: int):
+        assert dataset == "consultor_mensual"
+        assert user == replicon_user
+        assert limit >= 3
+        return [
+            {"mes": "2026-04-01", "consultor": "Andrea Morales", "horas_facturables": 124},
+            {"mes": "2026-05-01", "consultor": "Andrea Morales", "horas_facturables": 130},
+            {"mes": "2026-06-01", "consultor": "Andrea Morales", "horas_facturables": 40},
+        ]
+
+    metric = {
+        **_metric(),
+        "id": "billable_hours",
+        "name": "Horas facturables mensuales por consultor",
+        "dataset": "consultor_mensual",
+        "entity": {"kind": "consultant", "id_field": "consultor", "label_field": "consultor"},
+        "time_field": "mes",
+        "value_field": "horas_facturables",
+        "expected_behavior": "higher_is_good",
+    }
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{"cartridge": "replicon", "domain": "Rentabilidad", "metrics": [metric]}],
+    )
+
+    result = await intelligence_engine.run_intelligence(
+        replicon_user,
+        {"cartridge_id": "replicon", "metrics": ["billable_hours"]},
+        fetcher=fake_fetcher,
+        persist=False,
+    )
+
+    assert len(result["signals"]) == 1
+    assert result["signals"][0]["cartridge_id"] == "replicon"
+    assert result["signals"][0]["dataset"] == "consultor_mensual"
+
+
+@pytest.mark.asyncio
 async def test_intelligence_readiness_sets_rls_context_before_signal_stats(monkeypatch):
     class FakeConnection:
         def __init__(self):

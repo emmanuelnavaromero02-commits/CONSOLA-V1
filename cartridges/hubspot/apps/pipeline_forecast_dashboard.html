@@ -13,18 +13,14 @@
     th { color: #9aa0a6; font-weight: 600; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
     .note { margin-top: 16px; color: #9aa0a6; font-size: 12px; }
+    .state { padding: 18px 10px; color: #9aa0a6; }
+    .error { color: #fca5a5; }
   </style>
 </head>
 <body>
   <h1>Pipeline &amp; Forecast por Vendedor</h1>
   <p class="sub">Dataset: <code>gold/hubspot/forecast_mensual</code> — pipeline abierto ponderado vs. ganado del mes.</p>
 
-  <!--
-    App declarativa: la plataforma renderiza esta vista a partir de
-    apps/pipeline_forecast_dashboard.json (layout=table, dataset=forecast_mensual).
-    Este HTML es la vista por defecto / fallback. Las filas se inyectan desde
-    el dataset gold por el host de apps de la Console.
-  -->
   <table id="grid">
     <thead>
       <tr>
@@ -37,9 +33,62 @@
         <th class="num">Ganado</th>
       </tr>
     </thead>
-    <tbody data-bind="forecast_mensual"></tbody>
+    <tbody id="rows" data-bind="forecast_mensual">
+      <tr><td class="state" colspan="7">Cargando forecast...</td></tr>
+    </tbody>
   </table>
 
   <p class="note">Forecast ponderado = Σ (monto × probabilidad) de deals abiertos. El margen requiere costo (finanzas) y el cruce con capacidad operativa usa Replicon — fase 2.</p>
+  <script>
+    const tbody = document.getElementById("rows");
+    const money = new Intl.NumberFormat("es-MX", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+    const integer = new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 });
+
+    function cell(value, numeric = false, formatter = null) {
+      const td = document.createElement("td");
+      if (numeric) td.className = "num";
+      td.textContent = formatter ? formatter(Number(value || 0)) : String(value ?? "");
+      return td;
+    }
+
+    function render(rows) {
+      tbody.replaceChildren();
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const tr = document.createElement("tr");
+        const td = cell("Forecast no disponible para este workspace.");
+        td.className = "state";
+        td.colSpan = 7;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        tr.appendChild(cell(row.mes));
+        tr.appendChild(cell(row.vendedor));
+        tr.appendChild(cell(row.deals_abiertos, true, integer));
+        tr.appendChild(cell(row.monto_pipeline_usd, true, money));
+        tr.appendChild(cell(row.forecast_ponderado_usd, true, money));
+        tr.appendChild(cell(row.deals_ganados, true, integer));
+        tr.appendChild(cell(row.monto_ganado_usd, true, money));
+        tbody.appendChild(tr);
+      }
+    }
+
+    fetch("/api/data/forecast_mensual?limit=100")
+      .then((response) => {
+        if (!response.ok) throw new Error("Dataset no disponible");
+        return response.json();
+      })
+      .then(render)
+      .catch((error) => {
+        const tr = document.createElement("tr");
+        const td = cell(error.message || "Dataset no disponible");
+        td.className = "state error";
+        td.colSpan = 7;
+        tr.appendChild(td);
+        tbody.replaceChildren(tr);
+      });
+  </script>
 </body>
 </html>

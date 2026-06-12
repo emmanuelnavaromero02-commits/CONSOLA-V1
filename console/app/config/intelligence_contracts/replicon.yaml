@@ -63,13 +63,13 @@ metrics:
         risk: 50
         time_cost: 0
   - id: billable_hours
-    name: Horas facturables semanales por consultor
-    dataset: consultor_timesheet_semanal
+    name: Horas facturables mensuales por consultor
+    dataset: consultor_mensual
     entity:
       kind: consultant
       id_field: consultor
       label_field: consultor
-    time_field: semana
+    time_field: mes
     value_field: horas_facturables
     expected_behavior: higher_is_good
     baseline:
