@@ -27,7 +27,7 @@ DEFAULT_REGION = (
 )
 TERMINAL_STATUSES = {"Success", "Cancelled", "TimedOut", "Failed", "Cancelling"}
 MAX_INLINE_SCRIPT_BYTES = int(
-    os.environ.get("OMEGA_SSM_MAX_INLINE_SCRIPT_BYTES", "6000")
+    os.environ.get("OMEGA_SSM_MAX_INLINE_SCRIPT_BYTES", "12000")
 )
 SENSITIVE_PATTERNS = [
     re.compile(r"(?i)(authorization\s*:\s*)([^\r\n]+)"),
