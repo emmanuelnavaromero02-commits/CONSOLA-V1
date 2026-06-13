@@ -82,6 +82,13 @@ gzip -t "$workdir/postgres.sql.gz"
 gzip -t "$workdir/postgres_gold.sql.gz"
 emit "backup dumps gzip valid" "PASS" "postgres and postgres_gold gzip streams verified"
 
+restore_stream() {{
+  gunzip -c "$1" | sed \
+    -e '/^DROP ROLE IF EXISTS postgres;$/d' \
+    -e '/^CREATE ROLE postgres;$/d' \
+    -e '/^ALTER ROLE postgres WITH /d'
+}}
+
 op_container="omega_dr_op_$(date -u +%H%M%S)_$$"
 gold_container="omega_dr_gold_$(date -u +%H%M%S)_$$"
 docker run -d --name "$op_container" -e POSTGRES_PASSWORD=dr pgvector/pgvector:pg15 >/dev/null
@@ -102,14 +109,14 @@ for container in "$op_container" "$gold_container"; do
 done
 emit "temporary restore DB ready" "PASS" "containers started without host ports"
 
-if gunzip -c "$workdir/postgres.sql.gz" | docker exec -i "$op_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/tmp/omega-dr-op.out 2>/tmp/omega-dr-op.err; then
+if restore_stream "$workdir/postgres.sql.gz" | docker exec -i "$op_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/tmp/omega-dr-op.out 2>/tmp/omega-dr-op.err; then
   op_tables="$(docker exec "$op_container" psql -U postgres -d modecissions -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d '\r' || true)"
   emit "operational dump isolated restore" "PASS" "tables=${{op_tables:-unknown}}"
 else
   emit "operational dump isolated restore" "FAIL" "$(tail -c 500 /tmp/omega-dr-op.err || true)"
   exit 24
 fi
-if gunzip -c "$workdir/postgres_gold.sql.gz" | docker exec -i "$gold_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/tmp/omega-dr-gold.out 2>/tmp/omega-dr-gold.err; then
+if restore_stream "$workdir/postgres_gold.sql.gz" | docker exec -i "$gold_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/tmp/omega-dr-gold.out 2>/tmp/omega-dr-gold.err; then
   gold_tables="$(docker exec "$gold_container" psql -U postgres -d modecissions_gold -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d '\r' || true)"
   emit "gold dump isolated restore" "PASS" "tables=${{gold_tables:-unknown}}"
 else

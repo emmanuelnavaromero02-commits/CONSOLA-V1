@@ -80,6 +80,8 @@ def test_dr_rehearsal_is_safe_by_default_and_uses_temp_restore_targets():
     assert "docker run -d --name" in src
     assert 'destructive": False' in src
     assert "json.dumps({{" in src
+    assert "restore_stream" in src
+    assert "DROP ROLE IF EXISTS postgres" in src
     assert "CONFIRM_RESTORE=modecissions" not in src
     assert "restore.sh" not in src
 
