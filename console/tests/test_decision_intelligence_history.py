@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.services.intelligence import history
@@ -205,12 +207,40 @@ async def test_snapshot_persists_original_decision_intelligence_without_outcome(
             "period_key": "2026-06",
             "freshness_at": "2026-06-01",
             "decision_intelligence": {
-                "method": "robust_baseline_v0",
+                "method": "robust_residual_v0",
                 "anomaly_probability": 0.95,
                 "uncertainty_level": "medium",
                 "recommended_decision": "investigate",
                 "expected_impact": {"value": 1500, "currency": "USD"},
                 "data_quality": {"status": "sufficient"},
+                "time_series": {
+                    "method": "robust_residual_v0",
+                    "history_points": 5,
+                    "periods_observed": 6,
+                    "time_field": "mes",
+                    "value_field": "horas_facturables",
+                    "entity_key": "c1",
+                    "trend": {
+                        "method": "theil_sen_v0",
+                        "current_value": 100,
+                        "slope_per_period": 0,
+                        "basis": "test",
+                    },
+                    "seasonality": {
+                        "method": "none",
+                        "period": "month_of_year",
+                        "component": None,
+                        "status": "insufficient_seasonality",
+                        "basis": "test",
+                    },
+                    "residual": {
+                        "value": 50,
+                        "median": 0,
+                        "mad": 1,
+                        "robust_z": 50,
+                        "basis": "test",
+                    },
+                },
             },
         },
         "evidence_pack": {"id": 55},
@@ -236,7 +266,8 @@ async def test_snapshot_persists_original_decision_intelligence_without_outcome(
     assert args[18] == 0.95
     assert args[20] == 1500
     assert args[22] == "sufficient"
-    assert args[23] == "robust_baseline_v0"
+    assert args[23] == "robust_residual_v0"
+    assert json.loads(args[16])["time_series"]["residual"]["robust_z"] == 50
 
 
 @pytest.mark.asyncio

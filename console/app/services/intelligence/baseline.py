@@ -14,6 +14,7 @@ from app.services.intelligence.external import build_external_evidence
 from app.services.intelligence.hypotheses import hypotheses
 from app.services.intelligence.prediction import build_prediction_signal
 from app.services.intelligence.scoring import decision_options
+from app.services.intelligence.time_series import analyze_time_series
 from app.services.intelligence.utils import (
     confidence,
     field_or_literal,
@@ -89,6 +90,11 @@ def build_metric_artifacts(
             for row in ordered[:-1][-window:]
             if (parsed := num(row.get(value_field))) is not None
         ]
+        time_series_analysis = analyze_time_series(
+            metric=metric,
+            latest=latest,
+            history_rows=ordered[:-1],
+        )
         if len(history_values) < minimum_history:
             missing_fields = [
                 field
@@ -112,11 +118,21 @@ def build_metric_artifacts(
                         actual_value=actual,
                         deviation_value=None,
                         missing_fields=sorted(set(missing_fields)),
+                        time_series=(
+                            time_series_analysis.payload
+                            if time_series_analysis is not None
+                            else None
+                        ),
                     ),
                 }
             )
             continue
-        expected = sum(history_values) / len(history_values)
+        expected = (
+            time_series_analysis.expected_value
+            if time_series_analysis is not None
+            and time_series_analysis.expected_value is not None
+            else sum(history_values) / len(history_values)
+        )
         deviation = actual - expected
         deviation_pct = (
             0.0
@@ -124,6 +140,10 @@ def build_metric_artifacts(
             else (1.0 if expected == 0 else deviation / abs(expected))
         )
         abs_pct = abs(deviation_pct)
+        residual_z = (
+            time_series_analysis.robust_z if time_series_analysis is not None else None
+        )
+        residual_trigger = residual_z is not None and residual_z >= 3.0
         entity_label = field_or_literal(latest, label_field, entity_id)
         latest_period_key = period_key(latest, time_field)
         base_signal = _base_signal(
@@ -144,8 +164,9 @@ def build_metric_artifacts(
             expected_behavior=expected_behavior,
             sample_count=len(history_values),
             signal_subtype="observed",
+            residual_z=residual_z,
         )
-        if abs_pct >= warning_pct:
+        if abs_pct >= warning_pct or residual_trigger:
             artifacts.append(
                 _artifact(
                     contract,
@@ -155,6 +176,7 @@ def build_metric_artifacts(
                     history_values,
                     method,
                     window,
+                    time_series_analysis=time_series_analysis,
                     include_external=include_external,
                     external_sources=external_sources,
                 )
@@ -189,6 +211,7 @@ def build_metric_artifacts(
                     history_values,
                     method,
                     window,
+                    time_series_analysis=time_series_analysis,
                     include_external=include_external,
                     external_sources=external_sources,
                 )
@@ -215,8 +238,12 @@ def _base_signal(
     expected_behavior: str,
     sample_count: int,
     signal_subtype: str,
+    residual_z: float | None = None,
 ) -> dict[str, Any]:
     abs_pct = abs(deviation_pct)
+    signal_severity = severity(abs_pct, rules)
+    if residual_z is not None:
+        signal_severity = _max_severity(signal_severity, _residual_severity(residual_z))
     return {
         "signal_id": stable_id(
             {
@@ -240,7 +267,7 @@ def _base_signal(
         "expected_value": round(expected, 4),
         "deviation_value": round(deviation, 4),
         "deviation_pct": round(deviation_pct, 4),
-        "severity": severity(abs_pct, rules),
+        "severity": signal_severity,
         "signal_type": signal_type(expected_behavior, actual, expected),
         "signal_subtype": signal_subtype,
         "status": "open",
@@ -260,6 +287,22 @@ def _base_signal(
     }
 
 
+def _residual_severity(residual_z: float) -> str:
+    value = abs(float(residual_z))
+    if value >= 6.0:
+        return "critical"
+    if value >= 4.0:
+        return "high"
+    if value >= 3.0:
+        return "medium"
+    return "low"
+
+
+def _max_severity(left: str, right: str) -> str:
+    order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    return left if order.get(left, 0) >= order.get(right, 0) else right
+
+
 def _artifact(
     contract: dict[str, Any],
     metric: dict[str, Any],
@@ -269,6 +312,7 @@ def _artifact(
     method: str,
     window: int,
     *,
+    time_series_analysis: Any | None,
     include_external: bool,
     external_sources: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
@@ -329,6 +373,8 @@ def _artifact(
         "freshness_at": freshness_at,
         "freshness_field": time_field,
     }
+    if time_series_analysis is not None:
+        baseline_payload["time_series"] = time_series_analysis.payload
     if str(signal.get("signal_subtype") or "").startswith("future_"):
         decision_intelligence = build_future_reserved_decision_intelligence(
             metric=metric,
@@ -342,6 +388,7 @@ def _artifact(
             baseline=baseline_payload,
             latest=latest,
             history_values=history_values,
+            time_series_analysis=time_series_analysis,
         )
     signal["decision_intelligence"] = decision_intelligence
     return {

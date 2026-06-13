@@ -6,11 +6,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.intelligence.time_series import TimeSeriesResult
 from app.services.intelligence.utils import num
 
 
 DecisionMethod = Literal[
     "robust_baseline_v0",
+    "robust_residual_v0",
+    "seasonal_residual_mad_v0",
     "insufficient_history",
     "deterministic_guardrail",
     "dataset_unavailable",
@@ -24,6 +27,15 @@ Recommendation = Literal[
 ]
 Level = Literal["low", "medium", "high", "unknown"]
 QualityStatus = Literal["sufficient", "thin", "insufficient"]
+TimeSeriesMethod = Literal[
+    "robust_residual_v0",
+    "seasonal_residual_mad_v0",
+    "insufficient_history",
+    "insufficient_seasonality",
+]
+TrendMethod = Literal["theil_sen_v0", "median_slope_v0", "none"]
+SeasonalityMethod = Literal["period_median_v0", "none"]
+SeasonalityStatus = Literal["applied", "insufficient_seasonality", "not_configured"]
 
 
 class _StrictModel(BaseModel):
@@ -74,6 +86,41 @@ class DataQuality(_StrictModel):
     missing_fields: list[str] = Field(default_factory=list)
 
 
+class TimeSeriesTrend(_StrictModel):
+    method: TrendMethod
+    current_value: float | None = None
+    slope_per_period: float | None = None
+    basis: str
+
+
+class TimeSeriesSeasonality(_StrictModel):
+    method: SeasonalityMethod
+    period: str | None = None
+    component: float | None = None
+    status: SeasonalityStatus
+    basis: str
+
+
+class TimeSeriesResidual(_StrictModel):
+    value: float | None = None
+    median: float | None = None
+    mad: float | None = None
+    robust_z: float | None = None
+    basis: str
+
+
+class TimeSeriesAnalysis(_StrictModel):
+    method: TimeSeriesMethod
+    history_points: int = Field(ge=0)
+    periods_observed: int = Field(ge=0)
+    time_field: str
+    value_field: str
+    entity_key: str | None = None
+    trend: TimeSeriesTrend
+    seasonality: TimeSeriesSeasonality
+    residual: TimeSeriesResidual
+
+
 class DecisionIntelligence(_StrictModel):
     method: DecisionMethod
     anomaly_probability: float | None = Field(default=None, ge=0, le=1)
@@ -89,6 +136,7 @@ class DecisionIntelligence(_StrictModel):
     rationale: str
     options: list[DecisionOption]
     data_quality: DataQuality
+    time_series: TimeSeriesAnalysis | None = None
 
     @field_validator("options")
     @classmethod
@@ -108,6 +156,7 @@ def build_decision_intelligence(
     baseline: dict[str, Any],
     latest: dict[str, Any],
     history_values: list[float],
+    time_series_analysis: TimeSeriesResult | None = None,
 ) -> dict[str, Any]:
     del baseline
     minimum_required = _minimum_required(metric)
@@ -126,6 +175,24 @@ def build_decision_intelligence(
             expected_value=expected,
             deviation_value=deviation,
             missing_fields=missing_fields,
+            time_series=(
+                time_series_analysis.payload
+                if time_series_analysis is not None
+                else None
+            ),
+        )
+
+    if (
+        time_series_analysis is not None
+        and time_series_analysis.probability is not None
+        and time_series_analysis.payload.get("method")
+        in {"robust_residual_v0", "seasonal_residual_mad_v0"}
+    ):
+        return _build_time_series_decision_intelligence(
+            metric=metric,
+            signal=signal,
+            history_values=history_values,
+            time_series_analysis=time_series_analysis,
         )
 
     center = _median(history_values)
@@ -188,6 +255,7 @@ def build_decision_intelligence(
             status="sufficient",
             missing_fields=[],
         ),
+        time_series=None,
     )
     return payload.model_dump(mode="json")
 
@@ -200,6 +268,7 @@ def build_insufficient_history_decision_intelligence(
     expected_value: float | None = None,
     deviation_value: float | None = None,
     missing_fields: list[str] | None = None,
+    time_series: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     del actual_value, expected_value
     minimum_required = _minimum_required(metric)
@@ -250,6 +319,7 @@ def build_insufficient_history_decision_intelligence(
             else "thin",
             missing_fields=missing_fields or [],
         ),
+        time_series=time_series,
     )
     return payload.model_dump(mode="json")
 
@@ -306,6 +376,120 @@ def build_future_reserved_decision_intelligence(
             status="thin" if history_points >= 2 else "insufficient",
             missing_fields=[],
         ),
+        time_series=None,
+    )
+    return payload.model_dump(mode="json")
+
+
+def _build_time_series_decision_intelligence(
+    *,
+    metric: dict[str, Any],
+    signal: dict[str, Any],
+    history_values: list[float],
+    time_series_analysis: TimeSeriesResult,
+) -> dict[str, Any]:
+    expected = time_series_analysis.expected_value
+    deviation = time_series_analysis.residual_gap
+    probability = time_series_analysis.probability
+    time_series = time_series_analysis.payload
+    method = str(time_series.get("method"))
+    robust_z = time_series_analysis.robust_z
+    robust_sigma = time_series_analysis.robust_sigma
+    currency = _impact_currency(metric)
+    impact = _expected_impact(metric, deviation)
+    residual = (
+        time_series.get("residual")
+        if isinstance(time_series.get("residual"), dict)
+        else {}
+    )
+    residual_mad = _safe_float(residual.get("mad"))
+    seasonality = (
+        time_series.get("seasonality")
+        if isinstance(time_series.get("seasonality"), dict)
+        else {}
+    )
+    seasonality_status = str(seasonality.get("status") or "not_configured")
+    missing_fields: list[str] = []
+    uncertainty = _time_series_uncertainty(
+        history_points=int(time_series.get("history_points") or len(history_values)),
+        residual_mad=residual_mad,
+        residual_sigma=robust_sigma,
+        seasonality_status=seasonality_status,
+        missing_fields=missing_fields,
+    )
+    if seasonality_status == "insufficient_seasonality" and uncertainty == "low":
+        uncertainty = "medium"
+    interval = ConfidenceInterval(
+        lower=_round(expected - robust_sigma)
+        if expected is not None and robust_sigma is not None
+        else None,
+        upper=_round(expected + robust_sigma)
+        if expected is not None and robust_sigma is not None
+        else None,
+        unit=str(metric.get("value_field") or metric.get("id") or "metric_value"),
+    )
+    delay = _cost_of_delay(impact, currency)
+    downside = _downside_risk(impact, currency, uncertainty)
+    voi = _value_of_information(uncertainty, impact)
+    recommended = _recommended_decision(probability, impact, uncertainty)
+    next_step = _recommended_next_step(recommended)
+    options = _options(
+        probability=probability,
+        expected_impact=impact,
+        cost_of_delay=delay.value_per_day,
+        uncertainty=uncertainty,
+        voi=voi.level,
+    )
+    method_label = (
+        "seasonal residual MAD"
+        if method == "seasonal_residual_mad_v0"
+        else "robust residual"
+    )
+    rationale = (
+        f"Decision Intelligence used {method_label} over "
+        f"{time_series.get('history_points')} temporal point(s). It removes robust trend"
+        + (
+            " and month-of-year seasonality"
+            if method == "seasonal_residual_mad_v0"
+            else ""
+        )
+        + f" before scoring residual_z={_round(robust_z)}. "
+        "Anomaly probability is a coarse rarity score from residual robust_z, "
+        "not a calibrated Bayesian posterior."
+    )
+    probability_basis = (
+        "coarse rarity score from residual robust_z; not calibrated Bayesian posterior; "
+        f"residual_z={_round(robust_z)}; "
+        f"seasonality_status={seasonality_status}; "
+        f"history_points={time_series.get('history_points')}"
+    )
+    payload = DecisionIntelligence(
+        method=method,  # type: ignore[arg-type]
+        anomaly_probability=probability,
+        probability_basis=probability_basis,
+        uncertainty_level=uncertainty,
+        confidence_interval=interval,
+        expected_impact=MoneyEstimate(
+            value=_round(impact) if impact > 0 else None,
+            currency=currency if impact > 0 else None,
+            basis=_impact_basis(metric, deviation),
+        ),
+        cost_of_delay=delay,
+        downside_risk=downside,
+        value_of_information=voi,
+        recommended_decision=recommended,
+        recommended_next_step=next_step,
+        rationale=rationale,
+        options=options,
+        data_quality=DataQuality(
+            history_points=int(
+                time_series.get("history_points") or len(history_values)
+            ),
+            minimum_required=_minimum_required(metric),
+            status="sufficient",
+            missing_fields=[],
+        ),
+        time_series=time_series,
     )
     return payload.model_dump(mode="json")
 
@@ -391,6 +575,36 @@ def _uncertainty_level(
     if history_points >= 8 and relative_mad <= 0.15:
         return "low"
     if history_points >= 3 and relative_mad <= 0.45:
+        return "medium"
+    return "high"
+
+
+def _time_series_uncertainty(
+    *,
+    history_points: int,
+    residual_mad: float | None,
+    residual_sigma: float | None,
+    seasonality_status: str,
+    missing_fields: list[str],
+) -> Level:
+    if missing_fields:
+        return "high"
+    if history_points < 5:
+        return "high"
+    sigma = abs(residual_sigma or 0.0)
+    mad = abs(residual_mad or 0.0)
+    if (
+        seasonality_status == "applied"
+        and history_points >= 18
+        and sigma <= max(1.0, mad * 3.0)
+    ):
+        return "low"
+    if history_points >= 8 and seasonality_status in {
+        "applied",
+        "insufficient_seasonality",
+    }:
+        return "medium"
+    if history_points >= 5 and mad <= max(1.0, sigma):
         return "medium"
     return "high"
 
