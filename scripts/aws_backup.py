@@ -8,7 +8,16 @@ import json
 import os
 from pathlib import Path
 
-from aws_ssm import DEFAULT_REGION, REPO, redact, resolve_instance_id, send_ssm_script, utc_stamp, write_json
+from aws_ssm import (
+    DEFAULT_REGION,
+    REPO,
+    redact,
+    resolve_instance_id,
+    send_ssm_script,
+    utc_now,
+    utc_stamp,
+    write_json,
+)
 
 
 DEFAULT_EVIDENCE_ROOT = REPO / "docs" / "release-evidence" / "backup-aws"
@@ -25,13 +34,32 @@ BACKUP_ID={json.dumps(backup_id)} bash backup.sh
 """
 
 
+def _parse_manifest(stdout: str) -> dict:
+    for line in stdout.splitlines():
+        if not line.startswith("OMEGA_BACKUP_MANIFEST="):
+            continue
+        try:
+            return json.loads(line.split("=", 1)[1])
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run AWS backup through SSM.")
     parser.add_argument("--region", default=DEFAULT_REGION)
-    parser.add_argument("--instance-id", default=os.environ.get("AWS_APP_INSTANCE_ID") or "")
-    parser.add_argument("--backup-id", default=os.environ.get("BACKUP_ID") or f"manual-{utc_stamp()}")
+    parser.add_argument(
+        "--instance-id", default=os.environ.get("AWS_APP_INSTANCE_ID") or ""
+    )
+    parser.add_argument(
+        "--backup-id", default=os.environ.get("BACKUP_ID") or f"manual-{utc_stamp()}"
+    )
     parser.add_argument("--evidence-dir", type=Path, default=None)
-    parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("OMEGA_AWS_BACKUP_TIMEOUT_SECONDS", "1800")))
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=int(os.environ.get("OMEGA_AWS_BACKUP_TIMEOUT_SECONDS", "1800")),
+    )
     args = parser.parse_args(argv)
     evidence_dir = args.evidence_dir or DEFAULT_EVIDENCE_ROOT / utc_stamp()
     instance_id = resolve_instance_id(args.region, args.instance_id or None)
@@ -42,19 +70,31 @@ def main(argv: list[str] | None = None) -> int:
         comment="omega-backup-aws",
         timeout_seconds=args.timeout_seconds,
     )
-    status = "PASS" if remote.status == "Success" else "FAIL"
+    manifest = _parse_manifest(remote.stdout)
+    if manifest:
+        manifest = {**manifest, "ssm_command_id": remote.command_id}
+    status = (
+        "PASS" if remote.status == "Success" and manifest.get("artifacts") else "FAIL"
+    )
     summary = {
         "status": status,
+        "generated_at_utc": utc_now().isoformat(),
         "ssm_command_id": remote.command_id,
         "instance_id": instance_id,
         "region": args.region,
         "backup_id": args.backup_id,
         "response_code": remote.response_code,
+        "manifest": manifest,
+        "manifest_verifiable": bool(manifest.get("artifacts")),
     }
     evidence_dir.mkdir(parents=True, exist_ok=True)
     write_json(evidence_dir / "summary.json", summary)
-    (evidence_dir / "remote_stdout_redacted.txt").write_text(redact(remote.stdout), encoding="utf-8")
-    (evidence_dir / "remote_stderr_redacted.txt").write_text(redact(remote.stderr), encoding="utf-8")
+    (evidence_dir / "remote_stdout_redacted.txt").write_text(
+        redact(remote.stdout), encoding="utf-8"
+    )
+    (evidence_dir / "remote_stderr_redacted.txt").write_text(
+        redact(remote.stderr), encoding="utf-8"
+    )
     (evidence_dir / "REPORT.md").write_text(
         "\n".join(
             [
@@ -65,15 +105,24 @@ def main(argv: list[str] | None = None) -> int:
                 f"- instance_id: `{instance_id}`",
                 f"- region: `{args.region}`",
                 f"- backup_id: `{args.backup_id}`",
+                f"- manifest_verifiable: `{summary['manifest_verifiable']}`",
             ]
         )
         + "\n",
         encoding="utf-8",
     )
-    print(json.dumps({"status": status, "evidence_dir": str(evidence_dir), "ssm_command_id": remote.command_id}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status": status,
+                "evidence_dir": str(evidence_dir),
+                "ssm_command_id": remote.command_id,
+            },
+            indent=2,
+        )
+    )
     return 0 if status == "PASS" else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
