@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 from aws_ssm import (
@@ -13,6 +14,7 @@ from aws_ssm import (
     REPO,
     redact,
     resolve_instance_id,
+    run_local,
     send_ssm_script,
     utc_now,
     utc_stamp,
@@ -45,6 +47,33 @@ def _parse_manifest(stdout: str) -> dict:
     return {}
 
 
+def _parse_manifest_s3_uri(stdout: str, backup_id: str) -> str:
+    pattern = re.compile(rf"s3://[^/\s]+/backups/{re.escape(backup_id)}/manifest\.json")
+    match = pattern.search(stdout)
+    if match:
+        return match.group(0)
+    prefix_pattern = re.compile(rf"s3://([^/\s]+)/backups/{re.escape(backup_id)}/")
+    match = prefix_pattern.search(stdout)
+    if match:
+        return f"s3://{match.group(1)}/backups/{backup_id}/manifest.json"
+    return ""
+
+
+def _fetch_manifest_from_s3(uri: str, region: str) -> dict:
+    if not uri:
+        return {}
+    result = run_local(
+        ["aws", "s3", "cp", uri, "-", "--region", region],
+        timeout=120,
+    )
+    if result.returncode != 0:
+        return {}
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run AWS backup through SSM.")
     parser.add_argument("--region", default=DEFAULT_REGION)
@@ -71,6 +100,12 @@ def main(argv: list[str] | None = None) -> int:
         timeout_seconds=args.timeout_seconds,
     )
     manifest = _parse_manifest(remote.stdout)
+    manifest_source = "ssm_stdout" if manifest else ""
+    if not manifest:
+        manifest = _fetch_manifest_from_s3(
+            _parse_manifest_s3_uri(remote.stdout, args.backup_id), args.region
+        )
+        manifest_source = "s3_manifest" if manifest else ""
     if manifest:
         manifest = {**manifest, "ssm_command_id": remote.command_id}
     status = (
@@ -85,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         "backup_id": args.backup_id,
         "response_code": remote.response_code,
         "manifest": manifest,
+        "manifest_source": manifest_source,
         "manifest_verifiable": bool(manifest.get("artifacts")),
     }
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"- instance_id: `{instance_id}`",
                 f"- region: `{args.region}`",
                 f"- backup_id: `{args.backup_id}`",
+                f"- manifest_source: `{manifest_source or '<missing>'}`",
                 f"- manifest_verifiable: `{summary['manifest_verifiable']}`",
             ]
         )
