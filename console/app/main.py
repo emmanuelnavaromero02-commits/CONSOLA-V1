@@ -2830,9 +2830,219 @@ async def api_tools_manifest():
 # console/app/routers/cartridges.py (registered with include_router below).
 
 
+def _gold_dataset_from_source(source: str) -> str:
+    raw = str(source or "").strip()
+    if raw.startswith("gold/"):
+        dataset = raw.split("/", 1)[1].strip()
+        if DATASET_NAME_RE.fullmatch(dataset):
+            return dataset
+    return ""
+
+
+def _gold_table_for_dataset(dataset: str) -> str:
+    if not DATASET_NAME_RE.fullmatch(dataset or ""):
+        raise HTTPException(400, "Invalid dataset name")
+    return f"gold_{dataset}"
+
+
+def _quote_pg_ident(identifier: str) -> str:
+    if not DATASET_NAME_RE.fullmatch(identifier or ""):
+        raise HTTPException(400, "Invalid identifier")
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _gold_schema_dsn() -> str:
+    return (
+        os.environ.get("GOLD_DATABASE_URL")
+        or ""
+    ).replace("postgresql+psycopg2://", "postgresql://")
+
+
+def _allowed_cartridges_for_user(user: dict | None) -> set[str] | None:
+    ctx = build_security_context(user)
+    raw = ctx.get("allowed_cartridges") or (user or {}).get("allowed_cartridges") or []
+    allowed = {str(item).strip() for item in raw if str(item).strip()}
+    if "*" in allowed or not allowed:
+        return None if str((user or {}).get("role") or "").lower() in {"owner", "super_admin", ROLE_ADMIN} else set()
+    return allowed
+
+
+async def _gold_catalog_scope_for_dataset(dataset: str, user: dict | None) -> tuple[str, str]:
+    ctx = build_security_context(user)
+    tenant_id = str(
+        ctx.get("tenant_id")
+        or (user or {}).get("active_tenant_id")
+        or (user or {}).get("tenant_id")
+        or ""
+    ).strip()
+    workspace_id = str(
+        ctx.get("workspace_id")
+        or (user or {}).get("active_workspace_id")
+        or (user or {}).get("workspace_id")
+        or ""
+    ).strip()
+    if workspace_id:
+        if not tenant_id:
+            try:
+                pool = await _get_db_pool()
+                tenant_id = str(await pool.fetchval("SELECT tenant_id::text FROM workspaces WHERE id = $1::uuid", workspace_id) or "").strip()
+            except Exception:
+                logger.debug("Failed to resolve tenant for Gold schema source", exc_info=True)
+        return tenant_id, workspace_id
+    if str((user or {}).get("role") or "").lower() not in {"owner", "super_admin", ROLE_ADMIN}:
+        return "", ""
+    pool = await _get_db_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT d.workspace_id::text AS workspace_id, w.tenant_id::text AS tenant_id
+          FROM datasets d
+          JOIN workspaces w ON w.id = d.workspace_id
+         WHERE d.name = $1
+           AND d.layer = 'gold'
+           AND d.workspace_id IS NOT NULL
+           AND COALESCE(d.row_count, 0) > 0
+         ORDER BY d.updated_at DESC NULLS LAST,
+                  d.last_refresh DESC NULLS LAST,
+                  d.created_at DESC NULLS LAST
+         LIMIT 1
+        """,
+        dataset,
+    )
+    if not row:
+        return "", ""
+    return str(row["tenant_id"] or "").strip(), str(row["workspace_id"] or "").strip()
+
+
+async def _gold_sources_from_catalog(user: dict | None) -> list[str]:
+    try:
+        pool = await _get_db_pool()
+        _tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
+    except Exception:
+        logger.debug("Gold source catalog fallback unavailable", exc_info=True)
+        return []
+    allowed = _allowed_cartridges_for_user(user)
+    if workspace_id:
+        rows = await pool.fetch(
+            """
+            SELECT DISTINCT name, cartridge
+              FROM datasets
+             WHERE layer = 'gold'
+               AND workspace_id = $1::uuid
+               AND COALESCE(row_count, 0) > 0
+             ORDER BY name
+            """,
+            workspace_id,
+        )
+    elif str((user or {}).get("role") or "").lower() in {"owner", "super_admin", ROLE_ADMIN}:
+        rows = await pool.fetch(
+            """
+            SELECT DISTINCT name, cartridge
+              FROM datasets
+             WHERE layer = 'gold'
+               AND workspace_id IS NOT NULL
+               AND COALESCE(row_count, 0) > 0
+             ORDER BY name
+            """
+        )
+    else:
+        rows = []
+    sources: list[str] = []
+    for row in rows:
+        cartridge = str(row["cartridge"] or "").strip()
+        if allowed is not None and cartridge and cartridge not in allowed:
+            continue
+        name = str(row["name"] or "").strip()
+        if DATASET_NAME_RE.fullmatch(name):
+            sources.append(f"gold/{name}")
+    return sorted(set(sources))
+
+
+async def _gold_schema_payload(source: str, user: dict | None) -> dict:
+    dataset = _gold_dataset_from_source(source)
+    if not dataset:
+        raise HTTPException(400, "Invalid Gold source")
+    dsn = _gold_schema_dsn()
+    if not dsn:
+        raise HTTPException(503, "Gold database is not configured")
+    tenant_id, workspace_id = await _gold_catalog_scope_for_dataset(dataset, user)
+    if not workspace_id:
+        raise HTTPException(404, f"No se encontró el conjunto de datos '{dataset}'")
+    try:
+        import asyncpg as _asyncpg
+
+        conn = await _asyncpg.connect(dsn, command_timeout=10)
+    except Exception as exc:
+        raise HTTPException(503, "Gold database unavailable") from exc
+    table = _gold_table_for_dataset(dataset)
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id or "",
+                workspace_id,
+            )
+            exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+            if not exists:
+                raise HTTPException(404, f"No se encontró el conjunto de datos '{dataset}'")
+            column_rows = await conn.fetch(
+                """
+                SELECT column_name, data_type
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = $1
+                 ORDER BY ordinal_position
+                """,
+                table,
+            )
+            columns = [
+                {"name": str(row["column_name"]), "type": str(row["data_type"])}
+                for row in column_rows
+            ]
+            names = {col["name"] for col in columns}
+            if "workspace_id" not in names:
+                raise HTTPException(404, f"No se encontró el conjunto de datos '{dataset}'")
+            values: list[Any] = [workspace_id]
+            clauses = ["workspace_id::text = $1"]
+            if "tenant_id" in names and tenant_id:
+                values.append(tenant_id)
+                clauses.append(f"tenant_id::text = ${len(values)}")
+            values.append(5)
+            rows = await conn.fetch(
+                (
+                    f"SELECT * FROM public.{_quote_pg_ident(table)} "
+                    f"WHERE {' AND '.join(clauses)} LIMIT ${len(values)}"
+                ),
+                *values,
+            )
+    finally:
+        await conn.close()
+    preview_rows = [dict(row) for row in rows]
+    return {
+        "source": source,
+        "source_kind": "gold",
+        "dataset": dataset,
+        "partitions": {
+            "source": source,
+            "kind": "gold",
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "partitions": [],
+        },
+        "preview": {
+            "source": source,
+            "schema": columns,
+            "columns": columns,
+            "rows": preview_rows,
+            "data": preview_rows,
+        },
+    }
+
+
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
     async def load_schema() -> dict:
+        if _gold_dataset_from_source(source):
+            return await _gold_schema_payload(source, user)
         partitions = await _refinement_invoke(
             "get_source_partitions",
             {"source": source},
@@ -2852,12 +3062,16 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
 @app.get("/api/sources", dependencies=[Depends(require_authenticated)])
 async def api_sources(user: dict = Depends(require_authenticated)):
     async def load_sources() -> dict:
-        data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
+        try:
+            data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
+        except HTTPException:
+            data = {}
         # Normalize: result may be {"result": [...]} or {"sources": [...]}
         sources = data.get("result") or data.get("sources") or []
+        gold_sources = await _gold_sources_from_catalog(user)
         if isinstance(sources, list):
-            return {"sources": sources}
-        return {"sources": []}
+            return {"sources": sorted(set([str(s) for s in sources if str(s).strip()] + gold_sources))}
+        return {"sources": gold_sources}
 
     return await _scoped_read_cache_get_or_set("sources", user, ("all",), load_sources)
 
@@ -3399,6 +3613,29 @@ async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]
             ).strip()
         except Exception:
             logger.debug("Failed to resolve tenant from workspace for scoped apps filter", exc_info=True)
+
+    if (not tenant_id or not workspace_id) and str((user or {}).get("role") or "").lower() in {"owner", "super_admin", ROLE_ADMIN}:
+        try:
+            pool = await _get_db_pool()
+            row = await pool.fetchrow(
+                """
+                SELECT d.workspace_id::text AS workspace_id, w.tenant_id::text AS tenant_id
+                  FROM datasets d
+                  JOIN workspaces w ON w.id = d.workspace_id
+                 WHERE d.layer = 'gold'
+                   AND d.workspace_id IS NOT NULL
+                   AND COALESCE(d.row_count, 0) > 0
+                 ORDER BY d.updated_at DESC NULLS LAST,
+                          d.last_refresh DESC NULLS LAST,
+                          d.created_at DESC NULLS LAST
+                 LIMIT 1
+                """
+            )
+            if row:
+                tenant_id = tenant_id or str(row["tenant_id"] or "").strip()
+                workspace_id = workspace_id or str(row["workspace_id"] or "").strip()
+        except Exception:
+            logger.debug("Failed to resolve fallback Gold workspace for scoped apps filter", exc_info=True)
 
     return tenant_id, workspace_id
 

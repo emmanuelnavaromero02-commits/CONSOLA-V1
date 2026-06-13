@@ -502,10 +502,12 @@ def _run_local(evidence_dir: Path, *, suffix: str | None = None) -> int:
 
     old_tenant = os.environ.get("OMEGA_SEED_TENANT_ID")
     old_workspace = os.environ.get("OMEGA_SEED_WORKSPACE_ID")
+    old_update_catalog = os.environ.get("OMEGA_SEED_UPDATE_CATALOG")
     try:
         for scope in (a, b):
             os.environ["OMEGA_SEED_TENANT_ID"] = scope.tenant_id
             os.environ["OMEGA_SEED_WORKSPACE_ID"] = scope.workspace_id
+            os.environ["OMEGA_SEED_UPDATE_CATALOG"] = "0"
             result = seed_replicon_beta_gold()
             fingerprint = result["scope_fingerprint"]
             checks.append(
@@ -533,6 +535,10 @@ def _run_local(evidence_dir: Path, *, suffix: str | None = None) -> int:
             os.environ.pop("OMEGA_SEED_WORKSPACE_ID", None)
         else:
             os.environ["OMEGA_SEED_WORKSPACE_ID"] = old_workspace
+        if old_update_catalog is None:
+            os.environ.pop("OMEGA_SEED_UPDATE_CATALOG", None)
+        else:
+            os.environ["OMEGA_SEED_UPDATE_CATALOG"] = old_update_catalog
 
     checks.extend(_run_gold_checks(a, b))
     checks.extend(_run_api_checks(a, b))

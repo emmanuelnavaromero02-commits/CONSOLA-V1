@@ -22,6 +22,15 @@ def test_aws_console_mounts_host_version_file() -> None:
     assert "/opt/modecissions/VERSION:/app/VERSION:ro" in volumes
 
 
+def test_aws_workspace_reads_gold_with_rls_scope() -> None:
+    doc = yaml.safe_load(_read(AWS_COMPOSE))
+    workspace = doc["services"]["workspace"]
+
+    assert "GOLD_DATABASE_URL" in workspace["environment"]
+    assert "postgres_gold:5433/modecissions_gold" in workspace["environment"]["GOLD_DATABASE_URL"]
+    assert workspace["depends_on"]["postgres_gold"]["condition"] == "service_healthy"
+
+
 def test_makefile_exposes_aws_beta_operational_targets() -> None:
     makefile = _read(MAKEFILE)
     for target, script in {
@@ -110,6 +119,8 @@ def test_replicon_seed_has_scoped_lineage_and_checksum_idempotency() -> None:
         "before_equals_after",
         "storage_prefix",
         "storage_uri LIKE",
+        "OMEGA_SEED_UPDATE_CATALOG",
+        "catalog_updated",
     ):
         assert needle in source
     assert "DELETE FROM silver_lineage WHERE cartridge_id = %s AND source_batch_id = %s" not in source
@@ -152,6 +163,36 @@ def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
         "/api/copilot/briefing/v2",
         "expected={403}",
         "tenant-ab-aws",
+        "OMEGA_SEED_UPDATE_CATALOG",
+        "\"0\"",
+    ):
+        assert needle in source
+
+
+def test_schema_viewer_has_gold_dataset_fallback() -> None:
+    source = _read("console/app/main.py")
+    router_source = _read("console/app/routers/v1/data.py")
+    for needle in (
+        "def _gold_sources_from_catalog",
+        "gold/",
+        "def _gold_schema_payload",
+        "source_kind",
+        "Gold database is not configured",
+    ):
+        assert needle in source
+    assert "_gold_schema_payload(source, user)" in router_source
+    assert "_gold_sources_from_catalog(user)" in router_source
+
+
+def test_workspace_apps_prefer_direct_gold_for_published_data() -> None:
+    source = _read("workspace/app/main.py")
+    for needle in (
+        "GOLD_DATABASE_URL",
+        "def _visible_dataset_metadata",
+        "def _query_gold_dataset_rows",
+        "def _query_gold_dataset_options",
+        "def _query_gold_dataset_filtered",
+        "_user_with_dataset_scope",
     ):
         assert needle in source
 

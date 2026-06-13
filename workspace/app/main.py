@@ -65,6 +65,7 @@ MCP_INFRA_URL        = os.environ.get("MCP_INFRA_URL",        "http://mcp-infra:
 CONSOLE_URL          = _public_url("CONSOLE_URL", "http://localhost:8000")
 WORKSPACE_PUBLIC_URL = _public_url("WORKSPACE_PUBLIC_URL", "http://localhost:8001")
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
+GOLD_DATABASE_URL    = os.environ.get("GOLD_DATABASE_URL", "")
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 INTERNAL_API_KEY = get_internal_api_key()
@@ -154,6 +155,88 @@ def _validate_dataset_name(dataset: str) -> None:
         raise HTTPException(400, "Invalid dataset name")
 
 
+def _gold_dsn() -> str:
+    return (GOLD_DATABASE_URL or "").replace("postgresql+psycopg2://", "postgresql://")
+
+
+def _quote_ident(identifier: str) -> str:
+    if not DATASET_NAME_RE.fullmatch(identifier or ""):
+        raise HTTPException(400, f"Invalid identifier: {identifier}")
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _gold_table_name(dataset: str) -> str:
+    _validate_dataset_name(dataset)
+    return f"gold_{dataset}"
+
+
+async def _visible_dataset_metadata(user: dict, dataset: str) -> dict:
+    ws_id = user.get("active_workspace_id") or user.get("workspace_id")
+    async with scoped_pg(user) as conn:
+        if ws_id:
+            row = await conn.fetchrow(
+                """
+                SELECT d.name, d.cartridge, d.workspace_id::text AS workspace_id,
+                       w.tenant_id::text AS tenant_id
+                  FROM datasets d
+                  LEFT JOIN workspaces w ON w.id = d.workspace_id
+                 WHERE d.name = $1
+                   AND d.workspace_id = $2::uuid
+                 LIMIT 1
+                """,
+                dataset,
+                ws_id,
+            )
+        elif _is_admin_user(user):
+            # Private beta admins often arrive from Console without a selected
+            # workspace. Use the Gold catalog as the server-side scope source
+            # instead of leaking a false 404 to published apps.
+            row = await conn.fetchrow(
+                """
+                SELECT d.name, d.cartridge, d.workspace_id::text AS workspace_id,
+                       w.tenant_id::text AS tenant_id
+                  FROM datasets d
+                  LEFT JOIN workspaces w ON w.id = d.workspace_id
+                 WHERE d.name = $1
+                   AND d.workspace_id IS NOT NULL
+                   AND COALESCE(d.row_count, 0) > 0
+                 ORDER BY d.updated_at DESC NULLS LAST,
+                          d.last_refresh DESC NULLS LAST,
+                          d.created_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                dataset,
+            )
+        else:
+            row = None
+
+    if not row:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    meta = dict(row)
+    cartridge = str(meta.get("cartridge") or "").strip()
+    if not cartridge:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    allowed = _allowed_cartridge_set(user)
+    if allowed is not None and cartridge not in allowed:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    if not meta.get("workspace_id"):
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    return meta
+
+
+def _user_with_dataset_scope(user: dict, meta: dict) -> dict:
+    tenant_id = str(meta.get("tenant_id") or user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+    workspace_id = str(meta.get("workspace_id") or user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+    scoped = dict(user)
+    if tenant_id:
+        scoped["tenant_id"] = scoped.get("tenant_id") or tenant_id
+        scoped["active_tenant_id"] = tenant_id
+    if workspace_id:
+        scoped["workspace_id"] = scoped.get("workspace_id") or workspace_id
+        scoped["active_workspace_id"] = workspace_id
+    return scoped
+
+
 def _rls_user_context(user: dict | None) -> dict:
     # Forward only the fields refinement's RLS layer consumes. Avoid sending
     # the raw session dict downstream — it may carry fields we don't want the
@@ -179,24 +262,8 @@ def _rls_user_context(user: dict | None) -> dict:
     }
 
 
-async def _assert_dataset_visible(user: dict, dataset: str) -> None:
-    ws_id = user.get("active_workspace_id") or user.get("workspace_id")
-    if not ws_id:
-        raise HTTPException(404, f"Dataset '{dataset}' not found")
-    async with scoped_pg(user) as conn:
-        row = await conn.fetchrow(
-            "SELECT name, cartridge FROM datasets WHERE name = $1 AND workspace_id = $2",
-            dataset,
-            ws_id,
-        )
-    if not row:
-        raise HTTPException(404, f"Dataset '{dataset}' not found")
-    cartridge = str(dict(row).get("cartridge") or "").strip()
-    if not cartridge:
-        raise HTTPException(404, f"Dataset '{dataset}' not found")
-    allowed = _allowed_cartridge_set(user)
-    if allowed is not None and cartridge not in allowed:
-        raise HTTPException(404, f"Dataset '{dataset}' not found")
+async def _assert_dataset_visible(user: dict, dataset: str) -> dict:
+    return await _visible_dataset_metadata(user, dataset)
 
 
 def _security_context(user: dict | None) -> dict:
@@ -279,6 +346,200 @@ def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
     if user is not None:
         payload["security_context"] = _security_context(user)
     return payload
+
+
+async def _gold_columns(conn: asyncpg.Connection, table: str) -> set[str]:
+    return {
+        str(row["column_name"])
+        for row in await conn.fetch(
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = $1
+            """,
+            table,
+        )
+    }
+
+
+def _gold_scope_where(columns: set[str], user: dict, values: list) -> list[str]:
+    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+    if "workspace_id" not in columns or not workspace_id:
+        raise HTTPException(404, "Dataset unavailable")
+    clauses = []
+    values.append(workspace_id)
+    clauses.append(f"workspace_id::text = ${len(values)}")
+    if "tenant_id" in columns and tenant_id:
+        values.append(tenant_id)
+        clauses.append(f"tenant_id::text = ${len(values)}")
+    return clauses
+
+
+async def _query_gold_dataset_rows(dataset: str, user: dict, limit: int) -> list[dict]:
+    dsn = _gold_dsn()
+    if not dsn:
+        raise HTTPException(503, "Gold unavailable")
+    table = _gold_table_name(dataset)
+    conn = await asyncpg.connect(dsn, command_timeout=10)
+    try:
+        async with conn.transaction():
+            tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+            workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
+            )
+            exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+            if not exists:
+                raise HTTPException(404, "Dataset unavailable")
+            columns = await _gold_columns(conn, table)
+            values: list = []
+            where = " AND ".join(_gold_scope_where(columns, user, values))
+            values.append(min(max(int(limit), 1), 10000))
+            rows = await conn.fetch(
+                f'SELECT * FROM public.{_quote_ident(table)} WHERE {where} LIMIT ${len(values)}',
+                *values,
+            )
+            return [dict(row) for row in rows]
+    finally:
+        await conn.close()
+
+
+async def _query_gold_dataset_options(dataset: str, user: dict, cols: list[str]) -> dict[str, list[str]]:
+    dsn = _gold_dsn()
+    if not dsn:
+        raise HTTPException(503, "Gold unavailable")
+    table = _gold_table_name(dataset)
+    options: dict[str, list[str]] = {col: [] for col in cols}
+    conn = await asyncpg.connect(dsn, command_timeout=10)
+    try:
+        async with conn.transaction():
+            tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+            workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
+            )
+            exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+            if not exists:
+                raise HTTPException(404, "Dataset unavailable")
+            table_columns = await _gold_columns(conn, table)
+            invalid = [col for col in cols if col not in table_columns]
+            if invalid:
+                raise HTTPException(400, f"Invalid column name: {invalid[0]}")
+            for col in cols:
+                values: list = []
+                clauses = _gold_scope_where(table_columns, user, values)
+                values.append(5000)
+                rows = await conn.fetch(
+                    (
+                        f"SELECT DISTINCT {_quote_ident(col)}::text AS val "
+                        f"FROM public.{_quote_ident(table)} "
+                        f"WHERE {' AND '.join(clauses)} AND {_quote_ident(col)} IS NOT NULL "
+                        f"ORDER BY val LIMIT ${len(values)}"
+                    ),
+                    *values,
+                )
+                options[col] = [str(row["val"]) for row in rows if row["val"] is not None]
+            return options
+    finally:
+        await conn.close()
+
+
+async def _query_gold_dataset_filtered(dataset: str, user: dict, body: dict) -> list[dict]:
+    dsn = _gold_dsn()
+    if not dsn:
+        raise HTTPException(503, "Gold unavailable")
+    table = _gold_table_name(dataset)
+    filters = body.get("filters", {})
+    if not isinstance(filters, dict):
+        raise HTTPException(400, "filters must be an object")
+    if len(filters) > 20:
+        raise HTTPException(400, "Too many filters (max 20)")
+    limit = min(max(int(body.get("limit", 2000)), 1), 10000)
+    requested_columns = body.get("columns", ["*"])
+    if not isinstance(requested_columns, list):
+        raise HTTPException(400, "columns must be an array")
+    conn = await asyncpg.connect(dsn, command_timeout=15)
+    try:
+        async with conn.transaction():
+            tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+            workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
+            )
+            exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+            if not exists:
+                raise HTTPException(404, "Dataset unavailable")
+            table_columns = await _gold_columns(conn, table)
+            values: list = []
+            clauses = _gold_scope_where(table_columns, user, values)
+
+            if requested_columns == ["*"]:
+                select_clause = "*"
+            else:
+                invalid_cols = [
+                    str(col)
+                    for col in requested_columns
+                    if not DATASET_NAME_RE.fullmatch(str(col)) or str(col) not in table_columns
+                ]
+                if invalid_cols:
+                    raise HTTPException(400, f"Invalid column name: {invalid_cols[0]}")
+                select_clause = ", ".join(_quote_ident(str(col)) for col in requested_columns) or "*"
+
+            for key, val in filters.items():
+                if val is None or val == "" or val == []:
+                    continue
+                if key == "fiscal_year":
+                    if "mes" not in table_columns:
+                        raise HTTPException(400, "fiscal_year filter requires mes column")
+                    vals = val if isinstance(val, list) else [val]
+                    if len(vals) > 50:
+                        raise HTTPException(400, "Too many fiscal_year values (max 50)")
+                    placeholders = []
+                    for item in vals:
+                        values.append(int(item))
+                        placeholders.append(f"${len(values)}")
+                    clauses.append(
+                        "(CASE WHEN EXTRACT(MONTH FROM mes)<=2 "
+                        "THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END) "
+                        f"IN ({','.join(placeholders)})"
+                    )
+                    continue
+                if not DATASET_NAME_RE.fullmatch(str(key)) or key not in table_columns:
+                    raise HTTPException(400, f"Invalid filter name: {key}")
+                vals = val if isinstance(val, list) else [val]
+                if len(vals) > 100:
+                    raise HTTPException(400, f"Too many values for filter '{key}' (max 100)")
+                placeholders = []
+                for item in vals:
+                    s = str(item)
+                    if len(s) > 500:
+                        raise HTTPException(400, "Filter value too long (max 500 chars)")
+                    values.append(s)
+                    placeholders.append(f"${len(values)}")
+                if len(placeholders) == 1:
+                    clauses.append(f"{_quote_ident(str(key))}::text = {placeholders[0]}")
+                else:
+                    clauses.append(f"{_quote_ident(str(key))}::text IN ({','.join(placeholders)})")
+
+            values.append(limit)
+            rows = await conn.fetch(
+                (
+                    f"SELECT {select_clause} FROM public.{_quote_ident(table)} "
+                    f"WHERE {' AND '.join(clauses)} LIMIT ${len(values)}"
+                ),
+                *values,
+            )
+            return [dict(row) for row in rows]
+    finally:
+        await conn.close()
 
 
 SECURITY_HEADERS = {
@@ -821,13 +1082,19 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
     # caller's workspace before proxying the query downstream. Returning
     # 404 (not 403) so the response cannot be used to enumerate datasets
     # in other tenants.
-    await _assert_dataset_visible(user, dataset)
+    meta = await _assert_dataset_visible(user, dataset)
+    scoped_user = _user_with_dataset_scope(user, meta)
+    try:
+        return await _query_gold_dataset_rows(dataset, scoped_user, limit)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload(
                              "query_dataset",
-                             {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
-                             user,
+                             {"name": dataset, "limit": limit, "user_context": _rls_user_context(scoped_user)},
+                             scoped_user,
                          ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
@@ -840,7 +1107,8 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     """Distinct values per column for filter dropdowns."""
     user = require_user(request)
     _validate_dataset_name(dataset)
-    await _assert_dataset_visible(user, dataset)
+    meta = await _assert_dataset_visible(user, dataset)
+    scoped_user = _user_with_dataset_scope(user, meta)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
     if not cols:
         raise HTTPException(400, "columns param required")
@@ -851,6 +1119,11 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     for col in cols:
         if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
             raise HTTPException(400, f"Invalid column name: {col}")
+    try:
+        return await _query_gold_dataset_options(dataset, scoped_user, cols)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
     sqls = [
         f"SELECT DISTINCT {col} AS val, '{col}' AS col "
         f"FROM pggold.gold_{dataset} WHERE {col} IS NOT NULL"
@@ -862,8 +1135,8 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload(
                              "preview_transform",
-                             {"sql": union_sql, "limit": 5000, "user_context": _rls_user_context(user)},
-                             user,
+                             {"sql": union_sql, "limit": 5000, "user_context": _rls_user_context(scoped_user)},
+                             scoped_user,
                          ))
     result = r.json()
     rows = result.get("data", [])
@@ -880,7 +1153,13 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     """Filtered query against a gold dataset (mirrors console for app compat)."""
     user = require_user(request)
     _validate_dataset_name(dataset)
-    await _assert_dataset_visible(user, dataset)
+    meta = await _assert_dataset_visible(user, dataset)
+    scoped_user = _user_with_dataset_scope(user, meta)
+    try:
+        return await _query_gold_dataset_filtered(dataset, scoped_user, body)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
     import re as _re
     filters = body.get("filters", {})
     limit   = min(int(body.get("limit", 2000)), 10000)
@@ -939,8 +1218,8 @@ async def api_data_query(request: Request, dataset: str, body: dict):
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload(
                              "preview_transform",
-                             {"sql": sql, "params": params, "limit": limit, "user_context": _rls_user_context(user)},
-                             user,
+                             {"sql": sql, "params": params, "limit": limit, "user_context": _rls_user_context(scoped_user)},
+                             scoped_user,
                          ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
@@ -994,10 +1273,15 @@ async def api_datasets_list(request: Request):
 async def api_dataset_schema(request: Request, name: str):
     user = require_user(request)
     _validate_dataset_name(name)
-    await _assert_dataset_visible(user, name)
+    meta = await _assert_dataset_visible(user, name)
+    scoped_user = _user_with_dataset_scope(user, meta)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("get_schema", {"name": name, "user_context": _rls_user_context(user)}, user))
+                         json=_mcp_payload(
+                             "get_schema",
+                             {"name": name, "user_context": _rls_user_context(scoped_user)},
+                             scoped_user,
+                         ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "schema unavailable")
     return r.json()

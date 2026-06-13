@@ -48,3 +48,19 @@ def test_sap_airflow_dags_use_runtime_pair_key_not_parse_time_legacy_key():
         assert '_INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")' not in src, rel
         assert 'os.environ.get("INTERNAL_API_KEY", "")' in src, rel
         assert "legacy fallback disabled in production" in src, rel
+
+
+def test_successfactors_child_dag_records_pipeline_run_telemetry():
+    src = _read("cartridges/sap_successfactors/dags/sap_successfactors_extract.py")
+
+    for needle in (
+        "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
+        "pipeline_run_save",
+        "missing tenant/workspace scope",
+        "status=\"success\"",
+        "status=\"failed\"",
+        "record_count",
+        "storage_uri",
+        "airflow_dag_run_id",
+    ):
+        assert needle in src

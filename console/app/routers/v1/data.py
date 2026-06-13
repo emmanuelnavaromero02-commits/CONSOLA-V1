@@ -78,6 +78,8 @@ async def refresh_dataset(name: str, user: dict = Depends(require_permission("da
 @router.get("/api/schema", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
+    if _gold_dataset_from_source(source):
+        return await _gold_schema_payload(source, user)
     partitions = await _refinement_invoke(
         "get_source_partitions",
         {"source": source},
@@ -96,12 +98,16 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
 @router.get("/api/sources", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_sources(user: dict = Depends(require_authenticated)):
-    data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
+    try:
+        data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
+    except HTTPException:
+        data = {}
     # Normalize: result may be {"result": [...]} or {"sources": [...]}
     sources = data.get("result") or data.get("sources") or []
+    gold_sources = await _gold_sources_from_catalog(user)
     if isinstance(sources, list):
-        return {"sources": sources}
-    return {"sources": []}
+        return {"sources": sorted(set([str(source) for source in sources if str(source).strip()] + gold_sources))}
+    return {"sources": gold_sources}
 
 # /api/datasets/save
 @router.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])

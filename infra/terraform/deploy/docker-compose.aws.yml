@@ -196,6 +196,7 @@ services:
       APP_ENV:              ${APP_ENV:-production}
       COOKIE_SECURE:        ${COOKIE_SECURE:-true}
       DATABASE_URL:         "postgresql+psycopg2://omega_workspace:${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required}@postgres:5432/modecissions"
+      GOLD_DATABASE_URL:    "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
       REFINEMENT_URL:       http://refinement:8500
       MCP_INFRA_URL:        http://mcp-infra:8010
@@ -211,6 +212,8 @@ services:
       - modecissions_net
     depends_on:
       postgres:
+        condition: service_healthy
+      postgres_gold:
         condition: service_healthy
       refinement:
         condition: service_healthy

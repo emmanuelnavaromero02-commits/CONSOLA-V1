@@ -37,6 +37,13 @@ REPLICON_VAULT_MARKER: dict[str, Any] = {
 }
 
 
+def _env_truthy(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def _d(month: int) -> date:
     return date(2026, month, 1)
 
@@ -1080,6 +1087,7 @@ def _upsert_vault_marker(cur, tenant_id: str, workspace_id: str) -> None:
 
 def seed_replicon_beta_gold() -> dict[str, Any]:
     _load_env_file()
+    update_catalog = _env_truthy("OMEGA_SEED_UPDATE_CATALOG", True)
     operational = _connect_operational()
     try:
         with operational.cursor() as cur:
@@ -1103,15 +1111,16 @@ def seed_replicon_beta_gold() -> dict[str, Any]:
     finally:
         gold.close()
 
-    operational = _connect_operational()
-    try:
-        with operational.cursor() as cur:
-            _upsert_dataset_catalog(cur, dataset_counts, tenant_id, workspace_id)
-            _refresh_lineage(cur, dataset_counts, tenant_id, workspace_id)
-            _refresh_data_catalog(cur)
-        operational.commit()
-    finally:
-        operational.close()
+    if update_catalog:
+        operational = _connect_operational()
+        try:
+            with operational.cursor() as cur:
+                _upsert_dataset_catalog(cur, dataset_counts, tenant_id, workspace_id)
+                _refresh_lineage(cur, dataset_counts, tenant_id, workspace_id)
+                _refresh_data_catalog(cur)
+            operational.commit()
+        finally:
+            operational.close()
 
     return {
         "tenant_id": tenant_id,
@@ -1120,6 +1129,7 @@ def seed_replicon_beta_gold() -> dict[str, Any]:
         "rows": sum(dataset_counts.values()),
         "scope_fingerprint": replicon_beta_gold_scope_fingerprint(tenant_id, workspace_id),
         "vault_marker": REPLICON_VAULT_KEY,
+        "catalog_updated": update_catalog,
     }
 
 
