@@ -357,6 +357,27 @@ def send_ssm_script(
     )
 
 
+def send_ssm_command_lines(
+    *,
+    region: str,
+    instance_id: str,
+    commands: list[str],
+    comment: str,
+    timeout_seconds: int = 600,
+    poll_seconds: float = 2.0,
+    send_attempts: int = 1,
+) -> SsmResult:
+    return _run_ssm_commands(
+        region=region,
+        instance_id=instance_id,
+        commands=commands,
+        comment=comment,
+        timeout_seconds=timeout_seconds,
+        poll_seconds=poll_seconds,
+        send_attempts=send_attempts,
+    )
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

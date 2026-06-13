@@ -29,6 +29,7 @@ def test_aws_ssm_large_script_upload_is_idempotent():
     assert 'OMEGA_SSM_MAX_INLINE_SCRIPT_BYTES", "12000"' in src
     assert "attempts: int = 1" in src
     assert "send_attempts: int = 1" in src
+    assert "send_ssm_command_lines" in src
     assert "attempts=3" in src
     assert "subprocess.TimeoutExpired" in src
     assert ".part-{chunk_name}" in src
@@ -94,7 +95,11 @@ def test_observability_tls_and_superset_reports_are_honest_and_redacted():
     assert "recent console errors" in obs
     assert "failed backtest runs 24h" in obs
     assert "external writeback disabled" in obs
+    assert "send_ssm_command_lines" in obs
     assert "send_attempts=3" in obs
+    assert "docker_health" in obs
+    assert "mode_vault" in obs
+    assert "mode_mcp_infra" in obs
     assert "redact(" in obs
     assert "HTTPS listener" in tls
     assert "BLOCKED" in tls
