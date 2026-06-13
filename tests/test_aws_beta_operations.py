@@ -27,7 +27,10 @@ def test_aws_workspace_reads_gold_with_rls_scope() -> None:
     workspace = doc["services"]["workspace"]
 
     assert "GOLD_DATABASE_URL" in workspace["environment"]
-    assert "postgres_gold:5433/modecissions_gold" in workspace["environment"]["GOLD_DATABASE_URL"]
+    assert (
+        "postgres_gold:5433/modecissions_gold"
+        in workspace["environment"]["GOLD_DATABASE_URL"]
+    )
     assert workspace["depends_on"]["postgres_gold"]["condition"] == "service_healthy"
 
 
@@ -104,8 +107,13 @@ def test_beta_smoke_aws_records_metadata_and_has_dual_layer_checks() -> None:
         "external write-back disabled",
     ):
         assert needle in source
-    assert ".env" not in source.split("remote_stdout_redacted.txt", 1)[0] or "env_value" in source
-    assert "printenv" not in source or "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK" in source
+    assert (
+        ".env" not in source.split("remote_stdout_redacted.txt", 1)[0]
+        or "env_value" in source
+    )
+    assert (
+        "printenv" not in source or "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK" in source
+    )
 
 
 def test_replicon_seed_has_scoped_lineage_and_checksum_idempotency() -> None:
@@ -123,7 +131,10 @@ def test_replicon_seed_has_scoped_lineage_and_checksum_idempotency() -> None:
         "catalog_updated",
     ):
         assert needle in source
-    assert "DELETE FROM silver_lineage WHERE cartridge_id = %s AND source_batch_id = %s" not in source
+    assert (
+        "DELETE FROM silver_lineage WHERE cartridge_id = %s AND source_batch_id = %s"
+        not in source
+    )
 
 
 def test_seed_replicon_beta_gold_aws_requires_scope_and_three_runs() -> None:
@@ -164,7 +175,7 @@ def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
         "expected={403}",
         "tenant-ab-aws",
         "OMEGA_SEED_UPDATE_CATALOG",
-        "\"0\"",
+        '"0"',
     ):
         assert needle in source
 
@@ -191,8 +202,8 @@ def test_semantic_viewer_has_gold_catalog_fallback() -> None:
     schema_js = _read("console/app/static/js/viewers/schema.js")
     for needle in (
         "def _gold_semantic_entities_from_catalog",
-        "source\": \"gold_catalog\"",
-        "_gold_schema_payload(f\"gold/{dataset}\"",
+        'source": "gold_catalog"',
+        '_gold_schema_payload(f"gold/{dataset}"',
         "await _gold_semantic_entities_from_catalog(cartridge, user)",
     ):
         assert needle in source
@@ -221,5 +232,7 @@ def test_aws_rollback_and_dr_wrappers_are_guarded() -> None:
     assert "DEPLOY_REF_OLD or IMAGE_TAG_OLD is required" in rollback
     assert "rollback.sh" in rollback
     assert "RUN_BACKUP_BEFORE_ROLLBACK" in rollback
-    assert "OMEGA_DR_REHEARSAL_EXECUTE=1" in dr
-    assert "BLOCKED" in dr
+    assert "isolated_temp_containers" in dr
+    assert "docker run -d --name" in dr
+    assert '"destructive": False' in dr
+    assert "restore.sh" not in dr
