@@ -637,6 +637,52 @@ async def calibration_report(
             else "Calibration uses linked outcomes only; rows without outcomes remain pending."
         ),
     }
+    try:
+        from app.services.intelligence.backtesting import (
+            calibration_next_required_data,
+            latest_backtest_report,
+        )
+
+        backtest = await latest_backtest_report(
+            user,
+            min_labels_required=min_required,
+        )
+    except Exception as exc:
+        backtest = {
+            "status": "not_available",
+            "latest_backtest_run": None,
+            "backtest_summary": None,
+            "insufficient_labeled_data": True,
+            "error": str(exc),
+        }
+        calibration_next_required_data = None
+    report["outcome_linked_summary"] = {
+        "status": "insufficient_labeled_data" if insufficient else "ok",
+        "total_results": total_snapshots,
+        "total_labeled": total_with_outcome,
+        "min_labels_required": min_required,
+        "insufficient_labeled_data": insufficient,
+        "label_source": "outcome",
+        "rationale": report["rationale"],
+    }
+    report["backtest_summary"] = backtest.get("backtest_summary")
+    report["latest_backtest_run"] = backtest.get("latest_backtest_run")
+    report["insufficient_labeled_data"] = bool(
+        insufficient or backtest.get("insufficient_labeled_data")
+    )
+    if calibration_next_required_data is None:
+        report["next_required_data"] = {
+            "outcomes_needed": max(0, min_required - total_with_outcome),
+            "periods_needed": 0,
+            "metrics_needed": [],
+            "labels_needed": 0,
+        }
+    else:
+        report["next_required_data"] = calibration_next_required_data(
+            total_with_outcome=total_with_outcome,
+            min_outcomes_required=min_required,
+            backtest=backtest,
+        )
     if insufficient:
         report["observed_success_rate"] = None
         report["calibration_buckets"] = []

@@ -46,7 +46,7 @@ def test_marketplace_next_surface_keeps_customer_and_admin_flows():
         assert action in component
     assert 'href: "/marketplace"' in navigation
     assert 'capability: "can_view_marketplace"' in navigation
-    assert 'can_admin_marketplace' in component
+    assert "can_admin_marketplace" in component
 
 
 def test_marketplace_next_static_pages_exist_after_export():
@@ -74,7 +74,14 @@ def test_marketplace_migration_uses_existing_platform_models():
     assert "INSERT INTO marketplace_products" in sql
     assert "FROM cartridges" in sql
     assert "cartridge_installations_tenant_workspace_cartridge_uniq" in sql
-    for status in ("requested", "paused", "revoked", "expired", "suspended", "pending_connection"):
+    for status in (
+        "requested",
+        "paused",
+        "revoked",
+        "expired",
+        "suspended",
+        "pending_connection",
+    ):
         assert status in sql
 
 
@@ -85,7 +92,10 @@ def test_marketplace_user_access_migration_scopes_per_user_without_parallel_mode
         assert f"REFERENCES {table}" in sql
     assert "PRIMARY KEY (tenant_id, workspace_id, cartridge_id, user_id)" in sql
     assert "CHECK (mode IN ('deny'))" in sql
-    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON user_cartridge_overrides TO omega_console" in sql
+    assert (
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON user_cartridge_overrides TO omega_console"
+        in sql
+    )
     assert "GRANT SELECT ON user_cartridge_overrides TO omega_workspace" in sql
 
 
@@ -93,7 +103,14 @@ def test_marketplace_status_upgrade_migration_widens_existing_constraints():
     sql = read("infra/init/74_marketplace_status_constraints.sql")
     assert "DROP CONSTRAINT IF EXISTS tenant_entitlements_status_chk" in sql
     assert "DROP CONSTRAINT IF EXISTS cartridge_installations_status_chk" in sql
-    for status in ("requested", "paused", "revoked", "expired", "suspended", "pending_connection"):
+    for status in (
+        "requested",
+        "paused",
+        "revoked",
+        "expired",
+        "suspended",
+        "pending_connection",
+    ):
         assert status in sql
 
 
@@ -127,7 +144,9 @@ def test_marketplace_runtime_never_runs_schema_ddl():
 
 def test_marketplace_admin_status_lock_targets_installation_only():
     source = read("console/app/services/marketplace_service.py")
-    state_section = source.split("async def _set_installation_state", 1)[1].split("def _decorate_installation", 1)[0]
+    state_section = source.split("async def _set_installation_state", 1)[1].split(
+        "def _decorate_installation", 1
+    )[0]
     assert "FOR UPDATE OF ci" in state_section
     assert "FOR UPDATE\n" not in state_section
     assert "WHERE ci.id = $1" in state_section
@@ -143,11 +162,20 @@ def test_marketplace_permissions_distinguish_request_from_admin():
     source = read("console/app/services/permissions.py")
     assert '"marketplace.request"' in source
     assert '"marketplace.admin"' in source
-    assert '"workspace_user": {"workspace.access", "apps.read", "marketplace.read", "marketplace.request"}' in source
-    assert '"viewer": {"monitor.read", "workspace.access", "apps.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"}' in source
-    assert '"user": {"monitor.read", "workspace.access", "apps.read", "marketplace.read"}' in source
+    assert (
+        '"workspace_user": {"workspace.access", "apps.read", "marketplace.read", "marketplace.request"}'
+        in source
+    )
+    assert (
+        '"viewer": {"monitor.read", "workspace.access", "apps.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"}'
+        in source
+    )
+    assert (
+        '"user": {"monitor.read", "workspace.access", "apps.read", "marketplace.read"}'
+        in source
+    )
     assert '"tenant_admin": {' in source
-    tenant_admin_section = source.split('"tenant_admin": {', 2)[2].split('},', 1)[0]
+    tenant_admin_section = source.split('"tenant_admin": {', 2)[2].split("},", 1)[0]
     assert '"iam.users.write"' in tenant_admin_section
     assert '"studio.read"' not in tenant_admin_section
     assert '"datasets.write"' not in tenant_admin_section
@@ -157,7 +185,9 @@ def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
     main = console_route_source()
     service = read("console/app/services/marketplace_service.py")
     js = read("console/app/static/js/marketplace.js")
-    retry_section = service.split("async def retry_installation", 1)[1].split("async def list_installation_access", 1)[0]
+    retry_section = service.split("async def retry_installation", 1)[1].split(
+        "async def list_installation_access", 1
+    )[0]
     # Marketplace admin is enforced by the marketplace.admin PERMISSION, not a
     # hardcoded global role: the admin routes gate on require_permission and the
     # service resolves access through has_permission. owner/super_admin/admin
@@ -170,9 +200,17 @@ def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
     assert "UPDATE tenant_entitlements" not in retry_section
     assert "row.can_retry" in js
     assert "installation transition not allowed from current status" in service
-    assert 'allowed_installation_statuses={"paused", "revoked", "expired", "suspended"}' in service
-    assert "const reactivateStates = ['paused', 'revoked', 'expired', 'suspended']" in js
-    assert "const approveStates = ['requested', 'pending_connection', 'waiting_credentials', 'failed', 'ready']" in js
+    assert (
+        'allowed_installation_statuses={"paused", "revoked", "expired", "suspended"}'
+        in service
+    )
+    assert (
+        "const reactivateStates = ['paused', 'revoked', 'expired', 'suspended']" in js
+    )
+    assert (
+        "const approveStates = ['requested', 'pending_connection', 'waiting_credentials', 'failed', 'ready']"
+        in js
+    )
     assert 'href="/viewer/vault"' not in js
 
 
@@ -180,10 +218,19 @@ def test_marketplace_permissions_follow_selected_workspace_header():
     main = console_route_source()
     deps = read("console/app/dependencies.py")
     workspace_session = read("workspace/app/services/session.py")
-    assert 'requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None' in main
+    assert (
+        'requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None'
+        in main
+    )
     assert '"workspace access forbidden"' in main
-    assert '"allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=user["id"])' in main
-    assert '"allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=jwt_user["id"])' in main
+    assert (
+        '"allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=user["id"])'
+        in main
+    )
+    assert (
+        '"allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=jwt_user["id"])'
+        in main
+    )
     assert "user_cartridge_overrides" in deps
     assert "uco.mode = 'deny'" in deps
     assert "user_cartridge_overrides" in workspace_session
@@ -194,13 +241,19 @@ def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     main = console_route_source()
     service = read("console/app/services/marketplace_service.py")
     js = read("console/app/static/js/marketplace.js")
-    access_section = service.split("async def set_installation_user_access", 1)[1].split("async def _set_installation_state", 1)[0]
+    access_section = service.split("async def set_installation_user_access", 1)[
+        1
+    ].split("async def _set_installation_state", 1)[0]
     assert '"/api/admin/installations/{installation_id}/access"' in main
-    assert '"/api/admin/installations/{installation_id}/access/{target_user_id}"' in main
+    assert (
+        '"/api/admin/installations/{installation_id}/access/{target_user_id}"' in main
+    )
     assert "Body(default_factory=dict)" in main
     assert "user is not assigned to this workspace" in access_section
     assert "DELETE FROM user_cartridge_overrides" in access_section
-    assert "ON CONFLICT (tenant_id, workspace_id, cartridge_id, user_id)" in access_section
+    assert (
+        "ON CONFLICT (tenant_id, workspace_id, cartridge_id, user_id)" in access_section
+    )
     assert "mode must be inherit or deny" in access_section
     assert "cartridge_user_access_updated" in access_section
     assert '"target_user_id"' in access_section
@@ -218,25 +271,35 @@ def test_workspace_and_mcp_are_scoped_to_active_cartridge_entitlements():
     cartridge_router = read("console/app/routers/cartridges.py")
     console_main = console_route_source()
     assert "_allowed_cartridge_set" in workspace
-    assert "return None if _is_admin_user(user) and not (user.get(\"active_workspace_id\") or user.get(\"workspace_id\")) else set()" in workspace
+    assert (
+        'return None if _is_admin_user(user) and not (user.get("active_workspace_id") or user.get("workspace_id")) else set()'
+        in workspace
+    )
     assert "if _is_admin_user(user):\n        return" not in workspace
     assert "cartridge_id = ANY($2::text[])" in workspace
     assert "WHERE cartridge_id = ANY($2::text[])" in workspace
-    assert "owner_id == user.get(\"id\")" in workspace
-    assert "return owner_id == user.get(\"id\")" in workspace
+    assert 'owner_id == user.get("id")' in workspace
+    assert 'return owner_id == user.get("id")' in workspace
     assert "_app_allowed_for_user" in workspace
-    assert "SELECT name, cartridge FROM datasets WHERE name = $1 AND workspace_id = $2" in workspace
+    assert "_visible_dataset_metadata" in workspace
+    assert "WHERE d.name = $1" in workspace
+    assert "d.workspace_id IS NOT NULL" in workspace
+    assert "COALESCE(d.row_count, 0) > 0" in workspace
     assert "allowed_cartridges" in assistant
     assert 'unrestricted = "*" in allowed_cartridges' in assistant
     assert "or (admin and not explicit_scope)" not in assistant
     assert "unrestricted = admin and not explicit_scope" not in assistant
-    assert "if not unrestricted and \"*\" not in allowed" in assistant
+    assert 'if not unrestricted and "*" not in allowed' in assistant
     assert "explicit_scope = explicit_cartridges is not None" in security_context
     assert 'json=_payload("list_cartridges", {}, user)' in assistant
-    assert 'json=_payload("cartridge_get_hints", {"cartridge_id": cartridge_id}, user)' in assistant
+    assert (
+        'json=_payload("cartridge_get_hints", {"cartridge_id": cartridge_id}, user)'
+        in assistant
+    )
     assert '"postgres_execute_query"' not in assistant
     assert '_mcp_payload("list_datasets"' in workspace
-    assert '_mcp_payload("get_schema"' in workspace
+    assert '"get_schema"' in workspace
+    assert "_user_with_dataset_scope(user, meta)" in workspace
     assert "_is_unscoped_admin_context" in mcp
     assert "if _is_unscoped_admin_context(ctx):\n        return" in mcp
     assert "if _is_admin_context(ctx):\n        return" not in mcp
@@ -248,4 +311,4 @@ def test_workspace_and_mcp_are_scoped_to_active_cartridge_entitlements():
     assert console_main.count("_require_cartridge_visible(user, cartridge_id)") >= 6
     assert "_is_unscoped_admin_security_context" in refinement
     assert "cartridge_id, datasets_used" in refinement
-    assert "f\"cartridges/{cartridge}/\"" in refinement
+    assert 'f"cartridges/{cartridge}/"' in refinement
