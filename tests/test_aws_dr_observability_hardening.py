@@ -30,6 +30,7 @@ def test_aws_ssm_large_script_upload_is_idempotent():
     assert "attempts: int = 1" in src
     assert "send_attempts: int = 1" in src
     assert "attempts=3" in src
+    assert "subprocess.TimeoutExpired" in src
     assert ".part-{chunk_name}" in src
     assert "cat {remote_b64}.part-* > {remote_b64}" in src
 
