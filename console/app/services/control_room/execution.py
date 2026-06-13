@@ -1849,9 +1849,13 @@ async def record_item_outcome(
         "action_run_id": body.get("action_run_id"),
         "decision_id": item.get("decision_id"),
         "measured_impact": body.get("measured_impact"),
+        "outcome_status": body.get("outcome_status"),
+        "observed_at": body.get("observed_at"),
         "evidence": body.get("evidence") if isinstance(body.get("evidence"), dict) else {},
     }
     async def _write(conn: Any, tenant_id: str | None, workspace_id: str) -> Any:
+        from app.services.intelligence.history import link_outcome_to_snapshot
+
         await _ensure_item_row(conn, user=user, item=item, status=item.get("status") or "in_review", critical=True)
         row = await conn.fetchrow(
             """
@@ -1875,6 +1879,14 @@ async def record_item_outcome(
             learned_rule,
             user.get("id"),
             json.dumps(metadata),
+        )
+        await link_outcome_to_snapshot(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            signal_id=item["id"],
+            outcome_row=row,
+            body=body,
         )
         if learned_rule:
             await _persist_lessons(conn, user=user, item=item, decision_id=item.get("decision_id"), lessons=[learned_rule])
@@ -1914,6 +1926,8 @@ async def record_item_outcome(
             "option_id": option_id,
             "prediction_error": prediction_error,
             "learned_rule": learned_rule,
+            "measured_impact": body.get("measured_impact"),
+            "action_run_id": body.get("action_run_id"),
         },
         critical=True,
     )
@@ -1933,6 +1947,8 @@ async def record_item_outcome(
             "action_taken": action_taken,
             "option_id": option_id,
             "learned_rule": learned_rule,
+            "measured_impact": body.get("measured_impact"),
+            "action_run_id": body.get("action_run_id"),
         },
         critical=True,
     )

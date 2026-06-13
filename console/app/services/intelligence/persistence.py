@@ -15,6 +15,10 @@ from app.services.intelligence.utils import (
     public_json,
     workspace_scope,
 )
+from app.services.intelligence.history import (
+    link_outcome_to_snapshot,
+    persist_decision_intelligence_snapshot,
+)
 
 
 def _actor_id(value: Any) -> int | None:
@@ -58,6 +62,9 @@ async def persist_artifacts(
     workspace_id: str,
     user: dict,
     artifacts: list[dict[str, Any]],
+    *,
+    intelligence_run_id: int | None = None,
+    run_ref: str | None = None,
 ) -> None:
     owner_user_id = _owner_user_id(user)
     pool = await auth.pool()
@@ -74,6 +81,10 @@ async def persist_artifacts(
             decision_intelligence = artifact.get("decision_intelligence")
             if isinstance(decision_intelligence, dict):
                 signal["decision_intelligence"] = decision_intelligence
+            if intelligence_run_id is not None:
+                signal["intelligence_run_id"] = intelligence_run_id
+            if run_ref:
+                signal["run_ref"] = run_ref
             signal["baseline_id"] = baseline_id
             pack_id = await persist_evidence(
                 conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id
@@ -101,6 +112,21 @@ async def persist_artifacts(
                     "hypotheses": hypotheses,
                     "options": options,
                 },
+            )
+            await persist_decision_intelligence_snapshot(
+                conn,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                user=user,
+                artifact={
+                    **artifact,
+                    "signal": signal,
+                    "evidence_pack": evidence_pack,
+                    "hypotheses": hypotheses,
+                    "options": options,
+                },
+                intelligence_run_id=intelligence_run_id,
+                run_ref=run_ref,
             )
 
 
@@ -240,6 +266,8 @@ async def persist_signal(
                 "decision_intelligence": signal.get("decision_intelligence")
                 if isinstance(signal.get("decision_intelligence"), dict)
                 else None,
+                "intelligence_run_id": signal.get("intelligence_run_id"),
+                "run_ref": signal.get("run_ref"),
             }
         ),
         sorted(TERMINAL_SIGNAL_STATUSES),
@@ -283,6 +311,8 @@ async def persist_evidence(
                 ).get("method")
                 if isinstance(signal.get("decision_intelligence"), dict)
                 else None,
+                "intelligence_run_id": signal.get("intelligence_run_id"),
+                "run_ref": signal.get("run_ref"),
             }
         ),
     )
@@ -449,6 +479,8 @@ async def publish_control_room_item(
         "freshness_field": freshness_field,
         "data_status": "gold_ready",
         "evidence_pack_id": evidence_pack_id,
+        "intelligence_run_id": signal.get("intelligence_run_id"),
+        "run_ref": signal.get("run_ref"),
         "evidence_pack": {
             "id": evidence_pack_id,
             "summary": evidence_pack.get("summary"),
@@ -477,6 +509,8 @@ async def publish_control_room_item(
             "source": "intelligence_engine",
             "decision_intelligence_method": decision_intelligence.get("method"),
             "recommended_decision": decision_intelligence.get("recommended_decision"),
+            "intelligence_run_id": signal.get("intelligence_run_id"),
+            "run_ref": signal.get("run_ref"),
         },
         "sql": (evidence_items or [{}])[0].get("query_text"),
         "intelligence": public_json(artifact),
@@ -575,6 +609,8 @@ async def publish_control_room_item(
                 "gold_table": gold_table,
                 "freshness_at": freshness_at,
                 "evidence_pack_id": evidence_pack_id,
+                "intelligence_run_id": signal.get("intelligence_run_id"),
+                "run_ref": signal.get("run_ref"),
             }
         ),
     )
@@ -858,6 +894,14 @@ async def record_outcome(
             learned_rule,
             owner_id,
             json_dumps({"reported_by": user.get("email")}),
+        )
+        await link_outcome_to_snapshot(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            signal_id=signal_id,
+            outcome_row=row,
+            body=body,
         )
         if learned_rule:
             await conn.execute(

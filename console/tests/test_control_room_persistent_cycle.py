@@ -133,6 +133,7 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
         action_row,
         _legacy_execution(item, row_id=201, mode="execute_live", status="executed"),
         outcome_row,
+        {"id": 9001},
     ])
 
     with (

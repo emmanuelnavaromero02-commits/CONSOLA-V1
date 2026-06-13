@@ -117,6 +117,11 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert '@router.get("/signals"' in router
     assert '@v1_router.get("/signals"' in router
     assert '@router.get("/readiness"' in router
+    assert '"/runs/{run_id}"' in router
+    assert '@router.get("/runs"' in router
+    assert '@router.get("/history"' in router
+    assert '@router.get("/calibration"' in router
+    assert 'mode: Literal["manual", "scheduled", "backtest", "smoke"] | None' in router
     assert '@router.get("/external/sources"' in router
     assert '"/external/sources/{source_id}"' in router
     assert '"/external/run"' in router
@@ -208,7 +213,8 @@ def test_console_vault_proxy_forwards_signed_security_context():
     source = read("console/app/main.py")
     v1_source = read("console/app/routers/v1/vault.py")
     assert "def _vault_headers_for_user" in source
-    assert '"x-security-context": json.dumps(build_security_context(user)' in source
+    compact = "".join(source.split())
+    assert '"x-security-context":json.dumps(build_security_context(user)' in compact
     vault_section = source.split("# ── Vault proxy", 1)[1].split("# ── RAG proxy", 1)[0]
     assert "_tenant_vault_conn_id" in vault_section
     assert 'f"{prefix}{clean}"' not in vault_section
@@ -232,6 +238,7 @@ def test_console_user_vault_calls_do_not_bypass_security_context():
 def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     service = read("console/app/services/control_room/api.py")
     state = read("console/app/services/control_room/state.py")
+    router = read("console/app/routers/control_room.py")
     ui = read("console-next/src/app/(shell)/control-room/page.tsx")
     assert "item_kind = 'intelligence_signal'" in service
     assert "_persisted_intelligence_items" in service
@@ -248,6 +255,10 @@ def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     assert "Valor de información" in ui
     assert "Registrar resultado" in ui
     assert "Evidencia considerada" in ui
+    assert '"/decision-intelligence/runs"' in router
+    assert '"/decision-intelligence/history"' in router
+    assert '"/decision-intelligence/calibration"' in router
+    assert 'Depends(require_permission("datasets.read"))' in router
 
 
 def test_service_readiness_defaults_to_private_beta_golden_path():
