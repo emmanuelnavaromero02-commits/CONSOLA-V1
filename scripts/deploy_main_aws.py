@@ -270,10 +270,10 @@ import sys
 
 src = Path(sys.argv[1])
 dst = Path(sys.argv[2])
-preserve = {
+preserve = {{
     Path(".git"),
     Path("infra/terraform/deploy/.env"),
-}
+}}
 
 def should_preserve(rel: Path) -> bool:
     return rel in preserve or any(parent in preserve for parent in rel.parents)

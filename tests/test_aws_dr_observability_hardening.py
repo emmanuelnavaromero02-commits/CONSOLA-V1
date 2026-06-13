@@ -16,6 +16,7 @@ def test_deploy_main_aws_is_artifact_based_and_secret_safe():
     assert "artifact_sha256" in src
     assert "S3_BUCKET_NAME" in src
     assert "host worktree preserved" in src
+    assert "preserve = {{" in src
     assert "DEPLOY_REF must be a full 40-character commit SHA" in src
     assert "origin/main" in src
     assert "printenv" not in src
