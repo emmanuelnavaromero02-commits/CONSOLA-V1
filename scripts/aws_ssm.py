@@ -265,6 +265,7 @@ def _send_large_ssm_script(
     comment: str,
     timeout_seconds: int,
     poll_seconds: float,
+    send_attempts: int,
 ) -> SsmResult:
     token = f"{int(time.time())}-{os.getpid()}"
     remote_script = f"/tmp/omega-ssm-large-{token}.sh"
@@ -313,6 +314,7 @@ def _send_large_ssm_script(
         comment=comment,
         timeout_seconds=timeout_seconds,
         poll_seconds=poll_seconds,
+        send_attempts=send_attempts,
         commands=[
             "set -eu",
             f"trap 'rm -f {remote_script} {remote_b64} {remote_b64}.part-*' EXIT",
@@ -332,6 +334,7 @@ def send_ssm_script(
     comment: str,
     timeout_seconds: int = 600,
     poll_seconds: float = 2.0,
+    send_attempts: int = 1,
 ) -> SsmResult:
     if len(script.encode("utf-8")) > MAX_INLINE_SCRIPT_BYTES:
         return _send_large_ssm_script(
@@ -341,6 +344,7 @@ def send_ssm_script(
             comment=comment,
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
+            send_attempts=send_attempts,
         )
     return _run_ssm_commands(
         region=region,
@@ -349,6 +353,7 @@ def send_ssm_script(
         comment=comment,
         timeout_seconds=timeout_seconds,
         poll_seconds=poll_seconds,
+        send_attempts=send_attempts,
     )
 
 

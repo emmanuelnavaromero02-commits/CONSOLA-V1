@@ -94,6 +94,7 @@ def test_observability_tls_and_superset_reports_are_honest_and_redacted():
     assert "recent console errors" in obs
     assert "failed backtest runs 24h" in obs
     assert "external writeback disabled" in obs
+    assert "send_attempts=3" in obs
     assert "redact(" in obs
     assert "HTTPS listener" in tls
     assert "BLOCKED" in tls
