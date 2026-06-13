@@ -1,5 +1,7 @@
 import asyncio
 import json
+from uuid import UUID
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -42,6 +44,29 @@ async def test_record_event_success():
         assert args[4] == "auth"  # resource_type
         assert args[9] == "rid-test"  # request_id
         assert args[10] == '{"key": "value"}'  # metadata
+
+
+@pytest.mark.asyncio
+async def test_record_event_serializes_uuid_metadata_for_critical_audit():
+    mock_pool = AsyncMock()
+    mock_pool.fetchval.side_effect = ["audit_events", True]
+    event_id = UUID("11111111-1111-1111-1111-111111111111")
+
+    with patch("app.services.audit_service.auth.pool", return_value=mock_pool):
+        await record_event(
+            user_id=1,
+            email="test@example.com",
+            action="control_room.decision.create",
+            resource_type="control_room_item",
+            resource_id="item-1",
+            metadata={"item": {"workspace_id": event_id}},
+            critical=True,
+        )
+
+    args = mock_pool.execute.call_args[0]
+    assert json.loads(args[10]) == {
+        "item": {"workspace_id": "11111111-1111-1111-1111-111111111111"}
+    }
 
 
 @pytest.mark.asyncio

@@ -90,8 +90,8 @@ async def record_event(
             if critical:
                 raise RuntimeError("critical audit table public.audit_events is missing")
             return
-        meta_json = json.dumps(metadata) if metadata is not None else None
-        tool_args_json = json.dumps(tool_args) if tool_args is not None else None
+        meta_json = json.dumps(metadata, default=str) if metadata is not None else None
+        tool_args_json = json.dumps(tool_args, default=str) if tool_args is not None else None
         event_user_id = _audit_user_id(user_id)
         event_request_id = request_id or request_id_var.get()
         has_request_id = await _audit_events_has_request_id(pool)
