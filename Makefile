@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -92,6 +92,7 @@ help:
 	@echo "  make seed-replicon-beta-gold-aws"
 	@echo "                    seed scoped Replicon Gold rows on AWS via SSM, idempotency checked"
 	@echo "  make tenant-ab-local / tenant-ab-aws"
+	@echo "  make decision-backtest-local / decision-backtest-aws"
 	@echo "                    verify tenant A/B positive and forbidden cross-scope probes"
 	@echo "  make dr-rehearsal"
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
@@ -195,6 +196,12 @@ run-intelligence-scheduled-local:
 
 run-intelligence-scheduled-aws:
 	@$(PYTHON) scripts/run_intelligence_scheduled.py --target aws
+
+decision-backtest-local:
+	@$(PYTHON) scripts/run_decision_backtest.py --target local
+
+decision-backtest-aws:
+	@$(PYTHON) scripts/run_decision_backtest.py --target aws
 
 test:
 	$(PYTEST) -ra tests/
