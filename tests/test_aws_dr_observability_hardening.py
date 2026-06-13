@@ -64,8 +64,11 @@ def test_backup_manifest_is_verifiable_and_redacts_config_values():
         "restore_hint",
         "generated_at",
         "OMEGA_BACKUP_MANIFEST",
+        "--only-show-errors",
     ):
         assert token in backup
+    assert "_fetch_manifest_from_s3" in wrapper
+    assert "manifest_source" in wrapper
     assert "manifest_verifiable" in wrapper
     assert "ssm_command_id" in wrapper
     assert "printenv" not in wrapper

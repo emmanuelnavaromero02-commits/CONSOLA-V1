@@ -119,15 +119,16 @@ cat > "${WORKDIR}/manifest.json" <<EOF
 }
 EOF
 
-aws s3 cp "${WORKDIR}/postgres.sql.gz" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/postgres.sql.gz" --region "${AWS_REGION}"
-aws s3 cp "${WORKDIR}/postgres_gold.sql.gz" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/postgres_gold.sql.gz" --region "${AWS_REGION}"
-aws s3 cp "${WORKDIR}/lakehouse_objects.tsv" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/lakehouse_objects.tsv" --region "${AWS_REGION}"
-aws s3 cp "${WORKDIR}/config_manifest.json" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/config_manifest.json" --region "${AWS_REGION}"
-aws s3 cp "${WORKDIR}/manifest.json" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/manifest.json" --region "${AWS_REGION}"
+aws s3 cp "${WORKDIR}/postgres.sql.gz" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/postgres.sql.gz" --region "${AWS_REGION}" --only-show-errors
+aws s3 cp "${WORKDIR}/postgres_gold.sql.gz" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/postgres_gold.sql.gz" --region "${AWS_REGION}" --only-show-errors
+aws s3 cp "${WORKDIR}/lakehouse_objects.tsv" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/lakehouse_objects.tsv" --region "${AWS_REGION}" --only-show-errors
+aws s3 cp "${WORKDIR}/config_manifest.json" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/config_manifest.json" --region "${AWS_REGION}" --only-show-errors
+aws s3 cp "${WORKDIR}/manifest.json" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/manifest.json" --region "${AWS_REGION}" --only-show-errors
 
 # Snapshot lakehouse objects into the backup prefix without recursively copying prior backups.
 aws s3 sync "s3://${S3_BUCKET_NAME}/" "s3://${S3_BUCKET_NAME}/backups/${BACKUP_ID}/lakehouse/" \
   --region "${AWS_REGION}" \
+  --only-show-errors \
   --exclude "backups/*"
 
 echo "OMEGA_BACKUP_MANIFEST=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))' "${WORKDIR}/manifest.json")"
