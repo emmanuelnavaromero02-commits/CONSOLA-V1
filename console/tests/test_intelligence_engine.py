@@ -459,10 +459,46 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
             },
         ]
 
-    async def fake_persist_artifacts(tenant_id, workspace_id, user, artifacts):
+    async def fake_persist_artifacts(
+        tenant_id,
+        workspace_id,
+        user,
+        artifacts,
+        *,
+        intelligence_run_id=None,
+        run_ref=None,
+    ):
         assert tenant_id == USER["active_tenant_id"]
         assert workspace_id == USER["active_workspace_id"]
         assert artifacts
+        assert intelligence_run_id == 42
+        assert run_ref == "intel-run-test"
+
+    async def fake_start_run(user, *, request, source_system, run_mode, datasets_evaluated):
+        assert request == {}
+        assert source_system is None
+        assert run_mode == "manual"
+        assert datasets_evaluated[0]["dataset"] == "forecast_mensual"
+        return {"id": 42, "run_ref": "intel-run-test"}
+
+    async def fake_finish_run(
+        user,
+        *,
+        run_id,
+        status,
+        artifacts,
+        skipped,
+        datasets_evaluated,
+        duration_ms,
+        errors=None,
+    ):
+        assert run_id == 42
+        assert status == "completed"
+        assert len(artifacts) == 1
+        assert skipped == []
+        assert datasets_evaluated[0]["metric"] == "forecast_weighted"
+        assert isinstance(duration_ms, int)
+        return {"id": 42, "run_ref": "intel-run-test", "status": status}
 
     async def fake_record_event(
         user_id, email, action, resource_type, resource_id, metadata=None
@@ -487,6 +523,12 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
         intelligence_engine_module, "persist_artifacts", fake_persist_artifacts
     )
     monkeypatch.setattr(
+        intelligence_engine_module, "start_intelligence_run", fake_start_run
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module, "finish_intelligence_run", fake_finish_run
+    )
+    monkeypatch.setattr(
         intelligence_engine_module.audit_service, "record_event", fake_record_event
     )
 
@@ -495,11 +537,92 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
     )
 
     assert len(result["signals"]) == 1
+    assert result["intelligence_run_id"] == 42
+    assert result["run_ref"] == "intel-run-test"
+    assert result["skipped_counts"] == {}
     assert events[0]["action"] == "intelligence.run"
+    assert events[0]["metadata"]["intelligence_run_id"] == 42
+    assert events[0]["metadata"]["run_ref"] == "intel-run-test"
+    assert events[0]["metadata"]["run_mode"] == "manual"
     assert events[0]["metadata"]["signals"] == 1
     assert events[0]["metadata"]["skipped"] == 0
     assert isinstance(events[0]["metadata"]["duration_ms"], int)
     assert events[0]["metadata"]["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_run_intelligence_persists_scheduled_run_counts_dataset_unavailable(monkeypatch):
+    events: list[dict] = []
+    finished: list[dict] = []
+
+    async def failing_fetcher(dataset: str, user: dict | None, limit: int):
+        raise RuntimeError("gold table missing")
+
+    async def fake_start_run(user, *, request, source_system, run_mode, datasets_evaluated):
+        assert request["run_mode"] == "scheduled"
+        assert source_system == "hubspot"
+        assert run_mode == "scheduled"
+        assert datasets_evaluated[0]["dataset"] == "forecast_mensual"
+        return {"id": 99, "run_ref": "intel-run-scheduled"}
+
+    async def fake_finish_run(
+        user,
+        *,
+        run_id,
+        status,
+        artifacts,
+        skipped,
+        datasets_evaluated,
+        duration_ms,
+        errors=None,
+    ):
+        finished.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "artifacts": artifacts,
+                "skipped": skipped,
+                "duration_ms": duration_ms,
+            }
+        )
+        return {"id": run_id, "run_ref": "intel-run-scheduled", "status": status}
+
+    async def fake_record_event(
+        user_id, email, action, resource_type, resource_id, metadata=None
+    ):
+        events.append({"action": action, "metadata": metadata or {}})
+
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module, "start_intelligence_run", fake_start_run
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module, "finish_intelligence_run", fake_finish_run
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module.audit_service, "record_event", fake_record_event
+    )
+
+    result = await intelligence_engine.run_intelligence(
+        USER,
+        {"cartridge_id": "hubspot", "run_mode": "scheduled"},
+        fetcher=failing_fetcher,
+        persist=True,
+    )
+
+    assert result["signals"] == []
+    assert result["run_mode"] == "scheduled"
+    assert result["intelligence_run_id"] == 99
+    assert result["dataset_unavailable_count"] == 1
+    assert result["skipped_counts"] == {"dataset_unavailable": 1}
+    assert finished[0]["status"] == "not_ready"
+    assert finished[0]["skipped"][0]["status"] == "dataset_unavailable"
+    assert events[0]["metadata"]["status"] == "not_ready"
+    assert events[0]["metadata"]["dataset_unavailable_count"] == 1
 
 
 @pytest.mark.asyncio

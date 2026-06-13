@@ -1581,6 +1581,8 @@ _RBAC_DEPENDENCY_PREFIXES = (
     "/api/users",
     "/api/decisions",
     "/api/datasets",
+    "/api/intelligence",
+    "/api/v1/intelligence",
     "/api/apps",
     "/api/control-room",
     "/api/admin/users",

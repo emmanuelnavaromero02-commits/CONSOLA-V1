@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.dependencies import require_authenticated
 from app.services import intelligence_engine
+from app.services.intelligence import history as intelligence_history
 from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
@@ -24,6 +27,7 @@ class IntelligenceRunRequest(_StrictModel):
     include_external: bool = False
     horizon_days: int | list[int] | None = None
     dry_run: bool = False
+    run_mode: Literal["manual", "scheduled", "backtest", "smoke"] | None = None
 
     @field_validator("metrics")
     @classmethod
@@ -114,6 +118,45 @@ async def intelligence_readiness_endpoint(
     return await intelligence_readiness(user, require_data=require_data)
 
 
+@router.get("/runs", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get("/runs", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_runs(
+    limit: int = Query(default=50, ge=1, le=250),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.list_runs(user, limit=limit)
+
+
+@router.get("/runs/{run_id}", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get("/runs/{run_id}", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_run_detail(
+    run_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.get_run(user, run_id)
+
+
+@router.get("/history", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get("/history", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_history_endpoint(
+    limit: int = Query(default=100, ge=1, le=500),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.list_history(user, limit=limit)
+
+
+@router.get("/calibration", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get("/calibration", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_calibration_endpoint(
+    min_outcomes_required: int = Query(default=10, ge=1, le=1000),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.calibration_report(
+        user,
+        min_outcomes_required=min_outcomes_required,
+    )
+
+
 @router.post(
     "/run",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
@@ -124,11 +167,31 @@ async def intelligence_readiness_endpoint(
 )
 async def intelligence_run(
     body: IntelligenceRunRequest | None = Body(default=None),
+    mode: Literal["manual", "scheduled", "backtest", "smoke"] | None = Query(default=None),
     user: dict = Depends(require_authenticated),
 ):
-    result = await intelligence_engine.run_intelligence(user, _payload(body))
+    payload = _payload(body)
+    if mode is not None:
+        payload["run_mode"] = mode
+    result = await intelligence_engine.run_intelligence(user, payload)
     _invalidate_control_room_cache(user)
     return result
+
+
+@router.post(
+    "/runs",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+@v1_router.post(
+    "/runs",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def intelligence_runs_create(
+    body: IntelligenceRunRequest | None = Body(default=None),
+    mode: Literal["manual", "scheduled", "backtest", "smoke"] | None = Query(default=None),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_run(body=body, mode=mode, user=user)
 
 
 @router.get("/external/sources", dependencies=[Depends(require_permission("datasets.read"))])

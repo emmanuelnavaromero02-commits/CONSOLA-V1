@@ -11,6 +11,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from app.dependencies import require_authenticated
 from app.services import control_room_service
 from app.services.csrf import require_csrf
+from app.services.intelligence import history as intelligence_history
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context
 
@@ -126,6 +127,41 @@ async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
     """Lightweight, pollable operational summary (persisted state only)."""
     return await control_room_service.ops_summary(user)
+
+
+@router.get("/decision-intelligence/runs", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_decision_intelligence_runs(
+    limit: int = Query(default=50, ge=1, le=250),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.list_runs(user, limit=limit)
+
+
+@router.get("/decision-intelligence/runs/{run_id}", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_decision_intelligence_run_detail(
+    run_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.get_run(user, run_id)
+
+
+@router.get("/decision-intelligence/history", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_decision_intelligence_history(
+    limit: int = Query(default=100, ge=1, le=500),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.list_history(user, limit=limit)
+
+
+@router.get("/decision-intelligence/calibration", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_decision_intelligence_calibration(
+    min_outcomes_required: int = Query(default=10, ge=1, le=1000),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_history.calibration_report(
+        user,
+        min_outcomes_required=min_outcomes_required,
+    )
 
 
 @router.get("/alerts", dependencies=[Depends(require_permission("datasets.read"))])
