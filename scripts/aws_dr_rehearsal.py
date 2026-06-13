@@ -122,14 +122,14 @@ import json
 import sys
 from pathlib import Path
 manifest = json.loads(Path(sys.argv[1]).read_text())
-print(json.dumps({
+print(json.dumps({{
     "status": "ok",
     "restore_mode": "isolated_temp_containers",
     "backup_id": sys.argv[2],
     "manifest_backup_id": manifest.get("backup_id"),
     "destructive": False,
     "lakehouse_writes": False,
-}, sort_keys=True))
+}}, sort_keys=True))
 PY
 )"
 """
