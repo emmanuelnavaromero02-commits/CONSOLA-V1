@@ -233,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         script=_remote_script(),
         comment="omega-aws-observability-report",
         timeout_seconds=args.timeout_seconds,
+        send_attempts=3,
     )
     checks.append(
         Check(
