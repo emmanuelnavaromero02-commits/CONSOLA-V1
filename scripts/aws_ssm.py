@@ -92,7 +92,14 @@ def aws_json(
     cmd = ["aws", "--region", region, *args, "--output", "json"]
     last_error = ""
     for attempt in range(1, max(1, attempts) + 1):
-        result = run_local(cmd, timeout=timeout)
+        try:
+            result = run_local(cmd, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            last_error = f"AWS CLI timed out after {timeout} seconds"
+            if attempt >= attempts:
+                raise RuntimeError(last_error) from exc
+            time.sleep(min(2.0 * attempt, 8.0))
+            continue
         if result.returncode == 0:
             try:
                 return json.loads(result.stdout or "{}")
