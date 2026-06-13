@@ -95,7 +95,12 @@ async def test_replicon_gold_generates_scoped_intelligence_signal_with_evidence(
     assert signal["freshness_field"] == "mes"
     assert signal["severity"] in {"critical", "high"}
     assert signal["decision_intelligence"] == decision
-    assert decision["method"] == "robust_baseline_v0"
+    assert decision["method"] == "robust_residual_v0"
+    assert decision["time_series"]["method"] == "robust_residual_v0"
+    assert (
+        decision["time_series"]["seasonality"]["status"] == "insufficient_seasonality"
+    )
+    assert decision["time_series"]["residual"]["robust_z"] is not None
     assert decision["expected_impact"]["currency"] == "USD"
     assert decision["expected_impact"]["value"] > 0
     assert decision["recommended_decision"] in {"investigate", "act_now"}
@@ -142,9 +147,9 @@ async def test_missing_gold_dataset_is_reported_without_inventing_signals():
 @pytest.mark.asyncio
 async def test_publish_control_room_item_persists_decision_intelligence_impact():
     decision = {
-        "method": "robust_baseline_v0",
+        "method": "robust_residual_v0",
         "anomaly_probability": 0.88,
-        "probability_basis": "coarse rarity from robust median/MAD; not calibrated posterior",
+        "probability_basis": "coarse rarity score from residual robust_z; not calibrated Bayesian posterior",
         "uncertainty_level": "medium",
         "confidence_interval": {
             "lower": 121.03,
@@ -209,6 +214,34 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
             "status": "sufficient",
             "missing_fields": [],
         },
+        "time_series": {
+            "method": "robust_residual_v0",
+            "history_points": 3,
+            "periods_observed": 4,
+            "time_field": "mes",
+            "value_field": "horas_facturables",
+            "entity_key": "Andrea Morales",
+            "trend": {
+                "method": "theil_sen_v0",
+                "current_value": 134,
+                "slope_per_period": 4,
+                "basis": "test trend",
+            },
+            "seasonality": {
+                "method": "none",
+                "period": "month_of_year",
+                "component": None,
+                "status": "insufficient_seasonality",
+                "basis": "test seasonality",
+            },
+            "residual": {
+                "value": -94,
+                "median": 0,
+                "mad": 1,
+                "robust_z": 94,
+                "basis": "test residual",
+            },
+        },
     }
     artifact = {
         "signal": {
@@ -266,7 +299,10 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
     metadata = json.loads(args[15])
     assert metadata["decision_intelligence"] == decision
     assert metadata["intelligence"]["decision_intelligence"] == decision
-    assert metadata["details"]["decision_intelligence_method"] == "robust_baseline_v0"
+    assert metadata["details"]["decision_intelligence_method"] == "robust_residual_v0"
+    assert metadata["details"]["time_series_method"] == "robust_residual_v0"
+    assert metadata["details"]["residual_z"] == 94
+    assert metadata["details"]["seasonality_status"] == "insufficient_seasonality"
     assert metadata["details"]["recommended_decision"] == "investigate"
     assert args[16] == 10440
     assert args[17] == "USD"

@@ -2,7 +2,7 @@
 
 Current status: NOT APPROVED for public v1.0.
 
-Current `VERSION`: `1.45.73-beta`.
+Current `VERSION`: `1.45.74-beta`.
 
 ## Hard Rule
 

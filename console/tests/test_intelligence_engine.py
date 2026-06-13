@@ -119,16 +119,18 @@ def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     assert signal["signal_type"] == "opportunity"
     assert signal["severity"] == "critical"
     assert signal["actual_value"] == 200
-    assert signal["expected_value"] == 110
+    assert signal["expected_value"] == 115
     assert baseline["sample_count"] == 3
     assert signal["decision_intelligence"] == decision
-    assert decision["method"] == "robust_baseline_v0"
+    assert decision["method"] == "robust_residual_v0"
     assert decision["anomaly_probability"] == 0.95
-    assert decision["uncertainty_level"] == "medium"
-    assert decision["expected_impact"]["value"] == 1800
+    assert decision["uncertainty_level"] == "high"
+    assert decision["expected_impact"]["value"] == 1700
     assert decision["expected_impact"]["currency"] == "USD"
-    assert decision["cost_of_delay"]["value_per_day"] == 60
+    assert decision["cost_of_delay"]["value_per_day"] == 56.67
     assert decision["recommended_decision"] == "investigate"
+    assert decision["time_series"]["method"] == "robust_residual_v0"
+    assert decision["time_series"]["residual"]["robust_z"] == 85
     assert {candidate["option"] for candidate in decision["options"]} == {
         "act_now",
         "investigate",
@@ -298,7 +300,7 @@ def test_decision_intelligence_high_probability_low_uncertainty_can_recommend_ac
     metric["baseline"]["window"] = 8
     rows = [
         {
-            "mes": f"2026-{month:02d}-01",
+            "mes": f"period-{month:02d}",
             "owner_id": "u1",
             "vendedor": "Sofia",
             "forecast_ponderado_usd": 100,
@@ -307,7 +309,7 @@ def test_decision_intelligence_high_probability_low_uncertainty_can_recommend_ac
     ]
     rows.append(
         {
-            "mes": "2026-09-01",
+            "mes": "period-09",
             "owner_id": "u1",
             "vendedor": "Sofia",
             "forecast_ponderado_usd": 180,
@@ -321,6 +323,7 @@ def test_decision_intelligence_high_probability_low_uncertainty_can_recommend_ac
     assert skipped == []
     decision = artifacts[0]["decision_intelligence"]
     assert decision["method"] == "robust_baseline_v0"
+    assert decision["time_series"] is None
     assert decision["uncertainty_level"] == "low"
     assert decision["expected_impact"]["value"] == 1600
     assert decision["recommended_decision"] == "act_now"
@@ -360,7 +363,8 @@ def test_decision_intelligence_high_uncertainty_does_not_recommend_act_now():
 
     assert skipped == []
     decision = artifacts[0]["decision_intelligence"]
-    assert decision["method"] == "robust_baseline_v0"
+    assert decision["method"] == "robust_residual_v0"
+    assert decision["time_series"]["method"] == "robust_residual_v0"
     assert decision["uncertainty_level"] == "high"
     assert decision["recommended_decision"] in {"investigate", "monitor"}
 
@@ -474,7 +478,9 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
         assert intelligence_run_id == 42
         assert run_ref == "intel-run-test"
 
-    async def fake_start_run(user, *, request, source_system, run_mode, datasets_evaluated):
+    async def fake_start_run(
+        user, *, request, source_system, run_mode, datasets_evaluated
+    ):
         assert request == {}
         assert source_system is None
         assert run_mode == "manual"
@@ -551,14 +557,18 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_intelligence_persists_scheduled_run_counts_dataset_unavailable(monkeypatch):
+async def test_run_intelligence_persists_scheduled_run_counts_dataset_unavailable(
+    monkeypatch,
+):
     events: list[dict] = []
     finished: list[dict] = []
 
     async def failing_fetcher(dataset: str, user: dict | None, limit: int):
         raise RuntimeError("gold table missing")
 
-    async def fake_start_run(user, *, request, source_system, run_mode, datasets_evaluated):
+    async def fake_start_run(
+        user, *, request, source_system, run_mode, datasets_evaluated
+    ):
         assert request["run_mode"] == "scheduled"
         assert source_system == "hubspot"
         assert run_mode == "scheduled"

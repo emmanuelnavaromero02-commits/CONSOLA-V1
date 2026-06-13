@@ -28,7 +28,7 @@ def test_v1_release_checklist_blocks_public_release_until_p2_green():
     text = (REPO / "docs/release-checklist-v1.md").read_text(encoding="utf-8")
     for needle in (
         "Current status: NOT APPROVED",
-        "Current `VERSION`: `1.45.73-beta`",
+        "Current `VERSION`: `1.45.74-beta`",
         "`make beta-smoke` green",
         "do not create a final `v1.0` or",
         "P2-19 live readiness | BLOCKED",

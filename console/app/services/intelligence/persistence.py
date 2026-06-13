@@ -464,6 +464,21 @@ async def publish_control_room_item(
         if isinstance(decision_intelligence.get("expected_impact"), dict)
         else {}
     )
+    time_series = (
+        decision_intelligence.get("time_series")
+        if isinstance(decision_intelligence.get("time_series"), dict)
+        else {}
+    )
+    time_series_residual = (
+        time_series.get("residual")
+        if isinstance(time_series.get("residual"), dict)
+        else {}
+    )
+    time_series_seasonality = (
+        time_series.get("seasonality")
+        if isinstance(time_series.get("seasonality"), dict)
+        else {}
+    )
     impact_estimate = num(expected_impact.get("value"))
     if impact_estimate is None:
         impact_estimate = abs(float(signal["deviation_value"]))
@@ -508,6 +523,9 @@ async def publish_control_room_item(
             "freshness_field": freshness_field,
             "source": "intelligence_engine",
             "decision_intelligence_method": decision_intelligence.get("method"),
+            "time_series_method": time_series.get("method"),
+            "residual_z": time_series_residual.get("robust_z"),
+            "seasonality_status": time_series_seasonality.get("status"),
             "recommended_decision": decision_intelligence.get("recommended_decision"),
             "intelligence_run_id": signal.get("intelligence_run_id"),
             "run_ref": signal.get("run_ref"),
