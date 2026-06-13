@@ -174,6 +174,8 @@ def test_schema_viewer_has_gold_dataset_fallback() -> None:
     router_source = _read("console/app/routers/v1/data.py")
     for needle in (
         "def _gold_sources_from_catalog",
+        "OMEGA_HIDDEN_GOLD_SOURCE_CARTRIDGES",
+        "simulation",
         "gold/",
         "def _gold_schema_payload",
         "source_kind",
@@ -182,6 +184,19 @@ def test_schema_viewer_has_gold_dataset_fallback() -> None:
         assert needle in source
     assert "_gold_schema_payload(source, user)" in router_source
     assert "_gold_sources_from_catalog(user)" in router_source
+
+
+def test_semantic_viewer_has_gold_catalog_fallback() -> None:
+    source = _read("console/app/main.py")
+    schema_js = _read("console/app/static/js/viewers/schema.js")
+    for needle in (
+        "def _gold_semantic_entities_from_catalog",
+        "source\": \"gold_catalog\"",
+        "_gold_schema_payload(f\"gold/{dataset}\"",
+        "await _gold_semantic_entities_from_catalog(cartridge, user)",
+    ):
+        assert needle in source
+    assert "if (!currentSource && sources.length)" in schema_js
 
 
 def test_workspace_apps_prefer_direct_gold_for_published_data() -> None:

@@ -10,6 +10,9 @@ async function loadSources() {
     const d = await r.json();
     const sources = d.sources || d.result || [];
     const sel = document.getElementById('source-sel');
+    if (!currentSource && sources.length) {
+      currentSource = sources[0];
+    }
     sel.innerHTML = '<option value="">— Selecciona una fuente —</option>' +
       sources.map(s => `<option value="${esc(s)}" ${s === currentSource ? 'selected' : ''}>${esc(s)}</option>`).join('');
     if (currentSource) loadSchema();

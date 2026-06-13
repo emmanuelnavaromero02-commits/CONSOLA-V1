@@ -2867,6 +2867,23 @@ def _allowed_cartridges_for_user(user: dict | None) -> set[str] | None:
     return allowed
 
 
+_HIDDEN_GOLD_SOURCE_CARTRIDGES = {
+    item.strip()
+    for item in os.environ.get("OMEGA_HIDDEN_GOLD_SOURCE_CARTRIDGES", "simulation").split(",")
+    if item.strip()
+}
+
+
+def _gold_source_visible_in_viewers(cartridge: str, dataset: str) -> bool:
+    cartridge = (cartridge or "").strip()
+    dataset = (dataset or "").strip()
+    if cartridge in _HIDDEN_GOLD_SOURCE_CARTRIDGES:
+        return False
+    if dataset.startswith("sim_dataset_"):
+        return False
+    return True
+
+
 async def _gold_catalog_scope_for_dataset(dataset: str, user: dict | None) -> tuple[str, str]:
     ctx = build_security_context(user)
     tenant_id = str(
@@ -2949,12 +2966,94 @@ async def _gold_sources_from_catalog(user: dict | None) -> list[str]:
     sources: list[str] = []
     for row in rows:
         cartridge = str(row["cartridge"] or "").strip()
+        name = str(row["name"] or "").strip()
+        if not _gold_source_visible_in_viewers(cartridge, name):
+            continue
         if allowed is not None and cartridge and cartridge not in allowed:
             continue
-        name = str(row["name"] or "").strip()
         if DATASET_NAME_RE.fullmatch(name):
             sources.append(f"gold/{name}")
     return sorted(set(sources))
+
+
+async def _gold_semantic_entities_from_catalog(cartridge: str, user: dict | None) -> list[dict[str, Any]]:
+    """Build Semantic viewer cards from real Gold datasets.
+
+    Some cartridges publish useful Gold datasets while their `entity_config`
+    rows do not carry column metadata. The viewer should still show concrete
+    fields instead of "Sin detalle de campos"; this fallback introspects the
+    RLS-scoped Gold tables already exposed by Schema.
+    """
+    cartridge = (cartridge or "").strip()
+    if not cartridge or cartridge in _HIDDEN_GOLD_SOURCE_CARTRIDGES:
+        return []
+    try:
+        pool = await _get_db_pool()
+        _tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
+    except Exception:
+        logger.debug("Gold semantic catalog fallback unavailable", exc_info=True)
+        return []
+
+    if workspace_id:
+        rows = await pool.fetch(
+            """
+            SELECT DISTINCT name, row_count
+              FROM datasets
+             WHERE layer = 'gold'
+               AND cartridge = $1
+               AND workspace_id = $2::uuid
+               AND COALESCE(row_count, 0) > 0
+             ORDER BY name
+             LIMIT 24
+            """,
+            cartridge,
+            workspace_id,
+        )
+    elif str((user or {}).get("role") or "").lower() in {"owner", "super_admin", ROLE_ADMIN}:
+        rows = await pool.fetch(
+            """
+            SELECT DISTINCT name, row_count
+              FROM datasets
+             WHERE layer = 'gold'
+               AND cartridge = $1
+               AND workspace_id IS NOT NULL
+               AND COALESCE(row_count, 0) > 0
+             ORDER BY name
+             LIMIT 24
+            """,
+            cartridge,
+        )
+    else:
+        rows = []
+
+    entities: list[dict[str, Any]] = []
+    for row in rows:
+        dataset = str(row["name"] or "").strip()
+        if not DATASET_NAME_RE.fullmatch(dataset) or not _gold_source_visible_in_viewers(cartridge, dataset):
+            continue
+        try:
+            payload = await _gold_schema_payload(f"gold/{dataset}", user)
+        except HTTPException:
+            continue
+        preview = payload.get("preview") or {}
+        columns = preview.get("columns") or preview.get("schema") or []
+        fields = [
+            {"name": str(col.get("name") or ""), "type": str(col.get("type") or "")}
+            for col in columns
+            if isinstance(col, dict) and str(col.get("name") or "").strip()
+        ]
+        entities.append({
+            "entity": dataset,
+            "name": dataset,
+            "display_name": dataset.replace("_", " ").title(),
+            "mode": "gold",
+            "modes": ["gold"],
+            "fields": fields,
+            "columns": fields,
+            "row_count": row["row_count"],
+            "source": "gold_catalog",
+        })
+    return entities
 
 
 async def _gold_schema_payload(source: str, user: dict | None) -> dict:
@@ -5929,7 +6028,15 @@ async def api_semantic(cartridge: str = "", user: dict = Depends(require_authent
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
-        entities = manifest.get("entities") or []
+        entities = list(manifest.get("entities") or [])
+        existing_names = {
+            str(item.get("entity") or item.get("name") or "").strip()
+            for item in entities
+            if isinstance(item, dict)
+        }
+        for item in await _gold_semantic_entities_from_catalog(cartridge, user):
+            if item["name"] not in existing_names:
+                entities.append(item)
         return {"cartridge": cartridge, "server": manifest, "entities": entities}
 
     # Fallback: Pattern A — invoke via MCP server
