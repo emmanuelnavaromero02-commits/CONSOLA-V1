@@ -24,6 +24,15 @@ def test_deploy_main_aws_is_artifact_based_and_secret_safe():
     assert "PAT" not in src
 
 
+def test_aws_ssm_large_script_upload_is_idempotent():
+    src = _read("scripts/aws_ssm.py")
+    assert "attempts: int = 1" in src
+    assert "send_attempts: int = 1" in src
+    assert "attempts=3" in src
+    assert ".part-{chunk_name}" in src
+    assert "cat {remote_b64}.part-* > {remote_b64}" in src
+
+
 def test_aws_full_regression_orchestrates_critical_gates():
     src = _read("scripts/aws_full_regression.py")
     for token in (
