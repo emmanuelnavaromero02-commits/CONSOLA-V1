@@ -26,6 +26,7 @@ def test_deploy_main_aws_is_artifact_based_and_secret_safe():
 
 def test_aws_ssm_large_script_upload_is_idempotent():
     src = _read("scripts/aws_ssm.py")
+    assert 'OMEGA_SSM_MAX_INLINE_SCRIPT_BYTES", "12000"' in src
     assert "attempts: int = 1" in src
     assert "send_attempts: int = 1" in src
     assert "attempts=3" in src
