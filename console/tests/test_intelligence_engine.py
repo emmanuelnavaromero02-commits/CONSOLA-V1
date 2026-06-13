@@ -156,6 +156,8 @@ def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
 def test_control_room_event_actor_id_accepts_numeric_strings_only():
     assert intelligence_persistence._actor_id(7) == 7
     assert intelligence_persistence._actor_id("7") == 7
+    assert intelligence_persistence._actor_id(0) is None
+    assert intelligence_persistence._actor_id("0") is None
     assert intelligence_persistence._actor_id("not-a-bigint") is None
     assert (
         intelligence_persistence._actor_id("11111111-1111-1111-1111-111111111111")

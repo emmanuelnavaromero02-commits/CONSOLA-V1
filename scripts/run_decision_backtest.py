@@ -61,7 +61,7 @@ async def main():
     mode = (os.environ.get("OMEGA_BACKTEST_MODE") or "historical_replay").strip()
     actor_email = os.environ.get("OMEGA_BACKTEST_ACTOR_EMAIL") or "omega-backtest@example.invalid"
     user = {
-        "id": _as_int(os.environ.get("OMEGA_BACKTEST_ACTOR_ID")) or 0,
+        "id": _as_int(os.environ.get("OMEGA_BACKTEST_ACTOR_ID")),
         "email": actor_email,
         "role": os.environ.get("OMEGA_BACKTEST_ACTOR_ROLE") or "admin",
         "workspace_role": os.environ.get("OMEGA_BACKTEST_WORKSPACE_ROLE") or "workspace_admin",

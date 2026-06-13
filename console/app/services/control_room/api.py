@@ -424,9 +424,12 @@ def _actor_id(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, int):
-        return value
+        return value if value > 0 else None
     text = str(value).strip()
-    return int(text) if text.isdigit() else None
+    if not text.isdigit():
+        return None
+    parsed = int(text)
+    return parsed if parsed > 0 else None
 
 
 @_bind_to_core

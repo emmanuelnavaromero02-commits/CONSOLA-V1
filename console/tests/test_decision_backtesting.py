@@ -333,3 +333,12 @@ def test_api_and_makefile_expose_backtest_contracts():
     assert "stdout_redacted.txt" in script
     assert "printenv" not in script
     assert "source .env" not in script
+    assert '"id": _as_int(os.environ.get("OMEGA_BACKTEST_ACTOR_ID")),' in script
+    assert '"id": _as_int(os.environ.get("OMEGA_BACKTEST_ACTOR_ID")) or 0' not in script
+
+
+def test_backtest_actor_id_zero_is_anonymous_not_foreign_key_value():
+    assert backtesting._actor_id({"id": None}) is None
+    assert backtesting._actor_id({"id": 0}) is None
+    assert backtesting._actor_id({"id": "0"}) is None
+    assert backtesting._actor_id({"id": 7}) == 7

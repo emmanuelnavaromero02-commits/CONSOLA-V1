@@ -64,10 +64,11 @@ def _actor_id(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, int):
-        return value
+        return value if value > 0 else None
     text = str(value).strip()
     if text.isdigit():
-        return int(text)
+        parsed = int(text)
+        return parsed if parsed > 0 else None
     return None
 
 
