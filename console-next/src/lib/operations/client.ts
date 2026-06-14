@@ -5,6 +5,7 @@ import type {
   BootstrapTenantAdminRequest,
   BootstrapTenantAdminResponse,
   CreateUserRequest,
+  IssueTenantAdminTemporaryPasswordRequest,
   OperationalMetrics,
   OperationWorkflow,
   OperationWorkflowActionResponse,
@@ -94,6 +95,18 @@ export async function bootstrapTenantAdmin(
 ): Promise<BootstrapTenantAdminResponse> {
   const { data } = await api.post<BootstrapTenantAdminResponse>(
     `/api/admin/tenants/${encodeURIComponent(tenantId)}/bootstrap-admin`,
+    req,
+  );
+  return data;
+}
+
+export async function issueTenantAdminTemporaryPassword(
+  tenantId: string,
+  userId: number,
+  req: IssueTenantAdminTemporaryPasswordRequest,
+): Promise<BootstrapTenantAdminResponse> {
+  const { data } = await api.post<BootstrapTenantAdminResponse>(
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/admins/${encodeURIComponent(userId)}/temporary-password`,
     req,
   );
   return data;
