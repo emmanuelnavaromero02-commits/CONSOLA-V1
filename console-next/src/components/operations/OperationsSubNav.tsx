@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
-import { Activity, FileSearch, KeySquare, ShieldCheck, Users, Workflow } from "lucide-react";
+import { Activity, Building2, FileSearch, KeySquare, ShieldCheck, Users, Workflow } from "lucide-react";
 
 import { getMeAccess } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
@@ -34,6 +34,7 @@ interface SubNavItem {
  */
 const ITEMS: SubNavItem[] = [
   { href: "/operations",        label: "Resumen",  icon: ShieldCheck },
+  { href: "/operations/companies", label: "Empresas", icon: Building2, capability: "can_manage_companies" },
   { href: "/operations/users",  label: "Usuarios", icon: Users, capability: "can_manage_workspace_users" },
   { href: "/operations/audit",  label: "Auditoría", icon: FileSearch, capability: "can_view_audit" },
   { href: "/operations/vault",  label: "Vault",    icon: KeySquare, capability: "can_view_vault" },

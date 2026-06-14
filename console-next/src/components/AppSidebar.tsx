@@ -7,6 +7,7 @@ import {
   AppWindow,
   Bot,
   Boxes,
+  Building2,
   Coins,
   Database,
   GitBranch,
@@ -98,6 +99,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Configuración/Admin",
     items: [
       { href: "/operations/audit", label: "Auditoría", icon: ShieldCheck, section: "Configuración/Admin", capability: "can_view_audit", keywords: "logs auditoria seguridad" },
+      { href: "/operations/companies", label: "Empresas", icon: Building2, section: "Configuración/Admin", capability: "can_manage_companies", keywords: "empresas tenants companias clientes workspaces" },
       { href: "/operations/users", label: "Usuarios", icon: Users, section: "Configuración/Admin", permission: "iam.users.read", capability: "can_manage_workspace_users", keywords: "iam usuarios roles" },
       { href: "/settings", label: "Ajustes", icon: Settings, section: "Configuración/Admin", capability: "can_view_settings", keywords: "configuracion settings ajustes" },
       { href: "/security", label: "Seguridad", icon: ShieldCheck, section: "Configuración/Admin", capability: "can_view_security", keywords: "seguridad sesiones intentos" },

@@ -5,6 +5,7 @@ Local authentication & session management for the console.
 - Sessions are server-side (random token in user_sessions table) + HttpOnly cookie.
 - Sessions slide on each authenticated request (renewed by SESSION_SLIDE_DAYS).
 """
+
 from __future__ import annotations
 
 import os
@@ -18,10 +19,10 @@ from fastapi import Header, HTTPException
 
 from app.security import get_internal_api_key
 
-COOKIE_NAME      = "mod_session"
+COOKIE_NAME = "mod_session"
 REFRESH_COOKIE_NAME = "refresh_token"
 SESSION_LIFETIME = timedelta(days=7)
-SESSION_SLIDE    = timedelta(days=1)   # extend if older than this
+SESSION_SLIDE = timedelta(days=1)  # extend if older than this
 # Absolute cap on a session's age — overrides the sliding window so an
 # attacker holding a stolen cookie cannot keep extending the session
 # forever, and so password/role revocation eventually takes effect for
@@ -49,7 +50,12 @@ def _login_attempt_lockout_disabled() -> bool:
     repeated full-suite runs do not poison the shared test account.
     """
     enabled_env = os.environ.get("RATE_LIMIT_ENABLED")
-    if enabled_env is not None and enabled_env.strip().lower() in {"false", "0", "no", "off"}:
+    if enabled_env is not None and enabled_env.strip().lower() in {
+        "false",
+        "0",
+        "no",
+        "off",
+    }:
         return True
     return False
 
@@ -70,9 +76,9 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "cartridge-salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
     # The old whitelist allowed these too; kept via legacy key only outside prod.
-    "console":    None,
+    "console": None,
     "refinement": None,
-    "mcp-infra":  None,
+    "mcp-infra": None,
 }
 
 
@@ -84,7 +90,9 @@ def _is_production() -> bool:
 def _require_pair_keys_in_production() -> None:
     if not _is_production():
         return
-    required = sorted({env for env in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV.values() if env})
+    required = sorted(
+        {env for env in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV.values() if env}
+    )
     missing = [env for env in required if not os.environ.get(env)]
     if missing:
         raise RuntimeError(
@@ -99,8 +107,12 @@ _require_pair_keys_in_production()
 async def pool() -> asyncpg.Pool:
     global _POOL
     if _POOL is None:
-        dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-        _POOL = await asyncpg.create_pool(dsn, min_size=1, max_size=4, command_timeout=10)
+        dsn = os.environ.get("DATABASE_URL", "").replace(
+            "postgresql+psycopg2://", "postgresql://"
+        )
+        _POOL = await asyncpg.create_pool(
+            dsn, min_size=1, max_size=4, command_timeout=10
+        )
     return _POOL
 
 
@@ -130,11 +142,13 @@ def _bcrypt_input(plain: str) -> bytes:
 
 
 def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(_bcrypt_input(plain), bcrypt.gensalt(rounds=12)).decode("utf-8")
+    return bcrypt.hashpw(_bcrypt_input(plain), bcrypt.gensalt(rounds=12)).decode(
+        "utf-8"
+    )
 
 
 def verify_password(plain: str, hashed: str | None) -> bool:
-    if not hashed:                       # invited but not yet activated → cannot log in
+    if not hashed:  # invited but not yet activated → cannot log in
         return False
     hashed_bytes = hashed.encode("utf-8")
     try:
@@ -176,48 +190,80 @@ async def _resolve_workspace_role_id(conn, role: str) -> int | None:
     return row["id"] if row else None
 
 
+async def _assignment_workspace(
+    conn,
+    workspace_id: str | None = None,
+    tenant_id: str | None = None,
+):
+    if workspace_id:
+        workspace = await conn.fetchrow(
+            "SELECT id, tenant_id FROM workspaces WHERE id = $1::uuid",
+            workspace_id,
+        )
+    else:
+        workspace = await conn.fetchrow(
+            "SELECT id, tenant_id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1"
+        )
+    if not workspace:
+        raise RuntimeError("no workspaces configured; cannot assign user membership")
+    if tenant_id and str(workspace["tenant_id"]) != str(tenant_id):
+        raise RuntimeError("workspace does not belong to tenant")
+    return workspace
+
+
 async def _assign_default_workspace_role(
     conn,
     user_id: int,
     role: str,
     workspace_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> None:
     """Grant a freshly-created user membership in the target/default workspace.
     The dependency chain in dependencies._with_workspace_context refuses
     requests without at least one row in user_workspace_roles, so this must
     run in the same transaction as the INSERT into users."""
-    if workspace_id:
-        workspace = await conn.fetchrow("SELECT id FROM workspaces WHERE id = $1::uuid", workspace_id)
-    else:
-        workspace = await conn.fetchrow(
-            "SELECT id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1"
-        )
-    if not workspace:
-        raise RuntimeError("no workspaces configured; cannot assign user membership")
+    workspace = await _assignment_workspace(conn, workspace_id, tenant_id)
     role_id = await _resolve_workspace_role_id(conn, role)
     if not role_id:
-        raise RuntimeError(f"role not present in `roles` table and no fallback available: {role!r}")
+        raise RuntimeError(
+            f"role not present in `roles` table and no fallback available: {role!r}"
+        )
     await conn.execute(
         """INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
            VALUES ($1, $2, $3)
            ON CONFLICT DO NOTHING""",
-        user_id, workspace["id"], role_id,
+        user_id,
+        workspace["id"],
+        role_id,
     )
 
 
-async def create_user(email: str, password: str, name: str | None = None,
-                      role: str = "user", workspace_id: str | None = None) -> dict:
+async def create_user(
+    email: str,
+    password: str,
+    name: str | None = None,
+    role: str = "user",
+    workspace_id: str | None = None,
+    tenant_id: str | None = None,
+) -> dict:
     """Direct create with password — used by bootstrap_admin and admin override."""
     p = await pool()
     async with p.acquire() as conn:
         async with conn.transaction():
+            workspace = await _assignment_workspace(conn, workspace_id, tenant_id)
             row = await conn.fetchrow(
-                """INSERT INTO users (email, name, password_hash, role, is_active)
-                   VALUES ($1, $2, $3, $4, TRUE)
-                   RETURNING id, email, name, role, is_active, must_change_password, created_at""",
-                email.lower().strip(), name, hash_password(password), role,
+                """INSERT INTO users (email, name, password_hash, role, is_active, must_change_password, tenant_id)
+                   VALUES ($1, $2, $3, $4, TRUE, TRUE, $5)
+                   RETURNING id, email, name, role, is_active, must_change_password, tenant_id, created_at""",
+                email.lower().strip(),
+                name,
+                hash_password(password),
+                role,
+                workspace["tenant_id"],
             )
-            await _assign_default_workspace_role(conn, row["id"], role, workspace_id)
+            await _assign_default_workspace_role(
+                conn, row["id"], role, str(workspace["id"]), str(workspace["tenant_id"])
+            )
     return _user_to_dict(row)
 
 
@@ -226,6 +272,7 @@ async def create_invited_user(
     name: str | None = None,
     role: str = "user",
     workspace_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict:
     """Create a user without a password (must_change_password is moot here —
     the activation flow sets the password). is_active stays FALSE until the
@@ -233,13 +280,19 @@ async def create_invited_user(
     p = await pool()
     async with p.acquire() as conn:
         async with conn.transaction():
+            workspace = await _assignment_workspace(conn, workspace_id, tenant_id)
             row = await conn.fetchrow(
-                """INSERT INTO users (email, name, password_hash, role, is_active, must_change_password)
-                   VALUES ($1, $2, NULL, $3, FALSE, FALSE)
-                   RETURNING id, email, name, role, is_active, must_change_password, created_at""",
-                email.lower().strip(), name, role,
+                """INSERT INTO users (email, name, password_hash, role, is_active, must_change_password, tenant_id)
+                   VALUES ($1, $2, NULL, $3, FALSE, FALSE, $4)
+                   RETURNING id, email, name, role, is_active, must_change_password, tenant_id, created_at""",
+                email.lower().strip(),
+                name,
+                role,
+                workspace["tenant_id"],
             )
-            await _assign_default_workspace_role(conn, row["id"], role, workspace_id)
+            await _assign_default_workspace_role(
+                conn, row["id"], role, str(workspace["id"]), str(workspace["tenant_id"])
+            )
     return _user_to_dict(row)
 
 
@@ -254,7 +307,8 @@ async def activate_user(user_id: int, new_password: str) -> dict | None:
                   must_change_password = FALSE, last_login = NOW()
             WHERE id = $2
             RETURNING id, email, name, role, is_active""",
-        hash_password(new_password), user_id,
+        hash_password(new_password),
+        user_id,
     )
     return dict(row) if row else None
 
@@ -270,7 +324,8 @@ async def reset_password_to(user_id: int, new_password: str) -> dict | None:
               SET password_hash = $1, must_change_password = FALSE
             WHERE id = $2 AND is_active = TRUE
             RETURNING id, email, name, role, is_active""",
-        hash_password(new_password), user_id,
+        hash_password(new_password),
+        user_id,
     )
     return dict(row) if row else None
 
@@ -278,7 +333,7 @@ async def reset_password_to(user_id: int, new_password: str) -> dict | None:
 async def _get_user_auth_record_by_email(email: str) -> dict | None:
     p = await pool()
     row = await p.fetchrow(
-        "SELECT id, email, name, password_hash, role, is_active, must_change_password "
+        "SELECT id, email, name, password_hash, role, is_active, must_change_password, tenant_id "
         "FROM users WHERE email = $1",
         email.lower().strip(),
     )
@@ -293,7 +348,7 @@ async def get_user_by_id(user_id: int) -> dict | None:
     p = await pool()
     row = await p.fetchrow(
         "SELECT id, email, name, role, is_active, must_change_password, "
-        "created_at, last_login, escalation_notify "
+        "tenant_id, created_at, last_login, escalation_notify "
         "FROM users WHERE id = $1",
         user_id,
     )
@@ -302,8 +357,10 @@ async def get_user_by_id(user_id: int) -> dict | None:
 
 async def list_users(active_only: bool = True) -> list[dict]:
     p = await pool()
-    sql = ("SELECT id, email, name, role, is_active, must_change_password, "
-           "created_at, last_login, escalation_notify FROM users")
+    sql = (
+        "SELECT id, email, name, role, is_active, must_change_password, "
+        "tenant_id, created_at, last_login, escalation_notify FROM users"
+    )
     if active_only:
         sql += " WHERE is_active = TRUE"
     sql += " ORDER BY email"
@@ -311,14 +368,26 @@ async def list_users(active_only: bool = True) -> list[dict]:
     return [_user_to_dict(r) for r in rows]
 
 
-async def update_user(user_id: int, *, name: str | None = None, role: str | None = None,
-                      is_active: bool | None = None, password: str | None = None,
-                      escalation_notify: bool | None = None) -> dict | None:
+async def update_user(
+    user_id: int,
+    *,
+    name: str | None = None,
+    role: str | None = None,
+    is_active: bool | None = None,
+    password: str | None = None,
+    escalation_notify: bool | None = None,
+) -> dict | None:
     """Admin update. If password is provided, force the user to change it on next login."""
     sets, params = [], []
-    if name is not None:      params.append(name);      sets.append(f"name = ${len(params)}")
-    if role is not None:      params.append(role);      sets.append(f"role = ${len(params)}")
-    if is_active is not None: params.append(is_active); sets.append(f"is_active = ${len(params)}")
+    if name is not None:
+        params.append(name)
+        sets.append(f"name = ${len(params)}")
+    if role is not None:
+        params.append(role)
+        sets.append(f"role = ${len(params)}")
+    if is_active is not None:
+        params.append(is_active)
+        sets.append(f"is_active = ${len(params)}")
     if escalation_notify is not None:
         params.append(bool(escalation_notify))
         sets.append(f"escalation_notify = ${len(params)}")
@@ -333,17 +402,21 @@ async def update_user(user_id: int, *, name: str | None = None, role: str | None
     row = await p.fetchrow(
         f"UPDATE users SET {', '.join(sets)} WHERE id = ${len(params)} "
         f"RETURNING id, email, name, role, is_active, must_change_password, "
-        f"created_at, last_login, escalation_notify",
+        f"tenant_id, created_at, last_login, escalation_notify",
         *params,
     )
     return _user_to_dict(row) if row else None
 
 
-async def change_own_password(user_id: int, current_password: str,
-                              new_password: str) -> tuple[bool, str | None]:
+async def change_own_password(
+    user_id: int, current_password: str, new_password: str
+) -> tuple[bool, str | None]:
     """Self-service password change. Returns (success, error_msg)."""
     if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
-        return False, f"el password debe tener al menos {MIN_PASSWORD_LENGTH} caracteres"
+        return (
+            False,
+            f"el password debe tener al menos {MIN_PASSWORD_LENGTH} caracteres",
+        )
     if current_password == new_password:
         return False, "el nuevo password debe ser distinto al actual"
     p = await pool()
@@ -357,7 +430,8 @@ async def change_own_password(user_id: int, current_password: str,
         return False, "el password actual es incorrecto"
     await p.execute(
         "UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2",
-        hash_password(new_password), user_id,
+        hash_password(new_password),
+        user_id,
     )
     return True, None
 
@@ -366,10 +440,14 @@ async def delete_user(user_id: int) -> bool:
     p = await pool()
     async with p.acquire() as conn:
         async with conn.transaction():
-            exists = await conn.fetchval("SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", user_id)
+            exists = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", user_id
+            )
             if not exists:
                 return False
-            await conn.execute("DELETE FROM user_workspace_roles WHERE user_id = $1", user_id)
+            await conn.execute(
+                "DELETE FROM user_workspace_roles WHERE user_id = $1", user_id
+            )
             await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
             await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
             try:
@@ -382,6 +460,7 @@ async def delete_user(user_id: int) -> bool:
 
 
 # ── Authentication ──────────────────────────────────────────────────────────
+
 
 async def authenticate(email: str, password: str, ip: str | None = None) -> dict | None:
     """Returns user dict (without password_hash) on success, else None."""
@@ -396,7 +475,7 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
             """SELECT COUNT(*) FROM login_attempts
                WHERE email = $1 AND success = FALSE
                AND created_at >= NOW() - INTERVAL '15 minutes'""",
-            normalized_email
+            normalized_email,
         )
     except asyncpg.UndefinedTableError:
         login_attempts_available = False
@@ -411,7 +490,8 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
         if login_attempts_available:
             await p.execute(
                 "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
-                normalized_email, ip
+                normalized_email,
+                ip,
             )
         return None
 
@@ -419,7 +499,8 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
         if login_attempts_available:
             await p.execute(
                 "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
-                normalized_email, ip
+                normalized_email,
+                ip,
             )
         return None
 
@@ -427,21 +508,26 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
     if login_attempts_available:
         await p.execute(
             "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, TRUE)",
-            normalized_email, ip
+            normalized_email,
+            ip,
         )
     await p.execute("UPDATE users SET last_login = NOW() WHERE id = $1", u["id"])
-    return {k: v for k, v in u.items() if k != "password_hash"}
+    return _user_to_dict(u)
 
 
 # ── Session management ─────────────────────────────────────────────────────
 
+
 async def create_session(user_id: int, ip: str | None = None) -> tuple[str, datetime]:
-    token   = secrets.token_hex(32)
+    token = secrets.token_hex(32)
     expires = datetime.now(timezone.utc) + SESSION_LIFETIME
     p = await pool()
     await p.execute(
         "INSERT INTO user_sessions (token, user_id, expires_at, ip) VALUES ($1, $2, $3, $4)",
-        token, user_id, expires, ip,
+        token,
+        user_id,
+        expires,
+        ip,
     )
     return token, expires
 
@@ -461,7 +547,7 @@ async def get_session_user(token: str) -> dict | None:
     p = await pool()
     row = await p.fetchrow(
         """SELECT s.token, s.user_id, s.expires_at, s.created_at,
-                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password
+                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password, u.tenant_id
              FROM user_sessions s
              JOIN users u ON u.id = s.user_id
             WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_active = TRUE""",
@@ -474,21 +560,28 @@ async def get_session_user(token: str) -> dict | None:
     # sliding extension prevents the same request from both invalidating and
     # extending the session.
     now = datetime.now(timezone.utc)
-    if row["created_at"] is not None and (now - row["created_at"]) > MAX_SESSION_LIFETIME:
+    if (
+        row["created_at"] is not None
+        and (now - row["created_at"]) > MAX_SESSION_LIFETIME
+    ):
         await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
         return None
     # Sliding window: if older than SESSION_SLIDE remaining, push expiry forward
     new_exp = now + SESSION_LIFETIME
     if (row["expires_at"] - now) < (SESSION_LIFETIME - SESSION_SLIDE):
-        await p.execute("UPDATE user_sessions SET expires_at = $1 WHERE token = $2",
-                        new_exp, token)
+        await p.execute(
+            "UPDATE user_sessions SET expires_at = $1 WHERE token = $2", new_exp, token
+        )
+    row_data = dict(row)
+    tenant_id = row_data.get("tenant_id")
     return {
-        "id":                   row["user_id"],
-        "email":                row["email"],
-        "name":                 row["name"],
-        "role":                 row["role"],
-        "is_active":            row["is_active"],
+        "id": row["user_id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "is_active": row["is_active"],
         "must_change_password": row["must_change_password"],
+        "tenant_id": str(tenant_id) if tenant_id else None,
     }
 
 
@@ -510,6 +603,7 @@ async def cleanup_expired_sessions() -> int:
 
 # ── Refresh token management ────────────────────────────────────────────────
 
+
 def generate_refresh_token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -524,7 +618,9 @@ async def create_refresh_token(user_id: int) -> tuple[str, datetime]:
     p = await pool()
     await p.execute(
         "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
-        user_id, hash_refresh_token(token), expires,
+        user_id,
+        hash_refresh_token(token),
+        expires,
     )
     return token, expires
 
@@ -535,7 +631,7 @@ async def get_refresh_token_user(token: str) -> dict | None:
     p = await pool()
     row = await p.fetchrow(
         """SELECT rt.id AS refresh_token_id, rt.user_id, rt.expires_at,
-                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password
+                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password, u.tenant_id
              FROM refresh_tokens rt
              JOIN users u ON u.id = rt.user_id
             WHERE rt.token_hash = $1
@@ -546,13 +642,16 @@ async def get_refresh_token_user(token: str) -> dict | None:
     )
     if not row:
         return None
+    row_data = dict(row)
+    tenant_id = row_data.get("tenant_id")
     return {
-        "id":                   row["user_id"],
-        "email":                row["email"],
-        "name":                 row["name"],
-        "role":                 row["role"],
-        "is_active":            row["is_active"],
+        "id": row["user_id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "is_active": row["is_active"],
         "must_change_password": row["must_change_password"],
+        "tenant_id": str(tenant_id) if tenant_id else None,
     }
 
 
@@ -568,6 +667,7 @@ async def revoke_refresh_token(token: str) -> None:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+
 def _user_to_dict(row) -> dict | None:
     if row is None:
         return None
@@ -575,6 +675,8 @@ def _user_to_dict(row) -> dict | None:
     for k in ("created_at", "last_login"):
         if d.get(k):
             d[k] = d[k].isoformat()
+    if d.get("tenant_id"):
+        d["tenant_id"] = str(d["tenant_id"])
     d.pop("password_hash", None)
     return d
 
@@ -604,7 +706,10 @@ def verify_internal_api_key(
     # Sprint v1.12: console exposes /internal/* endpoints to workspace and
     # to the built-in cartridges. Each pair has its own dedicated key. The
     # legacy shared INTERNAL_API_KEY is still accepted during migration.
-    if not x_internal_service or x_internal_service not in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV:
+    if (
+        not x_internal_service
+        or x_internal_service not in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV
+    ):
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if not x_api_key:
         raise HTTPException(status_code=403, detail="Forbidden")

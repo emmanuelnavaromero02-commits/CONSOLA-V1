@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from tests.console_route_source import console_route_source
@@ -218,18 +219,18 @@ def test_marketplace_permissions_follow_selected_workspace_header():
     main = console_route_source()
     deps = read("console/app/dependencies.py")
     workspace_session = read("workspace/app/services/session.py")
-    assert (
-        'requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None'
-        in main
+    assert re.search(
+        r"requested_workspace_id\s*=\s*\(\s*request\.headers\.get\(\"x-workspace-id\"\)\s*or\s*\"\"\s*\)\.strip\(\)\s*or\s*None",
+        main,
     )
     assert '"workspace access forbidden"' in main
-    assert (
-        '"allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=user["id"])'
-        in main
+    assert re.search(
+        r'"allowed_cartridges":\s*await\s+_workspace_cartridges\(\s*active_workspace\["workspace_id"\],\s*user_id=user\["id"\],?\s*\)',
+        main,
     )
-    assert (
-        '"allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=jwt_user["id"])'
-        in main
+    assert re.search(
+        r'"allowed_cartridges":\s*await\s+_workspace_cartridges\(\s*active_workspace\["workspace_id"\],\s*user_id=jwt_user\["id"\],?\s*\)',
+        main,
     )
     assert "user_cartridge_overrides" in deps
     assert "uco.mode = 'deny'" in deps

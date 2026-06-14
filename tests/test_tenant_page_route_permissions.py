@@ -62,6 +62,7 @@ def test_visible_routes_use_ui_capabilities_that_match_backend_guards():
         'href: "/studio"': "can_view_studio",
         'href: "/data/bronze"': "can_view_bronze",
         'href: "/operations/workflows"': "can_view_workflows",
+        'href: "/operations/companies"': "can_manage_companies",
         'href: "/operations/users"': "can_manage_workspace_users",
         'href: "/operations/audit"': "can_view_audit",
         'href: "/operations/vault"': "can_view_vault",

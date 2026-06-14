@@ -6,6 +6,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 MIGRATION = REPO / "infra" / "init" / "99e_operational_native_rls.sql"
 COMPLETION = REPO / "infra" / "init" / "99f_native_rls_completion.sql"
+COMPANY = REPO / "infra" / "init" / "99m_company_onboarding_rls.sql"
 
 
 def _read(path: Path) -> str:
@@ -48,7 +49,12 @@ def test_operational_native_rls_covers_workspace_scoped_surfaces():
 
 def test_operational_native_rls_targets_real_service_roles_not_test_roles():
     sql = _read(MIGRATION) + "\n" + _read(COMPLETION)
-    for role in ("omega_workspace", "omega_mcp_infra", "omega_vault", "omega_airflow_dag"):
+    for role in (
+        "omega_workspace",
+        "omega_mcp_infra",
+        "omega_vault",
+        "omega_airflow_dag",
+    ):
         assert role in sql
     assert "rls_cross_tenant_reader" not in sql
     assert "request.jwt.claims" not in sql
@@ -73,6 +79,21 @@ def test_native_rls_completion_forces_remaining_scoped_tables():
     assert "99f_native_rls_completion.sql" in sql
 
 
+def test_company_onboarding_rls_guard_documents_platform_owner_allowlist():
+    sql = _read(COMPANY)
+    assert "omega_rls_platform_owner_allowlist" in sql
+    assert "USING (true)" not in sql
+    for table in ("tenants", "workspaces", "users", "user_workspace_roles"):
+        assert f"('{table}'" in sql
+    for table in (
+        "control_room_items",
+        "prediction_outcomes",
+        "pipeline_runs",
+        "copilot_goals",
+    ):
+        assert f"'{table}'" in sql
+
+
 def test_tenant_services_set_db_scope_before_rls_tables():
     workspace_main = _read(REPO / "workspace/app/main.py")
     workspace_session = _read(REPO / "workspace/app/services/session.py")
@@ -80,7 +101,13 @@ def test_tenant_services_set_db_scope_before_rls_tables():
     vault = _read(REPO / "vault/app/main.py")
     mcp_agents = _read(REPO / "mcp-infra/app/tools/agents.py")
 
-    for source in (workspace_main, workspace_session, workspace_tokens, vault, mcp_agents):
+    for source in (
+        workspace_main,
+        workspace_session,
+        workspace_tokens,
+        vault,
+        mcp_agents,
+    ):
         assert "set_config('app.tenant_id'" in source
         assert "set_config('app.workspace_id'" in source
 

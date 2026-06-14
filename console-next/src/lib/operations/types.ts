@@ -20,6 +20,12 @@
  *   POST   /api/admin/users/{user_id}/send-reset  (CSRF, no body)
  *     resp  → { sent: <bool> }
  *
+ *   GET    /api/admin/tenants
+ *   POST   /api/admin/tenants  (CSRF)
+ *   GET    /api/admin/tenants/{tenant_id}/workspaces
+ *   POST   /api/admin/tenants/{tenant_id}/workspaces  (CSRF)
+ *   POST   /api/admin/tenants/{tenant_id}/bootstrap-admin  (CSRF)
+ *
  *   GET    /security/audit
  *     → list of audit events
  *
@@ -60,6 +66,7 @@ export interface AppUser {
   role:                 UserRole;
   is_active:            boolean;
   must_change_password: boolean;
+  tenant_id?:           string | null;
   created_at:           string | null;
   last_login:           string | null;
 }
@@ -81,6 +88,71 @@ export interface UpdateUserRequest {
   role?:      UserRole;
   is_active?: boolean;
   password?:  string;
+}
+
+// ── Companies / tenants ────────────────────────────────────────
+
+export interface TenantSummary {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  created_at: string | null;
+  updated_at?: string | null;
+  workspace_count: number;
+  user_count: number;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  tenant_id: string;
+  name: string;
+  created_at: string | null;
+  user_count: number;
+}
+
+export interface TenantListResponse {
+  tenants: TenantSummary[];
+}
+
+export interface TenantCreateRequest {
+  name: string;
+  slug?: string;
+}
+
+export interface TenantCreateResponse {
+  tenant: TenantSummary;
+  created: boolean;
+}
+
+export interface WorkspaceListResponse {
+  workspaces: WorkspaceSummary[];
+}
+
+export interface WorkspaceCreateRequest {
+  name: string;
+}
+
+export interface WorkspaceCreateResponse {
+  workspace: WorkspaceSummary;
+  created: boolean;
+}
+
+export interface BootstrapTenantAdminRequest {
+  workspace_id: string;
+  email: string;
+  name?: string;
+}
+
+export interface BootstrapTenantAdminResponse {
+  user: AppUser;
+  created: boolean;
+  tenant_id: string;
+  workspace_id: string;
+  workspace_role: "tenant_admin";
+  temporary_password?: string | null;
+  password_delivery: "one_time_response" | "existing_user_no_password_generated";
+  login_url: string;
 }
 
 // ── Audit ──────────────────────────────────────────────────────────

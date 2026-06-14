@@ -1,4 +1,5 @@
 """Static console contract: no Next.js proxy, FastAPI same-origin only."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,7 +26,9 @@ def test_next_proxy_files_are_removed_for_static_export():
         NEXT_ROOT / "src/app/security/[...path]/route.ts",
     ]
     for path in removed:
-        assert not path.exists(), f"{path.relative_to(REPO)} must not exist in static export mode"
+        assert (
+            not path.exists()
+        ), f"{path.relative_to(REPO)} must not exist in static export mode"
 
 
 def test_next_config_uses_static_export_and_fastapi_asset_prefix():
@@ -73,6 +76,7 @@ def test_fastapi_serves_console_next_pages_with_csrf_and_hashed_csp():
         '"/copilot"',
         '"/monitor"',
         '"/viewer"',
+        '"/operations/companies"',
         '"/operations/users"',
         '"/operations/audit"',
     ):

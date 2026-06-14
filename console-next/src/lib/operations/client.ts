@@ -2,6 +2,8 @@ import { api, isApiError } from "@/lib/api";
 import type {
   AppUser,
   AuditEvent,
+  BootstrapTenantAdminRequest,
+  BootstrapTenantAdminResponse,
   CreateUserRequest,
   OperationalMetrics,
   OperationWorkflow,
@@ -9,6 +11,9 @@ import type {
   OperationWorkflowDetailResponse,
   OperationWorkflowListResponse,
   OperationsHealth,
+  TenantCreateRequest,
+  TenantCreateResponse,
+  TenantListResponse,
   UpdateUserRequest,
   UsersListResponse,
   VaultConnection,
@@ -17,6 +22,9 @@ import type {
   VaultSecret,
   VaultSecretPayload,
   VaultSecretsResponse,
+  WorkspaceCreateRequest,
+  WorkspaceCreateResponse,
+  WorkspaceListResponse,
 } from "./types";
 
 // ── Users ──────────────────────────────────────────────────────────
@@ -48,6 +56,47 @@ export async function deleteUser(userId: number): Promise<void> {
 
 export async function sendPasswordReset(userId: number): Promise<void> {
   await api.post(`/api/admin/users/${userId}/send-reset`, {});
+}
+
+// ── Companies / tenants ────────────────────────────────────────
+
+export async function listTenants(): Promise<TenantListResponse> {
+  const { data } = await api.get<TenantListResponse>("/api/admin/tenants");
+  return { tenants: data.tenants ?? [] };
+}
+
+export async function createTenant(req: TenantCreateRequest): Promise<TenantCreateResponse> {
+  const { data } = await api.post<TenantCreateResponse>("/api/admin/tenants", req);
+  return data;
+}
+
+export async function listTenantWorkspaces(tenantId: string): Promise<WorkspaceListResponse> {
+  const { data } = await api.get<WorkspaceListResponse>(
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/workspaces`,
+  );
+  return { workspaces: data.workspaces ?? [] };
+}
+
+export async function createTenantWorkspace(
+  tenantId: string,
+  req: WorkspaceCreateRequest,
+): Promise<WorkspaceCreateResponse> {
+  const { data } = await api.post<WorkspaceCreateResponse>(
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/workspaces`,
+    req,
+  );
+  return data;
+}
+
+export async function bootstrapTenantAdmin(
+  tenantId: string,
+  req: BootstrapTenantAdminRequest,
+): Promise<BootstrapTenantAdminResponse> {
+  const { data } = await api.post<BootstrapTenantAdminResponse>(
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/bootstrap-admin`,
+    req,
+  );
+  return data;
 }
 
 // ── Audit ──────────────────────────────────────────────────────────

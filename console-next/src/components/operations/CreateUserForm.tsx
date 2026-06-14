@@ -140,7 +140,8 @@ export function CreateUserForm() {
         </button>
       </header>
       <p className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Workspace destino: <span className="font-mono">{workspaceId || "sin workspace activo"}</span>
+        Este formulario no crea empresas nuevas. Workspace activo:{" "}
+        <span className="font-mono">{workspaceId || "sin workspace activo"}</span>
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1.5 text-sm">

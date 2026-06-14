@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   ArrowRight,
+  Building2,
   FileSearch,
   KeySquare,
   Users,
@@ -18,18 +19,18 @@ import { legacyConsoleUrl } from "@/lib/legacy-url";
 /**
  * v1.44.4 Group 1 — Operations overview.
  *
- * BACKEND REALITY (audited 2026-05-17):
- *   - 3 real surfaces:  /api/admin/users, /security/audit,
- *                       /api/vault/connections/{cartridge}
+ * BACKEND REALITY (audited 2026-06-14):
+ *   - Real surfaces: /api/admin/tenants, /api/admin/users,
+ *                    /security/audit, /api/vault/connections/{cartridge},
+ *                    /api/copilot/workflow and /api/metrics/operational.
  *   - Brief asked for:  Vault entries / Audit log / Users CRUD
  *                       / Workspaces CRUD / Settings / Monitor.
- *     Workspaces / Settings(workspace_id) don't yet
- *     exist as backend endpoints — they're documented as
- *     coming soon below rather than shipped as UI theater.
+ *     Workspace onboarding now lives in Empresas. Settings(workspace_id)
+ *     remains backend-pending and is kept in the honest pending panel.
  *
  * Pre-Task-D placeholder linked to the legacy :8000 surface;
  * this page now replaces it with a Next.js-native overview
- * that surfaces the three real sub-modules + an honest
+ * that surfaces real sub-modules + an honest
  * "próximamente" panel for what's still backend-pending.
  */
 interface ModuleCard {
@@ -43,9 +44,16 @@ interface ModuleCard {
 
 const READY_MODULES: ModuleCard[] = [
   {
+    href:        "/operations/companies",
+    title:       "Empresas",
+    description: "Crear tenants, workspaces y primer tenant admin.",
+    icon:        Building2,
+    capability:  "can_manage_companies",
+  },
+  {
     href:        "/operations/users",
     title:       "Usuarios",
-    description: "Crear, editar, desactivar y mandar reset de contraseña.",
+    description: "Usuarios dentro del workspace activo.",
     icon:        Users,
     permission:  "iam.users.read",
     capability:  "can_manage_workspace_users",
@@ -82,11 +90,6 @@ const READY_MODULES: ModuleCard[] = [
 
 
 const PENDING_MODULES = [
-  {
-    title:       "Workspaces",
-    description: "CRUD de workspaces y asignaciones de usuarios.",
-    legacyHref:  legacyConsoleUrl("/iam"),
-  },
   {
     title:       "Settings",
     description: "Preferencias por workspace (idioma, tono, branding).",

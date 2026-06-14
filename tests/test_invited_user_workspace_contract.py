@@ -21,4 +21,6 @@ def test_invited_users_are_assigned_to_default_workspace_on_create():
     )[0]
     assert "async with p.acquire() as conn" in section
     assert "async with conn.transaction()" in section
-    assert "await _assign_default_workspace_role(conn, row[\"id\"], role, workspace_id)" in section
+    assert "tenant_id: str | None = None" in section
+    assert "await _assignment_workspace(conn, workspace_id, tenant_id)" in section
+    assert "must_change_password, tenant_id" in section

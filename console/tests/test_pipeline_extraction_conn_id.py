@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -35,4 +36,7 @@ def test_pipeline_extract_metadata_selects_connection_id():
     source = Path(console_main.__file__).read_text(encoding="utf-8")
 
     assert "e.connection_id AS connection_id" in source
-    assert 'extract_conf["conn_id"] = _normalize_pipeline_conn_id(metadata.get("connection_id"))' in source
+    assert re.search(
+        r'extract_conf\["conn_id"\]\s*=\s*_normalize_pipeline_conn_id\(\s*metadata\.get\("connection_id"\)\s*\)',
+        source,
+    )
