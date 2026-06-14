@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { deleteCookie } from "@/lib/cookies";
+import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
 /**
  * v1.44.3.3 Task E — logout affordance.
@@ -36,6 +38,7 @@ export function LogoutButton({ className }: { className?: string }) {
       } catch {
         /* Safari private mode / SSR — best-effort cleanup */
       }
+      deleteCookie(ACTIVE_WORKSPACE_COOKIE);
       router.replace("/login");
       router.refresh();
     } catch {

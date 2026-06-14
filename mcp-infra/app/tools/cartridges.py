@@ -308,18 +308,13 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "tenant_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
             "conn_id": {"type": "string", "description": "Optional Vault connection id"},
-            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id"],
     },
 )
 async def cartridge_sync_semantic_to_rag(
     cartridge_id: str,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     docs: list[str] = []
@@ -369,8 +364,6 @@ async def cartridge_sync_semantic_to_rag(
     source_name = _scoped_rag_source_name(
         f"_semantic_{cartridge_id}",
         security_context,
-        tenant_id,
-        workspace_id,
     )
 
     # Delete the previous auto-synced source if present
@@ -640,9 +633,9 @@ def _watermark_scope(tenant_id: str | None = None, workspace_id: str | None = No
 
 def cartridge_list_entities(
     cartridge_id: str,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    tenant_id, workspace_id = _scope_values(security_context)
     watermark_scope = _watermark_scope(tenant_id, workspace_id)
     with _conn() as c, c.cursor() as cur:
         cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id or "",))
@@ -785,9 +778,6 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
             "cartridge_id": {"type": "string"},
             "entity": {"type": "string"},
             "limit": {"type": "integer", "default": 20, "description": "Max 200"},
-            "tenant_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
-            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id", "entity"],
     },
@@ -796,14 +786,12 @@ def cartridge_preview(
     cartridge_id: str,
     entity: str,
     limit: int = 20,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Sprint v1.35 (audit B3 P0): force limit to a bounded int. cartridge_id
     # and entity are validated transitively by _bronze_path().
     limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
-    path = _bronze_path(cartridge_id, entity, security_context, tenant_id, workspace_id)
+    path = _bronze_path(cartridge_id, entity, security_context)
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _duckdb()
@@ -859,9 +847,6 @@ def cartridge_preview(
                 "type": "string",
                 "description": "ISO date — historical mode only",
             },
-            "tenant_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
-            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id", "entity"],
     },
@@ -872,8 +857,6 @@ async def cartridge_extract(
     mode: str = "incremental",
     from_date: str | None = None,
     to_date: str | None = None,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
     conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -904,7 +887,7 @@ async def cartridge_extract(
         conf["from_date"] = from_date
     if to_date:
         conf["to_date"] = to_date
-    _attach_security_scope(conf, security_context, tenant_id, workspace_id)
+    _attach_security_scope(conf, security_context)
 
     async with httpx.AsyncClient(
         auth=_airflow_auth(), timeout=30, headers=_request_headers()
@@ -945,10 +928,7 @@ async def cartridge_extract(
                 "enum": ["full", "incremental"],
                 "default": "incremental",
             },
-            "tenant_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
             "conn_id": {"type": "string", "description": "Optional Vault connection id"},
-            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id"],
     },
@@ -956,8 +936,6 @@ async def cartridge_extract(
 async def cartridge_extract_all(
     cartridge_id: str,
     mode: str = "incremental",
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
     conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -987,8 +965,6 @@ async def cartridge_extract_all(
                     **({"conn_id": selected_conn_id} if selected_conn_id else {}),
                 },
                 security_context,
-                tenant_id,
-                workspace_id,
             )
             try:
                 r = await client.post(
@@ -1198,9 +1174,6 @@ def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
                 "type": "string",
                 "description": "ID listed by cartridge_list_kbs",
             },
-            "tenant_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
-            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id", "kb_id"],
     },
@@ -1208,8 +1181,6 @@ def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
 def cartridge_run_kb(
     cartridge_id: str,
     kb_id: str,
-    tenant_id: str | None = None,
-    workspace_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with _conn() as c, c.cursor() as cur:
@@ -1229,8 +1200,6 @@ def cartridge_run_kb(
         sql,
         cartridge_id,
         security_context,
-        tenant_id,
-        workspace_id,
     )
     run_id = uuid.uuid4().hex[:8]
 
@@ -1258,8 +1227,6 @@ def cartridge_run_kb(
             scoped_output_path = _scoped_object_prefix(
                 output_path,
                 security_context,
-                tenant_id,
-                workspace_id,
             )
             key = f"{scoped_output_path}/load_date={load_date}/batch_id={run_id}/{kb_id}.parquet"
             with tempfile.TemporaryDirectory() as tmp:
@@ -1285,9 +1252,7 @@ def cartridge_run_kb(
             )
             engine = create_engine(url)
             try:
-                tenant, workspace = _scope_values(
-                    security_context, tenant_id, workspace_id
-                )
+                tenant, workspace = _scope_values(security_context)
                 if tenant and workspace:
                     scoped_df = df.copy()
                     scoped_df["tenant_id"] = tenant

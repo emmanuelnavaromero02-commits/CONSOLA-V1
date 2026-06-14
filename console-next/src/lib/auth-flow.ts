@@ -27,7 +27,8 @@
  * request-id and credential semantics as the authenticated modules.
  */
 import { apiFetch } from "@/lib/api";
-import { readCookie } from "@/lib/cookies";
+import { deleteCookie, readCookie } from "@/lib/cookies";
+import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
 export interface LoginError extends Error {
   status?: number;
@@ -71,6 +72,7 @@ async function readCookieEventually(name: string): Promise<string | null> {
  * Both URLs are relative to the FastAPI origin serving the static app.
  */
 export async function loginUser(email: string, password: string): Promise<unknown> {
+  deleteCookie(ACTIVE_WORKSPACE_COOKIE);
   // Step 1: GET /login to seed the csrf_token cookie.
   let csrfResponse: Response;
   const csrfTimeout = timeoutSignal();
@@ -146,5 +148,6 @@ export async function loginUser(email: string, password: string): Promise<unknow
   // 200 OK — the backend has set mod_session + refresh_token
   // cookies on the response. Return the parsed body so the caller
   // can use any payload the backend emits (currently {ok, user}).
+  deleteCookie(ACTIVE_WORKSPACE_COOKIE);
   return response.json().catch(() => ({ ok: true }));
 }

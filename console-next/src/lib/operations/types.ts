@@ -68,8 +68,17 @@ export interface AppUser {
   is_active:            boolean;
   must_change_password: boolean;
   tenant_id?:           string | null;
+  workspaces?:          UserWorkspaceSummary[];
   created_at:           string | null;
   last_login:           string | null;
+}
+
+export interface UserWorkspaceSummary {
+  workspace_id?:   string | null;
+  workspace_name?: string | null;
+  tenant_id?:      string | null;
+  tenant_name?:    string | null;
+  workspace_role?: string | null;
 }
 
 export interface UsersListResponse {

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { getMeAccess } from "@/lib/admin-surfaces";
 import { useCreateUser } from "@/lib/operations/hooks";
+import type { WorkspaceAccessItem } from "@/lib/workspace-context";
 
 
 const PLATFORM_ROLES: { value: string; label: string }[] = [
@@ -39,6 +40,12 @@ const MAX_PASS   = 256;
 // need for an enterprise console).
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+function workspaceLabel(workspace: WorkspaceAccessItem): string {
+  const tenant = workspace.tenant_name?.trim();
+  const name = workspace.workspace_name?.trim() || workspace.workspace_id || "Workspace";
+  return tenant ? `${tenant} / ${name}` : name;
+}
+
 
 /**
  * v1.44.4 Group 1 — Create user form.
@@ -64,7 +71,13 @@ export function CreateUserForm() {
   const [password, setPassword] = useState("");
   const [role,     setRole]     = useState<string>("viewer");
   const [open,     setOpen]     = useState(false);
-  const workspaceId = access.data?.workspace?.workspace_id?.trim() ?? "";
+  const [manualWorkspaceId, setManualWorkspaceId] = useState("");
+  const workspaces = useMemo(() => (
+    (access.data?.workspaces ?? []).filter((workspace) => workspace.workspace_id?.trim())
+  ), [access.data?.workspaces]);
+  const activeWorkspaceId = access.data?.workspace?.workspace_id?.trim() ?? "";
+  const activeWorkspace = workspaces.find((workspace) => workspace.active && workspace.workspace_id);
+  const workspaceId = manualWorkspaceId || activeWorkspace?.workspace_id || activeWorkspaceId || workspaces[0]?.workspace_id || "";
   const roles = access.data?.role?.is_platform_admin ? PLATFORM_ROLES : TENANT_ROLES;
 
   function reset() {
@@ -140,10 +153,26 @@ export function CreateUserForm() {
         </button>
       </header>
       <p className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Este formulario no crea empresas nuevas. Workspace activo:{" "}
+        Este formulario no crea empresas nuevas. Workspace destino:{" "}
         <span className="font-mono">{workspaceId || "sin workspace activo"}</span>
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {workspaces.length > 1 ? (
+          <label className="space-y-1.5 text-sm sm:col-span-2">
+            <span className="font-medium">Workspace destino</span>
+            <select
+              value={workspaceId}
+              onChange={(event) => setManualWorkspaceId(event.target.value)}
+              className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {workspaces.map((workspace) => (
+                <option key={workspace.workspace_id || workspaceLabel(workspace)} value={workspace.workspace_id || ""}>
+                  {workspaceLabel(workspace)} ({workspace.workspace_role || "sin rol"})
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="space-y-1.5 text-sm">
           <span className="font-medium">Email</span>
           <input

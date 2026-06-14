@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -22,16 +22,17 @@ import {
   useVaultConnections,
   useVaultSecrets,
 } from "@/lib/operations/hooks";
-import { useConnectorSchema } from "@/lib/hooks/useCartridges";
+import { useCartridgeList, useConnectorSchema } from "@/lib/hooks/useCartridges";
 import { cn } from "@/lib/utils";
 
-const CARTRIDGES = [
-  { id: "sap_successfactors", label: "SAP SuccessFactors" },
-  { id: "replicon", label: "Replicon" },
-  { id: "hubspot", label: "HubSpot CRM" },
-  { id: "sap_hcm", label: "SAP HCM" },
-  { id: "sap_s4hana", label: "SAP S/4HANA" },
-];
+const CARTRIDGE_LABELS: Record<string, string> = {
+  "sap_successfactors": "SAP SuccessFactors",
+  "replicon": "Replicon",
+  "hubspot": "HubSpot CRM",
+  "sap_hcm": "SAP HCM",
+  "sap_s4hana": "SAP S/4HANA",
+  "salesforce": "Salesforce",
+};
 
 type VaultTab = "connections" | "secrets";
 
@@ -97,7 +98,7 @@ const EXPLICIT_CONNECTION_FIELDS = [
 
 export function VaultConnectionsTable() {
   const [tab, setTab] = useState<VaultTab>("connections");
-  const [cartridge, setCartridge] = useState("sap_successfactors");
+  const [cartridge, setCartridge] = useState("");
   const [scope, setScope] = useState("llm");
   const [connForm, setConnForm] = useState<ConnForm>(EMPTY_CONN_FORM);
   const [secretForm, setSecretForm] = useState<SecretForm>(EMPTY_SECRET_FORM);
@@ -108,8 +109,19 @@ export function VaultConnectionsTable() {
   const [deleteConnId, setDeleteConnId] = useState<string | null>(null);
   const [deleteSecretKey, setDeleteSecretKey] = useState<string | null>(null);
 
+  const cartridges = useCartridgeList();
+  const cartridgeOptions = useMemo(() => (
+    (cartridges.data?.cartridges ?? []).map((id) => ({
+      id,
+      label: CARTRIDGE_LABELS[id] ?? id,
+    }))
+  ), [cartridges.data?.cartridges]);
+
+  const selectedCartridge = cartridgeOptions.some((item) => item.id === cartridge)
+    ? cartridge
+    : cartridgeOptions[0]?.id || "";
   const activeScope = scope.trim();
-  const connections = useVaultConnections(cartridge);
+  const connections = useVaultConnections(selectedCartridge || null);
   const secrets = useVaultSecrets(activeScope || null);
   const revealConnection = useRevealVaultConnection();
   const saveConnection = useUpsertVaultConnection();
@@ -117,7 +129,7 @@ export function VaultConnectionsTable() {
   const revealSecret = useRevealVaultSecret();
   const saveSecret = useUpsertVaultSecret();
   const removeSecret = useDeleteVaultSecret();
-  const connectorSchema = useConnectorSchema(cartridge);
+  const connectorSchema = useConnectorSchema(selectedCartridge || undefined);
 
   const rows = connections.data?.connections ?? [];
   const secretRows = secrets.data?.secrets ?? [];
@@ -142,7 +154,8 @@ export function VaultConnectionsTable() {
       return;
     }
     try {
-      const data = await revealConnection.mutateAsync({ cartridge, connId });
+      if (!selectedCartridge) return;
+      const data = await revealConnection.mutateAsync({ cartridge: selectedCartridge, connId });
       setRevealedTokens((current) => ({ ...current, [connId]: revealedConnectionSecret(data) }));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Sin permisos para revelar.");
@@ -153,7 +166,8 @@ export function VaultConnectionsTable() {
     const id = connectionId(conn);
     if (!id) return;
     try {
-      const data = await revealConnection.mutateAsync({ cartridge, connId: id });
+      if (!selectedCartridge) return;
+      const data = await revealConnection.mutateAsync({ cartridge: selectedCartridge, connId: id });
       const extra = omitKeys(data, EXPLICIT_CONNECTION_FIELDS);
       setEditingConnId(id);
       setConnForm({
@@ -198,8 +212,12 @@ export function VaultConnectionsTable() {
     }
     const payload = buildVaultConnectionPayload(connForm);
     if (payload === null) return;
+    if (!selectedCartridge) {
+      toast.error("No hay cartucho activo para guardar la conexión.");
+      return;
+    }
     saveConnection.mutate(
-      { cartridge, connId, payload },
+      { cartridge: selectedCartridge, connId, payload },
       {
         onSuccess: () => {
           toast.success("Conexión guardada.");
@@ -211,8 +229,12 @@ export function VaultConnectionsTable() {
   }
 
   function confirmDeleteConnection(connId: string) {
+    if (!selectedCartridge) {
+      toast.error("No hay cartucho activo para eliminar la conexión.");
+      return;
+    }
     removeConnection.mutate(
-      { cartridge, connId },
+      { cartridge: selectedCartridge, connId },
       {
         onSuccess: () => {
           toast.success("Conexión eliminada.");
@@ -322,17 +344,20 @@ export function VaultConnectionsTable() {
           <div className="flex flex-wrap items-center gap-2">
             {tab === "connections" ? (
               <select
-                value={cartridge}
+                value={selectedCartridge}
                 onChange={(event) => {
                   setCartridge(event.target.value);
                   setRevealedTokens({});
                   resetConnectionForm();
                 }}
+                disabled={cartridges.isLoading || cartridgeOptions.length === 0}
                 className="min-h-[44px] rounded-md border bg-background px-3 text-sm"
               >
-                {CARTRIDGES.map((item) => (
+                {cartridgeOptions.length ? cartridgeOptions.map((item) => (
                   <option key={item.id} value={item.id}>{item.label} ({item.id})</option>
-                ))}
+                )) : (
+                  <option value="">Sin cartuchos instalados</option>
+                )}
               </select>
             ) : (
               <input
@@ -359,10 +384,15 @@ export function VaultConnectionsTable() {
       </section>
 
       {tab === "connections" ? (
+        !selectedCartridge ? (
+          <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
+            No hay cartuchos activos en este workspace.
+          </p>
+        ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="space-y-3 rounded-lg border bg-card p-4">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold">Conexiones de {cartridge}</h2>
+              <h2 className="text-base font-semibold">Conexiones de {selectedCartridge}</h2>
               <button type="button" onClick={resetConnectionForm} className="inline-flex min-h-[40px] items-center gap-2 rounded-md border px-3 text-xs font-medium">
                 <Plus aria-hidden className="h-4 w-4" />
                 Nueva
@@ -416,7 +446,7 @@ export function VaultConnectionsTable() {
             )}
           </section>
           <ConnectionForm
-            cartridge={cartridge}
+            cartridge={selectedCartridge}
             authMethodValues={connectorSchema.data?.authMethodValues}
             form={connForm}
             editingId={editingConnId}
@@ -426,6 +456,7 @@ export function VaultConnectionsTable() {
             saving={saveConnection.isPending}
           />
         </div>
+        )
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="space-y-3 rounded-lg border bg-card p-4">

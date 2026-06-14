@@ -45,6 +45,11 @@ vi.mock("@/lib/operations/hooks", () => ({
 }));
 
 vi.mock("@/lib/hooks/useCartridges", () => ({
+  useCartridgeList: () => ({
+    data: { cartridges: ["sap_successfactors", "replicon"] },
+    isLoading: false,
+    isError: false,
+  }),
   useConnectorSchema: () => ({
     data: { authMethodValues: ["oauth2_client_credentials", "saml_bearer_assertion"] },
     isError: false,

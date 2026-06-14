@@ -55,6 +55,22 @@ describe("apiFetch", () => {
     expect(headers.get("X-CSRF-Token")).toBeNull();
   });
 
+  it("sends the active workspace header from the workspace cookie", async () => {
+    mockCookie("csrf_token=csrf; omega_active_workspace_id=workspace%201");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/api/me/access");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Headers;
+    expect(headers.get("X-Workspace-Id")).toBe("workspace 1");
+  });
+
   it("aborts slow requests with a localized timeout error and request id", async () => {
     vi.useFakeTimers();
     mockCookie("");

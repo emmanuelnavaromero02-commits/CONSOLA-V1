@@ -1054,6 +1054,21 @@ export default function ControlRoomPage() {
     }
   }, []);
 
+  const successFactorsAvailable = useMemo(() => (
+    dashboard?.cartridges.some((item) => (
+      item.active && (item.connector_id === "sap_successfactors" || item.id === "sap_successfactors")
+    )) ?? false
+  ), [dashboard?.cartridges]);
+
+  const clearSuccessFactorsState = useCallback(() => {
+    setSfGoldKpis(null);
+    setSfGoldLoading(false);
+    setSfGoldError("");
+    setSfDecisionModel(null);
+    setSfDecisionModelLoading(false);
+    setSfDecisionModelError("");
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadDashboard(undefined, false);
@@ -1074,23 +1089,31 @@ export default function ControlRoomPage() {
         void loadDashboard(selectedId, true);
         void loadLessons();
         void loadThresholds();
-        void loadSfGoldKpis();
-        void loadSfDecisionModel();
+        if (successFactorsAvailable) {
+          void loadSfGoldKpis();
+          void loadSfDecisionModel();
+        } else {
+          clearSuccessFactorsState();
+        }
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, selectedId, state]);
+  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
 
   useEffect(() => {
     if (state !== "ready") return;
     const timer = window.setTimeout(() => {
       void loadLessons();
       void loadThresholds();
-      void loadSfGoldKpis();
-      void loadSfDecisionModel();
+      if (successFactorsAvailable) {
+        void loadSfGoldKpis();
+        void loadSfDecisionModel();
+      } else {
+        clearSuccessFactorsState();
+      }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, domain, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, state]);
+  }, [cartridge, clearSuccessFactorsState, domain, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, state, successFactorsAvailable]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -1675,12 +1698,17 @@ export default function ControlRoomPage() {
     : filtered.filter((item) => Boolean(item.decision_id)).length;
 
   function refreshAll() {
-    void Promise.allSettled([
+    const tasks: Promise<unknown>[] = [
       loadDashboard(selectedId, false),
       loadLessons(),
       loadThresholds(),
-      loadSfGoldKpis(),
-    ]);
+    ];
+    if (successFactorsAvailable) {
+      tasks.push(loadSfGoldKpis(), loadSfDecisionModel());
+    } else {
+      clearSuccessFactorsState();
+    }
+    void Promise.allSettled(tasks);
   }
 
   return (
