@@ -947,6 +947,42 @@ def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
     return False
 
 
+def _rag_is_reserved_source_name(name: str) -> bool:
+    name = str(name or "")
+    return name.startswith(("raw:", "dataset:", "_semantic_"))
+
+
+def _scoped_rag_document_name(ctx: dict[str, Any], name: str) -> str:
+    name = str(name or "").strip()
+    if _is_unscoped_admin_context(ctx) or not _has_tenant_workspace_scope(ctx):
+        return name
+    if _RAG_SCOPE_SUFFIX_RE.search(name):
+        return name
+    return f"{name}{_rag_scope_suffix(ctx)}"
+
+
+def _rag_row_allowed(ctx: dict[str, Any], row: Any) -> bool:
+    if _is_unscoped_admin_context(ctx):
+        return True
+    if not isinstance(row, dict):
+        return _rag_source_allowed(ctx, "")
+    row_tenant = str(row.get("tenant_id") or "").strip()
+    row_workspace = str(row.get("workspace_id") or "").strip()
+    if row_tenant or row_workspace:
+        return (
+            row_tenant == str(ctx.get("tenant_id") or "").strip()
+            and row_workspace == str(ctx.get("workspace_id") or "").strip()
+        )
+    return _rag_source_allowed(ctx, str(row.get("name") or row.get("source_name") or ""))
+
+
+def _require_rag_context_scope(ctx: dict[str, Any]) -> None:
+    if _is_unscoped_admin_context(ctx):
+        return
+    if not _has_tenant_workspace_scope(ctx):
+        raise HTTPException(403, detail="RAG requires tenant/workspace scope")
+
+
 def _cartridge_for_run_id(run_id: str) -> str | None:
     import psycopg2
     from app.config import settings as s
@@ -973,12 +1009,9 @@ def _filter_rag_payload(payload: Any, ctx: dict[str, Any]) -> Any:
         return payload
     out = dict(payload)
     if isinstance(out.get("sources"), list):
-        out["sources"] = [s for s in out["sources"] if _rag_source_allowed(ctx, s.get("name") if isinstance(s, dict) else "")]
+        out["sources"] = [s for s in out["sources"] if _rag_row_allowed(ctx, s)]
     if isinstance(out.get("results"), list):
-        out["results"] = [
-            r for r in out["results"]
-            if _rag_source_allowed(ctx, r.get("source_name") if isinstance(r, dict) else "")
-        ]
+        out["results"] = [r for r in out["results"] if _rag_row_allowed(ctx, r)]
     return out
 
 
@@ -1091,12 +1124,34 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         if "studio.write" not in set(ctx.get("permissions") or []) or not _is_admin_context(ctx):
             raise HTTPException(403, detail="superset tools require admin studio.write context")
 
+    if tool in _RAG_READ_TOOLS | _RAG_WRITE_TOOLS:
+        _require_rag_context_scope(ctx)
+        if tool == "ingest_document":
+            source_name = str(args.get("name") or "").strip()
+            if not source_name:
+                raise HTTPException(400, detail="RAG source name is required")
+            if _rag_is_reserved_source_name(source_name):
+                if not _rag_source_allowed(ctx, source_name):
+                    raise HTTPException(403, detail="RAG source is outside caller scope")
+            else:
+                args["name"] = _scoped_rag_document_name(ctx, source_name)
+        args["security_context"] = ctx
+
     if tool in _AIRFLOW_WRITE_TOOLS | _PIPELINE_WRITE_TOOLS:
         if not _is_admin_context(ctx):
             raise HTTPException(403, detail="airflow and pipeline write tools require admin context")
 
     if tool in _PIPELINE_TELEMETRY_TOOLS:
         _validate_pipeline_run_save_scope(ctx, args)
+
+    if tool in _PIPELINE_READ_TOOLS | _PIPELINE_WRITE_TOOLS:
+        cartridge_id = str(args.get("cartridge_id") or "").strip()
+        _require_cartridge_scope(ctx, cartridge_id)
+        if tool in {"watermark_get", "watermark_set"} and not _is_unscoped_admin_context(ctx):
+            if not _has_tenant_workspace_scope(ctx):
+                raise HTTPException(403, detail="pipeline tools require tenant/workspace scope")
+            args["tenant_id"] = str(ctx.get("tenant_id") or "")
+            args["workspace_id"] = str(ctx.get("workspace_id") or "")
 
     if tool == "airflow_trigger_dag":
         _validate_airflow_trigger_scope(ctx, args)
@@ -1174,6 +1229,11 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     elif tool in _CARTRIDGE_READ_TOOLS | _CARTRIDGE_EXECUTE_TOOLS:
         if tool != "list_cartridges":
             _require_cartridge_scope(ctx, str(args.get("cartridge_id") or args.get("id") or ""))
+        if tool == "cartridge_list_entities" and not _is_unscoped_admin_context(ctx):
+            if not _has_tenant_workspace_scope(ctx):
+                raise HTTPException(403, detail="cartridge entities require tenant/workspace scope")
+            args["tenant_id"] = str(ctx.get("tenant_id") or "")
+            args["workspace_id"] = str(ctx.get("workspace_id") or "")
         if tool in _CARTRIDGE_EXECUTE_TOOLS:
             _inject_cartridge_execution_scope(ctx, args)
 
@@ -1350,8 +1410,9 @@ async def rag_rest_list_sources(
     internal_service: str = Depends(verify_api_key),
 ):
     ctx = _rest_security_context(internal_service, header_value=x_security_context)
+    _require_rag_context_scope(ctx)
     kind_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
-    sources = await _rag_list_sources(kinds=kind_list)
+    sources = await _rag_list_sources(kinds=kind_list, scope=ctx)
     return _filter_rag_payload({"sources": sources}, ctx)
 
 
@@ -1367,13 +1428,14 @@ async def rag_rest_delete_source(
         security_context=json.loads(x_security_context or "{}") if x_security_context else {},
     )
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
-    sources = await _rag_list_sources()
+    _require_rag_context_scope(ctx)
+    sources = await _rag_list_sources(scope=ctx)
     source = next((s for s in sources if int(s.get("id") or 0) == source_id), None)
     if not source:
         raise HTTPException(404, "Source not found")
     if not _rag_source_allowed(ctx, str(source.get("name") or "")):
         raise HTTPException(403, "RAG source is outside caller scope")
-    ok = await _rag_delete_source(source_id)
+    ok = await _rag_delete_source(source_id, scope=ctx)
     if not ok:
         raise HTTPException(404, "Source not found")
     return {"deleted": True, "source_id": source_id}
@@ -1382,12 +1444,14 @@ async def rag_rest_delete_source(
 @app.post("/rag/search")
 async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api_key)):
     ctx = _rest_security_context(internal_service, body)
+    _require_rag_context_scope(ctx)
     try:
         result = {"results": await _rag_do_search(
             query=body["query"],
             top_k=body.get("top_k", 5),
             source_ids=body.get("source_ids"),
             kinds=body.get("kinds"),
+            security_context=ctx,
         )}
     except EmbeddingProviderError as exc:
         raise HTTPException(503, detail="Embedding provider unavailable") from exc
@@ -1398,8 +1462,14 @@ async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api
 async def rag_rest_ingest(body: dict, internal_service: str = Depends(verify_api_key)):
     fake_req = InvokeRequest(tool="ingest_document", args={}, security_context=body.get("security_context") or {})
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
-    if not _rag_source_allowed(ctx, str(body.get("name") or "")):
+    _require_rag_context_scope(ctx)
+    source_name = str(body.get("name") or "").strip()
+    if not source_name:
+        raise HTTPException(400, "RAG source name is required")
+    if _rag_is_reserved_source_name(source_name) and not _rag_source_allowed(ctx, source_name):
         raise HTTPException(403, "RAG source is outside caller scope")
+    if not _rag_is_reserved_source_name(source_name):
+        source_name = _scoped_rag_document_name(ctx, source_name)
     content = body.get("content", "")
     if body.get("mime_type") == "application/pdf":
         import base64
@@ -1411,11 +1481,12 @@ async def rag_rest_ingest(body: dict, internal_service: str = Depends(verify_api
             raise HTTPException(400, "Could not extract text from PDF")
     try:
         return await _rag_do_ingest(
-            name=body["name"],
+            name=source_name,
             content=content,
             description=body.get("description", ""),
             mime_type=body.get("mime_type", "text/plain"),
             kind=body.get("kind", "document"),
+            security_context=ctx,
         )
     except EmbeddingProviderError as exc:
         raise HTTPException(503, detail="Embedding provider unavailable") from exc
@@ -1460,6 +1531,7 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
             description=desc,
             mime_type="text/plain",
             kind="schema",
+            security_context=ctx,
         )
     except EmbeddingProviderError as exc:
         raise HTTPException(503, detail="Embedding provider unavailable") from exc
@@ -1685,6 +1757,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
         description=f"Modelo semántico consolidado del cartucho {cartridge}",
         mime_type="text/plain",
         kind="document",
+        security_context=ctx,
     )
     return {
         "rebuilt": True,

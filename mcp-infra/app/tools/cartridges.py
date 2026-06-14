@@ -630,8 +630,27 @@ def list_cartridges() -> list[dict[str, Any]]:
         "required": ["cartridge_id"],
     },
 )
-def cartridge_list_entities(cartridge_id: str) -> list[dict[str, Any]]:
+def _watermark_scope(tenant_id: str | None = None, workspace_id: str | None = None) -> str:
+    tenant = str(tenant_id or "").strip()
+    workspace = str(workspace_id or "").strip()
+    if tenant and workspace:
+        return f"tenant:{tenant}:workspace:{workspace}"
+    return "platform"
+
+
+def cartridge_list_entities(
+    cartridge_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> list[dict[str, Any]]:
+    watermark_scope = _watermark_scope(tenant_id, workspace_id)
     with _conn() as c, c.cursor() as cur:
+        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id or "",))
+        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",))
+        cur.execute(
+            "SELECT set_config('app.platform_admin', %s, true)",
+            ("false" if tenant_id and workspace_id else "true",),
+        )
         cur.execute(
             """
             SELECT e.entity, e.mode, e.watermark_field, e.description,
@@ -639,10 +658,11 @@ def cartridge_list_entities(cartridge_id: str) -> list[dict[str, Any]]:
             FROM entity_config e
             LEFT JOIN entity_watermarks w
               ON w.cartridge_id = e.cartridge_id AND w.entity_name = e.entity
+             AND w.watermark_scope = %s
             WHERE e.cartridge_id = %s AND e.enabled = TRUE
             ORDER BY e.entity
             """,
-            (cartridge_id,),
+            (watermark_scope, cartridge_id),
         )
         rows = cur.fetchall()
     return [

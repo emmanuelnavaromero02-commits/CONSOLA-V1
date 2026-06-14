@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import require_authenticated
 from app.services import auth
+from app.services.security_context import build_security_context
 
 
 _KNOWN_CARTRIDGES = frozenset({
@@ -35,13 +36,48 @@ router = APIRouter(
 # helpers raise HTTPException on bad input so router thin-wrappers can
 # just await them.
 
-async def freshness_for_cartridge_internal(cartridge: str) -> dict:
+def _allowed_cartridges(user: dict | None) -> set[str] | None:
+    ctx = build_security_context(user)
+    role = str(ctx.get("role") or "").lower()
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    allowed = {
+        str(item).strip()
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    if role in {"admin", "owner", "super_admin"} and not (tenant_id or workspace_id) and "*" in allowed:
+        return None
+    return {item for item in allowed if item != "*"}
+
+
+def _require_cartridge(user: dict | None, cartridge: str) -> None:
+    if cartridge not in _KNOWN_CARTRIDGES:
+        raise HTTPException(404, "Unknown cartridge")
+    allowed = _allowed_cartridges(user)
+    if allowed is not None and cartridge not in allowed:
+        raise HTTPException(403, "cartridge not allowed for active workspace")
+
+
+def _watermark_scope_for_user(user: dict | None) -> str | None:
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if tenant_id and workspace_id:
+        return f"tenant:{tenant_id}:workspace:{workspace_id}"
+    return None
+
+
+async def freshness_for_cartridge_internal(cartridge: str, user: dict | None = None) -> dict:
     """Per-entity freshness for one cartridge. Identical SQL to the
     HTTP endpoint below — the router just wraps this."""
     if cartridge not in _KNOWN_CARTRIDGES:
         raise HTTPException(404, "Unknown cartridge")
+    watermark_scope = _watermark_scope_for_user(user)
     pool = await auth.pool()
     async with pool.acquire() as conn:
+        scope_sql = "AND ew.watermark_scope = $2" if watermark_scope else ""
+        params = (cartridge, watermark_scope) if watermark_scope else (cartridge,)
         rows = await conn.fetch(
             """
             SELECT
@@ -56,6 +92,7 @@ async def freshness_for_cartridge_internal(cartridge: str) -> dict:
             LEFT JOIN entity_watermarks ew
                 ON  ew.cartridge_id = ec.cartridge_id
                 AND ew.entity_name  = ec.entity
+                {scope_sql}
             LEFT JOIN LATERAL (
                 SELECT status, finished_at
                 FROM extraction_runs
@@ -75,8 +112,8 @@ async def freshness_for_cartridge_internal(cartridge: str) -> dict:
             ) er ON TRUE
             WHERE ec.cartridge_id = $1
             ORDER BY ec.entity
-            """,
-            cartridge,
+            """.format(scope_sql=scope_sql),
+            *params,
         )
     return {"cartridge": cartridge, "entities": [dict(r) for r in rows]}
 
@@ -105,10 +142,22 @@ async def freshness_all_internal() -> dict:
 # ── HTTP endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/{cartridge}")
-async def freshness_for_cartridge(cartridge: str) -> dict:
-    return await freshness_for_cartridge_internal(cartridge)
+async def freshness_for_cartridge(
+    cartridge: str,
+    user: dict = Depends(require_authenticated),
+) -> dict:
+    _require_cartridge(user, cartridge)
+    return await freshness_for_cartridge_internal(cartridge, user)
 
 
 @router.get("")
-async def freshness_all() -> dict:
-    return await freshness_all_internal()
+async def freshness_all(user: dict = Depends(require_authenticated)) -> dict:
+    allowed = _allowed_cartridges(user)
+    if allowed is None:
+        return await freshness_all_internal()
+    cartridges = []
+    for cartridge in sorted(c for c in allowed if c in _KNOWN_CARTRIDGES):
+        payload = await freshness_for_cartridge_internal(cartridge, user)
+        entities = payload.get("entities") if isinstance(payload, dict) else []
+        cartridges.append({"cartridge_id": cartridge, "entity_count": len(entities or [])})
+    return {"cartridges": cartridges}

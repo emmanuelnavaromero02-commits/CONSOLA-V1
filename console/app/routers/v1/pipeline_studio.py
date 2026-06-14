@@ -50,13 +50,17 @@ async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(r
 # /api/pipeline
 @router.get("/api/pipeline", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
-async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require_authenticated)):
+async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authenticated)):
     """
     Ensambla el DAG completo: entidades × bronze status × silver datasets × gold deps.
     Fuentes: entity_config (entities), pipeline_runs + jobs (run history), refinement (datasets).
     """
     user = _runtime_user(user)
-    _require_cartridge_visible(user, cartridge)
+    cartridge, _active_cartridges = await _resolve_scoped_operation_cartridge(
+        user,
+        cartridge,
+        fallback="sap_successfactors",
+    )
     import re as _re
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 

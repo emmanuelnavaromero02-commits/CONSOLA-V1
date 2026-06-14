@@ -78,6 +78,7 @@ async def refresh_dataset(name: str, user: dict = Depends(require_permission("da
 @router.get("/api/schema", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
+    _require_technical_source_access(user, source)
     if _gold_dataset_from_source(source):
         return await _gold_schema_payload(source, user)
     partitions = await _refinement_invoke(
@@ -98,15 +99,16 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
 @router.get("/api/sources", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_sources(user: dict = Depends(require_authenticated)):
-    try:
-        data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
-    except HTTPException:
-        data = {}
+    data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
     # Normalize: result may be {"result": [...]} or {"sources": [...]}
     sources = data.get("result") or data.get("sources") or []
     gold_sources = await _gold_sources_from_catalog(user)
     if isinstance(sources, list):
-        return {"sources": sorted(set([str(source) for source in sources if str(source).strip()] + gold_sources))}
+        return {
+            "sources": sorted(
+                set(_filter_technical_sources(user, sources) + gold_sources)
+            )
+        }
     return {"sources": gold_sources}
 
 # /api/datasets/save
@@ -319,8 +321,16 @@ async def api_explorer_delete(
 @_bind_to_main
 async def api_lineage(cartridge: str | None = None, user: dict = Depends(require_permission("datasets.read"))):
     """Global lineage graph across raw sources and silver/gold datasets."""
+    if cartridge:
+        _require_technical_cartridge_access(user, cartridge)
     payload = await _refinement_invoke("list_datasets", {}, timeout=15, user=user)
     datasets = (payload or {}).get("datasets") or []
+    allowed = _user_allowed_cartridges(user)
+    if allowed is not None:
+        datasets = [
+            d for d in datasets
+            if str(d.get("cartridge") or "").strip() in allowed
+        ]
     if cartridge:
         datasets = [d for d in datasets if d.get("cartridge") == cartridge]
 
@@ -574,6 +584,9 @@ async def api_catalog_get(
 ):
     args: dict = {}
     if layer:    args["layer"]    = layer
+    cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
+    if not cartridge and _user_allowed_cartridges(user) is not None:
+        return _empty_catalog_payload()
     if cartridge: args["cartridge"] = cartridge
     if tags:     args["tags"]     = [t.strip() for t in tags.split(",") if t.strip()]
     if datasets: args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
