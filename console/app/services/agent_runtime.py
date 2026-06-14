@@ -23,7 +23,7 @@ import httpx
 from app.security import get_internal_api_key
 from app.middleware.request_id import request_id_var
 from app.services import audit_service, llm_client
-from app.services.security_context import build_security_context, rls_user_context
+from app.services.security_context import build_security_context, rls_user_context, sign_security_context
 from app.services import tool_policy
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,8 @@ _SERVER_ENV_KEYS = {
 
 _DEFAULT_MAX_TOOL_CALLS = 8
 _DEFAULT_SCHEDULED_MAX_TOOL_CALLS = 5
+_CONTROL_ROOM_ALERT_TOOL = "mcp-infra__control_room__raise_alert"
+_SIGNED_CONTEXT_FIELDS = {"_signature", "_signed_at", "_signature_version"}
 
 
 def _headers_for(server_id: str) -> dict[str, str]:
@@ -78,6 +80,8 @@ class Agent:
     temperature:   float
     extra:         dict               # {"variables":{}, "schedule":{...}}
     is_active:     bool = True
+    tenant_id:      str | None = None
+    workspace_id:   str | None = None
 
     @classmethod
     def from_row(cls, row: dict | asyncpg.Record) -> "Agent":
@@ -109,6 +113,8 @@ class Agent:
             temperature   = float(row.get("temperature") if row.get("temperature") is not None else 0.4),
             extra         = _as_obj(row.get("extra"), {}),
             is_active     = bool(row.get("is_active", True)),
+            tenant_id      = str(row.get("tenant_id")) if row.get("tenant_id") else None,
+            workspace_id   = str(row.get("workspace_id")) if row.get("workspace_id") else None,
         )
 
 
@@ -260,33 +266,76 @@ def _rls_user_context(user: dict | None) -> dict:
     return rls_user_context(user)
 
 
-def _agent_security_context(agent: Agent, user: dict | None) -> dict:
+def _agent_scope(agent: Agent) -> tuple[str | None, str | None]:
+    tenant_id = str(agent.tenant_id or "").strip() or None
+    workspace_id = str(agent.workspace_id or "").strip() or None
+    return tenant_id, workspace_id
+
+
+def _agent_monitor_role(agent: Agent) -> str:
+    extra = agent.extra if isinstance(agent.extra, dict) else {}
+    return str(extra.get("role") or "").strip().lower()
+
+
+def _is_monitor_agent(agent: Agent) -> bool:
+    return _agent_monitor_role(agent) == "monitor"
+
+
+def _agent_context_metadata(agent: Agent, run_id: int | None) -> dict[str, Any]:
+    return {
+        "agent_id": agent.id,
+        "agent_slug": agent.slug,
+        "agent_name": agent.name,
+        "agent_run_id": run_id,
+        "agent_role": _agent_monitor_role(agent) or None,
+    }
+
+
+def _resign_context(ctx: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    payload = {key: value for key, value in dict(ctx).items() if key not in _SIGNED_CONTEXT_FIELDS}
+    payload.update(extra)
+    return sign_security_context(payload)
+
+
+def _scheduled_permissions(agent: Agent) -> list[str]:
+    permissions = {"datasets.read", "cartridges.read"}
+    if _is_monitor_agent(agent) and _CONTROL_ROOM_ALERT_TOOL in set(agent.allowed_tools or []):
+        permissions.add("control_room.write")
+    return sorted(permissions)
+
+
+def _agent_security_context(agent: Agent, user: dict | None, *, run_id: int | None = None) -> dict:
     if user is not None:
-        return build_security_context(user)
+        return _resign_context(build_security_context(user), _agent_context_metadata(agent, run_id))
     cartridge = (agent.cartridge_id or "").strip()
+    tenant_id, workspace_id = _agent_scope(agent)
+    if not tenant_id or not workspace_id:
+        raise RuntimeError("scheduled agents require tenant_id and workspace_id scope")
     prefixes = []
     if cartridge:
+        scope = f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
         prefixes = [
             f"raw/{cartridge}/",
             f"silver/{cartridge}/",
             f"gold/{cartridge}/",
-            f"uploads/{cartridge}/",
+            f"uploads/{cartridge}/{scope}",
             f"cartridges/{cartridge}/",
         ]
-    return {
+    return sign_security_context({
         "trusted": True,
         "source": "agent_runner",
         "user_id": None,
         "email": "agent-runner@omega.local",
         "role": "agent",
         "workspace_role": None,
-        "tenant_id": None,
-        "workspace_id": None,
-        "permissions": ["datasets.read", "cartridges.read"],
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "permissions": _scheduled_permissions(agent),
         "allowed_cartridges": [cartridge] if cartridge else [],
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": prefixes,
-    }
+        **_agent_context_metadata(agent, run_id),
+    })
 
 
 def _max_tool_calls(agent: Agent, *, scheduled: bool) -> int:
@@ -389,6 +438,12 @@ def _make_invoke(
         if full_name not in catalog:
             return await deny("denied", f"tool not available in live catalog: {full_name}")
 
+        if scheduled and not all(_agent_scope(agent)):
+            return await deny(
+                "scope_required",
+                "scheduled agents require tenant_id and workspace_id scope",
+            )
+
         tool_call_count += 1
         if tool_call_count > max_calls:
             return await deny(
@@ -414,10 +469,17 @@ def _make_invoke(
         except tool_policy.ToolPolicyError as exc:
             return await deny("invalid_args", str(exc))
 
-        # Scheduled runs have no human in the loop. They may read and report,
-        # but they cannot write/delete/change state unless a future scheduler
-        # approval token is wired server-side.
-        if scheduled and risk != "read":
+        scheduled_advisory_alert = (
+            scheduled
+            and full_name == _CONTROL_ROOM_ALERT_TOOL
+            and risk == "write"
+            and _is_monitor_agent(agent)
+        )
+
+        # Scheduled runs have no human in the loop. They may read and raise
+        # advisory Control Room alerts; no other write/delete/change state is
+        # allowed without a future scheduler approval token wired server-side.
+        if scheduled and risk != "read" and not scheduled_advisory_alert:
             return await deny(
                 "scheduled_action_blocked",
                 "scheduled agents cannot execute write/destructive tools without approval",
@@ -427,7 +489,7 @@ def _make_invoke(
         # Manual runs still require the Copilot-style approval card for every
         # write/destructive tool. The agent runtime records a pending action
         # instead of executing it; UI/API can surface that state safely.
-        if meta["requires_approval"]:
+        if meta["requires_approval"] and not scheduled_advisory_alert:
             await _audit_agent_tool(
                 agent=agent, run_id=run_id, user=user, server_id=server_id,
                 tool=tool, args=args, risk_level=risk, status="pending_approval",
@@ -466,7 +528,7 @@ def _make_invoke(
         payload = {
             "tool": tool,
             "args": args,
-            "security_context": _agent_security_context(agent, user),
+            "security_context": _agent_security_context(agent, user, run_id=run_id),
         }
         try:
             async with httpx.AsyncClient(headers=_headers_for(server_id), timeout=120) as c:
@@ -610,9 +672,9 @@ async def _agent_runs_have_scope_columns() -> bool:
     ))
 
 
-def _scope_parts(user: dict | None) -> tuple[str | None, str | None]:
+def _scope_parts(user: dict | None, agent: Agent | None = None) -> tuple[str | None, str | None]:
     if not user:
-        return None, None
+        return _agent_scope(agent) if agent is not None else (None, None)
     tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip() or None
     workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip() or None
     return tenant_id, workspace_id
@@ -623,9 +685,10 @@ async def _start_run(
     user_id: int | None,
     input_messages: list[dict],
     user: dict | None = None,
+    agent: Agent | None = None,
 ) -> int:
     pool = await _get_pool()
-    tenant_id, workspace_id = _scope_parts(user)
+    tenant_id, workspace_id = _scope_parts(user, agent)
     if await _agent_runs_have_scope_columns():
         row = await pool.fetchrow(
             "INSERT INTO agent_runs (agent_id, user_id, input_messages, tenant_id, workspace_id) "
@@ -677,7 +740,7 @@ async def run(
     tools, server_map = await _discover_agent_tools(agent)
 
     user_id = user.get("id") if user else None
-    run_id  = await _start_run(agent.id, user_id, input_messages, user=user)
+    run_id  = await _start_run(agent.id, user_id, input_messages, user=user, agent=agent)
     await audit_service.record_event(
         user_id=user_id,
         email=user.get("email") if user else "agent-runner@omega.local",

@@ -23,6 +23,7 @@ import { KNOWN_CARTRIDGES } from "@/lib/cartridges";
 import { cn } from "@/lib/utils";
 
 type AgentTab = "config" | "tools" | "rag" | "schedule" | "runs" | "test";
+type AgentListFilter = "all" | "monitor" | "control_room" | "cartridge" | "platform_ops";
 
 interface AgentDraft {
   id: string | null;
@@ -37,6 +38,9 @@ interface AgentDraft {
   model: string;
   max_tokens: number;
   temperature: number;
+  role: string;
+  category: string;
+  scope: string;
   variables: Array<{ key: string; value: string }>;
   schedule: {
     cron: string;
@@ -49,6 +53,15 @@ interface AgentDraft {
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const RAG_KINDS = ["dataset", "schema", "metric", "policy", "runbook"];
+const AGENT_LIST_FILTERS: Array<{ id: AgentListFilter; label: string }> = [
+  { id: "all", label: "Todos" },
+  { id: "monitor", label: "Monitores" },
+  { id: "control_room", label: "Control Room" },
+  { id: "cartridge", label: "Cartuchos" },
+  { id: "platform_ops", label: "Plataforma" },
+];
+const AGENT_CATEGORIES = ["cartridge", "control_room", "platform_ops"];
+const AGENT_SCOPES = ["workspace", "cartridge", "control_room"];
 const INPUT_CLASS = "min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const TEXTAREA_CLASS = "rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
@@ -66,6 +79,9 @@ function emptyDraft(cartridge = "replicon"): AgentDraft {
     model: DEFAULT_MODEL,
     max_tokens: 8192,
     temperature: 0.4,
+    role: "",
+    category: "cartridge",
+    scope: "workspace",
     variables: [],
     schedule: { cron: "", tz: "UTC", prompt: "", enabled: true },
     is_active: true,
@@ -110,6 +126,9 @@ function draftFromAgent(agent: AgentRecord): AgentDraft {
     model: agent.model || DEFAULT_MODEL,
     max_tokens: Number(agent.max_tokens ?? 8192),
     temperature: Number(agent.temperature ?? 0.4),
+    role: asString(extra.role),
+    category: asString(extra.category) || "cartridge",
+    scope: asString(extra.scope) || "workspace",
     variables: Object.entries(variables).map(([key, value]) => ({ key, value: String(value ?? "") })),
     schedule: {
       cron: asString(schedule.cron || schedule.cron_expression),
@@ -128,6 +147,9 @@ function payloadFromDraft(draft: AgentDraft): AgentPayload {
     if (key) variables[key] = row.value;
   });
   const extra: Record<string, unknown> = {};
+  if (draft.role.trim()) extra.role = draft.role.trim();
+  if (draft.category.trim()) extra.category = draft.category.trim();
+  if (draft.scope.trim()) extra.scope = draft.scope.trim();
   if (Object.keys(variables).length) extra.variables = variables;
   if (draft.schedule.cron.trim() || draft.schedule.prompt.trim() || draft.schedule.tz.trim() || !draft.schedule.enabled) {
     extra.schedule = {
@@ -157,6 +179,7 @@ function payloadFromDraft(draft: AgentDraft): AgentPayload {
 export function AgentsConsole() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
+  const [listFilter, setListFilter] = useState<AgentListFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<AgentDraft | null>(null);
   const [tab, setTab] = useState<AgentTab>("config");
@@ -242,21 +265,32 @@ export function AgentsConsole() {
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return agents.data ?? [];
-    return (agents.data ?? []).filter((agent) => (
-      [
+    return (agents.data ?? []).filter((agent) => {
+      const extra = asRecord(agent.extra);
+      const role = asString(extra.role);
+      const category = asString(extra.category);
+      const filterMatch = (
+        listFilter === "all"
+        || (listFilter === "monitor" && role === "monitor")
+        || (listFilter !== "monitor" && category === listFilter)
+      );
+      if (!filterMatch) return false;
+      if (!needle) return true;
+      return [
         agent.name,
         agent.slug,
         agent.cartridge_id,
         agent.description,
         agent.instructions,
         agent.model,
+        role,
+        category,
         ...(agent.allowed_tools ?? []),
       ]
         .filter((value): value is string => typeof value === "string")
-        .some((value) => value.toLowerCase().includes(needle))
-    ));
-  }, [agents.data, query]);
+        .some((value) => value.toLowerCase().includes(needle));
+    });
+  }, [agents.data, listFilter, query]);
 
   function selectAgent(agent: AgentRecord) {
     setSelectedId(agent.id);
@@ -338,10 +372,28 @@ export function AgentsConsole() {
         </div>
 
         <section aria-label="Agentes" className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {AGENT_LIST_FILTERS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setListFilter(item.id)}
+                className={cn(
+                  "inline-flex min-h-[34px] items-center rounded-md border px-2.5 text-xs font-medium",
+                  listFilter === item.id ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
           {filtered.length === 0 ? (
             <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">No hay agentes que coincidan.</p>
           ) : filtered.map((agent, index) => {
             const active = agent.is_active !== false;
+            const extra = asRecord(agent.extra);
+            const role = asString(extra.role);
+            const category = asString(extra.category);
             return (
               <button
                 key={agentKey(agent, index)}
@@ -370,6 +422,7 @@ export function AgentsConsole() {
                 <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{agent.description || "Sin descripción."}</p>
                 <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
                   <span className="rounded-md bg-muted/30 p-2">Cartucho: <strong>{agent.cartridge_id || "-"}</strong></span>
+                  <span className="rounded-md bg-muted/30 p-2">Tipo: <strong>{role === "monitor" ? "Monitor" : category || "general"}</strong></span>
                   <span className="rounded-md bg-muted/30 p-2">Tools: <strong>{toolsLabel(agent)}</strong></span>
                 </div>
               </button>
@@ -602,6 +655,22 @@ function ConfigTab({ draft, setDraft, cartridgeOptions }: { draft: AgentDraft; s
       </Field>
       <Field label="Temperatura">
         <input type="number" min={0} max={2} step={0.1} value={draft.temperature} onChange={(event) => setDraft({ ...draft, temperature: Number(event.target.value) })} className={INPUT_CLASS} />
+      </Field>
+      <Field label="Rol operativo">
+        <select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} className={INPUT_CLASS}>
+          <option value="">General</option>
+          <option value="monitor">Monitor</option>
+        </select>
+      </Field>
+      <Field label="Categoría">
+        <select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className={INPUT_CLASS}>
+          {AGENT_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </Field>
+      <Field label="Scope">
+        <select value={draft.scope} onChange={(event) => setDraft({ ...draft, scope: event.target.value })} className={INPUT_CLASS}>
+          {AGENT_SCOPES.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
       </Field>
       <Field label="Descripción" wide>
         <textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} className={cn(TEXTAREA_CLASS, "min-h-24")} />

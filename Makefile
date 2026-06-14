@@ -280,13 +280,13 @@ stress-write-heavy:
 	@OMEGA_STRESS_PROFILE=write-heavy OMEGA_STRESS_ENABLE_WRITES=1 $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
 
 data-integrity-audit:
-	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/data_integrity_audit.py
+	@$(PYTHON) scripts/data_integrity_audit.py
 
 copilot-redteam:
-	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/copilot_redteam.py
+	@$(PYTHON) scripts/copilot_redteam.py
 
 cartridge-resilience:
-	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/cartridge_resilience.py --workload "$(WORKLOAD)"
+	@$(PYTHON) scripts/cartridge_resilience.py --workload "$(WORKLOAD)"
 
 chaos-local:
 	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/chaos_gate.py --target local

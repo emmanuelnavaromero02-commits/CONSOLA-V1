@@ -40,6 +40,21 @@ def test_agents_console_restores_editor_tools_schedule_runs_and_test_flow():
     assert "schedule" in src
 
 
+def test_agents_console_exposes_monitor_taxonomy():
+    src = read("console-next/src/components/agents/AgentsConsole.tsx")
+    for token in (
+        "AgentListFilter",
+        "Monitores",
+        "Control Room",
+        "Plataforma",
+        "extra.role",
+        "extra.category",
+        "extra.scope",
+        "Rol operativo",
+    ):
+        assert token in src
+
+
 def test_agent_api_client_covers_full_legacy_surface():
     src = read("console-next/src/lib/admin-surfaces.ts")
     for endpoint in (

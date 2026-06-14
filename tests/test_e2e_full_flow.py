@@ -64,7 +64,9 @@ def session():
 
 
 def test_e2e_01_admin_can_login(session):
-    r = session.get("/api/auth/me")
+    r = session.get("/api/me")
+    if r.status_code == 404:
+        r = session.get("/auth/me")
     assert r.status_code == 200
     body = r.json()
     # /api/auth/me may return the user under "user" or flat; accept either.
@@ -78,7 +80,8 @@ def test_e2e_02_tool_manifest_lists_servers(session):
     data = r.json()
     assert "servers" in data, f"manifest missing servers key: {data}"
     # At least one cartridge/infra server present after a normal boot.
-    assert isinstance(data["servers"], list)
+    assert isinstance(data["servers"], (dict, list))
+    assert data["servers"]
 
 
 def test_e2e_03_cartridge_connector_schema_replicon(session):

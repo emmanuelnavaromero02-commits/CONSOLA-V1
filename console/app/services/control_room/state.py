@@ -985,8 +985,10 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
     score = int(priority.get("score") or item.get("priority_score") or 0)
     alert_type = _alert_type_for_item(item)
     threshold_state = str(item.get("threshold_state") or "default")
+    is_agent_alert = item.get("kind") == "agent_alert" or item.get("source") == "agent"
     should_alert = (
-        alert_type in {"source_health", "threshold_breach", "learned_pattern"}
+        is_agent_alert
+        or alert_type in {"source_health", "threshold_breach", "learned_pattern"}
         or item.get("severity") in {"critical", "high"}
         or score >= 55
     )
@@ -1012,6 +1014,14 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "id": f"alert:{item.get('id')}",
         "item_id": item.get("id"),
         "alert_type": alert_type,
+        "source": item.get("source") or "system",
+        "advisory": bool(item.get("advisory")),
+        "agent_id": item.get("agent_id"),
+        "agent_run_id": item.get("agent_run_id"),
+        "deduped": bool(item.get("deduped")),
+        "occurrence_count": int(item.get("occurrence_count") or 1),
+        "hypothesis": item.get("hypothesis"),
+        "expected_outcome": item.get("expected_outcome"),
         "severity": severity,
         "priority_score": score,
         "domain": item.get("domain"),
@@ -1167,7 +1177,7 @@ async def _overlay_item_state(
                     item.get("entity_id"),
                     item.get("entity_label"),
                     item.get("anomaly_type"),
-                    json.dumps(_metadata_for_item(item, impact)),
+                    json.dumps(_metadata_for_item(item, impact), default=str),
                     impact.get("estimate"),
                     impact.get("currency") or "USD",
                     impact.get("confidence"),
@@ -1832,7 +1842,7 @@ async def _ensure_item_row(
             item.get("entity_id"),
             item.get("entity_label"),
             item.get("anomaly_type"),
-            json.dumps(_metadata_for_item(item, impact)),
+            json.dumps(_metadata_for_item(item, impact), default=str),
             impact.get("estimate"),
             impact.get("currency") or "USD",
             impact.get("confidence"),

@@ -1579,42 +1579,61 @@ async def action_preview(
         "external_write": False,
     }
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review")
-    execution = await _record_action_execution(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="preview",
-        status="generated",
-        payload=payload,
-        result=result,
-    )
-    action_run = await _record_action_run(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="preview",
-        status="preview_generated",
-        input_payload=payload,
-        execution_result=result,
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
-    )
-    await _set_execution_status(pool, user=user, item=item, execution_status="preview_generated")
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="action_preview",
-        metadata={
-            "template_id": template["template_id"],
-            "execution_id": execution.get("id"),
-            "action_run_id": action_run.get("id"),
-        },
-    )
+
+    async def _write(conn: Any, _tenant_id: str | None, _workspace_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status=item.get("status") or "in_review",
+            critical=True,
+        )
+        execution = await _record_action_execution(
+            conn,
+            user=user,
+            item=item,
+            template=template,
+            mode="preview",
+            status="generated",
+            payload=payload,
+            result=result,
+            critical=True,
+        )
+        action_run = await _record_action_run(
+            conn,
+            user=user,
+            item=item,
+            template=template,
+            mode="preview",
+            status="preview_generated",
+            input_payload=payload,
+            execution_result=result,
+            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            metadata={"legacy_table": "control_room_action_executions"},
+            critical=True,
+        )
+        await _set_execution_status(
+            conn,
+            user=user,
+            item=item,
+            execution_status="preview_generated",
+            critical=True,
+        )
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="action_preview",
+            metadata={
+                "template_id": template["template_id"],
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+            },
+            critical=True,
+        )
+        return execution, action_run
+
+    execution, action_run = await _run_with_db_scope(pool, user, _write)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1672,47 +1691,66 @@ async def action_dry_run(
         ),
     }
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review")
-    execution = await _record_action_execution(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="dry_run",
-        status="validated" if validation_ok else "failed",
-        payload=payload,
-        result=result,
-        error=None if validation_ok else "dry_run_validation_failed",
-    )
-    action_run = await _record_action_run(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="dry_run",
-        status=action_run_status,
-        input_payload=payload,
-        dry_run_result=result,
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        error_code=None if validation_ok else "dry_run_validation_failed",
-        error_message=None if validation_ok else result["message"],
-        metadata={"legacy_table": "control_room_action_executions", "checks": validation_checks},
-        critical=True,
-    )
-    await _set_execution_status(pool, user=user, item=item, execution_status=execution_status)
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="action_dry_run",
-        metadata={
-            "template_id": template["template_id"],
-            "execution_id": execution.get("id"),
-            "action_run_id": action_run.get("id"),
-            "action_run_status": action_run_status,
-            "warnings": warnings,
-        },
-    )
+
+    async def _write(conn: Any, _tenant_id: str | None, _workspace_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status=item.get("status") or "in_review",
+            critical=True,
+        )
+        execution = await _record_action_execution(
+            conn,
+            user=user,
+            item=item,
+            template=template,
+            mode="dry_run",
+            status="validated" if validation_ok else "failed",
+            payload=payload,
+            result=result,
+            error=None if validation_ok else "dry_run_validation_failed",
+            critical=True,
+        )
+        action_run = await _record_action_run(
+            conn,
+            user=user,
+            item=item,
+            template=template,
+            mode="dry_run",
+            status=action_run_status,
+            input_payload=payload,
+            dry_run_result=result,
+            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            error_code=None if validation_ok else "dry_run_validation_failed",
+            error_message=None if validation_ok else result["message"],
+            metadata={"legacy_table": "control_room_action_executions", "checks": validation_checks},
+            critical=True,
+        )
+        await _set_execution_status(
+            conn,
+            user=user,
+            item=item,
+            execution_status=execution_status,
+            critical=True,
+        )
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="action_dry_run",
+            metadata={
+                "template_id": template["template_id"],
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "action_run_status": action_run_status,
+                "warnings": warnings,
+            },
+            critical=True,
+        )
+        return execution, action_run
+
+    execution, action_run = await _run_with_db_scope(pool, user, _write)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

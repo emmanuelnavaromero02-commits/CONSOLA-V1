@@ -55,6 +55,7 @@ type SourceRollup = SourceState | "partial" | "stub" | "attention" | "inactive" 
 type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;
 type AlertOperation = "ack" | "snooze" | "assign" | "false-positive";
+type AlertSourceFilter = "all" | "agent" | "system" | "intelligence";
 
 interface SourceStatus {
   dataset: string;
@@ -413,7 +414,7 @@ interface IntelligenceOutcomeDraft {
 
 interface ControlItem {
   id: string;
-  kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal";
+  kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal" | "agent_alert";
   domain: string;
   module: string;
   module_id?: string;
@@ -462,6 +463,14 @@ interface ControlAlert {
   id: string;
   item_id: string;
   alert_type: string;
+  source?: string;
+  advisory?: boolean;
+  agent_id?: string | null;
+  agent_run_id?: string | number | null;
+  deduped?: boolean;
+  occurrence_count?: number;
+  hypothesis?: string | null;
+  expected_outcome?: string | null;
   severity: Severity;
   priority_score: number;
   domain: string;
@@ -894,6 +903,7 @@ export default function ControlRoomPage() {
   const [domain, setDomain] = useState("all");
   const [cartridge, setCartridge] = useState("all");
   const [severity, setSeverity] = useState<Severity | "all">("all");
+  const [alertSource, setAlertSource] = useState<AlertSourceFilter>("all");
   const [selectedId, setSelectedId] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailMode, setDetailMode] = useState<DetailMode>(null);
@@ -1141,10 +1151,14 @@ export default function ControlRoomPage() {
   )), [cartridge, cartridges, domain]);
 
   const contextConnectorIds = useMemo(() => new Set(contextModules.map((item) => item.connector_id || item.id)), [contextModules]);
-  const contextAlerts = useMemo(() => (dashboard?.alerts ?? []).filter((alert) => (
-    (domain === "all" || alert.domain === domain)
-    && (cartridge === "all" || alert.module_id === cartridge)
-  )), [cartridge, dashboard?.alerts, domain]);
+  const contextAlerts = useMemo(() => (dashboard?.alerts ?? []).filter((alert) => {
+    const source = String(alert.source || "system");
+    return (
+      (domain === "all" || alert.domain === domain)
+      && (cartridge === "all" || alert.module_id === cartridge)
+      && (alertSource === "all" || source === alertSource)
+    );
+  }), [alertSource, cartridge, dashboard?.alerts, domain]);
 
   const contextLessons = useMemo(() => {
     const itemIds = new Set(filtered.map((item) => item.id));
@@ -1761,6 +1775,8 @@ export default function ControlRoomPage() {
             contextModules={contextModules}
             contextLessons={contextLessons}
             contextAlerts={contextAlerts}
+            alertSource={alertSource}
+            onAlertSource={setAlertSource}
             lessonsLoading={lessonsLoading}
             lessonsError={lessonsError}
             contextThresholds={contextThresholds}
@@ -2010,6 +2026,8 @@ function DashboardView({
   contextModules,
   contextLessons,
   contextAlerts,
+  alertSource,
+  onAlertSource,
   lessonsLoading,
   lessonsError,
   contextThresholds,
@@ -2057,6 +2075,8 @@ function DashboardView({
   contextModules: Cartridge[];
   contextLessons: Lesson[];
   contextAlerts: ControlAlert[];
+  alertSource: AlertSourceFilter;
+  onAlertSource: (source: AlertSourceFilter) => void;
   lessonsLoading: boolean;
   lessonsError: string;
   contextThresholds: DetectionThreshold[];
@@ -2168,7 +2188,7 @@ function DashboardView({
         </div>
 
         <aside className="space-y-4 2xl:sticky 2xl:top-20 2xl:self-start" aria-label="Decisiones y actividad">
-          <AlertQueuePanel context={context} alerts={contextAlerts} busyAction={busyAction} actionError={alertActionError} actionMessage={alertActionMessage} onOperateAlert={onOperateAlert} onOpenItem={onOpenItem} items={dashboard?.items ?? contextItems} />
+          <AlertQueuePanel context={context} alerts={contextAlerts} alertSource={alertSource} onAlertSource={onAlertSource} busyAction={busyAction} actionError={alertActionError} actionMessage={alertActionMessage} onOperateAlert={onOperateAlert} onOpenItem={onOpenItem} items={dashboard?.items ?? contextItems} />
           <LiveDataFeed items={contextItems} alerts={contextAlerts} />
           <MiniPanel title="Aprendizaje" value={lessonsLoading ? "..." : contextLessons.length} detail="reglas visibles" />
         </aside>
@@ -2358,19 +2378,26 @@ function ContextOperations({ context, modules, sources, items, lessons, alerts, 
   );
 }
 
-function AlertQueuePanel({ context, alerts, items, busyAction, actionError, actionMessage, onOperateAlert, onOpenItem }: { context: ActiveContext; alerts: ControlAlert[]; items: ControlItem[]; busyAction: string; actionError: string; actionMessage: string; onOperateAlert: (alert: ControlAlert, operation: AlertOperation) => void; onOpenItem: (item: ControlItem) => void }) {
+function AlertQueuePanel({ context, alerts, items, alertSource, onAlertSource, busyAction, actionError, actionMessage, onOperateAlert, onOpenItem }: { context: ActiveContext; alerts: ControlAlert[]; items: ControlItem[]; alertSource: AlertSourceFilter; onAlertSource: (source: AlertSourceFilter) => void; busyAction: string; actionError: string; actionMessage: string; onOperateAlert: (alert: ControlAlert, operation: AlertOperation) => void; onOpenItem: (item: ControlItem) => void }) {
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const topAlerts = alerts.slice(0, 6);
   const critical = alerts.filter((alert) => alert.severity === "critical").length;
   const pushReady = alerts.filter((alert) => alert.push_ready).length;
+  const agentCount = alerts.filter((alert) => alert.source === "agent").length;
   const avgPriority = alerts.length ? Math.round(alerts.reduce((sum, alert) => sum + (alert.priority_score || 0), 0) / alerts.length) : 0;
+  const sourceOptions: Array<{ id: AlertSourceFilter; label: string }> = [
+    { id: "all", label: "Todas" },
+    { id: "agent", label: "Agente" },
+    { id: "system", label: "Sistema" },
+    { id: "intelligence", label: "Inteligencia" },
+  ];
   return (
     <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-red-400/20 dark:bg-[#0d111d] dark:shadow-[0_0_26px_rgba(248,113,113,0.08)]" aria-label="Cola de alertas operativas">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase text-red-700 dark:text-red-300/90">Zona de decisiones</p>
           <h2 className="text-lg font-semibold text-foreground dark:text-white">{alerts.length} alertas activas</h2>
-          <p className="text-sm text-muted-foreground">{context.title} · {pushReady} listas para atención · {critical} críticas · ejecución supervisada</p>
+          <p className="text-sm text-muted-foreground">{context.title} · {pushReady} listas para atención · {critical} críticas · {agentCount} de agente · ejecución supervisada</p>
         </div>
         <span className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-sm text-red-700 dark:text-red-100">
           <Bell aria-hidden className="h-4 w-4" />
@@ -2382,6 +2409,21 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
         <Metric label="Críticas" value={critical} />
         <Metric label="Prioridad media" value={alerts.length ? avgPriority : "N/D"} />
       </div>
+      <div className="mb-4 flex flex-wrap gap-2" aria-label="Filtrar alertas por origen">
+        {sourceOptions.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onAlertSource(option.id)}
+            className={cn(
+              "inline-flex min-h-[36px] items-center rounded-md border px-3 text-xs font-medium",
+              alertSource === option.id ? "border-cyan-400 bg-cyan-500/15 text-cyan-950 dark:text-cyan-50" : "bg-background text-muted-foreground hover:bg-accent/10",
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       <DecisionPulse alerts={alerts} />
       {actionMessage ? <p className="mb-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300" role="status">{actionMessage}</p> : null}
       {actionError ? <p className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{actionError}</p> : null}
@@ -2392,11 +2434,22 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
             return (
               <article className="rounded-lg border bg-background p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#07111e]" key={alert.id}>
                 <div className="flex items-start justify-between gap-3">
-                  <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(alert.severity))}>{severityLabels[alert.severity]}</span>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(alert.severity))}>{severityLabels[alert.severity]}</span>
+                    {alert.source === "agent" ? <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-700 dark:text-cyan-200">Agente monitor</span> : null}
+                    {alert.advisory ? <span className="rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">Advisory</span> : null}
+                  </div>
                   <strong className="text-xs text-muted-foreground">Prioridad {alert.priority_score}</strong>
                 </div>
                 <h3 className="mt-3 font-semibold text-foreground dark:text-white">{sanitizeBusinessCopy(alert.title, "Alerta operativa")}</h3>
                 <p className="mt-1 text-sm text-muted-foreground">{sanitizeBusinessCopy(alert.message, "OMEGA requiere revisión operativa.")}</p>
+                {alert.source === "agent" && (alert.occurrence_count || alert.hypothesis || alert.expected_outcome) ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {alert.occurrence_count ? `Ocurrencias: ${alert.occurrence_count}` : ""}
+                    {alert.hypothesis ? `${alert.occurrence_count ? " · " : ""}Hipótesis: ${sanitizeBusinessCopy(alert.hypothesis, "sin hipótesis")}` : ""}
+                    {alert.expected_outcome ? " · Resultado esperado registrado" : ""}
+                  </p>
+                ) : null}
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <Metric label="Frente" value={businessFrontLabel(alert.module)} />
                   <Metric label="Atención" value={businessStatusLabel(alert.delivery?.status || "not_configured")} />

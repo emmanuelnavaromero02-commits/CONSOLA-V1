@@ -39,6 +39,7 @@ import app.tools.airflow     # noqa: F401
 import app.tools.admin_request  # noqa: F401
 import app.tools.agents      # noqa: F401
 import app.tools.cartridges  # noqa: F401
+import app.tools.control_room  # noqa: F401
 import app.tools.minio       # noqa: F401
 import app.tools.pipeline    # noqa: F401
 import app.tools.postgres    # noqa: F401
@@ -301,6 +302,7 @@ _VAULT_DESTRUCTIVE_TOOLS = {"vault_delete_connection"}
 _AGENT_READ_TOOLS = {"agent_list", "agent_get"}
 _AGENT_WRITE_TOOLS = {"agent_create", "agent_update"}
 _AGENT_DESTRUCTIVE_TOOLS = {"agent_delete"}
+_CONTROL_ROOM_ALERT_TOOLS = {"control_room__raise_alert"}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
@@ -1117,6 +1119,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "studio.write", internal_service)
     elif tool in _AGENT_DESTRUCTIVE_TOOLS:
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
+    elif tool in _CONTROL_ROOM_ALERT_TOOLS:
+        ctx = _require_context_permission(req, "control_room.write", internal_service)
     else:
         return None
 
@@ -1178,6 +1182,16 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         vault_scope = str(args.get("cartridge_id") or args.get("scope") or "").strip()
         if not _is_unscoped_admin_context(ctx):
             _require_cartridge_scope(ctx, vault_scope)
+        args["security_context"] = ctx
+
+    if tool in _CONTROL_ROOM_ALERT_TOOLS:
+        if not _has_tenant_workspace_scope(ctx):
+            raise HTTPException(403, detail="control room alerts require tenant/workspace scope")
+        forbidden_scope_args = {"tenant_id", "workspace_id", "user_id", "security_context"}
+        supplied = sorted(key for key in forbidden_scope_args if key in args)
+        if supplied:
+            raise HTTPException(403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}")
+        _require_cartridge_scope(ctx, str(args.get("cartridge_id") or ""))
         args["security_context"] = ctx
 
     if tool.startswith("postgres_"):
