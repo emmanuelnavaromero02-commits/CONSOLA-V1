@@ -18,7 +18,7 @@ export default function UsersPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Usuarios</h1>
           <p className="text-sm text-muted-foreground">
-            Administración de cuentas con acceso a OMEGA.
+            Administración de cuentas dentro del workspace activo.
           </p>
         </div>
         <CreateUserForm />

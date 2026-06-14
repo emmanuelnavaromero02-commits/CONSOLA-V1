@@ -24,6 +24,7 @@ describe("AppSidebar", () => {
     expect(markup).toContain("Control Room");
     expect(markup).toContain("Monitor");
     expect(markup).not.toContain("Usuarios");
+    expect(markup).not.toContain("Empresas");
     expect(markup).not.toContain("Vault");
     expect(markup).not.toContain("Ajustes");
   });
@@ -52,6 +53,7 @@ describe("AppSidebar", () => {
         "cartridges.read",
       ],
       ui_capabilities: {
+        can_manage_companies: true,
         can_manage_workspace_users: true,
         can_view_knowledge: true,
         can_view_vault: true,
@@ -60,6 +62,7 @@ describe("AppSidebar", () => {
       },
     }, "/operations/users");
 
+    expect(markup).toContain("Empresas");
     expect(markup).toContain("Usuarios");
     expect(markup).toContain("Conocimiento");
     expect(markup).toContain("Vault");
@@ -97,6 +100,7 @@ describe("AppSidebar", () => {
     }, "/operations/users");
 
     expect(markup).toContain("Usuarios");
+    expect(markup).not.toContain("Empresas");
     expect(markup).toContain("Control Room");
     expect(markup).toContain("Copiloto");
     expect(markup).toContain("Tokens");

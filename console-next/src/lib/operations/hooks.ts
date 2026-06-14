@@ -3,7 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  bootstrapTenantAdmin,
   createUser,
+  createTenant,
+  createTenantWorkspace,
   deleteUser,
   deleteVaultConnection,
   deleteVaultSecret,
@@ -11,6 +14,8 @@ import {
   getOperationalMetrics,
   getOperationsHealth,
   getOperationWorkflow,
+  listTenants,
+  listTenantWorkspaces,
   listOperationWorkflows,
   listAuditEvents,
   listUsers,
@@ -27,12 +32,17 @@ import {
 import type {
   AppUser,
   AuditEvent,
+  BootstrapTenantAdminRequest,
+  BootstrapTenantAdminResponse,
   CreateUserRequest,
   OperationalMetrics,
   OperationWorkflow,
   OperationWorkflowActionResponse,
   OperationWorkflowDetailResponse,
   OperationsHealth,
+  TenantCreateRequest,
+  TenantCreateResponse,
+  TenantListResponse,
   UpdateUserRequest,
   VaultConnection,
   VaultConnectionPayload,
@@ -40,6 +50,9 @@ import type {
   VaultSecret,
   VaultSecretPayload,
   VaultSecretsResponse,
+  WorkspaceCreateRequest,
+  WorkspaceCreateResponse,
+  WorkspaceListResponse,
 } from "./types";
 
 // ── Users ──────────────────────────────────────────────────────────
@@ -79,6 +92,55 @@ export function useDeleteUser() {
 export function useSendPasswordReset() {
   return useMutation<void, Error, number>({
     mutationFn: sendPasswordReset,
+  });
+}
+
+// ── Companies / tenants ────────────────────────────────────────
+
+export function useTenants() {
+  return useQuery<TenantListResponse>({
+    queryKey: ["operations", "tenants"],
+    queryFn: listTenants,
+    staleTime: 30_000,
+  });
+}
+
+export function useTenantWorkspaces(tenantId: string | null) {
+  return useQuery<WorkspaceListResponse>({
+    queryKey: ["operations", "tenants", tenantId, "workspaces"],
+    queryFn: () => listTenantWorkspaces(tenantId as string),
+    enabled: Boolean(tenantId),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateTenant() {
+  const qc = useQueryClient();
+  return useMutation<TenantCreateResponse, Error, TenantCreateRequest>({
+    mutationFn: createTenant,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["operations", "tenants"] }),
+  });
+}
+
+export function useCreateTenantWorkspace() {
+  const qc = useQueryClient();
+  return useMutation<WorkspaceCreateResponse, Error, { tenantId: string; payload: WorkspaceCreateRequest }>({
+    mutationFn: ({ tenantId, payload }) => createTenantWorkspace(tenantId, payload),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["operations", "tenants"] });
+      qc.invalidateQueries({ queryKey: ["operations", "tenants", vars.tenantId, "workspaces"] });
+    },
+  });
+}
+
+export function useBootstrapTenantAdmin() {
+  const qc = useQueryClient();
+  return useMutation<BootstrapTenantAdminResponse, Error, { tenantId: string; payload: BootstrapTenantAdminRequest }>({
+    mutationFn: ({ tenantId, payload }) => bootstrapTenantAdmin(tenantId, payload),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["operations", "tenants"] });
+      qc.invalidateQueries({ queryKey: ["operations", "tenants", vars.tenantId, "workspaces"] });
+    },
   });
 }
 

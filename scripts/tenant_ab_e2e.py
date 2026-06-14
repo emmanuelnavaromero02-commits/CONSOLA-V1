@@ -19,7 +19,16 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from aws_ssm import DEFAULT_REGION, REPO, redact, resolve_instance_id, send_ssm_script, utc_now, utc_stamp, write_json
+from aws_ssm import (
+    DEFAULT_REGION,
+    REPO,
+    redact,
+    resolve_instance_id,
+    send_ssm_script,
+    utc_now,
+    utc_stamp,
+    write_json,
+)
 
 
 PASS = "PASS"
@@ -65,7 +74,13 @@ def _env_file(path: Path = REPO / "infra" / ".env") -> None:
 
 
 def _load_db_modules() -> None:
-    global Json, _load_env_file, psycopg2, replicon_beta_gold_scope_fingerprint, seed_replicon_beta_gold, sql
+    global \
+        Json, \
+        _load_env_file, \
+        psycopg2, \
+        replicon_beta_gold_scope_fingerprint, \
+        seed_replicon_beta_gold, \
+        sql
     if psycopg2 is not None:
         return
     import psycopg2 as _psycopg2  # noqa: PLC0415
@@ -99,11 +114,17 @@ def _admin_dsn(database: str, port_env: str, default_port: str) -> str:
 
 
 def _operational_dsn() -> str:
-    return _normalize_dsn(os.environ.get("DATABASE_URL") or _admin_dsn("modecissions", "POSTGRES_PORT", "15432"))
+    return _normalize_dsn(
+        os.environ.get("DATABASE_URL")
+        or _admin_dsn("modecissions", "POSTGRES_PORT", "15432")
+    )
 
 
 def _gold_admin_dsn() -> str:
-    return _normalize_dsn(os.environ.get("GOLD_DATABASE_URL") or _admin_dsn("modecissions_gold", "POSTGRES_GOLD_PORT", "15433"))
+    return _normalize_dsn(
+        os.environ.get("GOLD_DATABASE_URL")
+        or _admin_dsn("modecissions_gold", "POSTGRES_GOLD_PORT", "15433")
+    )
 
 
 def _role_dsn(base_dsn: str, role: str, password: str | None) -> str:
@@ -114,7 +135,15 @@ def _role_dsn(base_dsn: str, role: str, password: str | None) -> str:
     if parsed.port:
         host = f"{host}:{parsed.port}"
     userinfo = f"{urllib.parse.quote(role)}:{urllib.parse.quote(password)}"
-    return urllib.parse.urlunsplit((parsed.scheme or "postgresql", f"{userinfo}@{host}", parsed.path, parsed.query, parsed.fragment))
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme or "postgresql",
+            f"{userinfo}@{host}",
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
 
 
 def _table_columns(cur, table: str) -> set[str]:
@@ -130,7 +159,9 @@ def _table_columns(cur, table: str) -> set[str]:
     return {str(row[0]) for row in cur.fetchall()}
 
 
-def _ensure_replicon_entitlement(cur, tenant_id: str, workspace_id: str, user_id: int, suffix: str) -> None:
+def _ensure_replicon_entitlement(
+    cur, tenant_id: str, workspace_id: str, user_id: int, suffix: str
+) -> None:
     cur.execute("SELECT to_regclass('public.marketplace_products')")
     if not cur.fetchone()[0]:
         return
@@ -166,14 +197,23 @@ def _ensure_replicon_entitlement(cur, tenant_id: str, workspace_id: str, user_id
             ON CONFLICT (workspace_id, cartridge_id) DO UPDATE
               SET status='ready', product_id=EXCLUDED.product_id, current_step='tenant_ab_seeded', ready_at=NOW(), updated_at=NOW()
             """,
-            (f"tenant_ab_{suffix}_{workspace_id[:8]}", tenant_id, workspace_id, product_id, f"tenant-ab:{suffix}:{workspace_id}", user_id),
+            (
+                f"tenant_ab_{suffix}_{workspace_id[:8]}",
+                tenant_id,
+                workspace_id,
+                product_id,
+                f"tenant-ab:{suffix}:{workspace_id}",
+                user_id,
+            ),
         )
 
 
 def _seed_operational_artifacts(cur, scope: Scope) -> None:
     cur.execute("SELECT EXISTS (SELECT 1 FROM cartridges WHERE id='replicon')")
     if not cur.fetchone()[0]:
-        raise RuntimeError("cartridge replicon is missing; cannot seed Control Room item")
+        raise RuntimeError(
+            "cartridge replicon is missing; cannot seed Control Room item"
+        )
     cur.execute(
         """
         INSERT INTO intelligence_signals (
@@ -257,8 +297,23 @@ def _seed_operational_artifacts(cur, scope: Scope) -> None:
 
 
 def _create_scope(cur, suffix: str, label: str) -> Scope:
-    tenant_id = str(cur.execute("INSERT INTO tenants (name) VALUES (%s) RETURNING id", (f"tenant-ab-{suffix}-{label}",)) or cur.fetchone()[0])
-    workspace_id = str(cur.execute("INSERT INTO workspaces (tenant_id, name) VALUES (%s, %s) RETURNING id", (tenant_id, f"Tenant AB {label} {suffix}")) or cur.fetchone()[0])
+    tenant_id = str(
+        cur.execute(
+            "INSERT INTO tenants (name, slug) VALUES (%s, %s) RETURNING id",
+            (
+                f"tenant-ab-{suffix}-{label}",
+                f"tenant-ab-{suffix.lower()}-{label.lower()}",
+            ),
+        )
+        or cur.fetchone()[0]
+    )
+    workspace_id = str(
+        cur.execute(
+            "INSERT INTO workspaces (tenant_id, name) VALUES (%s, %s) RETURNING id",
+            (tenant_id, f"Tenant AB {label} {suffix}"),
+        )
+        or cur.fetchone()[0]
+    )
     cur.execute("SELECT id FROM roles WHERE name='tenant_admin' LIMIT 1")
     role_row = cur.fetchone()
     if not role_row:
@@ -309,10 +364,14 @@ def _jwt(scope: Scope) -> str:
     header = {"alg": os.environ.get("JWT_ALGORITHM", "HS256"), "typ": "JWT"}
     if header["alg"] != "HS256":
         raise RuntimeError("tenant_ab_e2e only supports JWT_ALGORITHM=HS256")
-    signing_input = _b64url(json.dumps(header, separators=(",", ":")).encode()) + "." + _b64url(
-        json.dumps(claims, separators=(",", ":")).encode()
+    signing_input = (
+        _b64url(json.dumps(header, separators=(",", ":")).encode())
+        + "."
+        + _b64url(json.dumps(claims, separators=(",", ":")).encode())
     )
-    signature = hmac.new(secret.encode("utf-8"), signing_input.encode("ascii"), hashlib.sha256).digest()
+    signature = hmac.new(
+        secret.encode("utf-8"), signing_input.encode("ascii"), hashlib.sha256
+    ).digest()
     return signing_input + "." + _b64url(signature)
 
 
@@ -365,11 +424,24 @@ def _contains(value: Any, needle: str) -> bool:
 def _run_gold_checks(a: Scope, b: Scope) -> list[Check]:
     checks: list[Check] = []
     gold_admin = _gold_admin_dsn()
-    gold_role = "omega_gold_reader" if os.environ.get("OMEGA_GOLD_READER_PASSWORD") else "omega_refinement_gold"
-    gold_password = os.environ.get("OMEGA_GOLD_READER_PASSWORD") or os.environ.get("OMEGA_REFINEMENT_GOLD_PASSWORD")
+    gold_role = (
+        "omega_gold_reader"
+        if os.environ.get("OMEGA_GOLD_READER_PASSWORD")
+        else "omega_refinement_gold"
+    )
+    gold_password = os.environ.get("OMEGA_GOLD_READER_PASSWORD") or os.environ.get(
+        "OMEGA_REFINEMENT_GOLD_PASSWORD"
+    )
     reader = _role_dsn(gold_admin, gold_role, gold_password)
     if not reader:
-        return [Check("gold", "Gold read role credentials", BLOCKED, "OMEGA_GOLD_READER_PASSWORD or OMEGA_REFINEMENT_GOLD_PASSWORD missing")]
+        return [
+            Check(
+                "gold",
+                "Gold read role credentials",
+                BLOCKED,
+                "OMEGA_GOLD_READER_PASSWORD or OMEGA_REFINEMENT_GOLD_PASSWORD missing",
+            )
+        ]
     for own, other in ((a, b), (b, a)):
         conn = psycopg2.connect(reader)
         try:
@@ -419,10 +491,23 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
     checks: list[Check] = []
     base_url = os.environ.get("CONSOLE_URL", "http://127.0.0.1:8000")
     for own, other in ((a, b), (b, a)):
-        _status, signals = _http_json(base_url, f"/api/intelligence/signals?limit=500&tenant_id={other.tenant_id}&workspace_id={other.workspace_id}", own)
+        _status, signals = _http_json(
+            base_url,
+            f"/api/intelligence/signals?limit=500&tenant_id={other.tenant_id}&workspace_id={other.workspace_id}",
+            own,
+        )
         sees_own = _contains(signals, own.signal_id)
-        sees_other = _contains(signals, other.signal_id) or _contains(signals, other.workspace_id)
-        checks.append(Check("api", f"{own.label} API sees own signal", PASS if sees_own else FAIL, f"signal_id={own.signal_id}"))
+        sees_other = _contains(signals, other.signal_id) or _contains(
+            signals, other.workspace_id
+        )
+        checks.append(
+            Check(
+                "api",
+                f"{own.label} API sees own signal",
+                PASS if sees_own else FAIL,
+                f"signal_id={own.signal_id}",
+            )
+        )
         checks.append(
             Check(
                 "api",
@@ -431,10 +516,29 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
                 f"other_signal_present={sees_other}",
             )
         )
-        status, _payload = _http_json(base_url, "/api/intelligence/signals?limit=20", own, workspace_id=other.workspace_id, expected={403})
-        checks.append(Check("api", f"{own.label} x-workspace-id {other.label} rejected", PASS if status == 403 else FAIL, f"status={status}"))
-        _status, dashboard = _http_json(base_url, f"/api/control-room/dashboard?tenant_id={other.tenant_id}&workspace_id={other.workspace_id}", own)
-        control_leak = _contains(dashboard, other.item_id) or _contains(dashboard, other.workspace_id)
+        status, _payload = _http_json(
+            base_url,
+            "/api/intelligence/signals?limit=20",
+            own,
+            workspace_id=other.workspace_id,
+            expected={403},
+        )
+        checks.append(
+            Check(
+                "api",
+                f"{own.label} x-workspace-id {other.label} rejected",
+                PASS if status == 403 else FAIL,
+                f"status={status}",
+            )
+        )
+        _status, dashboard = _http_json(
+            base_url,
+            f"/api/control-room/dashboard?tenant_id={other.tenant_id}&workspace_id={other.workspace_id}",
+            own,
+        )
+        control_leak = _contains(dashboard, other.item_id) or _contains(
+            dashboard, other.workspace_id
+        )
         checks.append(
             Check(
                 "control-room",
@@ -443,8 +547,21 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
                 f"other_item_present={control_leak}",
             )
         )
-        status, _payload = _http_json(base_url, "/api/copilot/briefing/v2", own, workspace_id=other.workspace_id, expected={403})
-        checks.append(Check("copilot", f"{own.label} Copilot workspace {other.label} rejected", PASS if status == 403 else FAIL, f"status={status}"))
+        status, _payload = _http_json(
+            base_url,
+            "/api/copilot/briefing/v2",
+            own,
+            workspace_id=other.workspace_id,
+            expected={403},
+        )
+        checks.append(
+            Check(
+                "copilot",
+                f"{own.label} Copilot workspace {other.label} rejected",
+                PASS if status == 403 else FAIL,
+                f"status={status}",
+            )
+        )
         mutation_probes = (
             (
                 "decision",
@@ -454,7 +571,10 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
             (
                 "outcome",
                 f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/outcomes",
-                {"action_taken": "tenant_ab_forbidden_probe", "outcome_summary": "must not cross scope"},
+                {
+                    "action_taken": "tenant_ab_forbidden_probe",
+                    "outcome_summary": "must not cross scope",
+                },
             ),
             (
                 "lesson",
@@ -464,7 +584,11 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
             (
                 "execute",
                 f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/execute",
-                {"template_id": "create_followup_task", "confirm_execute": True, "idempotency_key": f"tenant-ab-forbidden-{own.label}-{other.label}"},
+                {
+                    "template_id": "create_followup_task",
+                    "confirm_execute": True,
+                    "idempotency_key": f"tenant-ab-forbidden-{own.label}-{other.label}",
+                },
             ),
         )
         for probe_name, path, body in mutation_probes:
@@ -544,7 +668,13 @@ def _run_local(evidence_dir: Path, *, suffix: str | None = None) -> int:
     checks.extend(_run_api_checks(a, b))
     a_fp = replicon_beta_gold_scope_fingerprint(a.tenant_id, a.workspace_id)
     b_fp = replicon_beta_gold_scope_fingerprint(b.tenant_id, b.workspace_id)
-    status = FAIL if any(check.status == FAIL for check in checks) else BLOCKED if any(check.status == BLOCKED for check in checks) else PASS
+    status = (
+        FAIL
+        if any(check.status == FAIL for check in checks)
+        else BLOCKED
+        if any(check.status == BLOCKED for check in checks)
+        else PASS
+    )
     summary = {
         "status": status,
         "generated_at_utc": utc_now().isoformat(),
@@ -642,7 +772,13 @@ def _run_aws(args: argparse.Namespace) -> int:
             checks.append(Check("remote", name, status, _short(evidence)))
     if payload:
         checks.extend(Check(**item) for item in payload.get("checks", []))
-    status = FAIL if any(check.status == FAIL for check in checks) else BLOCKED if any(check.status == BLOCKED for check in checks) else PASS
+    status = (
+        FAIL
+        if any(check.status == FAIL for check in checks)
+        else BLOCKED
+        if any(check.status == BLOCKED for check in checks)
+        else PASS
+    )
     summary = {
         "status": status,
         "generated_at_utc": utc_now().isoformat(),
@@ -654,8 +790,12 @@ def _run_aws(args: argparse.Namespace) -> int:
     }
     evidence_dir.mkdir(parents=True, exist_ok=True)
     write_json(evidence_dir / "summary.json", summary)
-    (evidence_dir / "remote_stdout_redacted.txt").write_text(redact(remote.stdout), encoding="utf-8")
-    (evidence_dir / "remote_stderr_redacted.txt").write_text(redact(remote.stderr), encoding="utf-8")
+    (evidence_dir / "remote_stdout_redacted.txt").write_text(
+        redact(remote.stdout), encoding="utf-8"
+    )
+    (evidence_dir / "remote_stderr_redacted.txt").write_text(
+        redact(remote.stderr), encoding="utf-8"
+    )
     lines = [
         "# AWS Tenant A/B Isolation Evidence",
         "",
@@ -671,22 +811,44 @@ def _run_aws(args: argparse.Namespace) -> int:
         evidence = check.evidence.replace("|", "\\|")
         lines.append(f"| {check.layer} | {check.name} | {check.status} | {evidence} |")
     (evidence_dir / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(json.dumps({"status": status, "evidence_dir": str(evidence_dir), "ssm_command_id": remote.command_id}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status": status,
+                "evidence_dir": str(evidence_dir),
+                "ssm_command_id": remote.command_id,
+            },
+            indent=2,
+        )
+    )
     return 0 if status == PASS else 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run tenant A/B isolation checks locally or on AWS.")
+    parser = argparse.ArgumentParser(
+        description="Run tenant A/B isolation checks locally or on AWS."
+    )
     parser.add_argument("--target", choices={"local", "aws"}, default="local")
     parser.add_argument("--region", default=DEFAULT_REGION)
-    parser.add_argument("--instance-id", default=os.environ.get("AWS_APP_INSTANCE_ID") or "")
+    parser.add_argument(
+        "--instance-id", default=os.environ.get("AWS_APP_INSTANCE_ID") or ""
+    )
     parser.add_argument("--evidence-dir", type=Path, default=None)
-    parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("OMEGA_TENANT_AB_TIMEOUT_SECONDS", "1200")))
-    parser.add_argument("--suffix", default=os.environ.get("OMEGA_TENANT_AB_SUFFIX") or "")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=int(os.environ.get("OMEGA_TENANT_AB_TIMEOUT_SECONDS", "1200")),
+    )
+    parser.add_argument(
+        "--suffix", default=os.environ.get("OMEGA_TENANT_AB_SUFFIX") or ""
+    )
     args = parser.parse_args(argv)
     if args.target == "aws":
         return _run_aws(args)
-    return _run_local(args.evidence_dir or DEFAULT_LOCAL_EVIDENCE_ROOT / utc_stamp(), suffix=args.suffix or None)
+    return _run_local(
+        args.evidence_dir or DEFAULT_LOCAL_EVIDENCE_ROOT / utc_stamp(),
+        suffix=args.suffix or None,
+    )
 
 
 if __name__ == "__main__":

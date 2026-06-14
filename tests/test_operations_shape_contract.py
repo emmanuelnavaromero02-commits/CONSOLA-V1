@@ -16,6 +16,7 @@ If a backend refactor renames a route or flips PATCH → PUT (or
 vice versa), CI fires loud before the operator clicks Save and
 gets a 405.
 """
+
 from __future__ import annotations
 
 import re
@@ -24,11 +25,12 @@ from pathlib import Path
 from tests.console_route_source import console_route_source
 
 
-REPO     = Path(__file__).resolve().parents[1]
-MAIN_PY  = REPO / "console/app/main.py"
-SEC_PY   = REPO / "console/app/routers/security.py"
+REPO = Path(__file__).resolve().parents[1]
+MAIN_PY = REPO / "console/app/main.py"
+SEC_PY = REPO / "console/app/routers/security.py"
 TS_TYPES = REPO / "console-next/src/lib/operations/types.ts"
 TS_CLIENT = REPO / "console-next/src/lib/operations/client.ts"
+ADMIN_TENANTS_PY = REPO / "console/app/routers/admin_tenants.py"
 
 
 def _read(p: Path) -> str:
@@ -45,11 +47,11 @@ def test_admin_users_routes_use_real_verbs():
     src = console_route_source()
     # Each tuple is (verb, route literal, permission needed)
     expectations = [
-        ("get",    '"/api/admin/users"',                       "iam.users.read"),
-        ("post",   '"/api/admin/users"',                       "iam.users.write"),
-        ("patch",  '"/api/admin/users/{user_id}"',             "iam.users.write"),
-        ("delete", '"/api/admin/users/{user_id}"',             "iam.users.write"),
-        ("post",   '"/api/admin/users/{user_id}/send-reset"',  "iam.users.write"),
+        ("get", '"/api/admin/users"', "iam.users.read"),
+        ("post", '"/api/admin/users"', "iam.users.write"),
+        ("patch", '"/api/admin/users/{user_id}"', "iam.users.write"),
+        ("delete", '"/api/admin/users/{user_id}"', "iam.users.write"),
+        ("post", '"/api/admin/users/{user_id}/send-reset"', "iam.users.write"),
     ]
     for verb, route_literal, permission in expectations:
         pattern = re.compile(
@@ -70,7 +72,9 @@ def test_admin_users_routes_use_real_verbs():
             rf"@app\.{verb}\(\s*{re.escape(route_literal)}[\s\S]*?\):\s*\n",
             src,
         )
-        assert block, f"Decorator + signature block for {verb} {route_literal} not found"
+        assert (
+            block
+        ), f"Decorator + signature block for {verb} {route_literal} not found"
         assert permission in block.group(0), (
             f"@app.{verb}({route_literal}) must enforce "
             f"require_permission({permission!r})"
@@ -83,9 +87,9 @@ def test_security_audit_route_exists():
     src = _read(SEC_PY)
     assert 'prefix="/security"' in src, "security router must use prefix=/security"
     assert '@router.get("/audit")' in src
-    assert 'require_permission("security.audit.read")' in src, (
-        "GET /security/audit must require security.audit.read"
-    )
+    assert (
+        'require_permission("security.audit.read")' in src
+    ), "GET /security/audit must require security.audit.read"
 
 
 def test_vault_connections_route_exists():
@@ -93,6 +97,20 @@ def test_vault_connections_route_exists():
     src = console_route_source()
     assert '"/api/vault/connections/{cartridge}"' in src
     assert 'require_permission("vault.connections.read")' in src
+
+
+def test_company_onboarding_routes_exist():
+    src = _read(ADMIN_TENANTS_PY)
+    for route in (
+        '@router.get("")',
+        '@router.post("",',
+        '@router.get("/{tenant_id}/workspaces")',
+        '@router.post("/{tenant_id}/workspaces"',
+        '@router.post("/{tenant_id}/bootstrap-admin"',
+    ):
+        assert route in src
+    assert 'require_global_any_role("owner", "super_admin", ROLE_ADMIN)' in src
+    assert "temporary_password = _temporary_password()" in src
 
 
 # ── Frontend types agree with backend ────────────────────────

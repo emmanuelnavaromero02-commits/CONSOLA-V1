@@ -2,9 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
 import {
+  bootstrapTenantAdmin,
   cancelOperationWorkflow,
+  createTenant,
+  createTenantWorkspace,
   deleteVaultConnection,
   deleteVaultSecret,
+  listTenantWorkspaces,
+  listTenants,
   listVaultConnections,
   listVaultSecrets,
   triggerOperationWorkflow,
@@ -30,6 +35,7 @@ const apiMock = vi.mocked(api);
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe("operations vault client", () => {
@@ -75,6 +81,60 @@ describe("operations vault client", () => {
     });
     expect(apiMock.delete).toHaveBeenNthCalledWith(1, "/api/vault/connections/sap%20hcm/primary%20conn");
     expect(apiMock.delete).toHaveBeenNthCalledWith(2, "/api/vault/secrets/platform%20secrets/anthropic%20key");
+  });
+});
+
+describe("operations companies client", () => {
+  it("uses the platform tenant onboarding endpoints", async () => {
+    apiMock.get
+      .mockResolvedValueOnce({ data: { tenants: [] }, status: 200, headers: new Headers(), requestId: "r" })
+      .mockResolvedValueOnce({ data: { workspaces: [] }, status: 200, headers: new Headers(), requestId: "r" });
+    apiMock.post
+      .mockResolvedValueOnce({
+        data: { tenant: { id: "tenant 1" }, created: true },
+        status: 200,
+        headers: new Headers(),
+        requestId: "r",
+      })
+      .mockResolvedValueOnce({
+        data: { workspace: { id: "workspace 1" }, created: true },
+        status: 200,
+        headers: new Headers(),
+        requestId: "r",
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user: { id: 7, email: "admin@example.com" },
+          temporary_password: "secret",
+          password_delivery: "one_time_response",
+        },
+        status: 200,
+        headers: new Headers(),
+        requestId: "r",
+      });
+
+    await listTenants();
+    await createTenant({ name: "Cliente Demo", slug: "cliente-demo" });
+    await listTenantWorkspaces("tenant 1");
+    await createTenantWorkspace("tenant 1", { name: "Principal" });
+    await bootstrapTenantAdmin("tenant 1", {
+      workspace_id: "workspace 1",
+      email: "admin@example.com",
+    });
+
+    expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/admin/tenants");
+    expect(apiMock.post).toHaveBeenNthCalledWith(1, "/api/admin/tenants", {
+      name: "Cliente Demo",
+      slug: "cliente-demo",
+    });
+    expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/admin/tenants/tenant%201/workspaces");
+    expect(apiMock.post).toHaveBeenNthCalledWith(2, "/api/admin/tenants/tenant%201/workspaces", {
+      name: "Principal",
+    });
+    expect(apiMock.post).toHaveBeenNthCalledWith(3, "/api/admin/tenants/tenant%201/bootstrap-admin", {
+      workspace_id: "workspace 1",
+      email: "admin@example.com",
+    });
   });
 });
 

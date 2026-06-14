@@ -10,6 +10,7 @@ workspaces, and queries as the real `omega_workspace` service role with
 `app.tenant_id`/`app.workspace_id` set per workspace. It must use production
 policies from `infra/init/99e_operational_native_rls.sql`, not test-created RLS.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -118,7 +119,9 @@ async def _wait_for_schema(dsn: str, container_id: str) -> None:
         state = _docker("inspect", "-f", "{{.State.Status}}", container_id, check=False)
         if state.stdout.strip() in {"exited", "dead"}:
             logs = _docker("logs", "--tail=200", container_id, check=False)
-            raise RuntimeError(f"postgres init container exited early:\n{logs.stdout}\n{logs.stderr}")
+            raise RuntimeError(
+                f"postgres init container exited early:\n{logs.stdout}\n{logs.stderr}"
+            )
         try:
             conn = await asyncpg.connect(dsn)
             try:
@@ -188,11 +191,13 @@ def postgres_with_real_init_schema() -> str:
 async def _seed_rls_probe(conn: asyncpg.Connection) -> dict[str, str]:
     suffix = uuid.uuid4().hex
     tenant_a = await conn.fetchval(
-        "INSERT INTO tenants (name) VALUES ($1) RETURNING id",
+        "INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id",
+        f"rls-tenant-a-{suffix}",
         f"rls-tenant-a-{suffix}",
     )
     tenant_b = await conn.fetchval(
-        "INSERT INTO tenants (name) VALUES ($1) RETURNING id",
+        "INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id",
+        f"rls-tenant-b-{suffix}",
         f"rls-tenant-b-{suffix}",
     )
     workspace_a = await conn.fetchval(
@@ -305,7 +310,9 @@ async def _cross_tenant_probe(dsn: str) -> dict[str, list[str] | dict[str, str]]
     return {"probe": probe, "visible_to_a": visible_to_a, "visible_to_b": visible_to_b}
 
 
-def test_postgres_rls_blocks_workspace_b_rows_from_workspace_a(postgres_with_real_init_schema):
+def test_postgres_rls_blocks_workspace_b_rows_from_workspace_a(
+    postgres_with_real_init_schema,
+):
     result = asyncio.run(_cross_tenant_probe(postgres_with_real_init_schema))
     probe = result["probe"]
 
@@ -317,9 +324,7 @@ def test_postgres_rls_blocks_workspace_b_rows_from_workspace_a(postgres_with_rea
 def test_workspace_admin_cannot_use_admin_only_marketplace_calls():
     async def _runner() -> None:
         with pytest.raises(marketplace_service.MarketplaceError):
-            await marketplace_service.list_admin_installations(
-                USER_B_WORKSPACE_ADMIN
-            )
+            await marketplace_service.list_admin_installations(USER_B_WORKSPACE_ADMIN)
 
     asyncio.run(_runner())
 
@@ -335,15 +340,9 @@ def test_workspace_admin_cannot_activate_arbitrary_cartridges():
 
 
 def test_workspace_admin_cannot_administer_marketplace_globally():
-    assert not permissions.has_permission(
-        USER_B_WORKSPACE_ADMIN, "marketplace.admin"
-    )
+    assert not permissions.has_permission(USER_B_WORKSPACE_ADMIN, "marketplace.admin")
 
 
 def test_workspace_admin_does_not_get_global_role_writes():
-    assert not permissions.has_permission(
-        USER_B_WORKSPACE_ADMIN, "iam.roles.write"
-    )
-    assert not permissions.has_permission(
-        USER_B_WORKSPACE_ADMIN, "iam.policies.write"
-    )
+    assert not permissions.has_permission(USER_B_WORKSPACE_ADMIN, "iam.roles.write")
+    assert not permissions.has_permission(USER_B_WORKSPACE_ADMIN, "iam.policies.write")
