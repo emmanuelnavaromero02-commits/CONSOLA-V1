@@ -547,9 +547,6 @@ async def _filter_installations_by_scoped_connections(
         status = str(row.get("installation_status") or "ready").strip().lower()
         if status not in ACTIVE_INSTALLATION_STATUSES:
             continue
-        # Keep every installed cartridge visible in the scoped cockpit. Active
-        # Vault connections enrich the row, but they must not hide other
-        # entitled config-only cartridges in the same workspace.
         candidate = {
             **row,
             "installation_status": status,
@@ -574,7 +571,8 @@ async def _filter_installations_by_scoped_connections(
                 "auth_method": first.get("auth_method"),
             }
         )
-    return candidates
+    connected = [row for row in candidates if row.get("connection_count")]
+    return connected or candidates
 
 
 @_bind_to_core

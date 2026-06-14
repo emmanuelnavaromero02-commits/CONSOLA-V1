@@ -278,6 +278,19 @@ _CARTRIDGE_EXECUTE_TOOLS = {
     "cartridge_extract_all",
     "cartridge_run_kb",
 }
+_CARTRIDGE_CONTEXT_TOOLS = {
+    "cartridge_get_semantic",
+    "cartridge_search_term",
+    "cartridge_get_manifest",
+    "cartridge_get_hints",
+    "cartridge_list_entities",
+    "cartridge_get_schema",
+    "cartridge_list_jobs",
+    "cartridge_list_kbs",
+    "cartridge_preview",
+    "cartridge_query_kb",
+    *_CARTRIDGE_EXECUTE_TOOLS,
+}
 _AIRFLOW_READ_TOOLS = {"airflow_list_dags", "airflow_get_run_status", "airflow_get_task_logs", "airflow_list_task_instances", "airflow_list_dag_runs"}
 _AIRFLOW_RUN_TOOLS = {"airflow_trigger_dag"}
 _AIRFLOW_WRITE_TOOLS = {"airflow_create_dag", "airflow_delete_dag", "airflow_set_variable"}
@@ -1242,6 +1255,7 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             _inject_cartridge_execution_scope(ctx, args)
         elif tool == "cartridge_query_kb":
             _validate_cartridge_query_sql(ctx, cartridge_id, str(args.get("sql") or ""))
+            _inject_cartridge_execution_scope(ctx, args)
 
     if tool in _RUN_ID_SCOPED_TOOLS:
         _require_pipeline_run_scope(ctx, str(args.get("run_id") or ""))
@@ -1252,6 +1266,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         if tool == "cartridge_list_entities" and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
                 raise HTTPException(403, detail="cartridge entities require tenant/workspace scope")
+            args["security_context"] = ctx
+        if tool in _CARTRIDGE_CONTEXT_TOOLS:
             args["security_context"] = ctx
         if tool in _CARTRIDGE_EXECUTE_TOOLS:
             _inject_cartridge_execution_scope(ctx, args)

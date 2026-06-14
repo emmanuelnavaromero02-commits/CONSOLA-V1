@@ -31,6 +31,31 @@ connector:
     path_template: "raw/replicon/{entity}/tenant_id={tenant_id}/workspace_id={workspace_id}/load_date={load_date}/batch_id={run_id}/"
     bucket_env: MINIO_BUCKET
 
+  # ── Platform runtime contract ──────────────────────────────────────────────
+  runtime:
+    mode: config_only
+    scope_source: signed_security_context
+    forbidden_client_scope_args:
+      - tenant_id
+      - workspace_id
+      - security_context
+    storage_scope:
+      strategy: tenant_workspace_prefix
+      required_template_markers:
+        - "tenant_id={tenant_id}"
+        - "workspace_id={workspace_id}"
+    platform_services:
+      - schema
+      - semantic
+      - watermarks
+      - jobs
+      - preview
+      - lineage
+      - catalog
+      - extraction
+      - rag
+      - control_room
+
   # ── Extraction modes ────────────────────────────────────────────────────────
   modes:
     - id: full

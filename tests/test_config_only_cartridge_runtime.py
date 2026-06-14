@@ -37,6 +37,29 @@ def _path_template(source: str) -> str:
     return match.group(1)
 
 
+def test_replicon_and_hubspot_declare_config_only_platform_runtime_contract():
+    for cartridge in ("replicon", "hubspot"):
+        source = _read(f"cartridges/{cartridge}/app/config/connector.yaml")
+        assert "runtime:" in source
+        assert "mode: config_only" in source
+        assert "scope_source: signed_security_context" in source
+        for forbidden in ("tenant_id", "workspace_id", "security_context"):
+            assert forbidden in source
+        for service in (
+            "schema",
+            "semantic",
+            "watermarks",
+            "jobs",
+            "preview",
+            "lineage",
+            "catalog",
+            "extraction",
+            "rag",
+            "control_room",
+        ):
+            assert f"- {service}" in source
+
+
 def test_cartridge_connector_configs_declare_scoped_storage_prefixes():
     for cartridge in CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/app/config/connector.yaml")
@@ -74,15 +97,13 @@ def test_semantic_and_control_room_use_config_only_entitlements_not_vault_only_c
     control_room_page = _read("console-next/src/app/(shell)/control-room/page.tsx")
 
     assert "def _resolve_scoped_config_cartridge(" in main
-    assert "cartridge = _resolve_scoped_config_cartridge(" in main
     semantic_section = main.split('@app.get("/api/semantic"', 1)[1].split("# ── Data Catalog API", 1)[0]
-    assert "_resolve_scoped_operation_cartridge" not in semantic_section
+    assert "cartridge, _active = await _resolve_scoped_operation_cartridge(" in semantic_section
     assert "must not require an active Vault" in main
 
     installation_filter = control_room.split("async def _filter_installations_by_scoped_connections", 1)[1].split("@_bind_to_core", 1)[0]
-    assert "return candidates" in installation_filter
-    assert "if filtered:" not in installation_filter
-    assert "must not hide other" in installation_filter
+    assert "connected = [row for row in candidates if row.get(\"connection_count\")]" in installation_filter
+    assert "return connected or candidates" in installation_filter
 
     assert "successFactorsAvailable" in control_room_page
     assert "clearSuccessFactorsState" in control_room_page
@@ -107,6 +128,8 @@ def test_mcp_generic_cartridge_tools_do_not_expose_client_owned_scope_args():
     assert "def _reject_client_owned_scope_args(" in gateway
     assert "_reject_client_owned_scope_args(args)" in gateway
     assert '"backend-owned arg is not allowed' in gateway
+    assert "_CARTRIDGE_CONTEXT_TOOLS" in gateway
+    assert 'args["security_context"] = ctx' in gateway
     for public_arg in (
         '"tenant_id": {"type": "string"}',
         '"workspace_id": {"type": "string"}',
@@ -115,14 +138,27 @@ def test_mcp_generic_cartridge_tools_do_not_expose_client_owned_scope_args():
         assert public_arg not in tools
 
     for function in (
+        "cartridge_get_semantic",
+        "cartridge_search_term",
+        "cartridge_get_manifest",
+        "cartridge_get_hints",
         "cartridge_sync_semantic_to_rag",
         "cartridge_list_entities",
+        "cartridge_get_schema",
         "cartridge_preview",
+        "cartridge_list_jobs",
+        "cartridge_list_kbs",
         "cartridge_extract",
         "cartridge_extract_all",
         "cartridge_run_kb",
+        "cartridge_query_kb",
     ):
         args = _function_args(tools, function)
         assert "security_context" in args
         assert "tenant_id" not in args
         assert "workspace_id" not in args
+
+    assert "_scoped_rag_source_name(" in tools
+    assert "connections = []" in tools
+    assert "if not workspace_scoped:" in tools
+    assert "resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)" in tools

@@ -7479,7 +7479,7 @@ async def api_semantic(
 ):
     from app.services import cartridge_service as _cs
 
-    cartridge = _resolve_scoped_config_cartridge(
+    cartridge, _active = await _resolve_scoped_operation_cartridge(
         user,
         cartridge,
         fallback="sap_successfactors",

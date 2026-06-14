@@ -157,6 +157,11 @@ def _scope_values(
     return _safe_scope_segment(tenant_id), _safe_scope_segment(workspace_id)
 
 
+def _has_workspace_scope(security_context: dict[str, Any] | None = None) -> bool:
+    tenant_id, workspace_id = _scope_values(security_context)
+    return bool(tenant_id and workspace_id)
+
+
 def _scope_suffix(
     security_context: dict[str, Any] | None = None,
     tenant_id: str | None = None,
@@ -259,12 +264,16 @@ def _scoped_rag_source_name(
         "required": ["cartridge_id"],
     },
 )
-def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
+def cartridge_get_semantic(
+    cartridge_id: str,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Returns business vocabulary from BOTH sources:
       - semantic_terms     (manually curated business glossary)
       - data_catalog       (per-column descriptions on Gold/Silver datasets owned by the cartridge)
     """
+    _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT term, definition, maps_to FROM semantic_terms "
@@ -412,7 +421,11 @@ async def cartridge_sync_semantic_to_rag(
         "required": ["cartridge_id", "query"],
     },
 )
-async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]:
+async def cartridge_search_term(
+    cartridge_id: str,
+    query: str,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Hybrid lookup:
       1. SQL ILIKE over semantic_terms + data_catalog (exact-ish matches).
@@ -452,11 +465,14 @@ async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]
 
     # Vector fallback against the auto-synced RAG source for this cartridge
     rag_results: list[dict] = []
+    target_name = _scoped_rag_source_name(
+        f"_semantic_{cartridge_id}",
+        security_context,
+    )
     try:
         from app.rag.store import list_sources
         from app.tools.rag import _do_search
 
-        target_name = f"_semantic_{cartridge_id}"
         for s in await list_sources():
             if s.get("name") == target_name:
                 rag_results = await _do_search(
@@ -472,7 +488,7 @@ async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]
         "matches_in_data_catalog": columns,
         "matches_in_rag": rag_results,
         "rag_synced": any(
-            s.get("name") == f"_semantic_{cartridge_id}"
+            s.get("name") == target_name
             for s in (await _safe_list_rag_sources())
         ),
     }
@@ -503,7 +519,11 @@ async def _safe_list_rag_sources() -> list[dict]:
         "required": ["cartridge_id"],
     },
 )
-def cartridge_get_manifest(cartridge_id: str) -> dict[str, Any]:
+def cartridge_get_manifest(
+    cartridge_id: str,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    workspace_scoped = _has_workspace_scope(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT id, name, version, description, pattern, category, bronze_path "
@@ -522,20 +542,22 @@ def cartridge_get_manifest(cartridge_id: str) -> dict[str, Any]:
             "category": row[5],
             "bronze_path": row[6],
         }
-        cur.execute(
-            "SELECT conn_id, description, auth_type, poll_strategy "
-            "FROM cartridge_connections WHERE cartridge_id=%s ORDER BY conn_id",
-            (cartridge_id,),
-        )
-        connections = [
-            {
-                "conn_id": r[0],
-                "description": r[1],
-                "auth_type": r[2],
-                "poll_strategy": r[3],
-            }
-            for r in cur.fetchall()
-        ]
+        connections = []
+        if not workspace_scoped:
+            cur.execute(
+                "SELECT conn_id, description, auth_type, poll_strategy "
+                "FROM cartridge_connections WHERE cartridge_id=%s ORDER BY conn_id",
+                (cartridge_id,),
+            )
+            connections = [
+                {
+                    "conn_id": r[0],
+                    "description": r[1],
+                    "auth_type": r[2],
+                    "poll_strategy": r[3],
+                }
+                for r in cur.fetchall()
+            ]
         cur.execute(
             "SELECT dag_id, file, description, trigger FROM cartridge_dags "
             "WHERE cartridge_id=%s ORDER BY dag_id",
@@ -557,7 +579,11 @@ def cartridge_get_manifest(cartridge_id: str) -> dict[str, Any]:
         "required": ["cartridge_id"],
     },
 )
-def cartridge_get_hints(cartridge_id: str) -> dict[str, Any]:
+def cartridge_get_hints(
+    cartridge_id: str,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT COALESCE(assistant_hints, '') FROM cartridges WHERE id=%s",
@@ -691,7 +717,12 @@ def cartridge_list_entities(
         "required": ["cartridge_id", "entity"],
     },
 )
-def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
+def cartridge_get_schema(
+    cartridge_id: str,
+    entity: str,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             """
@@ -1094,9 +1125,16 @@ def cartridge_get_job_status(run_id: str) -> dict[str, Any]:
         "required": ["cartridge_id"],
     },
 )
-def cartridge_list_jobs(cartridge_id: str, limit: int = 10) -> list[dict[str, Any]]:
+def cartridge_list_jobs(
+    cartridge_id: str,
+    limit: int = 10,
+    security_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     limit = min(limit, 50)
+    tenant_id, workspace_id = _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
+        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id or "",))
+        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",))
         cur.execute(
             """
             SELECT run_id, dag_id, entity, mode, status,
@@ -1137,7 +1175,11 @@ def cartridge_list_jobs(cartridge_id: str, limit: int = 10) -> list[dict[str, An
         "required": ["cartridge_id"],
     },
 )
-def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
+def cartridge_list_kbs(
+    cartridge_id: str,
+    security_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT kb_id, name, description, pg_table, output_path "
@@ -1346,11 +1388,16 @@ def cartridge_run_kb(
         "required": ["cartridge_id", "sql"],
     },
 )
-def cartridge_query_kb(cartridge_id: str, sql: str, limit: int = 100) -> dict[str, Any]:
+def cartridge_query_kb(
+    cartridge_id: str,
+    sql: str,
+    limit: int = 100,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     # Sprint v1.35 (audit B3 P0): force ``limit`` to a bounded int so a
     # string payload can't ride the LIMIT clause into the f-string.
     limit = validate_bounded_int(limit, "limit", lo=1, hi=5000)
-    resolved = sql.replace("{bucket}", settings.minio_bucket)
+    resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
     try:
