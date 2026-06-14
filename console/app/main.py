@@ -3346,6 +3346,27 @@ def _user_allowed_cartridges(user: dict | None) -> set[str] | None:
     return allowed
 
 
+def _context_visible_cartridges(user: dict | None) -> set[str] | None:
+    ctx = build_security_context(user)
+    if _is_security_admin_context(ctx):
+        return None
+    allowed = {
+        str(c).strip()
+        for c in (ctx.get("allowed_cartridges") or [])
+        if str(c).strip()
+    }
+    if "*" in allowed:
+        return None
+    if allowed:
+        return allowed
+    if _is_workspace_scoped_user(user):
+        return set()
+    role = str(ctx.get("role") or (user or {}).get("role") or "").strip().lower()
+    if role in {"owner", "super_admin", ROLE_ADMIN}:
+        return None
+    return set()
+
+
 def _require_workspace_scope_for_technical_view(user: dict | None) -> None:
     if _user_allowed_cartridges(user) is None:
         return
@@ -4644,6 +4665,43 @@ async def _resolve_scoped_operation_cartridge(
     if resolved:
         _require_cartridge_visible(user, resolved)
     return resolved, active
+
+
+def _resolve_scoped_config_cartridge(
+    user: dict | None,
+    cartridge: str | None,
+    *,
+    fallback: str = "sap_successfactors",
+    candidates: set[str] | None = None,
+) -> str:
+    """Resolve read-only cartridge configuration from workspace entitlements.
+
+    Config-only surfaces must not require an active Vault connection; a single
+    connected cartridge cannot hide other installed cartridges in the workspace.
+    """
+    requested = str(cartridge or "").strip()
+    candidate_set = candidates or _OPERATIONAL_CARTRIDGES
+    visible = _context_visible_cartridges(user)
+    if visible is not None:
+        if not _is_workspace_scoped_user(user):
+            raise HTTPException(403, "tenant/workspace scope required")
+        visible_candidates = {c for c in visible if c in candidate_set}
+        if requested:
+            if requested in visible_candidates:
+                return requested
+            raise HTTPException(
+                403, f"cartridge '{requested}' is not installed for this workspace"
+            )
+        if fallback in visible_candidates:
+            return fallback
+        if visible_candidates:
+            return sorted(visible_candidates)[0]
+        raise HTTPException(403, "no cartridge installed for this workspace")
+
+    resolved = requested or fallback
+    if resolved:
+        _require_cartridge_visible(user, resolved)
+    return resolved
 
 
 async def _scope_catalog_cartridge_arg(user: dict | None, cartridge: str | None) -> str:
@@ -7421,7 +7479,7 @@ async def api_semantic(
 ):
     from app.services import cartridge_service as _cs
 
-    cartridge, _active_cartridges = await _resolve_scoped_operation_cartridge(
+    cartridge = _resolve_scoped_config_cartridge(
         user,
         cartridge,
         fallback="sap_successfactors",

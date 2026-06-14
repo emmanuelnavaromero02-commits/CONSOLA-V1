@@ -68,6 +68,27 @@ def test_workspace_context_is_backend_driven_and_sent_as_header():
     assert "WorkspaceSwitcher" in sidebar
 
 
+def test_semantic_and_control_room_use_config_only_entitlements_not_vault_only_connections():
+    main = _read("console/app/main.py")
+    control_room = _read("console/app/services/control_room/api.py")
+    control_room_page = _read("console-next/src/app/(shell)/control-room/page.tsx")
+
+    assert "def _resolve_scoped_config_cartridge(" in main
+    assert "cartridge = _resolve_scoped_config_cartridge(" in main
+    semantic_section = main.split('@app.get("/api/semantic"', 1)[1].split("# ── Data Catalog API", 1)[0]
+    assert "_resolve_scoped_operation_cartridge" not in semantic_section
+    assert "must not require an active Vault" in main
+
+    installation_filter = control_room.split("async def _filter_installations_by_scoped_connections", 1)[1].split("@_bind_to_core", 1)[0]
+    assert "return candidates" in installation_filter
+    assert "if filtered:" not in installation_filter
+    assert "must not hide other" in installation_filter
+
+    assert "successFactorsAvailable" in control_room_page
+    assert "clearSuccessFactorsState" in control_room_page
+    assert "item.connector_id === \"sap_successfactors\"" in control_room_page
+
+
 def test_users_and_vault_are_workspace_scoped_in_ui():
     users_table = _read("console-next/src/components/operations/UsersTable.tsx")
     create_user = _read("console-next/src/components/operations/CreateUserForm.tsx")

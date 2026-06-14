@@ -537,7 +537,6 @@ async def _filter_installations_by_scoped_connections(
     installations: list[dict[str, Any]],
     user: dict | None,
 ) -> list[dict[str, Any]]:
-    filtered: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row in installations:
@@ -548,27 +547,26 @@ async def _filter_installations_by_scoped_connections(
         status = str(row.get("installation_status") or "ready").strip().lower()
         if status not in ACTIVE_INSTALLATION_STATUSES:
             continue
-        # Keep an unscoped candidate (no connection metadata) so the cockpit
-        # can fall back to the installed catalog when nothing is connected yet.
-        candidates.append(
-            {
-                **row,
-                "installation_status": status,
-                "connections": [],
-                "connection_count": 0,
-                "active_connection_ids": [],
-                "connection_id": None,
-                "auth_method": None,
-            }
-        )
+        # Keep every installed cartridge visible in the scoped cockpit. Active
+        # Vault connections enrich the row, but they must not hide other
+        # entitled config-only cartridges in the same workspace.
+        candidate = {
+            **row,
+            "installation_status": status,
+            "connections": [],
+            "connection_count": 0,
+            "active_connection_ids": [],
+            "connection_id": None,
+            "auth_method": None,
+        }
         connections = await _vault_connections_for_cartridge(cartridge_id, user)
         if not connections:
+            candidates.append(candidate)
             continue
         first = connections[0]
-        filtered.append(
+        candidates.append(
             {
-                **row,
-                "installation_status": status,
+                **candidate,
                 "connections": connections,
                 "connection_count": len(connections),
                 "active_connection_ids": [conn["conn_id"] for conn in connections],
@@ -576,12 +574,6 @@ async def _filter_installations_by_scoped_connections(
                 "auth_method": first.get("auth_method"),
             }
         )
-    if filtered:
-        return filtered
-    # Fallback: no installed cartridge has an active scoped Vault connection
-    # (fresh install / local / E2E / demo). Show the installed catalog instead
-    # of an empty cockpit. As soon as a real connection exists (e.g. FEMSA's
-    # femsa_sf) the loop above scopes the view down to it automatically.
     return candidates
 
 
