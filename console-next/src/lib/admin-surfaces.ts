@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { WorkspaceAccessItem } from "@/lib/workspace-context";
 
 export interface SecuritySession {
   session_id?: string;
@@ -208,6 +209,7 @@ export interface MeAccessResponse {
     workspace_id?: string | null;
     workspace_role?: string | null;
   };
+  workspaces?: WorkspaceAccessItem[];
   permissions?: string[];
   cartridges?: {
     allowed?: Array<{ cartridge_id?: string; product_name?: string; status?: string }>;

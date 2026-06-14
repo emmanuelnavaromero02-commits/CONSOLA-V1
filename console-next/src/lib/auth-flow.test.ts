@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiFetch } from "@/lib/api";
-import { readCookie } from "@/lib/cookies";
+import { deleteCookie, readCookie } from "@/lib/cookies";
 import { loginUser } from "./auth-flow";
 
 vi.mock("@/lib/api", () => ({
@@ -9,14 +9,17 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/lib/cookies", () => ({
+  deleteCookie: vi.fn(),
   readCookie: vi.fn(),
 }));
 
 const apiFetchMock = vi.mocked(apiFetch);
+const deleteCookieMock = vi.mocked(deleteCookie);
 const readCookieMock = vi.mocked(readCookie);
 
 beforeEach(() => {
   apiFetchMock.mockReset();
+  deleteCookieMock.mockReset();
   readCookieMock.mockReset();
 });
 
@@ -52,6 +55,8 @@ describe("loginUser", () => {
       headers: { "X-CSRF-Token": "csrf-token" },
       json: { email: "user@example.com", password: "secret" },
     }));
+    expect(deleteCookieMock).toHaveBeenCalledWith("omega_active_workspace_id");
+    expect(deleteCookieMock).toHaveBeenCalledTimes(2);
   });
 
   it("rejects when /login did not seed the CSRF cookie", async () => {

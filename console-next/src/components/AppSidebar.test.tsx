@@ -135,4 +135,37 @@ describe("AppSidebar", () => {
     expect(markup).not.toContain("Auditoría");
     expect(markup).not.toContain("Usuarios");
   });
+
+  it("renders a workspace selector only when the user has multiple workspaces", () => {
+    const markup = render({
+      role: { is_platform_admin: false },
+      permissions: ["workspace.access"],
+      workspaces: [
+        {
+          tenant_name: "Cliente A",
+          workspace_name: "Finanzas",
+          workspace_id: "ws-a",
+          active: true,
+        },
+        {
+          tenant_name: "Cliente B",
+          workspace_name: "Operaciones",
+          workspace_id: "ws-b",
+        },
+      ],
+      ui_capabilities: { can_view_workspace: true },
+    });
+
+    expect(markup).toContain("Workspace activo");
+    expect(markup).toContain("Cliente A / Finanzas");
+    expect(markup).toContain("Cliente B / Operaciones");
+
+    const single = render({
+      role: { is_platform_admin: false },
+      permissions: ["workspace.access"],
+      workspaces: [{ workspace_name: "Solo", workspace_id: "ws-a", active: true }],
+      ui_capabilities: { can_view_workspace: true },
+    });
+    expect(single).not.toContain("Workspace activo");
+  });
 });

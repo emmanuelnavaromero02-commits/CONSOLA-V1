@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "sonner";
 import { KeyRound, ShieldOff } from "lucide-react";
@@ -38,6 +38,17 @@ function relativeTime(value: string | null): string {
   return formatDistanceToNow(new Date(ts), { addSuffix: true, locale: es });
 }
 
+function workspaceLabel(workspace: NonNullable<AppUser["workspaces"]>[number]): string {
+  const name = workspace.workspace_name?.trim() || workspace.workspace_id || "Workspace";
+  return workspace.tenant_name?.trim() ? `${workspace.tenant_name} / ${name}` : name;
+}
+
+function userWorkspaceSummary(user: AppUser): string {
+  const workspaces = user.workspaces ?? [];
+  if (!workspaces.length) return "—";
+  return workspaces.map(workspaceLabel).join(", ");
+}
+
 
 export function UsersTable() {
   const { data: users, isLoading, isError, refetch } = useUsers();
@@ -46,6 +57,23 @@ export function UsersTable() {
   const resetMutation  = useSendPasswordReset();
 
   const [confirmDelete, setConfirmDelete] = useState<AppUser | null>(null);
+  const [workspaceFilter, setWorkspaceFilter] = useState("");
+  const rows = useMemo(() => users ?? [], [users]);
+  const workspaceOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const user of rows) {
+      for (const workspace of user.workspaces ?? []) {
+        const id = workspace.workspace_id?.trim();
+        if (id) byId.set(id, workspaceLabel(workspace));
+      }
+    }
+    return Array.from(byId.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows]);
+  const visibleRows = workspaceFilter
+    ? rows.filter((user) => (user.workspaces ?? []).some((workspace) => workspace.workspace_id === workspaceFilter))
+    : rows;
 
   // Round 1 P0: focus management on the delete confirm dialog.
   // The dialog auto-focuses Cancel (defensive default for a
@@ -118,7 +146,6 @@ export function UsersTable() {
     );
   }
 
-  const rows = users ?? [];
   if (rows.length === 0) {
     return (
       <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -164,6 +191,28 @@ export function UsersTable() {
 
   return (
     <>
+      {workspaceOptions.length > 1 ? (
+        <div className="mb-3 flex flex-col gap-2 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Filtrar por workspace</span>
+            <select
+              value={workspaceFilter}
+              onChange={(event) => setWorkspaceFilter(event.target.value)}
+              className="min-h-[40px] min-w-72 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">Todos los workspaces visibles</option>
+              {workspaceOptions.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="text-xs text-muted-foreground">
+            {visibleRows.length} de {rows.length} usuarios visibles
+          </span>
+        </div>
+      ) : null}
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
@@ -171,13 +220,14 @@ export function UsersTable() {
               <th className="px-4 py-2 font-medium">Email</th>
               <th className="px-4 py-2 font-medium">Nombre</th>
               <th className="px-4 py-2 font-medium">Rol</th>
+              <th className="px-4 py-2 font-medium">Workspace</th>
               <th className="px-4 py-2 font-medium">Estado</th>
               <th className="px-4 py-2 font-medium">Último login</th>
               <th className="px-4 py-2 text-right font-medium">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((u) => (
+            {visibleRows.map((u) => (
               <tr key={u.id} className="border-t">
                 <td className="px-4 py-3">
                   <span className="font-medium">{u.email}</span>
@@ -191,6 +241,9 @@ export function UsersTable() {
                   {u.name || "—"}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">{u.role}</td>
+                <td className="max-w-xs px-4 py-3 text-xs text-muted-foreground">
+                  {userWorkspaceSummary(u)}
+                </td>
                 <td className="px-4 py-3">
                   <span
                     className={

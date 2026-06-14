@@ -25,7 +25,7 @@ connector:
     layer: bronze
     format: parquet
     compression: snappy
-    path_template: "raw/salesforce/{entity}/load_date={load_date}/batch_id={run_id}/"
+    path_template: "raw/salesforce/{entity}/tenant_id={tenant_id}/workspace_id={workspace_id}/load_date={load_date}/batch_id={run_id}/"
     bucket_env: MINIO_BUCKET
   watermark:
     storage: postgres

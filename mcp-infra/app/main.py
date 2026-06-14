@@ -811,12 +811,16 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
 
 def _inject_cartridge_execution_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
     args["security_context"] = ctx
-    tenant_id = str(ctx.get("tenant_id") or "").strip()
-    workspace_id = str(ctx.get("workspace_id") or "").strip()
-    if tenant_id:
-        args["tenant_id"] = tenant_id
-    if workspace_id:
-        args["workspace_id"] = workspace_id
+
+
+def _reject_client_owned_scope_args(args: dict[str, Any]) -> None:
+    forbidden = {"tenant_id", "workspace_id", "security_context"}
+    supplied = sorted(key for key in forbidden if key in args)
+    if supplied:
+        raise HTTPException(
+            403,
+            detail=f"backend-owned arg is not allowed: {', '.join(supplied)}",
+        )
 
 
 def _extract_s3_keys(sql: str) -> list[str]:
@@ -1229,6 +1233,7 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             raise HTTPException(403, detail="cartridge not allowed")
 
     if tool in _CARTRIDGE_DATA_TOOLS:
+        _reject_client_owned_scope_args(args)
         cartridge_id = str(args.get("cartridge_id") or "").strip()
         _require_cartridge_scope(ctx, cartridge_id)
         if tool == "cartridge_preview":
@@ -1241,13 +1246,13 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     if tool in _RUN_ID_SCOPED_TOOLS:
         _require_pipeline_run_scope(ctx, str(args.get("run_id") or ""))
     elif tool in _CARTRIDGE_READ_TOOLS | _CARTRIDGE_EXECUTE_TOOLS:
+        _reject_client_owned_scope_args(args)
         if tool != "list_cartridges":
             _require_cartridge_scope(ctx, str(args.get("cartridge_id") or args.get("id") or ""))
         if tool == "cartridge_list_entities" and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
                 raise HTTPException(403, detail="cartridge entities require tenant/workspace scope")
-            args["tenant_id"] = str(ctx.get("tenant_id") or "")
-            args["workspace_id"] = str(ctx.get("workspace_id") or "")
+            args["security_context"] = ctx
         if tool in _CARTRIDGE_EXECUTE_TOOLS:
             _inject_cartridge_execution_scope(ctx, args)
 

@@ -1,4 +1,5 @@
 import { readCookie } from "@/lib/cookies";
+import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
 export { readCookie };
 
@@ -59,6 +60,10 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
   const requestId = headers.get("X-Request-ID") || makeRequestId();
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", requestId);
+  const activeWorkspaceId = readCookie(ACTIVE_WORKSPACE_COOKIE);
+  if (activeWorkspaceId && !headers.has("X-Workspace-Id")) {
+    headers.set("X-Workspace-Id", activeWorkspaceId);
+  }
 
   let body = init.body ?? undefined;
   if (init.json !== undefined) {

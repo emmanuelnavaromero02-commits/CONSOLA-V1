@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import type { MeAccessResponse } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
 
@@ -207,6 +208,9 @@ export function AppSidebar({
       </header>
 
       <div className={cn("border-b py-3", showLabels ? "px-3" : "px-2")}>
+        {showLabels && (access?.workspaces?.length ?? 0) > 1 ? (
+          <WorkspaceSwitcher workspaces={access?.workspaces} className="mb-3" />
+        ) : null}
         {showLabels ? (
           <label className="space-y-1 text-sm">
             <span className="text-xs font-medium uppercase text-muted-foreground">Servicios</span>

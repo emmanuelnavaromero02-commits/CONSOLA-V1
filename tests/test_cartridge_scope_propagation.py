@@ -195,12 +195,14 @@ def test_mcp_infra_injects_trusted_scope_before_cartridge_execution():
 
     assert "def _inject_cartridge_execution_scope(" in source
     assert 'args["security_context"] = ctx' in source
-    assert 'args["tenant_id"] = tenant_id' in source
-    assert 'args["workspace_id"] = workspace_id' in source
+    assert "def _reject_client_owned_scope_args(" in source
+    assert '"backend-owned arg is not allowed' in source
     assert "_inject_cartridge_execution_scope(ctx, args)" in source
+    assert "_reject_client_owned_scope_args(args)" in source
     assert 'conf["security_context"] = ctx' in source
     assert "def _attach_security_scope(" in tools
-    assert '"security_context": {"type": "object"}' in tools
+    for public_arg in ('"tenant_id": {"type": "string"}', '"workspace_id": {"type": "string"}', '"security_context": {"type": "object"}'):
+        assert public_arg not in tools
     assert "security_context: dict[str, Any] | None = None" in tools
     assert "_scoped_object_prefix(" in tools
     assert "_scope_cartridge_sql(" in tools
@@ -208,13 +210,15 @@ def test_mcp_infra_injects_trusted_scope_before_cartridge_execution():
 
     for fn_name in (
         "cartridge_sync_semantic_to_rag",
+        "cartridge_list_entities",
         "cartridge_extract",
         "cartridge_extract_all",
         "cartridge_run_kb",
     ):
-        assert {"tenant_id", "workspace_id", "security_context"} <= _function_args(
-            tools, fn_name
-        )
+        args = _function_args(tools, fn_name)
+        assert "security_context" in args
+        assert "tenant_id" not in args
+        assert "workspace_id" not in args
 
 
 def test_direct_scoped_cartridge_mcp_invokes_load_forwarded_context():

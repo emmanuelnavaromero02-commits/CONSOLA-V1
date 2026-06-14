@@ -2881,6 +2881,23 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         "workspace_admin",
         "tenant_admin",
     }
+    active_workspace_id = user.get("workspace_id") or user.get("active_workspace_id")
+    active_tenant_id = user.get("tenant_id") or user.get("active_tenant_id")
+    switchable_workspaces = []
+    for workspace in user.get("workspaces") or []:
+        workspace_id = str(workspace.get("workspace_id") or "").strip()
+        if not workspace_id:
+            continue
+        switchable_workspaces.append(
+            {
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get("workspace_name"),
+                "tenant_id": workspace.get("tenant_id"),
+                "tenant_name": workspace.get("tenant_name"),
+                "workspace_role": workspace.get("workspace_role"),
+                "active": workspace_id == str(active_workspace_id or ""),
+            }
+        )
 
     return {
         "user": {
@@ -2893,10 +2910,11 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             "is_platform_admin": is_platform_admin,
         },
         "workspace": {
-            "tenant_id": user.get("tenant_id") or user.get("active_tenant_id"),
-            "workspace_id": user.get("workspace_id") or user.get("active_workspace_id"),
+            "tenant_id": active_tenant_id,
+            "workspace_id": active_workspace_id,
             "workspace_role": workspace_role_resolved,
         },
+        "workspaces": switchable_workspaces,
         "permissions": effective,
         "cartridges": {
             "allowed": cartridges_allowed,
@@ -8855,6 +8873,60 @@ async def _target_user_workspace_ids(user_id: int) -> set[str]:
     return {str(row["workspace_id"]) for row in rows if row["workspace_id"]}
 
 
+async def _workspace_summaries_for_users(user_ids: list[int]) -> dict[int, list[dict]]:
+    if not user_ids:
+        return {}
+    try:
+        pool = await _get_db_pool()
+    except (RuntimeError, AttributeError) as exc:
+        if not _workspace_scope_db_unavailable(exc):
+            raise
+        return {}
+    rows = await pool.fetch(
+        """
+        SELECT uwr.user_id::int AS user_id,
+               w.id::text AS workspace_id,
+               w.name AS workspace_name,
+               t.id::text AS tenant_id,
+               t.name AS tenant_name,
+               r.name AS workspace_role
+          FROM user_workspace_roles uwr
+          JOIN workspaces w ON w.id = uwr.workspace_id
+          JOIN tenants t ON t.id = w.tenant_id
+          JOIN roles r ON r.id = uwr.role_id
+         WHERE uwr.user_id = ANY($1::int[])
+         ORDER BY w.created_at ASC, w.name ASC, r.name ASC
+        """,
+        user_ids,
+    )
+    result: dict[int, list[dict]] = {}
+    for row in rows:
+        result.setdefault(int(row["user_id"]), []).append(
+            {
+                "workspace_id": row["workspace_id"],
+                "workspace_name": row["workspace_name"],
+                "tenant_id": row["tenant_id"],
+                "tenant_name": row["tenant_name"],
+                "workspace_role": row["workspace_role"],
+            }
+        )
+    return result
+
+
+async def _attach_workspace_summaries(users: list[dict]) -> list[dict]:
+    ids = [int(u["id"]) for u in users if u.get("id") is not None]
+    summaries = await _workspace_summaries_for_users(ids)
+    enriched: list[dict] = []
+    for user in users:
+        item = dict(user)
+        if user.get("id") is not None:
+            item["workspaces"] = summaries.get(int(user["id"]), [])
+        else:
+            item["workspaces"] = []
+        enriched.append(item)
+    return enriched
+
+
 async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> set[int]:
     if _is_global_iam_admin(admin_user):
         return {int(u["id"]) for u in users if u.get("id") is not None}
@@ -8957,9 +9029,10 @@ async def api_admin_users_list(
 ):
     users = await _auth.list_users(active_only=False)
     if _is_global_iam_admin(admin_user):
-        return {"users": users}
+        return {"users": await _attach_workspace_summaries(users)}
     visible_ids = await _visible_user_ids_for_admin(admin_user, users)
-    return {"users": [u for u in users if u.get("id") in visible_ids]}
+    scoped_users = [u for u in users if u.get("id") in visible_ids]
+    return {"users": await _attach_workspace_summaries(scoped_users)}
 
 
 @app.post("/api/admin/users", dependencies=[Depends(require_csrf)])
