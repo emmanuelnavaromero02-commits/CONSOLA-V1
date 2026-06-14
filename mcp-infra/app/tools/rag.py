@@ -43,9 +43,16 @@ async def search_rag(
     top_k: int = 5,
     source_ids: list[int] | None = None,
     kinds: list[str] | None = None,
+    security_context: dict | None = None,
 ) -> dict:
     query_vec = await embed_query(query)
-    results = await _search(query_vec, top_k=top_k, source_ids=source_ids, kinds=kinds)
+    results = await _search(
+        query_vec,
+        top_k=top_k,
+        source_ids=source_ids,
+        kinds=kinds,
+        scope=security_context,
+    )
     return {"results": results}
 
 
@@ -56,8 +63,8 @@ async def search_rag(
     description="List all documents currently ingested in the RAG knowledge base.",
     input_schema={"type": "object", "properties": {}, "required": []},
 )
-async def list_rag_sources() -> dict:
-    return {"sources": await _list_sources()}
+async def list_rag_sources(security_context: dict | None = None) -> dict:
+    return {"sources": await _list_sources(scope=security_context)}
 
 
 # ── Tool 3 · ingest_document ──────────────────────────────────────────────────
@@ -79,13 +86,20 @@ async def list_rag_sources() -> dict:
         "required": ["name", "content"],
     },
 )
-async def ingest_document(name: str, content: str, description: str = "", kind: str = "document") -> dict:
+async def ingest_document(
+    name: str,
+    content: str,
+    description: str = "",
+    kind: str = "document",
+    security_context: dict | None = None,
+) -> dict:
     return await _do_ingest(
         name=name,
         content=content,
         description=description,
         mime_type="text/plain",
         kind=kind,
+        security_context=security_context,
     )
 
 
@@ -97,6 +111,7 @@ async def _do_ingest(
     description: str = "",
     mime_type: str = "text/plain",
     kind: str = "document",
+    security_context: dict | None = None,
 ) -> dict:
     chunks = chunk_document(
         content,
@@ -120,6 +135,7 @@ async def _do_ingest(
         chunks=chunks,
         embeddings=embeddings,
         kind=kind,
+        scope=security_context,
     )
 
 
@@ -128,6 +144,13 @@ async def _do_search(
     top_k: int = 5,
     source_ids: list[int] | None = None,
     kinds: list[str] | None = None,
+    security_context: dict | None = None,
 ) -> list[dict]:
     query_vec = await embed_query(query)
-    return await _search(query_vec, top_k=top_k, source_ids=source_ids, kinds=kinds)
+    return await _search(
+        query_vec,
+        top_k=top_k,
+        source_ids=source_ids,
+        kinds=kinds,
+        scope=security_context,
+    )

@@ -31,13 +31,37 @@ from app.registry import tool
         "required": ["cartridge_id", "entity"],
     },
 )
-def watermark_get(cartridge_id: str, entity: str) -> dict:
+def _watermark_scope(tenant_id: str | None = None, workspace_id: str | None = None) -> str:
+    tenant = str(tenant_id or "").strip()
+    workspace = str(workspace_id or "").strip()
+    if tenant and workspace:
+        return f"tenant:{tenant}:workspace:{workspace}"
+    return "platform"
+
+
+def _set_db_scope(cur, tenant_id: str | None = None, workspace_id: str | None = None) -> None:
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id or ""),))
+    cur.execute("SELECT set_config('app.workspace_id', %s, true)", (str(workspace_id or ""),))
+    cur.execute(
+        "SELECT set_config('app.platform_admin', %s, true)",
+        ("false" if tenant_id and workspace_id else "true",),
+    )
+
+
+def watermark_get(
+    cartridge_id: str,
+    entity: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    scope = _watermark_scope(tenant_id, workspace_id)
     with _conn() as conn, conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         cur.execute(
             """SELECT watermark_field, last_watermark_value, last_run_id, updated_at
                FROM entity_watermarks
-               WHERE cartridge_id = %s AND entity_name = %s""",
-            (cartridge_id, entity),
+               WHERE cartridge_id = %s AND entity_name = %s AND watermark_scope = %s""",
+            (cartridge_id, entity, scope),
         )
         row = cur.fetchone()
     if not row:
@@ -71,20 +95,32 @@ def watermark_get(cartridge_id: str, entity: str) -> dict:
         "required": ["cartridge_id", "entity", "watermark_field", "value", "run_id"],
     },
 )
-def watermark_set(cartridge_id: str, entity: str, watermark_field: str,
-                  value: str, run_id: str) -> dict:
+def watermark_set(
+    cartridge_id: str,
+    entity: str,
+    watermark_field: str,
+    value: str,
+    run_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    scope = _watermark_scope(tenant_id, workspace_id)
     with _conn() as conn, conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         cur.execute(
             """INSERT INTO entity_watermarks
                    (cartridge_id, entity_name, watermark_field,
-                    last_watermark_value, last_run_id, updated_at)
-               VALUES (%s, %s, %s, %s, %s, NOW())
-               ON CONFLICT (cartridge_id, entity_name) DO UPDATE
+                    last_watermark_value, last_run_id, updated_at,
+                    tenant_id, workspace_id, watermark_scope)
+               VALUES (%s, %s, %s, %s, %s, NOW(), %s::uuid, %s::uuid, %s)
+               ON CONFLICT (watermark_scope, cartridge_id, entity_name) DO UPDATE
                SET watermark_field       = EXCLUDED.watermark_field,
                    last_watermark_value  = EXCLUDED.last_watermark_value,
                    last_run_id           = EXCLUDED.last_run_id,
+                   tenant_id             = EXCLUDED.tenant_id,
+                   workspace_id          = EXCLUDED.workspace_id,
                    updated_at            = NOW()""",
-            (cartridge_id, entity, watermark_field, value, run_id),
+            (cartridge_id, entity, watermark_field, value, run_id, tenant_id, workspace_id, scope),
         )
         conn.commit()
     return {"saved": True, "cartridge_id": cartridge_id, "entity": entity, "value": value}

@@ -68,13 +68,30 @@ def _pg_conn():
     return psycopg2.connect(Variable.get("postgres_conn"))
 
 
-def _get_watermark(entity: str) -> str | None:
+def _watermark_scope(tenant_id: object = None, workspace_id: object = None) -> tuple[str, str | None, str | None]:
+    tenant = str(tenant_id).strip() if tenant_id else ""
+    workspace = str(workspace_id).strip() if workspace_id else ""
+    if tenant and workspace:
+        return f"tenant:{tenant}:workspace:{workspace}", tenant, workspace
+    return "platform", None, None
+
+
+def _set_db_scope(cur, tenant_id: str | None, workspace_id: str | None) -> None:
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id or "",))
+    cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id or "",))
+    cur.execute("SELECT set_config('app.platform_admin', %s, true)", ("false" if tenant_id and workspace_id else "true",))
+
+
+def _get_watermark(entity: str, tenant_id: object = None, workspace_id: object = None) -> str | None:
     try:
         conn = _pg_conn()
         with conn.cursor() as cur:
+            scope, scoped_tenant_id, scoped_workspace_id = _watermark_scope(tenant_id, workspace_id)
+            _set_db_scope(cur, scoped_tenant_id, scoped_workspace_id)
             cur.execute(
                 "SELECT last_watermark_value FROM entity_watermarks "
-                "WHERE cartridge_id='replicon' AND entity_name=%s", (entity,)
+                "WHERE cartridge_id='replicon' AND entity_name=%s AND watermark_scope=%s",
+                (entity, scope),
             )
             row = cur.fetchone()
         conn.close()
@@ -83,19 +100,41 @@ def _get_watermark(entity: str) -> str | None:
         return None
 
 
-def _set_watermark(entity: str, field: str, value: str, run_id: str) -> None:
+def _set_watermark(
+    entity: str,
+    field: str,
+    value: str,
+    run_id: str,
+    tenant_id: object = None,
+    workspace_id: object = None,
+) -> None:
     try:
         conn = _pg_conn()
         with conn.cursor() as cur:
+            scope, scoped_tenant_id, scoped_workspace_id = _watermark_scope(tenant_id, workspace_id)
+            _set_db_scope(cur, scoped_tenant_id, scoped_workspace_id)
             cur.execute(
                 """INSERT INTO entity_watermarks
                        (cartridge_id, entity_name, watermark_field,
-                        last_watermark_value, last_run_id, updated_at)
-                   VALUES ('replicon', %s, %s, %s, %s, NOW())
-                   ON CONFLICT (cartridge_id, entity_name) DO UPDATE
+                        last_watermark_value, last_run_id, tenant_id, workspace_id,
+                        watermark_scope, updated_at)
+                   VALUES ('replicon', %s, %s, %s, %s, %s::uuid, %s::uuid, %s, NOW())
+                   ON CONFLICT (watermark_scope, cartridge_id, entity_name) DO UPDATE
                    SET watermark_field=%s, last_watermark_value=%s,
-                       last_run_id=%s, updated_at=NOW()""",
-                (entity, field, value, run_id, field, value, run_id),
+                       last_run_id=%s, tenant_id=EXCLUDED.tenant_id,
+                       workspace_id=EXCLUDED.workspace_id, updated_at=NOW()""",
+                (
+                    entity,
+                    field,
+                    value,
+                    run_id,
+                    scoped_tenant_id,
+                    scoped_workspace_id,
+                    scope,
+                    field,
+                    value,
+                    run_id,
+                ),
             )
         conn.commit()
         conn.close()
@@ -428,7 +467,7 @@ def replicon_extract():
 
         # ── Filtro incremental ─────────────────────────────────────────────
         if mode == "incremental" and watermark_field and watermark_field in df.columns:
-            last_wm = _get_watermark(entity)
+            last_wm = _get_watermark(entity, tenant_id, workspace_id)
             if last_wm:
                 df = df[df[watermark_field].astype(str) > last_wm]
 
@@ -449,7 +488,7 @@ def replicon_extract():
             vals  = df[watermark_field].dropna().astype(str)
             new_wm = vals.max() if not vals.empty else None
             if new_wm:
-                _set_watermark(entity, watermark_field, new_wm, run_id)
+                _set_watermark(entity, watermark_field, new_wm, run_id, tenant_id, workspace_id)
 
         return {
             "run_id":               run_id,

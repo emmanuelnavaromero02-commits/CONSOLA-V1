@@ -54,7 +54,7 @@ def test_security_context_admin_can_traverse_platform_prefixes():
     assert "cartridges/" in ctx["allowed_prefixes"]
 
 
-def test_workspace_scoped_admin_can_manage_cartridges_inside_workspace_only():
+def test_workspace_scoped_admin_without_installations_fails_closed():
     ctx = build_security_context(
         {
             "id": 9,
@@ -66,11 +66,8 @@ def test_workspace_scoped_admin_can_manage_cartridges_inside_workspace_only():
         }
     )
 
-    assert ctx["allowed_cartridges"] == ["*"]
-    assert "raw/" in ctx["allowed_prefixes"]
-    assert "silver/" in ctx["allowed_prefixes"]
-    assert "gold/" in ctx["allowed_prefixes"]
-    assert "uploads/" in ctx["allowed_prefixes"]
+    assert ctx["allowed_cartridges"] == []
+    assert ctx["allowed_prefixes"] == []
     assert "inbound/" not in ctx["allowed_prefixes"]
 
 

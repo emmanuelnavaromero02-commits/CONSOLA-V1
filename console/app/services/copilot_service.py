@@ -365,6 +365,7 @@ def _classify_freshness(age_seconds: int | float | None) -> str:
 async def _annotate_citation_freshness(
     citation: dict,
     cache: dict | None = None,
+    user_context: dict | None = None,
 ) -> dict:
     """Mutate ``citation`` in place with ``age_seconds`` (if missing)
     and ``freshness_level``. Looks up the watermark via
@@ -397,7 +398,10 @@ async def _annotate_citation_freshness(
             # Local import to avoid circular: routers/freshness.py
             # imports from app.services.auth.
             from app.routers.freshness import freshness_for_cartridge_internal
-            data = await freshness_for_cartridge_internal(cartridge)
+            if user_context is not None:
+                data = await freshness_for_cartridge_internal(cartridge, user_context)
+            else:
+                data = await freshness_for_cartridge_internal(cartridge)
         except Exception:
             citation["freshness_level"] = "unknown"
             if cache is not None:
@@ -914,7 +918,11 @@ async def _execute_approved_tool_calls(
                 except Exception:
                     extracted = []
                 for c in extracted:
-                    await _annotate_citation_freshness(c, cache=freshness_cache)
+                    await _annotate_citation_freshness(
+                        c,
+                        cache=freshness_cache,
+                        user_context=user,
+                    )
                 citations.extend(extracted)
 
         tool_use_id = f"approval_{uuid.uuid4().hex}"
@@ -1385,7 +1393,11 @@ async def _run_loop(
                     # from 3 cartridges only issue 3 freshness queries
                     # instead of 20 (N+1 avoidance).
                     for c in msg_citations:
-                        await _annotate_citation_freshness(c, cache=_freshness_cache)
+                        await _annotate_citation_freshness(
+                            c,
+                            cache=_freshness_cache,
+                            user_context=user,
+                        )
                     msg_text = "".join(text_parts)
                     new_mid = await _persist_message(
                         conn, conversation_id=conversation_id,

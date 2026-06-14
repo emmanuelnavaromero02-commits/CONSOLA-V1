@@ -132,7 +132,11 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
         or "vault.connections.write" in effective
         or "cartridges.read" in effective
     ):
-        allowed_cartridges = ["*"]
+        # Workspace-scoped users must never receive wildcard cartridge access
+        # from permissions alone. The authenticated user enrichment layer
+        # populates allowed_cartridges from workspace entitlements/installations;
+        # if that context is missing, fail closed downstream.
+        allowed_cartridges = []
     else:
         allowed_cartridges = []
 

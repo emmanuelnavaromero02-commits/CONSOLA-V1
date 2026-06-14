@@ -3293,6 +3293,108 @@ def _allowed_cartridges_for_user(user: dict | None) -> set[str] | None:
     return allowed
 
 
+def _scope_ids_from_user(user: dict | None) -> tuple[str, str]:
+    ctx = build_security_context(user)
+    return (
+        str(ctx.get("tenant_id") or "").strip(),
+        str(ctx.get("workspace_id") or "").strip(),
+    )
+
+
+def _is_workspace_scoped_user(user: dict | None) -> bool:
+    tenant_id, workspace_id = _scope_ids_from_user(user)
+    return bool(tenant_id and workspace_id)
+
+
+def _user_allowed_cartridges(user: dict | None) -> set[str] | None:
+    ctx = build_security_context(user)
+    if _is_security_admin_context(ctx):
+        return None
+    allowed = {
+        str(c).strip()
+        for c in (ctx.get("allowed_cartridges") or [])
+        if str(c).strip() and str(c).strip() != "*"
+    }
+    return allowed
+
+
+def _require_workspace_scope_for_technical_view(user: dict | None) -> None:
+    if _user_allowed_cartridges(user) is None:
+        return
+    if not _is_workspace_scoped_user(user):
+        raise HTTPException(403, "tenant/workspace scope required")
+
+
+def _cartridge_allowed_for_user(user: dict | None, cartridge_id: str) -> bool:
+    cartridge_id = str(cartridge_id or "").strip()
+    if not cartridge_id:
+        return False
+    allowed = _user_allowed_cartridges(user)
+    return allowed is None or cartridge_id in allowed
+
+
+def _require_technical_cartridge_access(user: dict | None, cartridge_id: str) -> None:
+    if not _cartridge_allowed_for_user(user, cartridge_id):
+        raise HTTPException(403, "cartridge not allowed for active workspace")
+
+
+def _cartridge_from_technical_source(source: str) -> str:
+    value = str(source or "").strip().strip("/")
+    if not value:
+        return ""
+    for prefix in ("raw", "silver", "gold", "uploads", "cartridges"):
+        marker = f"{prefix}/"
+        if value.startswith(marker):
+            parts = value.split("/")
+            return parts[1] if len(parts) > 1 else ""
+    for cartridge in sorted(_OPERATIONAL_CARTRIDGES, key=len, reverse=True):
+        if (
+            value == cartridge
+            or value.startswith(f"{cartridge}/")
+            or value.startswith(f"{cartridge}:")
+            or value.startswith(f"{cartridge}_")
+        ):
+            return cartridge
+    return ""
+
+
+def _technical_source_allowed(user: dict | None, source: str) -> bool:
+    allowed = _user_allowed_cartridges(user)
+    if allowed is None:
+        return True
+    _require_workspace_scope_for_technical_view(user)
+    cartridge = _cartridge_from_technical_source(source)
+    if not cartridge or cartridge not in allowed:
+        return False
+    tenant_id, workspace_id = _scope_ids_from_user(user)
+    parts = str(source or "").strip("/").split("/")
+    tenant_markers = [part for part in parts if part.startswith("tenant_id=")]
+    workspace_markers = [part for part in parts if part.startswith("workspace_id=")]
+    if tenant_markers and any(part != f"tenant_id={tenant_id}" for part in tenant_markers):
+        return False
+    if workspace_markers and any(part != f"workspace_id={workspace_id}" for part in workspace_markers):
+        return False
+    if workspace_markers and not tenant_markers:
+        return False
+    return True
+
+
+def _require_technical_source_access(user: dict | None, source: str) -> None:
+    if not _technical_source_allowed(user, source):
+        raise HTTPException(403, "source not allowed for active workspace")
+
+
+def _filter_technical_sources(user: dict | None, sources: list) -> list:
+    return [
+        source for source in sources
+        if isinstance(source, str) and _technical_source_allowed(user, source)
+    ]
+
+
+def _empty_catalog_payload() -> dict[str, Any]:
+    return {"datasets": {}, "relationships": []}
+
+
 _HIDDEN_GOLD_SOURCE_CARTRIDGES = {
     item.strip()
     for item in os.environ.get(
@@ -3601,6 +3703,8 @@ async def _gold_schema_payload(source: str, user: dict | None) -> dict:
 
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
+    _require_technical_source_access(user, source)
+
     async def load_schema() -> dict:
         if _gold_dataset_from_source(source):
             return await _gold_schema_payload(source, user)
@@ -3632,6 +3736,7 @@ async def api_sources(user: dict = Depends(require_authenticated)):
         sources = data.get("result") or data.get("sources") or []
         gold_sources = await _gold_sources_from_catalog(user)
         if isinstance(sources, list):
+            sources = _filter_technical_sources(user, sources)
             return {
                 "sources": sorted(
                     set([str(s) for s in sources if str(s).strip()] + gold_sources)
@@ -3931,6 +4036,12 @@ def _explorer_path_allowed(
     if not tenant or not workspace:
         return True
 
+    if "*" in allowed:
+        # Workspace-scoped callers must browse only explicit cartridge
+        # entitlements. A wildcard at this layer means auth enrichment failed,
+        # so fail closed instead of exposing technical storage roots.
+        return False
+
     tenant_marker = f"tenant_id={tenant}"
     workspace_marker = f"workspace_id={workspace}"
     tenant_parts = [part for part in parts if part.startswith("tenant_id=")]
@@ -4108,10 +4219,15 @@ async def api_lineage(
     user: dict = Depends(require_permission("datasets.read")),
 ):
     """Global lineage graph across raw sources and silver/gold datasets."""
+    if cartridge:
+        _require_technical_cartridge_access(user, cartridge)
     payload = await _refinement_invoke("list_datasets", {}, timeout=15, user=user)
     datasets = (payload or {}).get("datasets") or []
     if cartridge:
         datasets = [d for d in datasets if d.get("cartridge") == cartridge]
+    allowed = _user_allowed_cartridges(user)
+    if allowed is not None:
+        datasets = [d for d in datasets if str(d.get("cartridge") or "") in allowed]
 
     by_name = {d["name"]: d for d in datasets if d.get("name")}
     nodes: dict[str, dict] = {}
@@ -4480,6 +4596,22 @@ async def _resolve_scoped_operation_cartridge(
             return fallback, active
         return sorted(active)[0], active
 
+    allowed = _user_allowed_cartridges(user)
+    if allowed is not None:
+        _require_workspace_scope_for_technical_view(user)
+        allowed_candidates = {c for c in allowed if c in candidate_set}
+        if requested:
+            if requested in allowed_candidates:
+                return requested, active
+            raise HTTPException(
+                403, f"cartridge '{requested}' is not installed for this workspace"
+            )
+        if fallback in allowed_candidates:
+            return fallback, active
+        if allowed_candidates:
+            return sorted(allowed_candidates)[0], active
+        raise HTTPException(403, "no cartridge installed for this workspace")
+
     resolved = requested or fallback
     if resolved:
         _require_cartridge_visible(user, resolved)
@@ -4499,6 +4631,19 @@ async def _scope_catalog_cartridge_arg(user: dict | None, cartridge: str | None)
         if "sap_successfactors" in active:
             return "sap_successfactors"
         return sorted(active)[0]
+    allowed = _user_allowed_cartridges(user)
+    if allowed is not None:
+        _require_workspace_scope_for_technical_view(user)
+        allowed_candidates = {c for c in allowed if c in _OPERATIONAL_CARTRIDGES}
+        if requested:
+            if requested in allowed_candidates:
+                return requested
+            raise HTTPException(
+                403, f"cartridge '{requested}' is not installed for this workspace"
+            )
+        if "sap_successfactors" in allowed_candidates:
+            return "sap_successfactors"
+        return sorted(allowed_candidates)[0] if allowed_candidates else ""
     if requested:
         _require_cartridge_visible(user, requested)
     return requested
@@ -6230,11 +6375,13 @@ def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:
     if user is None:
         return
     ctx = build_security_context(user)
-    allowed = {
-        str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()
-    }
-    if "*" in allowed:
+    if _is_security_admin_context(ctx):
         return
+    allowed = {
+        str(c).strip()
+        for c in (ctx.get("allowed_cartridges") or [])
+        if str(c).strip() and str(c).strip() != "*"
+    }
     if str(cartridge_id) not in allowed:
         raise HTTPException(403, "cartridge not allowed")
 
@@ -7289,6 +7436,8 @@ async def api_catalog_get(
     if layer:
         args["layer"] = layer
     cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
+    if not cartridge and _user_allowed_cartridges(user) is not None:
+        return _empty_catalog_payload()
     if cartridge:
         args["cartridge"] = cartridge
     if tags:
