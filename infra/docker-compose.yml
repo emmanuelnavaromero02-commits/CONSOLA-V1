@@ -1006,6 +1006,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
     volumes:
+      - ../cartridges/platform/dags:/opt/airflow/dags/platform:ro
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
@@ -1109,6 +1110,7 @@ services:
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
+      - ../cartridges/platform/dags:/opt/airflow/dags/platform:ro
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
@@ -1203,6 +1205,7 @@ services:
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
+      - ../cartridges/platform/dags:/opt/airflow/dags/platform:ro
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro

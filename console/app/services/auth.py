@@ -36,6 +36,12 @@ REFRESH_TOKEN_LIFETIME = timedelta(days=7)
 # managed-password products use as default.
 MIN_PASSWORD_LENGTH = 12
 
+# Roles that legitimately operate across every workspace. Only these may fall
+# back to the default (oldest) workspace when created without an explicit
+# workspace_id — for any other role that fallback would be a silent
+# cross-tenant grant, so we require an explicit workspace instead.
+_GLOBAL_WORKSPACE_FALLBACK_ROLES = {"owner", "super_admin", "admin"}
+
 _POOL: asyncpg.Pool | None = None
 
 
@@ -189,6 +195,15 @@ async def _assign_default_workspace_role(
     if workspace_id:
         workspace = await conn.fetchrow("SELECT id FROM workspaces WHERE id = $1::uuid", workspace_id)
     else:
+        # No explicit workspace. Global-admin roles operate across all
+        # workspaces (they bypass per-workspace scoping), so seeding them into
+        # the oldest workspace is harmless and keeps bootstrap_admin working.
+        # A scoped role must NOT be silently dropped into the default workspace
+        # — that is unintended cross-tenant access. Require an explicit one.
+        if str(role or "").strip().lower() not in _GLOBAL_WORKSPACE_FALLBACK_ROLES:
+            raise RuntimeError(
+                f"workspace_id is required when creating a non-global user (role={role!r})"
+            )
         workspace = await conn.fetchrow(
             "SELECT id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1"
         )

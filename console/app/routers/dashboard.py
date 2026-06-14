@@ -106,16 +106,24 @@ async def _cartridge_counts(pool, active_cartridges: tuple[str, ...]) -> dict:
     }
 
 
-async def _extraction_counts(pool, active_cartridges: tuple[str, ...]) -> dict:
-    """Extraction runs started today + over the last 7 days.
+def _run_scope(is_global: bool, workspace_id: str | None, idx: int) -> tuple[str, list]:
+    """Tenant scoping for run queries against pipeline_runs. A global admin
+    sees every run; a scoped user sees only runs tagged with their workspace.
+    Returns the extra WHERE fragment and its params (param ``$idx``)."""
+    if is_global or not workspace_id:
+        return "", []
+    return f" AND workspace_id = ${idx}::uuid", [workspace_id]
 
-    Uses ``started_at`` (not finished_at) because migration 40 only
-    indexes ``idx_extraction_runs_started_at`` — querying finished_at
-    forces a seq-scan on every 30s dashboard poll, which compounds
-    fast with multiple operators open. The KPI semantics are
-    equivalent for a daily window (an extraction started 2 minutes
-    ago that hasn't finished still counts as "today's work").
-    """
+
+async def _extraction_counts(
+    pool,
+    active_cartridges: tuple[str, ...],
+    workspace_id: str | None = None,
+    is_global: bool = True,
+) -> dict:
+    """Extraction runs today + last 7 days, from pipeline_runs (the scoped
+    run table). Scoped per workspace for non-global users so two tenants
+    sharing a cartridge never see each other's runs."""
     if not active_cartridges:
         return {
             "today": 0,
@@ -123,66 +131,61 @@ async def _extraction_counts(pool, active_cartridges: tuple[str, ...]) -> dict:
             "productive_failures_today": 0,
             "unscope_noise_failures_today": 0,
         }
+    scope, sp = _run_scope(is_global, workspace_id, 2)
     today = await pool.fetchval(
-        """
-        SELECT COUNT(*)
-          FROM extraction_runs
+        f"""
+        SELECT COUNT(*) FROM pipeline_runs
          WHERE started_at >= date_trunc('day', NOW())
-           AND cartridge_id = ANY($1::text[])
+           AND cartridge_id = ANY($1::text[]){scope}
         """,
-        list(active_cartridges),
+        list(active_cartridges), *sp,
     )
     week = await pool.fetchval(
-        """
-        SELECT COUNT(*)
-          FROM extraction_runs
+        f"""
+        SELECT COUNT(*) FROM pipeline_runs
          WHERE started_at >= NOW() - INTERVAL '7 days'
-           AND cartridge_id = ANY($1::text[])
+           AND cartridge_id = ANY($1::text[]){scope}
         """,
-        list(active_cartridges),
+        list(active_cartridges), *sp,
     )
     productive_failures = await pool.fetchval(
-        """
-        SELECT COUNT(*)
-          FROM extraction_runs
+        f"""
+        SELECT COUNT(*) FROM pipeline_runs
          WHERE started_at >= date_trunc('day', NOW())
            AND status = 'failed'
-           AND cartridge_id = ANY($1::text[])
+           AND cartridge_id = ANY($1::text[]){scope}
         """,
-        list(active_cartridges),
-    )
-    unscope_noise = await pool.fetchval(
-        """
-        SELECT COUNT(*)
-          FROM extraction_runs
-         WHERE started_at >= date_trunc('day', NOW())
-           AND status = 'failed'
-           AND NOT (cartridge_id = ANY($1::text[]))
-        """,
-        list(active_cartridges),
+        list(active_cartridges), *sp,
     )
     return {
         "today": int(today or 0),
         "week":  int(week or 0),
         "productive_failures_today": int(productive_failures or 0),
-        "unscope_noise_failures_today": int(unscope_noise or 0),
+        "unscope_noise_failures_today": 0,
     }
 
 
-async def _freshness_per_cartridge(pool, active_cartridges: tuple[str, ...]) -> dict:
-    """Hours since the latest successful extraction per cartridge."""
+async def _freshness_per_cartridge(
+    pool,
+    active_cartridges: tuple[str, ...],
+    workspace_id: str | None = None,
+    is_global: bool = True,
+) -> dict:
+    """Hours since the latest successful extraction per cartridge, scoped to
+    the workspace for non-global users (from pipeline_runs)."""
     if not active_cartridges:
         return {}
+    scope, sp = _run_scope(is_global, workspace_id, 2)
     rows = await pool.fetch(
-        """
+        f"""
         SELECT cartridge_id,
                EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-          FROM extraction_runs
+          FROM pipeline_runs
          WHERE status = 'success'
-           AND cartridge_id = ANY($1::text[])
+           AND cartridge_id = ANY($1::text[]){scope}
          GROUP BY cartridge_id
         """,
-        list(active_cartridges),
+        list(active_cartridges), *sp,
     )
     by_id: dict = {}
     for row in rows:
@@ -199,31 +202,61 @@ async def _freshness_per_cartridge(pool, active_cartridges: tuple[str, ...]) -> 
     return out
 
 
-async def _user_counts(pool) -> dict:
+async def _user_counts(pool, user: dict | None = None) -> dict:
     """Daily-active = distinct emails with a successful login today.
 
-    The login_attempts table is authoritative for "did user X log in
-    on date Y" (login_security migration v1.32) — querying users.last_login
-    would race the JWT-refresh path. Column is ``created_at`` (see
-    infra/init/17_login_security.sql:8) and is covered by
-    ``idx_login_attempts_email_created_at``.
+    Scoped per tenant: a global admin sees platform-wide counts; any scoped
+    role sees only users that belong to a workspace in their own tenant — a
+    tenant_admin must not see other tenants' user totals.
+
+    The login_attempts table is authoritative for "did user X log in on date Y"
+    (login_security migration v1.32).
     """
-    active_today = await pool.fetchval(
-        """
-        SELECT COUNT(DISTINCT email)
-          FROM login_attempts
-         WHERE success = TRUE
-           AND created_at >= date_trunc('day', NOW())
-        """
-    )
-    total = await pool.fetchval("SELECT COUNT(*) FROM users")
+    role = str((user or {}).get("role") or "").lower()
+    is_global = role in {"owner", "super_admin", "admin"}
+    tenant_id = str((user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+
+    if is_global or not tenant_id:
+        active_today = await pool.fetchval(
+            """
+            SELECT COUNT(DISTINCT email)
+              FROM login_attempts
+             WHERE success = TRUE
+               AND created_at >= date_trunc('day', NOW())
+            """
+        )
+        total = await pool.fetchval("SELECT COUNT(*) FROM users")
+    else:
+        active_today = await pool.fetchval(
+            """
+            SELECT COUNT(DISTINCT la.email)
+              FROM login_attempts la
+              JOIN users u ON u.email = la.email
+              JOIN user_workspace_roles uwr ON uwr.user_id = u.id
+              JOIN workspaces w ON w.id = uwr.workspace_id
+             WHERE la.success = TRUE
+               AND la.created_at >= date_trunc('day', NOW())
+               AND w.tenant_id = $1::uuid
+            """,
+            tenant_id,
+        )
+        total = await pool.fetchval(
+            """
+            SELECT COUNT(DISTINCT u.id)
+              FROM users u
+              JOIN user_workspace_roles uwr ON uwr.user_id = u.id
+              JOIN workspaces w ON w.id = uwr.workspace_id
+             WHERE w.tenant_id = $1::uuid
+            """,
+            tenant_id,
+        )
     return {
         "active_today": int(active_today or 0),
         "total":        int(total or 0),
     }
 
 
-async def _copilot_counts(pool) -> dict:
+async def _copilot_counts(pool, user: dict | None = None) -> dict:
     """Copilot activity today — conversations started + tool
     invocations.
 
@@ -232,45 +265,81 @@ async def _copilot_counts(pool) -> dict:
     pre-v1.42 DBs where the table doesn't exist yet (returns NULL
     → counts default to 0).
     """
-    conversations = 0
-    has_convs = await pool.fetchval(
-        "SELECT to_regclass('public.conversations')"
-    )
-    if has_convs:
-        conversations = await pool.fetchval(
-            """
-            SELECT COUNT(*) FROM conversations
-             WHERE created_at >= date_trunc('day', NOW())
-            """
-        ) or 0
+    role = str((user or {}).get("role") or "").lower()
+    is_global = role in {"owner", "super_admin", "admin"}
+    tenant_id = str((user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+    workspace_id = str((user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip()
+    scoped = not is_global and bool(tenant_id)
 
-    tools_today = await pool.fetchval(
-        """
-        SELECT COUNT(*) FROM audit_events
-         WHERE tool_name IS NOT NULL
-           AND created_at >= date_trunc('day', NOW())
-        """
-    )
+    conversations = 0
+    has_convs = await pool.fetchval("SELECT to_regclass('public.conversations')")
+    if has_convs:
+        if scoped and workspace_id:
+            # conversations carry workspace_id directly.
+            conversations = await pool.fetchval(
+                "SELECT COUNT(*) FROM conversations "
+                "WHERE created_at >= date_trunc('day', NOW()) AND workspace_id = $1::uuid",
+                workspace_id,
+            ) or 0
+        else:
+            conversations = await pool.fetchval(
+                "SELECT COUNT(*) FROM conversations WHERE created_at >= date_trunc('day', NOW())"
+            ) or 0
+
+    if scoped:
+        tools_today = await pool.fetchval(
+            f"SELECT COUNT(*) FROM audit_events ae "
+            f"WHERE ae.tool_name IS NOT NULL AND ae.created_at >= date_trunc('day', NOW()) "
+            f"AND {_TENANT_ACTOR_SUBQUERY}",
+            tenant_id,
+        )
+    else:
+        tools_today = await pool.fetchval(
+            "SELECT COUNT(*) FROM audit_events ae "
+            "WHERE ae.tool_name IS NOT NULL AND ae.created_at >= date_trunc('day', NOW())"
+        )
     return {
         "conversations_today": int(conversations or 0),
         "tools_invoked_today": int(tools_today or 0),
     }
 
 
-async def _audit_counts(pool) -> dict:
-    total = await pool.fetchval(
-        """
-        SELECT COUNT(*) FROM audit_events
-         WHERE created_at >= date_trunc('day', NOW())
-        """
-    )
-    destructive = await pool.fetchval(
-        """
-        SELECT COUNT(*) FROM audit_events
-         WHERE risk_level = 'destructive'
-           AND created_at >= date_trunc('day', NOW())
-        """
-    )
+# Actor (user_id) belongs to a workspace of the given tenant. audit_events has
+# no tenant column, so we scope by who performed the action.
+_TENANT_ACTOR_SUBQUERY = (
+    "ae.user_id IN ("
+    "SELECT DISTINCT uwr.user_id FROM user_workspace_roles uwr "
+    "JOIN workspaces w ON w.id = uwr.workspace_id WHERE w.tenant_id = $1::uuid)"
+)
+
+
+async def _audit_counts(pool, user: dict | None = None) -> dict:
+    """Audit events today. Scoped per tenant for non-global users (by actor),
+    so a tenant_admin doesn't see platform-wide event counts."""
+    role = str((user or {}).get("role") or "").lower()
+    is_global = role in {"owner", "super_admin", "admin"}
+    tenant_id = str((user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+
+    if is_global or not tenant_id:
+        total = await pool.fetchval(
+            "SELECT COUNT(*) FROM audit_events ae WHERE ae.created_at >= date_trunc('day', NOW())"
+        )
+        destructive = await pool.fetchval(
+            "SELECT COUNT(*) FROM audit_events ae "
+            "WHERE ae.risk_level = 'destructive' AND ae.created_at >= date_trunc('day', NOW())"
+        )
+    else:
+        total = await pool.fetchval(
+            f"SELECT COUNT(*) FROM audit_events ae "
+            f"WHERE ae.created_at >= date_trunc('day', NOW()) AND {_TENANT_ACTOR_SUBQUERY}",
+            tenant_id,
+        )
+        destructive = await pool.fetchval(
+            f"SELECT COUNT(*) FROM audit_events ae "
+            f"WHERE ae.risk_level = 'destructive' AND ae.created_at >= date_trunc('day', NOW()) "
+            f"AND {_TENANT_ACTOR_SUBQUERY}",
+            tenant_id,
+        )
     return {
         "events_today":              int(total or 0),
         "destructive_actions_today": int(destructive or 0),
@@ -284,18 +353,34 @@ async def dashboard_kpis(user: dict = Depends(require_authenticated)):
     small queries) and return the shape documented in the v1.44.1
     brief."""
     pool = await auth.pool()
-    # Scope KPIs to cartridges with an active scoped Vault connection. When
-    # NONE are connected yet (fresh install / local / E2E / demo stack), fall
-    # back to the full built-in catalog so the dashboard is never a dead
-    # surface. Once a real connection exists (e.g. FEMSA's femsa_sf) the view
-    # scopes down to it automatically.
-    active_cartridges = await _active_scoped_cartridges(user) or _CARTRIDGES
+    # Scope the dashboard to the ACTIVE WORKSPACE's activated data cartridges.
+    # `allowed_cartridges` is the per-(tenant,workspace) entitlement set; we keep
+    # only the data cartridges (platform/meta are excluded from the freshness
+    # view). A tenant with nothing activated must see an empty surface — NOT the
+    # full built-in catalog. The old `or _CARTRIDGES` fallback leaked the whole
+    # catalog to every tenant; removed.
+    allowed = {str(c).strip() for c in (user.get("allowed_cartridges") or [])}
+    workspace_cartridges = tuple(c for c in _CARTRIDGES if c in allowed)
+    connected_list: list[str] = []
+    for _c in workspace_cartridges:
+        if await _vault_connections_for_cartridge(_c, user):
+            connected_list.append(_c)
+    connected_cartridges = tuple(connected_list)
+
+    role = str(user.get("role") or "").lower()
+    is_global = role in {"owner", "super_admin", "admin"}
+    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip() or None
+
     return {
-        "active_cartridges": list(active_cartridges),
-        "cartridges":    await _cartridge_counts(pool, active_cartridges),
-        "extractions":   await _extraction_counts(pool, active_cartridges),
-        "data_freshness": await _freshness_per_cartridge(pool, active_cartridges),
-        "users":         await _user_counts(pool),
-        "copilot":       await _copilot_counts(pool),
-        "audit":         await _audit_counts(pool),
+        "active_cartridges": list(workspace_cartridges),
+        "cartridges": {
+            "total":        len(workspace_cartridges),
+            "connected":    len(connected_cartridges),
+            "disconnected": len(workspace_cartridges) - len(connected_cartridges),
+        },
+        "extractions":   await _extraction_counts(pool, workspace_cartridges, workspace_id, is_global),
+        "data_freshness": await _freshness_per_cartridge(pool, workspace_cartridges, workspace_id, is_global),
+        "users":         await _user_counts(pool, user),
+        "copilot":       await _copilot_counts(pool, user),
+        "audit":         await _audit_counts(pool, user),
     }

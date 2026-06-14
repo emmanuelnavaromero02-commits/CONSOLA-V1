@@ -398,63 +398,25 @@ async def startup():
             "category":    "studio",
             "description": "Cartridge & entity management: rename_entity, list_entities, update_entity",
         },
-        # v1.43.1 (Codex P0-3): register the built-in cartridges so the
-        # copilot's tool_manifest sees their /mcp/tools at boot.
-        # ``register`` HTTP-fetches /mcp/tools and stores the result in
-        # the tools JSONB column, so refreshing the console picks up
-        # newly-added tools automatically. Migration 42 also seeds the
-        # rows so fresh installs have them even before console boots.
-        {
-            "id":          "hubspot",
-            "name":        "HubSpot CRM",
-            "url":         os.environ.get("HUBSPOT_URL", "http://hubspot:8210"),
-            "category":    "cartridge",
-            "description": "Connector for HubSpot CRM.",
-        },
-        {
-            "id":          "replicon",
-            "name":        "Replicon Time & Attendance",
-            "url":         os.environ.get("REPLICON_URL", "http://replicon:8201"),
-            "category":    "cartridge",
-            "description": "Connector for Replicon workforce management platform.",
-        },
-        {
-            "id":          "salesforce",
-            "name":        "Salesforce Sales Cloud",
-            "url":         os.environ.get("SALESFORCE_URL", "http://salesforce:8205"),
-            "category":    "cartridge",
-            "description": "Connector for Salesforce Sales Cloud.",
-        },
-        {
-            "id":          "sap_hcm",
-            "name":        "SAP HCM Core",
-            "url":         os.environ.get("SAP_HCM_URL", "http://sap-hcm:8202"),
-            "category":    "cartridge",
-            "description": "Connector for SAP HCM on-premise / S4HANA HCM.",
-        },
-        {
-            "id":          "sap_successfactors",
-            "name":        "SAP SuccessFactors",
-            "url":         os.environ.get("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"),
-            "category":    "cartridge",
-            "description": "Connector for SAP SuccessFactors Employee Central.",
-        },
-        {
-            "id":          "sap_s4hana",
-            "name":        "SAP S/4HANA",
-            "url":         os.environ.get("SAP_S4HANA_URL", "http://sap-s4hana:8204"),
-            "category":    "cartridge",
-            "description": "Connector for SAP S/4HANA modules.",
-        },
+        # Per-cartridge MCP servers were removed. Cartridge tools are now
+        # served generically by mcp-infra (the "infra" server above) as
+        # cartridge_* tools parameterized by cartridge_id — no per-cartridge
+        # container. See docs/design/cartridge-runtime-unification.md.
     ]
     for server in builtin:
         url = server["url"].strip()
         if url:
             await register(server)
 
-    # RAG migrado a mcp-infra — quita el registro standalone si quedó de antes
     pool = await _get_pool()
+    # RAG migrado a mcp-infra — quita el registro standalone si quedó de antes
     await pool.execute("DELETE FROM mcp_servers WHERE id='rag'")
+    # Prune any per-cartridge server rows left by migration 42 or earlier
+    # boots; their tools now live on the mcp-infra ("infra") server.
+    await pool.execute(
+        "DELETE FROM mcp_servers WHERE category='cartridge' "
+        "OR id IN ('hubspot','replicon','salesforce','sap_hcm','sap_successfactors','sap_s4hana')"
+    )
 
 
 async def list_servers() -> list[dict]:

@@ -16,6 +16,7 @@ import re
 import time
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -41,7 +42,10 @@ _CARTRIDGE_PORTS = {
     "sap_s4hana": 8204,
     "salesforce": 8205,
 }
-_CONN_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+# Connection ids double as user-facing labels, so allow spaces (e.g.
+# "Replicon Analytics"). They are URL-encoded wherever they hit the Vault
+# path. Kept to a safe printable subset — no slashes or control chars.
+_CONN_ID_RE = re.compile(r"^[\w .:-]{1,128}$")
 
 
 def _allowed_cartridges(user: dict | None) -> set[str] | None:
@@ -177,17 +181,34 @@ async def connector_schema(cartridge: str, user: dict = Depends(require_authenti
     dependencies=[Depends(require_permission("cartridges.read"))],
 )
 async def entities(cartridge: str, user: dict = Depends(require_authenticated)):
-    """List entities + last watermark per entity, merged for the UI."""
+    """List entities + last watermark per entity, merged for the UI.
+
+    Served by the generic mcp-infra ``cartridge_list_entities`` tool (reads
+    entity_config + entity_watermarks from Postgres) instead of proxying to a
+    per-cartridge container — part of the cartridge-runtime unification. See
+    docs/design/cartridge-runtime-unification.md.
+    """
     _require_cartridge_visible(user, cartridge)
-    async with httpx.AsyncClient(timeout=15.0, headers=_cartridge_internal_headers()) as c:
-        ents = await c.get(_cartridge_url(cartridge, "/skills/entities"))
-        wms = await c.get(_cartridge_url(cartridge, "/skills/get_watermarks"))
-    ent_list = ents.json().get("entities", []) if ents.is_success else []
-    watermarks = wms.json().get("watermarks", []) if wms.is_success else []
-    wm_by_entity = {w.get("entity"): w for w in watermarks if isinstance(w, dict)}
+    from app.services import mcp_registry
+
+    result = await mcp_registry.invoke(
+        "infra", "cartridge_list_entities", {"cartridge_id": cartridge}, user=user
+    )
+    ent_list = result if isinstance(result, list) else (result.get("entities") or [])
+    out = []
     for ent in ent_list:
-        ent["watermark"] = wm_by_entity.get(ent.get("entity"))
-    return {"entities": ent_list}
+        item = dict(ent)
+        item["watermark"] = (
+            {
+                "entity": ent.get("entity"),
+                "watermark_field": ent.get("watermark_field"),
+                "last_watermark": ent.get("last_watermark"),
+            }
+            if ent.get("watermark_field")
+            else None
+        )
+        out.append(item)
+    return {"entities": out}
 
 
 @router.post(
@@ -247,6 +268,66 @@ async def run_entity(
     return r.json()
 
 
+async def _reveal_vault_connection(user: dict, cartridge: str, conn_id: str) -> dict:
+    """Read the full connection payload (incl. token) from the Vault service.
+
+    The Vault scopes connections by the SIGNED security context (tenant/
+    workspace), not by a prefixed conn_id — so we pass the plain conn_id plus
+    the signed context, exactly like console's own reveal endpoint. Raises 404
+    if not configured for this workspace."""
+    headers = {
+        **_vault_headers(),
+        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
+    }
+    async with httpx.AsyncClient(headers=headers, timeout=8.0) as c:
+        r = await c.get(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(conn_id, safe='')}"
+        )
+    if r.status_code == 404:
+        raise HTTPException(404, "connection not configured")
+    r.raise_for_status()
+    data = r.json()
+    return data if isinstance(data, dict) else {}
+
+
+def _load_connector_auth(cartridge: str) -> dict:
+    """Return the auth block from the cartridge's connector.yaml."""
+    import yaml
+
+    candidates = [
+        Path(f"/registry/cartridges/{cartridge}/app/config/connector.yaml"),
+        Path(__file__).resolve().parents[3] / "cartridges" / cartridge / "app" / "config" / "connector.yaml",
+    ]
+    for path in candidates:
+        if path.exists():
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            block = data.get("connector", data)
+            return dict(block.get("auth") or {})
+    return {}
+
+
+def _build_auth_headers_from_connector(auth_cfg: dict, conn: dict) -> dict[str, str]:
+    """Build outbound auth headers from connector.yaml + the revealed connection."""
+    header = str(auth_cfg.get("header") or "Authorization").strip()
+    prefix = str(auth_cfg.get("prefix") if auth_cfg.get("prefix") is not None else "Bearer ")
+    atype = str(auth_cfg.get("type") or "bearer_token").strip().lower()
+    token = next(
+        (conn[k] for k in ("token", "access_token", "api_token", "api_key", "password") if conn.get(k)),
+        None,
+    )
+    if atype in {"bearer_token", "api_key", "token", "apikey"} and token:
+        return {header: f"{prefix}{token}"}
+    if atype == "basic":
+        import base64
+
+        username = conn.get("username") or conn.get("user") or conn.get("admin_user")
+        password = conn.get("password") or token
+        if username and password:
+            encoded = base64.b64encode(f"{username}:{password}".encode()).decode()
+            return {"Authorization": f"Basic {encoded}"}
+    return {}
+
+
 @router.post(
     "/{cartridge}/test_connection",
     dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.write"))],
@@ -256,45 +337,51 @@ async def test_connection(
     request: Request,
     conn_id: str | None = Query(default=None, max_length=128),
 ):
-    """Validate credentials by hitting the cartridge's /skills/test_connection.
+    """Generic connection test — no per-cartridge container.
 
-    v1.44.1: the response shape is normalised to the v1.44.1 brief
-    contract ``{ok, message, latency_ms}`` so the upcoming UI can
-    render success/error consistently regardless of which cartridge
-    answered. Records an audit event with the outcome AND scrubs
-    the response body so a chatty cartridge error can't leak
-    sensitive substrings into audit_events.
+    Reveals the workspace-scoped connection from Vault, builds auth headers
+    from the cartridge's connector.yaml, and pings the external base_url
+    directly. The result is honest: a reachable host that accepts the
+    credentials passes; a 401/403 or unreachable host fails. Response shape:
+    ``{ok, message, latency_ms}``.
     """
     user = getattr(request.state, "user", None) or {}
     _require_cartridge_visible(user, cartridge)
-    selected_conn_id = _normalize_conn_id(conn_id)
+    selected_conn_id = _normalize_conn_id(conn_id) or _DEFAULT_CONN_ID
 
     started = time.monotonic()
     ok = False
     message = ""
     payload: dict = {}
     try:
-        async with httpx.AsyncClient(
-            timeout=10.0, headers=_cartridge_internal_headers_for_user(user)
-        ) as c:
-            params = {"conn_id": selected_conn_id} if selected_conn_id else None
-            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), params=params)
+        conn = await _reveal_vault_connection(user, cartridge, selected_conn_id)
+        base_url = str(conn.get("base_url") or conn.get("url") or conn.get("host") or "").strip()
+        if not base_url:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            message = "La conexión no tiene base_url configurada."
+            payload = {"status": "missing_base_url"}
+        else:
+            auth_cfg = _load_connector_auth(cartridge)
+            auth_headers = _build_auth_headers_from_connector(auth_cfg, conn)
+            async with httpx.AsyncClient(timeout=10.0, headers={"Accept": "application/json", **auth_headers}) as c:
+                r = await c.get(base_url)
+            latency_ms = int((time.monotonic() - started) * 1000)
+            if r.status_code in (401, 403):
+                ok = False
+                message = f"Credenciales rechazadas por el endpoint (HTTP {r.status_code})."
+            else:
+                ok = True
+                message = f"Conectado ({latency_ms} ms, HTTP {r.status_code})."
+            payload = {"status": "ok" if ok else "auth_failed", "http_status": r.status_code}
+    except HTTPException as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
-        payload = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-        ok = _test_connection_succeeded(r.is_success, payload)
-        status_label = str(payload.get("status") or "").strip()
-        missing = payload.get("missing")
-        missing_label = f"; missing={missing}" if missing else ""
-        message = payload.get("message") or payload.get("error") or (
-            f"Conectado ({latency_ms} ms)" if ok
-            else f"{status_label or 'not_ok'}{missing_label} (HTTP {r.status_code})"
-        )
+        ok = False
+        message = "Conexión no configurada en Vault." if exc.status_code == 404 else str(exc.detail)[:200]
     except Exception as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
         ok = False
-        # Truncate the message — error strings from a cartridge may
-        # surface internal endpoints / tokens / file paths.
-        message = str(exc)[:200] or "connection error"
+        # Truncate — error strings may surface internal endpoints/tokens/paths.
+        message = f"No se pudo conectar: {str(exc)[:160]}" or "connection error"
 
     await audit_service.record_event(
         user_id=user.get("id"),

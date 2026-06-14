@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -22,16 +22,21 @@ import {
   useVaultConnections,
   useVaultSecrets,
 } from "@/lib/operations/hooks";
-import { useConnectorSchema } from "@/lib/hooks/useCartridges";
+import { useCartridgeList, useConnectorSchema } from "@/lib/hooks/useCartridges";
 import { cn } from "@/lib/utils";
 
-const CARTRIDGES = [
-  { id: "sap_successfactors", label: "SAP SuccessFactors" },
-  { id: "replicon", label: "Replicon" },
-  { id: "hubspot", label: "HubSpot CRM" },
-  { id: "sap_hcm", label: "SAP HCM" },
-  { id: "sap_s4hana", label: "SAP S/4HANA" },
-];
+// Display labels only. The actual list of selectable cartridges comes from
+// /api/cartridges, which returns just the cartridges ACTIVE in the current
+// workspace — so a workspace with nothing activated shows an empty picker
+// instead of offering connections it isn't allowed to configure.
+const CARTRIDGE_LABELS: Record<string, string> = {
+  sap_successfactors: "SAP SuccessFactors",
+  replicon: "Replicon",
+  hubspot: "HubSpot CRM",
+  sap_hcm: "SAP HCM",
+  sap_s4hana: "SAP S/4HANA",
+  salesforce: "Salesforce",
+};
 
 type VaultTab = "connections" | "secrets";
 
@@ -97,7 +102,20 @@ const EXPLICIT_CONNECTION_FIELDS = [
 
 export function VaultConnectionsTable() {
   const [tab, setTab] = useState<VaultTab>("connections");
-  const [cartridge, setCartridge] = useState("sap_successfactors");
+  const cartridgeList = useCartridgeList();
+  const availableCartridges = cartridgeList.data?.cartridges ?? [];
+  const [cartridge, setCartridge] = useState("");
+
+  // Keep the selection valid for the current workspace: default to the first
+  // active cartridge, and clear it if the active set no longer includes it.
+  useEffect(() => {
+    if (cartridgeList.isLoading) return;
+    if (availableCartridges.length === 0) {
+      if (cartridge !== "") setCartridge("");
+    } else if (!availableCartridges.includes(cartridge)) {
+      setCartridge(availableCartridges[0]);
+    }
+  }, [cartridgeList.isLoading, availableCartridges, cartridge]);
   const [scope, setScope] = useState("llm");
   const [connForm, setConnForm] = useState<ConnForm>(EMPTY_CONN_FORM);
   const [secretForm, setSecretForm] = useState<SecretForm>(EMPTY_SECRET_FORM);
@@ -328,11 +346,20 @@ export function VaultConnectionsTable() {
                   setRevealedTokens({});
                   resetConnectionForm();
                 }}
-                className="min-h-[44px] rounded-md border bg-background px-3 text-sm"
+                disabled={availableCartridges.length === 0}
+                className="min-h-[44px] rounded-md border bg-background px-3 text-sm disabled:opacity-60"
               >
-                {CARTRIDGES.map((item) => (
-                  <option key={item.id} value={item.id}>{item.label} ({item.id})</option>
-                ))}
+                {availableCartridges.length === 0 ? (
+                  <option value="">
+                    {cartridgeList.isLoading ? "Cargando…" : "Sin cartuchos activos"}
+                  </option>
+                ) : (
+                  availableCartridges.map((id) => (
+                    <option key={id} value={id}>
+                      {(CARTRIDGE_LABELS[id] ?? id)} ({id})
+                    </option>
+                  ))
+                )}
               </select>
             ) : (
               <input

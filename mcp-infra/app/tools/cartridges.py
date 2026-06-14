@@ -33,6 +33,27 @@ from app.tools.postgres import _conn
 
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
+# Gold is the guarded business layer: it lives in pggold (Postgres) and is
+# queried only through refinement, which applies the RLS-by-AST guard. The
+# generic cartridge tools run DuckDB directly with no such guard, so they must
+# never touch a gold/ object-store path — that would be an unscoped read of the
+# business layer. Any legacy gold parquet is reachable only via the guarded
+# refinement engine, not here.
+_GOLD_PATH_RE = re.compile(r"s3://[^'\"\s)]+/gold/", re.IGNORECASE)
+
+
+class GoldReadForbidden(ValueError):
+    """Raised when a cartridge tool's SQL references a gold/ storage path."""
+
+
+def _assert_no_gold_path(sql: str) -> None:
+    if _GOLD_PATH_RE.search(str(sql or "")):
+        raise GoldReadForbidden(
+            "Reading gold/ object-store paths is not allowed here. The gold "
+            "layer lives in pggold and must be queried through refinement, "
+            "which applies row-level security."
+        )
+
 
 # ── DuckDB helper (S3 pre-configured) ─────────────────────────────────────────
 
@@ -1129,6 +1150,127 @@ def cartridge_list_jobs(cartridge_id: str, limit: int = 10) -> list[dict[str, An
     ]
 
 
+# ── Tool · get_entity_status ──────────────────────────────────────────────────
+# Parity with the per-cartridge mcp_server (salesforce get_entity_status):
+# a per-entity composite of config + watermark + last run. Lets the generic
+# runtime replace that container tool one-to-one.
+
+
+@tool(
+    name="cartridge_get_entity_status",
+    description=(
+        "Extraction status for a single entity: mode, enabled flag, watermark "
+        "config and last recorded watermark, plus the most recent pipeline run "
+        "(status, run_id, timestamps, record_count, error)."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {"type": "string"},
+            "entity": {
+                "type": "string",
+                "description": "Entity name as listed by cartridge_list_entities",
+            },
+        },
+        "required": ["cartridge_id", "entity"],
+    },
+)
+def cartridge_get_entity_status(cartridge_id: str, entity: str) -> dict[str, Any]:
+    try:
+        entity = validate_identifier(entity, "entity")
+    except ValueError as exc:
+        return {"error": str(exc)}
+    with _conn() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.mode, e.enabled, e.watermark_field, e.description,
+                   w.last_watermark_value
+            FROM entity_config e
+            LEFT JOIN entity_watermarks w
+              ON w.cartridge_id = e.cartridge_id AND w.entity_name = e.entity
+            WHERE e.cartridge_id = %s AND e.entity = %s
+            """,
+            (cartridge_id, entity),
+        )
+        cfg = cur.fetchone()
+        if not cfg:
+            return {
+                "error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"
+            }
+        cur.execute(
+            """
+            SELECT run_id, status, started_at, finished_at, record_count, error_message
+            FROM pipeline_runs
+            WHERE cartridge_id=%s AND entity=%s
+            ORDER BY started_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            (cartridge_id, entity),
+        )
+        run = cur.fetchone()
+    return {
+        "entity": entity,
+        "mode": cfg[0] or "full",
+        "enabled": cfg[1],
+        "watermark_field": cfg[2],
+        "description": cfg[3] or "",
+        "last_watermark": cfg[4],
+        "last_run_id": run[0] if run else None,
+        "last_run_status": run[1] if run else None,
+        "last_run_started_at": run[2].isoformat() if run and run[2] else None,
+        "last_run_finished_at": run[3].isoformat() if run and run[3] else None,
+        "last_run_records": run[4] if run else None,
+        "last_run_error": run[5] if run else None,
+    }
+
+
+# ── Tool · run_all_kb ─────────────────────────────────────────────────────────
+# Parity with the per-cartridge mcp_server (salesforce run_all_kb): runs every
+# enabled KB. Implemented as a loop over the generic cartridge_run_kb so there
+# is a single KB execution path.
+
+
+@tool(
+    name="cartridge_run_all_kb",
+    description=(
+        "Execute every enabled Knowledge Bit of a cartridge in sequence. "
+        "Returns a per-KB list of results (status, records, storage)."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {"type": "string"},
+            "tenant_id": {"type": "string"},
+            "workspace_id": {"type": "string"},
+        },
+        "required": ["cartridge_id"],
+    },
+)
+def cartridge_run_all_kb(
+    cartridge_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for kb in cartridge_list_kbs(cartridge_id):
+        kb_id = kb.get("kb_id")
+        try:
+            res = cartridge_run_kb(
+                cartridge_id,
+                kb_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                security_context=security_context,
+            )
+        except Exception as exc:  # noqa: BLE001 — one bad KB must not abort the batch
+            res = {"kb_id": kb_id, "status": "failed", "error": str(exc)}
+        if isinstance(res, dict):
+            res.setdefault("kb_id", kb_id)
+        results.append(res)
+    return results
+
+
 # ── Tool 9 · list_kbs ─────────────────────────────────────────────────────────
 
 
@@ -1212,6 +1354,10 @@ def cartridge_run_kb(
         tenant_id,
         workspace_id,
     )
+    try:
+        _assert_no_gold_path(sql)
+    except GoldReadForbidden as exc:
+        return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
     run_id = uuid.uuid4().hex[:8]
 
     try:
@@ -1366,6 +1512,10 @@ def cartridge_query_kb(cartridge_id: str, sql: str, limit: int = 100) -> dict[st
     # string payload can't ride the LIMIT clause into the f-string.
     limit = validate_bounded_int(limit, "limit", lo=1, hi=5000)
     resolved = sql.replace("{bucket}", settings.minio_bucket)
+    try:
+        _assert_no_gold_path(resolved)
+    except GoldReadForbidden as exc:
+        return {"cartridge_id": cartridge_id, "error": "gold_read_forbidden", "reason": str(exc)}
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
     try:

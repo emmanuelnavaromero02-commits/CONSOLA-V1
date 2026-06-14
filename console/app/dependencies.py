@@ -189,7 +189,12 @@ async def _workspace_cartridges(workspace_id: str | None, user_id: int | None = 
                 ORDER BY cartridge""",
             workspace_id,
         )
-    return [str(row["cartridge"]) for row in rows if row["cartridge"]]
+    cartridges = [str(row["cartridge"]) for row in rows if row["cartridge"]]
+    # The platform cartridge is infrastructure (shared system DAGs / meta tools),
+    # not an opt-in data product — it is active by default for every workspace.
+    if "platform" not in cartridges:
+        cartridges.append("platform")
+    return cartridges
 
 
 async def _with_workspace_context(user: dict, requested_workspace_id: str | None) -> dict:

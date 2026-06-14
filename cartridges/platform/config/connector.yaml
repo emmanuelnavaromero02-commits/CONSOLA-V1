@@ -1,0 +1,13 @@
+# Platform cartridge connector descriptor.
+#
+# Unlike data cartridges (replicon, sap_*, hubspot, salesforce), the platform
+# cartridge has NO external system and NO credentials. It ships shared
+# orchestration DAGs that the rest of the platform reuses. It is enabled for
+# every tenant by default (see default_enabled) and is exempt from per-tenant
+# data scoping in the pipeline (console treats cartridge_id 'platform' specially).
+cartridge_id: platform
+name: Platform
+kind: meta            # not a data connector — orchestration only
+default_enabled: true # auto-active for every tenant; not an opt-in marketplace product
+external_connection: false
+auth: none
