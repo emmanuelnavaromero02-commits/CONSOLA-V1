@@ -1,4 +1,5 @@
 import { readCookie } from "@/lib/cookies";
+import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
 export { readCookie };
 
@@ -69,6 +70,14 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
   if (method !== "GET" && method !== "HEAD") {
     const csrf = csrfToken();
     if (csrf && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrf);
+  }
+
+  // Scope every request to the workspace the user picked in the shell
+  // switcher (persisted as a cookie). The backend auth middleware reads
+  // this header to resolve the active workspace/tenant.
+  if (!headers.has("X-Workspace-Id")) {
+    const activeWorkspace = readCookie(ACTIVE_WORKSPACE_COOKIE);
+    if (activeWorkspace) headers.set("X-Workspace-Id", activeWorkspace);
   }
 
   const timeoutMs = init.timeoutMs === undefined ? DEFAULT_API_TIMEOUT_MS : init.timeoutMs;

@@ -46,6 +46,7 @@ export function UsersTable() {
   const resetMutation  = useSendPasswordReset();
 
   const [confirmDelete, setConfirmDelete] = useState<AppUser | null>(null);
+  const [workspaceFilter, setWorkspaceFilter] = useState<string>("");
 
   // Round 1 P0: focus management on the delete confirm dialog.
   // The dialog auto-focuses Cancel (defensive default for a
@@ -118,14 +119,37 @@ export function UsersTable() {
     );
   }
 
-  const rows = users ?? [];
-  if (rows.length === 0) {
+  const allRows = users ?? [];
+  if (allRows.length === 0) {
     return (
       <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
         No hay usuarios registrados todavía.
       </p>
     );
   }
+
+  // Unique tenant/workspace options across all listed users, for the
+  // segmentation filter. Grouped by tenant in the dropdown.
+  const workspaceIndex = new Map<string, { label: string; tenant: string }>();
+  for (const u of allRows) {
+    for (const w of u.workspaces ?? []) {
+      if (!workspaceIndex.has(w.workspace_id)) {
+        workspaceIndex.set(w.workspace_id, { label: w.workspace_name, tenant: w.tenant_name });
+      }
+    }
+  }
+  const workspaceTenants = Array.from(
+    Array.from(workspaceIndex.entries()).reduce((acc, [id, info]) => {
+      const list = acc.get(info.tenant) ?? [];
+      list.push({ id, label: info.label });
+      acc.set(info.tenant, list);
+      return acc;
+    }, new Map<string, Array<{ id: string; label: string }>>()),
+  );
+
+  const rows = workspaceFilter
+    ? allRows.filter((u) => (u.workspaces ?? []).some((w) => w.workspace_id === workspaceFilter))
+    : allRows;
 
   async function handleToggleActive(u: AppUser) {
     try {
@@ -164,12 +188,41 @@ export function UsersTable() {
 
   return (
     <>
+      {workspaceIndex.size > 0 ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <label className="text-xs font-medium uppercase text-muted-foreground" htmlFor="ws-filter">
+            Segmentar por
+          </label>
+          <select
+            id="ws-filter"
+            value={workspaceFilter}
+            onChange={(e) => setWorkspaceFilter(e.target.value)}
+            className="min-h-[40px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Todos los workspaces</option>
+            {workspaceTenants.map(([tenant, items]) => (
+              <optgroup key={tenant} label={tenant}>
+                {items.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <span className="text-xs text-muted-foreground">
+            {rows.length} de {allRows.length}
+          </span>
+        </div>
+      ) : null}
+
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-medium">Email</th>
               <th className="px-4 py-2 font-medium">Nombre</th>
+              <th className="px-4 py-2 font-medium">Tenant / Workspace</th>
               <th className="px-4 py-2 font-medium">Rol</th>
               <th className="px-4 py-2 font-medium">Estado</th>
               <th className="px-4 py-2 font-medium">Último login</th>
@@ -189,6 +242,25 @@ export function UsersTable() {
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">
                   {u.name || "—"}
+                </td>
+                <td className="px-4 py-3">
+                  {(u.workspaces ?? []).length === 0 ? (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {(u.workspaces ?? []).map((w) => (
+                        <span
+                          key={w.workspace_id}
+                          className="inline-flex items-center rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+                          title={`${w.tenant_name} / ${w.workspace_name} · ${w.workspace_role}`}
+                        >
+                          <span className="text-muted-foreground">{w.tenant_name}</span>
+                          <span className="mx-1 text-muted-foreground/60">/</span>
+                          <span className="font-medium">{w.workspace_name}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">{u.role}</td>
                 <td className="px-4 py-3">

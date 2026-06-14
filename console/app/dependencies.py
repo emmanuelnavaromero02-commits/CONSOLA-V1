@@ -52,8 +52,8 @@ async def _user_from_jwt(token: str) -> dict:
     return user
 
 
-async def _workspace_memberships(user_id: int) -> list[dict]:
-    p = await _auth.pool()
+async def _explicit_workspace_memberships(p, user_id: int) -> list[dict]:
+    """Workspaces the user has an explicit role row for (user_workspace_roles)."""
     rows = await p.fetch(
         """SELECT w.id::text AS workspace_id,
                   w.name AS workspace_name,
@@ -69,6 +69,70 @@ async def _workspace_memberships(user_id: int) -> list[dict]:
         user_id,
     )
     return [dict(row) for row in rows]
+
+
+async def _tenant_ids_for_user(p, user_id: int) -> set[str]:
+    """Tenants a non-global user is attached to: the tenants of the workspaces
+    they are an explicit member of, plus their own users.tenant_id if set.
+
+    This is what scopes a tenant_admin: they administer every workspace under
+    any tenant they belong to, even workspaces they are not explicitly in.
+    """
+    rows = await p.fetch(
+        """SELECT DISTINCT w.tenant_id::text AS tenant_id
+             FROM user_workspace_roles uwr
+             JOIN workspaces w ON w.id = uwr.workspace_id
+            WHERE uwr.user_id = $1""",
+        user_id,
+    )
+    tenant_ids = {r["tenant_id"] for r in rows if r["tenant_id"]}
+    own = await p.fetchval("SELECT tenant_id::text FROM users WHERE id = $1", user_id)
+    if own:
+        tenant_ids.add(own)
+    return tenant_ids
+
+
+async def _workspace_memberships(user_id: int) -> list[dict]:
+    """Workspaces a user can act in, role-aware.
+
+    * Global admins (owner/super_admin/admin) → every workspace across every
+      tenant. Lets a super_admin switch tenant/workspace freely.
+    * tenant_admin → every workspace under any tenant they belong to.
+    * Everyone else → only their explicit user_workspace_roles memberships.
+    """
+    p = await _auth.pool()
+    role = await p.fetchval("SELECT role FROM users WHERE id = $1", user_id)
+
+    if role in _GLOBAL_ADMIN_ROLES:
+        rows = await p.fetch(
+            """SELECT w.id::text AS workspace_id,
+                      w.name AS workspace_name,
+                      t.id::text AS tenant_id,
+                      t.name AS tenant_name
+                 FROM workspaces w
+                 JOIN tenants t ON t.id = w.tenant_id
+                ORDER BY t.name ASC, w.created_at ASC, w.name ASC"""
+        )
+        return [{**dict(r), "workspace_role": role} for r in rows]
+
+    if role == "tenant_admin":
+        tenant_ids = await _tenant_ids_for_user(p, user_id)
+        if tenant_ids:
+            rows = await p.fetch(
+                """SELECT w.id::text AS workspace_id,
+                          w.name AS workspace_name,
+                          t.id::text AS tenant_id,
+                          t.name AS tenant_name
+                     FROM workspaces w
+                     JOIN tenants t ON t.id = w.tenant_id
+                    WHERE w.tenant_id = ANY($1::uuid[])
+                    ORDER BY t.name ASC, w.created_at ASC, w.name ASC""",
+                list(tenant_ids),
+            )
+            if rows:
+                return [{**dict(r), "workspace_role": "tenant_admin"} for r in rows]
+
+    return await _explicit_workspace_memberships(p, user_id)
 
 
 async def _workspace_cartridges(workspace_id: str | None, user_id: int | None = None) -> list[str]:

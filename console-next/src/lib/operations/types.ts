@@ -53,6 +53,14 @@ export type UserRole =
   | "viewer"
   | string;
 
+export interface UserWorkspace {
+  workspace_id:   string;
+  workspace_name: string;
+  tenant_id:      string;
+  tenant_name:    string;
+  workspace_role: string;
+}
+
 export interface AppUser {
   id:                   number;
   email:                string;
@@ -62,6 +70,7 @@ export interface AppUser {
   must_change_password: boolean;
   created_at:           string | null;
   last_login:           string | null;
+  workspaces?:          UserWorkspace[];
 }
 
 export interface UsersListResponse {

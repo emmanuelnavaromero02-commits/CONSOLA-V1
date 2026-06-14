@@ -1,0 +1,6 @@
+1:"$Sreact.fragment"
+2:I[26236,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js","/static/console-next/_next/static/chunks/0emhazj188wx4.js","/static/console-next/_next/static/chunks/0s7w9ak5wf11h.js","/static/console-next/_next/static/chunks/06it6~5w4o_qr.js","/static/console-next/_next/static/chunks/0e4ghtjwdnd.8.js"],"WorkspacesConsole"]
+3:I[97367,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js"],"OutletBoundary"]
+4:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":[["$","main",null,{"className":"mx-auto max-w-6xl space-y-6 px-6 py-6","children":[["$","header",null,{"className":"space-y-1","children":[["$","h1",null,{"className":"text-2xl font-semibold tracking-tight","children":"Workspaces"}],["$","p",null,{"className":"text-sm text-muted-foreground","children":"Provisión de workspaces dentro de un tenant."}]]}],["$","$L2",null,{}]]}],[["$","script","script-0",{"src":"/static/console-next/_next/static/chunks/0e4ghtjwdnd.8.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"console-next-static"}
+5:null

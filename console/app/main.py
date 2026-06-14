@@ -132,6 +132,7 @@ from app.dependencies import (
     ROLE_ADMIN,
     ROLE_ANALYST,
     ROLE_WORKSPACE_ADMIN,
+    _tenant_ids_for_user,
     _workspace_cartridges,
     _workspace_memberships,
     get_current_global_user,
@@ -2517,6 +2518,24 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
 
     is_platform_admin = role_canonical in {"owner", "super_admin", "admin"}
     can_manage_workspace = workspace_role_resolved in {"workspace_admin", "tenant_admin"}
+    # Tenant provisioning is global-admin only; workspace provisioning also
+    # available to a tenant_admin (scoped to their own tenant by the API).
+    can_manage_tenants = is_platform_admin
+    can_manage_workspaces = is_platform_admin or role_canonical == "tenant_admin"
+    # The workspaces this user may switch into (role-aware: global admins get
+    # every workspace, tenant_admins get their tenant's, others their explicit
+    # memberships). Feeds the shell workspace switcher.
+    switchable_workspaces = [
+        {
+            "workspace_id": w.get("workspace_id"),
+            "workspace_name": w.get("workspace_name"),
+            "tenant_id": w.get("tenant_id"),
+            "tenant_name": w.get("tenant_name"),
+            "workspace_role": w.get("workspace_role"),
+        }
+        for w in (user.get("workspaces") or [])
+        if w.get("workspace_id")
+    ]
 
     return {
         "user": {
@@ -2533,6 +2552,7 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             "workspace_id": user.get("workspace_id") or user.get("active_workspace_id"),
             "workspace_role": workspace_role_resolved,
         },
+        "workspaces": switchable_workspaces,
         "permissions": effective,
         "cartridges": {
             "allowed": cartridges_allowed,
@@ -2593,6 +2613,8 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             "can_view_settings":       _can("settings.read") and is_platform_admin,
             "can_view_security":       _can("security.audit.read") and is_platform_admin,
             "can_view_decisions":      is_platform_admin,
+            "can_manage_tenants":      can_manage_tenants,
+            "can_manage_workspaces":   can_manage_workspaces,
         },
     }
 
@@ -7372,13 +7394,284 @@ async def _assert_can_manage_target_user(admin_user: dict, target_user_id: int) 
         raise HTTPException(403, "workspace access forbidden")
 
 
+# ── Tenants (platform-admin only) ──────────────────────────────────────
+# Tenant/workspace provisioning previously had no API or UI — only raw SQL
+# (see scripts/tenant_ab_e2e.py). These endpoints expose the
+# tenant → workspace → first-admin chain to a global super_admin/owner/admin
+# so the Configuración/Admin → Tenants page can create them without psql.
+_TENANT_NAME_RE = re.compile(r"^[\w][\w .\-]{1,98}[\w]$")
+
+
+def _validate_tenant_name_or_400(value: object | None, *, field: str = "name") -> str:
+    name = str(value or "").strip()
+    if not name:
+        raise HTTPException(400, f"{field} is required")
+    if not _TENANT_NAME_RE.match(name):
+        raise HTTPException(400, f"{field} must be 2-100 chars: letters, digits, space, dot, dash, underscore")
+    return name
+
+
+@app.get("/api/admin/tenants")
+async def api_admin_tenants_list(
+    admin_user: dict = Depends(require_global_any_role("owner", "super_admin", "admin", "tenant_admin")),
+):
+    pool = await _get_db_pool()
+    where = ""
+    args: list = []
+    if not _is_global_iam_admin(admin_user):
+        # tenant_admin sees only their own tenant(s).
+        tenant_ids = await _tenant_ids_for_user(pool, admin_user["id"])
+        if not tenant_ids:
+            return {"tenants": []}
+        where = "WHERE t.id = ANY($1::uuid[])"
+        args = [list(tenant_ids)]
+    rows = await pool.fetch(
+        f"""
+        SELECT t.id, t.name, t.created_at,
+               COUNT(w.id) AS workspace_count
+          FROM tenants t
+          LEFT JOIN workspaces w ON w.tenant_id = t.id
+         {where}
+         GROUP BY t.id, t.name, t.created_at
+         ORDER BY t.created_at DESC
+        """,
+        *args,
+    )
+    return {
+        "tenants": [
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "workspace_count": int(r["workspace_count"] or 0),
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/api/admin/tenants", dependencies=[Depends(require_csrf)])
+async def api_admin_tenants_create(
+    body: dict,
+    request: Request,
+    admin_user: dict = Depends(require_global_any_role("owner", "super_admin", "admin")),
+):
+    """Create a tenant, optionally its first workspace and first admin user.
+
+    Body: {name, workspace_name?, admin_email?, admin_password?, admin_name?}
+    The optional admin is only created when a workspace_name is also given,
+    because a user must land in a workspace to have any access.
+    """
+    name = _validate_tenant_name_or_400(body.get("name"))
+    workspace_name_raw = str(body.get("workspace_name") or "").strip()
+    workspace_name = _validate_tenant_name_or_400(workspace_name_raw, field="workspace_name") if workspace_name_raw else None
+
+    admin_email_raw = body.get("admin_email")
+    admin_password = body.get("admin_password") or ""
+    want_admin = bool(admin_email_raw) or bool(admin_password)
+    if want_admin and not workspace_name:
+        raise HTTPException(400, "workspace_name is required to create a first admin user")
+    admin_email = _normalize_email_or_400(admin_email_raw) if want_admin else None
+    if want_admin:
+        admin_password = _validate_password_or_400(admin_password, field="admin_password")
+        if await _auth.get_user_by_email(admin_email):
+            raise HTTPException(409, f"user with email {admin_email} already exists")
+
+    import asyncpg as _asyncpg
+
+    pool = await _get_db_pool()
+    try:
+        tenant_id = await pool.fetchval(
+            "INSERT INTO tenants (name) VALUES ($1) RETURNING id", name
+        )
+    except _asyncpg.UniqueViolationError:
+        raise HTTPException(409, f"tenant '{name}' already exists")
+
+    workspace_id: str | None = None
+    if workspace_name:
+        workspace_id = str(
+            await pool.fetchval(
+                "INSERT INTO workspaces (tenant_id, name) VALUES ($1, $2) RETURNING id",
+                tenant_id,
+                workspace_name,
+            )
+        )
+
+    created_admin: dict | None = None
+    if want_admin and workspace_id:
+        create_user_kwargs = {
+            "email": admin_email,
+            "password": admin_password,
+            "name": body.get("admin_name"),
+            "role": "tenant_admin",
+        }
+        if "workspace_id" in inspect.signature(_auth.create_user).parameters:
+            create_user_kwargs["workspace_id"] = workspace_id
+        created_admin = await _auth.create_user(**create_user_kwargs)
+        if created_admin.get("id"):
+            await _set_workspace_role_for_user(int(created_admin["id"]), workspace_id, "tenant_admin")
+
+    await _audit.record_event(
+        admin_user.get("id"), admin_user.get("email"), "tenant.created", "tenant", str(tenant_id),
+        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+        metadata={"name": name, "workspace_id": workspace_id, "admin_email": admin_email},
+    )
+    return {
+        "id": str(tenant_id),
+        "name": name,
+        "workspace_id": workspace_id,
+        "workspace_name": workspace_name,
+        "admin_email": admin_email if created_admin else None,
+    }
+
+
+@app.get("/api/admin/workspaces")
+async def api_admin_workspaces_list(
+    tenant_id: str | None = None,
+    admin_user: dict = Depends(require_global_any_role("owner", "super_admin", "admin", "tenant_admin")),
+):
+    pool = await _get_db_pool()
+    clauses: list[str] = []
+    args: list = []
+    if not _is_global_iam_admin(admin_user):
+        # tenant_admin is restricted to workspaces under their own tenant(s).
+        allowed = await _tenant_ids_for_user(pool, admin_user["id"])
+        if not allowed:
+            return {"workspaces": []}
+        if tenant_id and tenant_id not in allowed:
+            raise HTTPException(403, "tenant access forbidden")
+        args.append(list(allowed))
+        clauses.append(f"w.tenant_id = ANY(${len(args)}::uuid[])")
+    if tenant_id:
+        args.append(tenant_id)
+        clauses.append(f"w.tenant_id = ${len(args)}::uuid")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = await pool.fetch(
+        f"""
+        SELECT w.id, w.name, w.tenant_id, w.created_at, t.name AS tenant_name
+          FROM workspaces w
+          JOIN tenants t ON t.id = w.tenant_id
+         {where}
+         ORDER BY t.name, w.created_at DESC
+        """,
+        *args,
+    )
+    return {
+        "workspaces": [
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "tenant_id": str(r["tenant_id"]),
+                "tenant_name": r["tenant_name"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/api/admin/workspaces", dependencies=[Depends(require_csrf)])
+async def api_admin_workspaces_create(
+    body: dict,
+    request: Request,
+    admin_user: dict = Depends(require_global_any_role("owner", "super_admin", "admin", "tenant_admin")),
+):
+    """Create a workspace under an existing tenant. Body: {tenant_id, name}.
+
+    A tenant_admin may only create workspaces under their own tenant(s); a
+    global admin may target any tenant.
+    """
+    import asyncpg as _asyncpg
+
+    tenant_id = str(body.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(400, "tenant_id is required")
+    name = _validate_tenant_name_or_400(body.get("name"))
+
+    pool = await _get_db_pool()
+    if not _is_global_iam_admin(admin_user):
+        allowed = await _tenant_ids_for_user(pool, admin_user["id"])
+        if tenant_id not in allowed:
+            raise HTTPException(403, "tenant access forbidden")
+    tenant_row = await pool.fetchrow("SELECT id, name FROM tenants WHERE id = $1::uuid", tenant_id)
+    if not tenant_row:
+        raise HTTPException(404, "tenant not found")
+    try:
+        workspace_id = str(
+            await pool.fetchval(
+                "INSERT INTO workspaces (tenant_id, name) VALUES ($1::uuid, $2) RETURNING id",
+                tenant_id,
+                name,
+            )
+        )
+    except _asyncpg.UniqueViolationError:
+        raise HTTPException(409, f"workspace '{name}' already exists in this tenant")
+
+    await _audit.record_event(
+        admin_user.get("id"), admin_user.get("email"), "workspace.created", "workspace", workspace_id,
+        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+        metadata={"name": name, "tenant_id": tenant_id},
+    )
+    return {
+        "id": workspace_id,
+        "name": name,
+        "tenant_id": tenant_id,
+        "tenant_name": tenant_row["name"],
+    }
+
+
+async def _attach_user_workspaces(users: list[dict]) -> None:
+    """Attach each user's explicit workspace/tenant memberships so the
+    Users table can segment by tenant/workspace. Mutates in place."""
+    ids = [int(u["id"]) for u in users if u.get("id") is not None]
+    for u in users:
+        u["workspaces"] = []
+    if not ids:
+        return
+    pool = await _get_db_pool()
+    rows = await pool.fetch(
+        """
+        SELECT uwr.user_id,
+               w.id::text AS workspace_id,
+               w.name AS workspace_name,
+               t.id::text AS tenant_id,
+               t.name AS tenant_name,
+               r.name AS workspace_role
+          FROM user_workspace_roles uwr
+          JOIN workspaces w ON w.id = uwr.workspace_id
+          JOIN tenants t ON t.id = w.tenant_id
+          JOIN roles r ON r.id = uwr.role_id
+         WHERE uwr.user_id = ANY($1::int[])
+         ORDER BY t.name, w.name
+        """,
+        ids,
+    )
+    by_user: dict[int, list[dict]] = {}
+    for r in rows:
+        by_user.setdefault(r["user_id"], []).append(
+            {
+                "workspace_id": r["workspace_id"],
+                "workspace_name": r["workspace_name"],
+                "tenant_id": r["tenant_id"],
+                "tenant_name": r["tenant_name"],
+                "workspace_role": r["workspace_role"],
+            }
+        )
+    for u in users:
+        if u.get("id") is not None:
+            u["workspaces"] = by_user.get(int(u["id"]), [])
+
+
 @app.get("/api/admin/users")
 async def api_admin_users_list(admin_user: dict = Depends(require_permission("iam.users.read"))):
     users = await _auth.list_users(active_only=False)
     if _is_global_iam_admin(admin_user):
-        return {"users": users}
-    visible_ids = await _visible_user_ids_for_admin(admin_user, users)
-    return {"users": [u for u in users if u.get("id") in visible_ids]}
+        visible = users
+    else:
+        visible_ids = await _visible_user_ids_for_admin(admin_user, users)
+        visible = [u for u in users if u.get("id") in visible_ids]
+    await _attach_user_workspaces(visible)
+    return {"users": visible}
 
 
 @app.post("/api/admin/users", dependencies=[Depends(require_csrf)])

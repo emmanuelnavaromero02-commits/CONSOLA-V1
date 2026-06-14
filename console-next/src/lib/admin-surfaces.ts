@@ -208,6 +208,13 @@ export interface MeAccessResponse {
     workspace_id?: string | null;
     workspace_role?: string | null;
   };
+  workspaces?: Array<{
+    workspace_id?: string | null;
+    workspace_name?: string | null;
+    tenant_id?: string | null;
+    tenant_name?: string | null;
+    workspace_role?: string | null;
+  }>;
   permissions?: string[];
   cartridges?: {
     allowed?: Array<{ cartridge_id?: string; product_name?: string; status?: string }>;

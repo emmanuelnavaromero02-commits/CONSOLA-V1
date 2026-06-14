@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from app.dependencies import require_admin
 from app.dependencies import require_authenticated
+from app.dependencies import require_global_any_role
 from app.services import audit_service
 from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie
 from app.services.permissions import has_permission, require_permission
@@ -276,6 +277,33 @@ async def operations_users_page(request: Request):
 )
 async def operations_audit_page(request: Request):
     return _console_next_response(request, "operations/audit/index.html")
+
+
+# Tenant provisioning page (Configuración/Admin → Tenants). Global-admin
+# only, matching the /api/admin/tenants RBAC gate.
+@router.get("/admin/tenants", dependencies=[Depends(require_admin)])
+async def admin_tenants_page(request: Request):
+    return _console_next_response(request, "admin/tenants/index.html")
+
+
+@router.get("/admin/tenants/", dependencies=[Depends(require_admin)])
+async def admin_tenants_page_slash(request: Request):
+    return _console_next_response(request, "admin/tenants/index.html")
+
+
+# Workspace provisioning page (Configuración/Admin → Workspaces). Global
+# admins plus tenant_admin (the API scopes a tenant_admin to their tenant).
+_workspaces_page_guard = require_global_any_role("owner", "super_admin", "admin", "tenant_admin")
+
+
+@router.get("/admin/workspaces", dependencies=[Depends(_workspaces_page_guard)])
+async def admin_workspaces_page(request: Request):
+    return _console_next_response(request, "admin/workspaces/index.html")
+
+
+@router.get("/admin/workspaces/", dependencies=[Depends(_workspaces_page_guard)])
+async def admin_workspaces_page_slash(request: Request):
+    return _console_next_response(request, "admin/workspaces/index.html")
 
 
 @router.get(

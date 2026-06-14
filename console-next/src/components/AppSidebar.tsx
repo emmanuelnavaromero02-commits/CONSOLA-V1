@@ -7,6 +7,7 @@ import {
   AppWindow,
   Bot,
   Boxes,
+  Building2,
   Coins,
   Database,
   GitBranch,
@@ -30,6 +31,7 @@ import type { LucideIcon } from "lucide-react";
 
 import type { MeAccessResponse } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 
 interface NavItem {
   href:        string;
@@ -97,6 +99,8 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: "Configuración/Admin",
     items: [
+      { href: "/admin/tenants", label: "Tenants", icon: Building2, section: "Configuración/Admin", capability: "can_manage_tenants", keywords: "tenants clientes provisionar workspace organizacion" },
+      { href: "/admin/workspaces", label: "Workspaces", icon: Boxes, section: "Configuración/Admin", capability: "can_manage_workspaces", keywords: "workspaces espacios provisionar tenant" },
       { href: "/operations/audit", label: "Auditoría", icon: ShieldCheck, section: "Configuración/Admin", capability: "can_view_audit", keywords: "logs auditoria seguridad" },
       { href: "/operations/users", label: "Usuarios", icon: Users, section: "Configuración/Admin", permission: "iam.users.read", capability: "can_manage_workspace_users", keywords: "iam usuarios roles" },
       { href: "/settings", label: "Ajustes", icon: Settings, section: "Configuración/Admin", capability: "can_view_settings", keywords: "configuracion settings ajustes" },
@@ -203,6 +207,12 @@ export function AppSidebar({
           </button>
         )}
       </header>
+
+      {showLabels && (access?.workspaces?.length ?? 0) > 1 ? (
+        <div className="border-b px-3 py-3">
+          <WorkspaceSwitcher access={access} showLabels={showLabels} />
+        </div>
+      ) : null}
 
       <div className={cn("border-b py-3", showLabels ? "px-3" : "px-2")}>
         {showLabels ? (

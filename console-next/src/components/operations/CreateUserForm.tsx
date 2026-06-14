@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -64,7 +64,32 @@ export function CreateUserForm() {
   const [password, setPassword] = useState("");
   const [role,     setRole]     = useState<string>("viewer");
   const [open,     setOpen]     = useState(false);
-  const workspaceId = access.data?.workspace?.workspace_id?.trim() ?? "";
+  const [workspaceId, setWorkspaceId] = useState("");
+
+  // Workspaces the actor may assign into: a global admin gets every
+  // tenant's workspaces, a tenant_admin only their tenant's (the backend
+  // me/access already scopes this list). Grouped by tenant for the picker.
+  const workspaces = useMemo(() => access.data?.workspaces ?? [], [access.data]);
+  const byTenant = useMemo(() => {
+    const groups = new Map<string, { tenantName: string; items: typeof workspaces }>();
+    for (const w of workspaces) {
+      const key = w.tenant_id ?? "—";
+      if (!groups.has(key)) groups.set(key, { tenantName: w.tenant_name ?? "—", items: [] });
+      groups.get(key)!.items.push(w);
+    }
+    return Array.from(groups.values());
+  }, [workspaces]);
+
+  // Default the target to the active workspace, else the first available.
+  useEffect(() => {
+    if (workspaceId) return;
+    const active = access.data?.workspace?.workspace_id ?? "";
+    if (active) setWorkspaceId(active);
+    else if (workspaces.length > 0 && workspaces[0].workspace_id) {
+      setWorkspaceId(workspaces[0].workspace_id);
+    }
+  }, [workspaceId, access.data, workspaces]);
+
   const roles = access.data?.role?.is_platform_admin ? PLATFORM_ROLES : TENANT_ROLES;
 
   function reset() {
@@ -90,7 +115,7 @@ export function CreateUserForm() {
       return;
     }
     if (!workspaceId) {
-      toast.error("No hay workspace activo para asignar el usuario.");
+      toast.error("Selecciona un tenant/workspace destino.");
       return;
     }
     try {
@@ -139,9 +164,26 @@ export function CreateUserForm() {
           Cancelar
         </button>
       </header>
-      <p className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Workspace destino: <span className="font-mono">{workspaceId || "sin workspace activo"}</span>
-      </p>
+      <label className="mb-3 block space-y-1.5 text-sm">
+        <span className="font-medium">Tenant / Workspace destino</span>
+        <select
+          value={workspaceId}
+          onChange={(e) => setWorkspaceId(e.target.value)}
+          disabled={workspaces.length === 0}
+          className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {workspaces.length === 0 && <option value="">Sin workspaces disponibles</option>}
+          {byTenant.map((group) => (
+            <optgroup key={group.tenantName} label={group.tenantName}>
+              {group.items.map((w) => (
+                <option key={w.workspace_id} value={w.workspace_id ?? ""}>
+                  {w.workspace_name ?? w.workspace_id}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </label>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1.5 text-sm">
           <span className="font-medium">Email</span>
