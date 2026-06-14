@@ -107,10 +107,12 @@ def test_company_onboarding_routes_exist():
         '@router.get("/{tenant_id}/workspaces")',
         '@router.post("/{tenant_id}/workspaces"',
         '@router.post("/{tenant_id}/bootstrap-admin"',
+        '"/{tenant_id}/admins/{user_id}/temporary-password"',
     ):
         assert route in src
     assert 'require_global_any_role("owner", "super_admin", ROLE_ADMIN)' in src
     assert "temporary_password = _temporary_password()" in src
+    assert "tenant_admin_temporary_password_issued" in src
 
 
 # ── Frontend types agree with backend ────────────────────────

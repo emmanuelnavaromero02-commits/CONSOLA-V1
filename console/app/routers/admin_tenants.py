@@ -97,7 +97,24 @@ def _tenant_row(row) -> dict[str, Any]:
     }
 
 
-def _workspace_row(row) -> dict[str, Any]:
+def _tenant_admin_row(row) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "id": int(data["id"]),
+        "email": data["email"],
+        "name": data["name"],
+        "role": data["role"],
+        "workspace_role": data.get("workspace_role") or "tenant_admin",
+        "is_active": bool(data["is_active"]),
+        "must_change_password": bool(data["must_change_password"]),
+        "tenant_id": str(data["tenant_id"]) if data.get("tenant_id") else None,
+        "created_at": data["created_at"].isoformat()
+        if data.get("created_at")
+        else None,
+    }
+
+
+def _workspace_row(row, tenant_admins: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     data = dict(row)
     return {
         "id": str(data["id"]),
@@ -107,6 +124,7 @@ def _workspace_row(row) -> dict[str, Any]:
         if data.get("created_at")
         else None,
         "user_count": int(data.get("user_count") or 0),
+        "tenant_admins": tenant_admins or [],
     }
 
 
@@ -261,7 +279,33 @@ async def list_workspaces(tenant_id: str, _admin: dict = Depends(PLATFORM_ADMIN)
         """,
         tenant_id,
     )
-    return {"workspaces": [_workspace_row(row) for row in rows]}
+    admin_rows = await pool.fetch(
+        """
+        SELECT uwr.workspace_id::text AS workspace_id,
+               u.id, u.email, u.name, u.role, u.is_active,
+               u.must_change_password, u.tenant_id, u.created_at,
+               r.name AS workspace_role
+          FROM user_workspace_roles uwr
+          JOIN workspaces w ON w.id = uwr.workspace_id
+          JOIN users u ON u.id = uwr.user_id
+          JOIN roles r ON r.id = uwr.role_id
+         WHERE w.tenant_id = $1::uuid
+           AND r.name = 'tenant_admin'
+         ORDER BY lower(u.email)
+        """,
+        tenant_id,
+    )
+    admins_by_workspace: dict[str, list[dict[str, Any]]] = {}
+    for row in admin_rows:
+        admins_by_workspace.setdefault(row["workspace_id"], []).append(
+            _tenant_admin_row(row)
+        )
+    return {
+        "workspaces": [
+            _workspace_row(row, admins_by_workspace.get(str(row["id"]), []))
+            for row in rows
+        ]
+    }
 
 
 @router.post("/{tenant_id}/workspaces", dependencies=[Depends(require_csrf)])
@@ -450,5 +494,93 @@ async def bootstrap_tenant_admin(
         "password_delivery": "one_time_response"
         if temporary_password
         else "existing_user_no_password_generated",
+        "login_url": "/login",
+    }
+
+
+@router.post(
+    "/{tenant_id}/admins/{user_id}/temporary-password",
+    dependencies=[Depends(require_csrf)],
+)
+async def issue_tenant_admin_temporary_password(
+    tenant_id: str,
+    user_id: int,
+    body: dict,
+    request: Request,
+    admin: dict = Depends(PLATFORM_ADMIN),
+):
+    tenant_id = _normalize_uuid(tenant_id, "tenant_id")
+    workspace_id = _normalize_uuid(body.get("workspace_id"), "workspace_id")
+    if user_id <= 0:
+        raise HTTPException(400, "user_id must be positive")
+
+    temporary_password = _temporary_password()
+    pool = await auth.pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT u.id, u.email, u.name, u.role, u.is_active,
+                       u.must_change_password, u.tenant_id, u.created_at,
+                       r.name AS workspace_role,
+                       w.id::text AS workspace_id
+                  FROM users u
+                  JOIN user_workspace_roles uwr ON uwr.user_id = u.id
+                  JOIN roles r ON r.id = uwr.role_id
+                  JOIN workspaces w ON w.id = uwr.workspace_id
+                 WHERE u.id = $1
+                   AND w.id = $2::uuid
+                   AND w.tenant_id = $3::uuid
+                   AND r.name = 'tenant_admin'
+                 LIMIT 1
+                """,
+                user_id,
+                workspace_id,
+                tenant_id,
+            )
+            if not row:
+                raise HTTPException(404, "tenant admin not found for workspace")
+            if row["tenant_id"] and str(row["tenant_id"]) != tenant_id:
+                raise HTTPException(409, "tenant admin belongs to another tenant")
+            if str(row["role"]) in DANGEROUS_GLOBAL_ROLES:
+                raise HTTPException(409, "tenant admin has a platform role")
+
+            updated = await conn.fetchrow(
+                """
+                UPDATE users
+                   SET password_hash = $1,
+                       must_change_password = TRUE,
+                       is_active = TRUE,
+                       tenant_id = $3::uuid
+                 WHERE id = $2
+                 RETURNING id, email, name, role, is_active, must_change_password, tenant_id, created_at
+                """,
+                auth.hash_password(temporary_password),
+                user_id,
+                tenant_id,
+            )
+            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
+
+    await _record(
+        request,
+        admin,
+        "tenant_admin_temporary_password_issued",
+        "user",
+        str(user_id),
+        {
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "workspace_role": "tenant_admin",
+        },
+    )
+    return {
+        "user": _user_row(updated),
+        "created": False,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "workspace_role": "tenant_admin",
+        "temporary_password": temporary_password,
+        "password_delivery": "one_time_response",
         "login_url": "/login",
     }

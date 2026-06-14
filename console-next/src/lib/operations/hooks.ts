@@ -14,6 +14,7 @@ import {
   getOperationalMetrics,
   getOperationsHealth,
   getOperationWorkflow,
+  issueTenantAdminTemporaryPassword,
   listTenants,
   listTenantWorkspaces,
   listOperationWorkflows,
@@ -35,6 +36,7 @@ import type {
   BootstrapTenantAdminRequest,
   BootstrapTenantAdminResponse,
   CreateUserRequest,
+  IssueTenantAdminTemporaryPasswordRequest,
   OperationalMetrics,
   OperationWorkflow,
   OperationWorkflowActionResponse,
@@ -137,6 +139,17 @@ export function useBootstrapTenantAdmin() {
   const qc = useQueryClient();
   return useMutation<BootstrapTenantAdminResponse, Error, { tenantId: string; payload: BootstrapTenantAdminRequest }>({
     mutationFn: ({ tenantId, payload }) => bootstrapTenantAdmin(tenantId, payload),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["operations", "tenants"] });
+      qc.invalidateQueries({ queryKey: ["operations", "tenants", vars.tenantId, "workspaces"] });
+    },
+  });
+}
+
+export function useIssueTenantAdminTemporaryPassword() {
+  const qc = useQueryClient();
+  return useMutation<BootstrapTenantAdminResponse, Error, { tenantId: string; userId: number; payload: IssueTenantAdminTemporaryPasswordRequest }>({
+    mutationFn: ({ tenantId, userId, payload }) => issueTenantAdminTemporaryPassword(tenantId, userId, payload),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["operations", "tenants"] });
       qc.invalidateQueries({ queryKey: ["operations", "tenants", vars.tenantId, "workspaces"] });

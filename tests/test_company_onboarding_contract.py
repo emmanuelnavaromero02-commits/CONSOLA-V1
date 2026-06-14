@@ -30,6 +30,7 @@ def test_admin_tenants_router_is_registered_and_platform_only():
         '@router.get("/{tenant_id}/workspaces")',
         '@router.post("/{tenant_id}/workspaces"',
         '@router.post("/{tenant_id}/bootstrap-admin"',
+        '"/{tenant_id}/admins/{user_id}/temporary-password"',
     ):
         assert route in router
     assert "dependencies=[Depends(require_csrf)]" in router
@@ -44,6 +45,9 @@ def test_bootstrap_admin_generates_one_time_password_server_side():
     assert '"password_delivery": "one_time_response"' in router
     assert "auth.hash_password(temporary_password)" in router
     assert "DANGEROUS_GLOBAL_ROLES" in router
+    assert "tenant_admin_temporary_password_issued" in router
+    assert '"workspace_role": "tenant_admin"' in router
+    assert 'body.get("temporary_password")' not in router
     for role in ("owner", "admin", "super_admin", "security_admin", "auditor"):
         assert role in router
 
@@ -80,6 +84,10 @@ def test_companies_ui_and_route_are_real_not_legacy_redirects():
     assert "useCreateTenant" in ui
     assert "useCreateTenantWorkspace" in ui
     assert "useBootstrapTenantAdmin" in ui
+    assert "useIssueTenantAdminTemporaryPassword" in ui
+    assert "Acciones de empresa" in ui
+    assert "Reset temporal" in ui
+    assert "Revocar" in ui
     assert "Este formulario no crea empresas" not in ui
     assert "Contraseña temporal" in ui
 

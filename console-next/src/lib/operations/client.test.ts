@@ -8,6 +8,7 @@ import {
   createTenantWorkspace,
   deleteVaultConnection,
   deleteVaultSecret,
+  issueTenantAdminTemporaryPassword,
   listTenantWorkspaces,
   listTenants,
   listVaultConnections,
@@ -111,6 +112,16 @@ describe("operations companies client", () => {
         status: 200,
         headers: new Headers(),
         requestId: "r",
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user: { id: 7, email: "admin@example.com" },
+          temporary_password: "secret-2",
+          password_delivery: "one_time_response",
+        },
+        status: 200,
+        headers: new Headers(),
+        requestId: "r",
       });
 
     await listTenants();
@@ -120,6 +131,9 @@ describe("operations companies client", () => {
     await bootstrapTenantAdmin("tenant 1", {
       workspace_id: "workspace 1",
       email: "admin@example.com",
+    });
+    await issueTenantAdminTemporaryPassword("tenant 1", 7, {
+      workspace_id: "workspace 1",
     });
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/admin/tenants");
@@ -135,6 +149,11 @@ describe("operations companies client", () => {
       workspace_id: "workspace 1",
       email: "admin@example.com",
     });
+    expect(apiMock.post).toHaveBeenNthCalledWith(
+      4,
+      "/api/admin/tenants/tenant%201/admins/7/temporary-password",
+      { workspace_id: "workspace 1" },
+    );
   });
 });
 

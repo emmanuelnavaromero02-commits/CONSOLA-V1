@@ -25,6 +25,7 @@
  *   GET    /api/admin/tenants/{tenant_id}/workspaces
  *   POST   /api/admin/tenants/{tenant_id}/workspaces  (CSRF)
  *   POST   /api/admin/tenants/{tenant_id}/bootstrap-admin  (CSRF)
+ *   POST   /api/admin/tenants/{tenant_id}/admins/{user_id}/temporary-password  (CSRF)
  *
  *   GET    /security/audit
  *     → list of audit events
@@ -109,6 +110,7 @@ export interface WorkspaceSummary {
   name: string;
   created_at: string | null;
   user_count: number;
+  tenant_admins?: TenantAdminSummary[];
 }
 
 export interface TenantListResponse {
@@ -138,6 +140,18 @@ export interface WorkspaceCreateResponse {
   created: boolean;
 }
 
+export interface TenantAdminSummary {
+  id: number;
+  email: string;
+  name?: string | null;
+  role: UserRole;
+  workspace_role: "tenant_admin";
+  is_active: boolean;
+  must_change_password: boolean;
+  tenant_id?: string | null;
+  created_at: string | null;
+}
+
 export interface BootstrapTenantAdminRequest {
   workspace_id: string;
   email: string;
@@ -153,6 +167,10 @@ export interface BootstrapTenantAdminResponse {
   temporary_password?: string | null;
   password_delivery: "one_time_response" | "existing_user_no_password_generated";
   login_url: string;
+}
+
+export interface IssueTenantAdminTemporaryPasswordRequest {
+  workspace_id: string;
 }
 
 // ── Audit ──────────────────────────────────────────────────────────
