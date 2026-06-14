@@ -13,6 +13,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -20,8 +21,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import psycopg2
+from psycopg2 import sql as pg_sql
+
 
 STATUS_ORDER = {"PASS": 0, "BLOCKED": 1, "FAIL": 2}
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+GOLD_TABLE_PROFILES = {
+    "beta": (
+        "gold_consultor_mensual",
+        "gold_pnl_mensual",
+        "gold_forecast_mensual",
+    ),
+    "hubspot": (
+        "gold_deals_estancados",
+        "gold_pipeline_salud",
+    ),
+    "sap_successfactors": (
+        "gold_sap_successfactors_employee_360",
+        "gold_sap_successfactors_headcount_by_department",
+        "gold_sap_successfactors_org_structure",
+        "gold_sap_successfactors_manager_hierarchy",
+    ),
+}
+GOLD_TABLE_PROFILES["all"] = tuple(dict.fromkeys(item for tables in GOLD_TABLE_PROFILES.values() for item in tables))
 SECRET_KEYS = (
     "ANTHROPIC_API_KEY",
     "HUBSPOT_ACCESS_TOKEN",
@@ -96,9 +119,19 @@ def _fixture_checks(path: Path) -> list[Check]:
     return checks
 
 
-def _psql_scalar(dsn: str, sql: str) -> tuple[str, str]:
+def _python_scalar(dsn: str, statement: str | pg_sql.Composable, params: tuple[Any, ...] | None = None) -> tuple[str, str]:
+    try:
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(statement, params)
+            row = cur.fetchone()
+            return "0", "" if row is None else str(row[0])
+    except Exception as exc:
+        return "1", _redact(f"{type(exc).__name__}: {exc}")
+
+
+def _psql_scalar(dsn: str, statement: str) -> tuple[str, str]:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
-        handle.write(sql)
+        handle.write(statement)
         path = handle.name
     try:
         proc = subprocess.run(
@@ -111,6 +144,18 @@ def _psql_scalar(dsn: str, sql: str) -> tuple[str, str]:
     finally:
         Path(path).unlink(missing_ok=True)
     return str(proc.returncode), _redact(proc.stdout.strip())
+
+
+def _sql_scalar(dsn: str, statement: str | pg_sql.Composable, params: tuple[Any, ...] | None = None) -> tuple[str, str]:
+    code, out = _python_scalar(dsn, statement, params)
+    if code == "0":
+        return code, out
+    if params or not isinstance(statement, str):
+        return code, out
+    try:
+        return _psql_scalar(dsn, statement)
+    except FileNotFoundError:
+        return code, out
 
 
 def _db_checks() -> list[Check]:
@@ -130,7 +175,7 @@ def _db_checks() -> list[Check]:
      WHERE rolname IN ('omega_workspace','omega_mcp_infra','omega_vault')
        AND rolbypassrls = true;
     """
-    code, out = _psql_scalar(dsn, sql)
+    code, out = _sql_scalar(dsn, sql)
     if code != "0":
         checks.append(Check("operational RLS role audit", "BLOCKED", out, "Install psql and provide DATABASE_URL"))
     else:
@@ -141,13 +186,27 @@ def _db_checks() -> list[Check]:
      WHERE status = 'running'
        AND created_at < now() - interval '2 hours';
     """
-    code, out = _psql_scalar(dsn, stuck_sql)
+    code, out = _sql_scalar(dsn, stuck_sql)
     if code != "0":
         checks.append(Check("stuck jobs audit", "BLOCKED", out, "DATABASE_URL=postgresql://... make data-integrity-audit"))
     else:
         count = int(out or "0")
         checks.append(Check("stuck jobs audit", "FAIL" if count else "PASS", f"stuck_jobs={count}"))
     return checks
+
+
+def _required_gold_tables() -> tuple[str, ...]:
+    raw_tables = os.environ.get("OMEGA_AUDIT_REQUIRED_GOLD_TABLES", "")
+    if raw_tables.strip():
+        return tuple(item.strip() for item in raw_tables.split(",") if item.strip())
+    profile = os.environ.get("OMEGA_AUDIT_GOLD_PROFILE", "beta").strip().lower() or "beta"
+    return GOLD_TABLE_PROFILES.get(profile, ())
+
+
+def _gold_profile() -> str:
+    if os.environ.get("OMEGA_AUDIT_REQUIRED_GOLD_TABLES", "").strip():
+        return "custom"
+    return os.environ.get("OMEGA_AUDIT_GOLD_PROFILE", "beta").strip().lower() or "beta"
 
 
 def _gold_checks() -> list[Check]:
@@ -162,19 +221,35 @@ def _gold_checks() -> list[Check]:
             )
         ]
     checks: list[Check] = []
-    for table in (
-        "gold_sap_successfactors_employee_360",
-        "gold_sap_successfactors_headcount_by_department",
-        "gold_sap_successfactors_org_structure",
-        "gold_sap_successfactors_manager_hierarchy",
-    ):
-        code, out = _psql_scalar(dsn, f"SELECT count(*) FROM {table};")
+    profile = _gold_profile()
+    required_tables = _required_gold_tables()
+    if not required_tables:
+        checks.append(
+            Check(
+                "Gold required table profile",
+                "BLOCKED",
+                f"unknown profile={profile}",
+                "Set OMEGA_AUDIT_GOLD_PROFILE=beta|hubspot|sap_successfactors|all or OMEGA_AUDIT_REQUIRED_GOLD_TABLES",
+            )
+        )
+    for table in required_tables:
+        if not IDENTIFIER_RE.match(table):
+            checks.append(Check(f"Gold row count {table}", "FAIL", "invalid table identifier"))
+            continue
+        code, out = _sql_scalar(dsn, "SELECT to_regclass(%s);", (table,))
+        if code != "0":
+            checks.append(Check(f"Gold row count {table}", "BLOCKED", out, "Verify Gold DB URL and migrations"))
+            continue
+        if not out or out == "None":
+            checks.append(Check(f"Gold row count {table}", "BLOCKED", f"profile={profile} missing table", "Materialize required Gold tables or choose the correct audit profile"))
+            continue
+        code, out = _sql_scalar(dsn, pg_sql.SQL("SELECT count(*) FROM {};").format(pg_sql.Identifier(table)))
         if code != "0":
             checks.append(Check(f"Gold row count {table}", "BLOCKED", out, "Verify Gold DB URL and migrations"))
             continue
         count = int(out or "0")
-        checks.append(Check(f"Gold row count {table}", "FAIL" if count < 0 else "PASS", f"row_count={count}"))
-    code, out = _psql_scalar(dsn, "SELECT rolbypassrls FROM pg_roles WHERE rolname='omega_refinement_gold';")
+        checks.append(Check(f"Gold row count {table}", "FAIL" if count < 0 else "PASS", f"profile={profile} row_count={count}"))
+    code, out = _sql_scalar(dsn, "SELECT rolbypassrls FROM pg_roles WHERE rolname='omega_refinement_gold';")
     if code != "0" or out == "":
         checks.append(Check("Gold NOBYPASSRLS", "BLOCKED", out or "role not visible"))
     else:

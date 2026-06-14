@@ -1475,6 +1475,9 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
             params.append(owner_id)
             owner_clause = f"AND owner_user_id = ${len(params)}"
         pool = await auth.pool()
+        # Contract: persisted Intelligence items remain scoped as
+        # item_kind = 'intelligence_signal'; agent monitor alerts are added
+        # advisory-only without replacing the Intelligence signal surface.
         rows = await pool.fetch(
             f"""
             SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
@@ -1486,7 +1489,7 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
              WHERE workspace_id = $1
                {tenant_clause}
                {owner_clause}
-               AND item_kind = 'intelligence_signal'
+               AND item_kind IN ('intelligence_signal', 'agent_alert')
              ORDER BY priority_score DESC, last_seen_at DESC
              LIMIT 200
             """,
@@ -1503,7 +1506,11 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         if status not in ITEM_STATUSES:
             status = "open"
         item_id = str(public_row.get("item_id") or "")
+        kind = str(public_row.get("item_kind") or "intelligence_signal")
+        is_agent_alert = kind == "agent_alert"
         escaped_item_id = item_id.replace("'", "''")
+        source = str(metadata.get("source") or ("agent" if is_agent_alert else "intelligence"))
+        occurrence_count = int(metadata.get("occurrence_count") or 1)
         intelligence = (
             metadata.get("intelligence")
             if isinstance(metadata.get("intelligence"), dict)
@@ -1522,12 +1529,14 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         items.append(
             {
                 "id": item_id,
-                "kind": public_row.get("item_kind") or "intelligence_signal",
+                "kind": kind,
                 "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
                 "workspace_id": public_row.get("workspace_id")
                 or metadata.get("workspace_id"),
                 "domain": public_row.get("domain") or "Operacion",
-                "module": metadata.get("module") or "Intelligence Engine",
+                "module": metadata.get("module")
+                or metadata.get("agent_name")
+                or ("Agente monitor" if is_agent_alert else "Intelligence Engine"),
                 "cartridge": public_row.get("cartridge_id") or "platform",
                 "source_dataset": public_row.get("source_dataset")
                 or "intelligence_signals",
@@ -1559,18 +1568,23 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                 "details": metadata.get("details")
                 if isinstance(metadata.get("details"), dict)
                 else {},
-                "title": public_row.get("title") or "Senal de inteligencia operativa",
+                "title": public_row.get("title")
+                or ("Alerta de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
                 "description": metadata.get("description")
                 or public_row.get("title")
-                or "Senal de inteligencia operativa",
+                or ("Alerta advisory de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
                 "recommendation": metadata.get("recommendation")
                 or "Revisar evidencia y seleccionar una opcion supervisada.",
                 "root_cause": metadata.get("root_cause")
-                or "Desviacion contra baseline.",
+                or ("Hipotesis generada por agente monitor." if is_agent_alert else "Desviacion contra baseline."),
                 "impact": metadata.get("impact")
                 or "Impacto operativo pendiente de validar.",
                 "sql": metadata.get("sql")
-                or f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'",
+                or (
+                    f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'"
+                    if is_agent_alert
+                    else f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'"
+                ),
                 "status": status,
                 "decision_id": public_row.get("decision_id"),
                 "impact_estimate": public_row.get("impact_estimate"),
@@ -1596,6 +1610,14 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                 else [],
                 "decision_intelligence": decision_intelligence,
                 "intelligence": intelligence,
+                "source": source,
+                "advisory": bool(metadata.get("advisory")) or is_agent_alert,
+                "agent_id": metadata.get("agent_id"),
+                "agent_run_id": metadata.get("agent_run_id"),
+                "deduped": occurrence_count > 1,
+                "occurrence_count": occurrence_count,
+                "hypothesis": metadata.get("hypothesis"),
+                "expected_outcome": metadata.get("expected_outcome"),
                 "first_seen_at": public_row.get("first_seen_at"),
                 "last_seen_at": public_row.get("last_seen_at"),
                 "resolved_at": public_row.get("resolved_at"),
@@ -1968,7 +1990,8 @@ async def dashboard(
     if persist:
         known_ids = {str(item.get("id")) for item in items}
         for item in await _persisted_intelligence_items(user):
-            if str(item.get("cartridge") or "").strip() not in active_cartridges:
+            item_cartridge = str(item.get("cartridge") or "").strip()
+            if item_cartridge != "platform" and item_cartridge not in active_cartridges:
                 continue
             if str(item.get("id")) not in known_ids:
                 items.append(item)

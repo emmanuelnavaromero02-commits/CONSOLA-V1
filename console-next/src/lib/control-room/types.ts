@@ -407,7 +407,7 @@ export interface IntelligenceOutcomeDraft {
 
 export interface ControlItem {
   id: string;
-  kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal";
+  kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal" | "agent_alert";
   domain: string;
   module: string;
   module_id?: string;
@@ -456,6 +456,14 @@ export interface ControlAlert {
   id: string;
   item_id: string;
   alert_type: string;
+  source?: string;
+  advisory?: boolean;
+  agent_id?: string | null;
+  agent_run_id?: string | number | null;
+  deduped?: boolean;
+  occurrence_count?: number;
+  hypothesis?: string | null;
+  expected_outcome?: string | null;
   severity: Severity;
   priority_score: number;
   domain: string;

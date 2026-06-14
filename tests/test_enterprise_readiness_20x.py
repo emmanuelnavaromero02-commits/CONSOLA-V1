@@ -70,6 +70,7 @@ def test_makefile_exposes_enterprise_readiness_20x_targets():
     for target in ("stress-smoke", "stress-beta", "stress-spike", "stress-write-heavy"):
         block = makefile[makefile.index(f"{target}:") : makefile.index("\n\n", makefile.index(f"{target}:"))]
         assert "$(MAKE) data-integrity-audit" in block
+    assert '"OMEGA_AUDIT_GOLD_PROFILE": ctx.workload' in _read("scripts/enterprise_readiness.py")
 
 
 def test_enterprise_readiness_docs_define_status_and_unblock_semantics():

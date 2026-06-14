@@ -85,6 +85,12 @@ DESTRUCTIVE_TOOLS = {
     "delete_app", "delete_dataset", "delete_entity", "vault_delete_connection",
 }
 
+ADVISORY_WRITE_TOOLS = {
+    # Advisory-only internal write: creates/updates a Control Room alert but
+    # cannot approve, execute, write back externally, or mark decisions done.
+    "control_room__raise_alert",
+}
+
 DEFAULT_FRESHNESS_MINUTES = 60
 
 
@@ -101,6 +107,12 @@ def classify_tool(tool_name: str) -> dict[str, Any]:
             "requires_approval": True,
             "freshness_minutes": None,
         }
+    if tool_name in ADVISORY_WRITE_TOOLS:
+        return {
+            "risk_level": "write",
+            "requires_approval": False,
+            "freshness_minutes": None,
+        }
     return {
         "risk_level": "write",
         "requires_approval": True,
@@ -115,6 +127,8 @@ def requires_approval(tool_name: str) -> bool:
     tool requires explicit user approval until the manifest marks it read-only.
     """
     if tool_name in READ_ONLY_TOOLS:
+        return False
+    if tool_name in ADVISORY_WRITE_TOOLS:
         return False
     if tool_name in DESTRUCTIVE_TOOLS:
         return True

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -93,3 +94,57 @@ def test_data_integrity_without_live_inputs_is_blocked_not_pass(tmp_path: Path):
     assert "GOLD_DATABASE_URL missing" in report
     assert "OMEGA_AUDIT_PARQUET_MANIFEST missing" in report
     assert "BLOCKED" in report
+
+
+def test_gold_audit_defaults_to_beta_profile(monkeypatch):
+    module = __import__("scripts.data_integrity_audit", fromlist=["_gold_checks"])
+    calls: list[str] = []
+
+    def fake_scalar(_dsn: str, statement: Any, params: tuple[Any, ...] | None = None) -> tuple[str, str]:
+        if params:
+            calls.append(str(params[0]))
+            return "0", str(params[0])
+        sql = str(statement)
+        if "rolbypassrls" in sql:
+            return "0", "f"
+        return "0", "3"
+
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://example")
+    monkeypatch.delenv("OMEGA_AUDIT_GOLD_PROFILE", raising=False)
+    monkeypatch.delenv("OMEGA_AUDIT_REQUIRED_GOLD_TABLES", raising=False)
+    monkeypatch.setattr(module, "_sql_scalar", fake_scalar)
+
+    checks = module._gold_checks()
+
+    assert "gold_consultor_mensual" in calls
+    assert "gold_pnl_mensual" in calls
+    assert "gold_forecast_mensual" in calls
+    assert "gold_sap_successfactors_employee_360" not in calls
+    assert {check.status for check in checks} == {"PASS"}
+
+
+def test_gold_audit_successfactors_profile_is_explicit(monkeypatch):
+    module = __import__("scripts.data_integrity_audit", fromlist=["_gold_checks"])
+    calls: list[str] = []
+
+    def fake_scalar(_dsn: str, statement: Any, params: tuple[Any, ...] | None = None) -> tuple[str, str]:
+        if params:
+            table = str(params[0])
+            calls.append(table)
+            if table == "gold_sap_successfactors_manager_hierarchy":
+                return "0", ""
+            return "0", table
+        if "rolbypassrls" in str(statement):
+            return "0", "f"
+        return "0", "0"
+
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("OMEGA_AUDIT_GOLD_PROFILE", "sap_successfactors")
+    monkeypatch.delenv("OMEGA_AUDIT_REQUIRED_GOLD_TABLES", raising=False)
+    monkeypatch.setattr(module, "_sql_scalar", fake_scalar)
+
+    checks = module._gold_checks()
+
+    assert "gold_sap_successfactors_employee_360" in calls
+    assert "gold_sap_successfactors_manager_hierarchy" in calls
+    assert any(check.status == "BLOCKED" and "manager_hierarchy" in check.name for check in checks)

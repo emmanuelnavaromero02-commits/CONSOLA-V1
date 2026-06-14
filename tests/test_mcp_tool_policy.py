@@ -54,3 +54,17 @@ def test_scheduled_agents_do_not_get_destructive_manifest_bypass():
     read_only_block = source.split("READ_ONLY_TOOLS = {", 1)[1].split("}", 1)[0]
     for name in ("create_goal_run", "plan_goal_run", "execute_goal_run", "agent_delete"):
         assert f'"{name}"' not in read_only_block
+
+
+def test_control_room_raise_alert_is_advisory_write_not_readonly():
+    manifest = _load_tool_manifest()
+    meta = manifest.classify_tool("control_room__raise_alert")
+
+    assert meta["risk_level"] == "write"
+    assert meta["requires_approval"] is False
+
+    source = (REPO / "console/app/services/tool_manifest.py").read_text(encoding="utf-8")
+    read_only_block = source.split("READ_ONLY_TOOLS = {", 1)[1].split("}", 1)[0]
+    destructive_block = source.split("DESTRUCTIVE_TOOLS = {", 1)[1].split("}", 1)[0]
+    assert '"control_room__raise_alert"' not in read_only_block
+    assert '"control_room__raise_alert"' not in destructive_block

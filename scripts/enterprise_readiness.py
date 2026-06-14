@@ -291,7 +291,15 @@ def main(argv: list[str] | None = None) -> int:
             break
     run(ctx, "copilot redteam", "make copilot-redteam", env={"OMEGA_COPILOT_REDTEAM_EVIDENCE_DIR": str(ctx.evidence_dir / "copilot-redteam")})
     run(ctx, "cartridge resilience", "make cartridge-resilience", env={"OMEGA_CARTRIDGE_RESILIENCE_EVIDENCE_DIR": str(ctx.evidence_dir / "cartridge-resilience")})
-    run(ctx, "data integrity audit", "make data-integrity-audit", env={"OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "data-integrity")})
+    run(
+        ctx,
+        "data integrity audit",
+        "make data-integrity-audit",
+        env={
+            "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "data-integrity"),
+            "OMEGA_AUDIT_GOLD_PROFILE": ctx.workload,
+        },
+    )
     _write_report(ctx)
     status = _status(ctx.steps)
     print(json.dumps({"status": status, "evidence_dir": str(ctx.evidence_dir)}, indent=2))

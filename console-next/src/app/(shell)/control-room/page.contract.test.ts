@@ -38,6 +38,14 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("/alerts/");
   });
 
+  it("surfaces advisory agent monitor alerts distinctly", () => {
+    expect(pageSource).toContain('type AlertSourceFilter = "all" | "agent" | "system" | "intelligence"');
+    expect(pageSource).toContain("Agente monitor");
+    expect(pageSource).toContain("Advisory");
+    expect(pageSource).toContain("occurrence_count");
+    expect(pageSource).toContain("expected_outcome");
+  });
+
   it("keeps the executive room self-contained and does not depend on the reference HTML", () => {
     expect(pageSource).not.toContain("sourceCatalogHref");
     expect(pageSource).not.toContain("sourceDataHref");

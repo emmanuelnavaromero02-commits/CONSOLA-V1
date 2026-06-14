@@ -148,11 +148,21 @@ def get_hubspot_connection(security_context: str | None = None) -> dict[str, Any
     """Return HubSpot connection material from env first, then Console Vault."""
     payload = get_connection_for_worker("hubspot", security_context=security_context)
     connection = dict(payload)
+    env_token = ""
+    for candidate in _ENV_ALIASES.get("HUBSPOT_API_TOKEN", ("HUBSPOT_API_TOKEN",)):
+        value = os.environ.get(candidate)
+        if value:
+            env_token = value
+            break
     connection["base_url"] = (
         get_secret_for_worker("hubspot", "HUBSPOT_BASE_URL", security_context=security_context)
         or settings.hubspot_base_url
     )
     auth_method = str(connection.get("auth_method") or "bearer_token").strip().lower()
+    if env_token:
+        connection["auth_method"] = "bearer_token"
+        connection["token"] = env_token
+        return connection
     if auth_method == "basic":
         user = get_secret_for_worker("hubspot", "HUBSPOT_USER", security_context=security_context)
         password = get_secret_for_worker("hubspot", "HUBSPOT_PASSWORD", security_context=security_context)
