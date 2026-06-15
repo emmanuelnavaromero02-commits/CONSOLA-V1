@@ -120,16 +120,19 @@ async def _load_threshold_rows(
     if enabled_only:
         where.append("enabled = TRUE")
     try:
-        rows = await pool.fetch(
-            f"""
-            SELECT id, cartridge_id, anomaly_type, metric, warning_value,
-                   critical_value, currency, enabled, metadata, created_at, updated_at
-              FROM control_room_thresholds
-             WHERE {' AND '.join(where)}
-             ORDER BY cartridge_id, anomaly_type, metric
-            """,
-            workspace_id,
-        )
+        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+            return await conn.fetch(
+                f"""
+                SELECT id, cartridge_id, anomaly_type, metric, warning_value,
+                       critical_value, currency, enabled, metadata, created_at, updated_at
+                  FROM control_room_thresholds
+                 WHERE {' AND '.join(where)}
+                 ORDER BY cartridge_id, anomaly_type, metric
+                """,
+                workspace_id,
+            )
+
+        rows = await _run_with_db_scope(pool, user or {}, _load)
         return [_threshold_to_public(row) for row in rows]
     except Exception:
         return []
@@ -167,17 +170,20 @@ async def _load_lesson_rows(
         where.append(f"item_id = ${len(params)}")
     params.append(max(1, min(int(limit or 100), 500)))
     try:
-        rows = await pool.fetch(
-            f"""
-            SELECT id, item_id, cartridge_id, anomaly_type, rule,
-                   source_decision_id, confidence, metadata, created_at
-              FROM control_room_lessons
-             WHERE {' AND '.join(where)}
-             ORDER BY created_at DESC
-             LIMIT ${len(params)}
-            """,
-            *params,
-        )
+        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+            return await conn.fetch(
+                f"""
+                SELECT id, item_id, cartridge_id, anomaly_type, rule,
+                       source_decision_id, confidence, metadata, created_at
+                  FROM control_room_lessons
+                 WHERE {' AND '.join(where)}
+                 ORDER BY created_at DESC
+                 LIMIT ${len(params)}
+                """,
+                *params,
+            )
+
+        rows = await _run_with_db_scope(pool, user or {}, _load)
         return [_lesson_to_public(row) for row in rows]
     except Exception:
         return []
@@ -1120,77 +1126,77 @@ async def _overlay_item_state(
     pool = await auth.pool()
     item_ids = [item["id"] for item in items]
 
-    if persist:
-        for item in items:
-            impact = _impact_for_item(item)
-            try:
-                await pool.execute(
-                    """
-                    INSERT INTO control_room_items (
-                        tenant_id, workspace_id, item_id, cartridge_id, domain,
-                        source_dataset, item_kind, title, severity, status,
-                        entity_kind, entity_id, entity_label, anomaly_type, metadata,
-                        impact_estimate, impact_currency, confidence, priority_score,
-                        selected_option_id, execution_status,
-                        first_seen_at, last_seen_at
+    async def _upsert_and_load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, dict[str, Any]]:
+        if persist:
+            for item in items:
+                impact = _impact_for_item(item)
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO control_room_items (
+                            tenant_id, workspace_id, item_id, cartridge_id, domain,
+                            source_dataset, item_kind, title, severity, status,
+                            entity_kind, entity_id, entity_label, anomaly_type, metadata,
+                            impact_estimate, impact_currency, confidence, priority_score,
+                            selected_option_id, execution_status,
+                            first_seen_at, last_seen_at
+                        )
+                        VALUES (
+                            $1, $2, $3, $4, $5,
+                            $6, $7, $8, $9, 'open',
+                            $10, $11, $12, $13, $14::jsonb,
+                            $15, $16, $17, $18, $19, $20,
+                            NOW(), NOW()
+                        )
+                        ON CONFLICT (workspace_id, item_id) DO UPDATE
+                        SET cartridge_id = EXCLUDED.cartridge_id,
+                            domain = EXCLUDED.domain,
+                            source_dataset = EXCLUDED.source_dataset,
+                            item_kind = EXCLUDED.item_kind,
+                            title = EXCLUDED.title,
+                            severity = EXCLUDED.severity,
+                            entity_kind = EXCLUDED.entity_kind,
+                            entity_id = EXCLUDED.entity_id,
+                            entity_label = EXCLUDED.entity_label,
+                            anomaly_type = EXCLUDED.anomaly_type,
+                            metadata = control_room_items.metadata || EXCLUDED.metadata,
+                            impact_estimate = EXCLUDED.impact_estimate,
+                            impact_currency = EXCLUDED.impact_currency,
+                            confidence = EXCLUDED.confidence,
+                            priority_score = EXCLUDED.priority_score,
+                            last_seen_at = NOW(),
+                            status = CASE
+                                WHEN control_room_items.status = ANY($21::text[])
+                                THEN control_room_items.status
+                                ELSE control_room_items.status
+                            END
+                        """,
+                        tenant_id,
+                        workspace_id,
+                        item["id"],
+                        item["cartridge"],
+                        item["domain"],
+                        item["source_dataset"],
+                        item["kind"],
+                        item["title"],
+                        item["severity"],
+                        item.get("entity_kind"),
+                        item.get("entity_id"),
+                        item.get("entity_label"),
+                        item.get("anomaly_type"),
+                        json.dumps(_metadata_for_item(item, impact), default=str),
+                        impact.get("estimate"),
+                        impact.get("currency") or "USD",
+                        impact.get("confidence"),
+                        impact.get("priority_score") or 0,
+                        item.get("selected_option_id"),
+                        item.get("execution_status") or "not_started",
+                        sorted(TERMINAL_ITEM_STATUSES),
                     )
-                    VALUES (
-                        $1, $2, $3, $4, $5,
-                        $6, $7, $8, $9, 'open',
-                        $10, $11, $12, $13, $14::jsonb,
-                        $15, $16, $17, $18, $19, $20,
-                        NOW(), NOW()
-                    )
-                    ON CONFLICT (workspace_id, item_id) DO UPDATE
-                    SET cartridge_id = EXCLUDED.cartridge_id,
-                        domain = EXCLUDED.domain,
-                        source_dataset = EXCLUDED.source_dataset,
-                        item_kind = EXCLUDED.item_kind,
-                        title = EXCLUDED.title,
-                        severity = EXCLUDED.severity,
-                        entity_kind = EXCLUDED.entity_kind,
-                        entity_id = EXCLUDED.entity_id,
-                        entity_label = EXCLUDED.entity_label,
-                        anomaly_type = EXCLUDED.anomaly_type,
-                        metadata = control_room_items.metadata || EXCLUDED.metadata,
-                        impact_estimate = EXCLUDED.impact_estimate,
-                        impact_currency = EXCLUDED.impact_currency,
-                        confidence = EXCLUDED.confidence,
-                        priority_score = EXCLUDED.priority_score,
-                        last_seen_at = NOW(),
-                        status = CASE
-                            WHEN control_room_items.status = ANY($21::text[])
-                            THEN control_room_items.status
-                            ELSE control_room_items.status
-                        END
-                    """,
-                    tenant_id,
-                    workspace_id,
-                    item["id"],
-                    item["cartridge"],
-                    item["domain"],
-                    item["source_dataset"],
-                    item["kind"],
-                    item["title"],
-                    item["severity"],
-                    item.get("entity_kind"),
-                    item.get("entity_id"),
-                    item.get("entity_label"),
-                    item.get("anomaly_type"),
-                    json.dumps(_metadata_for_item(item, impact), default=str),
-                    impact.get("estimate"),
-                    impact.get("currency") or "USD",
-                    impact.get("confidence"),
-                    impact.get("priority_score") or 0,
-                    item.get("selected_option_id"),
-                    item.get("execution_status") or "not_started",
-                    sorted(TERMINAL_ITEM_STATUSES),
-                )
-            except Exception:
-                break
+                except Exception:
+                    break
 
-    try:
-        rows = await pool.fetch(
+        rows = await conn.fetch(
             """
             SELECT item_id, status, decision_id, metadata, first_seen_at, last_seen_at,
                    resolved_at, dismissed_at, impact_estimate, impact_currency,
@@ -1202,7 +1208,10 @@ async def _overlay_item_state(
             workspace_id,
             item_ids,
         )
-        state_by_id = {row["item_id"]: _row_to_public(row) for row in rows}
+        return {row["item_id"]: _row_to_public(row) for row in rows}
+
+    try:
+        state_by_id = await _run_with_db_scope(pool, user or {}, _upsert_and_load)
     except Exception:
         state_by_id = {}
 
@@ -1297,21 +1306,24 @@ async def _persisted_item_for_mutation(
         owner_clause = f"AND owner_user_id = ${len(params)}"
     pool = await auth.pool()
     try:
-        row = await pool.fetchrow(
-            f"""
-            SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
-                   severity, status, decision_id, entity_kind, entity_id,
-                   entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
-                   resolved_at, dismissed_at, impact_estimate, impact_currency,
-                   confidence, priority_score, selected_option_id, execution_status
-              FROM control_room_items
-             WHERE workspace_id = $1
-               AND item_id = $2
-               {tenant_clause}
-               {owner_clause}
-            """,
-            *params,
-        )
+        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
+            return await conn.fetchrow(
+                f"""
+                SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
+                       severity, status, decision_id, entity_kind, entity_id,
+                       entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
+                       resolved_at, dismissed_at, impact_estimate, impact_currency,
+                       confidence, priority_score, selected_option_id, execution_status
+                  FROM control_room_items
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                   {tenant_clause}
+                   {owner_clause}
+                """,
+                *params,
+            )
+
+        row = await _run_with_db_scope(pool, user, _load)
     except Exception:
         return None
     if not row:
@@ -1559,8 +1571,10 @@ async def get_item_activity(
     decision_action_rows: list[Any] = []
     action_run_rows: list[Any] = []
     outcome_rows: list[Any] = []
-    try:
-        event_rows = await pool.fetch(
+    async def _load_item_activity(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> tuple[list[Any], list[Any], list[Any]]:
+        events = await conn.fetch(
             """
             SELECT id, item_id, event_type, actor_email, metadata, created_at
               FROM control_room_item_events
@@ -1569,13 +1583,10 @@ async def get_item_activity(
              ORDER BY created_at DESC
              LIMIT 50
             """,
-            workspace_id,
+            scoped_workspace_id,
             item["id"],
         )
-    except Exception:
-        event_rows = []
-    try:
-        execution_rows = await pool.fetch(
+        executions = await conn.fetch(
             """
             SELECT id, item_id, template_id, mode, status, payload, result,
                    error, actor_email, created_at, completed_at
@@ -1585,14 +1596,12 @@ async def get_item_activity(
              ORDER BY created_at DESC
              LIMIT 50
             """,
-            workspace_id,
+            scoped_workspace_id,
             item["id"],
         )
-    except Exception:
-        execution_rows = []
-    if item.get("decision_id"):
-        try:
-            decision_action_rows = await pool.fetch(
+        decision_actions: list[Any] = []
+        if item.get("decision_id"):
+            decision_actions = await conn.fetch(
                 """
                 SELECT da.id, da.decision_id, da.action_text, da.note, da.actor, da.ts
                   FROM decision_actions da
@@ -1602,11 +1611,19 @@ async def get_item_activity(
                  ORDER BY da.ts DESC
                  LIMIT 50
                 """,
-                workspace_id,
+                scoped_workspace_id,
                 int(item["decision_id"]),
             )
-        except Exception:
-            decision_action_rows = []
+        return list(events), list(executions), list(decision_actions)
+
+    try:
+        event_rows, execution_rows, decision_action_rows = await _run_with_db_scope(
+            pool, user, _load_item_activity
+        )
+    except Exception:
+        event_rows = []
+        execution_rows = []
+        decision_action_rows = []
 
     async def _load_scoped_activity(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
@@ -1925,34 +1942,38 @@ async def upsert_threshold(
     enabled = bool(body.get("enabled", True))
     metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO control_room_thresholds (
-            tenant_id, workspace_id, cartridge_id, anomaly_type, metric,
-            warning_value, critical_value, currency, enabled, metadata, updated_at
+
+    async def _write_threshold(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+        return await conn.fetchrow(
+            """
+            INSERT INTO control_room_thresholds (
+                tenant_id, workspace_id, cartridge_id, anomaly_type, metric,
+                warning_value, critical_value, currency, enabled, metadata, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+            ON CONFLICT (workspace_id, cartridge_id, anomaly_type, metric) DO UPDATE
+            SET warning_value = EXCLUDED.warning_value,
+                critical_value = EXCLUDED.critical_value,
+                currency = EXCLUDED.currency,
+                enabled = EXCLUDED.enabled,
+                metadata = EXCLUDED.metadata,
+                updated_at = NOW()
+            RETURNING id, cartridge_id, anomaly_type, metric, warning_value,
+                      critical_value, currency, enabled, metadata, created_at, updated_at
+            """,
+            tenant_id,
+            scoped_workspace_id,
+            cartridge_id,
+            anomaly_type,
+            metric,
+            warning_value,
+            critical_value,
+            currency,
+            enabled,
+            json.dumps(metadata),
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
-        ON CONFLICT (workspace_id, cartridge_id, anomaly_type, metric) DO UPDATE
-        SET warning_value = EXCLUDED.warning_value,
-            critical_value = EXCLUDED.critical_value,
-            currency = EXCLUDED.currency,
-            enabled = EXCLUDED.enabled,
-            metadata = EXCLUDED.metadata,
-            updated_at = NOW()
-        RETURNING id, cartridge_id, anomaly_type, metric, warning_value,
-                  critical_value, currency, enabled, metadata, created_at, updated_at
-        """,
-        tenant_id,
-        workspace_id,
-        cartridge_id,
-        anomaly_type,
-        metric,
-        warning_value,
-        critical_value,
-        currency,
-        enabled,
-        json.dumps(metadata),
-    )
+
+    row = await _run_with_db_scope(pool, user, _write_threshold)
     public = _threshold_to_public(row)
     await audit_service.record_event(
         user_id=user.get("id"),

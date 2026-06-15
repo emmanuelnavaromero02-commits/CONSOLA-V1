@@ -21,7 +21,7 @@ minio==7.2.9
 pandas==2.2.3
 pyarrow==23.0.1
 pyyaml==6.0.2
-cryptography==48.0.0
+cryptography==48.0.1
 duckdb==1.2.2
 # v1.43.4 — Bumped fastmcp 2.5.0 → 3.x to fix Codex C1 BLOCKER:
 # the cartridge's /mcp/tools handler calls ``mcp.list_tools()`` and

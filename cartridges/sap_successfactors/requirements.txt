@@ -18,7 +18,7 @@ minio==7.2.9
 pandas==2.2.3
 pyarrow==23.0.1
 pyyaml==6.0.2
-cryptography==48.0.0
+cryptography==48.0.1
 duckdb==1.2.2
 # v1.43.4 — See cartridges/sap_hcm/requirements.txt for the
 # fastmcp 2 → 3 bump rationale (Codex C1 BLOCKER).

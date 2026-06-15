@@ -153,6 +153,25 @@ class _FakePool:
         self.calls.append(("execute", sql, params))
 
 
+def _non_scope_calls(fake: _FakePool) -> list[tuple[str, str, tuple]]:
+    return [
+        call
+        for call in fake.calls
+        if "set_config('app.tenant_id'" not in call[1]
+    ]
+
+
+def _assert_db_scope(fake: _FakePool, workspace_id: str) -> None:
+    scope_calls = [
+        call
+        for call in fake.calls
+        if "set_config('app.tenant_id'" in call[1]
+        and "set_config('app.workspace_id'" in call[1]
+    ]
+    assert scope_calls, "scoped endpoints must set Postgres app.tenant_id/app.workspace_id"
+    assert scope_calls[0][2][1] == workspace_id
+
+
 @pytest.fixture
 def console_main(monkeypatch):
     for k, v in _CONSOLE_TEST_ENV.items():
@@ -183,7 +202,8 @@ async def test_list_decisions_filters_by_active_workspace(console_main, monkeypa
     result = await console_main.api_decisions_list(status="", overdue="", user=user)
     assert result == {"decisions": []}
 
-    op, sql, params = fake.calls[0]
+    _assert_db_scope(fake, "workspace-A")
+    op, sql, params = _non_scope_calls(fake)[0]
     assert op == "fetch"
     assert "workspace_id = $1" in sql
     assert params[0] == "workspace-A"
@@ -192,8 +212,7 @@ async def test_list_decisions_filters_by_active_workspace(console_main, monkeypa
 @pytest.mark.asyncio
 async def test_list_decisions_returns_empty_without_active_workspace(console_main, monkeypatch):
     """A user with no active workspace must see zero decisions — the
-    pool is still hit (the visibility clause becomes ``FALSE``) but
-    the query returns nothing."""
+    route must fail closed before hitting the database."""
     fake = _FakePool(fetch_result=[])
 
     async def _factory():
@@ -203,9 +222,7 @@ async def test_list_decisions_returns_empty_without_active_workspace(console_mai
     user = {"id": 7, "role": "user"}  # no active_workspace_id
     result = await console_main.api_decisions_list(status="", overdue="", user=user)
     assert result == {"decisions": []}
-
-    _, sql, _ = fake.calls[0]
-    assert "FALSE" in sql, "missing-workspace path must short-circuit to FALSE"
+    assert fake.calls == [], "missing-workspace path must short-circuit before DB"
 
 
 @pytest.mark.asyncio
@@ -231,7 +248,8 @@ async def test_load_with_visibility_scopes_query_to_workspace(console_main, monk
     result = await console_main._dec_load_with_visibility(42, user)
     assert result is None
 
-    op, sql, params = fake.calls[0]
+    _assert_db_scope(fake, "workspace-A")
+    op, sql, params = _non_scope_calls(fake)[0]
     assert op == "fetchrow"
     assert "id = $1 AND workspace_id = $2" in sql
     assert params[:2] == (42, "workspace-A")
@@ -252,7 +270,8 @@ async def test_load_with_visibility_admin_still_scoped_to_workspace(console_main
     result = await console_main._dec_load_with_visibility(42, user)
     assert result is None
 
-    op, sql, params = fake.calls[0]
+    _assert_db_scope(fake, "workspace-A")
+    op, sql, params = _non_scope_calls(fake)[0]
     # Admin path skips the visibility/owner subclause but MUST still
     # bind workspace_id.
     assert "workspace_id = $2" in sql
@@ -294,6 +313,26 @@ def _fake_decision_row(workspace_id: str = "workspace-A") -> dict:
 
 
 @pytest.mark.asyncio
+async def test_list_decisions_returns_same_workspace_secret_with_db_scope(
+    console_main, monkeypatch
+):
+    secret = _fake_decision_row("workspace-A")
+    secret["title"] = "wsA-secret"
+    fake = _FakePool(fetch_result=[secret])
+
+    async def _factory():
+        return fake
+
+    monkeypatch.setattr(console_main, "_dec_pool", _factory)
+    user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
+
+    out = await console_main.api_decisions_list(status="", overdue="", user=user)
+
+    _assert_db_scope(fake, "workspace-A")
+    assert [row["title"] for row in out["decisions"]] == ["wsA-secret"]
+
+
+@pytest.mark.asyncio
 async def test_create_decision_inserts_active_workspace_id(console_main, monkeypatch):
     fake = _FakePool(fetchrow_result=_fake_decision_row())
 
@@ -308,7 +347,8 @@ async def test_create_decision_inserts_active_workspace_id(console_main, monkeyp
     )
     assert out["workspace_id"] == "workspace-A"
 
-    op, sql, params = fake.calls[0]
+    _assert_db_scope(fake, "workspace-A")
+    op, sql, params = _non_scope_calls(fake)[0]
     assert op == "fetchrow"
     assert "workspace_id" in sql
     # Reviewer #2 finding: tighten the param assertion. The INSERT
@@ -376,7 +416,8 @@ async def test_update_decision_happy_path_same_workspace(console_main, monkeypat
     assert out["title"] == "new-title"
 
     # The 2nd call is the UPDATE — verify it pins workspace_id.
-    op2, sql2, params2 = fake.calls[1]
+    _assert_db_scope(fake, "workspace-A")
+    op2, sql2, params2 = _non_scope_calls(fake)[1]
     assert op2 == "fetchrow"
     assert "workspace_id" in sql2
     assert "workspace-A" in params2
@@ -398,7 +439,8 @@ async def test_delete_decision_happy_path_same_workspace(console_main, monkeypat
     assert out == {"deleted": True, "id": 1}
 
     # The 2nd call is the DELETE — verify it pins workspace_id.
-    op2, sql2, params2 = fake.calls[1]
+    _assert_db_scope(fake, "workspace-A")
+    op2, sql2, params2 = _non_scope_calls(fake)[1]
     assert op2 == "execute"
     assert "workspace_id = $2" in sql2
     assert params2 == (1, "workspace-A")
@@ -466,7 +508,8 @@ async def test_add_action_happy_path_same_workspace(console_main, monkeypatch):
     assert out["action_text"] == "note"
 
     # First call loaded the parent decision with workspace filter.
-    _, load_sql, load_params = fake.calls[0]
+    _assert_db_scope(fake, "workspace-A")
+    _, load_sql, load_params = _non_scope_calls(fake)[0]
     assert "workspace_id = $2" in load_sql
     assert load_params[1] == "workspace-A"
 
