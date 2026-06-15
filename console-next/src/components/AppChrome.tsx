@@ -68,9 +68,19 @@ function userLabel(email: string): string {
   return trimmed.split("@")[0] || trimmed;
 }
 
-function canSeeSettings(access: MeAccessResponse | undefined): boolean {
+function canSeeAdminCenter(access: MeAccessResponse | undefined): boolean {
   if (!access) return false;
-  return access.ui_capabilities?.can_view_settings === true;
+  const capabilities = access.ui_capabilities ?? {};
+  return Boolean(
+    capabilities.can_manage_companies
+      || capabilities.can_manage_workspace_users
+      || capabilities.can_view_audit
+      || capabilities.can_view_vault
+      || capabilities.can_view_workflows
+      || capabilities.can_view_metrics
+      || capabilities.can_view_security
+      || capabilities.can_view_settings,
+  );
 }
 
 function UserMenu({
@@ -144,15 +154,15 @@ function UserMenu({
             >
               Mi acceso
             </Link>
-            {canSeeSettings(access) ? (
+            {canSeeAdminCenter(access) ? (
               <Link
                 prefetch={false}
-                href="/settings"
+                href="/operations"
                 role="menuitem"
                 onClick={() => setOpen(false)}
                 className="flex min-h-[40px] items-center rounded-md px-3 text-sm hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Ajustes globales
+                Centro de administración
               </Link>
             ) : null}
             <button

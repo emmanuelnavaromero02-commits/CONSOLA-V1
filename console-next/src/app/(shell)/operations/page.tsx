@@ -8,13 +8,14 @@ import {
   Building2,
   FileSearch,
   KeySquare,
+  Settings,
+  ShieldCheck,
   Users,
   Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { getMeAccess } from "@/lib/admin-surfaces";
-import { legacyConsoleUrl } from "@/lib/legacy-url";
 
 /**
  * v1.44.4 Group 1 — Operations overview.
@@ -60,7 +61,7 @@ const READY_MODULES: ModuleCard[] = [
   },
   {
     href:        "/operations/audit",
-    title:       "Auditoría",
+    title:       "Auditoría operativa",
     description: "Últimas 100 acciones registradas en el sistema.",
     icon:        FileSearch,
     permission:  "security.audit.read",
@@ -74,26 +75,31 @@ const READY_MODULES: ModuleCard[] = [
   },
   {
     href:        "/operations/workflows",
-    title:       "Workflows",
+    title:       "Automatizaciones",
     description: "Visualiza flujos, ejecútalos y cancela corridas activas.",
     icon:        Workflow,
     permission:  "copilot.execute",
   },
   {
     href:        "/operations/metrics",
-    title:       "Métricas",
+    title:       "Salud y métricas",
     description: "Salud de servicios, extracciones, errores y carga reciente.",
     icon:        Activity,
     permission:  "operations.read",
   },
-];
-
-
-const PENDING_MODULES = [
   {
-    title:       "Settings",
-    description: "Preferencias por workspace (idioma, tono, branding).",
-    legacyHref:  legacyConsoleUrl("/settings"),
+    href:        "/security",
+    title:       "Seguridad y sesiones",
+    description: "Sesiones, intentos y controles de seguridad del usuario actual.",
+    icon:        ShieldCheck,
+    capability:  "can_view_security",
+  },
+  {
+    href:        "/settings",
+    title:       "Ajustes",
+    description: "Preferencias y configuración operativa disponible para tu rol.",
+    icon:        Settings,
+    capability:  "can_view_settings",
   },
 ];
 
@@ -107,14 +113,13 @@ export default function OperationsOverviewPage() {
     if (item.capability && capabilities[item.capability] !== true) return false;
     return true;
   });
-  const showPending = access.data?.role?.is_platform_admin === true;
 
   return (
     <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Operaciones</h1>
         <p className="text-sm text-muted-foreground">
-          Administra usuarios, accesos y auditoría de la plataforma.
+          Centro único para empresas, usuarios, secretos, auditoría y salud operativa.
         </p>
       </header>
 
@@ -147,40 +152,6 @@ export default function OperationsOverviewPage() {
         ))}
       </section>
 
-      {showPending ? (
-        <section
-          aria-label="Próximamente"
-          className="space-y-3 rounded-lg border bg-muted/30 p-5"
-        >
-          <header className="space-y-1">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Próximamente
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              Estos módulos siguen disponibles en la consola clásica mientras
-              terminamos de migrarlos a la nueva interfaz.
-            </p>
-          </header>
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {PENDING_MODULES.map((m) => (
-              <li
-                key={m.title}
-                className="flex flex-col gap-2 rounded-md border bg-background p-4"
-              >
-                <h3 className="text-sm font-semibold tracking-tight">{m.title}</h3>
-                <p className="text-xs text-muted-foreground">{m.description}</p>
-                <a
-                  href={m.legacyHref}
-                  rel="noopener"
-                  className="mt-auto inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  Abrir en la consola clásica →
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
     </main>
   );
 }

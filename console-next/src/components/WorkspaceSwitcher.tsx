@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Building2 } from "lucide-react";
 
 import { writeCookie } from "@/lib/cookies";
@@ -18,6 +19,14 @@ function labelForWorkspace(workspace: WorkspaceAccessItem): string {
   return tenantName ? `${tenantName} / ${workspaceName}` : workspaceName;
 }
 
+function workspaceOptionLabel(workspace: WorkspaceAccessItem): string {
+  return workspace.workspace_name?.trim() || workspace.workspace_id || "Workspace";
+}
+
+function tenantGroupLabel(workspace: WorkspaceAccessItem): string {
+  return workspace.tenant_name?.trim() || "Empresa sin nombre";
+}
+
 function activeWorkspaceId(workspaces: WorkspaceAccessItem[]): string {
   const active = workspaces.find((workspace) => workspace.active && workspace.workspace_id);
   return active?.workspace_id || workspaces[0]?.workspace_id || "";
@@ -29,8 +38,20 @@ export function WorkspaceSwitcher({
   className,
 }: WorkspaceSwitcherProps) {
   const options = (workspaces ?? []).filter((workspace) => workspace.workspace_id);
-  if (options.length <= 1) return null;
+  const groupedOptions = useMemo(() => {
+    const groups = new Map<string, { label: string; items: WorkspaceAccessItem[] }>();
+    for (const workspace of options) {
+      const key = workspace.tenant_id || tenantGroupLabel(workspace);
+      if (!groups.has(key)) {
+        groups.set(key, { label: tenantGroupLabel(workspace), items: [] });
+      }
+      groups.get(key)?.items.push(workspace);
+    }
+    return Array.from(groups.values());
+  }, [options]);
+  if (options.length === 0) return null;
   const selected = activeWorkspaceId(options);
+  const activeWorkspace = options.find((workspace) => workspace.workspace_id === selected);
 
   function switchWorkspace(workspaceId: string) {
     if (!workspaceId || workspaceId === selected || typeof document === "undefined") return;
@@ -49,6 +70,11 @@ export function WorkspaceSwitcher({
   return (
     <label className={cn("block space-y-1 text-sm", className)}>
       <span className="text-xs font-medium uppercase text-muted-foreground">Workspace activo</span>
+      {activeWorkspace ? (
+        <span className="block truncate text-xs text-muted-foreground">
+          {labelForWorkspace(activeWorkspace)}
+        </span>
+      ) : null}
       <div className="relative">
         <Building2 aria-hidden className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
         <select
@@ -57,10 +83,14 @@ export function WorkspaceSwitcher({
           className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="Cambiar workspace activo"
         >
-          {options.map((workspace) => (
-            <option key={workspace.workspace_id || labelForWorkspace(workspace)} value={workspace.workspace_id || ""}>
-              {labelForWorkspace(workspace)}
-            </option>
+          {groupedOptions.map((group) => (
+            <optgroup key={group.label} label={group.label}>
+              {group.items.map((workspace) => (
+                <option key={workspace.workspace_id || labelForWorkspace(workspace)} value={workspace.workspace_id || ""}>
+                  {workspaceOptionLabel(workspace)}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </div>

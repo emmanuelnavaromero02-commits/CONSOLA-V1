@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { DataTechnicalHub } from "@/components/data/DataTechnicalHub";
 
 export default function DataPage() {
-  redirect("/data/catalog");
+  return <DataTechnicalHub />;
 }
