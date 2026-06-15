@@ -7,6 +7,7 @@ offending path and exception, instead of silently dropping the error.
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import sys
 from pathlib import Path
@@ -43,3 +44,13 @@ def test_invalid_sources_logs_warning_and_continues(seed_module, tmp_path, caplo
     messages = " ".join(r.getMessage() for r in caplog.records)
     assert "invalid sources" in messages
     assert "replicon_demo.sql" in messages
+
+
+def test_seed_packaged_datasets_sets_rls_scope_before_writes(seed_module):
+    source = inspect.getsource(seed_module.seed_packaged_datasets)
+
+    assert "SELECT id, tenant_id" in source
+    assert "conn.transaction()" in source
+    assert "set_config('app.tenant_id'" in source
+    assert "set_config('app.workspace_id'" in source
+    assert "tenant_id = EXCLUDED.tenant_id" in source

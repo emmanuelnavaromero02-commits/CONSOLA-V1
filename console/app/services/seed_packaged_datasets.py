@@ -78,54 +78,109 @@ async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
         return
 
     async with pool.acquire() as conn:
-        workspace_id = await conn.fetchval(
-            "SELECT id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1",
+        workspace = await conn.fetchrow(
+            """
+            SELECT id, tenant_id
+              FROM workspaces
+             ORDER BY created_at ASC, name ASC
+             LIMIT 1
+            """,
         )
-        if not workspace_id:
+        if not workspace:
             logger.warning("[seed_packaged_datasets] no workspace found; skipping")
             return
+        workspace_id = workspace["id"]
+        tenant_id = workspace["tenant_id"]
+        has_tenant_id = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'datasets'
+                   AND column_name = 'tenant_id'
+            )
+            """,
+        )
 
-        for cartridge_id, sql_files in packaged.items():
-            names: list[str] = []
-            for sql_path in sql_files:
-                try:
-                    dataset = _parse_dataset(sql_path)
-                except Exception as exc:
-                    logger.warning("[seed_packaged_datasets] skip %s: %s", sql_path, exc)
-                    continue
+        async with conn.transaction():
+            await conn.execute(
+                """
+                SELECT
+                    set_config('app.tenant_id', $1, true),
+                    set_config('app.workspace_id', $2, true)
+                """,
+                str(tenant_id),
+                str(workspace_id),
+            )
 
-                await conn.execute(
-                    """INSERT INTO datasets
-                          (name, layer, cartridge, sources, sql_def, description,
-                           column_mapping, schedule, updated_at, workspace_id)
-                       VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
-                               NOW(), $7)
-                       ON CONFLICT (name) DO UPDATE
-                          SET layer = EXCLUDED.layer,
-                              cartridge = EXCLUDED.cartridge,
-                              sources = EXCLUDED.sources,
-                              sql_def = EXCLUDED.sql_def,
-                              description = EXCLUDED.description,
-                              updated_at = NOW(),
-                              workspace_id = EXCLUDED.workspace_id""",
-                    dataset["name"],
-                    dataset["layer"],
-                    dataset["cartridge"],
-                    json.dumps(dataset["sources"]),
-                    dataset["sql"],
-                    dataset["description"],
-                    workspace_id,
-                )
-                names.append(dataset["name"])
+            for cartridge_id, sql_files in packaged.items():
+                names: list[str] = []
+                for sql_path in sql_files:
+                    try:
+                        dataset = _parse_dataset(sql_path)
+                    except Exception as exc:
+                        logger.warning("[seed_packaged_datasets] skip %s: %s", sql_path, exc)
+                        continue
 
-            if names:
-                await conn.execute(
-                    "DELETE FROM datasets WHERE cartridge = $1 AND NOT (name = ANY($2::text[]))",
-                    cartridge_id,
-                    names,
-                )
-                logger.info(
-                    "[seed_packaged_datasets] %s: seeded %d datasets",
-                    cartridge_id,
-                    len(names),
-                )
+                    if has_tenant_id:
+                        await conn.execute(
+                            """INSERT INTO datasets
+                                  (name, layer, cartridge, sources, sql_def, description,
+                                   column_mapping, schedule, updated_at, tenant_id, workspace_id)
+                               VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
+                                       NOW(), $7, $8)
+                               ON CONFLICT (name) DO UPDATE
+                                  SET layer = EXCLUDED.layer,
+                                      cartridge = EXCLUDED.cartridge,
+                                      sources = EXCLUDED.sources,
+                                      sql_def = EXCLUDED.sql_def,
+                                      description = EXCLUDED.description,
+                                      updated_at = NOW(),
+                                      tenant_id = EXCLUDED.tenant_id,
+                                      workspace_id = EXCLUDED.workspace_id""",
+                            dataset["name"],
+                            dataset["layer"],
+                            dataset["cartridge"],
+                            json.dumps(dataset["sources"]),
+                            dataset["sql"],
+                            dataset["description"],
+                            tenant_id,
+                            workspace_id,
+                        )
+                    else:
+                        await conn.execute(
+                            """INSERT INTO datasets
+                                  (name, layer, cartridge, sources, sql_def, description,
+                                   column_mapping, schedule, updated_at, workspace_id)
+                               VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
+                                       NOW(), $7)
+                               ON CONFLICT (name) DO UPDATE
+                                  SET layer = EXCLUDED.layer,
+                                      cartridge = EXCLUDED.cartridge,
+                                      sources = EXCLUDED.sources,
+                                      sql_def = EXCLUDED.sql_def,
+                                      description = EXCLUDED.description,
+                                      updated_at = NOW(),
+                                      workspace_id = EXCLUDED.workspace_id""",
+                            dataset["name"],
+                            dataset["layer"],
+                            dataset["cartridge"],
+                            json.dumps(dataset["sources"]),
+                            dataset["sql"],
+                            dataset["description"],
+                            workspace_id,
+                        )
+                    names.append(dataset["name"])
+
+                if names:
+                    await conn.execute(
+                        "DELETE FROM datasets WHERE cartridge = $1 AND NOT (name = ANY($2::text[]))",
+                        cartridge_id,
+                        names,
+                    )
+                    logger.info(
+                        "[seed_packaged_datasets] %s: seeded %d datasets",
+                        cartridge_id,
+                        len(names),
+                    )
