@@ -409,13 +409,13 @@ async def viewer_dataset(name: str, request: Request):
 
 
 @router.get("/data", dependencies=[Depends(require_permission("datasets.read"))])
-async def data_page():
-    return RedirectResponse(url="/data/catalog", status_code=307)
+async def data_page(request: Request):
+    return _console_next_response(request, "data/index.html")
 
 
 @router.get("/data/", dependencies=[Depends(require_permission("datasets.read"))])
-async def data_page_slash():
-    return RedirectResponse(url="/data/catalog", status_code=307)
+async def data_page_slash(request: Request):
+    return _console_next_response(request, "data/index.html")
 
 
 @router.get(
@@ -426,6 +426,16 @@ async def data_page_slash():
 )
 async def data_catalog_page(request: Request):
     return _console_next_response(request, "data/catalog/index.html")
+
+
+@router.get(
+    "/data/inventory", dependencies=[Depends(require_permission("datasets.read"))]
+)
+@router.get(
+    "/data/inventory/", dependencies=[Depends(require_permission("datasets.read"))]
+)
+async def data_inventory_page(request: Request):
+    return _console_next_response(request, "data/inventory/index.html")
 
 
 @router.get(

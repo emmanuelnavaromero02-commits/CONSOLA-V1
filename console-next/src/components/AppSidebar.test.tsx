@@ -22,7 +22,8 @@ describe("AppSidebar", () => {
     });
 
     expect(markup).toContain("Control Room");
-    expect(markup).toContain("Monitor");
+    expect(markup).toContain("Catálogo técnico");
+    expect(markup).not.toContain("Jobs y extracción");
     expect(markup).not.toContain("Usuarios");
     expect(markup).not.toContain("Empresas");
     expect(markup).not.toContain("Vault");
@@ -37,11 +38,11 @@ describe("AppSidebar", () => {
     }, "/data/lineage");
 
     expect(markup).toContain('aria-current="page"');
-    expect(markup).toContain('href="/data/lineage"');
-    expect(markup).toContain("Linaje");
+    expect(markup).toContain('href="/data"');
+    expect(markup).toContain("Catálogo técnico");
   });
 
-  it("renders admin surfaces only when role and permission both allow them", () => {
+  it("renders one admin entry when role and permission allow admin surfaces", () => {
     const markup = render({
       role: { is_platform_admin: true },
       permissions: [
@@ -62,12 +63,13 @@ describe("AppSidebar", () => {
       },
     }, "/operations/users");
 
-    expect(markup).toContain("Empresas");
-    expect(markup).toContain("Usuarios");
-    expect(markup).toContain("Conocimiento");
-    expect(markup).toContain("Vault");
-    expect(markup).toContain("Ajustes");
+    expect(markup).toContain("Centro de administración");
     expect(markup).toContain("Cartuchos");
+    expect(markup).not.toContain("Empresas");
+    expect(markup).not.toContain("Usuarios");
+    expect(markup).not.toContain("Vault");
+    expect(markup).not.toContain("Seguridad y sesiones");
+    expect(markup).not.toContain("Ajustes");
     expect(markup).toContain('aria-current="page"');
   });
 
@@ -99,14 +101,16 @@ describe("AppSidebar", () => {
       },
     }, "/operations/users");
 
-    expect(markup).toContain("Usuarios");
+    expect(markup).toContain("Centro de administración");
+    expect(markup).not.toContain("Usuarios");
     expect(markup).not.toContain("Empresas");
     expect(markup).toContain("Control Room");
+    expect(markup).toContain("Catálogo técnico");
     expect(markup).toContain("Copiloto");
     expect(markup).toContain("Tokens");
-    expect(markup).toContain("Auditoría");
-    expect(markup).toContain("Vault");
-    expect(markup).toContain("Métricas");
+    expect(markup).not.toContain("Auditoría");
+    expect(markup).not.toContain("Vault");
+    expect(markup).not.toContain("Métricas");
     expect(markup).not.toContain("Conocimiento");
     expect(markup).not.toContain("Consulta Bronce");
     expect(markup).not.toContain("Studio");
@@ -130,13 +134,13 @@ describe("AppSidebar", () => {
 
     expect(markup).not.toContain("Consulta Bronce");
     expect(markup).not.toContain("Studio");
-    expect(markup).not.toContain("Flujos de trabajo");
+    expect(markup).not.toContain("Automatizaciones");
     expect(markup).not.toContain("Vault");
     expect(markup).not.toContain("Auditoría");
     expect(markup).not.toContain("Usuarios");
   });
 
-  it("renders a workspace selector only when the user has multiple workspaces", () => {
+  it("renders a workspace selector when the user has an active workspace", () => {
     const markup = render({
       role: { is_platform_admin: false },
       permissions: ["workspace.access"],
@@ -158,7 +162,8 @@ describe("AppSidebar", () => {
 
     expect(markup).toContain("Workspace activo");
     expect(markup).toContain("Cliente A / Finanzas");
-    expect(markup).toContain("Cliente B / Operaciones");
+    expect(markup).toContain('label="Cliente B"');
+    expect(markup).toContain("Operaciones");
 
     const single = render({
       role: { is_platform_admin: false },
@@ -166,6 +171,7 @@ describe("AppSidebar", () => {
       workspaces: [{ workspace_name: "Solo", workspace_id: "ws-a", active: true }],
       ui_capabilities: { can_view_workspace: true },
     });
-    expect(single).not.toContain("Workspace activo");
+    expect(single).toContain("Workspace activo");
+    expect(single).toContain("Solo");
   });
 });

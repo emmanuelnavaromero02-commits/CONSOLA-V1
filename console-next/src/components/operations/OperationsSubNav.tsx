@@ -36,10 +36,10 @@ const ITEMS: SubNavItem[] = [
   { href: "/operations",        label: "Resumen",  icon: ShieldCheck },
   { href: "/operations/companies", label: "Empresas", icon: Building2, capability: "can_manage_companies" },
   { href: "/operations/users",  label: "Usuarios", icon: Users, capability: "can_manage_workspace_users" },
-  { href: "/operations/audit",  label: "Auditoría", icon: FileSearch, capability: "can_view_audit" },
+  { href: "/operations/audit",  label: "Auditoría operativa", icon: FileSearch, capability: "can_view_audit" },
   { href: "/operations/vault",  label: "Vault",    icon: KeySquare, capability: "can_view_vault" },
-  { href: "/operations/workflows", label: "Workflows", icon: Workflow, capability: "can_view_workflows" },
-  { href: "/operations/metrics",   label: "Métricas",  icon: Activity, capability: "can_view_metrics" },
+  { href: "/operations/workflows", label: "Automatizaciones", icon: Workflow, capability: "can_view_workflows" },
+  { href: "/operations/metrics",   label: "Salud y métricas",  icon: Activity, capability: "can_view_metrics" },
 ];
 
 
@@ -52,6 +52,8 @@ function isActive(pathname: string, href: string): boolean {
 export function OperationsSubNav() {
   const pathname = usePathname() ?? "";
   const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
+  if (pathname === "/operations") return null;
+
   const permissions = new Set(access.data?.permissions ?? []);
   const capabilities = access.data?.ui_capabilities ?? {};
   const visibleItems = ITEMS.filter((item) => {

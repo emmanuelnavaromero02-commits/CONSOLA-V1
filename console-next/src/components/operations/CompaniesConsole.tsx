@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -152,13 +151,14 @@ export function CompaniesConsole() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminName, setAdminName] = useState("");
+  const [workspaceCreateName, setWorkspaceCreateName] = useState("");
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [result, setResult] = useState<ProvisioningResult | null>(null);
 
   const workspaces = useTenantWorkspaces(selectedTenantId);
   const installations = useQuery({
-    queryKey: ["marketplace", "admin", "installations"],
+    queryKey: ["marketplace", "admin", "installations", selectedTenantId],
     queryFn: listAdminInstallations,
     enabled: Boolean(selectedTenantId),
     staleTime: 30_000,
@@ -175,12 +175,20 @@ export function CompaniesConsole() {
   });
   const rows = tenants.data?.tenants ?? [];
   const selectedTenant = rows.find((tenant) => tenant.id === selectedTenantId) ?? null;
-  const workspaceRows = workspaces.data?.workspaces ?? EMPTY_WORKSPACES;
+  const workspaceRows = useMemo(
+    () => (workspaces.data?.workspaces ?? EMPTY_WORKSPACES).filter((workspace) => workspace.tenant_id === selectedTenantId),
+    [selectedTenantId, workspaces.data?.workspaces],
+  );
   const selectedWorkspace = workspaceRows.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaceRows[0] ?? null;
   const selectedWorkspaceFilterId = selectedWorkspace?.id ?? null;
+  const tenantWorkspaceIds = useMemo(() => new Set(workspaceRows.map((workspace) => workspace.id)), [workspaceRows]);
   const tenantInstallations = useMemo(
-    () => (installations.data?.installations ?? []).filter((row) => row.tenant_id === selectedTenantId),
-    [installations.data?.installations, selectedTenantId],
+    () => (installations.data?.installations ?? []).filter((row) => {
+      if (row.tenant_id) return row.tenant_id === selectedTenantId;
+      if (row.workspace_id) return tenantWorkspaceIds.has(row.workspace_id);
+      return false;
+    }),
+    [installations.data?.installations, selectedTenantId, tenantWorkspaceIds],
   );
   const workspaceInstallations = useMemo(
     () => tenantInstallations.filter((row) => !selectedWorkspaceFilterId || row.workspace_id === selectedWorkspaceFilterId),
@@ -262,6 +270,27 @@ export function CompaniesConsole() {
       toast.success("Contraseña temporal generada. Cópiala ahora.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo generar la contraseña temporal.");
+    }
+  }
+
+  async function handleCreateWorkspaceForSelectedTenant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTenant) return;
+    const name = workspaceCreateName.trim();
+    if (!name) {
+      toast.error("El nombre del workspace es obligatorio.");
+      return;
+    }
+    try {
+      const response = await createWorkspace.mutateAsync({
+        tenantId: selectedTenant.id,
+        payload: { name },
+      });
+      setSelectedWorkspaceId(response.workspace.id);
+      setWorkspaceCreateName("");
+      toast.success(response.created ? "Workspace creado." : "Workspace existente seleccionado.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo crear el workspace.");
     }
   }
 
@@ -371,7 +400,294 @@ export function CompaniesConsole() {
         </section>
       ) : null}
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
+      <section className="rounded-lg border bg-card p-4 shadow-sm" aria-label="Empresa activa">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,0.8fr)_1fr] lg:items-end">
+          <label className="space-y-1.5 text-sm">
+            <span className="text-xs font-medium uppercase text-muted-foreground">Empresa activa</span>
+            <select
+              value={selectedTenantId ?? ""}
+              onChange={(event) => {
+                setSelectedTenantId(event.target.value || null);
+                setSelectedWorkspaceId(null);
+              }}
+              className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Seleccionar empresa para gestionar"
+            >
+              <option value="">Selecciona una empresa</option>
+              {rows.map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>
+                  {tenant.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-xs uppercase text-muted-foreground">Workspaces</p>
+              <p className="text-lg font-semibold">{selectedTenant?.workspace_count ?? 0}</p>
+            </div>
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-xs uppercase text-muted-foreground">Usuarios</p>
+              <p className="text-lg font-semibold">{selectedTenant?.user_count ?? 0}</p>
+            </div>
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-xs uppercase text-muted-foreground">Estado</p>
+              <p className="truncate text-lg font-semibold">{selectedTenant?.status ?? "-"}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {!selectedTenant ? (
+        <section className="rounded-lg border border-dashed bg-muted/20 p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+            <Building2 aria-hidden className="h-5 w-5 text-muted-foreground" />
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold">Selecciona una empresa</h2>
+              <p className="max-w-3xl text-sm text-muted-foreground">
+                El panel operativo aparece aquí con workspaces, tenant admins, cartuchos instalados,
+                peticiones pendientes y acciones contextuales de la empresa.
+              </p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {selectedTenant ? (
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
+          <section className="rounded-lg border bg-card shadow-sm">
+            <div key={selectedTenant.id}>
+            <header className="border-b px-4 py-3">
+              <h2 className="text-base font-semibold">Panel operativo de empresa</h2>
+              <p className="text-xs text-muted-foreground">
+                {selectedTenant.name} · {selectedTenant.slug} · creada {fmtDate(selectedTenant.created_at)}
+              </p>
+              <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                tenant_id={selectedTenant.id}
+              </p>
+            </header>
+            <div className="grid grid-cols-3 gap-3 border-b p-4 text-sm">
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Workspaces</p>
+                <p className="text-xl font-semibold">{selectedTenant.workspace_count}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Usuarios</p>
+                <p className="text-xl font-semibold">{selectedTenant.user_count}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Cartuchos</p>
+                <p className="text-xl font-semibold">{tenantInstallations.length}</p>
+              </div>
+            </div>
+            <form
+              onSubmit={handleCreateWorkspaceForSelectedTenant}
+              className="grid grid-cols-1 gap-3 border-b p-4 sm:grid-cols-[1fr_auto]"
+              aria-label="Crear workspace para empresa seleccionada"
+            >
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Nuevo workspace para esta empresa</span>
+                <input
+                  value={workspaceCreateName}
+                  onChange={(event) => setWorkspaceCreateName(event.target.value)}
+                  maxLength={160}
+                  className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder="Ej. Finanzas, Operaciones, RH"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={createWorkspace.isPending}
+                className="inline-flex min-h-[44px] items-center justify-center self-end rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Crear workspace
+              </button>
+            </form>
+            {workspaces.isLoading ? (
+              <div className="p-4 text-sm text-muted-foreground">Cargando workspaces...</div>
+            ) : workspaces.isError ? (
+              <div role="alert" className="p-4 text-sm text-destructive">No se pudieron cargar los workspaces.</div>
+            ) : (
+              <div className="divide-y">
+                {workspaceRows.map((workspace) => (
+                  <div
+                    key={workspace.id}
+                    className={cn(
+                      "space-y-3 px-4 py-3 text-sm",
+                      selectedWorkspace?.id === workspace.id ? "bg-primary/5" : "",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWorkspaceId(workspace.id)}
+                      className="grid w-full grid-cols-1 gap-2 text-left md:grid-cols-[1fr_auto_auto] md:items-center"
+                    >
+                      <div>
+                        <div className="font-medium">{workspace.name}</div>
+                        <div className="break-all font-mono text-xs text-muted-foreground">{workspace.id}</div>
+                      </div>
+                      <span className="text-muted-foreground">{workspace.user_count} usuarios</span>
+                      <span className="text-xs text-muted-foreground">{fmtDate(workspace.created_at)}</span>
+                    </button>
+                    {workspace.tenant_admins?.length ? (
+                      <div className="space-y-2 rounded-md border bg-background p-3">
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+                          <UserRoundCog aria-hidden className="h-4 w-4" />
+                          Tenant admins
+                        </div>
+                        {workspace.tenant_admins.map((admin) => (
+                          <div key={admin.id} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto] md:items-center">
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{admin.email}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {admin.is_active ? "activo" : "inactivo"} · {admin.must_change_password ? "debe cambiar password" : "password vigente"}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={issueTemporaryPassword.isPending}
+                              onClick={() => handleIssueTemporaryPassword(workspace, admin.id)}
+                              className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <KeyRound aria-hidden className="h-4 w-4" />
+                              Reset temporal
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border bg-background p-3 text-sm text-muted-foreground">
+                        Sin tenant admin registrado en este workspace.
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
+          </section>
+
+          <aside key={`${selectedTenant.id}:${selectedWorkspaceFilterId ?? "none"}`} className="space-y-4">
+            <section className="rounded-lg border bg-card p-4 shadow-sm">
+              <div className="flex items-start gap-2">
+                <PackageCheck aria-hidden className="mt-0.5 h-5 w-5 text-primary" />
+                <div>
+                  <h2 className="text-base font-semibold">Acciones de empresa</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Operaciones inline sobre la empresa seleccionada, sin redirigir a tu workspace activo.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                <div className="rounded-md border bg-background p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Activos</p>
+                  <p className="text-lg font-semibold">{activeInstallations}</p>
+                </div>
+                <div className="rounded-md border bg-background p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Peticiones</p>
+                  <p className="text-lg font-semibold">{pendingInstallations}</p>
+                </div>
+                <div className="rounded-md border bg-background p-3">
+                  <p className="text-xs uppercase text-muted-foreground">Bloqueados</p>
+                  <p className="text-lg font-semibold">{blockedInstallations}</p>
+                </div>
+              </div>
+              <div className="mt-4 space-y-2 rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                <p>
+                  Usa el panel izquierdo para crear workspaces o resetear el acceso temporal del tenant admin.
+                </p>
+                <p>
+                  Usa “Cartuchos y peticiones” para pausar, reactivar o revocar licencias del workspace seleccionado.
+                </p>
+              </div>
+            </section>
+
+            <section className="rounded-lg border bg-card shadow-sm">
+              <header className="border-b px-4 py-3">
+                <h2 className="text-base font-semibold">Cartuchos y peticiones</h2>
+                <p className="text-xs text-muted-foreground">
+                  {selectedWorkspace
+                    ? `${selectedTenant.name} / ${selectedWorkspace.name}`
+                    : selectedTenant.name}
+                </p>
+                <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                  tenant_id={selectedTenant.id}
+                  {selectedWorkspace ? ` · workspace_id=${selectedWorkspace.id}` : ""}
+                </p>
+              </header>
+              {installations.isLoading ? (
+                <div className="space-y-2 p-4" aria-busy="true">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <span key={idx} className="block h-20 animate-pulse rounded bg-muted" />
+                  ))}
+                </div>
+              ) : installations.isError ? (
+                <div role="alert" className="p-4 text-sm text-destructive">No se pudieron cargar instalaciones.</div>
+              ) : workspaceInstallations.length ? (
+                <div className="divide-y">
+                  {workspaceInstallations.map((installation) => {
+                    const status = installation.status || installation.access_status;
+                    const actions = adminActionsFor(status);
+                    return (
+                      <div key={installation.id} className="space-y-3 p-4 text-sm">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="font-medium">{installation.product_name || installation.cartridge_id}</p>
+                            <p className="break-all font-mono text-xs text-muted-foreground">{installation.cartridge_id}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {installation.current_step || "sin paso"} · {fmtDate(installation.updated_at)}
+                            </p>
+                          </div>
+                          <StatusPill status={status} />
+                        </div>
+                        {installation.error_message ? (
+                          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                            {installation.error_message}
+                          </div>
+                        ) : null}
+                        <div className="flex flex-wrap gap-2">
+                          {actions.length ? actions.map((action) => (
+                            <button
+                              key={action}
+                              type="button"
+                              disabled={installationAction.isPending}
+                              onClick={() => handleInstallationAction(installation, action)}
+                              className={cn(
+                                "inline-flex min-h-[40px] items-center justify-center rounded-md border px-3 text-xs font-medium disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                action === "revoke"
+                                  ? "border-destructive/40 bg-background text-destructive hover:bg-destructive/10"
+                                  : "bg-background hover:bg-accent/5",
+                              )}
+                            >
+                              {actionLabel(action)}
+                            </button>
+                          )) : (
+                            <span className="text-xs text-muted-foreground">Sin acciones disponibles para este estado.</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-4 text-sm text-muted-foreground">
+                  No hay cartuchos ni peticiones para este workspace.
+                </div>
+              )}
+            </section>
+
+            {blockedInstallations > 0 ? (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>Hay cartuchos bloqueados o fallidos para esta empresa. Revisa credenciales, Vault y logs antes de reactivar.</p>
+              </div>
+            ) : null}
+          </aside>
+        </section>
+      ) : null}
+
+      {!selectedTenant ? (
+      <section className="max-w-3xl">
         <form
           onSubmit={handleSubmit}
           className="space-y-4 rounded-lg border bg-card p-5 shadow-sm"
@@ -447,279 +763,7 @@ export function CompaniesConsole() {
             {busy ? "Creando..." : "Crear empresa aislada"}
           </button>
         </form>
-
-        <section className="rounded-lg border bg-card shadow-sm">
-          <header className="border-b px-4 py-3">
-            <h2 className="text-base font-semibold">Empresas existentes</h2>
-          </header>
-          {tenants.isLoading ? (
-            <div className="space-y-2 p-4" aria-busy="true">
-              {Array.from({ length: 4 }).map((_, idx) => (
-                <span key={idx} className="block h-12 animate-pulse rounded bg-muted" />
-              ))}
-            </div>
-          ) : tenants.isError ? (
-            <div role="alert" className="p-4 text-sm text-destructive">
-              No se pudieron cargar las empresas.
-            </div>
-          ) : rows.length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No hay empresas registradas.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-2 font-medium">Empresa</th>
-                    <th className="px-4 py-2 font-medium">Workspaces</th>
-                    <th className="px-4 py-2 font-medium">Usuarios</th>
-                    <th className="px-4 py-2 font-medium">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((tenant) => (
-                    <tr
-                      key={tenant.id}
-                      className={`cursor-pointer border-t hover:bg-muted/30 ${selectedTenantId === tenant.id ? "bg-primary/5" : ""}`}
-                      onClick={() => {
-                        setSelectedTenantId(tenant.id);
-                        setSelectedWorkspaceId(null);
-                      }}
-                    >
-                      <td className="px-4 py-3">
-                        <div className="font-medium">{tenant.name}</div>
-                        <div className="font-mono text-xs text-muted-foreground">{tenant.slug}</div>
-                      </td>
-                      <td className="px-4 py-3">{tenant.workspace_count}</td>
-                      <td className="px-4 py-3">{tenant.user_count}</td>
-                      <td className="px-4 py-3">{tenant.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
       </section>
-
-      {selectedTenant ? (
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
-          <section className="rounded-lg border bg-card shadow-sm">
-            <header className="border-b px-4 py-3">
-              <h2 className="text-base font-semibold">Empresa seleccionada</h2>
-              <p className="text-xs text-muted-foreground">
-                {selectedTenant.name} · creada {fmtDate(selectedTenant.created_at)}
-              </p>
-            </header>
-            <div className="grid grid-cols-3 gap-3 border-b p-4 text-sm">
-              <div>
-                <p className="text-xs uppercase text-muted-foreground">Workspaces</p>
-                <p className="text-xl font-semibold">{selectedTenant.workspace_count}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase text-muted-foreground">Usuarios</p>
-                <p className="text-xl font-semibold">{selectedTenant.user_count}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase text-muted-foreground">Cartuchos</p>
-                <p className="text-xl font-semibold">{tenantInstallations.length}</p>
-              </div>
-            </div>
-            {workspaces.isLoading ? (
-              <div className="p-4 text-sm text-muted-foreground">Cargando workspaces...</div>
-            ) : workspaces.isError ? (
-              <div role="alert" className="p-4 text-sm text-destructive">No se pudieron cargar los workspaces.</div>
-            ) : (
-              <div className="divide-y">
-                {workspaceRows.map((workspace) => (
-                  <div
-                    key={workspace.id}
-                    className={cn(
-                      "space-y-3 px-4 py-3 text-sm",
-                      selectedWorkspace?.id === workspace.id ? "bg-primary/5" : "",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedWorkspaceId(workspace.id)}
-                      className="grid w-full grid-cols-1 gap-2 text-left md:grid-cols-[1fr_auto_auto] md:items-center"
-                    >
-                      <div>
-                        <div className="font-medium">{workspace.name}</div>
-                        <div className="break-all font-mono text-xs text-muted-foreground">{workspace.id}</div>
-                      </div>
-                      <span className="text-muted-foreground">{workspace.user_count} usuarios</span>
-                      <span className="text-xs text-muted-foreground">{fmtDate(workspace.created_at)}</span>
-                    </button>
-                    {workspace.tenant_admins?.length ? (
-                      <div className="space-y-2 rounded-md border bg-background p-3">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-                          <UserRoundCog aria-hidden className="h-4 w-4" />
-                          Tenant admins
-                        </div>
-                        {workspace.tenant_admins.map((admin) => (
-                          <div key={admin.id} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto] md:items-center">
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">{admin.email}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {admin.is_active ? "activo" : "inactivo"} · {admin.must_change_password ? "debe cambiar password" : "password vigente"}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              disabled={issueTemporaryPassword.isPending}
-                              onClick={() => handleIssueTemporaryPassword(workspace, admin.id)}
-                              className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            >
-                              <KeyRound aria-hidden className="h-4 w-4" />
-                              Reset temporal
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-md border bg-background p-3 text-sm text-muted-foreground">
-                        Sin tenant admin registrado en este workspace.
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <aside className="space-y-4">
-            <section className="rounded-lg border bg-card p-4 shadow-sm">
-              <div className="flex items-start gap-2">
-                <PackageCheck aria-hidden className="mt-0.5 h-5 w-5 text-primary" />
-                <div>
-                  <h2 className="text-base font-semibold">Acciones de empresa</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Operaciones reales contra marketplace, usuarios, Vault y auditoría.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
-                <div className="rounded-md border bg-background p-3">
-                  <p className="text-xs uppercase text-muted-foreground">Activos</p>
-                  <p className="text-lg font-semibold">{activeInstallations}</p>
-                </div>
-                <div className="rounded-md border bg-background p-3">
-                  <p className="text-xs uppercase text-muted-foreground">Peticiones</p>
-                  <p className="text-lg font-semibold">{pendingInstallations}</p>
-                </div>
-                <div className="rounded-md border bg-background p-3">
-                  <p className="text-xs uppercase text-muted-foreground">Bloqueados</p>
-                  <p className="text-lg font-semibold">{blockedInstallations}</p>
-                </div>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <Link
-                  href="/operations/users"
-                  prefetch={false}
-                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  Usuarios
-                </Link>
-                <Link
-                  href="/admin/installations"
-                  prefetch={false}
-                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  Admin cartuchos
-                </Link>
-                <Link
-                  href="/operations/vault"
-                  prefetch={false}
-                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  Vault
-                </Link>
-                <Link
-                  href="/operations/audit"
-                  prefetch={false}
-                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  Auditoría
-                </Link>
-              </div>
-            </section>
-
-            <section className="rounded-lg border bg-card shadow-sm">
-              <header className="border-b px-4 py-3">
-                <h2 className="text-base font-semibold">Cartuchos y peticiones</h2>
-                <p className="text-xs text-muted-foreground">
-                  {selectedWorkspace ? selectedWorkspace.name : selectedTenant.name}
-                </p>
-              </header>
-              {installations.isLoading ? (
-                <div className="space-y-2 p-4" aria-busy="true">
-                  {Array.from({ length: 3 }).map((_, idx) => (
-                    <span key={idx} className="block h-20 animate-pulse rounded bg-muted" />
-                  ))}
-                </div>
-              ) : installations.isError ? (
-                <div role="alert" className="p-4 text-sm text-destructive">No se pudieron cargar instalaciones.</div>
-              ) : workspaceInstallations.length ? (
-                <div className="divide-y">
-                  {workspaceInstallations.map((installation) => {
-                    const status = installation.status || installation.access_status;
-                    const actions = adminActionsFor(status);
-                    return (
-                      <div key={installation.id} className="space-y-3 p-4 text-sm">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <p className="font-medium">{installation.product_name || installation.cartridge_id}</p>
-                            <p className="break-all font-mono text-xs text-muted-foreground">{installation.cartridge_id}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {installation.current_step || "sin paso"} · {fmtDate(installation.updated_at)}
-                            </p>
-                          </div>
-                          <StatusPill status={status} />
-                        </div>
-                        {installation.error_message ? (
-                          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-                            {installation.error_message}
-                          </div>
-                        ) : null}
-                        <div className="flex flex-wrap gap-2">
-                          {actions.length ? actions.map((action) => (
-                            <button
-                              key={action}
-                              type="button"
-                              disabled={installationAction.isPending}
-                              onClick={() => handleInstallationAction(installation, action)}
-                              className={cn(
-                                "inline-flex min-h-[40px] items-center justify-center rounded-md border px-3 text-xs font-medium disabled:pointer-events-none disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                action === "revoke"
-                                  ? "border-destructive/40 bg-background text-destructive hover:bg-destructive/10"
-                                  : "bg-background hover:bg-accent/5",
-                              )}
-                            >
-                              {actionLabel(action)}
-                            </button>
-                          )) : (
-                            <span className="text-xs text-muted-foreground">Sin acciones disponibles para este estado.</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="p-4 text-sm text-muted-foreground">
-                  No hay cartuchos ni peticiones para este workspace.
-                </div>
-              )}
-            </section>
-
-            {blockedInstallations > 0 ? (
-              <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
-                <p>Hay cartuchos bloqueados o fallidos para esta empresa. Revisa credenciales, Vault y logs antes de reactivar.</p>
-              </div>
-            ) : null}
-          </aside>
-        </section>
       ) : null}
     </main>
   );

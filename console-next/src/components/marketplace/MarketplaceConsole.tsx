@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight,
   Boxes,
   CheckCircle2,
   CircleSlash2,
@@ -159,11 +158,11 @@ function Counter({ label, value }: { label: string; value: number }) {
 function MarketplaceTabs({ mode, canAdmin }: { mode: MarketplaceMode; canAdmin: boolean }) {
   const items = [
     { href: "/marketplace", label: "Catálogo", mode: "catalog" },
-    { href: "/customer/cartridges", label: "Mis cartuchos", mode: "customer" },
-    ...(canAdmin ? [{ href: "/admin/installations", label: "Admin", mode: "admin" }] : []),
+    { href: "/customer/cartridges", label: "Instalados", mode: "customer" },
+    ...(canAdmin ? [{ href: "/admin/installations", label: "Licencias", mode: "admin" }] : []),
   ] as const;
   return (
-    <nav aria-label="Secciones marketplace" className="overflow-x-auto border-b">
+    <nav aria-label="Secciones de cartuchos" className="overflow-x-auto border-b">
       <ul className="mx-auto flex max-w-6xl items-center gap-1 px-6">
         {items.map((item) => (
           <li key={item.href}>
@@ -254,16 +253,7 @@ function ProductCard({
       ) : null}
 
       <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
-        {isActive ? (
-          <Link
-            href="/workspace"
-            prefetch={false}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Ver resultados
-            <ArrowRight aria-hidden className="h-4 w-4" />
-          </Link>
-        ) : canRequest ? (
+        {!isActive && canRequest ? (
           <button
             type="button"
             disabled={busy}
@@ -272,14 +262,19 @@ function ProductCard({
           >
             {busy ? "Enviando..." : "Solicitar activación"}
           </button>
-        ) : (
+        ) : !isActive ? (
           <a
             href={`mailto:support@omega.local?subject=Acceso%20Marketplace%20${encodeURIComponent(product.cartridge_id)}`}
             className="inline-flex min-h-[44px] items-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Contactar soporte
           </a>
-        )}
+        ) : null}
+        {isActive && !canAdmin ? (
+          <span className="inline-flex min-h-[44px] items-center rounded-md border bg-success/5 px-3 text-sm font-medium text-success">
+            Activo en workspace
+          </span>
+        ) : null}
         {canAdmin ? (
           <Link
             href={`/cartridges/viewer?id=${encodeURIComponent(product.cartridge_id)}`}
@@ -398,14 +393,14 @@ function CatalogAndCustomer({ mode, title }: { mode: Exclude<MarketplaceMode, "a
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Marketplace</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Cartuchos</p>
             <h1 className="text-3xl font-semibold tracking-tight">
-              {title || (mode === "customer" ? "Mis cartuchos" : "Cartuchos empresariales")}
+              {title || (mode === "customer" ? "Cartuchos instalados" : "Catálogo de cartuchos")}
             </h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
               {mode === "customer"
                 ? "Estado real de los cartuchos solicitados o activos para tu workspace."
-                : "Catálogo conectado a permisos reales: solicitud, aprobación admin, conexión y visibilidad por usuario."}
+                : "Catálogo conectado a permisos reales: solicitud, aprobación, conexión y visibilidad por workspace."}
             </p>
           </div>
           <label className="relative block w-full md:w-80">
@@ -680,8 +675,8 @@ function AdminMarketplace({ title }: { title?: string }) {
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Admin interno</p>
-            <h1 className="text-3xl font-semibold tracking-tight">{title || "Gestión de cartuchos por cliente"}</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Cartuchos</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{title || "Licencias y solicitudes"}</h1>
             <p className="max-w-3xl text-sm text-muted-foreground">
               Aprueba, pausa, revoca y controla el acceso por usuario. Los cambios impactan Workspace, Copilot y MCP desde backend.
             </p>

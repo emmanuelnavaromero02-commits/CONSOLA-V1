@@ -73,10 +73,10 @@ export default function CartridgesPage() {
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
       <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Cartuchos</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Monitor técnico de cartuchos</h1>
         <p className="text-sm text-muted-foreground">
-          Conecta OMEGA con tus sistemas origen. Cada cartucho expone una
-          configuración propia y se prueba en vivo antes de quedar activo.
+          Supervisa conectividad, pruebas en vivo y estado técnico de los
+          cartuchos ya integrados.
         </p>
       </header>
 

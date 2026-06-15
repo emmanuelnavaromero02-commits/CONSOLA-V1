@@ -3,28 +3,19 @@
 import Link from "next/link";
 import { useMemo, useState, type Ref } from "react";
 import {
-  Activity,
   AppWindow,
   Bot,
-  Boxes,
-  Building2,
   Coins,
   Database,
   GitBranch,
   Gauge,
   LayoutDashboard,
-  Layers3,
   Monitor,
   PanelLeftClose,
   PanelLeftOpen,
   Package,
   Search,
-  Settings,
-  ShieldCheck,
   Sparkles,
-  Table2,
-  Users,
-  Workflow,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -42,6 +33,7 @@ interface NavItem {
   active?:     string[];
   permission?: string;
   capability?: string;
+  capabilitiesAny?: string[];
   adminOnly?:  boolean;
   matchNested?: boolean;
 }
@@ -68,43 +60,58 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/dashboard", label: "Panel", icon: LayoutDashboard, section: "Núcleo", keywords: "dashboard inicio kpis" },
       { href: "/workspace", label: "Espacio de Trabajo", icon: AppWindow, section: "Núcleo", capability: "can_view_workspace", keywords: "workspace trabajo chat contexto" },
       { href: "/copilot", label: "Copiloto", icon: Bot, section: "Núcleo", capability: "can_view_copilot", matchNested: false, keywords: "chat agente ia streaming" },
-      { href: "/copilot/knowledge", label: "Conocimiento", icon: Layers3, section: "Núcleo", capability: "can_view_knowledge", keywords: "rag conocimiento fuentes vectorial" },
       { href: "/copilot/tokens", label: "Tokens", icon: Coins, section: "Núcleo", capability: "can_view_tokens", keywords: "costos llm consumo metricas" },
-      { href: "/marketplace", label: "Marketplace", icon: Package, section: "Núcleo", capability: "can_view_marketplace", active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses"], keywords: "market cartuchos licencias instalaciones" },
-      { href: "/apps-gallery", label: "Apps", icon: Boxes, section: "Núcleo", capability: "can_view_apps", keywords: "aplicaciones galeria" },
     ],
   },
   {
     title: "Datos",
     items: [
-      { href: "/data/catalog", label: "Catálogo", icon: Database, section: "Datos", active: ["/data", "/data/catalog"], capability: "can_view_catalog", keywords: "catalog datasets datos" },
-      { href: "/data/lineage", label: "Linaje", icon: GitBranch, section: "Datos", active: ["/data/lineage", "/viewer", "/lineage", "/linaje"], capability: "can_view_lineage", keywords: "lineage linaje grafo dependencias" },
-      { href: "/data/bronze", label: "Consulta Bronce", icon: Table2, section: "Datos", capability: "can_view_bronze", keywords: "raw bronze query consultas" },
-      { href: "/explorer", label: "Explorer", icon: Search, section: "Datos", capability: "can_view_explorer", keywords: "explorar esquema datasets" },
-      { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", capability: "can_view_studio", keywords: "studio semantic dag datasets" },
+      {
+        href: "/data",
+        label: "Catálogo técnico",
+        icon: Database,
+        section: "Datos",
+        active: ["/data", "/data/catalog", "/data/inventory", "/data/lineage", "/viewer", "/lineage", "/linaje", "/explorer", "/studio", "/data/bronze", "/copilot/knowledge", "/monitor"],
+        capabilitiesAny: ["can_view_catalog", "can_view_lineage", "can_view_knowledge", "can_view_bronze", "can_view_explorer", "can_view_studio", "can_view_monitor"],
+        keywords: "catalog datasets datos schema semantic lineage linaje watermarks explorer studio bronze conocimiento rag",
+      },
     ],
   },
   {
-    title: "Operaciones",
+    title: "Operación",
     items: [
-      { href: "/control-room", label: "Control Room", icon: Monitor, section: "Operaciones", capability: "can_view_control_room", keywords: "control sala room operaciones" },
-      { href: "/monitor", label: "Monitor", icon: Activity, section: "Operaciones", capability: "can_view_monitor", keywords: "jobs pipeline salud" },
-      { href: "/operations/workflows", label: "Flujos de trabajo", icon: Workflow, section: "Operaciones", capability: "can_view_workflows", keywords: "workflows flujos ejecutar cancelar" },
-      { href: "/operations/metrics", label: "Métricas", icon: Gauge, section: "Operaciones", capability: "can_view_metrics", keywords: "metricas salud carga" },
-      { href: "/agents", label: "Agentes", icon: Sparkles, section: "Operaciones", capability: "can_view_agents", keywords: "automatizacion agentes tools" },
-      { href: "/operations/vault", label: "Vault", icon: ShieldCheck, section: "Operaciones", capability: "can_view_vault", keywords: "secretos conexiones vault" },
-      { href: "/cartridges", label: "Cartuchos", icon: Boxes, section: "Operaciones", capability: "can_view_cartridges", keywords: "plugins integraciones cartuchos" },
+      { href: "/control-room", label: "Control Room", icon: Monitor, section: "Operación", capability: "can_view_control_room", keywords: "control sala room operaciones" },
+      { href: "/agents", label: "Agentes", icon: Sparkles, section: "Operación", capability: "can_view_agents", keywords: "automatizacion agentes tools monitores" },
+      { href: "/decisions", label: "Decisiones", icon: GitBranch, section: "Operación", capability: "can_view_decisions", keywords: "decisiones approvals" },
     ],
   },
   {
-    title: "Configuración/Admin",
+    title: "Integraciones",
     items: [
-      { href: "/operations/audit", label: "Auditoría", icon: ShieldCheck, section: "Configuración/Admin", capability: "can_view_audit", keywords: "logs auditoria seguridad" },
-      { href: "/operations/companies", label: "Empresas", icon: Building2, section: "Configuración/Admin", capability: "can_manage_companies", keywords: "empresas tenants companias clientes workspaces" },
-      { href: "/operations/users", label: "Usuarios", icon: Users, section: "Configuración/Admin", permission: "iam.users.read", capability: "can_manage_workspace_users", keywords: "iam usuarios roles" },
-      { href: "/settings", label: "Ajustes", icon: Settings, section: "Configuración/Admin", capability: "can_view_settings", keywords: "configuracion settings ajustes" },
-      { href: "/security", label: "Seguridad", icon: ShieldCheck, section: "Configuración/Admin", capability: "can_view_security", keywords: "seguridad sesiones intentos" },
-      { href: "/decisions", label: "Decisiones", icon: GitBranch, section: "Configuración/Admin", capability: "can_view_decisions", keywords: "decisiones approvals" },
+      {
+        href: "/marketplace",
+        label: "Cartuchos",
+        icon: Package,
+        section: "Integraciones",
+        capabilitiesAny: ["can_view_marketplace", "can_view_cartridges"],
+        active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses", "/cartridges", "/cartridges/viewer"],
+        keywords: "marketplace cartuchos licencias instalaciones monitor tecnico conectores integraciones",
+      },
+      { href: "/apps-gallery", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones galeria workspace analiticas" },
+    ],
+  },
+  {
+    title: "Administración",
+    items: [
+      {
+        href: "/operations",
+        label: "Centro de administración",
+        icon: Gauge,
+        section: "Administración",
+        capabilitiesAny: ["can_manage_companies", "can_manage_workspace_users", "can_view_vault", "can_view_audit", "can_view_workflows", "can_view_metrics", "can_view_security", "can_view_settings"],
+        active: ["/operations", "/operations/companies", "/operations/users", "/operations/vault", "/operations/audit", "/operations/workflows", "/operations/metrics", "/security", "/settings"],
+        keywords: "operaciones empresas tenants usuarios vault auditoria workflows metricas administracion seguridad sesiones ajustes settings",
+      },
     ],
   },
 ];
@@ -130,6 +137,7 @@ function canShowNavItem(item: NavItem, access: MeAccessResponse | undefined): bo
   if (item.adminOnly && !isPlatformAdmin) return false;
   if (item.permission && !permissions.has(item.permission)) return false;
   if (item.capability && capabilities[item.capability] !== true) return false;
+  if (item.capabilitiesAny?.length && !item.capabilitiesAny.some((capability) => capabilities[capability] === true)) return false;
   return true;
 }
 
@@ -208,7 +216,7 @@ export function AppSidebar({
       </header>
 
       <div className={cn("border-b py-3", showLabels ? "px-3" : "px-2")}>
-        {showLabels && (access?.workspaces?.length ?? 0) > 1 ? (
+        {showLabels && (access?.workspaces?.length ?? 0) > 0 ? (
           <WorkspaceSwitcher workspaces={access?.workspaces} className="mb-3" />
         ) : null}
         {showLabels ? (

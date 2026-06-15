@@ -2,57 +2,51 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Activity, Database, Droplets, Layers3, RefreshCcw } from "lucide-react";
+import { Activity, CircleCheck, CircleX, Clock3, RefreshCcw } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { JobTable } from "@/components/monitor/JobTable";
-import { PipelineTable } from "@/components/monitor/PipelineTable";
-import { StatusPill } from "@/components/monitor/StatusPill";
-import { useFreshness, useJobs, usePipeline } from "@/lib/monitor/hooks";
-
-const CARTRIDGES = ["sap_successfactors", "replicon", "hubspot", "sap_hcm", "sap_s4hana"] as const;
+import { useJobs } from "@/lib/monitor/hooks";
 
 export default function MonitorPage() {
-  const [cartridge, setCartridge] = useState<string>("sap_successfactors");
-  const jobs = useJobs(50);
-  const pipeline = usePipeline(cartridge);
-  const freshness = useFreshness(cartridge);
+  const [limit, setLimit] = useState(50);
+  const jobs = useJobs(100);
 
+  const visibleJobs = useMemo(() => (jobs.data ?? []).slice(0, limit), [jobs.data, limit]);
   const running = useMemo(
     () => (jobs.data ?? []).filter((job) => ["queued", "running"].includes(String(job.status).toLowerCase())).length,
     [jobs.data],
   );
-  const stale = useMemo(
-    () => (pipeline.data ?? []).filter((row) => row.bronze.status !== "fresh").length,
-    [pipeline.data],
+  const failed = useMemo(
+    () => (jobs.data ?? []).filter((job) => ["failed", "error"].includes(String(job.status).toLowerCase())).length,
+    [jobs.data],
   );
-  const watermarks = freshness.data ?? [];
+  const completed = useMemo(
+    () => (jobs.data ?? []).filter((job) => ["done", "success"].includes(String(job.status).toLowerCase())).length,
+    [jobs.data],
+  );
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight">Monitor</h1>
-          <p className="text-sm text-muted-foreground">
-            Runlogs, pipelines, marcas de agua y capa semántica desde FastAPI en same-origin.
+          <h1 className="text-3xl font-semibold tracking-tight">Ejecuciones y logs</h1>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Historial operativo de extracción. Las vistas técnicas viven en Catálogo técnico.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
-            value={cartridge}
-            onChange={(event) => setCartridge(event.target.value)}
+            value={limit}
+            onChange={(event) => setLimit(Number(event.target.value) || 50)}
             className="min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Cartucho"
+            aria-label="Límite de jobs"
           >
-            {CARTRIDGES.map((id) => <option key={id} value={id}>{id}</option>)}
+            {[25, 50, 100].map((value) => <option key={value} value={value}>{value} jobs</option>)}
           </select>
           <button
             type="button"
-            onClick={() => {
-              jobs.refetch();
-              pipeline.refetch();
-              freshness.refetch();
-            }}
+            onClick={() => jobs.refetch()}
             className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <RefreshCcw aria-hidden className="h-4 w-4" />
@@ -61,82 +55,17 @@ export default function MonitorPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-4" aria-label="Resumen operativo">
-        <MetricCard icon={Activity} label="Jobs activos" value={running} tone={running > 0 ? "warning" : "success"} />
-        <MetricCard icon={Database} label="Entidades pipeline" value={pipeline.data?.length ?? 0} />
-        <MetricCard icon={Droplets} label="Watermarks" value={watermarks.length} />
-        <MetricCard icon={Layers3} label="Bronze no fresh" value={stale} tone={stale > 0 ? "warning" : "success"} />
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-4" aria-label="Resumen de ejecuciones">
+        <MetricCard icon={Activity} label="Activos" value={running} tone={running > 0 ? "warning" : "success"} />
+        <MetricCard icon={CircleX} label="Fallidos" value={failed} tone={failed > 0 ? "warning" : "success"} />
+        <MetricCard icon={CircleCheck} label="Completados" value={completed} />
+        <MetricCard icon={Clock3} label="Mostrando" value={visibleJobs.length} />
       </section>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]" aria-label="Vistas rápidas">
-        <div className="space-y-3 rounded-lg border bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold">Pipeline</h2>
-              <p className="text-xs text-muted-foreground">Bronze, silver, gold y última corrida por entidad.</p>
-            </div>
-            <Link
-              href={`/viewer?type=pipeline&cartridge=${encodeURIComponent(cartridge)}`}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Abrir viewer
-            </Link>
-          </div>
-          {pipeline.isError ? (
-            <ErrorPanel message="No se pudo cargar el pipeline." onRetry={() => pipeline.refetch()} />
-          ) : pipeline.isLoading ? (
-            <SkeletonRows />
-          ) : (
-            <PipelineTable
-              rows={(pipeline.data ?? []).slice(0, 8)}
-              cartridge={cartridge}
-              onExtractionStarted={() => {
-                jobs.refetch();
-                pipeline.refetch();
-                freshness.refetch();
-              }}
-            />
-          )}
-        </div>
-
-        <div className="space-y-3 rounded-lg border bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold">Watermarks</h2>
-              <p className="text-xs text-muted-foreground">Última marca por entidad.</p>
-            </div>
-            <Link
-              href={`/viewer?type=watermarks&cartridge=${encodeURIComponent(cartridge)}`}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Ver marcas
-            </Link>
-          </div>
-          {freshness.isError ? (
-            <ErrorPanel message="No se pudieron cargar watermarks." onRetry={() => freshness.refetch()} />
-          ) : (
-            <div className="space-y-2">
-              {watermarks.slice(0, 8).map((row) => (
-                <div key={row.entity} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
-                  <div>
-                    <div className="text-sm font-medium">{row.entity}</div>
-                    <div className="text-xs text-muted-foreground">{row.watermark_value || "sin valor"}</div>
-                  </div>
-                  <StatusPill status={row.last_run_status || "unknown"} />
-                </div>
-              ))}
-              {!watermarks.length && !freshness.isLoading ? (
-                <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Sin watermarks.</p>
-              ) : null}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="space-y-3" aria-label="Jobs recientes">
-        <div className="flex items-center justify-between gap-3">
+      <section className="space-y-3" aria-label="Ejecuciones recientes">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold">Jobs recientes</h2>
+            <h2 className="text-base font-semibold">Ejecuciones recientes</h2>
             <p className="text-xs text-muted-foreground">Historial de ejecución y deeplinks a logs.</p>
           </div>
           <Link
@@ -151,7 +80,7 @@ export default function MonitorPage() {
         ) : jobs.isLoading ? (
           <SkeletonRows />
         ) : (
-          <JobTable jobs={jobs.data ?? []} />
+          <JobTable jobs={visibleJobs} />
         )}
       </section>
     </main>
