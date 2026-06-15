@@ -17,6 +17,7 @@ from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.version import app_version
 from app.services import audit_service, auth
+from app.services.db_scope import run_with_db_scope
 from app.services.control_room.readiness_manifest import dataset_readiness_registry
 from app.services.security_context import build_security_context, rls_user_context
 

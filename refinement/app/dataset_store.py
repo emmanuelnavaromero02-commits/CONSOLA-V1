@@ -22,6 +22,15 @@ def _conn():
     return psycopg2.connect(_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
 
 
+def _apply_scope(cur, tenant_id: str | None = None, workspace_id: str | None = None):
+    workspace = str(workspace_id or "").strip()
+    if not workspace:
+        return
+    tenant = str(tenant_id or "").strip()
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+    cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace,))
+
+
 def _default_workspace_id(cur):
     cur.execute("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
     row = cur.fetchone()
@@ -33,8 +42,11 @@ class DatasetStore:
         # datasets_dir kept for API compatibility but ignored
         pass
 
-    def list_datasets(self) -> list[dict]:
+    def list_datasets(
+        self, tenant_id: str | None = None, workspace_id: str | None = None
+    ) -> list[dict]:
         with _conn() as conn, conn.cursor() as cur:
+            _apply_scope(cur, tenant_id, workspace_id)
             cur.execute("""
                 SELECT name, description, layer, cartridge,
                        sources, schedule, last_refresh, row_count, workspace_id, created_by_id
@@ -58,8 +70,11 @@ class DatasetStore:
             for r in rows
         ]
 
-    def get_dataset(self, name: str) -> dict | None:
+    def get_dataset(
+        self, name: str, tenant_id: str | None = None, workspace_id: str | None = None
+    ) -> dict | None:
         with _conn() as conn, conn.cursor() as cur:
+            _apply_scope(cur, tenant_id, workspace_id)
             cur.execute("""
                 SELECT name, layer, cartridge, sources, sql_def,
                        column_mapping, schedule, description, last_refresh, row_count,
@@ -88,6 +103,7 @@ class DatasetStore:
         sources        = ds.get("sources") or []
         column_mapping = ds.get("column_mapping") or {}
         with _conn() as conn, conn.cursor() as cur:
+            _apply_scope(cur, ds.get("tenant_id"), ds.get("workspace_id"))
             workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)
             cur.execute("""
                 INSERT INTO datasets
@@ -119,8 +135,11 @@ class DatasetStore:
             ))
             conn.commit()
 
-    def delete_dataset(self, name: str) -> dict:
+    def delete_dataset(
+        self, name: str, tenant_id: str | None = None, workspace_id: str | None = None
+    ) -> dict:
         with _conn() as conn, conn.cursor() as cur:
+            _apply_scope(cur, tenant_id, workspace_id)
             cur.execute("SELECT layer, cartridge FROM datasets WHERE name = %s", (name,))
             row = cur.fetchone()
             if not row:
@@ -131,8 +150,15 @@ class DatasetStore:
             conn.commit()
         return {"deleted": True, "name": name, "layer": layer, "cartridge": cartridge}
 
-    def update_refresh(self, name: str, row_count: int):
+    def update_refresh(
+        self,
+        name: str,
+        row_count: int,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ):
         with _conn() as conn, conn.cursor() as cur:
+            _apply_scope(cur, tenant_id, workspace_id)
             cur.execute("""
                 UPDATE datasets
                 SET last_refresh = NOW(), row_count = %s, updated_at = NOW()

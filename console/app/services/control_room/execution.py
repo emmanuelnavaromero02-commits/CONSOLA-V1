@@ -686,50 +686,55 @@ async def create_decision_for_item(
         "source": "control_room",
     }]
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-           VALUES ($1, $2, CURRENT_DATE + 7, $3::jsonb, $4, NULL, 'shared', $5)
-           RETURNING *""",
-        title,
-        description,
-        json.dumps(kpis),
-        user["id"],
-        workspace_id,
-    )
-    await pool.fetchrow(
-        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *""",
-        row["id"],
-        "Decision creada desde Sala de Control",
-        item["recommendation"],
-        user.get("email") or "user",
-    )
-    await _ensure_item_row(pool, user=user, item=item, status="decision_created")
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = 'decision_created',
-                   decision_id = $1,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
-            row["id"],
-            workspace_id,
-            item["id"],
+
+    async def _write(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+        row = await conn.fetchrow(
+            """INSERT INTO decisions
+                  (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
+               VALUES ($1, $2, CURRENT_DATE + 7, $3::jsonb, $4, NULL, 'shared', $5)
+               RETURNING *""",
+            title,
+            description,
+            json.dumps(kpis),
+            user["id"],
+            scoped_workspace_id,
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="decision_created",
-        metadata={"decision_id": row["id"]},
-    )
+        await conn.fetchrow(
+            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *""",
+            row["id"],
+            "Decision creada desde Sala de Control",
+            item["recommendation"],
+            user.get("email") or "user",
+        )
+        await _ensure_item_row(conn, user=user, item=item, status="decision_created")
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = 'decision_created',
+                       decision_id = $1,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $2
+                   AND item_id = $3
+                """,
+                row["id"],
+                scoped_workspace_id,
+                item["id"],
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="decision_created",
+            metadata={"decision_id": row["id"]},
+        )
+        return row
+
+    row = await _run_with_db_scope(pool, user, _write)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -765,37 +770,40 @@ async def select_item_option(
         raise HTTPException(409, "terminal control room item cannot change option")
 
     pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    await _ensure_item_row(pool, user=user, item=item, status="in_review")
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = CASE
-                       WHEN status = ANY($4::text[]) THEN status
-                       ELSE 'in_review'
-                   END,
-                   metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                   selected_option_id = $5,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
-            json.dumps({"selected_option_id": option_id}),
-            workspace_id,
-            item["id"],
-            sorted(TERMINAL_ITEM_STATUSES),
-            option_id,
+
+    async def _write_selection(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+        await _ensure_item_row(conn, user=user, item=item, status="in_review")
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = CASE
+                           WHEN status = ANY($4::text[]) THEN status
+                           ELSE 'in_review'
+                       END,
+                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                       selected_option_id = $5,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $2
+                   AND item_id = $3
+                """,
+                json.dumps({"selected_option_id": option_id}),
+                scoped_workspace_id,
+                item["id"],
+                sorted(TERMINAL_ITEM_STATUSES),
+                option_id,
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="option_selected",
+            metadata={"option_id": option_id},
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="option_selected",
-        metadata={"option_id": option_id},
-    )
+
+    await _run_with_db_scope(pool, user, _write_selection)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -840,20 +848,29 @@ async def record_item_step(
         raise HTTPException(400, "invalid OMEGA step")
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "open")
     event_type = OMEGA_STEP_EVENT_TYPES[step]
     metadata = {
         "step_id": step,
         "note": str(note or "").strip()[:500],
         "control_id": str(control_id or "").strip()[:120],
     }
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type=event_type,
-        metadata=metadata,
-    )
+
+    async def _write_step(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status=item.get("status") or "open",
+        )
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type=event_type,
+            metadata=metadata,
+        )
+
+    await _run_with_db_scope(pool, user, _write_step)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -932,43 +949,46 @@ async def update_item_control(
     item_status = str(item.get("status") or "open")
     target_status = item_status if item_status in TERMINAL_ITEM_STATUSES else "in_review"
     pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    await _ensure_item_row(pool, user=user, item=item, status=target_status)
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = CASE
-                       WHEN status = ANY($4::text[]) THEN status
-                       ELSE $5::text
-                   END,
-                   metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
-            json.dumps({"control_state": next_state}),
-            workspace_id,
-            item["id"],
-            sorted(TERMINAL_ITEM_STATUSES),
-            target_status,
-        )
-    except Exception:
-        pass
     event_type = "control_updated" if next_status != "closed" else "control_checked"
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type=event_type,
-        metadata={
-            "control_id": control_key,
-            "control_status": next_status,
-            "owner": owner,
-            "due_at": due_at,
-            "note": note,
-        },
-    )
+
+    async def _write_control(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+        await _ensure_item_row(conn, user=user, item=item, status=target_status)
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = CASE
+                           WHEN status = ANY($4::text[]) THEN status
+                           ELSE $5::text
+                       END,
+                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $2
+                   AND item_id = $3
+                """,
+                json.dumps({"control_state": next_state}),
+                scoped_workspace_id,
+                item["id"],
+                sorted(TERMINAL_ITEM_STATUSES),
+                target_status,
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type=event_type,
+            metadata={
+                "control_id": control_key,
+                "control_status": next_status,
+                "owner": owner,
+                "due_at": due_at,
+                "note": note,
+            },
+        )
+
+    await _run_with_db_scope(pool, user, _write_control)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1016,30 +1036,52 @@ async def create_item_lesson(
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     decision_id = int(item["decision_id"]) if item.get("decision_id") is not None else None
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review")
-    await _persist_lessons(pool, user=user, item=item, decision_id=decision_id, lessons=[rule])
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1
-               AND item_id = $2
-            """,
-            _workspace_id(user),
-            item["id"],
-            json.dumps({"learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule)}),
+
+    async def _write_lesson(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status=item.get("status") or "in_review",
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="lesson_recorded",
-        metadata={"decision_id": decision_id, "lessons": [rule], "manual": True},
-    )
+        await _persist_lessons(
+            conn,
+            user=user,
+            item=item,
+            decision_id=decision_id,
+            lessons=[rule],
+        )
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                """,
+                scoped_workspace_id,
+                item["id"],
+                json.dumps(
+                    {
+                        "learned_rules": _merge_rule(
+                            item.get("omega", {}).get("lessons", {}).get("rules"),
+                            rule,
+                        )
+                    }
+                ),
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="lesson_recorded",
+            metadata={"decision_id": decision_id, "lessons": [rule], "manual": True},
+        )
+
+    await _run_with_db_scope(pool, user, _write_lesson)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1128,45 +1170,49 @@ async def apply_item_lesson(
     target_status = item.get("status") if item.get("status") in TERMINAL_ITEM_STATUSES else "in_review"
 
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=target_status)
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-                   status = CASE
-                       WHEN status = ANY($4::text[])
-                       THEN status
-                       ELSE $5
-                   END,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1
-               AND item_id = $2
-            """,
-            _workspace_id(user),
-            item["id"],
-            json.dumps({
-                "learned_rules": learned_rules,
-                "lesson_applications": applications,
-            }),
-            sorted(TERMINAL_ITEM_STATUSES),
-            target_status,
-        )
-    except Exception:
-        pass
 
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="lesson_applied",
-        metadata={
-            "lesson_id": int(lesson_id),
-            "rule": rule,
-            "source_decision_id": lesson.get("source_decision_id"),
-            "note": note,
-        },
-    )
+    async def _write_application(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+        await _ensure_item_row(conn, user=user, item=item, status=target_status)
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                       status = CASE
+                           WHEN status = ANY($4::text[])
+                           THEN status
+                           ELSE $5
+                       END,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                """,
+                scoped_workspace_id,
+                item["id"],
+                json.dumps({
+                    "learned_rules": learned_rules,
+                    "lesson_applications": applications,
+                }),
+                sorted(TERMINAL_ITEM_STATUSES),
+                target_status,
+            )
+        except Exception:
+            pass
+
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="lesson_applied",
+            metadata={
+                "lesson_id": int(lesson_id),
+                "rule": rule,
+                "source_decision_id": lesson.get("source_decision_id"),
+                "note": note,
+            },
+        )
+
+    await _run_with_db_scope(pool, user, _write_application)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1540,23 +1586,7 @@ def _uses_asyncpg_pool(pool: Any) -> bool:
 
 @_bind_to_core
 async def _run_with_db_scope(pool: Any, user: dict, work: Callable[[Any, str | None, str], Awaitable[Any]]) -> Any:
-    tenant_id, workspace_id = _workspace_scope(user)
-    if _uses_asyncpg_pool(pool):
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-                    tenant_id or "",
-                    workspace_id,
-                )
-                return await work(conn, tenant_id, workspace_id)
-
-    await pool.execute(
-        "SELECT set_config('app.tenant_id', $1, false), set_config('app.workspace_id', $2, false)",
-        tenant_id or "",
-        workspace_id,
-    )
-    return await work(pool, tenant_id, workspace_id)
+    return await run_with_db_scope(pool, user, work)
 
 
 @_bind_to_core
@@ -1777,23 +1807,26 @@ async def list_item_action_runs(
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT id, tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
-               action_type, adapter_name, mode, status, risk_level,
-               requires_approval, approval_status, idempotency_key,
-               actor_id, actor_email, input, dry_run_result, execution_result,
-               side_effect, error_code, error_message, metadata,
-               created_at, updated_at, completed_at
-          FROM action_runs
-         WHERE workspace_id = $1
-           AND item_id = $2
-         ORDER BY created_at DESC
-         LIMIT 100
-        """,
-        workspace_id,
-        item["id"],
-    )
+    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+        return await conn.fetch(
+            """
+            SELECT id, tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
+                   action_type, adapter_name, mode, status, risk_level,
+                   requires_approval, approval_status, idempotency_key,
+                   actor_id, actor_email, input, dry_run_result, execution_result,
+                   side_effect, error_code, error_message, metadata,
+                   created_at, updated_at, completed_at
+              FROM action_runs
+             WHERE workspace_id = $1
+               AND item_id = $2
+             ORDER BY created_at DESC
+             LIMIT 100
+            """,
+            workspace_id,
+            item["id"],
+        )
+
+    rows = await _run_with_db_scope(pool, user, _load)
     return {
         "item_id": item["id"],
         "action_runs": [_action_run_public(row) for row in rows],
@@ -2080,19 +2113,23 @@ async def run_auto_item(
     steps.append({"step": "control", "event": control.get("event_type")})
 
     pool = await auth.pool()
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="auto_run_completed",
-        metadata={
-            "steps": steps,
-            "decision_id": item.get("decision_id"),
-            "template_id": template_id,
-            "execution_status": item.get("execution_status"),
-            "external_write": False,
-        },
-    )
+
+    async def _record_auto_run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="auto_run_completed",
+            metadata={
+                "steps": steps,
+                "decision_id": item.get("decision_id"),
+                "template_id": template_id,
+                "execution_status": item.get("execution_status"),
+                "external_write": False,
+            },
+        )
+
+    await _run_with_db_scope(pool, user, _record_auto_run)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -3379,112 +3416,143 @@ async def execute_item(
     template = _resolve_template(item, template_id)
     payload = _execution_payload(item, "execute_live", template)
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
-    capability = _writeback_capability(template)
-    if capability.get("external") and not capability.get("adapter_available"):
-        await _record_execute_block(
-            pool,
+
+    async def _with_scoped_db(work: Callable[[Any], Awaitable[Any]]) -> Any:
+        async def _run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
+            return await work(conn)
+
+        return await _run_with_db_scope(pool, user, _run)
+
+    await _with_scoped_db(
+        lambda db: _ensure_item_row(
+            db,
             user=user,
             item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message=str(capability.get("reason") or "No hay adapter ERP aprobado para este template."),
-            error="adapter_missing",
+            status=item.get("status") or "in_review",
+            critical=True,
+        )
+    )
+    capability = _writeback_capability(template)
+    if capability.get("external") and not capability.get("adapter_available"):
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message=str(capability.get("reason") or "No hay adapter ERP aprobado para este template."),
+                error="adapter_missing",
+            )
         )
         raise HTTPException(501, "external ERP write-back adapter is not available for this template")
 
     if capability.get("external") and not _external_writeback_enabled():
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada.",
-            error="CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada.",
+                error="CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false",
+            )
         )
         raise HTTPException(409, "external ERP write-back is not available in Control Room V1")
 
     if not capability.get("supported") and not capability.get("external"):
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="No hay ejecucion supervisada aprobada para este template.",
-            error="unsupported_writeback_template",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="No hay ejecucion supervisada aprobada para este template.",
+                error="unsupported_writeback_template",
+            )
         )
         raise HTTPException(501, "execution template is not supported in Control Room V1")
 
     if not _confirmed_for_execute(confirm_execute):
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="Confirmacion explicita requerida antes de ejecutar la accion supervisada.",
-            error="explicit_confirmation_required",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="Confirmacion explicita requerida antes de ejecutar la accion supervisada.",
+                error="explicit_confirmation_required",
+            )
         )
         raise HTTPException(409, "explicit execution confirmation is required")
 
     if not item.get("decision_id"):
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="Se requiere decision aprobada antes de la ejecucion supervisada.",
-            error="decision_required",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="Se requiere decision aprobada antes de la ejecucion supervisada.",
+                error="decision_required",
+            )
         )
         raise HTTPException(409, "decision is required before execution")
 
     if str(item.get("status") or "") in TERMINAL_ITEM_STATUSES:
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="Item cerrado no puede ejecutar acciones supervisadas.",
-            error="terminal_item",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="Item cerrado no puede ejecutar acciones supervisadas.",
+                error="terminal_item",
+            )
         )
         raise HTTPException(409, "terminal control room item cannot execute supervised action")
 
     try:
-        existing = await _existing_executed_writeback(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
-            critical=True,
+        existing = await _with_scoped_db(
+            lambda db: _existing_executed_writeback(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                critical=True,
+            )
         )
     except Exception as exc:
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="No se pudo validar idempotencia antes de la ejecucion supervisada.",
-            error="idempotency_lookup_failed",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="No se pudo validar idempotencia antes de la ejecucion supervisada.",
+                error="idempotency_lookup_failed",
+            )
         )
         raise HTTPException(503, "execution idempotency lookup failed") from exc
     if existing:
@@ -3500,111 +3568,129 @@ async def execute_item(
         }
 
     if str(item.get("execution_status") or "not_started") != "dry_run_validated":
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="Se requiere dry-run validado antes de la ejecucion supervisada.",
-            error="dry_run_required",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="Se requiere dry-run validado antes de la ejecucion supervisada.",
+                error="dry_run_required",
+            )
         )
         raise HTTPException(409, "dry-run validation is required before execution")
 
     try:
-        successful_dry_run = await _latest_successful_dry_run(
-            pool,
-            user=user,
-            item=item,
-            template=template,
+        successful_dry_run = await _with_scoped_db(
+            lambda db: _latest_successful_dry_run(
+                db,
+                user=user,
+                item=item,
+                template=template,
+            )
         )
     except Exception as exc:
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="No se pudo validar el action_run de dry-run antes de ejecutar.",
-            error="dry_run_lookup_failed",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="No se pudo validar el action_run de dry-run antes de ejecutar.",
+                error="dry_run_lookup_failed",
+            )
         )
         raise HTTPException(503, "dry-run action run lookup failed") from exc
     if not successful_dry_run:
-        await _record_execute_block(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            ip=ip,
-            user_agent=user_agent,
-            message="Se requiere action_run de dry-run exitoso antes de la ejecucion supervisada.",
-            error="dry_run_action_run_required",
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message="Se requiere action_run de dry-run exitoso antes de la ejecucion supervisada.",
+                error="dry_run_action_run_required",
+            )
         )
         raise HTTPException(409, "successful dry-run action run is required before execution")
 
     if str(template.get("template_id") or "") == "create_followup_task":
-        return await _execute_internal_followup_task(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
-            ip=ip,
-            user_agent=user_agent,
+        return await _with_scoped_db(
+            lambda db: _execute_internal_followup_task(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                ip=ip,
+                user_agent=user_agent,
+            )
         )
 
     if str(template.get("template_id") or "") == "create_investigation_note":
-        return await _execute_internal_investigation_note(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
-            ip=ip,
-            user_agent=user_agent,
+        return await _with_scoped_db(
+            lambda db: _execute_internal_investigation_note(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                ip=ip,
+                user_agent=user_agent,
+            )
         )
 
     if str(template.get("template_id") or "") == "mark_decision_for_monitoring":
-        return await _execute_internal_decision_monitoring(
-            pool,
-            user=user,
-            item=item,
-            template=template,
-            payload=payload,
-            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
-            ip=ip,
-            user_agent=user_agent,
+        return await _with_scoped_db(
+            lambda db: _execute_internal_decision_monitoring(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                ip=ip,
+                user_agent=user_agent,
+            )
         )
 
     if capability.get("external") and capability.get("supported"):
-        return await _execute_external_writeback(
-            pool,
+        return await _with_scoped_db(
+            lambda db: _execute_external_writeback(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                ip=ip,
+                user_agent=user_agent,
+            )
+        )
+
+    await _with_scoped_db(
+        lambda db: _record_execute_block(
+            db,
             user=user,
             item=item,
             template=template,
             payload=payload,
-            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
             ip=ip,
             user_agent=user_agent,
+            message="No hay adapter ERP aprobado para este template.",
+            error="unsupported_writeback_template",
         )
-
-    await _record_execute_block(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        payload=payload,
-        ip=ip,
-        user_agent=user_agent,
-        message="No hay adapter ERP aprobado para este template.",
-        error="unsupported_writeback_template",
     )
     raise HTTPException(501, "execution template is not supported in Control Room V1")
 
@@ -3649,59 +3735,69 @@ async def approve_item(
         decision_id = int(created["decision"]["id"])
 
     pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    visible = await pool.fetchrow(
-        "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
-        decision_id,
-        workspace_id,
-    )
-    if not visible:
-        raise HTTPException(404, "decision not found")
     lessons = _lessons_for_item(item)
-    action = await pool.fetchrow(
-        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *""",
-        decision_id,
-        f"Aprobacion de recomendacion OMEGA: {item['title']}",
-        item["recommendation"],
-        user.get("email") or "user",
-    )
-    await _ensure_item_row(pool, user=user, item=item, status="approved")
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = 'approved',
-                   decision_id = $1,
-                   metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                   resolved_at = COALESCE(resolved_at, NOW()),
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
+
+    async def _write_approval(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+        visible = await conn.fetchrow(
+            "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
-            workspace_id,
-            item["id"],
-            json.dumps({"lessons": lessons}),
+            scoped_workspace_id,
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="approved",
-        metadata={"decision_id": decision_id, "action_id": dict(action).get("id")},
-    )
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="lesson_recorded",
-        metadata={"decision_id": decision_id, "lessons": lessons},
-    )
-    await _persist_lessons(pool, user=user, item=item, decision_id=decision_id, lessons=lessons)
+        if not visible:
+            raise HTTPException(404, "decision not found")
+        action = await conn.fetchrow(
+            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *""",
+            decision_id,
+            f"Aprobacion de recomendacion OMEGA: {item['title']}",
+            item["recommendation"],
+            user.get("email") or "user",
+        )
+        await _ensure_item_row(conn, user=user, item=item, status="approved")
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = 'approved',
+                       decision_id = $1,
+                       metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+                       resolved_at = COALESCE(resolved_at, NOW()),
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $2
+                   AND item_id = $3
+                """,
+                decision_id,
+                scoped_workspace_id,
+                item["id"],
+                json.dumps({"lessons": lessons}),
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="approved",
+            metadata={"decision_id": decision_id, "action_id": dict(action).get("id")},
+        )
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="lesson_recorded",
+            metadata={"decision_id": decision_id, "lessons": lessons},
+        )
+        await _persist_lessons(
+            conn,
+            user=user,
+            item=item,
+            decision_id=decision_id,
+            lessons=lessons,
+        )
+        return action
+
+    action = await _run_with_db_scope(pool, user, _write_approval)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -3759,30 +3855,33 @@ async def dismiss_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    await _ensure_item_row(pool, user=user, item=item, status="dismissed")
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = 'dismissed',
-                   dismissed_at = COALESCE(dismissed_at, NOW()),
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1
-               AND item_id = $2
-            """,
-            workspace_id,
-            item["id"],
+
+    async def _write_dismissed(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
+        await _ensure_item_row(conn, user=user, item=item, status="dismissed")
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = 'dismissed',
+                       dismissed_at = COALESCE(dismissed_at, NOW()),
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                """,
+                workspace_id,
+                item["id"],
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="dismissed",
+            metadata={"reason": reason or ""},
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="dismissed",
-        metadata={"reason": reason or ""},
-    )
+
+    await _run_with_db_scope(pool, user, _write_dismissed)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -3810,32 +3909,35 @@ async def reopen_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    await _ensure_item_row(pool, user=user, item=item, status="open")
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = 'open',
-                   decision_id = NULL,
-                   resolved_at = NULL,
-                   dismissed_at = NULL,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1
-               AND item_id = $2
-            """,
-            workspace_id,
-            item["id"],
+
+    async def _write_reopened(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
+        await _ensure_item_row(conn, user=user, item=item, status="open")
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = 'open',
+                       decision_id = NULL,
+                       resolved_at = NULL,
+                       dismissed_at = NULL,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                """,
+                workspace_id,
+                item["id"],
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="reopened",
+            metadata={"reason": reason or ""},
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="reopened",
-        metadata={"reason": reason or ""},
-    )
+
+    await _run_with_db_scope(pool, user, _write_reopened)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -3919,41 +4021,44 @@ async def _operate_alert(
         current_status if current_status not in {"open", ""} else "in_review"
     )
     pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    await _ensure_item_row(pool, user=user, item=item, status=target_status)
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET status = CASE
-                       WHEN $5::text = 'dismissed' THEN 'dismissed'
-                       WHEN status = ANY($4::text[]) THEN status
-                       ELSE $5::text
-                   END,
-                   metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                   dismissed_at = CASE
-                       WHEN $5::text = 'dismissed' THEN COALESCE(dismissed_at, NOW())
-                       ELSE dismissed_at
-                   END,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
-            json.dumps({"alert_state": alert_state}),
-            workspace_id,
-            item["id"],
-            sorted(TERMINAL_ITEM_STATUSES),
-            target_status,
+
+    async def _write_alert_state(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
+        await _ensure_item_row(conn, user=user, item=item, status=target_status)
+        try:
+            await conn.execute(
+                """
+                UPDATE control_room_items
+                   SET status = CASE
+                           WHEN $5::text = 'dismissed' THEN 'dismissed'
+                           WHEN status = ANY($4::text[]) THEN status
+                           ELSE $5::text
+                       END,
+                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                       dismissed_at = CASE
+                           WHEN $5::text = 'dismissed' THEN COALESCE(dismissed_at, NOW())
+                           ELSE dismissed_at
+                       END,
+                       last_seen_at = NOW()
+                 WHERE workspace_id = $2
+                   AND item_id = $3
+                """,
+                json.dumps({"alert_state": alert_state}),
+                workspace_id,
+                item["id"],
+                sorted(TERMINAL_ITEM_STATUSES),
+                target_status,
+            )
+        except Exception:
+            pass
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type=event_type,
+            metadata={"alert_state": alert_state, "note": note, "reason": reason},
         )
-    except Exception:
-        pass
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type=event_type,
-        metadata={"alert_state": alert_state, "note": note, "reason": reason},
-    )
+
+    await _run_with_db_scope(pool, user, _write_alert_state)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

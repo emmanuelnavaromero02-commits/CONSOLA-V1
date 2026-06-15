@@ -36,6 +36,7 @@ from app.logging_config import _redact, setup_logging  # noqa: E402
 setup_logging(service_name="console")
 
 import httpx
+from app.services.db_scope import scoped_db_for_user
 from fastapi import (
     Body,
     FastAPI,
@@ -8612,7 +8613,8 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
         params.append(user["id"])
         sql += f" AND (created_by_id = ${len(params)} OR assignee_id = ${len(params)})"
     pool = await _dec_pool()
-    row = await pool.fetchrow(sql, *params)
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(sql, *params)
     return dict(row) if row else None
 
 
@@ -8636,6 +8638,8 @@ async def api_decisions_list(
 ):
     where, params = [], []
     workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        return {"decisions": []}
     where.append(
         _dec_visible_clause(
             user["id"], _dec_is_workspace_admin(user), params, workspace_id
@@ -8651,7 +8655,8 @@ async def api_decisions_list(
     sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
     sql += " ORDER BY created_at DESC LIMIT 500"
     pool = await _dec_pool()
-    rows = await pool.fetch(sql, *params)
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        rows = await conn.fetch(sql, *params)
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 
@@ -8669,22 +8674,23 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_authenti
     if not workspace_id:
         raise HTTPException(400, "active workspace is required to create a decision")
     pool = await _dec_pool()
-    row = await pool.fetchrow(
-        """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
-           RETURNING *""",
-        title,
-        body.get("description") or "",
-        _coerce_date(body.get("commitment_date")),
-        _json_dec.dumps(body.get("kpis") or []),
-        user["id"],
-        body.get("assignee_id"),
-        body.get("visibility")
-        if body.get("visibility") in ("private", "shared")
-        else "private",
-        workspace_id,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            """INSERT INTO decisions
+                  (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
+               RETURNING *""",
+            title,
+            body.get("description") or "",
+            _coerce_date(body.get("commitment_date")),
+            _json_dec.dumps(body.get("kpis") or []),
+            user["id"],
+            body.get("assignee_id"),
+            body.get("visibility")
+            if body.get("visibility") in ("private", "shared")
+            else "private",
+            workspace_id,
+        )
     return _dec_row_to_dict(row)
 
 
@@ -8696,10 +8702,11 @@ async def api_decisions_get(
     if not row:
         raise HTTPException(404, f"Decision {decision_id} not found")
     pool = await _dec_pool()
-    actions = await pool.fetch(
-        "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
-        decision_id,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        actions = await conn.fetch(
+            "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
+            decision_id,
+        )
     out = _dec_row_to_dict(row)
     out["actions"] = [
         {**dict(a), "ts": a["ts"].isoformat() if a["ts"] else None} for a in actions
@@ -8768,7 +8775,8 @@ async def api_decisions_update(
         f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
     )
     pool = await _dec_pool()
-    row = await pool.fetchrow(sql, *params)
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(sql, *params)
     if not row:
         # The visibility check passed but the row vanished between
         # SELECT and UPDATE (e.g. a concurrent delete, or the row was
@@ -8791,11 +8799,12 @@ async def api_decisions_delete(
     # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
     # as the UPDATE above. ``existing["workspace_id"]`` came from
     # ``_dec_load_with_visibility`` which is already workspace-scoped.
-    await pool.execute(
-        "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
-        decision_id,
-        existing["workspace_id"],
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        await conn.execute(
+            "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+            decision_id,
+            existing["workspace_id"],
+        )
     return {"deleted": True, "id": decision_id}
 
 
@@ -8813,15 +8822,16 @@ async def api_decisions_add_action(
         raise HTTPException(400, "action_text is required")
     pool = await _dec_pool()
     actor = user.get("email") or "user"
-    row = await pool.fetchrow(
-        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *""",
-        decision_id,
-        action_text,
-        body.get("note"),
-        actor,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *""",
+            decision_id,
+            action_text,
+            body.get("note"),
+            actor,
+        )
     return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
 
 

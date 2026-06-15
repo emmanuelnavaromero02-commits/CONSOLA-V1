@@ -597,36 +597,39 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
     tenant_id, workspace_id = _workspace_scope(user)
     try:
         pool = await auth.pool()
-        rows = await pool.fetch(
-            """
-            SELECT
-                ci.cartridge_id,
-                ci.status AS installation_status,
-                ci.current_step,
-                ci.error_message,
-                ci.ready_at,
-                COALESCE(mp.name, c.name, ci.cartridge_id) AS label,
-                COALESCE(c.category, 'cartridge') AS category
-            FROM cartridge_installations ci
-            LEFT JOIN cartridges c ON c.id = ci.cartridge_id
-            LEFT JOIN marketplace_products mp ON mp.cartridge_id = ci.cartridge_id
-            WHERE ci.tenant_id = $1
-              AND ci.workspace_id = $2
-              AND NOT EXISTS (
-                  SELECT 1
-                    FROM user_cartridge_overrides uco
-                   WHERE uco.tenant_id = ci.tenant_id
-                     AND uco.workspace_id = ci.workspace_id
-                     AND uco.cartridge_id = ci.cartridge_id
-                     AND uco.user_id = $3
-                     AND uco.mode = 'deny'
-              )
-            ORDER BY lower(COALESCE(mp.name, c.name, ci.cartridge_id))
-            """,
-            tenant_id,
-            workspace_id,
-            (user or {}).get("id"),
-        )
+        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+            return await conn.fetch(
+                """
+                SELECT
+                    ci.cartridge_id,
+                    ci.status AS installation_status,
+                    ci.current_step,
+                    ci.error_message,
+                    ci.ready_at,
+                    COALESCE(mp.name, c.name, ci.cartridge_id) AS label,
+                    COALESCE(c.category, 'cartridge') AS category
+                FROM cartridge_installations ci
+                LEFT JOIN cartridges c ON c.id = ci.cartridge_id
+                LEFT JOIN marketplace_products mp ON mp.cartridge_id = ci.cartridge_id
+                WHERE ci.tenant_id = $1
+                  AND ci.workspace_id = $2
+                  AND NOT EXISTS (
+                      SELECT 1
+                        FROM user_cartridge_overrides uco
+                       WHERE uco.tenant_id = ci.tenant_id
+                         AND uco.workspace_id = ci.workspace_id
+                         AND uco.cartridge_id = ci.cartridge_id
+                         AND uco.user_id = $3
+                         AND uco.mode = 'deny'
+                  )
+                ORDER BY lower(COALESCE(mp.name, c.name, ci.cartridge_id))
+                """,
+                tenant_id,
+                workspace_id,
+                (user or {}).get("id"),
+            )
+
+        rows = await _run_with_db_scope(pool, user or {}, _load)
         return await _filter_installations_by_scoped_connections(
             [_row_to_public(row) for row in rows], user
         )
@@ -1468,23 +1471,26 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         # Contract: persisted Intelligence items remain scoped as
         # item_kind = 'intelligence_signal'; agent monitor alerts are added
         # advisory-only without replacing the Intelligence signal surface.
-        rows = await pool.fetch(
-            f"""
-            SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
-                   severity, status, decision_id, entity_kind, entity_id,
-                   entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
-                   resolved_at, dismissed_at, impact_estimate, impact_currency,
-                   confidence, priority_score, selected_option_id, execution_status
-              FROM control_room_items
-             WHERE workspace_id = $1
-               {tenant_clause}
-               {owner_clause}
-               AND item_kind IN ('intelligence_signal', 'agent_alert')
-             ORDER BY priority_score DESC, last_seen_at DESC
-             LIMIT 200
-            """,
-            *params,
-        )
+        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+            return await conn.fetch(
+                f"""
+                SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
+                       severity, status, decision_id, entity_kind, entity_id,
+                       entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
+                       resolved_at, dismissed_at, impact_estimate, impact_currency,
+                       confidence, priority_score, selected_option_id, execution_status
+                  FROM control_room_items
+                 WHERE workspace_id = $1
+                   {tenant_clause}
+                   {owner_clause}
+                   AND item_kind IN ('intelligence_signal', 'agent_alert')
+                 ORDER BY priority_score DESC, last_seen_at DESC
+                 LIMIT 200
+                """,
+                *params,
+            )
+
+        rows = await _run_with_db_scope(pool, user or {}, _load)
     except Exception:
         return []
     items: list[dict[str, Any]] = []
@@ -1650,23 +1656,26 @@ async def _cleanup_obsolete_source_state_items(
     _, workspace_id = _workspace_scope(user)
     try:
         pool = await auth.pool()
-        for cartridge_id, datasets in by_cartridge.items():
-            await pool.execute(
-                """
-                DELETE FROM control_room_items
-                 WHERE workspace_id = $1
-                   AND cartridge_id = $2
-                   AND item_kind = 'source_state'
-                   AND (
-                       NOT (source_dataset = ANY($3::text[]))
-                       OR NOT (item_id = ANY($4::text[]))
-                   )
-                """,
-                workspace_id,
-                cartridge_id,
-                sorted(datasets),
-                sorted(state_ids_by_cartridge.get(cartridge_id, set())),
-            )
+        async def _delete_obsolete(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+            for cartridge_id, datasets in by_cartridge.items():
+                await conn.execute(
+                    """
+                    DELETE FROM control_room_items
+                     WHERE workspace_id = $1
+                       AND cartridge_id = $2
+                       AND item_kind = 'source_state'
+                       AND (
+                           NOT (source_dataset = ANY($3::text[]))
+                           OR NOT (item_id = ANY($4::text[]))
+                       )
+                    """,
+                    workspace_id,
+                    cartridge_id,
+                    sorted(datasets),
+                    sorted(state_ids_by_cartridge.get(cartridge_id, set())),
+                )
+
+        await _run_with_db_scope(pool, user or {}, _delete_obsolete)
     except Exception:
         return
 
@@ -2001,13 +2010,16 @@ async def dashboard(
     workspace_id = _workspace_id(user)
     open_decisions = 0
     try:
-        open_decisions = int(
-            await pool.fetchval(
-                "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-                workspace_id,
+        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
+            return int(
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                    workspace_id,
+                )
+                or 0
             )
-            or 0
-        )
+
+        open_decisions = await _run_with_db_scope(pool, user or {}, _count_decisions)
     except Exception:
         open_decisions = 0
 
@@ -2242,13 +2254,16 @@ async def summary(
     workspace_id = _workspace_id(user)
     open_decisions = 0
     if workspace_id:
-        open_decisions = int(
-            await pool.fetchval(
-                "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-                workspace_id,
+        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
+            return int(
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                    workspace_id,
+                )
+                or 0
             )
-            or 0
-        )
+
+        open_decisions = await _run_with_db_scope(pool, user or {}, _count_decisions)
     lesson_rows = await _load_lesson_rows(user, limit=100)
     items = _attach_lessons_to_items(items, lesson_rows)
     alert_summary = _alert_payload(items)["summary"]
@@ -2301,50 +2316,67 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
 
-    status_rows = await pool.fetch(
-        "SELECT status, COUNT(*) AS n FROM control_room_items "
-        "WHERE workspace_id = $1 GROUP BY status",
-        workspace_id,
-    )
+    async def _load_counts(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
+        status_rows = await conn.fetch(
+            "SELECT status, COUNT(*) AS n FROM control_room_items "
+            "WHERE workspace_id = $1 GROUP BY status",
+            workspace_id,
+        )
+        severity_rows = await conn.fetch(
+            "SELECT severity, COUNT(*) AS n FROM control_room_items "
+            "WHERE workspace_id = $1 AND status = 'open' GROUP BY severity",
+            workspace_id,
+        )
+        exec_rows = await conn.fetch(
+            "SELECT status, COUNT(*) AS n FROM control_room_action_executions "
+            "WHERE workspace_id = $1 GROUP BY status",
+            workspace_id,
+        )
+        lessons_total = int(
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM control_room_lessons WHERE workspace_id = $1",
+                workspace_id,
+            )
+            or 0
+        )
+        thresholds_total = int(
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM control_room_thresholds WHERE workspace_id = $1 AND enabled = TRUE",
+                workspace_id,
+            )
+            or 0
+        )
+        last_item_at = await conn.fetchval(
+            "SELECT MAX(last_seen_at) FROM control_room_items WHERE workspace_id = $1",
+            workspace_id,
+        )
+        return {
+            "status_rows": status_rows,
+            "severity_rows": severity_rows,
+            "exec_rows": exec_rows,
+            "lessons_total": lessons_total,
+            "thresholds_total": thresholds_total,
+            "last_item_at": last_item_at,
+        }
+
+    counts = await _run_with_db_scope(pool, user or {}, _load_counts)
+    status_rows = counts["status_rows"]
     items_by_status = {s: 0 for s in _ITEM_STATUSES}
     for row in status_rows:
         items_by_status[str(row["status"])] = int(row["n"])
     total_items = sum(items_by_status.values())
 
-    severity_rows = await pool.fetch(
-        "SELECT severity, COUNT(*) AS n FROM control_room_items "
-        "WHERE workspace_id = $1 AND status = 'open' GROUP BY severity",
-        workspace_id,
-    )
+    severity_rows = counts["severity_rows"]
     open_by_severity = {s: 0 for s in _ITEM_SEVERITIES}
     for row in severity_rows:
         open_by_severity[str(row["severity"])] = int(row["n"])
 
-    exec_rows = await pool.fetch(
-        "SELECT status, COUNT(*) AS n FROM control_room_action_executions "
-        "WHERE workspace_id = $1 GROUP BY status",
-        workspace_id,
-    )
+    exec_rows = counts["exec_rows"]
     executions_by_status = {str(row["status"]): int(row["n"]) for row in exec_rows}
 
-    lessons_total = int(
-        await pool.fetchval(
-            "SELECT COUNT(*) FROM control_room_lessons WHERE workspace_id = $1",
-            workspace_id,
-        )
-        or 0
-    )
-    thresholds_total = int(
-        await pool.fetchval(
-            "SELECT COUNT(*) FROM control_room_thresholds WHERE workspace_id = $1 AND enabled = TRUE",
-            workspace_id,
-        )
-        or 0
-    )
-    last_item_at = await pool.fetchval(
-        "SELECT MAX(last_seen_at) FROM control_room_items WHERE workspace_id = $1",
-        workspace_id,
-    )
+    lessons_total = counts["lessons_total"]
+    thresholds_total = counts["thresholds_total"]
+    last_item_at = counts["last_item_at"]
 
     app_env = _os.environ.get("APP_ENV", "production").strip().lower()
     writeback_enabled = _external_writeback_enabled()

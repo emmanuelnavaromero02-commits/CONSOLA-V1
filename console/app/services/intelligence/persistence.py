@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.services import audit_service, auth, permissions
+from app.services.db_scope import scoped_db
 from app.services.intelligence.utils import (
     TERMINAL_SIGNAL_STATUSES,
     SIGNAL_KIND,
@@ -44,19 +44,6 @@ def _can_read_workspace_wide(user: dict) -> bool:
 
 def _owner_user_id(user: dict) -> int | None:
     return _actor_id(user.get("id"))
-
-
-@asynccontextmanager
-async def scoped_db(pool: Any, tenant_id: str | None, workspace_id: str):
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-                tenant_id or "",
-                workspace_id,
-            )
-            yield conn
-
 
 async def persist_artifacts(
     tenant_id: str | None,

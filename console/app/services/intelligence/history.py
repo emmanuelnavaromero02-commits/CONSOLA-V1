@@ -4,13 +4,13 @@ import os
 import json
 import uuid
 from collections import Counter, defaultdict
-from contextlib import asynccontextmanager
 from statistics import mean
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.services import auth, permissions
+from app.services.db_scope import scoped_db
 from app.services.intelligence.utils import (
     coerce_json_metadata,
     json_dumps,
@@ -46,19 +46,6 @@ PROBABILITY_BUCKETS = (
     (0.6, 0.8, "0.6-0.8"),
     (0.8, 1.0, "0.8-1.0"),
 )
-
-
-@asynccontextmanager
-async def scoped_db(pool: Any, tenant_id: str | None, workspace_id: str):
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-                tenant_id or "",
-                workspace_id,
-            )
-            yield conn
-
 
 def _actor_id(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
