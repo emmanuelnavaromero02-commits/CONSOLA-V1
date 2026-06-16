@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -101,6 +101,7 @@ help:
 	@echo "  make deploy-main-aws / aws-full-regression"
 	@echo "                    artifact deploy from main and full AWS regression via SSM"
 	@echo "  make aws-observability-report / aws-tls-status / aws-superset-probe"
+	@echo "  make superset-tenant-probe / superset-tenant-probe-aws"
 	@echo "                    low-cost AWS observability, TLS, and Superset probes"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make acceptance   run heavy full-stack acceptance with fake live HubSpot"
@@ -368,6 +369,12 @@ aws-tls-status:
 
 aws-superset-probe:
 	@$(PYTHON) scripts/aws_superset_probe.py
+
+superset-tenant-probe:
+	@$(PYTHON) scripts/superset_tenant_probe.py --target local
+
+superset-tenant-probe-aws:
+	@$(PYTHON) scripts/superset_tenant_probe.py --target aws
 
 rollback-rehearsal:
 	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/rollback_rehearsal.py

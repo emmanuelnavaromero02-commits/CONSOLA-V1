@@ -110,7 +110,9 @@ def test_observability_tls_and_superset_reports_are_honest_and_redacted():
     assert "HTTPS listener" in tls
     assert "BLOCKED" in tls
     assert "Tenant context propagation" in superset
-    assert "BLOCKED" in superset
+    assert "Tenant-facing Superset model" in superset
+    assert "Option A active" in superset
+    assert "Public Superset direct access" in superset
     for src in (obs, tls, superset):
         assert "printenv" not in src
 
@@ -123,6 +125,8 @@ def test_makefile_exposes_aws_hardening_targets():
         "aws-observability-report:",
         "aws-tls-status:",
         "aws-superset-probe:",
+        "superset-tenant-probe:",
+        "superset-tenant-probe-aws:",
         "rollback-rehearsal-aws:",
     ):
         assert target in makefile
