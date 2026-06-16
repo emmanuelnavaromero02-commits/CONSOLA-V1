@@ -101,7 +101,7 @@ first = monte_carlo.run_monte_carlo(payload)
 second = monte_carlo.run_monte_carlo(payload)
 if first["reproducibility_hash"] != second["reproducibility_hash"]:
     raise SystemExit("engine_hash_mismatch")
-if first["option_comparison"][0]["option_id"] != "a":
+if first["option_comparison"]["options"][0]["option_id"] != "a":
     raise SystemExit("option_order_mismatch")
 print("engine=PASS")
 
@@ -169,7 +169,7 @@ SELECT
   workspace_id,
   'manual_fixture',
   'aws-probe',
-  0,
+  30,
   100,
   123,
   'monte_carlo.v1',
