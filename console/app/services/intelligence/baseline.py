@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from app.services.intelligence import calibration
 from app.services.intelligence.contracts import configured_horizons, validate_metric
 from app.services.intelligence.decision_intelligence import (
     build_decision_intelligence,
@@ -35,6 +36,7 @@ def build_metric_artifacts(
     include_external: bool = False,
     horizon_days: list[int] | None = None,
     external_sources: list[dict[str, Any]] | None = None,
+    calibration_states: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     validate_metric(contract, metric)
     cartridge_id = str(contract.get("cartridge") or "")
@@ -179,6 +181,7 @@ def build_metric_artifacts(
                     time_series_analysis=time_series_analysis,
                     include_external=include_external,
                     external_sources=external_sources,
+                    calibration_states=calibration_states,
                 )
             )
         else:
@@ -214,6 +217,7 @@ def build_metric_artifacts(
                     time_series_analysis=time_series_analysis,
                     include_external=include_external,
                     external_sources=external_sources,
+                    calibration_states=calibration_states,
                 )
             )
     return artifacts, skipped
@@ -315,6 +319,7 @@ def _artifact(
     time_series_analysis: Any | None,
     include_external: bool,
     external_sources: list[dict[str, Any]] | None,
+    calibration_states: dict[str, dict[str, Any]] | None,
 ) -> dict[str, Any]:
     dataset = str(metric["dataset"])
     entity = metric["entity"]
@@ -327,6 +332,11 @@ def _artifact(
         else []
     )
     source_system = str(contract.get("cartridge") or signal.get("cartridge_id") or "")
+    calibration_state, calibration_group = _select_calibration_state(
+        calibration_states or {},
+        source_system=source_system,
+        metric_id=metric.get("id"),
+    )
     freshness_at = period_key(latest, time_field)
     signal.update(
         {
@@ -389,6 +399,8 @@ def _artifact(
             latest=latest,
             history_values=history_values,
             time_series_analysis=time_series_analysis,
+            calibration_state=calibration_state,
+            calibration_group=calibration_group,
         )
     signal["decision_intelligence"] = decision_intelligence
     return {
@@ -400,3 +412,20 @@ def _artifact(
         "options": decision_options(signal, metric),
         "outcome": None,
     }
+
+
+def _select_calibration_state(
+    states: dict[str, dict[str, Any]],
+    *,
+    source_system: str,
+    metric_id: Any,
+) -> tuple[dict[str, Any] | None, str]:
+    groups = calibration.live_calibration_groups(
+        source_system=source_system,
+        metric_id=metric_id,
+    )
+    for group in groups:
+        state = states.get(group)
+        if state:
+            return state, group
+    return None, groups[0]

@@ -165,6 +165,7 @@ class CalibrationObservationRequest(_StrictModel):
 class CalibrationRecomputeRequest(_StrictModel):
     calibration_group: str = Field(min_length=1, max_length=80)
     model_version: str | None = Field(default=None, max_length=120)
+    parent_calibration_group: str | None = Field(default=None, max_length=80)
     source_type: Literal[
         "monte_carlo_simulation",
         "decision_option",

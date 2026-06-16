@@ -195,6 +195,74 @@ def _row_state(row: Any | None, *, group: str, model_version: str) -> dict[str, 
     }
 
 
+def _parent_prior_source(group: str) -> str:
+    if group.startswith("source_type:"):
+        return "source_type"
+    if group.startswith("global:"):
+        return "global"
+    return "fixed"
+
+
+def _parent_group_candidates(group: str) -> list[str]:
+    parts = group.split(":")
+    if len(parts) >= 5 and parts[0] == "specific":
+        return [
+            calibration.source_type_calibration_group(parts[1], parts[-2]),
+            calibration.global_calibration_group(parts[-2]),
+        ]
+    if len(parts) >= 4 and parts[0] == "source_type":
+        return [calibration.global_calibration_group(parts[-2])]
+    return []
+
+
+async def _fetch_state(
+    conn: Any,
+    *,
+    workspace_id: str,
+    group: str,
+    model_version: str,
+) -> dict[str, Any] | None:
+    row = await conn.fetchrow(
+        """
+        SELECT *
+          FROM calibration_states
+         WHERE workspace_id = $1
+           AND calibration_group = $2
+           AND model_version = $3
+        """,
+        workspace_id,
+        group,
+        model_version,
+    )
+    return _row_state(row, group=group, model_version=model_version)
+
+
+async def _derived_prior_for_group(
+    conn: Any,
+    *,
+    workspace_id: str,
+    group: str,
+    model_version: str,
+    explicit_parent_group: str | None = None,
+) -> dict[str, Any]:
+    candidates = [explicit_parent_group] if explicit_parent_group else _parent_group_candidates(group)
+    for parent_group in [item for item in candidates if item]:
+        parent_state = await _fetch_state(
+            conn,
+            workspace_id=workspace_id,
+            group=parent_group,
+            model_version=model_version,
+        )
+        prior = calibration.derive_partial_pooling_prior(
+            parent_state,
+            parent_calibration_group=parent_group,
+            prior_source=_parent_prior_source(parent_group),
+        )
+        if prior.get("partial_pooling_applied"):
+            return prior
+    return calibration.derive_partial_pooling_prior(None)
+
+
 def _state_id(*, workspace_id: str, group: str, model_version: str) -> str:
     digest = calibration.reproducibility_hash(
         {"workspace_id": workspace_id, "group": group, "model_version": model_version}
@@ -469,6 +537,12 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         field="model_version",
         max_length=120,
     )
+    parent_group = _short_text(
+        clean.get("parent_calibration_group"),
+        field="parent_calibration_group",
+        max_length=80,
+        required=False,
+    ) or None
     source_type = str(clean.get("source_type") or "").strip() or None
     source_id = str(clean.get("source_id") or "").strip() or None
     if source_type and source_type not in SOURCE_TYPES:
@@ -498,10 +572,18 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             *params,
         )
         observations = [_observation_from_row(dict(row)) for row in rows]
+        prior = await _derived_prior_for_group(
+            conn,
+            workspace_id=workspace_id,
+            group=group,
+            model_version=model_version,
+            explicit_parent_group=parent_group,
+        )
         state = calibration.recompute_state(
             observations,
             calibration_group=group,
             model_version=model_version,
+            prior=prior,
         )
         state_row = await _upsert_state(
             conn,
@@ -522,6 +604,42 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             last_observed_at=None,
         )
     return {"state": public_json(dict(state_row)), "observations_recomputed": len(observations)}
+
+
+async def get_state_map_for_live_calibration(
+    user: dict,
+    groups: list[str] | set[str] | tuple[str, ...],
+    *,
+    model_version: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    clean_groups = sorted({str(group).strip() for group in groups if str(group or "").strip()})
+    if not clean_groups:
+        return {}
+    version = str(model_version or DEFAULT_MODEL_VERSION)
+    pool = await auth.pool()
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
+        rows = await conn.fetch(
+            """
+            SELECT *
+              FROM calibration_states
+             WHERE workspace_id = $1
+               AND calibration_group = ANY($2::text[])
+               AND model_version = $3
+            """,
+            workspace_id,
+            clean_groups,
+            version,
+        )
+    states: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        data = dict(row)
+        group = str(data.get("calibration_group") or "")
+        if not group:
+            continue
+        state = _row_state(data, group=group, model_version=version)
+        if state:
+            states[group] = state
+    return states
 
 
 def _observation_from_row(row: dict[str, Any]) -> dict[str, Any]:

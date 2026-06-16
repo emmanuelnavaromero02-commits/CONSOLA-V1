@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal rollback-rehearsal-aws deploy-main-aws aws-full-regression aws-observability-report aws-tls-status aws-superset-probe superset-tenant-probe superset-tenant-probe-aws monte-carlo-aws-probe bayesian-calibration-aws-probe bayesian-loop-probe bayesian-loop-probe-aws migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws run-intelligence-scheduled-local run-intelligence-scheduled-aws decision-backtest-local decision-backtest-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -104,7 +104,8 @@ help:
 	@echo "  make superset-tenant-probe / superset-tenant-probe-aws"
 	@echo "  make monte-carlo-aws-probe"
 	@echo "  make bayesian-calibration-aws-probe"
-	@echo "                    low-cost AWS observability, TLS, Superset, and Monte Carlo probes"
+	@echo "  make bayesian-loop-probe / bayesian-loop-probe-aws"
+	@echo "                    low-cost AWS observability, TLS, Superset, Monte Carlo, and Bayesian probes"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make acceptance   run heavy full-stack acceptance with fake live HubSpot"
 	@echo "  make security-scan"
@@ -383,6 +384,12 @@ monte-carlo-aws-probe:
 
 bayesian-calibration-aws-probe:
 	@$(PYTHON) scripts/aws_bayesian_calibration_probe.py
+
+bayesian-loop-probe:
+	@PYTHONPATH=console $(PYTHON) scripts/bayesian_loop_probe.py
+
+bayesian-loop-probe-aws:
+	@$(PYTHON) scripts/aws_bayesian_loop_probe.py
 
 rollback-rehearsal:
 	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/rollback_rehearsal.py

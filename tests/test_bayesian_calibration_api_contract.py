@@ -123,6 +123,7 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
     assert '"/calibration/observations"' in router
     assert "CalibrationObservationRequest(_StrictModel)" in router
     assert "CalibrationRecomputeRequest(_StrictModel)" in router
+    assert "parent_calibration_group" in router
     assert "await intelligence_history.calibration_report" in router
     assert "await calibration_service.observe" in router
     assert "await calibration_service.recompute" in router
@@ -138,6 +139,8 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
 
     assert "from app.services.db_scope import scoped_db_for_user" in service
     assert "async with scoped_db_for_user(pool, user)" in service
+    assert "get_state_map_for_live_calibration" in service
+    assert "derive_partial_pooling_prior" in service
     assert "tenant_id" in service
     assert "workspace_id" in service
     assert "security_context" in service
@@ -235,7 +238,14 @@ def test_calibration_migration_is_scoped_and_does_not_relax_rls():
 def test_makefile_exposes_bayesian_calibration_aws_probe():
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     script = REPO / "scripts/aws_bayesian_calibration_probe.py"
+    loop_script = REPO / "scripts/aws_bayesian_loop_probe.py"
+    local_loop_script = REPO / "scripts/bayesian_loop_probe.py"
 
     assert "bayesian-calibration-aws-probe" in makefile
+    assert "bayesian-loop-probe" in makefile
+    assert "bayesian-loop-probe-aws" in makefile
     assert script.exists()
+    assert loop_script.exists()
+    assert local_loop_script.exists()
     assert "OMEGA_BAYESIAN_CALIBRATION_CHECK" in script.read_text(encoding="utf-8")
+    assert "OMEGA_BAYESIAN_LOOP_CHECK" in loop_script.read_text(encoding="utf-8")

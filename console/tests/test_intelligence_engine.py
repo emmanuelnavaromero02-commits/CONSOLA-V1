@@ -153,6 +153,67 @@ def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     )
 
 
+def test_build_metric_artifacts_applies_live_bayesian_calibration_metadata():
+    rows = [
+        {
+            "mes": "2026-01-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        },
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 120,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 110,
+        },
+        {
+            "mes": "2026-04-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 200,
+        },
+    ]
+    group = "source_type:hubspot:forecast_weighted:v1"
+    states = {
+        group: {
+            "calibration_group": group,
+            "posterior": {"alpha": 12.0, "beta": 18.0, "mean": 0.4},
+            "metrics": {
+                "sample_count": 30,
+                "confidence_score": 1.0,
+                "prior_source": "global",
+                "partial_pooling_applied": True,
+                "parent_calibration_group": "global:forecast_weighted:v1",
+                "parent_sample_count": 30,
+            },
+        }
+    }
+
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(),
+        _metric(),
+        rows,
+        calibration_states=states,
+    )
+
+    assert skipped == []
+    decision = artifacts[0]["decision_intelligence"]
+    metadata = decision["calibration"]
+    assert metadata["raw_probability"] == pytest.approx(0.95)
+    assert metadata["calibrated_probability"] == pytest.approx(0.75)
+    assert metadata["calibration_applied"] is True
+    assert metadata["partial_pooling_applied"] is True
+    assert decision["anomaly_probability"] == metadata["calibrated_probability"]
+    assert "not a calibrated Bayesian posterior" not in decision["rationale"]
+
+
 def test_control_room_event_actor_id_accepts_numeric_strings_only():
     assert intelligence_persistence._actor_id(7) == 7
     assert intelligence_persistence._actor_id("7") == 7
