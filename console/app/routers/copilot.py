@@ -87,9 +87,8 @@ async def create_conversation(
     # workspace they don't belong to. The active workspace comes from
     # the authenticated session (already vetted by the auth layer).
     title = (body or {}).get("title")
-    workspace_id = user.get("active_workspace_id")
     result = await copilot_service.create_conversation(
-        user_id=user["id"], workspace_id=workspace_id, title=title,
+        user=user, title=title,
     )
     ip, ua = _forensic(request)
     await audit_service.record_event(
@@ -109,8 +108,7 @@ async def create_conversation(
 @router.get("/conversations")
 async def list_conversations(user: dict = Depends(require_authenticated)):
     return await copilot_service.list_conversations(
-        user_id=user["id"],
-        workspace_id=user.get("active_workspace_id"),
+        user=user,
     )
 
 

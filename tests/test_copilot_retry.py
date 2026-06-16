@@ -130,6 +130,9 @@ def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeyp
             self.conversations = {}
             self.messages = []
 
+        def transaction(self):
+            return _Transaction()
+
         async def fetchrow(self, q, *a):
             qq = " ".join(q.split())
             if qq.startswith("SELECT id, user_id, workspace_id, title"):
@@ -158,6 +161,10 @@ def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeyp
 
         async def execute(self, *a, **kw):
             return None
+
+    class _Transaction:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return False
 
     class _Acq:
         def __init__(self, db): self.db = db
@@ -206,8 +213,14 @@ def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeyp
 
     copilot_module.llm_client.chat = fake_chat
 
-    admin = {"id": 1, "email": "a@example.com", "role": "admin"}
-    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    admin = {
+        "id": 1,
+        "email": "a@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    conv = _run(copilot_module.create_conversation(user=admin))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="cuántos empleados?",
         user=admin,

@@ -132,3 +132,14 @@ def test_agent_runtime_and_watchdog_loaders_set_scope_before_scoped_agent_reads(
     assert "user_context=user" in watchdog
     assert "SET_SCOPE_SQL" in service
     assert "async with conn.transaction()" in service
+
+
+def test_copilot_conversation_paths_use_runtime_db_scope():
+    service = _read(REPO / "console/app/services/copilot_service.py")
+    router = _read(REPO / "console/app/routers/copilot.py")
+
+    assert "from app.services.db_scope import scoped_db_for_user" in service
+    assert "async with scoped_db_for_user(pool, user)" in service
+    assert "async with pool.acquire() as conn" not in service
+    assert "create_conversation(\n        user=user" in router
+    assert "list_conversations(\n        user=user" in router

@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 
 _SIBLINGS = ("/cartridges/", "/refinement", "/vault", "/workspace", "/mcp-infra")
@@ -43,13 +44,32 @@ class FakeDB:
         self.conversations: dict[str, dict] = {}
         self.messages: list[dict] = []
         self.audit_calls: list[dict] = []
+        self.scope_calls: list[tuple[str, str]] = []
+        self.current_tenant_id: str | None = None
+        self.current_workspace_id: str | None = None
+
+    def transaction(self):
+        return _Transaction()
+
+    def _has_scope(self) -> bool:
+        return bool(self.current_workspace_id)
+
+    def _conversation_visible(self, conversation_id: str) -> dict | None:
+        row = self.conversations.get(str(conversation_id))
+        if not row or not self._has_scope():
+            return None
+        if str(row.get("workspace_id")) != str(self.current_workspace_id):
+            return None
+        return row
 
     # asyncpg-compatible helpers ────────────────────────────────────────
     async def fetchrow(self, query: str, *args):
         q = " ".join(query.split())
         if q.startswith("SELECT id, user_id, workspace_id, title, created_at, updated_at FROM conversations"):
-            return self.conversations.get(args[0])
+            return self._conversation_visible(str(args[0]))
         if q.startswith("INSERT INTO conversations"):
+            if not self._has_scope() or str(args[1]) != str(self.current_workspace_id):
+                return None
             cid = str(uuid.uuid4())
             row = {
                 "id": cid, "user_id": args[0], "workspace_id": args[1],
@@ -58,6 +78,8 @@ class FakeDB:
             self.conversations[cid] = row
             return row
         if q.startswith("INSERT INTO conversation_messages"):
+            if not self._conversation_visible(str(args[0])):
+                return None
             mid = str(uuid.uuid4())
             self.messages.append({
                 "id": mid,
@@ -66,11 +88,14 @@ class FakeDB:
                 "content": args[2],
                 "tool_calls": args[3],
                 "tool_results": args[4],
-                "model": args[5],
+                "citations": args[5] if len(args) > 5 else None,
+                "model": args[6] if len(args) > 6 else None,
                 "created_at": len(self.messages),
             })
             return {"id": mid}
         if q.startswith("SELECT tool_calls FROM conversation_messages"):
+            if not self._conversation_visible(str(args[1])):
+                return None
             for m in self.messages:
                 if (m["id"] == args[0]
                         and m["conversation_id"] == args[1]
@@ -79,6 +104,8 @@ class FakeDB:
                     return {"tool_calls": m["tool_calls"]}
             return None
         if q.startswith("UPDATE conversation_messages SET tool_results = jsonb_build_array"):
+            if not self._conversation_visible(str(args[1])):
+                return None
             # The atomic claim used by approve_pending_action: returns
             # tool_calls only if the row is still pending (tool_results
             # IS NULL). A second call returns None, which the service
@@ -96,19 +123,47 @@ class FakeDB:
     async def fetch(self, query: str, *args):
         q = " ".join(query.split())
         if q.startswith("SELECT id, title, created_at, updated_at FROM conversations WHERE user_id"):
-            return [r for r in self.conversations.values() if r["user_id"] == args[0]]
+            if not self._has_scope():
+                return []
+            return [
+                r for r in self.conversations.values()
+                if r["user_id"] == args[0]
+                and str(r.get("workspace_id")) == str(self.current_workspace_id)
+            ]
         if q.startswith("SELECT role, content, tool_calls, tool_results FROM conversation_messages"):
             cid = args[0]
+            if not self._conversation_visible(str(cid)):
+                return []
             msgs = [m for m in self.messages if m["conversation_id"] == cid]
             msgs.sort(key=lambda m: m["created_at"])
             return msgs
-        if q.startswith("SELECT id, role, content, tool_calls, tool_results, created_at"):
+        if q.startswith("SELECT id, role, content, tool_calls, tool_results, citations, created_at"):
             cid = args[0]
+            if not self._conversation_visible(str(cid)):
+                return []
             return [m for m in self.messages if m["conversation_id"] == cid]
         raise AssertionError(f"unmocked fetch: {q[:120]}")
 
     async def execute(self, query: str, *args):
+        if "set_config('app.tenant_id'" in query:
+            self.current_tenant_id = str(args[0]) if args[0] is not None else None
+            self.current_workspace_id = str(args[1])
+            self.scope_calls.append((self.current_tenant_id or "", self.current_workspace_id))
+            return None
+        q = " ".join(query.split())
+        if q.startswith("UPDATE conversations SET updated_at = NOW()"):
+            if self._conversation_visible(str(args[0])):
+                self.conversations[str(args[0])]["updated_at"] = "now"
+            return None
         return None
+
+
+class _Transaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
 
 
 class FakePool:
@@ -137,12 +192,24 @@ def db():
 
 @pytest.fixture
 def admin_user():
-    return {"id": 1, "email": "admin@example.com", "role": "admin"}
+    return {
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
 
 
 @pytest.fixture
 def analyst_user():
-    return {"id": 2, "email": "analyst@example.com", "role": "analyst"}
+    return {
+        "id": 2,
+        "email": "analyst@example.com",
+        "role": "analyst",
+        "active_tenant_id": "33333333-3333-3333-3333-333333333333",
+        "active_workspace_id": "44444444-4444-4444-4444-444444444444",
+    }
 
 
 def _patch_pool(mod, db: FakeDB):
@@ -190,11 +257,98 @@ def _run(coro):
 def test_copilot_creates_conversation(copilot_module, db, admin_user):
     _patch_pool(copilot_module, db)
     out = _run(copilot_module.create_conversation(
-        user_id=admin_user["id"], workspace_id=None, title="Test convo",
+        user=admin_user, title="Test convo",
     ))
     assert out["id"] in db.conversations
     assert out["title"] == "Test convo"
     assert out["user_id"] == 1
+    assert db.scope_calls[-1] == (
+        admin_user["active_tenant_id"],
+        admin_user["active_workspace_id"],
+    )
+
+
+def test_copilot_conversation_list_is_scoped_by_active_workspace(
+    copilot_module, db, admin_user, analyst_user,
+):
+    _patch_pool(copilot_module, db)
+
+    a_conv = _run(copilot_module.create_conversation(
+        user=admin_user, title="Tenant A",
+    ))
+    b_conv = _run(copilot_module.create_conversation(
+        user=analyst_user, title="Tenant B",
+    ))
+
+    a_rows = _run(copilot_module.list_conversations(user=admin_user))
+    b_rows = _run(copilot_module.list_conversations(user=analyst_user))
+
+    assert [row["id"] for row in a_rows["conversations"]] == [a_conv["id"]]
+    assert [row["id"] for row in b_rows["conversations"]] == [b_conv["id"]]
+    assert a_conv["id"] not in [row["id"] for row in b_rows["conversations"]]
+    assert b_conv["id"] not in [row["id"] for row in a_rows["conversations"]]
+
+
+def test_copilot_messages_are_scoped_by_parent_conversation_workspace(
+    copilot_module, db, admin_user, analyst_user,
+):
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    async def fake_chat(*, messages, **_kw):
+        text = "ok"
+        return (text, [], list(messages) + [{
+            "role": "assistant",
+            "content": [{"type": "text", "text": text}],
+        }])
+
+    _patch_llm(copilot_module, fake_chat)
+
+    a_conv = _run(copilot_module.create_conversation(user=admin_user))
+    b_conv = _run(copilot_module.create_conversation(user=analyst_user))
+    _run(copilot_module.run_turn(
+        conversation_id=a_conv["id"],
+        user_message="hola A",
+        user=admin_user,
+    ))
+    _run(copilot_module.run_turn(
+        conversation_id=b_conv["id"],
+        user_message="hola B",
+        user=analyst_user,
+    ))
+
+    a_messages = _run(copilot_module.get_conversation_messages(
+        conversation_id=a_conv["id"],
+        user=admin_user,
+    ))
+    assert [msg["content"] for msg in a_messages["messages"]][:2] == ["hola A", "ok"]
+
+    with pytest.raises(HTTPException) as cross:
+        _run(copilot_module.get_conversation_messages(
+            conversation_id=b_conv["id"],
+            user=admin_user,
+        ))
+    assert cross.value.status_code == 404
+
+
+def test_copilot_conversations_fail_closed_without_active_workspace(
+    copilot_module, db, admin_user,
+):
+    _patch_pool(copilot_module, db)
+    user_without_scope = {
+        key: value
+        for key, value in admin_user.items()
+        if key not in {"active_tenant_id", "active_workspace_id"}
+    }
+
+    with pytest.raises(HTTPException) as create_exc:
+        _run(copilot_module.create_conversation(user=user_without_scope))
+    assert create_exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as list_exc:
+        _run(copilot_module.list_conversations(user=user_without_scope))
+    assert list_exc.value.status_code == 403
 
 
 def test_copilot_read_tool_executes_immediately(
@@ -220,7 +374,7 @@ def test_copilot_read_tool_executes_immediately(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat)
 
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"],
         user_message="¿Qué DAGs hay?",
@@ -257,7 +411,7 @@ def test_copilot_destructive_tool_blocks_without_approval(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat)
 
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="borra el DAG x",
         user=admin_user,
@@ -296,7 +450,7 @@ def test_copilot_write_tool_blocks_without_approval(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat)
 
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="actualiza algo",
         user=admin_user,
@@ -344,7 +498,7 @@ def test_copilot_write_tool_executes_after_approval(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
 
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="actualiza algo",
         user=admin_user,
@@ -391,7 +545,13 @@ def test_copilot_write_approval_does_not_require_execute_permission(
 ):
     """A write-level approved action needs copilot.write, not the
     destructive copilot.execute permission."""
-    writer_user = {"id": 3, "email": "writer@example.com", "role": "custom"}
+    writer_user = {
+        "id": 3,
+        "email": "writer@example.com",
+        "role": "custom",
+        "active_tenant_id": "55555555-5555-5555-5555-555555555555",
+        "active_workspace_id": "66666666-6666-6666-6666-666666666666",
+    }
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
@@ -435,7 +595,7 @@ def test_copilot_write_approval_does_not_require_execute_permission(
 
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
-    conv = _run(copilot_module.create_conversation(user_id=writer_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=writer_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="actualiza algo", user=writer_user,
     ))
@@ -491,7 +651,7 @@ def test_copilot_destructive_tool_executes_with_approval(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
 
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="borra el DAG x",
         user=admin_user,
@@ -541,7 +701,7 @@ def test_copilot_audit_records_tool_call_with_risk_level(
         return ("ok", [], [])
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="¿DAGs?",
         user=admin_user, ip="10.0.0.5", user_agent="pytest/1.0",
@@ -574,7 +734,7 @@ def test_copilot_scrubs_secrets_from_tool_args(copilot_module, db, admin_user):
         return ("blocked", [], [])
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="run",
         user=admin_user,
@@ -603,7 +763,7 @@ def test_copilot_persists_messages_in_conversation_messages(
         return (text, [], final)
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="hola",
         user=admin_user,
@@ -638,7 +798,7 @@ def test_copilot_blocks_tool_when_user_lacks_permission(
     _patch_llm(copilot_module, fake_chat)
 
     # Analyst owns this conversation.
-    conv = _run(copilot_module.create_conversation(user_id=analyst_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=analyst_user))
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="set k=v",
         user=analyst_user,
@@ -662,7 +822,7 @@ def test_copilot_user_message_size_limit(copilot_module, db, admin_user):
     _patch_manifest(copilot_module, [])
     _patch_audit(copilot_module, db)
     _patch_llm(copilot_module, AsyncMock(return_value=("ok", [], [])))
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     huge = "x" * (copilot_module.MAX_USER_MESSAGE_CHARS + 1)
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.run_turn(
@@ -679,12 +839,16 @@ def test_copilot_ownership_check_blocks_cross_user_access(
     _patch_audit(copilot_module, db)
     _patch_llm(copilot_module, AsyncMock(return_value=("ok", [], [])))
     # admin creates the convo, analyst tries to send to it
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.run_turn(
             conversation_id=conv["id"], user_message="hola", user=analyst_user,
         ))
-    assert "403" in str(exc_info.value) or "not your conversation" in str(exc_info.value).lower()
+    assert (
+        "403" in str(exc_info.value)
+        or "404" in str(exc_info.value)
+        or "not your conversation" in str(exc_info.value).lower()
+    )
 
 
 # ── R1 review fixes ────────────────────────────────────────────────────────
@@ -721,7 +885,7 @@ def test_copilot_tool_use_id_preserved_through_history(
         return ("Sin DAGs.", [], final)
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=1))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="dags?", user=admin_user,
     ))
@@ -763,7 +927,7 @@ def test_copilot_unknown_risk_level_defaults_to_destructive(
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat)
 
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="run",
         user=admin_user,
@@ -791,7 +955,7 @@ def test_copilot_502_does_not_leak_provider_exception(
         )
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.run_turn(
             conversation_id=conv["id"], user_message="hola",
@@ -810,9 +974,10 @@ def test_copilot_workspace_id_in_body_is_ignored_by_router():
     don't belong to. The active workspace comes from the session."""
     src = (Path(__file__).resolve().parents[1] / "console" / "app"
            / "routers" / "copilot.py").read_text(encoding="utf-8")
-    # Confirm by reading source: workspace_id is sourced from `user`,
-    # not from body.
-    assert "workspace_id = user.get(\"active_workspace_id\")" in src
+    # Confirm by reading source: the whole authenticated user context is
+    # handed to the service, which derives workspace scope from session state.
+    assert "copilot_service.create_conversation(" in src
+    assert "user=user" in src
     assert "body.get(\"workspace_id\")" not in src
     assert "(body or {}).get(\"workspace_id\")" not in src
 
@@ -835,7 +1000,7 @@ def test_copilot_pending_actions_deduped(copilot_module, db, admin_user):
         return ("aprobá", [], list(messages))
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="borra X dos veces",
         user=admin_user,
@@ -881,7 +1046,7 @@ def test_copilot_approval_race_returns_409_on_second_call(
 
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="delete x", user=admin_user,
     ))
@@ -972,7 +1137,7 @@ def test_copilot_approval_dedupes_duplicate_tool_calls(
 
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"],
         user_message="borra dupe dos veces",
@@ -1034,7 +1199,7 @@ def test_copilot_approved_tool_result_is_clipped_before_history(
 
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="write big", user=admin_user,
     ))
@@ -1064,7 +1229,7 @@ def test_copilot_pending_action_args_are_scrubbed(
         return ("aprobá", [], list(messages))
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="set k",
         user=admin_user,
@@ -1177,7 +1342,7 @@ def test_copilot_surfaces_sanitised_llm_provider_reason(copilot_module, db, admi
         )
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
 
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.run_turn(
@@ -1204,7 +1369,7 @@ def test_copilot_surfaces_sanitised_llm_provider_authorization_headers(copilot_m
         )
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
 
     with pytest.raises(Exception) as exc_info:
         _run(copilot_module.run_turn(
@@ -1260,7 +1425,7 @@ def test_copilot_open_turn_stream_emits_events_and_scrubs_args(
         return ("Hola", [], final)
 
     _patch_llm(copilot_module, fake_chat)
-    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    conv = _run(copilot_module.create_conversation(user=admin_user))
 
     async def collect():
         stream = await copilot_module.open_turn_stream(

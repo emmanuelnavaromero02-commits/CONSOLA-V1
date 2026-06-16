@@ -46,7 +46,13 @@ def _make_app(mod, *, user=None, bypass_csrf=True):
     from app.dependencies import require_authenticated
     from app.services.csrf import require_csrf
 
-    effective_user = user or {"id": 7, "email": "u@example.com", "role": "admin"}
+    effective_user = user or {
+        "id": 7,
+        "email": "u@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
 
     class _InjectUser(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
@@ -79,14 +85,22 @@ def test_list_conversations_requires_auth(copilot_router):
 
 def test_create_conversation_happy(copilot_router):
     api = _make_app(copilot_router)
+    seen = {}
+
+    async def fake_create(**kw):
+        seen.update(kw)
+        return {"id": "abc", "title": "hi"}
+
     copilot_router.copilot_service.create_conversation = AsyncMock(
-        return_value={"id": "abc", "title": "hi"}
+        side_effect=fake_create
     )
     r = TestClient(api).post(
         "/api/copilot/conversations", json={"title": "hi"},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"id": "abc", "title": "hi"}
+    assert seen["user"]["id"] == 7
+    assert seen["user"]["active_workspace_id"] == "22222222-2222-2222-2222-222222222222"
 
 
 def test_list_conversations_filters_by_user(copilot_router):
@@ -100,7 +114,8 @@ def test_list_conversations_filters_by_user(copilot_router):
     copilot_router.copilot_service.list_conversations = fake_list
     r = TestClient(api).get("/api/copilot/conversations")
     assert r.status_code == 200
-    assert seen["user_id"] == 7
+    assert seen["user"]["id"] == 7
+    assert seen["user"]["active_workspace_id"] == "22222222-2222-2222-2222-222222222222"
 
 
 def test_send_message_requires_csrf(copilot_router):
@@ -279,7 +294,13 @@ def test_approve_action_happy_path(copilot_router):
     assert r.status_code == 200
     assert captured == {
         "conversation_id": "c1", "message_id": "m1",
-        "user": {"id": 7, "email": "u@example.com", "role": "admin"},
+        "user": {
+            "id": 7,
+            "email": "u@example.com",
+            "role": "admin",
+            "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+            "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+        },
         "ip": captured["ip"], "user_agent": captured["user_agent"],
     }
 

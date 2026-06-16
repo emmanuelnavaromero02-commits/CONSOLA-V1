@@ -44,6 +44,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service, auth, llm_client, mcp_registry, permissions
+from app.services.db_scope import scoped_db_for_user
 from app.services import memory_service  # v1.44.3 Tarea D — memory injection
 from app.services import lessons_service  # v1.45 copilot lessons injection
 from app.services import tool_manifest, tool_policy
@@ -855,7 +856,7 @@ async def _execute_approved_tool_calls(
     summarise the real result.
     """
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         await _persist_message(
             conn,
             conversation_id=conversation_id,
@@ -951,7 +952,7 @@ async def _execute_approved_tool_calls(
         })
 
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         await _persist_message(
             conn,
             conversation_id=conversation_id,
@@ -973,17 +974,17 @@ async def _execute_approved_tool_calls(
 # ── Public CRUD ─────────────────────────────────────────────────────────────
 
 async def create_conversation(
-    *, user_id: int, workspace_id: str | None = None, title: str | None = None,
+    *, user: dict, title: str | None = None,
 ) -> dict:
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
         row = await conn.fetchrow(
             """
             INSERT INTO conversations (user_id, workspace_id, title)
             VALUES ($1, $2::uuid, $3)
             RETURNING id, user_id, workspace_id, title, created_at, updated_at
             """,
-            user_id,
+            user["id"],
             workspace_id,
             (title or "Nueva conversación")[:200],
         )
@@ -991,32 +992,20 @@ async def create_conversation(
 
 
 async def list_conversations(
-    *, user_id: int, workspace_id: str | None = None, limit: int = 50,
+    *, user: dict, limit: int = 50,
 ) -> dict:
     pool = await auth.pool()
-    async with pool.acquire() as conn:
-        if workspace_id:
-            rows = await conn.fetch(
-                """
-                SELECT id, title, created_at, updated_at
-                FROM conversations
-                WHERE user_id = $1 AND workspace_id = $2::uuid AND archived_at IS NULL
-                ORDER BY updated_at DESC
-                LIMIT $3
-                """,
-                user_id, workspace_id, limit,
-            )
-        else:
-            rows = await conn.fetch(
-                """
-                SELECT id, title, created_at, updated_at
-                FROM conversations
-                WHERE user_id = $1 AND archived_at IS NULL
-                ORDER BY updated_at DESC
-                LIMIT $2
-                """,
-                user_id, limit,
-            )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
+        rows = await conn.fetch(
+            """
+            SELECT id, title, created_at, updated_at
+            FROM conversations
+            WHERE user_id = $1 AND workspace_id = $2::uuid AND archived_at IS NULL
+            ORDER BY updated_at DESC
+            LIMIT $3
+            """,
+            user["id"], workspace_id, limit,
+        )
     return {"conversations": [
         {**dict(r), "id": str(r["id"])} for r in rows
     ]}
@@ -1025,7 +1014,7 @@ async def list_conversations(
 async def get_conversation_messages(*, conversation_id: str, user: dict) -> dict:
     conversation_id = _safe_uuid(conversation_id, what="conversation_id")
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         conv = await _load_conversation(conn, conversation_id)
         if not conv:
             raise HTTPException(404, "conversation not found")
@@ -1233,7 +1222,7 @@ async def _run_loop(
         return result
 
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         history = await _load_history(conn, conversation_id)
     initial_len = len(history)
 
@@ -1309,7 +1298,7 @@ async def _run_loop(
             },
         )
         pool = await auth.pool()
-        async with pool.acquire() as conn:
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
             # R3 LLM-F2: don't reference X-Request-ID in the user-facing
             # text — the client can read it from the response header
             # (set by RequestIDMiddleware), but the conversation row is
@@ -1344,7 +1333,7 @@ async def _run_loop(
     pending_message_id: str | None = None
 
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         for m in new_chunk:
             role = m.get("role")
             content = m.get("content")
@@ -1584,7 +1573,7 @@ async def _persist_user_turn(
     conversation_id = _safe_uuid(conversation_id, what="conversation_id")
 
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         conv = await _load_conversation(conn, conversation_id)
         if not conv:
             raise HTTPException(404, "conversation not found")
@@ -1706,7 +1695,7 @@ async def approve_pending_action(
     message_id = _safe_uuid(message_id, what="message_id")
 
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         conv = await _load_conversation(conn, conversation_id)
         if not conv:
             raise HTTPException(404, "conversation not found")
@@ -1743,7 +1732,7 @@ async def approve_pending_action(
             raise HTTPException(403, f"permission required: {needed}")
 
     pool = await auth.pool()
-    async with pool.acquire() as conn:
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         # Atomic claim: marks the message as "consumed" so a concurrent
         # POST /approve cannot execute the destructive action twice. We
         # encode the claim in tool_results (previously NULL meant pending)

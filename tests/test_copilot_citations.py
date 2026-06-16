@@ -161,6 +161,9 @@ class _FakeDB:
         self.conversations = {}
         self.messages = []
 
+    def transaction(self):
+        return _Transaction()
+
     async def fetchrow(self, query, *args):
         q = " ".join(query.split())
         if q.startswith("SELECT id, user_id, workspace_id, title, created_at, updated_at FROM conversations"):
@@ -192,6 +195,11 @@ class _FakeDB:
 
     async def execute(self, *a, **kw):
         return None
+
+
+class _Transaction:
+    async def __aenter__(self): return self
+    async def __aexit__(self, *_): return False
 
 
 class _Acquire:
@@ -270,8 +278,14 @@ def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
         {"name": "sap_hcm___get_employees", "risk_level": "read"},
     ], fake_chat, fake_invoke)
 
-    admin = {"id": 1, "email": "a@example.com", "role": "admin"}
-    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    admin = {
+        "id": 1,
+        "email": "a@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    conv = _run(copilot_module.create_conversation(user=admin))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="cuantos empleados?",
         user=admin,
@@ -447,8 +461,14 @@ def test_warning_prepended_to_reply_in_turn_payload(copilot_module):
     _patch_full(copilot_module, db, tools=[],
                 fake_chat=_make_chat_replying("Aproximadamente 1500 empleados."),
                 fake_invoke=AsyncMock(return_value={}))
-    admin = {"id": 99, "email": "x@example.com", "role": "admin"}
-    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    admin = {
+        "id": 99,
+        "email": "x@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    conv = _run(copilot_module.create_conversation(user=admin))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="¿cuántos empleados?",
         user=admin,
