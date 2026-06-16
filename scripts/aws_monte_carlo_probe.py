@@ -182,10 +182,10 @@ SELECT
   '[]'::jsonb,
   'aws-probe-hash-' || rn
 FROM _mc_scope;
-SET ROLE omega_console;
-SELECT set_config('app.tenant_id', (SELECT tenant_id::text FROM _mc_scope WHERE rn=1), true);
-SELECT set_config('app.workspace_id', (SELECT workspace_id::text FROM _mc_scope WHERE rn=1), true);
-SELECT 'visible=' || COUNT(*)::text FROM monte_carlo_simulations WHERE source_id='aws-probe';
+	SELECT set_config('app.tenant_id', (SELECT tenant_id::text FROM _mc_scope WHERE rn=1), true);
+	SELECT set_config('app.workspace_id', (SELECT workspace_id::text FROM _mc_scope WHERE rn=1), true);
+	SET ROLE omega_console;
+	SELECT 'visible=' || COUNT(*)::text FROM monte_carlo_simulations WHERE source_id='aws-probe';
 RESET ROLE;
 ROLLBACK;
 " || true)"
