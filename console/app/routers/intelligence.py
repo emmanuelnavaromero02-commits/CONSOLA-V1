@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.dependencies import require_authenticated
 from app.services import intelligence_engine
 from app.services.intelligence import backtesting as intelligence_backtesting
+from app.services.intelligence import calibration_service
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import monte_carlo_service
 from app.services.intelligence.readiness import intelligence_readiness
@@ -139,6 +140,42 @@ class MonteCarloRunRequest(_StrictModel):
         return value
 
 
+class CalibrationObservationRequest(_StrictModel):
+    source_type: Literal[
+        "monte_carlo_simulation",
+        "decision_option",
+        "prediction_outcome",
+        "backtest_case",
+        "manual_fixture",
+    ]
+    source_id: str = Field(min_length=1, max_length=256)
+    predicted_metric: str = Field(min_length=1, max_length=120)
+    predicted_probability: float | None = Field(default=None, ge=0, le=1)
+    predicted_value: float | None = None
+    predicted_interval: dict | None = None
+    actual_status: Literal["hit", "miss", "partial", "unknown"]
+    actual_value: float | None = None
+    observed_at: str | None = Field(default=None, max_length=80)
+    horizon_days: int = Field(default=30, ge=1, le=3650)
+    model_version: str | None = Field(default=None, max_length=120)
+    calibration_group: str | None = Field(default=None, max_length=80)
+    evidence_refs: list[dict] = Field(default_factory=list, max_length=20)
+
+
+class CalibrationRecomputeRequest(_StrictModel):
+    calibration_group: str = Field(min_length=1, max_length=80)
+    model_version: str | None = Field(default=None, max_length=120)
+    source_type: Literal[
+        "monte_carlo_simulation",
+        "decision_option",
+        "prediction_outcome",
+        "backtest_case",
+        "manual_fixture",
+    ] | None = None
+    source_id: str | None = Field(default=None, max_length=256)
+    limit: int = Field(default=5000, ge=1, le=10_000)
+
+
 def _payload(model: BaseModel | None) -> dict:
     if model is None:
         return {}
@@ -228,6 +265,103 @@ async def intelligence_calibration_endpoint(
     return await intelligence_history.calibration_report(
         user,
         min_outcomes_required=min_outcomes_required,
+    )
+
+
+@router.post(
+    "/calibration/observe",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+@v1_router.post(
+    "/calibration/observe",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def intelligence_calibration_observe(
+    body: CalibrationObservationRequest,
+    user: dict = Depends(require_authenticated),
+):
+    return await calibration_service.observe(user, _payload(body))
+
+
+@router.post(
+    "/calibration/recompute",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+@v1_router.post(
+    "/calibration/recompute",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def intelligence_calibration_recompute(
+    body: CalibrationRecomputeRequest,
+    user: dict = Depends(require_authenticated),
+):
+    return await calibration_service.recompute(user, _payload(body))
+
+
+@router.get(
+    "/calibration/state",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+@v1_router.get(
+    "/calibration/state",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def intelligence_calibration_state(
+    calibration_group: str | None = Query(default=None, max_length=80),
+    model_version: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=50, ge=1, le=250),
+    user: dict = Depends(require_authenticated),
+):
+    return await calibration_service.get_state(
+        user,
+        calibration_group=calibration_group,
+        model_version=model_version,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/calibration/observations",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+@v1_router.get(
+    "/calibration/observations",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def intelligence_calibration_observations(
+    source_type: Literal[
+        "monte_carlo_simulation",
+        "decision_option",
+        "prediction_outcome",
+        "backtest_case",
+        "manual_fixture",
+    ]
+    | None = Query(default=None),
+    source_id: str | None = Query(default=None, max_length=256),
+    calibration_group: str | None = Query(default=None, max_length=80),
+    model_version: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=50, ge=1, le=250),
+    user: dict = Depends(require_authenticated),
+):
+    return await calibration_service.list_observations(
+        user,
+        source_type=source_type,
+        source_id=source_id,
+        calibration_group=calibration_group,
+        model_version=model_version,
+        limit=limit,
     )
 
 
