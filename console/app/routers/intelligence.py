@@ -9,6 +9,7 @@ from app.dependencies import require_authenticated
 from app.services import intelligence_engine
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import history as intelligence_history
+from app.services.intelligence import monte_carlo_service
 from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
@@ -99,6 +100,43 @@ class BacktestRunRequest(_StrictModel):
     historical_label_robust_z: float | None = Field(default=None, ge=0, le=100)
     limit: int = Field(default=5000, ge=1, le=10_000)
     result_limit: int = Field(default=100, ge=0, le=1000)
+
+
+class MonteCarloOptionRequest(_StrictModel):
+    option_id: str = Field(min_length=1, max_length=120)
+    label: str | None = Field(default=None, max_length=240)
+    input_variables: dict[str, dict] | None = None
+    assumptions: dict | None = None
+
+
+class MonteCarloRunRequest(_StrictModel):
+    source_type: Literal[
+        "signal", "decision_option", "manual_fixture", "backtest_case"
+    ]
+    source_id: str = Field(min_length=1, max_length=256)
+    horizon_days: int = Field(default=30, ge=1, le=365)
+    iterations: int = Field(default=1000, ge=1, le=10_000)
+    seed: int = Field(default=0, ge=0)
+    model_version: str | None = Field(default=None, max_length=80)
+    input_variables: dict[str, dict] = Field(default_factory=dict)
+    assumptions: dict = Field(default_factory=dict)
+    output_metric: Literal["net_value", "delta", "cost", "delay_days"] = "net_value"
+    breach_threshold: float | None = None
+    breach_direction: Literal["below", "above"] | None = None
+    evidence_refs: list[dict] = Field(default_factory=list, max_length=20)
+    options: list[MonteCarloOptionRequest] | None = Field(default=None, max_length=10)
+
+    @field_validator("input_variables")
+    @classmethod
+    def _validate_input_variables(cls, value: dict[str, dict]) -> dict[str, dict]:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("input_variables must be a non-empty object")
+        if len(value) > 50:
+            raise ValueError("input_variables cannot contain more than 50 entries")
+        forbidden = {"tenant_id", "workspace_id", "security_context"}
+        if forbidden & set(value):
+            raise ValueError("scope variables are not accepted")
+        return value
 
 
 def _payload(model: BaseModel | None) -> dict:
@@ -256,6 +294,63 @@ async def intelligence_backtest_results(
     return await intelligence_backtesting.get_backtest_results(
         user,
         backtest_id,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/monte-carlo/run",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+@v1_router.post(
+    "/monte-carlo/run",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def intelligence_monte_carlo_run(
+    body: MonteCarloRunRequest,
+    user: dict = Depends(require_authenticated),
+):
+    return await monte_carlo_service.run_simulation(user, _payload(body))
+
+
+@router.get(
+    "/monte-carlo/{simulation_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+@v1_router.get(
+    "/monte-carlo/{simulation_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def intelligence_monte_carlo_detail(
+    simulation_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    return await monte_carlo_service.get_simulation(user, simulation_id)
+
+
+@router.get("/monte-carlo", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get(
+    "/monte-carlo", dependencies=[Depends(require_permission("datasets.read"))]
+)
+async def intelligence_monte_carlo_list(
+    source_type: Literal[
+        "signal", "decision_option", "manual_fixture", "backtest_case"
+    ]
+    | None = Query(default=None),
+    source_id: str | None = Query(default=None, max_length=256),
+    limit: int = Query(default=50, ge=1, le=250),
+    user: dict = Depends(require_authenticated),
+):
+    return await monte_carlo_service.list_simulations(
+        user,
+        source_type=source_type,
+        source_id=source_id,
         limit=limit,
     )
 
