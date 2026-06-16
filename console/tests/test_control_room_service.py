@@ -1858,8 +1858,15 @@ async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeyp
         "ts": datetime(2026, 5, 20, 10, 2, 0),
     }
     pool = _TransactionalPool(
-        pool_fetchrow_side_effect=[None, _dry_run_action_run_row(item)],
-        conn_fetchrow_side_effect=[None, {"id": 42}, action_row, _execution_row(item)],
+        pool_fetchrow_side_effect=[],
+        conn_fetchrow_side_effect=[
+            None,
+            _dry_run_action_run_row(item),
+            None,
+            {"id": 42},
+            action_row,
+            _execution_row(item),
+        ],
     )
 
     with (
@@ -2549,8 +2556,15 @@ async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch)
         "ts": datetime(2026, 5, 20, 10, 2, 0),
     }
     pool = _TransactionalPool(
-        pool_fetchrow_side_effect=[None, _dry_run_action_run_row(item)],
-        conn_fetchrow_side_effect=[None, {"id": 42}, action_row, _execution_row(item)],
+        pool_fetchrow_side_effect=[],
+        conn_fetchrow_side_effect=[
+            None,
+            _dry_run_action_run_row(item),
+            None,
+            {"id": 42},
+            action_row,
+            _execution_row(item),
+        ],
     )
 
     with (

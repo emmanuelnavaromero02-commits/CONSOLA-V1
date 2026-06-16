@@ -26,6 +26,59 @@ REPLICON_USER = {
 }
 
 
+class _AsyncContext:
+    def __init__(self, value=None):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class _ScopedConnection:
+    def __init__(
+        self,
+        *,
+        fetch_return=None,
+        fetch_side_effect=None,
+        fetchrow_return=None,
+        fetchrow_side_effect=None,
+    ):
+        self.execute = AsyncMock()
+        self.fetch = AsyncMock(return_value=fetch_return)
+        if fetch_side_effect is not None:
+            self.fetch.side_effect = fetch_side_effect
+        self.fetchrow = AsyncMock(return_value=fetchrow_return)
+        if fetchrow_side_effect is not None:
+            self.fetchrow.side_effect = fetchrow_side_effect
+
+    def transaction(self):
+        return _AsyncContext()
+
+
+class _ScopedPool:
+    def __init__(self, connection: _ScopedConnection):
+        self.connection = connection
+
+    def acquire(self):
+        return _AsyncContext(self.connection)
+
+
+def _assert_scope_call(
+    conn: _ScopedConnection,
+    *,
+    tenant_id: str = TENANT_A,
+    workspace_id: str = WORKSPACE_A,
+    call_index: int = 0,
+):
+    args = conn.execute.await_args_list[call_index].args
+    assert "set_config('app.tenant_id'" in args[0]
+    assert "set_config('app.workspace_id'" in args[0]
+    assert args[1:] == (tenant_id, workspace_id)
+
+
 async def replicon_gold_fetcher(
     dataset: str, user: dict | None, limit: int
 ) -> list[dict]:
@@ -427,9 +480,8 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
             },
         },
     }
-    mock_pool = AsyncMock()
-    mock_pool.fetch = AsyncMock(
-        return_value=[
+    conn = _ScopedConnection(
+        fetch_return=[
             {
                 "tenant_id": TENANT_A,
                 "workspace_id": WORKSPACE_A,
@@ -460,11 +512,13 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
             }
         ]
     )
+    mock_pool = _ScopedPool(conn)
 
     with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
         items = await control_room_service._persisted_intelligence_items(REPLICON_USER)
 
-    sql, workspace_arg, tenant_arg = mock_pool.fetch.await_args.args
+    _assert_scope_call(conn)
+    sql, workspace_arg, tenant_arg = conn.fetch.await_args.args
     assert "tenant_id::text" in sql
     assert workspace_arg == WORKSPACE_A
     assert tenant_arg == TENANT_A
@@ -505,8 +559,8 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
             ]
         return []
 
-    mock_pool = AsyncMock()
-    mock_pool.fetch = AsyncMock(side_effect=scoped_fetch)
+    conn = _ScopedConnection(fetch_side_effect=scoped_fetch)
+    mock_pool = _ScopedPool(conn)
     user_b = {
         **REPLICON_USER,
         "active_tenant_id": TENANT_B,
@@ -521,8 +575,15 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
 
     assert [item["id"] for item in a_items] == ["intel:a"]
     assert b_items == []
-    assert mock_pool.fetch.await_args_list[0].args[1:] == (WORKSPACE_A, TENANT_A)
-    assert mock_pool.fetch.await_args_list[1].args[1:] == (WORKSPACE_B, TENANT_B)
+    _assert_scope_call(conn)
+    _assert_scope_call(
+        conn,
+        tenant_id=TENANT_B,
+        workspace_id=WORKSPACE_B,
+        call_index=1,
+    )
+    assert conn.fetch.await_args_list[0].args[1:] == (WORKSPACE_A, TENANT_A)
+    assert conn.fetch.await_args_list[1].args[1:] == (WORKSPACE_B, TENANT_B)
 
 
 @pytest.mark.asyncio
@@ -544,8 +605,8 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
             }
         ]
 
-    mock_pool = AsyncMock()
-    mock_pool.fetch = AsyncMock(side_effect=scoped_fetch)
+    conn = _ScopedConnection(fetch_side_effect=scoped_fetch)
+    mock_pool = _ScopedPool(conn)
     employee_user = {
         **REPLICON_USER,
         "id": 11,
@@ -557,7 +618,8 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
         items = await control_room_service._persisted_intelligence_items(employee_user)
 
     assert [item["id"] for item in items] == ["intel:owned"]
-    assert mock_pool.fetch.await_args.args[1:] == (WORKSPACE_A, TENANT_A, 11)
+    _assert_scope_call(conn)
+    assert conn.fetch.await_args.args[1:] == (WORKSPACE_A, TENANT_A, 11)
 
 
 @pytest.mark.asyncio
@@ -575,8 +637,8 @@ async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_
         assert owner_id == 11
         return None
 
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=scoped_fetchrow)
+    conn = _ScopedConnection(fetchrow_side_effect=scoped_fetchrow)
+    mock_pool = _ScopedPool(conn)
     employee_user = {
         **REPLICON_USER,
         "id": 11,
@@ -590,7 +652,8 @@ async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_
         )
 
     assert item is None
-    assert mock_pool.fetchrow.await_args.args[1:] == (
+    _assert_scope_call(conn)
+    assert conn.fetchrow.await_args.args[1:] == (
         WORKSPACE_A,
         "intel:other",
         TENANT_A,

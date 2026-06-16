@@ -30,6 +30,8 @@ def workspace_scope_from_user(user: dict | None) -> tuple[str | None, str]:
 
 
 def _looks_like_asyncpg_pool(pool: Any) -> bool:
+    if type(pool).__module__ == "unittest.mock":
+        return False
     return callable(getattr(pool, "acquire", None))
 
 

@@ -25,6 +25,7 @@ from app.middleware.request_id import request_id_var
 from app.services import audit_service, llm_client
 from app.services.security_context import build_security_context, rls_user_context, sign_security_context
 from app.services import tool_policy
+from app.services.db_scope import scoped_db
 
 logger = logging.getLogger(__name__)
 
@@ -154,18 +155,45 @@ async def close_pool() -> None:
 
 # ── Loaders ──────────────────────────────────────────────────────────────────
 
-async def load_agent(agent_id: str) -> Agent | None:
+async def _fetch_with_optional_scope(
+    pool: asyncpg.Pool,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    work,
+):
+    if workspace_id:
+        async with scoped_db(pool, tenant_id, workspace_id) as conn:
+            return await work(conn)
+    return await work(pool)
+
+
+async def load_agent(agent_id: str, user_context: dict | None = None) -> Agent | None:
     pool = await _get_pool()
-    row = await pool.fetchrow("SELECT * FROM agents WHERE id=$1", agent_id)
+    tenant_id, workspace_id = _scope_parts(user_context)
+
+    async def _load(conn):
+        return await conn.fetchrow("SELECT * FROM agents WHERE id=$1", agent_id)
+
+    row = await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _load)
     return Agent.from_row(row) if row else None
 
 
-async def load_agent_by_slug(cartridge_id: str, slug: str) -> Agent | None:
+async def load_agent_by_slug(
+    cartridge_id: str,
+    slug: str,
+    user_context: dict | None = None,
+) -> Agent | None:
     pool = await _get_pool()
-    row = await pool.fetchrow(
-        "SELECT * FROM agents WHERE cartridge_id=$1 AND slug=$2",
-        cartridge_id, slug,
-    )
+    tenant_id, workspace_id = _scope_parts(user_context)
+
+    async def _load(conn):
+        return await conn.fetchrow(
+            "SELECT * FROM agents WHERE cartridge_id=$1 AND slug=$2",
+            cartridge_id,
+            slug,
+        )
+
+    row = await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _load)
     return Agent.from_row(row) if row else None
 
 
@@ -690,11 +718,18 @@ async def _start_run(
     pool = await _get_pool()
     tenant_id, workspace_id = _scope_parts(user, agent)
     if await _agent_runs_have_scope_columns():
-        row = await pool.fetchrow(
-            "INSERT INTO agent_runs (agent_id, user_id, input_messages, tenant_id, workspace_id) "
-            "VALUES ($1, $2, $3::jsonb, $4::uuid, $5::uuid) RETURNING id",
-            agent_id, user_id, json.dumps(input_messages), tenant_id, workspace_id,
-        )
+        async def _insert(conn):
+            return await conn.fetchrow(
+                "INSERT INTO agent_runs (agent_id, user_id, input_messages, tenant_id, workspace_id) "
+                "VALUES ($1, $2, $3::jsonb, $4::uuid, $5::uuid) RETURNING id",
+                agent_id,
+                user_id,
+                json.dumps(input_messages),
+                tenant_id,
+                workspace_id,
+            )
+
+        row = await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _insert)
     else:
         row = await pool.fetchrow(
             "INSERT INTO agent_runs (agent_id, user_id, input_messages) "
@@ -706,13 +741,24 @@ async def _start_run(
 
 async def _finish_run(run_id: int, *, status: str, output_text: str = "",
                       tool_calls: list[dict] | None = None,
-                      error_message: str | None = None):
+                      error_message: str | None = None,
+                      user: dict | None = None,
+                      agent: Agent | None = None):
     pool = await _get_pool()
-    await pool.execute(
-        "UPDATE agent_runs SET finished_at=NOW(), status=$2, output_text=$3, "
-        "tool_calls=$4::jsonb, error_message=$5 WHERE id=$1",
-        run_id, status, output_text, json.dumps(tool_calls or []), error_message,
-    )
+    tenant_id, workspace_id = _scope_parts(user, agent)
+
+    async def _update(conn):
+        return await conn.execute(
+            "UPDATE agent_runs SET finished_at=NOW(), status=$2, output_text=$3, "
+            "tool_calls=$4::jsonb, error_message=$5 WHERE id=$1",
+            run_id,
+            status,
+            output_text,
+            json.dumps(tool_calls or []),
+            error_message,
+        )
+
+    await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _update)
 
 
 # ── Public entry ────────────────────────────────────────────────────────────
@@ -784,7 +830,7 @@ async def run(
         )
     except _asyncio.CancelledError:
         await _finish_run(run_id, status="cancelled", tool_calls=tool_calls_log,
-                          error_message="Cancelled")
+                          error_message="Cancelled", user=user, agent=agent)
         await audit_service.record_event(
             user_id=user_id,
             email=user.get("email") if user else "agent-runner@omega.local",
@@ -798,7 +844,7 @@ async def run(
         raise
     except Exception as exc:
         await _finish_run(run_id, status="error", tool_calls=tool_calls_log,
-                          error_message=f"{type(exc).__name__}: {exc}")
+                          error_message=f"{type(exc).__name__}: {exc}", user=user, agent=agent)
         await audit_service.record_event(
             user_id=user_id,
             email=user.get("email") if user else "agent-runner@omega.local",
@@ -811,8 +857,14 @@ async def run(
         )
         raise
 
-    await _finish_run(run_id, status="ok", output_text=reply or "",
-                      tool_calls=tool_calls_log)
+    await _finish_run(
+        run_id,
+        status="ok",
+        output_text=reply or "",
+        tool_calls=tool_calls_log,
+        user=user,
+        agent=agent,
+    )
     await audit_service.record_event(
         user_id=user_id,
         email=user.get("email") if user else "agent-runner@omega.local",

@@ -345,7 +345,9 @@ async def invoke_watchdog(
     if agent_slug:
         from app.services import agent_runtime
         agent = await agent_runtime.load_agent_by_slug(
-            cartridge_id, agent_slug,
+            cartridge_id,
+            agent_slug,
+            user_context=user,
         )
         if agent is None:
             return {

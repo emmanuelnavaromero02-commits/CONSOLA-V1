@@ -4,12 +4,15 @@ as plain dicts for the HTTP / MCP layers.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 import os
 import uuid
-from typing import Any
+from typing import Any, AsyncIterator
 
 import asyncpg
+
+from app.services.db_scope import SET_SCOPE_SQL
 
 
 # ── Connection helper ──────────────────────────────────────────────────────
@@ -17,6 +20,21 @@ import asyncpg
 async def _pg():
     dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
     return await asyncpg.connect(dsn)
+
+
+@asynccontextmanager
+async def _scoped_pg(user_context: dict | None = None) -> AsyncIterator[asyncpg.Connection]:
+    conn = await _pg()
+    tenant_id, workspace_id = _tenant_workspace(user_context)
+    try:
+        if workspace_id:
+            async with conn.transaction():
+                await conn.execute(SET_SCOPE_SQL, tenant_id or "", workspace_id)
+                yield conn
+        else:
+            yield conn
+    finally:
+        await conn.close()
 
 
 # ── Serialization ──────────────────────────────────────────────────────────
@@ -138,8 +156,7 @@ async def list_agents(cartridge_id: str | None = None,
     if not include_inactive:
         where.append("is_active = TRUE")
 
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         if user_context and not _is_platform_admin(user_context):
             allowed = sorted(_allowed_cartridges(user_context) or set())
             if not allowed:
@@ -157,30 +174,26 @@ async def list_agents(cartridge_id: str | None = None,
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY cartridge_id, slug"
         rows = await conn.fetch(sql, *params)
-    finally:
-        await conn.close()
     return [_row_to_dict(r) for r in rows]
 
 
 async def get_agent(agent_id: str, user_context: dict | None = None) -> dict | None:
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         row = await conn.fetchrow("SELECT * FROM agents WHERE id=$1::uuid", agent_id)
-    finally:
-        await conn.close()
     agent = _row_to_dict(row)
     return agent if _can_view(agent, user_context) else None
 
 
-async def get_agent_by_slug(cartridge_id: str, slug: str) -> dict | None:
-    conn = await _pg()
-    try:
+async def get_agent_by_slug(
+    cartridge_id: str,
+    slug: str,
+    user_context: dict | None = None,
+) -> dict | None:
+    async with _scoped_pg(user_context) as conn:
         row = await conn.fetchrow(
             "SELECT * FROM agents WHERE cartridge_id=$1 AND slug=$2",
             cartridge_id, slug,
         )
-    finally:
-        await conn.close()
     return _row_to_dict(row)
 
 
@@ -193,8 +206,7 @@ async def create_agent(payload: dict, owner_user_id: int | None = None, user_con
     _require_allowed_cartridge(payload, user_context)
 
     new_id = uuid.uuid4()
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         scoped = await _has_scope_columns(conn)
         tenant_id, workspace_id = _tenant_workspace(user_context)
         if user_context and not _is_platform_admin(user_context) and not (scoped and tenant_id and workspace_id):
@@ -240,8 +252,6 @@ async def create_agent(payload: dict, owner_user_id: int | None = None, user_con
             """,
             *params,
         )
-    finally:
-        await conn.close()
     return _row_to_dict(row)
 
 
@@ -307,11 +317,8 @@ async def update_agent(agent_id: str, patch: dict, user_context: dict | None = N
     params.append(agent_id)
 
     sql = f"UPDATE agents SET {', '.join(sets)} WHERE id = ${len(params)}::uuid RETURNING *"
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         row = await conn.fetchrow(sql, *params)
-    finally:
-        await conn.close()
     return _row_to_dict(row) if _can_view(_row_to_dict(row), user_context) else None
 
 
@@ -321,11 +328,8 @@ async def delete_agent(agent_id: str, user_context: dict | None = None) -> bool:
         return False
     if not _can_manage(current, user_context):
         raise PermissionError("agent is read-only for this workspace")
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         res = await conn.execute("DELETE FROM agents WHERE id=$1::uuid", agent_id)
-    finally:
-        await conn.close()
     return res.endswith(" 1")
 
 
@@ -334,8 +338,7 @@ async def delete_agent(agent_id: str, user_context: dict | None = None) -> bool:
 async def list_runs(agent_id: str, limit: int = 20, user_context: dict | None = None) -> list[dict]:
     if not await get_agent(agent_id, user_context=user_context):
         return []
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         rows = await conn.fetch(
             "SELECT id, started_at, finished_at, status, "
             "       length(output_text) AS out_chars, "
@@ -345,8 +348,6 @@ async def list_runs(agent_id: str, limit: int = 20, user_context: dict | None = 
             "ORDER BY started_at DESC LIMIT $2",
             agent_id, limit,
         )
-    finally:
-        await conn.close()
     return [
         {
             "id":            r["id"],
@@ -361,16 +362,13 @@ async def list_runs(agent_id: str, limit: int = 20, user_context: dict | None = 
 
 
 async def get_run(run_id: int, user_context: dict | None = None) -> dict | None:
-    conn = await _pg()
-    try:
+    async with _scoped_pg(user_context) as conn:
         row = await conn.fetchrow(
             "SELECT id, agent_id, user_id, started_at, finished_at, status, "
             "       input_messages, output_text, tool_calls, error_message "
             "FROM agent_runs WHERE id=$1",
             run_id,
         )
-    finally:
-        await conn.close()
     if not row:
         return None
     if not await get_agent(str(row["agent_id"]), user_context=user_context):

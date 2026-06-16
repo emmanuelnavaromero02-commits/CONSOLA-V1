@@ -146,7 +146,7 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     token = request.headers.get("X-Agent-Runner-Token", "")
     if not _AGENT_RUNNER_TOKEN or not secrets.compare_digest(token, _AGENT_RUNNER_TOKEN):
         raise HTTPException(401, "invalid runner token")
-    agent = await _agent_runtime.load_agent(agent_id)
+    agent = await _agent_runtime.load_agent(agent_id, user_context=user)
     if not agent:
         raise HTTPException(404, "agent not found")
     extra = getattr(agent, "extra", None) or {}
