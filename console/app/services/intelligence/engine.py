@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service
+from app.services.intelligence import calibration, calibration_service
 from app.services.intelligence.baseline import build_metric_artifacts
 from app.services.intelligence.contracts import load_contracts
 from app.services.intelligence.external import list_sources, patch_source, run_sources
@@ -44,6 +45,47 @@ def _requested_horizons(body: dict[str, Any] | None) -> list[int] | None:
     return sorted(output)
 
 
+def _requested_calibration_groups(
+    contracts: list[dict[str, Any]],
+    metric_filter: set[str],
+) -> set[str]:
+    groups: set[str] = set()
+    for contract in contracts:
+        source_system = str(contract.get("cartridge") or "")
+        metrics = contract.get("metrics") if isinstance(contract.get("metrics"), list) else []
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+            metric_id = str(metric.get("id") or "").strip()
+            if metric_filter and metric_id not in metric_filter:
+                continue
+            groups.update(
+                calibration.live_calibration_groups(
+                    source_system=source_system,
+                    metric_id=metric_id,
+                )
+            )
+    return groups
+
+
+async def _load_live_calibration_states(
+    user: dict,
+    contracts: list[dict[str, Any]],
+    metric_filter: set[str],
+) -> dict[str, dict[str, Any]]:
+    groups = _requested_calibration_groups(contracts, metric_filter)
+    if not groups:
+        return {}
+    try:
+        return await calibration_service.get_state_map_for_live_calibration(
+            user,
+            groups,
+            model_version=calibration.MODEL_VERSION,
+        )
+    except Exception:
+        return {}
+
+
 async def run_intelligence(
     user: dict,
     body: dict[str, Any] | None = None,
@@ -70,6 +112,7 @@ async def run_intelligence(
     run_mode = normalize_run_mode((body or {}).get("run_mode") or (body or {}).get("mode"))
     horizons = _requested_horizons(body)
     fetch = fetcher or query_intelligence_dataset_rows
+    calibration_states = await _load_live_calibration_states(user, contracts, metric_filter)
     artifacts: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     should_persist = persist and not dry_run
@@ -111,6 +154,7 @@ async def run_intelligence(
                 rows,
                 include_external=include_external,
                 horizon_days=horizons,
+                calibration_states=calibration_states,
             )
             artifacts.extend(metric_artifacts)
             skipped.extend(metric_skipped)

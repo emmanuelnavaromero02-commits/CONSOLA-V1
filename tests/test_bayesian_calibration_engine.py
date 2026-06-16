@@ -92,3 +92,164 @@ def test_invalid_inputs_fail_closed():
         )
     with pytest.raises(calibration.CalibrationValidationError):
         calibration.apply_observation(None, _payload(predicted_metric=""))
+
+
+def test_live_calibration_without_state_returns_raw_probability():
+    result = calibration.apply_calibration_to_probability(
+        0.72,
+        None,
+        calibration_group="source_type:hubspot:forecast_weighted:v1",
+    )
+
+    assert result["raw_probability"] == pytest.approx(0.72)
+    assert result["calibrated_probability"] == pytest.approx(0.72)
+    assert result["calibration_applied"] is False
+    assert result["calibration_reason"] == "missing_calibration_state"
+    assert result["disclaimer"] == calibration.RAW_HEURISTIC_DISCLAIMER
+
+
+def test_live_calibration_requires_enough_samples():
+    state = {
+        "calibration_group": "source_type:hubspot:forecast_weighted:v1",
+        "posterior": {"alpha": 8.0, "beta": 2.0, "mean": 0.8},
+        "metrics": {"sample_count": 4, "confidence_score": 1.0},
+    }
+
+    result = calibration.apply_calibration_to_probability(0.4, state, min_samples=10)
+
+    assert result["calibrated_probability"] == pytest.approx(0.4)
+    assert result["calibration_applied"] is False
+    assert result["calibration_reason"] == "insufficient_calibration_data"
+    assert result["posterior_mean"] == pytest.approx(0.8)
+
+
+def test_live_calibration_moves_probability_up_down_and_respects_max_adjustment():
+    high_state = {
+        "calibration_group": "source_type:hubspot:forecast_weighted:v1",
+        "posterior": {"alpha": 30.0, "beta": 2.0, "mean": 0.9375},
+        "metrics": {"sample_count": 50, "confidence_score": 1.0},
+    }
+    low_state = {
+        "calibration_group": "source_type:hubspot:forecast_weighted:v1",
+        "posterior": {"alpha": 2.0, "beta": 30.0, "mean": 0.0625},
+        "metrics": {"sample_count": 50, "confidence_score": 1.0},
+    }
+
+    raised = calibration.apply_calibration_to_probability(
+        0.5,
+        high_state,
+        max_adjustment=0.2,
+    )
+    lowered = calibration.apply_calibration_to_probability(
+        0.5,
+        low_state,
+        max_adjustment=0.2,
+    )
+
+    assert raised["calibration_applied"] is True
+    assert raised["calibrated_probability"] == pytest.approx(0.7)
+    assert lowered["calibration_applied"] is True
+    assert lowered["calibrated_probability"] == pytest.approx(0.3)
+
+
+def test_live_calibration_confidence_score_affects_weight():
+    high_confidence = {
+        "calibration_group": "source_type:hubspot:forecast_weighted:v1",
+        "posterior": {"alpha": 18.0, "beta": 2.0, "mean": 0.9},
+        "metrics": {"sample_count": 10, "confidence_score": 1.0},
+    }
+    low_confidence = {
+        **high_confidence,
+        "metrics": {"sample_count": 10, "confidence_score": 0.4},
+    }
+
+    strong = calibration.apply_calibration_to_probability(
+        0.5,
+        high_confidence,
+        max_adjustment=0.5,
+    )
+    weak = calibration.apply_calibration_to_probability(
+        0.5,
+        low_confidence,
+        max_adjustment=0.5,
+    )
+
+    assert strong["weight"] > weak["weight"]
+    assert strong["calibrated_probability"] > weak["calibrated_probability"]
+
+
+def test_live_calibration_rejects_invalid_probability():
+    with pytest.raises(calibration.CalibrationValidationError):
+        calibration.apply_calibration_to_probability(1.2, None)
+
+
+def test_partial_pooling_uses_fixed_prior_without_sufficient_parent():
+    assert calibration.derive_partial_pooling_prior(None) == {
+        "alpha": 1.0,
+        "beta": 1.0,
+        "prior_source": "fixed",
+        "partial_pooling_applied": False,
+    }
+
+    parent = {
+        "calibration_group": "global:forecast_weighted:v1",
+        "posterior": {"alpha": 5.0, "beta": 5.0, "mean": 0.5},
+        "metrics": {"sample_count": 4},
+    }
+    prior = calibration.derive_partial_pooling_prior(parent, min_parent_samples=5)
+
+    assert prior["prior_source"] == "fixed"
+    assert prior["partial_pooling_applied"] is False
+
+
+def test_partial_pooling_derives_capped_prior_from_parent():
+    parent = {
+        "calibration_group": "global:forecast_weighted:v1",
+        "posterior": {"alpha": 71.0, "beta": 31.0, "mean": 71 / 102},
+        "metrics": {"sample_count": 100},
+    }
+
+    prior = calibration.derive_partial_pooling_prior(
+        parent,
+        parent_calibration_group="global:forecast_weighted:v1",
+        prior_source="global",
+        max_parent_prior_strength=20,
+    )
+
+    assert prior["partial_pooling_applied"] is True
+    assert prior["prior_source"] == "global"
+    assert prior["parent_sample_count"] == 100
+    assert prior["derived_prior_alpha"] == pytest.approx(14.921569)
+    assert prior["derived_prior_beta"] == pytest.approx(7.078431)
+
+
+def test_recompute_state_with_partial_pooling_prior_is_reproducible():
+    parent = {
+        "calibration_group": "global:forecast_weighted:v1",
+        "posterior": {"alpha": 9.0, "beta": 3.0, "mean": 0.75},
+        "metrics": {"sample_count": 12},
+    }
+    prior = calibration.derive_partial_pooling_prior(
+        parent,
+        parent_calibration_group="global:forecast_weighted:v1",
+        prior_source="global",
+    )
+    observations = [_payload(actual_status="hit")]
+
+    first = calibration.recompute_state(
+        observations,
+        calibration_group="source_type:hubspot:forecast_weighted:v1",
+        model_version="cal.test.v1",
+        prior=prior,
+    )
+    second = calibration.recompute_state(
+        observations,
+        calibration_group="source_type:hubspot:forecast_weighted:v1",
+        model_version="cal.test.v1",
+        prior=prior,
+    )
+
+    assert first["posterior"] == second["posterior"]
+    assert first["metrics"] == second["metrics"]
+    assert first["metrics"]["partial_pooling_applied"] is True
+    assert first["metrics"]["parent_calibration_group"] == "global:forecast_weighted:v1"

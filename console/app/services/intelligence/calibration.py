@@ -12,6 +12,14 @@ from typing import Any
 MODEL_VERSION = "bayesian_calibration.v1"
 DEFAULT_PRIOR_ALPHA = 1.0
 DEFAULT_PRIOR_BETA = 1.0
+DEFAULT_MIN_SAMPLES_FOR_CALIBRATION = 10
+DEFAULT_MAX_ADJUSTMENT = 0.20
+DEFAULT_MIN_PARENT_SAMPLES = 5
+DEFAULT_MAX_PARENT_PRIOR_STRENGTH = 20
+LIVE_CALIBRATION_GROUP_VERSION = "v1"
+MAX_CALIBRATION_GROUP_LENGTH = 80
+RAW_HEURISTIC_DISCLAIMER = "raw heuristic probability; insufficient calibration data"
+CALIBRATED_DISCLAIMER = "calibrated with Bayesian posterior"
 STATUS_VALUES = {"hit", "miss", "partial", "unknown"}
 
 
@@ -80,6 +88,17 @@ def _probability(value: Any) -> float | None:
     return parsed
 
 
+def _required_probability(value: Any, *, field: str = "raw_probability") -> float:
+    parsed = _num(value, field=field, required=True)
+    if parsed is None or parsed < 0 or parsed > 1:
+        raise CalibrationValidationError(f"{field} must be between 0 and 1")
+    return parsed
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
 def _status(value: Any) -> str:
     status = str(value or "").strip().lower()
     if status not in STATUS_VALUES:
@@ -131,16 +150,51 @@ def _posterior_payload(alpha: float, beta: float) -> dict[str, float | dict[str,
     }
 
 
+def _fixed_prior() -> dict[str, Any]:
+    return {
+        "alpha": DEFAULT_PRIOR_ALPHA,
+        "beta": DEFAULT_PRIOR_BETA,
+        "prior_source": "fixed",
+        "partial_pooling_applied": False,
+    }
+
+
+def _normalize_prior(prior: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = dict(prior or _fixed_prior())
+    alpha = float(payload.get("alpha", DEFAULT_PRIOR_ALPHA))
+    beta = float(payload.get("beta", DEFAULT_PRIOR_BETA))
+    if alpha <= 0 or beta <= 0:
+        raise CalibrationValidationError("prior alpha/beta must be positive")
+    payload["alpha"] = round(alpha, 6)
+    payload["beta"] = round(beta, 6)
+    payload.setdefault("prior_source", "fixed")
+    payload.setdefault("partial_pooling_applied", False)
+    return payload
+
+
+def _pooling_metrics(prior: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "partial_pooling_applied": bool(prior.get("partial_pooling_applied")),
+        "parent_calibration_group": prior.get("parent_calibration_group"),
+        "parent_sample_count": int(prior.get("parent_sample_count") or 0),
+        "derived_prior_alpha": prior.get("derived_prior_alpha"),
+        "derived_prior_beta": prior.get("derived_prior_beta"),
+        "prior_source": prior.get("prior_source") or "fixed",
+    }
+
+
 def empty_state(
     *,
     calibration_group: str,
     model_version: str = MODEL_VERSION,
+    prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    posterior = _posterior_payload(DEFAULT_PRIOR_ALPHA, DEFAULT_PRIOR_BETA)
+    prior_payload = _normalize_prior(prior)
+    posterior = _posterior_payload(float(prior_payload["alpha"]), float(prior_payload["beta"]))
     return {
         "calibration_group": calibration_group,
         "model_version": model_version,
-        "prior": {"alpha": DEFAULT_PRIOR_ALPHA, "beta": DEFAULT_PRIOR_BETA},
+        "prior": prior_payload,
         "posterior": posterior,
         "metrics": {
             "sample_count": 0,
@@ -163,6 +217,7 @@ def empty_state(
             "coverage_p10_p90": None,
             "calibration_error": None,
             "confidence_score": 0.0,
+            **_pooling_metrics(prior_payload),
         },
     }
 
@@ -240,19 +295,244 @@ def recompute_state(
     *,
     calibration_group: str,
     model_version: str = MODEL_VERSION,
+    prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    state = empty_state(calibration_group=calibration_group, model_version=model_version)
+    state = empty_state(
+        calibration_group=calibration_group,
+        model_version=model_version,
+        prior=prior,
+    )
     last_result: dict[str, Any] | None = None
     for observation in observations:
         last_result = apply_observation(state, observation)
         state = last_result["state"]
     if last_result is None:
         state["reproducibility_hash"] = reproducibility_hash(
-            {"model_version": MODEL_VERSION, "state": state}
+            {"model_version": model_version, "state": state}
         )
     else:
         state["reproducibility_hash"] = last_result["reproducibility_hash"]
     return state
+
+
+def _state_metrics(state: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(state, dict):
+        return {}
+    metrics = state.get("metrics")
+    return metrics if isinstance(metrics, dict) else {}
+
+
+def _state_posterior(state: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(state, dict):
+        return {}
+    posterior = state.get("posterior")
+    return posterior if isinstance(posterior, dict) else {}
+
+
+def derive_partial_pooling_prior(
+    parent_state: dict[str, Any] | None,
+    *,
+    parent_calibration_group: str | None = None,
+    prior_source: str = "global",
+    min_parent_samples: int = DEFAULT_MIN_PARENT_SAMPLES,
+    max_parent_prior_strength: int = DEFAULT_MAX_PARENT_PRIOR_STRENGTH,
+) -> dict[str, Any]:
+    metrics = _state_metrics(parent_state)
+    sample_count = int(metrics.get("sample_count") or 0)
+    if sample_count < min_parent_samples:
+        return _fixed_prior()
+    posterior = _state_posterior(parent_state)
+    alpha = float(posterior.get("alpha") or 0.0)
+    beta = float(posterior.get("beta") or 0.0)
+    total = alpha + beta
+    if alpha <= 0 or beta <= 0 or total <= 0:
+        return _fixed_prior()
+    parent_mean = float(posterior.get("mean") or (alpha / total))
+    parent_mean = _clamp(parent_mean, 0.0, 1.0)
+    strength = min(sample_count, max(0, int(max_parent_prior_strength)))
+    derived_alpha = 1.0 + parent_mean * strength
+    derived_beta = 1.0 + (1.0 - parent_mean) * strength
+    return {
+        "alpha": round(derived_alpha, 6),
+        "beta": round(derived_beta, 6),
+        "prior_source": prior_source,
+        "partial_pooling_applied": True,
+        "parent_calibration_group": parent_calibration_group
+        or str((parent_state or {}).get("calibration_group") or ""),
+        "parent_sample_count": sample_count,
+        "parent_posterior_mean": round(parent_mean, 6),
+        "max_parent_prior_strength": int(max_parent_prior_strength),
+        "derived_prior_alpha": round(derived_alpha, 6),
+        "derived_prior_beta": round(derived_beta, 6),
+    }
+
+
+def apply_calibration_to_probability(
+    raw_probability: Any,
+    calibration_state: dict[str, Any] | None,
+    *,
+    min_samples: int = DEFAULT_MIN_SAMPLES_FOR_CALIBRATION,
+    max_adjustment: float = DEFAULT_MAX_ADJUSTMENT,
+    calibration_group: str | None = None,
+) -> dict[str, Any]:
+    raw = _required_probability(raw_probability)
+    group = calibration_group or (
+        str(calibration_state.get("calibration_group"))
+        if isinstance(calibration_state, dict) and calibration_state.get("calibration_group")
+        else None
+    )
+    if not calibration_state:
+        return _calibration_metadata(
+            raw=raw,
+            calibrated=raw,
+            group=group,
+            sample_count=0,
+            calibration_applied=False,
+            reason="missing_calibration_state",
+            disclaimer=RAW_HEURISTIC_DISCLAIMER,
+            max_adjustment=max_adjustment,
+        )
+
+    metrics = _state_metrics(calibration_state)
+    posterior = _state_posterior(calibration_state)
+    sample_count = int(metrics.get("sample_count") or 0)
+    confidence_score = _clamp(float(metrics.get("confidence_score") or 0.0), 0.0, 1.0)
+    posterior_mean = posterior.get("mean")
+    posterior_alpha = posterior.get("alpha")
+    posterior_beta = posterior.get("beta")
+    if sample_count < min_samples or posterior_mean is None:
+        return _calibration_metadata(
+            raw=raw,
+            calibrated=raw,
+            group=group,
+            sample_count=sample_count,
+            posterior=posterior,
+            metrics=metrics,
+            confidence_score=confidence_score,
+            calibration_applied=False,
+            reason="insufficient_calibration_data",
+            disclaimer=RAW_HEURISTIC_DISCLAIMER,
+            max_adjustment=max_adjustment,
+        )
+
+    posterior_value = _clamp(float(posterior_mean), 0.0, 1.0)
+    sample_factor = _clamp(sample_count / max(float(min_samples * 2), 1.0), 0.0, 1.0)
+    weight = _clamp(sample_factor * confidence_score, 0.0, 1.0)
+    if weight <= 0:
+        return _calibration_metadata(
+            raw=raw,
+            calibrated=raw,
+            group=group,
+            sample_count=sample_count,
+            posterior=posterior,
+            metrics=metrics,
+            confidence_score=confidence_score,
+            calibration_applied=False,
+            reason="zero_calibration_weight",
+            disclaimer=RAW_HEURISTIC_DISCLAIMER,
+            max_adjustment=max_adjustment,
+        )
+    blended = raw * (1.0 - weight) + posterior_value * weight
+    max_delta = abs(float(max_adjustment))
+    delta = _clamp(blended - raw, -max_delta, max_delta)
+    calibrated = _clamp(raw + delta, 0.0, 1.0)
+    return _calibration_metadata(
+        raw=raw,
+        calibrated=calibrated,
+        group=group,
+        sample_count=sample_count,
+        posterior={
+            "mean": posterior_value,
+            "alpha": posterior_alpha,
+            "beta": posterior_beta,
+        },
+        metrics=metrics,
+        confidence_score=confidence_score,
+        weight=weight,
+        calibration_applied=True,
+        reason="bayesian_posterior_applied",
+        disclaimer=CALIBRATED_DISCLAIMER,
+        max_adjustment=max_adjustment,
+    )
+
+
+def _calibration_metadata(
+    *,
+    raw: float,
+    calibrated: float,
+    group: str | None,
+    sample_count: int,
+    calibration_applied: bool,
+    reason: str,
+    disclaimer: str,
+    max_adjustment: float,
+    posterior: dict[str, Any] | None = None,
+    metrics: dict[str, Any] | None = None,
+    confidence_score: float | None = None,
+    weight: float = 0.0,
+) -> dict[str, Any]:
+    posterior = posterior or {}
+    metrics = metrics or {}
+    return {
+        "raw_probability": round(raw, 6),
+        "calibrated_probability": round(calibrated, 6),
+        "calibration_applied": bool(calibration_applied),
+        "calibration_reason": reason,
+        "calibration_group": group,
+        "calibration_source": "bayesian_posterior" if calibration_applied else "raw_heuristic",
+        "sample_count": int(sample_count),
+        "posterior_mean": posterior.get("mean"),
+        "posterior_alpha": posterior.get("alpha"),
+        "posterior_beta": posterior.get("beta"),
+        "confidence_score": round(float(confidence_score or 0.0), 6),
+        "weight": round(float(weight or 0.0), 6),
+        "max_adjustment": round(abs(float(max_adjustment)), 6),
+        "partial_pooling_applied": bool(metrics.get("partial_pooling_applied")),
+        "parent_calibration_group": metrics.get("parent_calibration_group"),
+        "parent_sample_count": int(metrics.get("parent_sample_count") or 0),
+        "prior_source": metrics.get("prior_source") or "fixed",
+        "disclaimer": disclaimer,
+    }
+
+
+def _group_component(value: Any) -> str:
+    text = str(value or "unknown").strip().lower()
+    cleaned = []
+    for char in text:
+        if char.isalnum() or char in {"_", "-"}:
+            cleaned.append(char)
+        else:
+            cleaned.append("_")
+    return "".join(cleaned).strip("_") or "unknown"
+
+
+def _bounded_group(prefix: str, *components: Any) -> str:
+    raw = ":".join([prefix, *(_group_component(item) for item in components)])
+    if len(raw) <= MAX_CALIBRATION_GROUP_LENGTH:
+        return raw
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+    keep = MAX_CALIBRATION_GROUP_LENGTH - len(prefix) - len(digest) - 2
+    body = "_".join(_group_component(item) for item in components)
+    return f"{prefix}:{body[:keep].rstrip('_')}:{digest}"
+
+
+def global_calibration_group(metric_id: Any) -> str:
+    return _bounded_group("global", metric_id, LIVE_CALIBRATION_GROUP_VERSION)
+
+
+def source_type_calibration_group(source_system: Any, metric_id: Any) -> str:
+    return _bounded_group(
+        "source_type",
+        source_system,
+        metric_id,
+        LIVE_CALIBRATION_GROUP_VERSION,
+    )
+
+
+def live_calibration_groups(*, source_system: Any, metric_id: Any) -> list[str]:
+    source_group = source_type_calibration_group(source_system, metric_id)
+    global_group = global_calibration_group(metric_id)
+    return [source_group, global_group] if source_group != global_group else [global_group]
 
 
 def _update_counts(metrics: dict[str, Any], status: str) -> None:
@@ -339,6 +619,12 @@ def _public_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "coverage_p10_p90",
         "calibration_error",
         "confidence_score",
+        "partial_pooling_applied",
+        "parent_calibration_group",
+        "parent_sample_count",
+        "derived_prior_alpha",
+        "derived_prior_beta",
+        "prior_source",
     )
     return {key: metrics.get(key) for key in keys}
 

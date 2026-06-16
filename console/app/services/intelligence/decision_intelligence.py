@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.intelligence import calibration
 from app.services.intelligence.time_series import TimeSeriesResult
 from app.services.intelligence.utils import num
 
@@ -121,6 +122,27 @@ class TimeSeriesAnalysis(_StrictModel):
     residual: TimeSeriesResidual
 
 
+class CalibrationMetadata(_StrictModel):
+    raw_probability: float = Field(ge=0, le=1)
+    calibrated_probability: float = Field(ge=0, le=1)
+    calibration_applied: bool
+    calibration_reason: str
+    calibration_group: str | None = None
+    calibration_source: str
+    sample_count: int = Field(ge=0)
+    posterior_mean: float | None = None
+    posterior_alpha: float | None = None
+    posterior_beta: float | None = None
+    confidence_score: float = Field(ge=0, le=1)
+    weight: float = Field(ge=0, le=1)
+    max_adjustment: float = Field(ge=0, le=1)
+    partial_pooling_applied: bool = False
+    parent_calibration_group: str | None = None
+    parent_sample_count: int = Field(default=0, ge=0)
+    prior_source: str = "fixed"
+    disclaimer: str
+
+
 class DecisionIntelligence(_StrictModel):
     method: DecisionMethod
     anomaly_probability: float | None = Field(default=None, ge=0, le=1)
@@ -136,6 +158,7 @@ class DecisionIntelligence(_StrictModel):
     rationale: str
     options: list[DecisionOption]
     data_quality: DataQuality
+    calibration: CalibrationMetadata | None = None
     time_series: TimeSeriesAnalysis | None = None
 
     @field_validator("options")
@@ -157,6 +180,8 @@ def build_decision_intelligence(
     latest: dict[str, Any],
     history_values: list[float],
     time_series_analysis: TimeSeriesResult | None = None,
+    calibration_state: dict[str, Any] | None = None,
+    calibration_group: str | None = None,
 ) -> dict[str, Any]:
     del baseline
     minimum_required = _minimum_required(metric)
@@ -193,6 +218,8 @@ def build_decision_intelligence(
             signal=signal,
             history_values=history_values,
             time_series_analysis=time_series_analysis,
+            calibration_state=calibration_state,
+            calibration_group=calibration_group,
         )
 
     center = _median(history_values)
@@ -207,7 +234,13 @@ def build_decision_intelligence(
         robust_sigma = max(abs(center) * 0.05, 1.0)
         basis_notes.append("mad_zero_floor_applied")
     robust_z = abs((actual if actual is not None else center) - center) / robust_sigma
-    probability = _probability_from_robust_z(robust_z)
+    raw_probability = _probability_from_robust_z(robust_z)
+    calibration_payload = _calibration_for_probability(
+        raw_probability,
+        calibration_state=calibration_state,
+        calibration_group=calibration_group,
+    )
+    probability = float(calibration_payload["calibrated_probability"])
     uncertainty = _uncertainty_level(len(history_values), mad, center, missing_fields)
     interval = ConfidenceInterval(
         lower=_round(center - robust_sigma),
@@ -226,11 +259,22 @@ def build_decision_intelligence(
         uncertainty=uncertainty,
         voi=voi.level,
     )
-    rationale = (
-        "Decision Intelligence v0 used a robust median/MAD baseline over "
-        f"{len(history_values)} historical points. Anomaly probability is a coarse rarity score "
-        f"from robust_z={_round(robust_z)}, not a calibrated Bayesian posterior."
-    )
+    if calibration_payload["calibration_applied"]:
+        basis_notes.append(
+            f"bayesian_calibration_group={calibration_payload.get('calibration_group')}"
+        )
+        rationale = (
+            "Decision Intelligence v0 used a robust median/MAD baseline over "
+            f"{len(history_values)} historical points. Raw anomaly probability from "
+            f"robust_z={_round(robust_z)} was calibrated with a Bayesian posterior."
+        )
+    else:
+        basis_notes.append(str(calibration_payload["disclaimer"]))
+        rationale = (
+            "Decision Intelligence v0 used a robust median/MAD baseline over "
+            f"{len(history_values)} historical points. Anomaly probability is a coarse rarity score "
+            f"from robust_z={_round(robust_z)}, not a calibrated Bayesian posterior."
+        )
     payload = DecisionIntelligence(
         method="robust_baseline_v0",
         anomaly_probability=probability,
@@ -255,6 +299,7 @@ def build_decision_intelligence(
             status="sufficient",
             missing_fields=[],
         ),
+        calibration=CalibrationMetadata(**calibration_payload),
         time_series=None,
     )
     return payload.model_dump(mode="json")
@@ -387,10 +432,18 @@ def _build_time_series_decision_intelligence(
     signal: dict[str, Any],
     history_values: list[float],
     time_series_analysis: TimeSeriesResult,
+    calibration_state: dict[str, Any] | None = None,
+    calibration_group: str | None = None,
 ) -> dict[str, Any]:
     expected = time_series_analysis.expected_value
     deviation = time_series_analysis.residual_gap
-    probability = time_series_analysis.probability
+    raw_probability = time_series_analysis.probability
+    calibration_payload = _calibration_for_probability(
+        raw_probability,
+        calibration_state=calibration_state,
+        calibration_group=calibration_group,
+    )
+    probability = float(calibration_payload["calibrated_probability"])
     time_series = time_series_analysis.payload
     method = str(time_series.get("method"))
     robust_z = time_series_analysis.robust_z
@@ -445,24 +498,45 @@ def _build_time_series_decision_intelligence(
         if method == "seasonal_residual_mad_v0"
         else "robust residual"
     )
-    rationale = (
-        f"Decision Intelligence used {method_label} over "
-        f"{time_series.get('history_points')} temporal point(s). It removes robust trend"
-        + (
-            " and month-of-year seasonality"
-            if method == "seasonal_residual_mad_v0"
-            else ""
+    if calibration_payload["calibration_applied"]:
+        rationale = (
+            f"Decision Intelligence used {method_label} over "
+            f"{time_series.get('history_points')} temporal point(s). It removes robust trend"
+            + (
+                " and month-of-year seasonality"
+                if method == "seasonal_residual_mad_v0"
+                else ""
+            )
+            + f" before scoring residual_z={_round(robust_z)}. "
+            "Raw anomaly probability was calibrated with a Bayesian posterior."
         )
-        + f" before scoring residual_z={_round(robust_z)}. "
-        "Anomaly probability is a coarse rarity score from residual robust_z, "
-        "not a calibrated Bayesian posterior."
-    )
-    probability_basis = (
-        "coarse rarity score from residual robust_z; not calibrated Bayesian posterior; "
-        f"residual_z={_round(robust_z)}; "
-        f"seasonality_status={seasonality_status}; "
-        f"history_points={time_series.get('history_points')}"
-    )
+        probability_basis = (
+            "Bayesian calibrated probability from residual robust_z raw score; "
+            f"residual_z={_round(robust_z)}; "
+            f"seasonality_status={seasonality_status}; "
+            f"history_points={time_series.get('history_points')}; "
+            f"bayesian_calibration_group={calibration_payload.get('calibration_group')}"
+        )
+    else:
+        rationale = (
+            f"Decision Intelligence used {method_label} over "
+            f"{time_series.get('history_points')} temporal point(s). It removes robust trend"
+            + (
+                " and month-of-year seasonality"
+                if method == "seasonal_residual_mad_v0"
+                else ""
+            )
+            + f" before scoring residual_z={_round(robust_z)}. "
+            "Anomaly probability is a coarse rarity score from residual robust_z, "
+            "not a calibrated Bayesian posterior."
+        )
+        probability_basis = (
+            "coarse rarity score from residual robust_z; not calibrated Bayesian posterior; "
+            f"residual_z={_round(robust_z)}; "
+            f"seasonality_status={seasonality_status}; "
+            f"history_points={time_series.get('history_points')}; "
+            f"{calibration_payload['disclaimer']}"
+        )
     payload = DecisionIntelligence(
         method=method,  # type: ignore[arg-type]
         anomaly_probability=probability,
@@ -489,9 +563,25 @@ def _build_time_series_decision_intelligence(
             status="sufficient",
             missing_fields=[],
         ),
+        calibration=CalibrationMetadata(**calibration_payload),
         time_series=time_series,
     )
     return payload.model_dump(mode="json")
+
+
+def _calibration_for_probability(
+    raw_probability: float | None,
+    *,
+    calibration_state: dict[str, Any] | None,
+    calibration_group: str | None,
+) -> dict[str, Any]:
+    if raw_probability is None:
+        raise calibration.CalibrationValidationError("raw_probability is required")
+    return calibration.apply_calibration_to_probability(
+        raw_probability,
+        calibration_state,
+        calibration_group=calibration_group,
+    )
 
 
 def _minimum_required(metric: dict[str, Any]) -> int:
