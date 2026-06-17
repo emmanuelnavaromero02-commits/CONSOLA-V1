@@ -33,7 +33,7 @@ from app.core.job_runner import (
     fail_external_job,
     finish_external_job,
 )
-from app.core.request_context import reset_security_context, set_security_context
+from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
 from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
 from app.services.extraction_service import run_entity
@@ -70,6 +70,13 @@ def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(ctx, dict) or not ctx.get("trusted"):
         return None
     return ctx
+
+
+def _set_security_context(ctx: dict[str, Any] | None):
+    try:
+        return set_security_context(ctx)
+    except SecurityContextError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def _scoped_config(config: dict[str, Any], ctx: dict[str, Any] | None) -> dict[str, Any]:
@@ -183,7 +190,7 @@ def entity_extract(
     if report is not None:
         return _degraded_503(report)
 
-    token = set_security_context(ctx)
+    token = _set_security_context(ctx)
     try:
         result = run_entity(
             _with_optional_conn(_scoped_config({**config, "mode": mode}, ctx), conn_id),
@@ -219,7 +226,7 @@ def extract_all(
     if report is not None:
         return _degraded_503(report)
 
-    token = set_security_context(ctx)
+    token = _set_security_context(ctx)
     try:
         results = []
         entities, skipped = get_extract_all_plan(conn_id=conn_id, security_context=ctx)

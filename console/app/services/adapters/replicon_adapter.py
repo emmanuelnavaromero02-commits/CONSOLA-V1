@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 
+from app.services import egress_guard
 from app.services.control_room.core import BaseAdapter, ExecutionResult
 
 from .auth_factory import auth_headers
@@ -73,6 +75,27 @@ def _response_body(response: httpx.Response) -> Any:
         return response.text[:1000]
 
 
+def _allowed_private_hosts() -> set[str]:
+    raw = os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_HOSTS", "")
+    return {item.strip().rstrip(".").lower() for item in raw.split(",") if item.strip()}
+
+
+def _allowed_private_cidrs() -> list[str]:
+    return [item.strip() for item in os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", "").split(",") if item.strip()]
+
+
+def _validate_writeback_url(url: str) -> None:
+    try:
+        egress_guard.validate_url(
+            url,
+            label="replicon write-back URL",
+            allow_private_hosts=_allowed_private_hosts(),
+            allow_private_cidrs=_allowed_private_cidrs(),
+        )
+    except egress_guard.EgressGuardError as exc:
+        raise AdapterConfigurationError(str(exc)) from exc
+
+
 class RepliconAdapter(BaseAdapter):
     cartridge_id = "replicon"
 
@@ -84,6 +107,7 @@ class RepliconAdapter(BaseAdapter):
     ) -> ExecutionResult:
         CartridgeCircuitBreaker.before_call(self.cartridge_id)
         url = f"{_base_url(credentials)}{_writeback_path(action_data, credentials)}"
+        _validate_writeback_url(url)
         headers = auth_headers({**credentials, "auth_method": credentials.get("auth_method") or "bearer_token"})
         headers["Idempotency-Key"] = str(action_data.get("idempotency_key") or "")
         headers["X-Omega-Dry-Run"] = "true" if dry_run else "false"

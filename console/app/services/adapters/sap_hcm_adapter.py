@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 
+from app.services import egress_guard
 from app.services.adapters.circuit_breaker import CartridgeCircuitBreaker
 from app.services.control_room_service import BaseAdapter, ExecutionResult
 
@@ -27,6 +29,7 @@ class SapHcmAdapter(BaseAdapter):
             or self.DEFAULT_IT0008_PATH
         )
         url = f"{str(base_url).rstrip('/')}/{str(endpoint).lstrip('/')}"
+        _validate_writeback_url(url)
         payload = _build_it0008_payload(action_data)
         headers = {
             "accept": "application/json",
@@ -93,6 +96,27 @@ def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> tuple[htt
     if user and password:
         return httpx.BasicAuth(str(user), str(password)), "basic"
     raise ValueError("SAP HCM adapter requires bearer token, api_key, or user/password credentials")
+
+
+def _allowed_private_hosts() -> set[str]:
+    raw = os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_HOSTS", "")
+    return {item.strip().rstrip(".").lower() for item in raw.split(",") if item.strip()}
+
+
+def _allowed_private_cidrs() -> list[str]:
+    return [item.strip() for item in os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", "").split(",") if item.strip()]
+
+
+def _validate_writeback_url(url: str) -> None:
+    try:
+        egress_guard.validate_url(
+            url,
+            label="SAP HCM write-back URL",
+            allow_private_hosts=_allowed_private_hosts(),
+            allow_private_cidrs=_allowed_private_cidrs(),
+        )
+    except egress_guard.EgressGuardError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _fetch_csrf_token(

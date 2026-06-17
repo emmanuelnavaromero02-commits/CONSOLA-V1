@@ -17,16 +17,30 @@ _SIGNED_AT_FIELD = "_signed_at"
 _SIGNATURE_VERSION_FIELD = "_signature_version"
 _SIGNATURE_VERSION = "hmac-sha256-v1"
 _MIN_SIGNING_KEY_LEN = 32
+_SIGNATURE_TTL_SECONDS = 300
+_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _CURRENT_SECURITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "salesforce_security_context",
     default=None,
 )
 
 
-def set_security_context(ctx: dict[str, Any] | None) -> Token:
-    if not isinstance(ctx, dict) or not ctx.get("trusted"):
-        ctx = None
-    return _CURRENT_SECURITY_CONTEXT.set(ctx)
+class SecurityContextError(ValueError):
+    """Raised when an inbound trusted security_context cannot be verified."""
+
+
+def set_security_context(
+    ctx: dict[str, Any] | None,
+    *,
+    expected_tenant_id: str | None = None,
+    expected_workspace_id: str | None = None,
+) -> Token:
+    verified = verify_security_context(
+        ctx,
+        expected_tenant_id=expected_tenant_id,
+        expected_workspace_id=expected_workspace_id,
+    )
+    return _CURRENT_SECURITY_CONTEXT.set(verified)
 
 
 def reset_security_context(token: Token) -> None:
@@ -97,6 +111,52 @@ def _sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
         hashlib.sha256,
     ).hexdigest()
     return signed
+
+
+def _signature_ttl_seconds() -> int:
+    raw = (os.environ.get("SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS") or "").strip()
+    if not raw:
+        return _SIGNATURE_TTL_SECONDS
+    try:
+        ttl = int(raw)
+    except ValueError:
+        return _SIGNATURE_TTL_SECONDS
+    return ttl if ttl > 0 else _SIGNATURE_TTL_SECONDS
+
+
+def verify_security_context(
+    ctx: dict[str, Any] | None,
+    expected_tenant_id: str | None = None,
+    expected_workspace_id: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(ctx, dict) or not ctx.get("trusted"):
+        return None
+    if ctx.get(_SIGNATURE_VERSION_FIELD) != _SIGNATURE_VERSION:
+        raise SecurityContextError("security_context signature version is not supported")
+    signature = ctx.get(_SIGNATURE_FIELD)
+    if not isinstance(signature, str) or not signature:
+        raise SecurityContextError("security_context signature is required")
+    try:
+        signed_at = int(ctx.get(_SIGNED_AT_FIELD))
+    except (TypeError, ValueError) as exc:
+        raise SecurityContextError("security_context signed_at is invalid") from exc
+    now = int(time.time())
+    if signed_at > now + _SIGNATURE_FUTURE_SKEW_SECONDS:
+        raise SecurityContextError("security_context signature is from the future")
+    if now - signed_at > _signature_ttl_seconds():
+        raise SecurityContextError("security_context signature has expired")
+    expected_signature = hmac.new(
+        _signing_key().encode("utf-8"),
+        _canonical_context(ctx),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected_signature):
+        raise SecurityContextError("security_context signature is invalid")
+    if expected_tenant_id is not None and str(ctx.get("tenant_id") or "") != str(expected_tenant_id):
+        raise SecurityContextError("security_context tenant mismatch")
+    if expected_workspace_id is not None and str(ctx.get("workspace_id") or "") != str(expected_workspace_id):
+        raise SecurityContextError("security_context workspace mismatch")
+    return dict(ctx)
 
 
 def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 from pathlib import Path
 
@@ -19,6 +20,18 @@ def registry_module():
     sys.path.insert(0, str(REPO / "console"))
     from app.services import mcp_registry
     return mcp_registry
+
+
+@pytest.fixture(autouse=True)
+def fake_mcp_dns(registry_module, monkeypatch):
+    def getaddrinfo(host, port, *_args, **_kwargs):
+        if str(host).rstrip(".").lower() in registry_module.ALLOWED_MCP_HOSTS:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.42.0.10", port))]
+        if str(host).rstrip(".").lower() == "localhost":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr(registry_module.egress_guard.socket, "getaddrinfo", getaddrinfo)
 
 
 def _run(coro):

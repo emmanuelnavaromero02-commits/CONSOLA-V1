@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from app.api.deps import verify_api_key
 from app.api.routes_health import router as health_router
 from app.api.routes_skills import router as skills_router
-from app.core.request_context import reset_security_context, set_security_context
+from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
 from app.core import job_runner
 from app.mcp_server import mcp, load_custom_tools
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
@@ -207,6 +207,8 @@ async def mcp_invoke(body: dict, request: Request):
     """Invoke a tool by name with args. Returns the tool result."""
     tool_name = body.get("tool", "")
     args = body.get("args", {})
+    expected_tenant_id = args.get("tenant_id") if isinstance(args, dict) else None
+    expected_workspace_id = args.get("workspace_id") if isinstance(args, dict) else None
 
     tool = await mcp.get_tool(tool_name)
     if tool is None:
@@ -214,7 +216,11 @@ async def mcp_invoke(body: dict, request: Request):
 
     try:
         import json as _json
-        token = set_security_context(body.get("security_context"))
+        token = set_security_context(
+            body.get("security_context"),
+            expected_tenant_id=expected_tenant_id,
+            expected_workspace_id=expected_workspace_id,
+        )
         try:
             result = await tool.run(args)
         finally:
@@ -242,6 +248,11 @@ async def mcp_invoke(body: dict, request: Request):
                 return {"result": texts[0] if len(texts) == 1 else texts}
 
         return {"result": result}
+    except SecurityContextError as exc:
+        return JSONResponse(
+            {"error": "security_context_denied", "detail": str(exc)},
+            status_code=403,
+        )
     except Exception as exc:
         request_id = _log_internal_error(exc, "hubspot mcp invoke failed", request)
         return JSONResponse(

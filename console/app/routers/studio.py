@@ -35,6 +35,7 @@ from app.services import (
     cartridge_service,
     dag_code_generator,
     dag_templates,
+    egress_guard,
     mcp_registry,
     schema_introspect,
     studio_assistant,
@@ -407,7 +408,7 @@ def _looks_odata(cartridge_id: str, connector: dict[str, Any], args: dict[str, A
 
 
 def _is_production_env() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return egress_guard.is_production_env()
 
 
 def _configured_outbound_private_hosts() -> set[str]:
@@ -434,59 +435,14 @@ def _resolve_external_url_address(
     label: str,
     allow_configured_private: bool = False,
 ) -> tuple[str, str]:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        return f"{label} must use http or https", ""
-    if _is_production_env() and parsed.scheme != "https":
-        return f"{label} must use https in production", ""
-    if parsed.username or parsed.password:
-        return f"{label} must not include credentials", ""
-    host = (parsed.hostname or "").rstrip(".").lower()
-    if not host:
-        return f"{label} host is required", ""
-    allowed_hosts = _configured_outbound_private_hosts() if allow_configured_private else set()
-    if host in {"localhost"} or host.endswith(".localhost") or host.endswith(".local"):
-        if host not in allowed_hosts:
-            return f"{label} host is not public", ""
-    if host in {"metadata.google.internal", "instance-data", "169.254.169.254"}:
-        return f"{label} metadata hosts are blocked", ""
-    try:
-        addresses = [
-            item[4][0]
-            for item in socket.getaddrinfo(
-                host,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-                type=socket.SOCK_STREAM,
-            )
-        ]
-    except socket.gaierror:
-        return f"{label} host could not be resolved", ""
-    except Exception as exc:
-        return f"{label} validation failed: {type(exc).__name__}", ""
-    allowed_cidrs = _configured_outbound_private_cidrs() if allow_configured_private else []
-    first_address = ""
-    for address in addresses:
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            return f"{label} resolved to an invalid address", ""
-        if allow_configured_private and (host in allowed_hosts or any(ip in cidr for cidr in allowed_cidrs)):
-            first_address = first_address or address
-            continue
-        if (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-            or ip in _BLOCKED_SHARED_ADDRESS_SPACE
-        ):
-            return f"{label} resolved to a non-public address", ""
-        first_address = first_address or address
-    if first_address:
-        return "", first_address
-    return f"{label} host could not be resolved", ""
+    return egress_guard.resolve_url_address(
+        url,
+        label=label,
+        allow_private_hosts=_configured_outbound_private_hosts() if allow_configured_private else set(),
+        allow_private_cidrs=[
+            str(cidr) for cidr in (_configured_outbound_private_cidrs() if allow_configured_private else [])
+        ],
+    )
 
 
 def _validate_external_url(url: str, *, label: str, allow_configured_private: bool = False) -> str:
@@ -572,50 +528,19 @@ async def _pinned_http_request(
     max_bytes: int = _MAX_SPEC_BYTES,
     allow_configured_private: bool = False,
 ) -> _PinnedHTTPResponse:
-    reason, address = _resolve_external_url_address(
+    return await egress_guard.pinned_request(
+        method,
         url,
         label=label,
-        allow_configured_private=allow_configured_private,
+        headers=headers,
+        body=body,
+        content_type=content_type,
+        max_bytes=max_bytes,
+        allow_private_hosts=_configured_outbound_private_hosts() if allow_configured_private else set(),
+        allow_private_cidrs=[
+            str(cidr) for cidr in (_configured_outbound_private_cidrs() if allow_configured_private else [])
+        ],
     )
-    if reason:
-        raise ValueError(reason)
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").rstrip(".").lower()
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    path = parsed.path or "/"
-    if parsed.query:
-        path = f"{path}?{parsed.query}"
-    ssl_context = ssl.create_default_context() if parsed.scheme == "https" else None
-    reader, writer = await asyncio.wait_for(
-        asyncio.open_connection(
-            host=address,
-            port=port,
-            ssl=ssl_context,
-            server_hostname=host if ssl_context else None,
-        ),
-        timeout=15.0,
-    )
-    try:
-        request_headers = {
-            "Host": host if parsed.port in (None, 80, 443) else f"{host}:{parsed.port}",
-            "Connection": "close",
-            "Accept": "*/*",
-            **(headers or {}),
-        }
-        if body:
-            request_headers["Content-Length"] = str(len(body))
-            if content_type:
-                request_headers["Content-Type"] = content_type
-        header_blob = "".join(f"{name}: {value}\r\n" for name, value in request_headers.items())
-        writer.write(f"{method.upper()} {path} HTTP/1.1\r\n{header_blob}\r\n".encode("utf-8") + body)
-        await asyncio.wait_for(writer.drain(), timeout=15.0)
-        return await asyncio.wait_for(_read_pinned_http_response(reader, max_bytes), timeout=15.0)
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
 
 
 async def _live_odata_introspection(

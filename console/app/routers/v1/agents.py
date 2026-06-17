@@ -146,9 +146,14 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     token = request.headers.get("X-Agent-Runner-Token", "")
     if not _AGENT_RUNNER_TOKEN or not secrets.compare_digest(token, _AGENT_RUNNER_TOKEN):
         raise HTTPException(401, "invalid runner token")
-    agent = await _agent_runtime.load_agent(agent_id, user_context=user)
+    agent = await _agent_runtime.load_agent(agent_id)
     if not agent:
         raise HTTPException(404, "agent not found")
+    if not (
+        str(getattr(agent, "tenant_id", None) or "").strip()
+        and str(getattr(agent, "workspace_id", None) or "").strip()
+    ):
+        raise HTTPException(403, "scheduled agent requires tenant/workspace scope")
     extra = getattr(agent, "extra", None) or {}
     schedule = extra.get("schedule") if isinstance(extra, dict) else {}
     if not isinstance(schedule, dict) or schedule.get("enabled") is False:
