@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.dependencies import require_authenticated
 from app.services import intelligence_engine
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
+from app.services.intelligence import decision_orchestrator
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import monte_carlo_service
 from app.services.intelligence.readiness import intelligence_readiness
@@ -177,10 +178,61 @@ class CalibrationRecomputeRequest(_StrictModel):
     limit: int = Field(default=5000, ge=1, le=10_000)
 
 
+class OrchestrationRequest(_StrictModel):
+    source_type: Literal[
+        "control_room_item",
+        "agent_alert",
+        "intelligence_signal",
+        "monte_carlo_simulation",
+        "calibration_observation",
+        "manual_fixture",
+    ]
+    source_id: str = Field(min_length=1, max_length=256)
+    title: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=4000)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    entities: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    time_horizon: str | None = Field(default=None, max_length=120)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+    @field_validator("metrics", "constraints")
+    @classmethod
+    def _validate_no_scope_dict(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _reject_scope_fields(value)
+        return value
+
+    @field_validator("entities", "evidence_refs")
+    @classmethod
+    def _validate_no_scope_list(
+        cls,
+        value: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        _reject_scope_fields(value)
+        return value
+
+
 def _payload(model: BaseModel | None) -> dict:
     if model is None:
         return {}
     return model.model_dump(exclude_none=True)
+
+
+def _reject_scope_fields(value: Any) -> None:
+    if isinstance(value, dict):
+        forbidden = {"tenant_id", "workspace_id", "security_context"}
+        overlap = forbidden & {str(key) for key in value}
+        if overlap:
+            raise ValueError("scope variables are not accepted")
+        for item in value.values():
+            _reject_scope_fields(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_scope_fields(item)
+
+
+def _orchestrator_error(exc: decision_orchestrator.DecisionOrchestratorError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
 def _invalidate_control_room_cache(user: dict) -> None:
@@ -189,6 +241,75 @@ def _invalidate_control_room_cache(user: dict) -> None:
     except Exception:
         return
     _control_room_cache_invalidate(user)
+
+
+@router.post(
+    "/orchestrate",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+@v1_router.post(
+    "/orchestrate",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def intelligence_orchestrate(
+    body: OrchestrationRequest,
+    user: dict = Depends(require_authenticated),
+):
+    try:
+        return await decision_orchestrator.orchestrate(user, _payload(body))
+    except decision_orchestrator.DecisionOrchestratorError as exc:
+        raise _orchestrator_error(exc) from exc
+
+
+@router.get("/orchestrate", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get("/orchestrate", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_orchestration_list(
+    source_type: Literal[
+        "control_room_item",
+        "agent_alert",
+        "intelligence_signal",
+        "monte_carlo_simulation",
+        "calibration_observation",
+        "manual_fixture",
+    ]
+    | None = Query(default=None),
+    source_id: str | None = Query(default=None, max_length=256),
+    limit: int = Query(default=50, ge=1, le=250),
+    user: dict = Depends(require_authenticated),
+):
+    try:
+        return await decision_orchestrator.list_orchestrations(
+            user,
+            source_type=source_type,
+            source_id=source_id,
+            limit=limit,
+        )
+    except decision_orchestrator.DecisionOrchestratorError as exc:
+        raise _orchestrator_error(exc) from exc
+
+
+@router.get(
+    "/orchestrate/{orchestration_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+@v1_router.get(
+    "/orchestrate/{orchestration_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def intelligence_orchestration_detail(
+    orchestration_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    try:
+        return await decision_orchestrator.get_orchestration(user, orchestration_id)
+    except decision_orchestrator.DecisionOrchestratorError as exc:
+        raise _orchestrator_error(exc) from exc
 
 
 @router.get("/signals", dependencies=[Depends(require_permission("datasets.read"))])
