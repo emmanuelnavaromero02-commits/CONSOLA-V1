@@ -76,13 +76,16 @@ def require(condition, message):
         raise SystemExit(message)
 
 
-async def expect_http(coro, status_code):
+async def expect_http(coro, status_code, label):
     try:
         await coro
     except HTTPException as exc:
-        require(exc.status_code == status_code, f"expected_http_{status_code}_got_{exc.status_code}")
+        require(
+            exc.status_code == status_code,
+            f"{label}:expected_http_{status_code}_got_{exc.status_code}",
+        )
         return
-    raise SystemExit(f"expected_http_{status_code}_not_raised")
+    raise SystemExit(f"{label}:expected_http_{status_code}_not_raised")
 
 
 async def main():
@@ -176,6 +179,7 @@ async def main():
             },
         ),
         409,
+        "non_sandbox_blocked",
     )
     await expect_http(
         external_actions.propose(
@@ -189,6 +193,7 @@ async def main():
             },
         ),
         400,
+        "secret_payload_rejected",
     )
 
     proposed = await external_actions.propose(
@@ -208,7 +213,11 @@ async def main():
 
     hidden_list = await external_actions.list_actions(tenant_b_user)
     require(all(item["id"] != action_id for item in hidden_list["actions"]), "tenant_b_list_leak")
-    await expect_http(external_actions.get_action(tenant_b_user, action_id), 404)
+    await expect_http(
+        external_actions.get_action(tenant_b_user, action_id),
+        404,
+        "tenant_b_get_hidden",
+    )
 
     dry_run = await external_actions.dry_run(
         base,
@@ -221,6 +230,7 @@ async def main():
     await expect_http(
         external_actions.approve(base, action_id, {"idempotency_key": "probe-self-approve-" + suffix}),
         403,
+        "maker_checker_self_approval",
     )
     approved = await external_actions.approve(
         admin,
@@ -267,9 +277,15 @@ async def main():
     )
     async with pool.acquire() as conn:
         await conn.execute(
+            "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+            base["active_tenant_id"],
+            base["active_workspace_id"],
+        )
+        update_status = await conn.execute(
             "UPDATE external_actions SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1::uuid",
             expired_action_id,
         )
+        require(update_status.endswith(" 1"), "expire_update_scoped")
     await expect_http(
         external_actions.execute(
             admin,
@@ -277,6 +293,7 @@ async def main():
             {"idempotency_key": "probe-execute-expired-" + suffix},
         ),
         409,
+        "expired_execute_blocked",
     )
 
     blocked = await external_actions.propose(
@@ -310,6 +327,7 @@ async def main():
                 {"idempotency_key": "probe-execute-disabled-" + suffix},
             ),
             409,
+            "sandbox_flag_disabled",
         )
     finally:
         if old_flag is None:
