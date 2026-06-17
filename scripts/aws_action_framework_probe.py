@@ -276,15 +276,16 @@ async def main():
         {"idempotency_key": "probe-approve-expired-" + suffix},
     )
     async with pool.acquire() as conn:
-        await conn.execute(
-            "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-            base["active_tenant_id"],
-            base["active_workspace_id"],
-        )
-        update_status = await conn.execute(
-            "UPDATE external_actions SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1::uuid",
-            expired_action_id,
-        )
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                base["active_tenant_id"],
+                base["active_workspace_id"],
+            )
+            update_status = await conn.execute(
+                "UPDATE external_actions SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1::uuid",
+                expired_action_id,
+            )
         require(update_status.endswith(" 1"), "expire_update_scoped")
     await expect_http(
         external_actions.execute(
@@ -336,18 +337,24 @@ async def main():
             os.environ["EXTERNAL_ACTION_SANDBOX_ENABLED"] = old_flag
 
     async with pool.acquire() as conn:
-        raw_secret_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM external_actions WHERE payload::text LIKE '%redaction-test-value%'"
-        )
-        terminal_events = await conn.fetchval(
-            '''
-            SELECT COUNT(*)
-              FROM external_action_events
-             WHERE action_id = $1::uuid
-               AND event_type = 'execute_succeeded'
-            ''',
-            action_id,
-        )
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                base["active_tenant_id"],
+                base["active_workspace_id"],
+            )
+            raw_secret_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM external_actions WHERE payload::text LIKE '%redaction-test-value%'"
+            )
+            terminal_events = await conn.fetchval(
+                '''
+                SELECT COUNT(*)
+                  FROM external_action_events
+                 WHERE action_id = $1::uuid
+                   AND event_type = 'execute_succeeded'
+                ''',
+                action_id,
+            )
     require(raw_secret_count == 0, "secret_payload_persisted")
     require(terminal_events == 1, "duplicate_execute_terminal_event")
     print("action_framework=PASS")
