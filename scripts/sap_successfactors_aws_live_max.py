@@ -945,8 +945,7 @@ async def main():
 
     async def run_prompt(message, user_agent):
         conversation = await copilot_service.create_conversation(
-            user_id=user["id"],
-            workspace_id=workspace_id,
+            user=user,
             title="Validacion live SAP SuccessFactors",
         )
         result = await asyncio.wait_for(

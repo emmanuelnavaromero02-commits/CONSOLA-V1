@@ -2371,6 +2371,11 @@ async def _execute_internal_followup_task(
     if _supports_transactional_acquire(pool):
         async with pool.acquire() as conn:
             async with conn.transaction():
+                await conn.execute(
+                    SET_SCOPE_SQL,
+                    str(user.get("active_tenant_id") or user.get("tenant_id") or ""),
+                    _workspace_id(user),
+                )
                 return await _execute_internal_followup_task_tx(
                     conn,
                     user=user,

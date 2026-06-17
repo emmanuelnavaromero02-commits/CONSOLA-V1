@@ -38,6 +38,9 @@ class _FakeDB:
         self.conversations = {}
         self.messages = []
 
+    def transaction(self):
+        return _Transaction()
+
     async def fetchrow(self, query, *args):
         q = " ".join(query.split())
         if q.startswith("SELECT id, user_id, workspace_id, title, created_at, updated_at FROM conversations"):
@@ -67,6 +70,11 @@ class _FakeDB:
 
     async def execute(self, *a, **kw):
         return None
+
+
+class _Transaction:
+    async def __aenter__(self): return self
+    async def __aexit__(self, *_): return False
 
 
 class _Acquire:
@@ -145,8 +153,14 @@ def test_two_cartridge_query_returns_two_citations(copilot_module):
         {"name": "sap_hcm___list_employees", "risk_level": "read"},
     ], fake_chat, fake_invoke)
 
-    admin = {"id": 1, "email": "a@example.com", "role": "admin"}
-    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    admin = {
+        "id": 1,
+        "email": "a@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    conv = _run(copilot_module.create_conversation(user=admin))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="compara horas vs emp",
         user=admin,
@@ -200,8 +214,14 @@ def test_source_cap_enforced_at_3(copilot_module, caplog):
         {"name": "sap_successfactors___do_x",  "risk_level": "read"},
     ], fake_chat, fake_invoke)
 
-    admin = {"id": 2, "email": "b@example.com", "role": "admin"}
-    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    admin = {
+        "id": 2,
+        "email": "b@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    conv = _run(copilot_module.create_conversation(user=admin))
     import logging
     with caplog.at_level(logging.WARNING):
         out = _run(copilot_module.run_turn(
@@ -253,8 +273,14 @@ def test_citations_grouped_by_source_in_order(copilot_module):
         {"name": "replicon___list_entries",  "risk_level": "read"},
     ], fake_chat, fake_invoke)
 
-    admin = {"id": 3, "email": "c@example.com", "role": "admin"}
-    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    admin = {
+        "id": 3,
+        "email": "c@example.com",
+        "role": "admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+    }
+    conv = _run(copilot_module.create_conversation(user=admin))
     out = _run(copilot_module.run_turn(
         conversation_id=conv["id"], user_message="dame ambos",
         user=admin,
