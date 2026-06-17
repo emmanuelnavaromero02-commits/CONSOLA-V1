@@ -344,15 +344,15 @@ def main() -> int:
     evidence_dir = args.evidence_root / utc_stamp()
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
-    result = send_ssm_script(
+    remote = send_ssm_script(
         instance_id=instance_id,
         region=args.region,
         script=_remote_script(),
         comment="omega-decision-orchestrator-aws-probe",
         timeout_seconds=900,
     )
-    stdout = redact(result.get("stdout", ""))
-    stderr = redact(result.get("stderr", ""))
+    stdout = redact(remote.stdout)
+    stderr = redact(remote.stderr)
     (evidence_dir / "remote_stdout_redacted.txt").write_text(stdout, encoding="utf-8")
     (evidence_dir / "remote_stderr_redacted.txt").write_text(stderr, encoding="utf-8")
 
@@ -371,7 +371,7 @@ def main() -> int:
         "generated_at_utc": utc_now(),
         "instance_id": instance_id,
         "region": args.region,
-        "ssm_command_id": result.get("command_id"),
+        "ssm_command_id": remote.command_id,
         "checks": [asdict(check) for check in checks],
     }
     write_json(evidence_dir / "summary.json", summary)
