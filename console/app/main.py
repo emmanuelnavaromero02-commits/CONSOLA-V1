@@ -9606,6 +9606,7 @@ async def api_admin_users_send_reset(
 
 
 from app.routers import cartridges as cartridges_router
+from app.routers import actions as actions_router
 from app.routers import copilot as copilot_router
 from app.routers import (
     copilot_advanced as copilot_advanced_router,
@@ -9639,6 +9640,7 @@ app.include_router(settings.router)
 app.include_router(settings_internal.router)
 app.include_router(operations.router)
 app.include_router(control_room.router)
+app.include_router(actions_router.router)
 app.include_router(security.router)
 app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)
