@@ -9,6 +9,7 @@ Contract each MCP server must implement:
 from __future__ import annotations
 
 import ipaddress
+import asyncio
 import json
 import os
 import re
@@ -20,6 +21,7 @@ from fastapi import HTTPException
 
 from app.security import get_internal_api_key
 from app.middleware.request_id import request_id_var
+from app.services import egress_guard
 from app.services.security_context import build_security_context
 
 _pool: asyncpg.Pool | None = None
@@ -99,6 +101,17 @@ def _loopback_allowed() -> bool:
     return not _is_production_env()
 
 
+def _mcp_allowed_private_hosts() -> set[str]:
+    hosts = set(ALLOWED_MCP_HOSTS) | _configured_allowed_hosts()
+    if _loopback_allowed():
+        hosts.update({"localhost"})
+    return hosts
+
+
+def _mcp_allowed_private_cidrs() -> list[str]:
+    return [str(cidr) for cidr in _configured_allowed_cidrs()]
+
+
 def _validate_mcp_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
@@ -106,28 +119,57 @@ def _validate_mcp_url(url: str) -> None:
     host = (parsed.hostname or "").rstrip(".").lower()
     if not host:
         raise ValueError("mcp URL host is required")
+    allowed_hosts = _mcp_allowed_private_hosts()
+    allowed_cidrs = _configured_allowed_cidrs()
 
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         if host in {"localhost"}:
             if _loopback_allowed():
+                egress_guard.validate_url(
+                    url,
+                    label="mcp URL",
+                    allow_private_hosts=allowed_hosts,
+                    allow_private_cidrs=_mcp_allowed_private_cidrs(),
+                    allow_http_hosts=allowed_hosts,
+                )
                 return
             raise ValueError("loopback MCP hosts are disabled in production")
-        if host not in ALLOWED_MCP_HOSTS and host not in _configured_allowed_hosts():
+        if host not in allowed_hosts:
             raise ValueError(f"mcp host not allowlisted: {host}")
+        egress_guard.validate_url(
+            url,
+            label="mcp URL",
+            allow_private_hosts=allowed_hosts,
+            allow_private_cidrs=_mcp_allowed_private_cidrs(),
+            allow_http_hosts=allowed_hosts,
+        )
         return
 
     if ip.is_loopback:
         if not _loopback_allowed():
             raise ValueError("loopback MCP hosts are disabled in production")
+        egress_guard.validate_url(
+            url,
+            label="mcp URL",
+            allow_private_hosts=allowed_hosts,
+            allow_private_cidrs=_mcp_allowed_private_cidrs(),
+            allow_private=True,
+            allow_http_hosts=allowed_hosts,
+            require_https_in_prod=False,
+        )
         return
     if ip.is_link_local or host.startswith("169.254.") or ip in _BLOCKED_SHARED_ADDRESS_SPACE:
         raise ValueError("metadata/link-local MCP hosts are blocked")
-    if any(ip in cidr for cidr in _configured_allowed_cidrs()):
-        return
-    if ip.is_private or ip.is_global or ip.is_reserved or ip.is_multicast:
+    if not any(ip in cidr for cidr in allowed_cidrs):
         raise ValueError(f"mcp IP host not allowlisted: {host}")
+    egress_guard.validate_url(
+        url,
+        label="mcp URL",
+        allow_private_cidrs=_mcp_allowed_private_cidrs(),
+        allow_http_hosts={host},
+    )
 
 
 def _enforce_mcp_url(url: str) -> None:
@@ -560,17 +602,33 @@ async def invoke(
         if ctx:
             payload["security_context"] = ctx
         _enforce_outbound_scope(server_id, str(row["category"] or ""), tool, args or {}, ctx or {})
-        async with httpx.AsyncClient(headers=_headers_for(server_id, row["url"]), timeout=120) as client:
-            r = await client.post(
-                f"{row['url']}/mcp/invoke",
-                json=payload,
-            )
-            r.raise_for_status()
-            data = r.json()
-            # Unwrap {result: ...} envelope if present
-            return data.get("result", data)
+        response = await egress_guard.pinned_request(
+            "POST",
+            f"{str(row['url']).rstrip('/')}/mcp/invoke",
+            label="mcp invoke URL",
+            headers=_headers_for(server_id, row["url"]),
+            json_body=payload,
+            max_bytes=10 * 1024 * 1024,
+            timeout=120,
+            allow_private_hosts=_mcp_allowed_private_hosts(),
+            allow_private_cidrs=_mcp_allowed_private_cidrs(),
+            allow_http_hosts=_mcp_allowed_private_hosts(),
+        )
+        if response.is_redirect:
+            raise HTTPException(403, "MCP redirects are blocked")
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail") or response.text
+            except Exception:
+                detail = response.text
+            status = response.status_code if response.status_code < 500 else 502
+            raise HTTPException(status, detail or f"MCP tool failed: {server_id}/{tool}")
+        data = response.json()
+        return data.get("result", data)
     except HTTPException:
         raise
+    except (egress_guard.EgressGuardError, asyncio.TimeoutError) as exc:
+        raise HTTPException(403, f"MCP egress blocked: {exc}") from exc
     except httpx.TimeoutException as exc:
         raise HTTPException(504, f"MCP tool timeout: {server_id}/{tool}") from exc
     except httpx.HTTPStatusError as exc:
@@ -610,10 +668,19 @@ async def health_check_all() -> int:
 async def _fetch_tools(url: str, server_id: str | None = None) -> list[dict]:
     _validate_mcp_url(url)
     try:
-        async with httpx.AsyncClient(headers=_headers_for(server_id or "", url), timeout=10) as client:
-            r = await client.get(f"{url}/mcp/tools")
-            if r.status_code < 400:
-                return r.json().get("tools", [])
+        response = await egress_guard.pinned_request(
+            "GET",
+            f"{url.rstrip('/')}/mcp/tools",
+            label="mcp tools URL",
+            headers=_headers_for(server_id or "", url),
+            max_bytes=2 * 1024 * 1024,
+            timeout=10,
+            allow_private_hosts=_mcp_allowed_private_hosts(),
+            allow_private_cidrs=_mcp_allowed_private_cidrs(),
+            allow_http_hosts=_mcp_allowed_private_hosts(),
+        )
+        if response.status_code < 400 and not response.is_redirect:
+            return response.json().get("tools", [])
     except Exception:
         pass
     return []

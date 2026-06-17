@@ -24,10 +24,12 @@ def test_agent_crud_and_manual_invoke_use_workspace_agent_permissions():
 
 def test_scheduled_agent_invoke_requires_enabled_cron_and_constant_time_token():
     src = console_route_source()
-    section = src.split('async def api_agents_invoke_scheduled', 1)[1].split('@app.post("/api/agents/{agent_id}/invoke/stream"', 1)[0]
+    section = src.split('async def api_agents_invoke_scheduled', 1)[1].split('async def api_agents_invoke_stream', 1)[0]
     assert "secrets.compare_digest" in section
     assert "agent schedule is not enabled" in section
     assert "agent schedule cron is required" in section
     assert "agent schedule is not due" in section
     assert "_agent_schedule_due(schedule)" in section
     assert 'extra.get("schedule")' in section
+    assert "load_agent(agent_id, user_context=user)" not in section
+    assert "scheduled agent requires tenant/workspace scope" in section

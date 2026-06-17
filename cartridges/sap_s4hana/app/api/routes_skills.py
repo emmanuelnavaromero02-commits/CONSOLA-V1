@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
-from app.core.request_context import reset_security_context, set_security_context
+from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
 from app.services.kb_service import (
@@ -36,13 +36,20 @@ def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
     return ctx
 
 
+def _set_security_context(ctx: dict[str, Any] | None):
+    try:
+        return set_security_context(ctx)
+    except SecurityContextError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 def _run_entity_with_context(
     config: dict[str, Any],
     body: dict[str, Any] | None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     ctx = _security_context(body)
-    token = set_security_context(ctx)
+    token = _set_security_context(ctx)
     try:
         scoped_config = {**config, "security_context": ctx} if ctx else config
         return run_entity(scoped_config, **kwargs)
@@ -52,7 +59,7 @@ def _run_entity_with_context(
 
 def _run_kb_with_context(kb_id: str, body: dict[str, Any] | None) -> dict:
     ctx = _security_context(body)
-    token = set_security_context(ctx)
+    token = _set_security_context(ctx)
     try:
         return run_knowledge_bit(kb_id, ctx)
     finally:
@@ -61,7 +68,7 @@ def _run_kb_with_context(kb_id: str, body: dict[str, Any] | None) -> dict:
 
 def _run_all_kbs_with_context(body: dict[str, Any] | None) -> list[dict]:
     ctx = _security_context(body)
-    token = set_security_context(ctx)
+    token = _set_security_context(ctx)
     try:
         return run_all_knowledge_bits(ctx)
     finally:

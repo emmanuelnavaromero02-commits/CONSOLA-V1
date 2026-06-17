@@ -39,10 +39,7 @@ _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 def _duckdb() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
-    try:
-        conn.execute("LOAD httpfs;")
-    except Exception:
-        conn.execute("INSTALL httpfs; LOAD httpfs;")
+    conn.execute("LOAD httpfs;")
     conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
     conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
     conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")

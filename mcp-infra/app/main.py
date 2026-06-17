@@ -1635,7 +1635,7 @@ def _duckdb_s3_settings(con, endpoint: str, region: str) -> None:
 
     url_style = "vhost" if "amazonaws.com" in endpoint else "path"
     secure = (os.environ.get("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"})
-    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute("LOAD httpfs;")
     con.execute(f"""
         SET s3_endpoint='{endpoint}';
         SET s3_access_key_id='{os.environ.get('MINIO_ACCESS_KEY','')}';

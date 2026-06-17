@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import time
 
-from app.services import mcp_registry, llm_client
+from app.services import assistant_tool_gate, llm_client
 
 SYSTEM_BASE = """Eres el asistente de MODecissionsPaaS, una plataforma de decisiones empresariales.
 Tienes acceso a herramientas MCP registradas en la plataforma.
@@ -58,9 +58,8 @@ Cuando el usuario pida un dashboard, reporte o visualización interactiva:
    - Horas → XX,XXX.x h
    - Color condicional: margen > 20% = verde, 10-20% = amarillo, < 10% = rojo
 
-4. Tras generar el HTML, llama a refinement__publish_app(name, title, html, description)
-   - name: slug snake_case, e.g. "pnl_revenue_manager"
-   - Devuelve {"url": "/apps/{name}"} → preséntalo como enlace clickeable al usuario
+4. Si generas HTML, entrégalo al usuario en el chat. Publicar apps es una acción
+   de escritura y no está disponible para autoejecución desde este chat.
 
 5. Para listar apps existentes: refinement__list_apps()
 
@@ -131,7 +130,10 @@ def _scope_cache_key(user: dict | None) -> str:
     ])
 
 
-async def _get_catalog_context(user: dict | None = None) -> str:
+async def _get_catalog_context(
+    user: dict | None = None,
+    catalog: dict[str, dict] | None = None,
+) -> str:
     """Return cached catalog context, refreshing if stale."""
     global _catalog_ts
 
@@ -140,7 +142,17 @@ async def _get_catalog_context(user: dict | None = None) -> str:
         return _catalog_text_by_scope[key]
 
     try:
-        payload = await mcp_registry.invoke("refinement", "get_data_catalog", {}, user=user)
+        if not catalog or "refinement__get_data_catalog" not in catalog:
+            return _catalog_text_by_scope.get(key, "")
+        payload = await assistant_tool_gate.invoke(
+            "refinement",
+            "get_data_catalog",
+            {},
+            user,
+            catalog,
+        )
+        if isinstance(payload, dict) and payload.get("error") == assistant_tool_gate.DENIED_ERROR:
+            return _catalog_text_by_scope.get(key, "")
         _catalog_text_by_scope[key] = _format_catalog(payload if isinstance(payload, dict) else {})
         _catalog_ts   = time.time()
     except Exception:
@@ -153,24 +165,9 @@ async def _get_catalog_context(user: dict | None = None) -> str:
 # ── Main chat handler ─────────────────────────────────────────────────────────
 
 async def chat(message: str, history: list[dict], user: dict | None = None) -> dict:
-    catalog_ctx = await _get_catalog_context(user)
+    tools, tool_server_map, catalog = await assistant_tool_gate.build_tools(user)
+    catalog_ctx = await _get_catalog_context(user, catalog)
     system = SYSTEM_BASE + ("\n\n" + catalog_ctx if catalog_ctx else "")
-
-    servers = await mcp_registry.list_servers()
-    tools: list[dict] = []
-    tool_server_map: dict[str, str] = {}
-
-    for server in servers:
-        if not server.get("healthy"):
-            continue
-        for t in (server.get("tools") or []):
-            full_name = f"{server['id']}__{t['name']}"
-            tools.append({
-                "name":         full_name,
-                "description":  f"[{server['name']}] {t.get('description', '')}",
-                "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
-            })
-            tool_server_map[full_name] = server["id"]
 
     messages = list(history)
     messages.append({"role": "user", "content": message})
@@ -179,7 +176,7 @@ async def chat(message: str, history: list[dict], user: dict | None = None) -> d
         system=system,
         messages=messages,
         tools=tools,
-        invoke_tool=lambda srv, tool, a: mcp_registry.invoke(srv, tool, a, user=user),
+        invoke_tool=lambda srv, tool, a: assistant_tool_gate.invoke(srv, tool, a, user, catalog),
         tool_server_map=tool_server_map,
         user_context=user,
     )
