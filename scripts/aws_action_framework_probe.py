@@ -103,15 +103,40 @@ async def main():
             '''
         )
         require(row, "no_active_workspace_user")
-        tenant_b = await conn.fetchval(
+        tenant_name = "Action Framework Probe Tenant " + str(uuid.uuid4())
+        tenant_slug = "action-framework-probe-" + str(uuid.uuid4())[:8]
+        tenant_has_slug = await conn.fetchval(
             '''
-            INSERT INTO tenants(name)
-            VALUES ($1)
-            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-            RETURNING id
-            ''',
-            "Action Framework Probe Tenant " + str(uuid.uuid4()),
+            SELECT EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'tenants'
+                   AND column_name = 'slug'
+            )
+            '''
         )
+        if tenant_has_slug:
+            tenant_b = await conn.fetchval(
+                '''
+                INSERT INTO tenants(name, slug)
+                VALUES ($1, $2)
+                ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id
+                ''',
+                tenant_name,
+                tenant_slug,
+            )
+        else:
+            tenant_b = await conn.fetchval(
+                '''
+                INSERT INTO tenants(name)
+                VALUES ($1)
+                ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id
+                ''',
+                tenant_name,
+            )
         workspace_b = await conn.fetchval(
             '''
             INSERT INTO workspaces(tenant_id, name)
