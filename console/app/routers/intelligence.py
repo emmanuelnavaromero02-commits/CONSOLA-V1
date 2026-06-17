@@ -12,6 +12,7 @@ from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import monte_carlo_service
+from app.services.intelligence import orchestrator_execution
 from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
@@ -212,6 +213,16 @@ class OrchestrationRequest(_StrictModel):
         return value
 
 
+class OrchestrationExecuteEnginesRequest(_StrictModel):
+    engine_inputs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("engine_inputs")
+    @classmethod
+    def _validate_engine_inputs(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _reject_scope_fields(value)
+        return value
+
+
 def _payload(model: BaseModel | None) -> dict:
     if model is None:
         return {}
@@ -231,7 +242,7 @@ def _reject_scope_fields(value: Any) -> None:
             _reject_scope_fields(item)
 
 
-def _orchestrator_error(exc: decision_orchestrator.DecisionOrchestratorError) -> HTTPException:
+def _orchestrator_error(exc: Any) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
@@ -309,6 +320,53 @@ async def intelligence_orchestration_detail(
     try:
         return await decision_orchestrator.get_orchestration(user, orchestration_id)
     except decision_orchestrator.DecisionOrchestratorError as exc:
+        raise _orchestrator_error(exc) from exc
+
+
+@router.post(
+    "/orchestrate/{orchestration_id}/execute-engines",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+@v1_router.post(
+    "/orchestrate/{orchestration_id}/execute-engines",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def intelligence_orchestration_execute_engines(
+    orchestration_id: str,
+    body: OrchestrationExecuteEnginesRequest | None = Body(default=None),
+    user: dict = Depends(require_authenticated),
+):
+    try:
+        return await orchestrator_execution.execute_engines(
+            user,
+            orchestration_id,
+            _payload(body),
+        )
+    except orchestrator_execution.OrchestratorExecutionError as exc:
+        raise _orchestrator_error(exc) from exc
+
+
+@router.get(
+    "/orchestrate/{orchestration_id}/executions",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+@v1_router.get(
+    "/orchestrate/{orchestration_id}/executions",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def intelligence_orchestration_executions(
+    orchestration_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    try:
+        return await orchestrator_execution.list_executions(user, orchestration_id)
+    except orchestrator_execution.OrchestratorExecutionError as exc:
         raise _orchestrator_error(exc) from exc
 
 
