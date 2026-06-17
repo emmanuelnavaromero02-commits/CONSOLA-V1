@@ -135,11 +135,18 @@ def scheduled_probe():
 
 
 def forged_cartridge_probe():
-    cartridge_url = (os.environ.get("SAP_HCM_URL") or os.environ.get("REPLICON_URL") or "").rstrip("/")
     api_key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE") or os.environ.get("INTERNAL_API_KEY") or ""
-    if not cartridge_url or not api_key:
-        emit("forged cartridge context rejected", "BLOCKED", "missing cartridge URL or internal API key")
+    if not api_key:
+        emit("forged cartridge context rejected", "BLOCKED", "missing cartridge internal API key")
         return
+    candidates = [
+        os.environ.get("SAP_SUCCESSFACTORS_URL") or "http://sap-successfactors:8203",
+        os.environ.get("SAP_HCM_URL") or "http://sap-hcm:8202",
+        os.environ.get("SAP_S4HANA_URL") or "http://sap-s4hana:8204",
+        os.environ.get("SALESFORCE_URL") or "http://salesforce:8205",
+        os.environ.get("HUBSPOT_URL") or "http://hubspot:8210",
+        os.environ.get("REPLICON_URL") or "http://replicon:8201",
+    ]
     payload = json.dumps({
         "tool": "list_entities",
         "args": {},
@@ -149,28 +156,36 @@ def forged_cartridge_probe():
             "workspace_id": "workspace-probe",
         },
     }).encode("utf-8")
-    req = urllib.request.Request(
-        cartridge_url + "/mcp/invoke",
-        data=payload,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "x-internal-service": "console",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            body = response.read().decode("utf-8", errors="replace")
-            emit("forged cartridge context rejected", "FAIL", f"status={response.status} body={body[:300]}")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 403:
-            emit("forged cartridge context rejected", "PASS", f"status=403 body={body[:300]}")
-        else:
-            emit("forged cartridge context rejected", "FAIL", f"status={exc.code} body={body[:300]}")
-    except Exception as exc:
-        emit("forged cartridge context rejected", "BLOCKED", type(exc).__name__)
+    attempts = []
+    for cartridge_url in candidates:
+        cartridge_url = (cartridge_url or "").rstrip("/")
+        if not cartridge_url:
+            continue
+        req = urllib.request.Request(
+            cartridge_url + "/mcp/invoke",
+            data=payload,
+            headers={
+                "content-type": "application/json",
+                "x-api-key": api_key,
+                "x-internal-service": "console",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                emit("forged cartridge context rejected", "FAIL", f"url={cartridge_url} status={response.status} body={body[:300]}")
+                return
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 403:
+                emit("forged cartridge context rejected", "PASS", f"url={cartridge_url} status=403 body={body[:300]}")
+                return
+            emit("forged cartridge context rejected", "FAIL", f"url={cartridge_url} status={exc.code} body={body[:300]}")
+            return
+        except Exception as exc:
+            attempts.append(f"{cartridge_url}:{type(exc).__name__}")
+    emit("forged cartridge context rejected", "BLOCKED", "; ".join(attempts) or "no cartridge URLs attempted")
 
 
 asyncio.run(assistant_probe())
@@ -206,8 +221,14 @@ def main() -> int:
     args = parser.parse_args()
 
     instance_id = args.instance_id or resolve_instance_id(args.region)
-    command = send_ssm_script(instance_id=instance_id, region=args.region, script=_remote_script())
-    output = command.get("stdout", "") + "\n" + command.get("stderr", "")
+    command = send_ssm_script(
+        instance_id=instance_id,
+        region=args.region,
+        script=_remote_script(),
+        comment="omega-p0-security-aws-probe",
+        timeout_seconds=600,
+    )
+    output = command.stdout + "\n" + command.stderr
     checks = _parse_checks(output)
     if not checks:
         checks = [Check("p0 probe harness", BLOCKED, _short(output), "Check SSM/docker compose access.")]
@@ -219,7 +240,7 @@ def main() -> int:
         "generated_at": utc_now().isoformat(),
         "region": args.region,
         "instance_id": instance_id,
-        "ssm_command_id": command.get("command_id"),
+        "ssm_command_id": command.command_id,
         "checks": [asdict(check) for check in checks],
         "raw_output": _short(output, 4000),
     }
