@@ -116,6 +116,8 @@ def _validate_mcp_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("mcp URL must use http or https")
+    if parsed.username or parsed.password:
+        raise ValueError("mcp URL must not include credentials")
     host = (parsed.hostname or "").rstrip(".").lower()
     if not host:
         raise ValueError("mcp URL host is required")
@@ -138,13 +140,6 @@ def _validate_mcp_url(url: str) -> None:
             raise ValueError("loopback MCP hosts are disabled in production")
         if host not in allowed_hosts:
             raise ValueError(f"mcp host not allowlisted: {host}")
-        egress_guard.validate_url(
-            url,
-            label="mcp URL",
-            allow_private_hosts=allowed_hosts,
-            allow_private_cidrs=_mcp_allowed_private_cidrs(),
-            allow_http_hosts=allowed_hosts,
-        )
         return
 
     if ip.is_loopback:

@@ -118,6 +118,36 @@ def test_register_rejects_unallowlisted_host_before_db(registry_module):
     assert exc.value.status_code == 403
 
 
+def test_register_degrades_unresolved_allowlisted_host_to_unhealthy(registry_module, monkeypatch):
+    monkeypatch.setattr(
+        registry_module.egress_guard.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(socket.gaierror()),
+    )
+    calls = []
+
+    class Pool:
+        async def execute(self, *args):
+            calls.append(args)
+
+    async def fake_pool():
+        return Pool()
+
+    monkeypatch.setattr(registry_module, "_get_pool", fake_pool)
+
+    result = _run(registry_module.register({
+        "id": "hubspot",
+        "name": "HubSpot CRM",
+        "url": "http://hubspot:8210",
+        "category": "cartridge",
+        "description": "Connector for HubSpot CRM.",
+    }))
+
+    assert result == {"registered": True, "tools": 0, "tool_count": 0}
+    assert calls, "register should persist the degraded registry row"
+    assert calls[0][-2:] == (0, False)
+
+
 def test_invoke_refuses_malicious_stored_url(registry_module, monkeypatch):
     class Pool:
         async def fetchrow(self, *_args):
