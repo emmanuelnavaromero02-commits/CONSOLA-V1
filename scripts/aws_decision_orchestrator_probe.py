@@ -368,7 +368,7 @@ def main() -> int:
         ]
     summary = {
         "status": _overall_status(checks),
-        "generated_at_utc": utc_now(),
+        "generated_at_utc": utc_now().isoformat(),
         "instance_id": instance_id,
         "region": args.region,
         "ssm_command_id": remote.command_id,
