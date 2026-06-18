@@ -4,6 +4,7 @@ from collections.abc import Callable
 from fastapi import Depends, HTTPException, Request
 
 from app.services import auth as _auth
+from app.services.db_scope import scoped_db
 from app.services.jwt_auth import JWTAuthError, verify_access_token_async
 
 
@@ -77,54 +78,67 @@ async def _workspace_cartridges(workspace_id: str | None, user_id: int | None = 
     p = await _auth.pool()
     if not hasattr(p, "fetchval"):
         return []
-    has_entitlements = await p.fetchval("SELECT to_regclass('public.tenant_entitlements')")
-    if has_entitlements:
-        has_user_overrides = await p.fetchval("SELECT to_regclass('public.user_cartridge_overrides')")
-        deny_filter = ""
-        args: tuple = (workspace_id,)
-        if has_user_overrides and user_id is not None:
-            deny_filter = """
-                  AND NOT EXISTS (
-                    SELECT 1
-                      FROM user_cartridge_overrides uco
-                     WHERE uco.tenant_id = te.tenant_id
-                       AND uco.workspace_id = te.workspace_id
-                       AND uco.cartridge_id = te.cartridge_id
-                       AND uco.user_id = $2
-                       AND uco.mode = 'deny'
-                  )
-            """
-            args = (workspace_id, user_id)
-        rows = await p.fetch(
-            f"""SELECT cartridge_id AS cartridge
-                 FROM tenant_entitlements te
-                WHERE te.workspace_id = $1
-                  AND te.status = 'active'
-                  AND (te.ends_at IS NULL OR te.ends_at > NOW())
-                  AND EXISTS (
-                    SELECT 1
-                      FROM cartridge_installations ci
-                     WHERE ci.tenant_id = te.tenant_id
-                       AND ci.workspace_id = te.workspace_id
-                       AND ci.cartridge_id = te.cartridge_id
-                       AND ci.status = 'ready'
-                  )
-                  {deny_filter}
-                ORDER BY cartridge""",
-            *args,
-        )
-    else:
-        if _is_production_env():
-            return []
-        rows = await p.fetch(
-            """SELECT DISTINCT cartridge
-                 FROM datasets
-                WHERE workspace_id = $1
-                  AND cartridge IS NOT NULL
-                  AND cartridge <> ''
-                ORDER BY cartridge""",
-            workspace_id,
-        )
+    tenant_id = await p.fetchval(
+        "SELECT tenant_id::text FROM workspaces WHERE id = $1::uuid",
+        workspace_id,
+    )
+    conn_ctx = scoped_db(p, tenant_id, workspace_id) if tenant_id else None
+    conn = None
+    if conn_ctx is not None:
+        conn = await conn_ctx.__aenter__()
+    try:
+        db = conn or p
+        has_entitlements = await db.fetchval("SELECT to_regclass('public.tenant_entitlements')")
+        if has_entitlements:
+            has_user_overrides = await db.fetchval("SELECT to_regclass('public.user_cartridge_overrides')")
+            deny_filter = ""
+            args: tuple = (workspace_id,)
+            if has_user_overrides and user_id is not None:
+                deny_filter = """
+                      AND NOT EXISTS (
+                        SELECT 1
+                          FROM user_cartridge_overrides uco
+                         WHERE uco.tenant_id = te.tenant_id
+                           AND uco.workspace_id = te.workspace_id
+                           AND uco.cartridge_id = te.cartridge_id
+                           AND uco.user_id = $2
+                           AND uco.mode = 'deny'
+                      )
+                """
+                args = (workspace_id, user_id)
+            rows = await db.fetch(
+                f"""SELECT cartridge_id AS cartridge
+                     FROM tenant_entitlements te
+                    WHERE te.workspace_id = $1
+                      AND te.status = 'active'
+                      AND (te.ends_at IS NULL OR te.ends_at > NOW())
+                      AND EXISTS (
+                        SELECT 1
+                          FROM cartridge_installations ci
+                         WHERE ci.tenant_id = te.tenant_id
+                           AND ci.workspace_id = te.workspace_id
+                           AND ci.cartridge_id = te.cartridge_id
+                           AND ci.status = 'ready'
+                      )
+                      {deny_filter}
+                    ORDER BY cartridge""",
+                *args,
+            )
+        else:
+            if _is_production_env():
+                return []
+            rows = await db.fetch(
+                """SELECT DISTINCT cartridge
+                     FROM datasets
+                    WHERE workspace_id = $1
+                      AND cartridge IS NOT NULL
+                      AND cartridge <> ''
+                    ORDER BY cartridge""",
+                workspace_id,
+            )
+    finally:
+        if conn_ctx is not None:
+            await conn_ctx.__aexit__(None, None, None)
     return [str(row["cartridge"]) for row in rows if row["cartridge"]]
 
 
