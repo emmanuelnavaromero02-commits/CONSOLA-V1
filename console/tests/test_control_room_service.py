@@ -2151,30 +2151,15 @@ def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch)
         def json(self):
             return self._body
 
-    class SapClient:
-        instance = None
+    calls = []
 
-        def __init__(self, **_kwargs):
-            self.get_calls = []
-            self.post_calls = []
-            SapClient.instance = self
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def get(self, url, *, headers, auth):
-            self.get_calls.append({"url": url, "headers": headers, "auth": auth})
+    def fake_pinned_request_sync(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        if method == "GET":
             return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
+        return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
 
-        def post(self, url, *, json, headers, auth):
-            self.post_calls.append({"url": url, "json": json, "headers": headers, "auth": auth})
-            return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
-
-    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
-    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
+    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
 
     result = sap_hcm_adapter.SapHcmAdapter().execute(
         {
@@ -2188,8 +2173,10 @@ def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch)
     )
 
     assert result.ok is True
-    assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
-    assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["headers"]["x-csrf-token"] == "Fetch"
+    assert calls[1]["method"] == "POST"
+    assert calls[1]["headers"]["x-csrf-token"] == "csrf-123"
 
 
 def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
@@ -2205,30 +2192,15 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
         def json(self):
             return self._body
 
-    class SapClient:
-        instance = None
+    calls = []
 
-        def __init__(self, **_kwargs):
-            self.get_calls = []
-            self.post_calls = []
-            SapClient.instance = self
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def get(self, url, *, headers, auth):
-            self.get_calls.append({"url": url, "headers": headers, "auth": auth})
+    def fake_pinned_request_sync(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        if method == "GET":
             return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
+        return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
 
-        def post(self, url, *, json, headers, auth):
-            self.post_calls.append({"url": url, "json": json, "headers": headers, "auth": auth})
-            return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
-
-    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
-    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
+    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
 
     result = sap_hcm_adapter.SapHcmAdapter().execute(
         {
@@ -2243,9 +2215,11 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
 
     assert result.ok is True
     assert result.data["status_code"] == 201
-    assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
-    assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
-    assert "DRY_RUN" not in SapClient.instance.post_calls[0]["json"]
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["headers"]["x-csrf-token"] == "Fetch"
+    assert calls[1]["method"] == "POST"
+    assert calls[1]["headers"]["x-csrf-token"] == "csrf-123"
+    assert "DRY_RUN" not in calls[1]["json_body"]
 
 
 def test_replicon_adapter_posts_realistic_writeback_payload(monkeypatch):
@@ -2258,25 +2232,13 @@ def test_replicon_adapter_posts_realistic_writeback_payload(monkeypatch):
         def json(self):
             return {"remote_id": "replicon-writeback-1", "status": "accepted"}
 
-    class RepliconClient:
-        instance = None
+    calls = []
 
-        def __init__(self, **_kwargs):
-            self.post_calls = []
-            RepliconClient.instance = self
+    def fake_pinned_request_sync(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return RepliconResponse()
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, url, *, headers, json):
-            self.post_calls.append({"url": url, "headers": headers, "json": json})
-            return RepliconResponse()
-
-    monkeypatch.setattr(replicon_adapter.httpx, "Client", RepliconClient)
-    monkeypatch.setattr(replicon_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
+    monkeypatch.setattr(replicon_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
 
     result = replicon_adapter.RepliconAdapter().execute(
         {
@@ -2299,13 +2261,14 @@ def test_replicon_adapter_posts_realistic_writeback_payload(monkeypatch):
     assert result.ok is True
     assert result.status == "executed"
     assert result.data["external_id"] == "replicon-writeback-1"
-    call = RepliconClient.instance.post_calls[0]
+    call = calls[0]
+    assert call["method"] == "POST"
     assert call["url"] == "https://replicon.example/api/omega/writeback"
     assert call["headers"]["Authorization"] == "Bearer replicon-token"
     assert call["headers"]["Idempotency-Key"] == "idem-rep"
     assert call["headers"]["X-Omega-Dry-Run"] == "false"
-    assert call["json"]["replicon"]["project"] == "Omega Norte"
-    assert call["json"]["dry_run"] is False
+    assert call["json_body"]["replicon"]["project"] == "Omega Norte"
+    assert call["json_body"]["dry_run"] is False
 
 
 def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
@@ -2319,28 +2282,13 @@ def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
         def json(self):
             return {"error": "forbidden"}
 
-    class SapClient:
-        instance = None
+    calls = []
 
-        def __init__(self, **_kwargs):
-            self.post_calls = []
-            SapClient.instance = self
+    def fake_pinned_request_sync(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return SapResponse()
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def get(self, *_args, **_kwargs):
-            return SapResponse()
-
-        def post(self, *args, **kwargs):
-            self.post_calls.append((args, kwargs))
-            return SapResponse()
-
-    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
-    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
+    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
 
     with pytest.raises(RuntimeError, match="CSRF token fetch failed with HTTP 403"):
         sap_hcm_adapter.SapHcmAdapter().execute(
@@ -2353,7 +2301,7 @@ def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
             dry_run=False,
         )
 
-    assert SapClient.instance.post_calls == []
+    assert [call["method"] for call in calls] == ["GET"]
 
 
 @pytest.mark.asyncio
