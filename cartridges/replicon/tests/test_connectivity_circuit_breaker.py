@@ -156,6 +156,30 @@ def test_replicon_seeded_gold_connection_is_data_only_ok(monkeypatch):
     assert result["conn_id"] == "seeded_gold"
 
 
+def test_replicon_seeded_gold_extract_is_data_only_without_network(monkeypatch):
+    replicon_client = _import_client()
+    RepliconClient = replicon_client.RepliconClient
+
+    monkeypatch.setattr(
+        replicon_client,
+        "get_replicon_connection",
+        lambda **_kwargs: {
+            "base_url": "seeded://replicon-beta-gold",
+            "auth_method": "seeded_gold",
+        },
+    )
+
+    def fail_if_network_called(*_args, **_kwargs):
+        raise AssertionError("seeded_gold extraction must not call external Replicon")
+
+    monkeypatch.setattr(replicon_client.requests, "get", fail_if_network_called)
+    monkeypatch.setattr(replicon_client.requests, "post", fail_if_network_called)
+
+    result = RepliconClient(conn_id="seeded_gold").extract_table("User")
+
+    assert result == []
+
+
 def test_replicon_dns_failure_reports_configured_host(monkeypatch):
     replicon_client = _import_client()
     RepliconClient = replicon_client.RepliconClient

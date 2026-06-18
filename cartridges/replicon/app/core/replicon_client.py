@@ -264,6 +264,14 @@ class RepliconClient:
         dataUrls in the completed extract is a dict keyed by tableId:
           { "Project": "https://s3.amazonaws.com/..." }
         """
+        if self._is_seeded_gold_connection():
+            logger.warning(
+                "Replicon seeded_gold extraction is data-only; "
+                "skipping external API table=%s",
+                table_id,
+            )
+            return []
+
         extract_id = self._create_extract([table_id])
         result = self._poll_extract(extract_id)
 
