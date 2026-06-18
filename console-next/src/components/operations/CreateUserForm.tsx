@@ -152,12 +152,8 @@ export function CreateUserForm() {
           Cancelar
         </button>
       </header>
-      <p className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Este formulario no crea empresas nuevas. Workspace destino:{" "}
-        <span className="font-mono">{workspaceId || "sin workspace activo"}</span>
-      </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {workspaces.length > 1 ? (
+        {workspaces.length > 0 ? (
           <label className="space-y-1.5 text-sm sm:col-span-2">
             <span className="font-medium">Workspace destino</span>
             <select
@@ -167,7 +163,7 @@ export function CreateUserForm() {
             >
               {workspaces.map((workspace) => (
                 <option key={workspace.workspace_id || workspaceLabel(workspace)} value={workspace.workspace_id || ""}>
-                  {workspaceLabel(workspace)} ({workspace.workspace_role || "sin rol"})
+                  {workspaceLabel(workspace)}
                 </option>
               ))}
             </select>

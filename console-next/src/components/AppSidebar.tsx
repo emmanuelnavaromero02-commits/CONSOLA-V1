@@ -71,10 +71,11 @@ const NAV_SECTIONS: NavSection[] = [
         label: "Catálogo técnico",
         icon: Database,
         section: "Datos",
-        active: ["/data", "/data/catalog", "/data/inventory", "/data/lineage", "/viewer", "/lineage", "/linaje", "/explorer", "/studio", "/data/bronze", "/copilot/knowledge", "/monitor"],
-        capabilitiesAny: ["can_view_catalog", "can_view_lineage", "can_view_knowledge", "can_view_bronze", "can_view_explorer", "can_view_studio", "can_view_monitor"],
+        active: ["/data", "/data/catalog", "/data/inventory", "/data/lineage", "/viewer", "/lineage", "/linaje", "/explorer", "/data/bronze", "/copilot/knowledge", "/monitor"],
+        capabilitiesAny: ["can_view_catalog", "can_view_lineage", "can_view_knowledge", "can_view_bronze", "can_view_explorer", "can_view_monitor"],
         keywords: "catalog datasets datos schema semantic lineage linaje watermarks explorer studio bronze conocimiento rag",
       },
+      { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", capability: "can_view_studio", keywords: "studio cartuchos dag refinamiento capas semantica builder" },
     ],
   },
   {
