@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 
 from app.services import audit_service, cartridge_service, permissions
+from app.services.db_scope import scoped_db_for_user
 
 
 class MarketplaceError(RuntimeError):
@@ -210,7 +211,7 @@ async def list_products(user: dict) -> dict[str, Any]:
     tenant_id, workspace_id = _scope(user)
     user_id = user.get("id")
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         await _ensure_products(conn)
         rows = await conn.fetch(
             """
@@ -364,7 +365,7 @@ async def request_product(cartridge_id: str, user: dict, *, source: str = "marke
     fingerprint = hashlib.sha256(f"{tenant_id}:{workspace_id}:{cartridge_id}".encode("utf-8")).hexdigest()
     idempotency_key = f"marketplace-request:{workspace_id}:{cartridge_id}"
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         async with conn.transaction():
             await _ensure_products(conn)
             product = await conn.fetchrow(
@@ -559,7 +560,7 @@ async def activate_product(cartridge_id: str, user: dict, *, source: str = "cons
         raise MarketplaceError("admin role required")
     tenant_id, workspace_id = _scope(user)
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         await _ensure_products(conn)
         # CRITICAL: re-validate marketplace_products.status and internal_only
         # before approving. Without this an existing installation in
@@ -588,7 +589,7 @@ async def list_installations(user: dict) -> dict[str, Any]:
     tenant_id, workspace_id = _scope(user)
     user_id = user.get("id")
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         rows = await conn.fetch(
             """
             SELECT
@@ -644,8 +645,9 @@ async def list_installations(user: dict) -> dict[str, Any]:
 async def list_admin_installations(user: dict) -> dict[str, Any]:
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
+    tenant_id, workspace_id = _scope(user)
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         await _ensure_products(conn)
         rows = await conn.fetch(
             """
@@ -678,6 +680,8 @@ async def list_admin_installations(user: dict) -> dict[str, Any]:
               ON te.tenant_id = ci.tenant_id
              AND te.workspace_id = ci.workspace_id
              AND te.cartridge_id = ci.cartridge_id
+            WHERE ci.tenant_id = $1
+              AND ci.workspace_id = $2
             ORDER BY
               CASE ci.status
                 WHEN 'requested' THEN 0
@@ -687,7 +691,9 @@ async def list_admin_installations(user: dict) -> dict[str, Any]:
                 ELSE 4
               END,
               ci.updated_at DESC
-            """
+            """,
+            tenant_id,
+            workspace_id,
         )
     return {"installations": [_decorate_installation(_row(r) or {}) for r in rows]}
 
@@ -696,7 +702,7 @@ async def get_admin_installation(installation_id: str, user: dict) -> dict[str, 
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         row = await _installation_row(conn, installation_id, admin=True)
     if not row:
         raise MarketplaceError("installation not found")
@@ -797,7 +803,7 @@ async def reactivate_installation(installation_id: str, user: dict) -> dict[str,
 async def retry_installation(installation_id: str, user: dict) -> dict[str, Any]:
     tenant_id, workspace_id = _scope(user)
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         async with conn.transaction():
             row = await conn.fetchrow(
                 """
@@ -862,7 +868,7 @@ async def list_installation_access(installation_id: str, user: dict) -> dict[str
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         await _ensure_schema(conn)
         installation = await _installation_row(conn, installation_id, admin=True)
         if not installation:
@@ -930,7 +936,7 @@ async def set_installation_user_access(
     reason = (reason or "").strip()[:500] or None
 
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         async with conn.transaction():
             await _ensure_schema(conn)
             installation = await conn.fetchrow(
@@ -1070,7 +1076,7 @@ async def _set_installation_state(
         raise MarketplaceError("admin role required")
     user_id = user.get("id")
     p = await cartridge_service.pool()
-    async with p.acquire() as conn:
+    async with scoped_db_for_user(p, user) as (conn, _tenant_id, _workspace_id):
         async with conn.transaction():
             row = await conn.fetchrow(
                 """
