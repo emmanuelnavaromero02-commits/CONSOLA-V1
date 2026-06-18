@@ -65,7 +65,7 @@ def dependency_app(monkeypatch):
         return None
 
     class FakePool:
-        async def fetch(self, query, user_id):
+        async def fetch(self, query, user_id=None):
             return [dict(row) for row in auth_stub.workspace_rows]
 
     async def pool():
