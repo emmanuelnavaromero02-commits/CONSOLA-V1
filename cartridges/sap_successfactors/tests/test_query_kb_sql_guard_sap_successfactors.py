@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
+os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 PREFIX = "s3://lakehouse/raw/sap_successfactors/"
@@ -23,6 +24,25 @@ def _validate_kb_sql(sql: str):
     from app.core.sql_guard import validate_kb_sql
 
     return validate_kb_sql(sql, PREFIXES)
+
+
+@pytest.fixture
+def signed_scope():
+    from app.core import request_context
+
+    ctx = request_context._sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        }
+    )
+    token = request_context.set_security_context(ctx)
+    try:
+        yield
+    finally:
+        request_context.reset_security_context(token)
 
 
 @pytest.mark.parametrize(
@@ -83,7 +103,7 @@ def test_validate_kb_sql_blocks_dangerous_queries(sql, expected):
     assert expected in reason
 
 
-def test_query_kb_returns_sql_blocked_before_duckdb(monkeypatch):
+def test_query_kb_returns_sql_blocked_before_duckdb(monkeypatch, signed_scope):
     from app import mcp_server
 
     def fail_get_connection():
@@ -107,7 +127,7 @@ def test_query_kb_rejects_invalid_limit_before_duckdb(monkeypatch):
     assert "positive integer" in result["reason"]
 
 
-def test_query_kb_caps_huge_limit_argument(monkeypatch):
+def test_query_kb_caps_huge_limit_argument(monkeypatch, signed_scope):
     from app import mcp_server
 
     class FakeResult:
@@ -136,7 +156,7 @@ def test_query_kb_caps_huge_limit_argument(monkeypatch):
     assert conn.executed == ["SELECT * FROM (SELECT 1 AS ok) _q LIMIT 5000"]
 
 
-def test_query_kb_error_response_does_not_leak_resolved_sql_or_paths(monkeypatch):
+def test_query_kb_error_response_does_not_leak_resolved_sql_or_paths(monkeypatch, signed_scope):
     from app import mcp_server
 
     class LeakyConnection:
