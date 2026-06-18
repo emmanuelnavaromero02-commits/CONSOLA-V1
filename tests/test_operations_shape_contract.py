@@ -139,6 +139,32 @@ def test_ts_client_uses_patch_for_update_user():
     )
 
 
+def test_admin_reset_returns_one_time_temporary_password():
+    src = console_route_source()
+    marker = "async def api_admin_users_send_reset"
+    assert marker in src, "api_admin_users_send_reset block not found"
+    start = src.index(marker)
+    body = src[start : src.index("async def api_vault_list_connections", start)]
+    assert '"temporary_password": temporary_password' in body
+    assert '"password_delivery": "one_time_response"' in body
+    assert "must_change_password = TRUE" in body
+    assert "DELETE FROM refresh_tokens" in body
+    assert "DELETE FROM user_sessions" in body
+    assert "temporary_password_issued" in body
+
+
+def test_operations_ui_surfaces_reset_temporary_password_once():
+    users_table = _read(REPO / "console-next/src/components/operations/UsersTable.tsx")
+    types_src = _read(TS_TYPES)
+    client_src = _read(TS_CLIENT)
+
+    assert "SendPasswordResetResponse" in types_src
+    assert "temporary_password?: string | null" in types_src
+    assert "Promise<SendPasswordResetResponse>" in client_src
+    assert "Contraseña temporal generada" in users_table
+    assert "navigator.clipboard.writeText(resetSecret.password)" in users_table
+
+
 def test_ts_client_lists_audit_at_security_path():
     """The Audit page MUST hit /security/audit directly on FastAPI,
     NOT /api/audit/log."""

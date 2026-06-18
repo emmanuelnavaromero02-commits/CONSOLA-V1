@@ -15,6 +15,7 @@ import type {
   TenantCreateRequest,
   TenantCreateResponse,
   TenantListResponse,
+  SendPasswordResetResponse,
   UpdateUserRequest,
   UsersListResponse,
   VaultConnection,
@@ -55,8 +56,12 @@ export async function deleteUser(userId: number): Promise<void> {
   await api.delete(`/api/admin/users/${userId}`);
 }
 
-export async function sendPasswordReset(userId: number): Promise<void> {
-  await api.post(`/api/admin/users/${userId}/send-reset`, {});
+export async function sendPasswordReset(userId: number): Promise<SendPasswordResetResponse> {
+  const { data } = await api.post<SendPasswordResetResponse>(
+    `/api/admin/users/${userId}/send-reset`,
+    {},
+  );
+  return data;
 }
 
 // ── Companies / tenants ────────────────────────────────────────

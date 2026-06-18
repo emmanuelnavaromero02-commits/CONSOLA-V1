@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "sonner";
-import { KeyRound, ShieldOff } from "lucide-react";
+import { Check, Copy, KeyRound, ShieldOff } from "lucide-react";
 
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
@@ -49,6 +49,12 @@ function userWorkspaceSummary(user: AppUser): string {
   return workspaces.map(workspaceLabel).join(", ");
 }
 
+interface ResetSecret {
+  email: string;
+  password: string;
+  sent: boolean;
+}
+
 
 export function UsersTable() {
   const { data: users, isLoading, isError, refetch } = useUsers();
@@ -58,6 +64,8 @@ export function UsersTable() {
 
   const [confirmDelete, setConfirmDelete] = useState<AppUser | null>(null);
   const [workspaceFilter, setWorkspaceFilter] = useState("");
+  const [resetSecret, setResetSecret] = useState<ResetSecret | null>(null);
+  const [copiedReset, setCopiedReset] = useState(false);
   const rows = useMemo(() => users ?? [], [users]);
   const workspaceOptions = useMemo(() => {
     const byId = new Map<string, string>();
@@ -169,11 +177,33 @@ export function UsersTable() {
 
   async function handleSendReset(u: AppUser) {
     try {
-      await resetMutation.mutateAsync(u.id);
-      toast.success(`Email de restablecimiento enviado a ${u.email}.`);
+      const result = await resetMutation.mutateAsync(u.id);
+      if (result.temporary_password) {
+        setResetSecret({
+          email: u.email,
+          password: result.temporary_password,
+          sent: Boolean(result.sent),
+        });
+        setCopiedReset(false);
+        toast.success("Contraseña temporal generada.");
+      } else {
+        setResetSecret(null);
+        toast.success(`Email de restablecimiento enviado a ${u.email}.`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error desconocido.";
       toast.error(`No se pudo enviar el reset: ${msg}`);
+    }
+  }
+
+  async function handleCopyResetPassword() {
+    if (!resetSecret) return;
+    try {
+      await navigator.clipboard.writeText(resetSecret.password);
+      setCopiedReset(true);
+      toast.success("Contraseña temporal copiada.");
+    } catch {
+      toast.error("No se pudo copiar automáticamente.");
     }
   }
 
@@ -191,6 +221,44 @@ export function UsersTable() {
 
   return (
     <>
+      {resetSecret ? (
+        <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="font-semibold text-amber-800 dark:text-amber-200">
+                Contraseña temporal generada
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {resetSecret.email} · {resetSecret.sent ? "correo enviado" : "correo no confirmado"}
+              </p>
+              <code className="mt-2 block overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs text-foreground">
+                {resetSecret.password}
+              </code>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopyResetPassword()}
+                className="inline-flex min-h-[40px] items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {copiedReset ? (
+                  <Check aria-hidden className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy aria-hidden className="h-3.5 w-3.5" />
+                )}
+                {copiedReset ? "Copiada" : "Copiar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setResetSecret(null)}
+                className="inline-flex min-h-[40px] items-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Ocultar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {workspaceOptions.length > 1 ? (
         <div className="mb-3 flex flex-col gap-2 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
           <label className="space-y-1 text-sm">

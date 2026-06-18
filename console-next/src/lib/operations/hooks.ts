@@ -42,6 +42,7 @@ import type {
   OperationWorkflowActionResponse,
   OperationWorkflowDetailResponse,
   OperationsHealth,
+  SendPasswordResetResponse,
   TenantCreateRequest,
   TenantCreateResponse,
   TenantListResponse,
@@ -92,7 +93,7 @@ export function useDeleteUser() {
 }
 
 export function useSendPasswordReset() {
-  return useMutation<void, Error, number>({
+  return useMutation<SendPasswordResetResponse, Error, number>({
     mutationFn: sendPasswordReset,
   });
 }

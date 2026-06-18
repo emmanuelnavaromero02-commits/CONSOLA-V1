@@ -18,7 +18,7 @@
  *     resp  → { deleted: true, id: <user_id> }
  *
  *   POST   /api/admin/users/{user_id}/send-reset  (CSRF, no body)
- *     resp  → { sent: <bool> }
+ *     resp  → { sent: <bool>, temporary_password?: <string>, password_delivery?: <string> }
  *
  *   GET    /api/admin/tenants
  *   POST   /api/admin/tenants  (CSRF)
@@ -83,6 +83,12 @@ export interface UserWorkspaceSummary {
 
 export interface UsersListResponse {
   users: AppUser[];
+}
+
+export interface SendPasswordResetResponse {
+  sent:                boolean;
+  temporary_password?: string | null;
+  password_delivery?:  string | null;
 }
 
 export interface CreateUserRequest {

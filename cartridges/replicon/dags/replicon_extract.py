@@ -252,6 +252,11 @@ def _is_seeded_gold_connection(base_url: str, connection: dict) -> bool:
     return auth_method == "seeded_gold" or str(base_url or "").startswith("seeded://")
 
 
+def _is_seeded_gold_conn_id(conn_id: object) -> bool:
+    value = str(conn_id or "").strip().lower()
+    return value == "seeded_gold" or value.startswith("seeded://")
+
+
 def _seeded_gold_result(
     *,
     entity: str,
@@ -477,6 +482,22 @@ def replicon_extract():
         security_context = conf.get("security_context") if isinstance(conf.get("security_context"), dict) else {}
         tenant_id = conf.get("tenant_id") or security_context.get("tenant_id")
         workspace_id = conf.get("workspace_id") or security_context.get("workspace_id")
+
+        if _is_seeded_gold_conn_id(conn_id):
+            logger.warning(
+                "replicon_extract using seeded_gold data-only connection "
+                "entity=%s mode=%s conn_id=%s; Vault reveal skipped",
+                entity,
+                mode,
+                conn_id,
+            )
+            return _seeded_gold_result(
+                entity=entity,
+                mode=mode,
+                conn_id=str(conn_id),
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
 
         base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id)
         if _is_seeded_gold_connection(base_url, connection):
