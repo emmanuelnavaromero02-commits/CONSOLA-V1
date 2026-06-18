@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -139,12 +139,13 @@ def skills_root() -> dict:
 @router.post("/test_connection")
 def test_connection(
     x_security_context: str | None = Header(default=None, alias="x-security-context"),
+    conn_id: str | None = Query(default=None, max_length=128),
 ) -> dict:
     """Validate Replicon credentials without triggering extraction."""
     try:
         from app.core.replicon_client import RepliconClient
 
-        return RepliconClient(security_context=x_security_context).test_connection()
+        return RepliconClient(security_context=x_security_context, conn_id=conn_id).test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 

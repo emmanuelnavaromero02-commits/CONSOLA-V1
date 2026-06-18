@@ -80,6 +80,30 @@ function stringList(value: unknown): string[] | undefined {
   return items.length ? items : undefined;
 }
 
+function addField(fields: ConnectorField[], field: ConnectorField): void {
+  if (!fields.some((existing) => existing.name === field.name)) {
+    fields.push(field);
+  }
+}
+
+function envField(
+  name: string,
+  type: FieldType,
+  label: string,
+  description: unknown,
+  required = true,
+): ConnectorField {
+  const field: ConnectorField = {
+    name,
+    type,
+    label,
+    required,
+  };
+  const descriptionText = text(description);
+  if (descriptionText) field.description = descriptionText;
+  return field;
+}
+
 function fieldFromSpec(name: string, spec: unknown): ConnectorField {
   const source = isRecord(spec) ? spec : {};
   const field: ConnectorField = {
@@ -135,8 +159,17 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
     const authSpec = isRecord(connector.auth) ? connector.auth : {};
     const fields: ConnectorField[] = [];
     const baseUrlEnv = text(apiSpec.base_url_env);
+    const authMethodValues = stringList(authSpec.auth_method_values);
+    const authType = text(authSpec.type);
+    const structuredAuth = authType !== "bearer_token";
+    const supportsOauthClientCredentials =
+      authType === "oauth2_client_credentials"
+      || (structuredAuth && authMethodValues?.includes("oauth2_client_credentials"));
+    const supportsSamlBearer =
+      authType === "saml_bearer_assertion"
+      || (structuredAuth && authMethodValues?.includes("saml_bearer_assertion"));
     if (baseUrlEnv) {
-      fields.push({
+      addField(fields, {
         name: "base_url",
         type: "url",
         label: "Base URL",
@@ -144,8 +177,21 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
         required: true,
       });
     }
-    if (authSpec.type === "bearer_token") {
-      fields.push({
+    if (authMethodValues?.length && (supportsOauthClientCredentials || supportsSamlBearer)) {
+      const authMethodField: ConnectorField = {
+        name: "auth_method",
+        type: "select",
+        label: "Método de autenticación",
+        required: true,
+        default: authType ?? authMethodValues[0],
+        options: authMethodValues.map((value) => ({ value, label: value })),
+      };
+      const authMethodEnv = text(authSpec.auth_method_env);
+      if (authMethodEnv) authMethodField.description = authMethodEnv;
+      addField(fields, authMethodField);
+    }
+    if (authType === "bearer_token") {
+      addField(fields, {
         name: "token",
         type: "password",
         label: "Bearer token",
@@ -153,9 +199,22 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
         required: true,
       });
     }
+    if (supportsOauthClientCredentials || supportsSamlBearer) {
+      addField(fields, envField("client_id", "string", "Client ID", authSpec.client_id_env));
+      addField(fields, envField("token_url", "url", "Token URL", authSpec.token_url_env));
+      addField(fields, envField("company_id", "string", "Company ID", authSpec.company_id_env));
+    }
+    if (supportsOauthClientCredentials) {
+      addField(fields, envField("client_secret", "password", "Client secret", authSpec.client_secret_env, !supportsSamlBearer));
+    }
+    if (supportsSamlBearer) {
+      addField(fields, envField("admin_user", "string", "Admin user", authSpec.admin_user_env));
+      addField(fields, envField("idp_url", "url", "IDP URL", authSpec.idp_url_env, false));
+      addField(fields, envField("private_key_pem", "password", "Private key PEM", "SF_PRIVATE_KEY_PEM / SF_PRIVATE_KEY_PATH"));
+    }
     return {
       fields,
-      authMethodValues: stringList(authSpec.auth_method_values),
+      authMethodValues,
       name: text(connector.name),
       description: text(connector.description),
     };

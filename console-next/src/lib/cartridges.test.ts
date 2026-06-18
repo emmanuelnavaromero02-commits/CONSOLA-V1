@@ -85,6 +85,64 @@ describe("cartridge client", () => {
     });
   });
 
+  it("adapts SuccessFactors OAuth/SAML metadata into Vault fields", async () => {
+    apiMock.get.mockResolvedValueOnce({
+      data: {
+        connector: {
+          name: "SAP SuccessFactors HXM",
+          api: { base_url_env: "SF_BASE_URL" },
+          auth: {
+            type: "oauth2_client_credentials",
+            auth_method_env: "SF_AUTH_METHOD",
+            auth_method_values: ["oauth2_client_credentials", "saml_bearer_assertion"],
+            token_url_env: "SF_TOKEN_URL",
+            idp_url_env: "SF_IDP_URL",
+            client_id_env: "SF_CLIENT_ID",
+            client_secret_env: "SF_CLIENT_SECRET",
+            company_id_env: "SF_COMPANY_ID",
+            private_key_path_env: "SF_PRIVATE_KEY_PATH",
+            admin_user_env: "SF_ADMIN_USER",
+          },
+        },
+      },
+      status: 200,
+      headers: new Headers(),
+      requestId: "r",
+    });
+
+    const schema = await getConnectorSchema("sap_successfactors");
+    const fieldsByName = Object.fromEntries(schema.fields.map((field) => [field.name, field]));
+
+    expect(schema.authMethodValues).toEqual(["oauth2_client_credentials", "saml_bearer_assertion"]);
+    expect(Object.keys(fieldsByName)).toEqual([
+      "base_url",
+      "auth_method",
+      "client_id",
+      "token_url",
+      "company_id",
+      "client_secret",
+      "admin_user",
+      "idp_url",
+      "private_key_pem",
+    ]);
+    expect(fieldsByName.auth_method).toMatchObject({
+      type: "select",
+      label: "Método de autenticación",
+      description: "SF_AUTH_METHOD",
+      required: true,
+      options: [
+        { value: "oauth2_client_credentials", label: "oauth2_client_credentials" },
+        { value: "saml_bearer_assertion", label: "saml_bearer_assertion" },
+      ],
+    });
+    expect(fieldsByName.client_secret).toMatchObject({ type: "password", required: false });
+    expect(fieldsByName.private_key_pem).toMatchObject({
+      type: "password",
+      description: "SF_PRIVATE_KEY_PEM / SF_PRIVATE_KEY_PATH",
+      required: true,
+    });
+  });
+
   it("uses encoded mutation endpoints for credentials and activation", async () => {
     apiMock.post.mockResolvedValue({ data: { ok: true }, status: 200, headers: new Headers(), requestId: "r" });
     apiMock.delete.mockResolvedValueOnce({ data: { ok: true }, status: 200, headers: new Headers(), requestId: "r" });
