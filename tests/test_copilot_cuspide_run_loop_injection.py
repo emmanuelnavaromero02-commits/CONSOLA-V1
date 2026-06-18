@@ -12,6 +12,7 @@ lessons block when lessons_service returns one.
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import sys
 from pathlib import Path
 from typing import Any
@@ -83,7 +84,12 @@ def test_run_loop_injects_lessons_block_into_system_prompt(
     async def fake_pool():
         return _FakePool()
 
+    @asynccontextmanager
+    async def fake_scoped_db_for_user(pool, user):
+        yield _FakeConn(), user.get("active_tenant_id"), user.get("active_workspace_id")
+
     monkeypatch.setattr(copilot_mod.auth, "pool", fake_pool)
+    monkeypatch.setattr(copilot_mod, "scoped_db_for_user", fake_scoped_db_for_user)
     monkeypatch.setattr(copilot_mod, "_load_conversation", fake_load_conv)
     monkeypatch.setattr(copilot_mod, "_load_history", fake_load_history)
     monkeypatch.setattr(copilot_mod, "_build_tools_for_llm", fake_tools)
@@ -102,8 +108,13 @@ def test_run_loop_injects_lessons_block_into_system_prompt(
     out = asyncio.run(
         copilot_mod._run_loop(
             conversation_id="11111111-1111-1111-1111-111111111111",
-            user={"id": 1, "email": "u@x", "active_workspace_id": None,
-                  "role": "admin"},
+            user={
+                "id": 1,
+                "email": "u@x",
+                "active_tenant_id": "tenant-a",
+                "active_workspace_id": "workspace-a",
+                "role": "admin",
+            },
             ip=None, user_agent=None,
             approved_keys=set(),
         )
