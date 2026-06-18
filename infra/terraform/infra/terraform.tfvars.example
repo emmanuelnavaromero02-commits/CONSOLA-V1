@@ -13,8 +13,8 @@ egress_mode       = "nat_instance"
 nat_instance_type = "t3.micro"
 enable_vpn        = false
 
-public_console_domain   = "console.example.com"
-public_workspace_domain = "workspace.example.com"
+public_console_domain   = "console.7businesssolutions.com"
+public_workspace_domain = "workspace.7businesssolutions.com"
 
 # If the public domain is in Route53, set the zone id and Terraform will
 # create ACM validation and A-alias records automatically.
@@ -26,7 +26,7 @@ route53_zone_id = ""
 manual_acm_validation_complete = false
 
 # If DNS is managed elsewhere, this can point to an already issued ACM cert.
-public_acm_certificate_arn = ""
+public_acm_certificate_arn = "arn:aws:acm:us-east-1:095713296066:certificate/fbb0b26c-bac5-4050-a04a-849be0507af8"
 
 # Public SSH is disabled by default. Prefer SSM:
 # aws ssm start-session --target <instance-id>
@@ -46,12 +46,12 @@ enable_public_alb_waf             = true
 public_alb_waf_rate_limit         = 2000
 public_alb_waf_common_rule_action = "count"
 
-# Transactional email. Keep MailHog until a real sender domain exists.
+# Transactional email. Production uses Amazon SES API with the EC2 IAM role.
 # For Amazon SES API after domain verification/sandbox approval:
-# email_provider   = "ses"
-# ses_sender_domain = "example.com"
-# smtp_from        = "no-reply@example.com"
-# smtp_from_domain = "example.com"
+# email_provider    = "ses"
+# ses_sender_domain = "7businesssolutions.com"
+# smtp_from         = "no-reply@7businesssolutions.com"
+# smtp_from_domain  = "7businesssolutions.com"
 #
 # Keep SMTP only for MailHog/dev or an external SMTP provider:
 # email_provider   = "smtp"
@@ -59,13 +59,13 @@ public_alb_waf_common_rule_action = "count"
 # smtp_port        = 587
 # smtp_user        = "<smtp-username>"
 # smtp_use_tls     = true
-email_provider   = "smtp"
-ses_sender_domain = ""
-smtp_host        = "mailhog"
-smtp_port        = 1025
+email_provider    = "ses"
+ses_sender_domain = "7businesssolutions.com"
+smtp_host         = "email-smtp.us-east-1.amazonaws.com"
+smtp_port         = 587
 smtp_user        = ""
-smtp_from        = "noreply@modecissions.local"
-smtp_from_domain = "modecissions.local"
-smtp_use_tls     = false
+smtp_from        = "no-reply@7businesssolutions.com"
+smtp_from_domain = "7businesssolutions.com"
+smtp_use_tls     = true
 
 vpn_admin_allowed_cidrs = []

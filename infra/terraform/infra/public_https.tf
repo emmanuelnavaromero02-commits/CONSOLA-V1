@@ -31,7 +31,7 @@ locals {
   workspace_public_url = (
     local.public_https_enabled
     ? "https://${var.public_workspace_domain}"
-    : "http://${aws_lb.public.dns_name}:8081"
+    : "http://${aws_lb.public.dns_name}"
   )
 }
 
@@ -177,19 +177,6 @@ resource "aws_lb_listener" "http_console_technical" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.console.arn
-  }
-}
-
-resource "aws_lb_listener" "http_workspace_technical" {
-  count = local.public_https_enabled ? 0 : 1
-
-  load_balancer_arn = aws_lb.public.arn
-  port              = "8081"
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.workspace.arn
   }
 }
 
@@ -355,6 +342,28 @@ resource "aws_cloudwatch_metric_alarm" "app_ec2_status_check" {
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.public_alarms.arn]
   ok_actions          = [aws_sns_topic.public_alarms.arn]
+
+  dimensions = {
+    InstanceId = aws_instance.app.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "app_ec2_system_recover" {
+  alarm_name          = "modecissions-app-ec2-system-recover"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "StatusCheckFailed_System"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  alarm_description   = "Phase 1 self-healing: recover the same stateful App EC2 on system status check failure. Do not replace with ASG until Postgres/state is externalized."
+  treat_missing_data  = "notBreaching"
+  alarm_actions = [
+    "arn:aws:automate:${var.aws_region}:ec2:recover",
+    aws_sns_topic.public_alarms.arn,
+  ]
+  ok_actions = [aws_sns_topic.public_alarms.arn]
 
   dimensions = {
     InstanceId = aws_instance.app.id

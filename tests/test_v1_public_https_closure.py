@@ -44,7 +44,7 @@ def test_public_https_variables_outputs_and_alb_exist():
     assert 'resource "aws_acm_certificate" "public"' in alb
     assert 'resource "aws_lb_listener" "http_redirect"' in alb
     assert 'resource "aws_lb_listener" "http_console_technical"' in alb
-    assert 'resource "aws_lb_listener" "http_workspace_technical"' in alb
+    assert 'resource "aws_lb_listener" "http_workspace_technical"' not in alb
     assert 'resource "aws_lb_listener" "https"' in alb
     assert "manual_acm_validation_complete" in alb
     assert 'path                = "/readyz"' in alb
@@ -60,6 +60,23 @@ def test_terraform_has_two_public_subnets_for_alb():
     assert 'aws_subnet.public.id, aws_subnet.public_secondary.id' in alb
 
 
+def test_production_tfvars_pin_domains_certificate_waf_and_ses():
+    tfvars = _read(TF / "terraform.tfvars.example")
+
+    assert 'public_console_domain   = "console.7businesssolutions.com"' in tfvars
+    assert 'public_workspace_domain = "workspace.7businesssolutions.com"' in tfvars
+    assert (
+        'public_acm_certificate_arn = "arn:aws:acm:us-east-1:095713296066:certificate/'
+        in tfvars
+    )
+    assert 'enable_public_alb_waf             = true' in tfvars
+    assert 'public_alb_waf_common_rule_action = "count"' in tfvars
+    assert 'email_provider    = "ses"' in tfvars
+    assert 'ses_sender_domain = "7businesssolutions.com"' in tfvars
+    assert 'smtp_from        = "no-reply@7businesssolutions.com"' in tfvars
+    assert 'smtp_from_domain = "7businesssolutions.com"' in tfvars
+
+
 def test_no_public_ssh_or_internal_app_ports():
     sg = _read(TF / "security_groups.tf")
     assert "cidr_blocks = var.ssh_allowed_cidrs" in sg
@@ -73,13 +90,59 @@ def test_no_public_ssh_or_internal_app_ports():
     ]
     assert not ssh_world, "SSH must not be open to the world"
 
-    for port in ("8000", "8001", "8082", "8088", "9000", "15432", "8201", "8202", "8203", "8204"):
+    for port in ("8000", "8001", "8081", "8082", "8088", "9000", "15432", "8201", "8202", "8203", "8204"):
         public_ingress = [
             block for block in ingress_blocks
             if re.search(rf"from_port\s*=\s*{port}\b", block)
             and 'cidr_blocks = ["0.0.0.0/0"]' in block
         ]
         assert not public_ingress, f"internal port {port} must not be public in Terraform security groups"
+
+
+def test_public_alb_target_groups_only_use_internal_service_ports():
+    alb = _read(TF / "public_https.tf")
+
+    assert re.search(
+        r'resource "aws_lb_target_group" "console" \{[\s\S]*?port\s*=\s*8000[\s\S]*?path\s*=\s*"/readyz"',
+        alb,
+    )
+    assert re.search(
+        r'resource "aws_lb_target_group" "workspace" \{[\s\S]*?port\s*=\s*8001[\s\S]*?path\s*=\s*"/healthz"',
+        alb,
+    )
+    for port in ("8081", "8082", "8088"):
+        assert not re.search(rf'resource "aws_lb_target_group" "[^"]+" \{{[\s\S]*?port\s*=\s*{port}\b', alb)
+        assert not re.search(rf'resource "aws_lb_listener" "[^"]+" \{{[\s\S]*?port\s*=\s*"{port}"', alb)
+
+
+def test_waf_baseline_blocks_obvious_bad_traffic_and_observes_common_rules():
+    waf = _read(TF / "waf.tf")
+    variables = _read(TF / "variables.tf")
+
+    assert 'resource "aws_wafv2_web_acl" "public_alb"' in waf
+    assert 'resource "aws_wafv2_web_acl_association" "public_alb"' in waf
+    assert "RateLimitPerIp" in waf
+    assert "block {}" in waf
+    assert "AWSManagedRulesAmazonIpReputationList" in waf
+    assert "AWSManagedRulesKnownBadInputsRuleSet" in waf
+    assert "AWSManagedRulesCommonRuleSet" in waf
+    assert 'default     = "count"' in variables
+    assert 'contains(["count", "block"], lower(var.public_alb_waf_common_rule_action))' in variables
+    assert "cloudwatch_metrics_enabled = true" in waf
+
+
+def test_phase_one_self_healing_uses_ec2_recover_not_horizontal_scaling():
+    alb = _read(TF / "public_https.tf")
+    ec2 = _read(TF / "ec2_app.tf")
+    variables = _read(TF / "variables.tf")
+
+    assert 'resource "aws_instance" "app"' in ec2
+    assert 'resource "aws_cloudwatch_metric_alarm" "app_ec2_system_recover"' in alb
+    assert "StatusCheckFailed_System" in alb
+    assert 'arn:aws:automate:${var.aws_region}:ec2:recover' in alb
+    assert "Do not replace with ASG until Postgres/state is externalized" in alb
+    assert "aws_autoscaling_group" not in "".join(path.read_text(encoding="utf-8") for path in TF.glob("*.tf"))
+    assert 'lower(var.image_tag) != "latest"' in variables
 
 
 def test_userdata_sets_browser_urls_to_https_public_domains():
@@ -113,6 +176,7 @@ def test_public_verify_and_operational_scripts_have_release_guards():
     assert "E2E_LIVE_LLM=1 is required" in verify
     assert "TEST_PASSWORD or E2E_ADMIN_PASSWORD is required" in verify
     assert "login cookies are HttpOnly, Secure and SameSite" in verify
+    assert "for port in 8000 8001 8081 8082 8088" in verify
     assert '/api/cartridges/${cartridge}/test_connection' in verify
     assert "npx playwright test" in verify
 

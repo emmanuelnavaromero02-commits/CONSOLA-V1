@@ -96,17 +96,6 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  dynamic "ingress" {
-    for_each = local.public_https_enabled ? [] : [1]
-    content {
-      description = "Technical HTTP workspace listener without public domain"
-      from_port   = 8081
-      to_port     = 8081
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  }
-
   egress {
     description = "Console target in VPC"
     from_port   = 8000

@@ -138,7 +138,7 @@ check_http_redirect "${CONSOLE_HOST}" "/healthz" "${CONSOLE_HOST}"
 check_http_redirect "${WORKSPACE_HOST}" "/healthz" "${WORKSPACE_HOST}"
 
 for host in "${CONSOLE_HOST}" "${WORKSPACE_HOST}"; do
-  for port in 8000 8001 8082 8088 9000 15432 8201 8202 8203 8204; do
+  for port in 8000 8001 8081 8082 8088 9000 15432 8201 8202 8203 8204; do
     if curl -sS --max-time 3 -o /dev/null "http://${host}:${port}/" 2>/dev/null; then
       fail "internal port ${port} is reachable on ${host}"
     fi
