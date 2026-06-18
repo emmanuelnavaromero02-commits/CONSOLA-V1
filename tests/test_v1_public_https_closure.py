@@ -164,7 +164,9 @@ def test_aws_entrypoint_derives_cookie_security_from_public_scheme():
 
 
 def test_partial_dataset_badges_are_visible_in_catalog_ui():
-    page = _read(REPO / "console-next/src/app/(shell)/data/catalog/page.tsx")
-    assert "datasetReadiness" in page
-    assert "Parcial" in page
-    assert "AlertTriangle" in page
+    catalog_page = _read(REPO / "console-next/src/app/(shell)/data/catalog/page.tsx")
+    inventory_page = _read(REPO / "console-next/src/app/(shell)/data/inventory/page.tsx")
+    assert "DataTechnicalHub" in catalog_page
+    assert "datasetReadiness" in inventory_page
+    assert "Parcial" in inventory_page
+    assert "AlertTriangle" in inventory_page
