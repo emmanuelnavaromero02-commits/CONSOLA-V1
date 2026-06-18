@@ -13,11 +13,16 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 AWS_COMPOSE = REPO / "infra/terraform/deploy/docker-compose.aws.yml"
+AWS_CARTRIDGES = REPO / "infra/terraform/deploy/docker-compose.cartridges.yml"
 RUNBOOK     = REPO / "infra/terraform/deploy/DEPLOY-RUNBOOK.md"
 
 
 def _doc():
     return yaml.safe_load(AWS_COMPOSE.read_text(encoding="utf-8"))
+
+
+def _cartridge_doc():
+    return yaml.safe_load(AWS_CARTRIDGES.read_text(encoding="utf-8"))
 
 
 def test_aws_compose_either_includes_or_documents_cartridges():
@@ -44,6 +49,34 @@ def test_aws_compose_either_includes_or_documents_cartridges():
         "DEPLOY-RUNBOOK explanation. Operator would deploy DAGs that "
         "call hosts that don't resolve."
     )
+
+
+def test_default_cartridge_urls_resolve_to_declared_aws_services():
+    """Every default Docker hostname handed to Airflow must exist in the
+    combined AWS compose service set. Otherwise the UI shows getaddrinfo
+    failures such as ``Temporary failure in name resolution``.
+    """
+    raw = AWS_COMPOSE.read_text(encoding="utf-8")
+    services = set(_doc().get("services", {})) | set(_cartridge_doc().get("services", {}))
+    expected = {
+        "replicon",
+        "hubspot",
+        "salesforce",
+        "sap-hcm",
+        "sap-s4hana",
+        "sap-successfactors",
+    }
+    for hostname in expected:
+        assert f"http://{hostname}:" in raw
+        assert hostname in services, f"{hostname} is used in AWS URLs but has no service"
+
+
+def test_same_host_cartridges_are_internal_only():
+    """The same-host overlay is for Docker bridge DNS, not public ports."""
+    services = _cartridge_doc().get("services", {})
+    for name in ("replicon", "hubspot", "salesforce", "sap-hcm", "sap-s4hana"):
+        assert name in services
+        assert "ports" not in services[name], f"{name} must not publish host ports in AWS"
 
 
 def test_aws_compose_passes_cartridge_url_env_vars_to_airflow():
