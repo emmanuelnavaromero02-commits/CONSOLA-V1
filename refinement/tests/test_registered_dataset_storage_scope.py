@@ -32,24 +32,39 @@ def _body() -> dict:
 
 
 class _FakeStore:
-    def get_dataset(self, name: str) -> dict | None:
+    def get_dataset(
+        self,
+        name: str,
+        *,
+        tenant_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict | None:
         datasets = {
             "sap_successfactors_empemployment_latest": {
                 "name": name,
                 "layer": "silver",
                 "cartridge": "sap_successfactors",
+                "tenant_id": "tenant-a",
                 "workspace_id": "workspace-a",
             },
             "sap_successfactors_employee_360": {
                 "name": name,
                 "layer": "gold",
                 "cartridge": "sap_successfactors",
+                "tenant_id": "tenant-a",
                 "workspace_id": "workspace-a",
                 "sql_def": "SELECT * FROM read_parquet('s3://lakehouse/silver/sap_successfactors/sap_successfactors_empemployment_latest/**/*.parquet')",
                 "sources": ["silver/sap_successfactors/sap_successfactors_empemployment_latest"],
             },
         }
-        return datasets.get(name)
+        dataset = datasets.get(name)
+        if not dataset:
+            return None
+        if tenant_id is not None and tenant_id != dataset["tenant_id"]:
+            return None
+        if workspace_id is not None and workspace_id != dataset["workspace_id"]:
+            return None
+        return dataset
 
 
 def test_registered_legacy_silver_glob_allowed_when_declared(monkeypatch):
