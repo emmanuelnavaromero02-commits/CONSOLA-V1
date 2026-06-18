@@ -54,7 +54,7 @@ output "public_console_url" {
 }
 
 output "public_workspace_url" {
-  description = "Public workspace URL. Uses ALB HTTP :8081 in technical mode and HTTPS domain in production mode."
+  description = "Public workspace URL. Production uses the HTTPS workspace domain through the ALB 443 host-header rule; no public :8081 listener is exposed."
   value       = local.workspace_public_url
 }
 
