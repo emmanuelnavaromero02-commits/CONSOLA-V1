@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import require_authenticated
 from app.services import auth
+from app.services.db_scope import scoped_db_for_user, workspace_scope_from_user
 from app.services.security_context import build_security_context
 
 
@@ -75,9 +76,33 @@ async def freshness_for_cartridge_internal(cartridge: str, user: dict | None = N
         raise HTTPException(404, "Unknown cartridge")
     watermark_scope = _watermark_scope_for_user(user)
     pool = await auth.pool()
-    async with pool.acquire() as conn:
-        scope_sql = "AND ew.watermark_scope = $2" if watermark_scope else ""
-        params = (cartridge, watermark_scope) if watermark_scope else (cartridge,)
+    tenant_id = workspace_id = None
+    if user:
+        try:
+            tenant_id, workspace_id = workspace_scope_from_user(user)
+        except HTTPException:
+            tenant_id = workspace_id = None
+
+    async def _fetch(conn, tenant: str | None, workspace: str | None):
+        params: list[str] = [cartridge]
+        scope_sql = ""
+        if watermark_scope:
+            params.append(watermark_scope)
+            scope_sql = f"AND ew.watermark_scope = ${len(params)}"
+        run_scope_sql = ""
+        if workspace:
+            if tenant:
+                params.append(tenant)
+                tenant_ref = f"${len(params)}"
+                params.append(workspace)
+                workspace_ref = f"${len(params)}"
+                run_scope_sql = (
+                    f"AND er_run.tenant_id = {tenant_ref}::uuid "
+                    f"AND er_run.workspace_id = {workspace_ref}::uuid"
+                )
+            else:
+                params.append(workspace)
+                run_scope_sql = f"AND er_run.workspace_id = ${len(params)}::uuid"
         rows = await conn.fetch(
             """
             SELECT
@@ -95,9 +120,10 @@ async def freshness_for_cartridge_internal(cartridge: str, user: dict | None = N
                 {scope_sql}
             LEFT JOIN LATERAL (
                 SELECT status, finished_at
-                FROM extraction_runs
-                WHERE cartridge_id = ec.cartridge_id
-                  AND entity_name  = ec.entity
+                FROM extraction_runs er_run
+                WHERE er_run.cartridge_id = ec.cartridge_id
+                  AND er_run.entity_name  = ec.entity
+                  {run_scope_sql}
                 -- v1.43.x R1-DBA: removed NULLS LAST. The index
                 -- idx_extraction_runs_cartridge_entity_started is
                 -- created as (cartridge_id, entity_name, started_at
@@ -112,9 +138,17 @@ async def freshness_for_cartridge_internal(cartridge: str, user: dict | None = N
             ) er ON TRUE
             WHERE ec.cartridge_id = $1
             ORDER BY ec.entity
-            """.format(scope_sql=scope_sql),
+            """.format(scope_sql=scope_sql, run_scope_sql=run_scope_sql),
             *params,
         )
+        return rows
+
+    if workspace_id:
+        async with scoped_db_for_user(pool, user) as (conn, scoped_tenant, scoped_workspace):
+            rows = await _fetch(conn, scoped_tenant, scoped_workspace)
+    else:
+        async with pool.acquire() as conn:
+            rows = await _fetch(conn, tenant_id, workspace_id)
     return {"cartridge": cartridge, "entities": [dict(r) for r in rows]}
 
 
