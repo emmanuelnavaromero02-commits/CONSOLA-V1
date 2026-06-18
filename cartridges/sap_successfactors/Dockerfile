@@ -4,6 +4,7 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV HOME=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
