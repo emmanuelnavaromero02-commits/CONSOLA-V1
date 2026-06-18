@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from app.core.pg_client import get_connection
+from app.core.request_context import scope_values
 
 
 def create_run(
@@ -14,16 +15,18 @@ def create_run(
     started_at: datetime,
 ) -> str:
     run_id = str(uuid.uuid4())
+    tenant_id, workspace_id = scope_values()
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO extraction_runs
-                    (run_id, cartridge_id, entity_name, run_type, status, started_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (run_id, cartridge_id, entity_name, run_type, status, started_at,
+                     tenant_id, workspace_id, scope_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'scoped')
                 """,
-                (run_id, cartridge_id, entity_name, run_type, status, started_at),
+                (run_id, cartridge_id, entity_name, run_type, status, started_at, tenant_id, workspace_id),
             )
         conn.commit()
         return run_id

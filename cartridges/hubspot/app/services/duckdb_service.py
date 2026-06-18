@@ -12,9 +12,20 @@ from sqlalchemy import create_engine, text
 
 from app.core.config import settings
 from app.core.minio_client import upload_file_to_minio
-from app.core.request_context import scoped_prefix, scope_values
+from app.core.request_context import (
+    SecurityContextError,
+    require_tenant_workspace_scope,
+    scoped_prefix,
+    scope_values,
+)
 
 _SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+
+
+def _path_has_scope(path: str, scope: str) -> bool:
+    parts = [part for part in path.strip("/").split("/") if part]
+    scope_parts = [part for part in scope.strip("/").split("/") if part]
+    return any(parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts)))
 
 
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
@@ -45,8 +56,13 @@ def write_kb_parquet(
     run_id: str,
     security_context: dict[str, Any] | None = None,
 ) -> str:
+    security_context = require_tenant_workspace_scope(security_context)
     load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    scope = "" if "tenant_id=" in output_path else scoped_prefix(security_context)
+    scope = scoped_prefix(security_context)
+    if "tenant_id=" in output_path or "workspace_id=" in output_path:
+        if not _path_has_scope(output_path, scope):
+            raise SecurityContextError("KB output path is outside the active tenant/workspace scope")
+        scope = ""
     object_name = (
         f"{output_path}/{scope}load_date={load_date}/batch_id={run_id}/{kb_id}.parquet"
     )
@@ -64,6 +80,7 @@ def write_kb_to_postgres(
     pg_table: str,
     security_context: dict[str, Any] | None = None,
 ) -> None:
+    security_context = require_tenant_workspace_scope(security_context)
     if not _SAFE_IDENT_RE.match(pg_table):
         raise ValueError(f"Unsafe pg_table identifier: {pg_table!r}")
     tenant, workspace = scope_values(security_context)

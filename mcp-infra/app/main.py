@@ -19,6 +19,7 @@ import secrets
 import time
 import uuid
 from typing import Any
+from urllib.parse import unquote
 
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
@@ -471,15 +472,33 @@ def _prefix_allowed(ctx: dict[str, Any], value: str) -> bool:
         return True
     if len(parts) <= 3 and root in {"raw", "silver", "gold"}:
         return True
-    scoped_marker = f"tenant_id={tenant_id}/workspace_id={workspace_id}"
-    normalized = value.rstrip("/")
-    return f"/{scoped_marker}/" in f"/{normalized}/" or normalized.endswith(f"/{scoped_marker}")
+    return _key_has_exact_scope(value, tenant_id, workspace_id)
+
+
+def _canonical_storage_key(value: str) -> str:
+    raw = str(value or "").strip().lstrip("/").replace("\\", "/")
+    for _ in range(3):
+        decoded = unquote(raw).replace("\\", "/")
+        if decoded == raw:
+            break
+        raw = decoded
+    parts = [part for part in raw.split("/") if part and part != "."]
+    if any(part == ".." for part in parts):
+        raise HTTPException(403, detail="storage path traversal is not allowed")
+    return "/".join(parts)
+
+
+def _key_has_exact_scope(value: str, tenant_id: str, workspace_id: str) -> bool:
+    key = _canonical_storage_key(value)
+    parts = key.split("/")
+    scope_parts = [f"tenant_id={tenant_id}", f"workspace_id={workspace_id}"]
+    return any(parts[idx : idx + 2] == scope_parts for idx in range(len(parts)))
 
 
 def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
     tenant: str | None = None
     workspace: str | None = None
-    for part in str(key or "").strip("/").split("/"):
+    for part in _canonical_storage_key(key).split("/"):
         if part.startswith("tenant_id="):
             tenant = part.split("=", 1)[1]
         elif part.startswith("workspace_id="):
@@ -488,7 +507,7 @@ def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
 
 
 def _is_physical_storage_key(key: str) -> bool:
-    parts = str(key or "").strip("/").split("/")
+    parts = _canonical_storage_key(key).split("/")
     if not parts:
         return False
     root = parts[0]
@@ -540,9 +559,7 @@ def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:
         return
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
-    scoped_marker = f"tenant_id={tenant_id}/workspace_id={workspace_id}"
-    normalized = value.rstrip("/")
-    if f"/{scoped_marker}/" not in f"/{normalized}/" and not normalized.endswith(f"/{scoped_marker}"):
+    if not _key_has_exact_scope(value, tenant_id, workspace_id):
         raise HTTPException(403, detail="tenant/workspace object scope required")
 
 
@@ -852,9 +869,9 @@ def _reader_storage_key(path: str) -> str:
     path = (path or "").strip()
     if not path.startswith("s3://"):
         raise HTTPException(403, detail="cartridge SQL readers must use s3:// paths")
-    rest = path[5:]
+    rest = _canonical_storage_key(path[5:])
     key = rest.split("/", 1)[1] if "/" in rest else ""
-    if not key or ".." in key.split("/"):
+    if not key:
         raise HTTPException(403, detail="cartridge SQL path is not allowed")
     return key
 
@@ -869,6 +886,7 @@ def _require_cartridge_sql_path(ctx: dict[str, Any], cartridge_id: str, path: st
         raise HTTPException(403, detail="cartridge SQL must stay inside its cartridge prefix")
     if not _prefix_allowed(ctx, key):
         raise HTTPException(403, detail="cartridge SQL path not allowed")
+    _require_scoped_object_path(ctx, key)
 
 
 def _validate_cartridge_query_sql(ctx: dict[str, Any], cartridge_id: str, sql: str) -> None:
@@ -1138,6 +1156,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
     elif tool in _CONTROL_ROOM_ALERT_TOOLS:
         ctx = _require_context_permission(req, "control_room.write", internal_service)
+    elif tool.startswith("cartridge_"):
+        raise HTTPException(403, detail="cartridge tool lacks tenancy metadata")
     else:
         return None
 
@@ -1263,6 +1283,9 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         _reject_client_owned_scope_args(args)
         if tool != "list_cartridges":
             _require_cartridge_scope(ctx, str(args.get("cartridge_id") or args.get("id") or ""))
+        if tool in _CARTRIDGE_CONTEXT_TOOLS and not _is_unscoped_admin_context(ctx):
+            if not _has_tenant_workspace_scope(ctx):
+                raise HTTPException(403, detail="cartridge tools require tenant/workspace scope")
         if tool == "cartridge_list_entities" and not _is_unscoped_admin_context(ctx):
             if not _has_tenant_workspace_scope(ctx):
                 raise HTTPException(403, detail="cartridge entities require tenant/workspace scope")

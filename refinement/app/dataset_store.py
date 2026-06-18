@@ -79,8 +79,10 @@ class DatasetStore:
                 SELECT name, layer, cartridge, sources, sql_def,
                        column_mapping, schedule, description, last_refresh, row_count,
                        workspace_id, created_by_id
-                FROM datasets WHERE name = %s
-            """, (name,))
+                FROM datasets
+                WHERE name = %s
+                  AND (%s::uuid IS NULL OR workspace_id = %s::uuid)
+            """, (name, workspace_id, workspace_id))
             r = cur.fetchone()
         if not r:
             return None
@@ -105,6 +107,10 @@ class DatasetStore:
         with _conn() as conn, conn.cursor() as cur:
             workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)
             _apply_scope(cur, ds.get("tenant_id"), workspace_id)
+            cur.execute("SELECT workspace_id FROM datasets WHERE name = %s", (ds["name"],))
+            existing = cur.fetchone()
+            if existing and workspace_id and str(existing.get("workspace_id") or "") != str(workspace_id):
+                raise ValueError("dataset name already exists outside the active workspace")
             cur.execute("""
                 INSERT INTO datasets
                   (name, layer, cartridge, sources, sql_def, description,
@@ -140,13 +146,19 @@ class DatasetStore:
     ) -> dict:
         with _conn() as conn, conn.cursor() as cur:
             _apply_scope(cur, tenant_id, workspace_id)
-            cur.execute("SELECT layer, cartridge FROM datasets WHERE name = %s", (name,))
+            cur.execute(
+                "SELECT layer, cartridge FROM datasets WHERE name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)",
+                (name, workspace_id, workspace_id),
+            )
             row = cur.fetchone()
             if not row:
                 return {"deleted": False, "error": "not found"}
             layer     = row["layer"]
             cartridge = row["cartridge"] or "unknown"
-            cur.execute("DELETE FROM datasets WHERE name = %s", (name,))
+            cur.execute(
+                "DELETE FROM datasets WHERE name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)",
+                (name, workspace_id, workspace_id),
+            )
             conn.commit()
         return {"deleted": True, "name": name, "layer": layer, "cartridge": cartridge}
 
@@ -163,5 +175,6 @@ class DatasetStore:
                 UPDATE datasets
                 SET last_refresh = NOW(), row_count = %s, updated_at = NOW()
                 WHERE name = %s
-            """, (row_count, name))
+                  AND (%s::uuid IS NULL OR workspace_id = %s::uuid)
+            """, (row_count, name, workspace_id, workspace_id))
             conn.commit()

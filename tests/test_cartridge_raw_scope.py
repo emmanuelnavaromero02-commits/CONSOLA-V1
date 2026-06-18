@@ -18,6 +18,7 @@ from tests.conftest import load_cartridge_app
 )
 def test_raw_parquet_upload_path_uses_forwarded_tenant_workspace_scope(cartridge, entity, monkeypatch):
     load_cartridge_app(cartridge)
+    from app.core import request_context
     from app.services import parquet_service
 
     uploads: list[str] = []
@@ -37,11 +38,14 @@ def test_raw_parquet_upload_path_uses_forwarded_tenant_workspace_scope(cartridge
         rows=[{"id": "1"}],
         run_id="run-1",
         load_type="full",
-        security_context={
-            "trusted": True,
-            "tenant_id": "tenant-1",
-            "workspace_id": "ws-1",
-        },
+        security_context=request_context._sign_security_context(
+            {
+                "trusted": True,
+                "source": "console",
+                "tenant_id": "tenant-1",
+                "workspace_id": "ws-1",
+            }
+        ),
         **kwargs,
     )
 

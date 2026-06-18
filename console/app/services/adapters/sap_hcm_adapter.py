@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import base64
 import os
+import ssl
 from typing import Any
-
-import httpx
 
 from app.services import egress_guard
 from app.services.adapters.circuit_breaker import CartridgeCircuitBreaker
@@ -29,27 +29,36 @@ class SapHcmAdapter(BaseAdapter):
             or self.DEFAULT_IT0008_PATH
         )
         url = f"{str(base_url).rstrip('/')}/{str(endpoint).lstrip('/')}"
-        _validate_writeback_url(url)
         payload = _build_it0008_payload(action_data)
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
         }
-        auth, _auth_method = _auth_for(credentials, headers)
+        _auth_method = _auth_for(credentials, headers)
         timeout = float(credentials.get("timeout") or 20.0)
 
         CartridgeCircuitBreaker.before_call(self.CARTRIDGE_ID)
         try:
-            with httpx.Client(timeout=timeout) as client:
-                csrf_token = _fetch_csrf_token(client, url, headers=headers, auth=auth)
-                headers["x-csrf-token"] = csrf_token
-                response = client.post(url, json=payload, headers=headers, auth=auth)
+            csrf_token = _fetch_csrf_token(url, headers=headers, timeout=timeout)
+            headers["x-csrf-token"] = csrf_token
+            response = egress_guard.pinned_request_sync(
+                "POST",
+                url,
+                label="SAP HCM write-back URL",
+                headers=headers,
+                json_body=payload,
+                timeout=timeout,
+                allow_private_hosts=_allowed_private_hosts(),
+                allow_private_cidrs=_allowed_private_cidrs(),
+            )
+        except egress_guard.EgressGuardError as exc:
+            raise ValueError(str(exc)) from exc
         except RuntimeError as exc:
             text = str(exc)
             if "HTTP 5" in text or "HTTP 429" in text:
                 CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)
             raise
-        except httpx.TransportError:
+        except (OSError, TimeoutError, ssl.SSLError):
             CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)
             raise
 
@@ -81,7 +90,7 @@ def _first_present(source: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> tuple[httpx.BasicAuth | None, str]:
+def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> str:
     token = _first_present(credentials, "token", "api_token", "bearer_token", "SAP_HCM_TOKEN")
     api_key = _first_present(credentials, "api_key", "SAP_HCM_API_KEY")
     user = _first_present(credentials, "user", "username", "sap_hcm_user", "SAP_HCM_USER")
@@ -89,12 +98,14 @@ def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> tuple[htt
 
     if token:
         headers["authorization"] = f"Bearer {token}"
-        return None, "bearer_token"
+        return "bearer_token"
     if api_key:
         headers["x-api-key"] = str(api_key)
-        return None, "api_key"
+        return "api_key"
     if user and password:
-        return httpx.BasicAuth(str(user), str(password)), "basic"
+        encoded = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
+        headers["authorization"] = f"Basic {encoded}"
+        return "basic"
     raise ValueError("SAP HCM adapter requires bearer token, api_key, or user/password credentials")
 
 
@@ -107,27 +118,22 @@ def _allowed_private_cidrs() -> list[str]:
     return [item.strip() for item in os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", "").split(",") if item.strip()]
 
 
-def _validate_writeback_url(url: str) -> None:
-    try:
-        egress_guard.validate_url(
-            url,
-            label="SAP HCM write-back URL",
-            allow_private_hosts=_allowed_private_hosts(),
-            allow_private_cidrs=_allowed_private_cidrs(),
-        )
-    except egress_guard.EgressGuardError as exc:
-        raise ValueError(str(exc)) from exc
-
-
 def _fetch_csrf_token(
-    client: httpx.Client,
     url: str,
     *,
     headers: dict[str, str],
-    auth: httpx.BasicAuth | None,
+    timeout: float,
 ) -> str:
     fetch_headers = {**headers, "x-csrf-token": "Fetch"}
-    response = client.get(url, headers=fetch_headers, auth=auth)
+    response = egress_guard.pinned_request_sync(
+        "GET",
+        url,
+        label="SAP HCM CSRF URL",
+        headers=fetch_headers,
+        timeout=timeout,
+        allow_private_hosts=_allowed_private_hosts(),
+        allow_private_cidrs=_allowed_private_cidrs(),
+    )
     if not 200 <= response.status_code < 400:
         raise RuntimeError(f"SAP HCM CSRF token fetch failed with HTTP {response.status_code}")
     token = response.headers.get("x-csrf-token")
@@ -153,7 +159,7 @@ def _build_it0008_payload(action_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _response_body(response: httpx.Response) -> Any:
+def _response_body(response: egress_guard.PinnedHTTPResponse) -> Any:
     try:
         return response.json()
     except ValueError:

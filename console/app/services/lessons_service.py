@@ -88,7 +88,9 @@ async def record_lesson(
         lesson_text.strip()
     )[:_MAX_LESSON_TEXT]
     confidence = max(0.0, min(1.0, float(confidence)))
-    if scope not in ("user", "workspace", "global"):
+    if scope == "global":
+        scope = "workspace_global"
+    if scope not in ("user", "workspace", "workspace_global", "tenant_global", "platform_global"):
         scope = "user"
     if source_kind not in ("approval", "decline", "manual", "system"):
         source_kind = "manual"
@@ -392,11 +394,11 @@ async def fetch_relevant_lessons(
                hits,
                created_at,
                scope
-          FROM copilot_lessons
+         FROM copilot_lessons
          WHERE enabled = TRUE
            AND (user_id = $1
                 OR (workspace_id IS NOT NULL AND workspace_id = $2::uuid)
-                OR scope = 'global')
+                OR (scope IN ('workspace_global', 'tenant_global') AND workspace_id IS NOT NULL AND workspace_id = $2::uuid))
          ORDER BY created_at DESC
          LIMIT 200
         """,
@@ -650,10 +652,10 @@ async def list_lessons(
                hits,
                last_used_at,
                created_at
-          FROM copilot_lessons
+         FROM copilot_lessons
          WHERE (user_id = $1
                 OR (workspace_id IS NOT NULL AND workspace_id = $2::uuid)
-                OR scope = 'global')
+                OR (scope IN ('workspace_global', 'tenant_global') AND workspace_id IS NOT NULL AND workspace_id = $2::uuid))
            AND ($3::boolean = FALSE OR enabled = TRUE)
          ORDER BY created_at DESC
          LIMIT $4

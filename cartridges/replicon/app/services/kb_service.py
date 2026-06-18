@@ -7,7 +7,13 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.pg_client import get_connection
-from app.core.request_context import get_security_context, scoped_prefix
+from app.core.request_context import (
+    SecurityContextError,
+    get_security_context,
+    require_tenant_workspace_scope,
+    scoped_prefix,
+)
+from app.core.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_kbs, get_kb_config
 from app.services.duckdb_service import (
     run_kb_sql,
@@ -26,22 +32,36 @@ _SQL_SHARED_RAW_PATH_RE = re.compile(
 
 
 def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> str:
+    security_context = require_tenant_workspace_scope(security_context)
     resolved = str(sql or "").replace("{bucket}", settings.minio_bucket)
     scope = scoped_prefix(security_context)
-    if not scope:
-        return resolved
 
     def _scope_path(match: re.Match[str]) -> str:
         base, rest = match.group(1), match.group(2)
-        if not rest or "tenant_id=" in rest:
-            return match.group(0)
+        if not rest:
+            raise SecurityContextError("KB storage path must include an entity or dataset segment")
         head, sep, tail = rest.partition("/")
         if not sep or not head:
+            raise SecurityContextError("KB storage path must include an entity or dataset segment")
+        if "tenant_id=" in rest or "workspace_id=" in rest:
+            if not rest.startswith(f"{head}/{scope}"):
+                raise SecurityContextError("KB storage path is outside the active tenant/workspace scope")
             return match.group(0)
         return f"{base}{head}/{scope}{tail}"
 
     resolved = _SQL_STORAGE_PATH_RE.sub(_scope_path, resolved)
     return _SQL_SHARED_RAW_PATH_RE.sub(_scope_path, resolved)
+
+
+def _kb_allowed_prefixes() -> tuple[str, str, str, str, str]:
+    bucket = settings.minio_bucket
+    return (
+        f"s3://{bucket}/raw/{CARTRIDGE_ID}/",
+        f"s3://{bucket}/silver/{CARTRIDGE_ID}/",
+        f"s3://{bucket}/gold/{CARTRIDGE_ID}/",
+        f"s3://{bucket}/raw/fx_rates/",
+        f"s3://{bucket}/raw/excel_billing/",
+    )
 
 
 def get_all_knowledge_bits() -> list[dict]:
@@ -57,14 +77,23 @@ def get_all_knowledge_bits() -> list[dict]:
     ]
 
 
-def _create_kb_run(kb_id: str, started_at: datetime) -> str:
+def _create_kb_run(kb_id: str, started_at: datetime, security_context: dict[str, Any]) -> str:
     run_id = str(uuid.uuid4())
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO kb_runs (run_id, kb_id, status, started_at) VALUES (%s, %s, %s, %s)",
-                (run_id, kb_id, "running", started_at),
+                """INSERT INTO kb_runs
+                   (run_id, kb_id, status, started_at, tenant_id, workspace_id, scope_status)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'scoped')""",
+                (
+                    run_id,
+                    kb_id,
+                    "running",
+                    started_at,
+                    security_context.get("tenant_id"),
+                    security_context.get("workspace_id"),
+                ),
             )
         conn.commit()
     finally:
@@ -120,15 +149,23 @@ def run_knowledge_bit(
     if not sql:
         return {"status": "error", "error": f"KB {kb_id} has no SQL defined"}
 
-    security_context = (
-        security_context
-        if isinstance(security_context, dict)
-        else get_security_context()
+    try:
+        security_context = require_tenant_workspace_scope(
+            security_context if isinstance(security_context, dict) else get_security_context()
+        )
+        resolved_sql = _scope_kb_sql(sql, security_context)
+    except SecurityContextError as exc:
+        return {"status": "error", "error": str(exc)}
+    ok, err = validate_kb_sql(
+        resolved_sql,
+        _kb_allowed_prefixes(),
+        required_scope=scoped_prefix(security_context),
     )
-    resolved_sql = _scope_kb_sql(sql, security_context)
+    if not ok:
+        return {"status": "error", "error": f"KB SQL blocked by security guard: {err}"}
 
     started_at = datetime.now(timezone.utc)
-    run_id = _create_kb_run(kb_id, started_at)
+    run_id = _create_kb_run(kb_id, started_at, security_context)
 
     try:
         df = run_kb_sql(resolved_sql)

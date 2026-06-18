@@ -15,7 +15,11 @@ import re
 from fastmcp import FastMCP
 
 from app.core.config import settings
-from app.core.request_context import scoped_prefix
+from app.core.request_context import (
+    SecurityContextError,
+    require_tenant_workspace_scope,
+    scoped_prefix,
+)
 from app.core import job_runner
 from app.services.catalog_service import (
     get_all_entities,
@@ -162,7 +166,11 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
             "columns": [],
         }
     bucket = settings.minio_bucket
-    scope = scoped_prefix()
+    try:
+        ctx = require_tenant_workspace_scope()
+    except SecurityContextError as exc:
+        return {"error": "security_context_denied", "reason": str(exc), "rows": [], "columns": []}
+    scope = scoped_prefix(ctx)
     path = f"s3://{bucket}/raw/hubspot/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true, union_by_name=true) LIMIT {limit}"
     try:
@@ -365,8 +373,16 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
     except ValueError as exc:
         return {"error": "invalid_limit", "reason": str(exc)}
 
-    resolved = _scope_kb_sql(str(sql or ""))
-    ok, err = validate_kb_sql(resolved, _hubspot_allowed_kb_prefixes())
+    try:
+        ctx = require_tenant_workspace_scope()
+        resolved = _scope_kb_sql(str(sql or ""), ctx)
+    except SecurityContextError as exc:
+        return {"error": "security_context_denied", "reason": str(exc)}
+    ok, err = validate_kb_sql(
+        resolved,
+        _hubspot_allowed_kb_prefixes(),
+        required_scope=scoped_prefix(ctx),
+    )
     if not ok:
         return {"error": "sql_blocked", "reason": err}
 
@@ -408,7 +424,19 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
         return
 
     def _tool_fn() -> dict[str, Any]:
-        scoped_sql = f"SELECT * FROM ({_scope_kb_sql(sql)}) _q LIMIT 100"
+        try:
+            ctx = require_tenant_workspace_scope()
+            resolved_sql = _scope_kb_sql(sql, ctx)
+        except SecurityContextError as exc:
+            return {"error": "security_context_denied", "reason": str(exc)}
+        ok, err = validate_kb_sql(
+            resolved_sql,
+            _hubspot_allowed_kb_prefixes(),
+            required_scope=scoped_prefix(ctx),
+        )
+        if not ok:
+            return {"error": "sql_blocked", "reason": err}
+        scoped_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
         conn = _get_duckdb_connection()
         try:
             rel = conn.execute(scoped_sql)
