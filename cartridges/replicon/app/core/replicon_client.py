@@ -74,9 +74,13 @@ class RepliconClient:
         self.base_url = str(connection.get("base_url") or "").rstrip("/")
         self._auth_connection = connection
         self._conn_id = (conn_id or "").strip()
+        self._auth_method = str(connection.get("auth_method") or "").strip().lower()
 
         if not self.base_url:
             raise EnvironmentError("Replicon base_url is required (set env or Vault connection)")
+
+    def _is_seeded_gold_connection(self) -> bool:
+        return self._auth_method == "seeded_gold" or self.base_url.startswith("seeded://")
 
     # ------------------------------------------------------------------
     # Auth header
@@ -288,6 +292,16 @@ class RepliconClient:
     # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
+        if self._is_seeded_gold_connection():
+            return {
+                "status": "ok",
+                "reachable": True,
+                "data_only": True,
+                "message": "Conexión de datos semilla activa; no requiere llamada a Replicon.",
+                "base_url": self.base_url,
+                **({"conn_id": self._conn_id} if self._conn_id else {}),
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
         try:
             tables = self.list_tables()
             return {

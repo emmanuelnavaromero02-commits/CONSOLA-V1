@@ -444,7 +444,7 @@ def replicon_extract():
         mode      = conf.get("mode", "incremental")
         from_date = conf.get("from_date") or None
         to_date   = conf.get("to_date")   or None
-        conn_id   = conf.get("connection_id") or DEFAULT_CONN_ID
+        conn_id   = conf.get("conn_id") or conf.get("connection_id") or DEFAULT_CONN_ID
         security_context = conf.get("security_context") if isinstance(conf.get("security_context"), dict) else {}
         tenant_id = conf.get("tenant_id") or security_context.get("tenant_id")
         workspace_id = conf.get("workspace_id") or security_context.get("workspace_id")

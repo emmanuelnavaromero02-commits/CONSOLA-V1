@@ -169,13 +169,13 @@ class SAPClientError(RuntimeError):
     pass
 
 
-def _token_rejected_message(auth_label: str, exc: requests.HTTPError, checklist: str) -> str:
+def _token_rejected_message(auth_label: str, exc: requests.HTTPError) -> str:
     response = exc.response
     status = response.status_code if response is not None else "unknown"
     return (
-        f"{auth_label} token rejected by SuccessFactors (HTTP {status}); "
-        f"verify {checklist}. "
-        "Vault fields were present, but SAP did not accept the token exchange."
+        f"SuccessFactors rechazo la conexion guardada en Vault (HTTP {status}) "
+        f"durante autenticacion {auth_label}. Revisa esa conexion en Vault y "
+        "confirma que SAP tenga autorizado el usuario/API client."
     )
 
 
@@ -632,7 +632,6 @@ class SapSfClient:
                     _token_rejected_message(
                         "OAuth",
                         exc,
-                        "company_id, client_id, client_secret, token_url, and SuccessFactors datacenter",
                     )
                 ) from exc
             raise SAPClientError(f"OAuth token request failed: {exc}") from exc
@@ -703,7 +702,6 @@ class SapSfClient:
                     _token_rejected_message(
                         "SAML bearer",
                         exc,
-                        "company_id, client_id, admin_user, private_key_pem, token_url, and SuccessFactors datacenter",
                     )
                 ) from exc
             raise SAPClientError(f"SAML bearer token request failed: {exc}") from exc

@@ -172,9 +172,10 @@ def test_saml_bearer_token_401_reports_successfactors_rejection(monkeypatch):
         client._request_uncached_saml_bearer_token(("unit-test",))
 
     message = str(exc_info.value)
-    assert "SAML bearer token rejected by SuccessFactors (HTTP 401)" in message
-    assert "company_id, client_id, admin_user, private_key_pem" in message
-    assert "Vault fields were present" in message
+    assert "SuccessFactors rechazo la conexion guardada en Vault (HTTP 401)" in message
+    assert "autenticacion SAML bearer" in message
+    assert "private_key_pem" not in message
+    assert "company_id" not in message
 
 
 def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):

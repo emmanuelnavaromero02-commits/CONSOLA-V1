@@ -131,6 +131,31 @@ def test_replicon_client_uses_selected_vault_connection(monkeypatch):
     assert captured == {"security_context": "signed-context", "conn_id": "seeded_gold"}
 
 
+def test_replicon_seeded_gold_connection_is_data_only_ok(monkeypatch):
+    replicon_client = _import_client()
+    RepliconClient = replicon_client.RepliconClient
+
+    monkeypatch.setattr(
+        replicon_client,
+        "get_replicon_connection",
+        lambda **_kwargs: {
+            "base_url": "seeded://replicon-beta-gold",
+            "auth_method": "seeded_gold",
+        },
+    )
+
+    def fail_if_network_called(*_args, **_kwargs):
+        raise AssertionError("seeded_gold must not call external Replicon")
+
+    monkeypatch.setattr(replicon_client.requests, "get", fail_if_network_called)
+    result = RepliconClient(conn_id="seeded_gold").test_connection()
+
+    assert result["status"] == "ok"
+    assert result["reachable"] is True
+    assert result["data_only"] is True
+    assert result["conn_id"] == "seeded_gold"
+
+
 def test_replicon_dns_failure_reports_configured_host(monkeypatch):
     replicon_client = _import_client()
     RepliconClient = replicon_client.RepliconClient
