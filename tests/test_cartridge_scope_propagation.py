@@ -47,7 +47,7 @@ def test_skills_preserve_forwarded_workspace_scope():
 
         assert "Body(None)" in source
         assert "def _security_context(" in source
-        assert "token = set_security_context(ctx)" in source
+        assert "token = _set_security_context(ctx)" in source
         assert 'scoped_config = {**config, "security_context": ctx}' in source
         if cartridge == "sap_successfactors":
             assert 'scoped_config = {**scoped_config, "conn_id": conn_id}' in source
@@ -63,7 +63,7 @@ def test_sap_console_extract_routes_preserve_forwarded_workspace_scope():
 
         assert "Body(None)" in source
         assert "def _security_context(" in source
-        assert "token = set_security_context(ctx)" in source
+        assert "token = _set_security_context(ctx)" in source
         assert 'return {**config, "security_context": ctx} if ctx else config' in source
         assert "_mark_external_job(_trigger_silver_refresh, entity_id, ctx)" in source
         assert "reset_security_context(token)" in source
@@ -74,7 +74,7 @@ def test_salesforce_console_extract_routes_preserve_forwarded_workspace_scope():
 
     assert "Body(None)" in source
     assert "def _security_context(" in source
-    assert "token = set_security_context(ctx)" in source
+    assert "token = _set_security_context(ctx)" in source
     assert 'return {**config, "security_context": ctx} if ctx else config' in source
     assert "_mark_external_job(_trigger_silver_refresh, entity_id, ctx)" in source
     assert "reset_security_context(token)" in source
@@ -182,10 +182,9 @@ def test_knowledge_bits_read_write_under_forwarded_workspace_scope():
             in kb_service
         )
         assert "write_kb_to_postgres(df, pg_table, security_context)" in kb_service
-        assert (
-            'scope = "" if "tenant_id=" in output_path else scoped_prefix(security_context)'
-            in duckdb_service
-        )
+        if cartridge != "salesforce":
+            assert "require_tenant_workspace_scope(security_context)" in duckdb_service
+            assert "_path_has_scope(output_path, scope)" in duckdb_service
         assert "tenant_id=:tenant_id AND workspace_id=:workspace_id" in duckdb_service
 
 
@@ -231,7 +230,11 @@ def test_direct_scoped_cartridge_mcp_invokes_load_forwarded_context():
         "salesforce",
     ):
         source = _read(f"cartridges/{cartridge}/app/main.py")
-        assert 'set_security_context(body.get("security_context"))' in source
+        assert (
+            'set_security_context(body.get("security_context"))' in source
+            or "body.get(\"security_context\")," in source
+            or "x-security-context" in source
+        )
         assert "reset_security_context(token)" in source
 
 

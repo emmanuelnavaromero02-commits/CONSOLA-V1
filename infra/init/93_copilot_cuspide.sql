@@ -149,7 +149,7 @@ BEGIN
   ) THEN
     ALTER TABLE copilot_lessons
       ADD CONSTRAINT copilot_lessons_scope_check
-      CHECK (scope IN ('user', 'workspace', 'global'));
+      CHECK (scope IN ('user', 'workspace', 'global', 'workspace_global', 'tenant_global', 'platform_global'));
   END IF;
 END $$;
 

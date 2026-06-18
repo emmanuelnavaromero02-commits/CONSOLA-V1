@@ -28,6 +28,10 @@ _READ_FN_RE = re.compile(
 _COMMENT_RE = re.compile(r"(--|/\*)")
 _QUOTED_RE = re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")")
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(?P<value>[^\s,)]+)", re.IGNORECASE)
+_TAUTOLOGY_RE = re.compile(
+    r"\b(?:OR|AND)\s+(?P<left>\d+)\s*=\s*(?P=left)\b",
+    re.IGNORECASE,
+)
 
 
 def _mask_quoted(sql: str) -> str:
@@ -40,6 +44,36 @@ def _prefixes(allowed_bucket_prefix: str | tuple[str, ...] | list[str]) -> tuple
     else:
         allowed = tuple(allowed_bucket_prefix)
     return tuple(p.rstrip("/") + "/" for p in allowed)
+
+
+def _canonical_s3_path(path: str) -> str:
+    raw_path = path
+    for _ in range(3):
+        decoded = unquote(raw_path).replace("\\", "/")
+        if decoded == raw_path:
+            break
+        raw_path = decoded
+    if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
+        return raw_path
+    if not raw_path.startswith("s3://"):
+        return raw_path
+    scheme, rest = raw_path[:5], raw_path[5:]
+    parts = [part for part in rest.split("/") if part and part != "."]
+    if any(part == ".." for part in parts):
+        return raw_path
+    return scheme + "/".join(parts)
+
+
+def _has_exact_scope(path: str, required_scope: str | None) -> bool:
+    if not required_scope:
+        return True
+    if not path.startswith("s3://"):
+        return False
+    parts = [part for part in path[5:].split("/") if part]
+    scope_parts = [part for part in required_scope.strip("/").split("/") if part]
+    if not scope_parts:
+        return False
+    return any(parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts)))
 
 
 def has_limit_clause(sql: str) -> bool:
@@ -59,7 +93,12 @@ def _validate_limit_clause(masked_sql: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | list[str]) -> tuple[bool, str | None]:
+def validate_kb_sql(
+    sql: str,
+    allowed_bucket_prefix: str | tuple[str, ...] | list[str],
+    *,
+    required_scope: str | None = None,
+) -> tuple[bool, str | None]:
     """Validate ad-hoc DuckDB SQL before it reaches query_kb."""
     if not isinstance(sql, str) or not sql.strip():
         return False, "empty SQL"
@@ -76,6 +115,8 @@ def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | lis
         return False, "Multiple statements are not allowed"
     if _COMMENT_RE.search(masked):
         return False, "SQL comments are not allowed"
+    if _TAUTOLOGY_RE.search(masked):
+        return False, "SQL tautology predicates are not allowed"
 
     if _METADATA_EXFIL_RE.search(stripped):
         return False, "DuckDB metadata/settings access (PRAGMA/current_setting/duckdb_settings) is not allowed in query_kb"
@@ -102,12 +143,14 @@ def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | lis
     normalized_prefixes = _prefixes(allowed_bucket_prefix)
     for fn in _READ_FN_RE.finditer(stripped):
         name = fn.group(1).lower()
-        raw_path = unquote(fn.group("path")).replace("\\", "/")
+        raw_path = _canonical_s3_path(fn.group("path"))
         if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
             return False, f"{name} may only read from the cartridge S3 prefixes"
         if "/../" in raw_path or raw_path.endswith("/.."):
             return False, f"{name} path traversal is not allowed"
         if not any(raw_path.startswith(prefix) for prefix in normalized_prefixes):
             return False, f"{name} path must start with one of {normalized_prefixes}"
+        if not _has_exact_scope(raw_path, required_scope):
+            return False, f"{name} path must stay inside the active tenant/workspace scope"
 
     return True, None

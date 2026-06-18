@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import ssl
 from typing import Any
-
-import httpx
 
 from app.services import egress_guard
 
@@ -45,18 +45,6 @@ def _json_payload(action_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_writeback_url(url: str, *, label: str = "write-back URL") -> None:
-    try:
-        egress_guard.validate_url(
-            url,
-            label=label,
-            allow_private_hosts=_allowed_private_hosts(),
-            allow_private_cidrs=_allowed_private_cidrs(),
-        )
-    except egress_guard.EgressGuardError as exc:
-        raise AdapterConfigurationError(str(exc)) from exc
-
-
 def _allowed_private_hosts() -> set[str]:
     raw = os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_HOSTS", "")
     return {item.strip().rstrip(".").lower() for item in raw.split(",") if item.strip()}
@@ -76,18 +64,27 @@ class HttpWriteBackAdapter(BaseAdapter):
         credentials: dict[str, Any],
         action_data: dict[str, Any],
         headers: dict[str, str] | None = None,
-        ) -> ExecutionResult:
+    ) -> ExecutionResult:
         CartridgeCircuitBreaker.before_call(self.cartridge_id)
         url = f"{_base_url(credentials)}{_writeback_path(action_data, credentials)}"
-        _validate_writeback_url(url)
         request_headers = auth_headers(credentials)
         if headers:
             request_headers.update(headers)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(url, headers=request_headers, json=_json_payload(action_data))
-        except httpx.TransportError as exc:
+            response = await egress_guard.pinned_request(
+                "POST",
+                url,
+                label="write-back URL",
+                headers=request_headers,
+                json_body=_json_payload(action_data),
+                timeout=self.timeout_seconds,
+                allow_private_hosts=_allowed_private_hosts(),
+                allow_private_cidrs=_allowed_private_cidrs(),
+            )
+        except egress_guard.EgressGuardError as exc:
+            raise AdapterConfigurationError(str(exc)) from exc
+        except (OSError, TimeoutError, asyncio.TimeoutError, ssl.SSLError) as exc:
             CartridgeCircuitBreaker.record_failure(self.cartridge_id)
             raise AdapterExecutionError(f"{self.cartridge_id} transport error: {exc}", status_code=503) from exc
 

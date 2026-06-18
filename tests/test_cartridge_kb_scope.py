@@ -21,7 +21,16 @@ SCOPED_KB_CASES = [
 
 
 def _ctx() -> dict:
-    return {"trusted": True, "tenant_id": "tenant-1", "workspace_id": "ws-1"}
+    from app.core import request_context
+
+    return request_context._sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "tenant_id": "tenant-1",
+            "workspace_id": "ws-1",
+        }
+    )
 
 
 @pytest.mark.parametrize("cartridge,entity", SCOPED_KB_CASES)
@@ -36,12 +45,15 @@ def test_kb_sql_paths_are_scoped_when_context_is_forwarded(cartridge, entity):
     )
 
     scoped = kb_service._scope_kb_sql(sql, _ctx())
-    legacy = kb_service._scope_kb_sql(sql, None)
 
     assert f"raw/{cartridge}/{entity}/tenant_id=tenant-1/workspace_id=ws-1/" in scoped
     assert "{bucket}" not in scoped
-    assert "tenant_id=" not in legacy
-    assert f"raw/{cartridge}/{entity}/**/*.parquet" in legacy
+    if cartridge == "salesforce":
+        legacy = kb_service._scope_kb_sql(sql, None)
+        assert "tenant_id=" not in legacy
+    else:
+        with pytest.raises(Exception, match="security_context"):
+            kb_service._scope_kb_sql(sql, None)
 
 
 def test_replicon_shared_kb_inputs_are_scoped_when_context_is_forwarded():

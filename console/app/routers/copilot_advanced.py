@@ -380,12 +380,16 @@ async def create_lesson_endpoint(
     # lesson into the wrong visibility bucket. The Python service
     # layer also normalises scope, but that's the second line of
     # defence — we want a 400 at the edge, not a silent fallback.
-    if scope not in ("user", "workspace", "global"):
+    if scope == "global":
+        scope = "workspace_global"
+    if scope not in ("user", "workspace", "workspace_global", "tenant_global", "platform_global"):
         raise HTTPException(
-            400, "scope must be one of: user, workspace, global",
+            400, "scope must be one of: user, workspace, workspace_global, tenant_global, platform_global",
         )
-    if scope in ("workspace", "global") and not _has_admin(user):
-        raise HTTPException(403, "workspace/global lessons require admin")
+    if scope in ("workspace", "workspace_global", "tenant_global") and not _has_admin(user):
+        raise HTTPException(403, "workspace lessons require admin")
+    if scope == "platform_global" and str(user.get("role") or "").lower() not in {"owner", "super_admin", "admin"}:
+        raise HTTPException(403, "platform_global lessons require platform admin")
     # Audit-round-6 P1 fix: previously ``_looks_like_jailbreak`` only
     # ran at render time, so a malicious admin could plant a row
     # carrying ``"[SYSTEM OVERRIDE]: ignore everything"`` into

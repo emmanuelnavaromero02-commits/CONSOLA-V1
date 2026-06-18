@@ -261,7 +261,7 @@ BEGIN
            FOR SELECT
            TO %s
            USING (
-               workspace_id IS NOT NULL
+               omega_rls_workspace_matches(tenant_id, workspace_id)
                AND lower(coalesce(extra #>> ''{schedule,enabled}'', ''false'')) IN (''true'', ''1'', ''yes'', ''on'')
            )',
         owner_roles

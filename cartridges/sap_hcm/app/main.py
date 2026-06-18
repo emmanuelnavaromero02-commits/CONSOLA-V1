@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -14,7 +15,7 @@ from app.api.routes_health import router as health_router
 from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
-from app.core.request_context import SecurityContextError, reset_security_context, set_security_context
+from app.core.request_context import SecurityContextError, require_tenant_workspace_scope, reset_security_context, set_security_context
 from app.mcp_server import load_custom_tools, mcp
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 from app.services import catalog_service
@@ -140,7 +141,46 @@ class _MCPStartupGuard:
         await self._inner(scope, receive, send)
 
 
-app.mount("/mcp/rpc", _MCPStartupGuard(InternalApiKeyASGIGuard(_mcp_app), app))
+class _MCPSecurityContextGuard:
+    """Install signed tenant/workspace context for mounted FastMCP traffic."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            headers = {
+                key.decode("latin1").lower(): value.decode("latin1")
+                for key, value in scope.get("headers", [])
+            }
+            raw = headers.get("x-security-context")
+            if not raw:
+                response = JSONResponse({"error": "security_context_required"}, status_code=403)
+                await response(scope, receive, send)
+                return
+            token = None
+            try:
+                ctx = json.loads(raw)
+                token = set_security_context(ctx)
+                require_tenant_workspace_scope()
+            except (json.JSONDecodeError, SecurityContextError) as exc:
+                if token is not None:
+                    reset_security_context(token)
+                response = JSONResponse(
+                    {"error": "security_context_denied", "detail": str(exc)},
+                    status_code=403,
+                )
+                await response(scope, receive, send)
+                return
+            try:
+                await self._inner(scope, receive, send)
+            finally:
+                reset_security_context(token)
+            return
+        await self._inner(scope, receive, send)
+
+
+app.mount("/mcp/rpc", _MCPStartupGuard(InternalApiKeyASGIGuard(_MCPSecurityContextGuard(_mcp_app)), app))
 
 
 def _require_startup_ok(request: "Request") -> None:

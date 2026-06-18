@@ -88,12 +88,20 @@ entities:
       - firstname
       - lastname
       - email
+      - phone
       - company
       - jobtitle
       - lifecyclestage
       - hubspot_owner_id
       - createdate
       - lastmodifieddate
+    protection:
+      firstname: masked
+      lastname: masked
+      email: shadowed
+      phone: masked
+      company: masked
+      hubspot_owner_id: shadowed
 
   - entity: line_items
     object: line_items
@@ -125,6 +133,11 @@ entities:
     mode: full
     page_size: 100
     description: "Vendedores / dueños de deals (id, email, nombre)."
+    protection:
+      id: shadowed
+      email: shadowed
+      first_name: masked
+      last_name: masked
 
   - entity: pipelines
     object: pipelines

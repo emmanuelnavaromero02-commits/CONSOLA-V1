@@ -1608,10 +1608,9 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
     if tool == "get_lineage":
         sec = _require_security_permission(body, "datasets.read")
         ds = store.get_dataset(args["name"], **_dataset_store_scope(sec))
-        if ds:
-            _require_dataset_scope(body, ds)
-        else:
-            _require_security_permission(body, "datasets.read")
+        if not ds:
+            raise HTTPException(404, f"Dataset '{args['name']}' not found")
+        _require_dataset_scope(body, ds)
         return _get_lineage(args["name"], args.get("limit", 10))
 
     if tool == "describe_source":
@@ -2163,8 +2162,8 @@ def _get_app_details(args: dict, sec: dict) -> dict:
         return {"error": "name is required"}
     rows = _pg_exec(
         "SELECT name, title, description, cartridge_id, visibility, datasets_used, created_by_id, updated_at "
-        "FROM analytic_apps WHERE name = %s",
-        (name,), fetch=True, security_context=sec,
+        "FROM analytic_apps WHERE name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid OR scope_status = 'platform_template')",
+        (name, sec.get("workspace_id"), sec.get("workspace_id")), fetch=True, security_context=sec,
     ) or []
     if not rows:
         return {"error": f"app '{name}' not found"}
@@ -2183,8 +2182,8 @@ def _get_app_html(args: dict, sec: dict) -> dict:
         return {"error": "name is required"}
     rows = _pg_exec(
         "SELECT name, title, description, cartridge_id, visibility, datasets_used, created_by_id, html "
-        "FROM analytic_apps WHERE name = %s",
-        (name,), fetch=True, security_context=sec,
+        "FROM analytic_apps WHERE name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid OR scope_status = 'platform_template')",
+        (name, sec.get("workspace_id"), sec.get("workspace_id")), fetch=True, security_context=sec,
     ) or []
     if not rows:
         return {"error": f"app '{name}' not found"}
@@ -2216,8 +2215,9 @@ def _list_apps(sec: dict) -> dict:
 def _delete_app(args: dict, sec: dict) -> dict:
     name = args["name"]
     existing = _pg_exec(
-        "SELECT name, visibility, cartridge_id, created_by_id FROM analytic_apps WHERE name=%s",
-        (name,),
+        "SELECT name, visibility, cartridge_id, created_by_id FROM analytic_apps "
+        "WHERE name=%s AND (%s::uuid IS NULL OR workspace_id = %s::uuid OR scope_status = 'platform_template')",
+        (name, sec.get("workspace_id"), sec.get("workspace_id")),
         fetch=True,
         security_context=sec,
     ) or []
@@ -2230,8 +2230,8 @@ def _delete_app(args: dict, sec: dict) -> dict:
     if not (_is_unscoped_admin_security_context(sec) or is_owner):
         raise HTTPException(403, "app delete requires admin or owner")
     rows = _pg_exec(
-        "DELETE FROM analytic_apps WHERE name=%s RETURNING name",
-        (name,),
+        "DELETE FROM analytic_apps WHERE name=%s AND (%s::uuid IS NULL OR workspace_id = %s::uuid) RETURNING name",
+        (name, sec.get("workspace_id"), sec.get("workspace_id")),
         fetch=True,
         security_context=sec,
     ) or []

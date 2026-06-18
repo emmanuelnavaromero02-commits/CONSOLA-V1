@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,25 @@ P0_EXFIL_SQL = [
 ]
 
 
+@contextmanager
+def _signed_context():
+    from app.core import request_context
+
+    ctx = request_context._sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "tenant_id": "tenant-1",
+            "workspace_id": "ws-1",
+        }
+    )
+    token = request_context.set_security_context(ctx)
+    try:
+        yield ctx
+    finally:
+        request_context.reset_security_context(token)
+
+
 @pytest.mark.parametrize("cartridge", ["replicon", "hubspot"])
 def test_query_kb_blocks_file_read_before_duckdb(cartridge, monkeypatch):
     load_cartridge_app(cartridge)
@@ -44,7 +64,8 @@ def test_query_kb_blocks_file_read_before_duckdb(cartridge, monkeypatch):
         raise AssertionError("DuckDB should not be opened for blocked SQL")
 
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", fail_get_connection)
-    result = mcp_server.query_kb("SELECT * FROM read_parquet('file:///etc/passwd')")
+    with _signed_context():
+        result = mcp_server.query_kb("SELECT * FROM read_parquet('file:///etc/passwd')")
 
     assert result["error"] == "sql_blocked"
     assert "S3 prefix" in result["reason"]
@@ -60,7 +81,8 @@ def test_query_kb_blocks_duckdb_metadata_exfil_before_duckdb(cartridge, sql, mon
         raise AssertionError("DuckDB should not be opened for metadata exfil SQL")
 
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", fail_get_connection)
-    result = mcp_server.query_kb(sql)
+    with _signed_context():
+        result = mcp_server.query_kb(sql)
 
     assert result["error"] == "sql_blocked"
 
@@ -100,9 +122,10 @@ def test_query_kb_error_response_does_not_leak_sql_or_paths(cartridge, entity, m
 
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda: LeakyConnection())
 
-    result = mcp_server.query_kb(
-        f"SELECT * FROM read_parquet('s3://{{bucket}}/raw/{cartridge}/{entity}/*.parquet')"
-    )
+    with _signed_context():
+        result = mcp_server.query_kb(
+            f"SELECT * FROM read_parquet('s3://{{bucket}}/raw/{cartridge}/{entity}/*.parquet')"
+        )
 
     rendered = repr(result)
     assert result == {"error": "query_failed", "reason": "DuckDB query failed"}
@@ -125,7 +148,8 @@ def test_custom_sql_tool_blocks_invalid_sql(cartridge, monkeypatch):
     )
 
     assert len(registered) == 1
-    result = registered[0]()
+    with _signed_context():
+        result = registered[0]()
     assert result["error"] == "sql_blocked"
     assert "S3 prefix" in result["reason"]
 
@@ -139,7 +163,8 @@ def test_preview_rejects_identifier_injection_before_duckdb(cartridge, monkeypat
         raise AssertionError("DuckDB should not be opened for invalid entity")
 
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", fail_get_connection)
-    result = mcp_server.preview("TimeEntry'); DROP TABLE x; --", limit=20)
+    with _signed_context():
+        result = mcp_server.preview("TimeEntry'); DROP TABLE x; --", limit=20)
 
     assert result["error"] == "invalid_argument"
     assert "Invalid entity" in result["reason"]
@@ -169,11 +194,14 @@ def test_preview_reads_forwarded_tenant_workspace_scope(cartridge, entity, monke
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda: FakeConnection())
 
     token = request_context.set_security_context(
-        {
-            "trusted": True,
-            "tenant_id": "tenant-1",
-            "workspace_id": "ws-1",
-        }
+        request_context._sign_security_context(
+            {
+                "trusted": True,
+                "source": "console",
+                "tenant_id": "tenant-1",
+                "workspace_id": "ws-1",
+            }
+        )
     )
     try:
         result = mcp_server.preview(entity, limit=20)

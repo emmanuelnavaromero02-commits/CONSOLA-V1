@@ -185,6 +185,59 @@ async def _read_pinned_http_response(reader: asyncio.StreamReader, max_bytes: in
     return PinnedHTTPResponse(status_code=status_code, headers=headers, content=bytes(body))
 
 
+def _read_pinned_http_response_sync(stream: Any, max_bytes: int) -> PinnedHTTPResponse:
+    header_parts: list[bytes] = []
+    header_size = 0
+    while True:
+        line = stream.readline(65537)
+        if not line:
+            break
+        header_parts.append(line)
+        header_size += len(line)
+        if header_size > 65536:
+            raise EgressGuardError("response headers too large")
+        if line in {b"\r\n", b"\n"}:
+            break
+    header_bytes = b"".join(header_parts)
+    header_text = header_bytes.decode("iso-8859-1", errors="replace")
+    lines = header_text.split("\r\n")
+    status_parts = lines[0].split(" ", 2) if lines else []
+    status_code = int(status_parts[1]) if len(status_parts) > 1 and status_parts[1].isdigit() else 0
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if not line or ":" not in line:
+            continue
+        name, value = line.split(":", 1)
+        headers[name.strip().lower()] = value.strip()
+
+    content_length = headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+        raise EgressGuardError("response exceeds size limit")
+    body = bytearray()
+    if headers.get("transfer-encoding", "").lower() == "chunked":
+        while True:
+            line = stream.readline(65536)
+            chunk_size = int(line.split(b";", 1)[0].strip() or b"0", 16)
+            if chunk_size == 0:
+                stream.readline(65536)
+                break
+            if len(body) + chunk_size > max_bytes:
+                raise EgressGuardError("response exceeds size limit")
+            body.extend(stream.read(chunk_size))
+            stream.read(2)
+    elif content_length and content_length.isdigit():
+        body.extend(stream.read(int(content_length)))
+    else:
+        while True:
+            chunk = stream.read(min(65536, max_bytes + 1 - len(body)))
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > max_bytes:
+                raise EgressGuardError("response exceeds size limit")
+    return PinnedHTTPResponse(status_code=status_code, headers=headers, content=bytes(body))
+
+
 async def pinned_request(
     method: str,
     url: str,
@@ -254,3 +307,65 @@ async def pinned_request(
             await writer.wait_closed()
         except Exception:
             pass
+
+
+def pinned_request_sync(
+    method: str,
+    url: str,
+    *,
+    label: str = "URL",
+    headers: dict[str, str] | None = None,
+    body: bytes = b"",
+    json_body: Any = None,
+    content_type: str = "",
+    max_bytes: int = _DEFAULT_MAX_BYTES,
+    timeout: float = 15.0,
+    allow_private_hosts: set[str] | list[str] | tuple[str, ...] | None = None,
+    allow_private_cidrs: list[str] | tuple[str, ...] | None = None,
+    allow_private: bool = False,
+    allow_http_hosts: set[str] | list[str] | tuple[str, ...] | None = None,
+    require_https_in_prod: bool = True,
+) -> PinnedHTTPResponse:
+    if json_body is not None:
+        body = json.dumps(json_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        content_type = content_type or "application/json"
+    reason, address = resolve_url_address(
+        url,
+        label=label,
+        allow_private_hosts=allow_private_hosts,
+        allow_private_cidrs=allow_private_cidrs,
+        allow_private=allow_private,
+        allow_http_hosts=allow_http_hosts,
+        require_https_in_prod=require_https_in_prod,
+    )
+    if reason:
+        raise EgressGuardError(reason)
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").rstrip(".").lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    ssl_context = ssl.create_default_context() if parsed.scheme == "https" else None
+    sock = socket.create_connection((address, port), timeout=timeout)
+    try:
+        if ssl_context:
+            sock = ssl_context.wrap_socket(sock, server_hostname=host)
+        sock.settimeout(timeout)
+        request_headers = {
+            "Host": host if parsed.port in (None, 80, 443) else f"{host}:{parsed.port}",
+            "Connection": "close",
+            "Accept": "*/*",
+            **(headers or {}),
+        }
+        if body:
+            request_headers["Content-Length"] = str(len(body))
+            if content_type:
+                request_headers["Content-Type"] = content_type
+        header_blob = "".join(f"{name}: {value}\r\n" for name, value in request_headers.items())
+        sock.sendall(f"{method.upper()} {path} HTTP/1.1\r\n{header_blob}\r\n".encode("utf-8") + body)
+        with sock.makefile("rb") as stream:
+            return _read_pinned_http_response_sync(stream, max_bytes)
+    finally:
+        sock.close()

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import os
+import ssl
 from typing import Any
-
-import httpx
 
 from app.services import egress_guard
 from app.services.control_room.core import BaseAdapter, ExecutionResult
@@ -68,7 +67,7 @@ def _payload(action_data: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     }
 
 
-def _response_body(response: httpx.Response) -> Any:
+def _response_body(response: egress_guard.PinnedHTTPResponse) -> Any:
     try:
         return response.json()
     except ValueError:
@@ -84,18 +83,6 @@ def _allowed_private_cidrs() -> list[str]:
     return [item.strip() for item in os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", "").split(",") if item.strip()]
 
 
-def _validate_writeback_url(url: str) -> None:
-    try:
-        egress_guard.validate_url(
-            url,
-            label="replicon write-back URL",
-            allow_private_hosts=_allowed_private_hosts(),
-            allow_private_cidrs=_allowed_private_cidrs(),
-        )
-    except egress_guard.EgressGuardError as exc:
-        raise AdapterConfigurationError(str(exc)) from exc
-
-
 class RepliconAdapter(BaseAdapter):
     cartridge_id = "replicon"
 
@@ -107,16 +94,25 @@ class RepliconAdapter(BaseAdapter):
     ) -> ExecutionResult:
         CartridgeCircuitBreaker.before_call(self.cartridge_id)
         url = f"{_base_url(credentials)}{_writeback_path(action_data, credentials)}"
-        _validate_writeback_url(url)
         headers = auth_headers({**credentials, "auth_method": credentials.get("auth_method") or "bearer_token"})
         headers["Idempotency-Key"] = str(action_data.get("idempotency_key") or "")
         headers["X-Omega-Dry-Run"] = "true" if dry_run else "false"
         timeout = float(credentials.get("timeout") or 20.0)
 
         try:
-            with httpx.Client(timeout=timeout) as client:
-                response = client.post(url, headers=headers, json=_payload(action_data, dry_run=dry_run))
-        except httpx.TransportError as exc:
+            response = egress_guard.pinned_request_sync(
+                "POST",
+                url,
+                label="replicon write-back URL",
+                headers=headers,
+                json_body=_payload(action_data, dry_run=dry_run),
+                timeout=timeout,
+                allow_private_hosts=_allowed_private_hosts(),
+                allow_private_cidrs=_allowed_private_cidrs(),
+            )
+        except egress_guard.EgressGuardError as exc:
+            raise AdapterConfigurationError(str(exc)) from exc
+        except (OSError, TimeoutError, ssl.SSLError) as exc:
             CartridgeCircuitBreaker.record_failure(self.cartridge_id)
             raise AdapterExecutionError(f"replicon transport error: {exc}", status_code=503) from exc
 

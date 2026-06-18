@@ -61,9 +61,10 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "SQL readers must use a direct string literal path" in source
     assert "pgdb schema is not readable through refinement" in source
     assert "_body_from_security_header" in source
-    assert "_require_dataset_scope(_body_from_security_header" in source
+    assert "_get_dataset_scoped(name, sec)" in source
+    assert "_require_dataset_scope(body, ds)" in source
     assert "pggold table is not registered as an allowed dataset" in source
-    assert "existing = store.get_dataset(args[\"name\"])" in source
+    assert "existing = store.get_dataset(args[\"name\"], **store_scope)" in source
     assert "_require_dataset_scope(body, existing, \"datasets.write\")" in source
     assert "SQL storage bucket not allowed" in source
     assert 'return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}' in source

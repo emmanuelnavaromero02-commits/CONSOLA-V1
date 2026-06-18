@@ -18,6 +18,7 @@ from typing import Any
 
 import asyncpg
 import httpx
+from app.core.request_context import scope_values
 import requests as _requests
 
 from app.core.config import settings
@@ -28,6 +29,14 @@ DEFAULT_CONN_ID = "default"
 CARTRIDGE_ID = "hubspot"
 
 _pool: asyncpg.Pool | None = None
+
+
+async def _apply_scope(conn) -> tuple[str, str]:
+    tenant_id, workspace_id = scope_values()
+    if tenant_id and workspace_id:
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        await conn.execute("SELECT set_config('app.workspace_id', $1, true)", workspace_id)
+    return tenant_id, workspace_id
 _tasks: dict[str, asyncio.Task] = {}
 
 
@@ -63,6 +72,9 @@ async def ensure_schema() -> None:
         "CREATE INDEX IF NOT EXISTS idx_jobs_status "
         "ON jobs(status, created_at DESC)"
     )
+    await pool.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tenant_id UUID")
+    await pool.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS workspace_id UUID")
+    await pool.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scope_status TEXT NOT NULL DEFAULT 'legacy_unscoped'")
 
 
 async def cleanup_stale() -> None:
@@ -81,11 +93,13 @@ async def cleanup_stale() -> None:
 
 async def _insert(job_id: str, tool: str, args: dict) -> None:
     pool = await _get_pool()
-    await pool.execute(
-        "INSERT INTO jobs (job_id, tool, args, status, message) "
-        "VALUES ($1, $2, $3::jsonb, 'running', 'Queued')",
-        job_id, tool, json.dumps(args),
-    )
+    async with pool.acquire() as conn:
+        tenant_id, workspace_id = await _apply_scope(conn)
+        await conn.execute(
+            "INSERT INTO jobs (job_id, tool, args, status, message, tenant_id, workspace_id, scope_status) "
+            "VALUES ($1, $2, $3::jsonb, 'running', 'Queued', $4::uuid, $5::uuid, 'scoped')",
+            job_id, tool, json.dumps(args), tenant_id or None, workspace_id or None,
+        )
 
 
 async def _update(
@@ -97,18 +111,20 @@ async def _update(
 ) -> None:
     pool = await _get_pool()
     finished_at = datetime.now(timezone.utc) if status in ("done", "failed") else None
-    await pool.execute(
-        """UPDATE jobs
-           SET status=$2, message=$3, result=$4::jsonb,
-               error=$5, updated_at=NOW(), finished_at=$6
-           WHERE job_id=$1""",
-        job_id,
-        status,
-        message,
-        json.dumps(result) if result is not None else None,
-        error[:4000] if error else "",
-        finished_at,
-    )
+    async with pool.acquire() as conn:
+        await _apply_scope(conn)
+        await conn.execute(
+            """UPDATE jobs
+               SET status=$2, message=$3, result=$4::jsonb,
+                   error=$5, updated_at=NOW(), finished_at=$6
+               WHERE job_id=$1""",
+            job_id,
+            status,
+            message,
+            json.dumps(result) if result is not None else None,
+            error[:4000] if error else "",
+            finished_at,
+        )
 
 
 # ── Central log writer ───────────────────────────────────────────────────────
@@ -123,12 +139,15 @@ async def _log(
     """Write a progress entry to the central run_logs table."""
     try:
         pool = await _get_pool()
-        await pool.execute(
-            "INSERT INTO run_logs (run_id, cartridge, entity, level, message, detail) "
-            "VALUES ($1, 'hubspot', $2, $3, $4, $5::jsonb)",
-            job_id, entity, level, message,
-            json.dumps(detail) if detail else None,
-        )
+        async with pool.acquire() as conn:
+            tenant_id, workspace_id = await _apply_scope(conn)
+            await conn.execute(
+                "INSERT INTO run_logs (run_id, cartridge, entity, level, message, detail, tenant_id, workspace_id, scope_status) "
+                "VALUES ($1, 'hubspot', $2, $3, $4, $5::jsonb, $6::uuid, $7::uuid, 'scoped')",
+                job_id, entity, level, message,
+                json.dumps(detail) if detail else None,
+                tenant_id or None, workspace_id or None,
+            )
     except Exception:
         pass  # logs are best-effort
 
@@ -199,7 +218,9 @@ async def create_extract_all_job(mode: str = "incremental") -> dict:
 
 async def get_job(job_id: str) -> dict:
     pool = await _get_pool()
-    row = await pool.fetchrow("SELECT * FROM jobs WHERE job_id=$1", job_id)
+    async with pool.acquire() as conn:
+        await _apply_scope(conn)
+        row = await conn.fetchrow("SELECT * FROM jobs WHERE job_id=$1", job_id)
     if not row:
         return {"error": f"Job '{job_id}' not found"}
     return _row_to_dict(row)
@@ -207,11 +228,13 @@ async def get_job(job_id: str) -> dict:
 
 async def list_jobs(limit: int = 10) -> list[dict]:
     pool = await _get_pool()
-    rows = await pool.fetch(
-        "SELECT * FROM jobs WHERE tool LIKE 'hubspot__%' "
-        "ORDER BY created_at DESC LIMIT $1",
-        min(limit, 50),
-    )
+    async with pool.acquire() as conn:
+        await _apply_scope(conn)
+        rows = await conn.fetch(
+            "SELECT * FROM jobs WHERE tool LIKE 'hubspot__%' "
+            "ORDER BY created_at DESC LIMIT $1",
+            min(limit, 50),
+        )
     return [_row_to_dict(r) for r in rows]
 
 
