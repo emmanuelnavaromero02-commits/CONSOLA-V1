@@ -637,7 +637,7 @@ function AdminMarketplace({ title }: { title?: string }) {
   const canAdmin = access.data?.ui_capabilities?.can_admin_marketplace === true;
   const installations = useQuery({
     queryKey: ["marketplace", "admin", "installations"],
-    queryFn: listAdminInstallations,
+    queryFn: () => listAdminInstallations(),
     enabled: canAdmin,
   });
   const actionMutation = useMutation({

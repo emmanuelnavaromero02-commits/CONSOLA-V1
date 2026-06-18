@@ -157,22 +157,6 @@ export function CompaniesConsole() {
   const [result, setResult] = useState<ProvisioningResult | null>(null);
 
   const workspaces = useTenantWorkspaces(selectedTenantId);
-  const installations = useQuery({
-    queryKey: ["marketplace", "admin", "installations", selectedTenantId],
-    queryFn: listAdminInstallations,
-    enabled: Boolean(selectedTenantId),
-    staleTime: 30_000,
-  });
-  const installationAction = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: AdminInstallationAction }) =>
-      runAdminInstallationAction(id, action),
-    onSuccess: () => {
-      toast.success("Instalación actualizada.");
-      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
-      queryClient.invalidateQueries({ queryKey: ["operations", "tenants"] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo actualizar la instalación."),
-  });
   const rows = tenants.data?.tenants ?? [];
   const selectedTenant = rows.find((tenant) => tenant.id === selectedTenantId) ?? null;
   const workspaceRows = useMemo(
@@ -181,6 +165,29 @@ export function CompaniesConsole() {
   );
   const selectedWorkspace = workspaceRows.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaceRows[0] ?? null;
   const selectedWorkspaceFilterId = selectedWorkspace?.id ?? null;
+  const selectedMarketplaceScope = useMemo(
+    () => ({
+      tenantId: selectedTenantId,
+      workspaceId: selectedWorkspace?.id ?? null,
+    }),
+    [selectedTenantId, selectedWorkspace?.id],
+  );
+  const installations = useQuery({
+    queryKey: ["marketplace", "admin", "installations", selectedTenantId, selectedWorkspace?.id ?? null],
+    queryFn: () => listAdminInstallations(selectedMarketplaceScope),
+    enabled: Boolean(selectedTenantId && selectedWorkspace?.id),
+    staleTime: 30_000,
+  });
+  const installationAction = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: AdminInstallationAction }) =>
+      runAdminInstallationAction(id, action, selectedMarketplaceScope),
+    onSuccess: () => {
+      toast.success("Instalación actualizada.");
+      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+      queryClient.invalidateQueries({ queryKey: ["operations", "tenants"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo actualizar la instalación."),
+  });
   const tenantWorkspaceIds = useMemo(() => new Set(workspaceRows.map((workspace) => workspace.id)), [workspaceRows]);
   const tenantInstallations = useMemo(
     () => (installations.data?.installations ?? []).filter((row) => {

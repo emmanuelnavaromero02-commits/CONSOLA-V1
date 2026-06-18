@@ -179,44 +179,57 @@ async def api_marketplace_retry(installation_id: str, user: dict = Depends(requi
         raise HTTPException(status, "marketplace retry failed") from exc
 
 # /api/admin/installations
-@router.get(
-    "/api/admin/installations",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
+@router.get("/api/admin/installations")
 @_bind_to_main
-async def api_admin_installations(user: dict = Depends(get_current_global_user)):
+async def api_admin_installations(
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.list_admin_installations(user)
+        return await marketplace_service.list_admin_installations(
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(403, "admin marketplace access denied") from exc
 
 # /api/admin/installations/{installation_id}
-@router.get(
-    "/api/admin/installations/{installation_id}",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
+@router.get("/api/admin/installations/{installation_id}")
 @_bind_to_main
-async def api_admin_installation(installation_id: str, user: dict = Depends(get_current_global_user)):
+async def api_admin_installation(
+    installation_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.get_admin_installation(installation_id, user)
+        return await marketplace_service.get_admin_installation(
+            installation_id,
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(404, "installation not found") from exc
 
 # /api/admin/installations/{installation_id}/access
-@router.get(
-    "/api/admin/installations/{installation_id}/access",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
+@router.get("/api/admin/installations/{installation_id}/access")
 @_bind_to_main
-async def api_admin_installation_access(installation_id: str, user: dict = Depends(get_current_global_user)):
+async def api_admin_installation_access(
+    installation_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.list_installation_access(installation_id, user)
+        return await marketplace_service.list_installation_access(
+            installation_id,
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(404, "installation access not found") from exc
 
@@ -232,8 +245,10 @@ async def api_admin_installation_access(installation_id: str, user: dict = Depen
 async def api_admin_installation_user_access(
     installation_id: str,
     target_user_id: int,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
     payload: dict = Body(default_factory=dict),
-    user: dict = Depends(get_current_global_user),
+    user: dict = Depends(require_permission("marketplace.admin")),
 ):
     try:
         return await marketplace_service.set_installation_user_access(
@@ -242,6 +257,8 @@ async def api_admin_installation_user_access(
             payload.get("mode"),
             payload.get("reason"),
             user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
         )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation access update failed") from exc
@@ -255,9 +272,19 @@ async def api_admin_installation_user_access(
     ],
 )
 @_bind_to_main
-async def api_admin_installation_approve(installation_id: str, user: dict = Depends(get_current_global_user)):
+async def api_admin_installation_approve(
+    installation_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.approve_installation(installation_id, user)
+        return await marketplace_service.approve_installation(
+            installation_id,
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation approval failed") from exc
 
@@ -270,9 +297,19 @@ async def api_admin_installation_approve(installation_id: str, user: dict = Depe
     ],
 )
 @_bind_to_main
-async def api_admin_installation_pause(installation_id: str, user: dict = Depends(get_current_global_user)):
+async def api_admin_installation_pause(
+    installation_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.pause_installation(installation_id, user)
+        return await marketplace_service.pause_installation(
+            installation_id,
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation pause failed") from exc
 
@@ -285,9 +322,19 @@ async def api_admin_installation_pause(installation_id: str, user: dict = Depend
     ],
 )
 @_bind_to_main
-async def api_admin_installation_revoke(installation_id: str, user: dict = Depends(get_current_global_user)):
+async def api_admin_installation_revoke(
+    installation_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.revoke_installation(installation_id, user)
+        return await marketplace_service.revoke_installation(
+            installation_id,
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation revoke failed") from exc
 
@@ -300,9 +347,19 @@ async def api_admin_installation_revoke(installation_id: str, user: dict = Depen
     ],
 )
 @_bind_to_main
-async def api_admin_installation_reactivate(installation_id: str, user: dict = Depends(get_current_global_user)):
+async def api_admin_installation_reactivate(
+    installation_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    user: dict = Depends(require_permission("marketplace.admin")),
+):
     try:
-        return await marketplace_service.reactivate_installation(installation_id, user)
+        return await marketplace_service.reactivate_installation(
+            installation_id,
+            user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, "installation reactivation failed") from exc
 

@@ -18,9 +18,10 @@ sqlalchemy==2.0.34
 asyncpg==0.29.0
 pgvector==0.3.2
 # v1.43.2 (DevOps R1 follow-up): pypdf 4.3.1 had 13+ CVEs (parser DoS,
-# loop bombs, unbounded recursion); 6.13.0 also closes
-# GHSA-248m-82v9-q6g6 and GHSA-cj93-chg6-vgv8 found by pip-audit.
+# loop bombs, unbounded recursion); 6.13.3 also closes
+# GHSA-248m-82v9-q6g6, GHSA-cj93-chg6-vgv8, and GHSA-jm82-fx9c-mx94
+# found by pip-audit.
 # Public API used by mcp-infra (PdfReader, page extraction) is
 # unchanged across the 4 -> 6 major bump per pypdf's stability policy.
-pypdf==6.13.0
+pypdf==6.13.3
 boto3>=1.34.0
