@@ -247,6 +247,35 @@ def _resolve_connection(entity: str, requested_conn_id: str | None = None) -> tu
     return _get_connection(conn_id)
 
 
+def _is_seeded_gold_connection(base_url: str, connection: dict) -> bool:
+    auth_method = str(connection.get("auth_method") or "").strip().lower()
+    return auth_method == "seeded_gold" or str(base_url or "").startswith("seeded://")
+
+
+def _seeded_gold_result(
+    *,
+    entity: str,
+    mode: str,
+    conn_id: str,
+    tenant_id: object = None,
+    workspace_id: object = None,
+) -> dict:
+    return {
+        "entity": entity,
+        "mode": mode,
+        "record_count": 0,
+        "status": "success",
+        "seed_only": True,
+        "conn_id": conn_id,
+        "tenant_id": str(tenant_id) if tenant_id else None,
+        "workspace_id": str(workspace_id) if workspace_id else None,
+        "message": (
+            "Replicon seeded_gold is already materialized in Gold datasets; "
+            "no external Replicon API extraction was run."
+        ),
+    }
+
+
 # ── MinIO helpers ─────────────────────────────────────────────────────────────
 
 def _minio_client():
@@ -450,6 +479,22 @@ def replicon_extract():
         workspace_id = conf.get("workspace_id") or security_context.get("workspace_id")
 
         base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id)
+        if _is_seeded_gold_connection(base_url, connection):
+            logger.warning(
+                "replicon_extract using seeded_gold data-only connection "
+                "entity=%s mode=%s vault_path=connections/replicon/%s",
+                entity,
+                mode,
+                resolved_conn_id,
+            )
+            return _seeded_gold_result(
+                entity=entity,
+                mode=mode,
+                conn_id=resolved_conn_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
+
         logger.warning(
             "replicon_extract starting external API call entity=%s mode=%s vault_path=connections/replicon/%s",
             entity,
