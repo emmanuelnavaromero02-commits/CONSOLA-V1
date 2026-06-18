@@ -318,7 +318,7 @@ def test_04_gold_catalog_and_data_query_work_end_to_end(admin_session: httpx.Cli
     assert isinstance(rows, list), rows
     acme = next((row for row in rows if row.get("dealname") == "ACME Expansion"), None)
     assert acme, rows
-    assert acme["vendedor"] == "Sofia Sales"
+    assert acme["vendedor"] == "*ofia *ales"
     assert float(acme["monto_ponderado_usd"]) == pytest.approx(3000.0)
 
     catalog = admin_session.get("/api/catalog?cartridge=hubspot", timeout=60)
