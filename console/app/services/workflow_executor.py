@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service, auth, mcp_registry, permissions, tool_manifest, tool_policy
+from app.services.db_scope import scoped_db_for_user, workspace_scope_from_user
 
 MAX_ATTEMPTS = 3
 BASE_BACKOFF_SECONDS = 1.0
@@ -140,15 +141,22 @@ async def _record_step_audit(
 
 
 async def _load_workflow(pool: Any, workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    tenant_id, workspace_id = workspace_scope_from_user(user)
     row = await pool.fetchrow(
         """
-        SELECT id, user_id, intent, plan, status, current_step, error,
+        SELECT id, user_id, tenant_id, workspace_id, intent, plan, status, current_step, error,
                created_at, finished_at, started_at, completed_at, step_results
           FROM workflow_runs
-         WHERE id = $1 AND user_id = $2
+         WHERE id = $1
+           AND user_id = $2
+           AND scope_status = 'scoped'
+           AND workspace_id = $3::uuid
+           AND ($4::uuid IS NULL OR tenant_id = $4::uuid)
         """,
         workflow_id,
         user["id"],
+        workspace_id,
+        tenant_id,
     )
     if row is None:
         raise HTTPException(404, "Workflow not found")
@@ -162,6 +170,7 @@ async def _load_steps(pool: Any, workflow_id: str) -> list[dict[str, Any]]:
                result, status, started_at, finished_at
           FROM workflow_steps
          WHERE workflow_id = $1
+           AND scope_status = 'scoped'
          ORDER BY step_idx
         """,
         workflow_id,
@@ -192,11 +201,14 @@ async def _materialise_steps_if_needed(pool: Any, workflow: dict[str, Any]) -> N
         await pool.execute(
             """
             INSERT INTO workflow_steps
-                (workflow_id, step_idx, description, tool, args, status)
-            VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
+                (workflow_id, tenant_id, workspace_id, scope_status,
+                 step_idx, description, tool, args, status)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5, $6, $7::jsonb, 'pending')
             ON CONFLICT (workflow_id, step_idx) DO NOTHING
             """,
             workflow_id,
+            workflow.get("tenant_id"),
+            workflow.get("workspace_id"),
             idx,
             description,
             item.get("tool"),
@@ -341,12 +353,17 @@ async def _invoke_with_retry(
 
 
 async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    raw_pool = await auth.pool()
+    async with scoped_db_for_user(raw_pool, user) as (conn, _tenant_id, _workspace_id):
+        return await _execute_workflow_scoped(conn, workflow_id, user)
+
+
+async def _execute_workflow_scoped(pool: Any, workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
     """Execute a planned workflow sequentially.
 
     Returns the workflow status and current step results. The function
     stops at the first approval gate or terminal failure.
     """
-    pool = await auth.pool()
     workflow = await _load_workflow(pool, workflow_id, user)
     status = workflow.get("status")
     if status in TERMINAL_RUN_STATUSES:
@@ -632,26 +649,33 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
 
 
 async def workflow_status(workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
-    pool = await auth.pool()
-    workflow = await _load_workflow(pool, workflow_id, user)
-    results = await _refresh_step_results(pool, workflow_id)
-    return {
-        "ok": True,
-        "workflow_id": workflow_id,
-        "status": workflow.get("status"),
-        "current_step": workflow.get("current_step"),
-        "error": workflow.get("error"),
-        "step_results": results,
-    }
+    raw_pool = await auth.pool()
+    async with scoped_db_for_user(raw_pool, user) as (conn, _tenant_id, _workspace_id):
+        workflow = await _load_workflow(conn, workflow_id, user)
+        results = await _refresh_step_results(conn, workflow_id)
+        return {
+            "ok": True,
+            "workflow_id": workflow_id,
+            "status": workflow.get("status"),
+            "current_step": workflow.get("current_step"),
+            "error": workflow.get("error"),
+            "step_results": results,
+        }
 
 
 async def cancel_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
-    pool = await auth.pool()
+    raw_pool = await auth.pool()
+    async with scoped_db_for_user(raw_pool, user) as (pool, _tenant_id, _workspace_id):
+        return await _cancel_workflow_scoped(pool, workflow_id, user)
+
+
+async def _cancel_workflow_scoped(pool: Any, workflow_id: str, user: dict[str, Any]) -> dict[str, Any]:
     row = await pool.fetchrow(
         """
         UPDATE workflow_runs
            SET status = 'cancelled', completed_at = NOW(), finished_at = NOW()
          WHERE id = $1 AND user_id = $2
+           AND scope_status = 'scoped'
            AND status IN ('planning', 'running', 'waiting_approval')
         RETURNING id, status
         """,
@@ -674,9 +698,19 @@ async def cancel_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, A
 
 
 async def approve_step(workflow_id: str, step_idx: int, user: dict[str, Any]) -> dict[str, Any]:
+    raw_pool = await auth.pool()
+    async with scoped_db_for_user(raw_pool, user) as (pool, _tenant_id, _workspace_id):
+        return await _approve_step_scoped(pool, workflow_id, step_idx, user)
+
+
+async def _approve_step_scoped(
+    pool: Any,
+    workflow_id: str,
+    step_idx: int,
+    user: dict[str, Any],
+) -> dict[str, Any]:
     if not permissions.has_permission(user, "copilot.execute"):
         raise HTTPException(403, "permission required: copilot.execute")
-    pool = await auth.pool()
     await _load_workflow(pool, workflow_id, user)
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -724,4 +758,4 @@ async def approve_step(workflow_id: str, step_idx: int, user: dict[str, Any]) ->
     if run_row is None:
         results = await _refresh_step_results(pool, workflow_id)
         return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
-    return await execute_workflow(workflow_id, user)
+    return await _execute_workflow_scoped(pool, workflow_id, user)

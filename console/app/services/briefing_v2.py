@@ -109,7 +109,7 @@ async def _attach_watchdogs(
 
 
 async def briefing_v2_for_user(
-    user_id: int, *, limit: int = 6,
+    user_id: int, *, limit: int = 6, user_context: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Enriched briefing — same source data as v1 plus
     ``priority_score``, ``next_action`` and matched ``watchdogs``.
@@ -126,9 +126,10 @@ async def briefing_v2_for_user(
     cleanly, which is strictly better UX than a red banner.
     """
     try:
-        highlights = await proactive_service.briefing_for_user(
-            user_id, limit=limit * 2,
-        )
+        kwargs: dict[str, Any] = {"limit": limit * 2}
+        if user_context is not None:
+            kwargs["user_context"] = user_context
+        highlights = await proactive_service.briefing_for_user(user_id, **kwargs)
     except Exception:
         logger.warning(
             "briefing_v2_for_user: upstream proactive_service failed; "

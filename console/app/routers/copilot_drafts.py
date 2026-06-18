@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth, draft_sender, memory_service
 from app.services.csrf import require_csrf
+from app.services.db_scope import scoped_db_for_user
 from app.services.permissions import require_permission
 
 # v1.44.3 (Tarea D): real LLM client for draft generation. The
@@ -108,15 +109,19 @@ async def create_draft(
         raise HTTPException(400, "metadata must be an object")
 
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO copilot_drafts (user_id, kind, title, body, tone, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-        RETURNING id, user_id, kind, title, body, tone, status, metadata,
-                  created_at, updated_at
-        """,
-        user["id"], kind, title, text, tone, json.dumps(metadata),
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        row = await conn.fetchrow(
+            """
+            INSERT INTO copilot_drafts
+                (user_id, tenant_id, workspace_id, scope_status,
+                 kind, title, body, tone, metadata)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5, $6, $7, $8::jsonb)
+            RETURNING id, user_id, kind, title, body, tone, status, metadata,
+                      created_at, updated_at
+            """,
+            user["id"], tenant_id, workspace_id, kind, title, text, tone,
+            json.dumps(metadata),
+        )
     await audit_service.record_event(
         user_id=user["id"],
         email=user.get("email"),
@@ -139,30 +144,38 @@ async def list_drafts(
     if status is not None and status not in {"draft", "sent", "discarded", "failed"}:
         raise HTTPException(400, "Invalid status filter")
     pool = await auth.pool()
-    if status is None:
-        rows = await pool.fetch(
-            """
-            SELECT id, user_id, kind, title, body, tone, status, metadata,
-                   created_at, updated_at
-              FROM copilot_drafts
-             WHERE user_id = $1
-             ORDER BY updated_at DESC
-             LIMIT 200
-            """,
-            user["id"],
-        )
-    else:
-        rows = await pool.fetch(
-            """
-            SELECT id, user_id, kind, title, body, tone, status, metadata,
-                   created_at, updated_at
-              FROM copilot_drafts
-             WHERE user_id = $1 AND status = $2
-             ORDER BY updated_at DESC
-             LIMIT 200
-            """,
-            user["id"], status,
-        )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        if status is None:
+            rows = await conn.fetch(
+                """
+                SELECT id, user_id, kind, title, body, tone, status, metadata,
+                       created_at, updated_at
+                  FROM copilot_drafts
+                 WHERE user_id = $1
+                   AND scope_status = 'scoped'
+                   AND workspace_id = $2::uuid
+                   AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+                 ORDER BY updated_at DESC
+                 LIMIT 200
+                """,
+                user["id"], workspace_id, tenant_id,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT id, user_id, kind, title, body, tone, status, metadata,
+                       created_at, updated_at
+                  FROM copilot_drafts
+                 WHERE user_id = $1
+                   AND status = $2
+                   AND scope_status = 'scoped'
+                   AND workspace_id = $3::uuid
+                   AND ($4::uuid IS NULL OR tenant_id = $4::uuid)
+                 ORDER BY updated_at DESC
+                 LIMIT 200
+                """,
+                user["id"], status, workspace_id, tenant_id,
+            )
     return {"drafts": [_serialize(r) for r in rows]}
 
 
@@ -302,7 +315,7 @@ async def generate_draft(
     # a less-personalised draft than refuse the request because
     # memory failed.
     try:
-        facts = await memory_service._fetch_facts(user["id"], limit=5)
+        facts = await memory_service._fetch_facts(user["id"], limit=5, user_context=user)
     except Exception:                              # noqa: BLE001
         facts = []
 
@@ -337,16 +350,19 @@ async def generate_draft(
         "generated": True,
     }
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO copilot_drafts (user_id, kind, title, body, tone, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-        RETURNING id, user_id, kind, title, body, tone, status, metadata,
-                  created_at, updated_at
-        """,
-        user["id"], kind, title, generated, tone,
-        json.dumps(enriched_metadata),
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        row = await conn.fetchrow(
+            """
+            INSERT INTO copilot_drafts
+                (user_id, tenant_id, workspace_id, scope_status,
+                 kind, title, body, tone, metadata)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5, $6, $7, $8::jsonb)
+            RETURNING id, user_id, kind, title, body, tone, status, metadata,
+                      created_at, updated_at
+            """,
+            user["id"], tenant_id, workspace_id, kind, title, generated, tone,
+            json.dumps(enriched_metadata),
+        )
 
     await audit_service.record_event(
         user_id=user["id"],

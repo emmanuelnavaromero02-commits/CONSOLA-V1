@@ -37,9 +37,14 @@ class FakePool:
     def __init__(self):
         self.draft_id = str(uuid.uuid4())
         self.user_id = 7
+        self.tenant_id = "11111111-1111-1111-1111-111111111111"
+        self.workspace_id = "22222222-2222-2222-2222-222222222222"
         self.row = {
             "id": self.draft_id,
             "user_id": self.user_id,
+            "tenant_id": self.tenant_id,
+            "workspace_id": self.workspace_id,
+            "scope_status": "scoped",
             "kind": "email",
             "title": "Fallback subject",
             "body": "Hola,\nNecesito validar el error.",
@@ -58,6 +63,8 @@ class FakePool:
             if (
                 args[0] == self.draft_id
                 and args[1] == self.user_id
+                and args[2] == self.workspace_id
+                and (args[3] in {None, self.tenant_id})
                 and self.row["status"] == "draft"
             ):
                 self.row["status"] = "sending"
@@ -68,6 +75,8 @@ class FakePool:
     async def execute(self, query: str, *args):
         q = " ".join(query.split())
         self.updates.append((q, args))
+        if q.startswith("SELECT set_config('app.tenant_id'"):
+            return "SELECT 1"
         if q.startswith("UPDATE copilot_drafts SET status = 'sent'"):
             if self.row["status"] == "sending":
                 self.row["status"] = "sent"
@@ -95,7 +104,13 @@ def fake_pool(draft_sender_module, monkeypatch):
 
 @pytest.fixture()
 def user(fake_pool):
-    return {"id": fake_pool.user_id, "email": "emmanuel@local.ai", "role": "analyst"}
+    return {
+        "id": fake_pool.user_id,
+        "email": "emmanuel@local.ai",
+        "role": "analyst",
+        "active_tenant_id": fake_pool.tenant_id,
+        "active_workspace_id": fake_pool.workspace_id,
+    }
 
 
 def test_send_draft_calls_email_service_with_correct_args(draft_sender_module, fake_pool, user, monkeypatch):
@@ -149,7 +164,13 @@ def test_send_draft_marks_status_failed_on_smtp_exception(draft_sender_module, f
 def test_send_draft_validates_ownership(draft_sender_module, fake_pool, monkeypatch):
     monkeypatch.setattr(draft_sender_module.email_service, "send_email", AsyncMock(return_value=True))
     monkeypatch.setattr(draft_sender_module.audit_service, "record_event", AsyncMock())
-    other_user = {"id": 999, "email": "other@example.com", "role": "viewer"}
+    other_user = {
+        "id": 999,
+        "email": "other@example.com",
+        "role": "viewer",
+        "active_tenant_id": fake_pool.tenant_id,
+        "active_workspace_id": fake_pool.workspace_id,
+    }
 
     with pytest.raises(HTTPException) as exc:
         run(draft_sender_module.send_draft(fake_pool.draft_id, other_user))
@@ -160,7 +181,13 @@ def test_send_draft_validates_ownership(draft_sender_module, fake_pool, monkeypa
 def test_send_draft_does_not_let_admin_send_another_users_draft(draft_sender_module, fake_pool, monkeypatch):
     monkeypatch.setattr(draft_sender_module.email_service, "send_email", AsyncMock(return_value=True))
     monkeypatch.setattr(draft_sender_module.audit_service, "record_event", AsyncMock())
-    admin = {"id": 999, "email": "admin@example.com", "role": "admin"}
+    admin = {
+        "id": 999,
+        "email": "admin@example.com",
+        "role": "admin",
+        "active_tenant_id": fake_pool.tenant_id,
+        "active_workspace_id": fake_pool.workspace_id,
+    }
 
     with pytest.raises(HTTPException) as exc:
         run(draft_sender_module.send_draft(fake_pool.draft_id, admin))

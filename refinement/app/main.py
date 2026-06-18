@@ -1709,7 +1709,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             ds = store.get_dataset(entry["dataset"], **store_scope)
             if ds:
                 _require_dataset_scope(body, ds, "datasets.write")
-        return _upsert_catalog_entries(args["entries"])
+        return _upsert_catalog_entries(args["entries"], sec)
 
     if tool == "register_relationship":
         sec = _require_security_permission(body, "datasets.write")
@@ -1718,7 +1718,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             ds = store.get_dataset(dataset_name, **store_scope)
             if ds:
                 _require_dataset_scope(body, ds, "datasets.write")
-        return _register_relationship(args)
+        return _register_relationship(args, sec)
 
     if tool == "publish_app":
         sec = _require_security_permission(body, "apps.write")
@@ -1728,7 +1728,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             return {"error": "cartridge_id is required for published apps outside admin context"}
         if cartridge_id:
             _require_cartridge_scope(sec, cartridge_id)
-        return _publish_app(args)
+        return _publish_app(args, sec)
 
     if tool == "list_apps":
         sec = _require_security_permission(body, "apps.read")
@@ -1776,11 +1776,23 @@ def _get_lineage(name: str, limit: int) -> dict:
         return {"name": name, "error": "Internal Error", "request_id": request_id}
 
 
-def _pg_exec(query: str, params=None, fetch=False):
+def _pg_set_scope(cur, security_context: dict | None) -> None:
+    if not isinstance(security_context, dict) or not security_context.get("trusted"):
+        return
+    tenant_id = str(security_context.get("tenant_id") or "")
+    workspace_id = str(security_context.get("workspace_id") or "")
+    cur.execute(
+        "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+        (tenant_id, workspace_id),
+    )
+
+
+def _pg_exec(query: str, params=None, fetch=False, security_context: dict | None = None):
     import psycopg2
     conn = psycopg2.connect(_postgres_dsn())
     result = None
     with conn.cursor() as cur:
+        _pg_set_scope(cur, security_context)
         cur.execute(query, params)
         if fetch:
             cols   = [d[0] for d in cur.description]
@@ -1831,6 +1843,15 @@ def _get_data_catalog(
         conditions.append("c.tags && %s"); params.append(tags)
     if datasets:
         conditions.append("c.dataset = ANY(%s)"); params.append(datasets)
+    if security_context and not _is_unscoped_admin_security_context(security_context):
+        workspace_id = str(security_context.get("workspace_id") or "").strip()
+        tenant_id = str(security_context.get("tenant_id") or "").strip()
+        if not workspace_id:
+            return {"datasets": {}, "relationships": []}
+        conditions.append("c.scope_status = 'scoped'")
+        conditions.append("c.workspace_id = %s"); params.append(workspace_id)
+        if tenant_id:
+            conditions.append("c.tenant_id = %s"); params.append(tenant_id)
 
     where = " AND ".join(conditions)
     cols = _pg_exec(
@@ -1840,7 +1861,7 @@ def _get_data_catalog(
             FROM data_catalog c
             WHERE {where}
             ORDER BY c.dataset, c.column_name""",
-        params, fetch=True,
+        params, fetch=True, security_context=security_context,
     ) or []
 
     # Group by dataset
@@ -1918,38 +1939,59 @@ def _get_data_catalog(
             """SELECT from_dataset, from_column, to_dataset, to_column,
                       join_hint, description, transform
                FROM data_relationships
-               WHERE from_dataset = ANY(%s) OR to_dataset = ANY(%s)
+               WHERE (from_dataset = ANY(%s) OR to_dataset = ANY(%s))
+                 AND (
+                     %s::text = ''
+                     OR (scope_status = 'scoped' AND workspace_id = %s::uuid)
+                 )
                ORDER BY from_dataset, from_column""",
-            [list(ds_names), list(ds_names)], fetch=True,
+            [
+                list(ds_names),
+                list(ds_names),
+                str((security_context or {}).get("workspace_id") or ""),
+                str((security_context or {}).get("workspace_id") or ""),
+            ],
+            fetch=True,
+            security_context=security_context,
         ) or []
 
     return {"datasets": datasets_out, "relationships": rels}
 
 
-def _upsert_catalog_entries(entries: list[dict]) -> dict:
+def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict:
     import json as _json
     import psycopg2
+    workspace_id = str(security_context.get("workspace_id") or "").strip()
+    tenant_id = str(security_context.get("tenant_id") or "").strip()
+    if not workspace_id:
+        raise HTTPException(403, "workspace scope required for catalog writes")
     conn = psycopg2.connect(_postgres_dsn())
     updated = 0
     with conn.cursor() as cur:
+        _pg_set_scope(cur, security_context)
         for e in entries:
             ev = e.get("example_values")
             cur.execute("""
                 INSERT INTO data_catalog
                     (dataset, layer, cartridge, column_name, data_type, description,
-                     example_values, tags, is_key, is_metric, updated_at)
+                     example_values, tags, is_key, is_metric,
+                     tenant_id, workspace_id, scope_status, updated_at)
                 SELECT %s, COALESCE(d.layer,'silver'), COALESCE(d.cartridge,''),
-                       %s, '', %s,
-                       %s::jsonb, %s, %s, %s, NOW()
-                FROM (SELECT layer, cartridge FROM datasets WHERE name=%s
-                      UNION ALL SELECT 'silver','') d LIMIT 1
-                ON CONFLICT (dataset, column_name) DO UPDATE
+                       %s, '', %s, %s::jsonb, %s, %s, %s,
+                       %s::uuid, %s::uuid, 'scoped', NOW()
+                  FROM datasets d
+                 WHERE d.name = %s
+                   AND d.workspace_id = %s::uuid
+                ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
+                DO UPDATE
                     SET description    = COALESCE(NULLIF(EXCLUDED.description,''), data_catalog.description),
                         example_values = COALESCE(EXCLUDED.example_values, data_catalog.example_values),
                         tags           = CASE WHEN EXCLUDED.tags != '{}' THEN EXCLUDED.tags
                                               ELSE data_catalog.tags END,
                         is_key         = COALESCE(EXCLUDED.is_key,   data_catalog.is_key),
                         is_metric      = COALESCE(EXCLUDED.is_metric, data_catalog.is_metric),
+                        tenant_id      = EXCLUDED.tenant_id,
+                        scope_status   = 'scoped',
                         updated_at     = NOW()
             """, (
                 e["dataset"],
@@ -1959,23 +2001,41 @@ def _upsert_catalog_entries(entries: list[dict]) -> dict:
                 e.get("tags", []),
                 e.get("is_key"),
                 e.get("is_metric"),
+                tenant_id or None,
+                workspace_id,
                 e["dataset"],
+                workspace_id,
             ))
-            updated += 1
+            updated += max(cur.rowcount, 0)
     conn.commit()
     conn.close()
     return {"updated": updated}
 
 
-def _register_relationship(args: dict) -> dict:
-    _pg_exec("""
+def _register_relationship(args: dict, security_context: dict) -> dict:
+    workspace_id = str(security_context.get("workspace_id") or "").strip()
+    tenant_id = str(security_context.get("tenant_id") or "").strip()
+    if not workspace_id:
+        raise HTTPException(403, "workspace scope required for catalog relationships")
+    rows = _pg_exec("""
         INSERT INTO data_relationships
-            (from_dataset, from_column, to_dataset, to_column, join_hint, description, transform)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
-        ON CONFLICT (from_dataset, from_column, to_dataset, to_column) DO UPDATE
+            (from_dataset, from_column, to_dataset, to_column, join_hint, description, transform,
+             tenant_id, workspace_id, scope_status)
+        SELECT %s,%s,%s,%s,%s,%s,%s,%s::uuid,%s::uuid,'scoped'
+          FROM datasets from_ds
+          JOIN datasets to_ds ON to_ds.name = %s
+         WHERE from_ds.name = %s
+           AND from_ds.workspace_id = %s::uuid
+           AND to_ds.workspace_id = %s::uuid
+        ON CONFLICT (workspace_id, from_dataset, from_column, to_dataset, to_column)
+        WHERE workspace_id IS NOT NULL
+        DO UPDATE
             SET join_hint   = EXCLUDED.join_hint,
                 description = EXCLUDED.description,
-                transform   = EXCLUDED.transform
+                transform   = EXCLUDED.transform,
+                tenant_id   = EXCLUDED.tenant_id,
+                scope_status = 'scoped'
+        RETURNING id
     """, (
         args["from_dataset"],
         args["from_column"],
@@ -1984,7 +2044,15 @@ def _register_relationship(args: dict) -> dict:
         args.get("join_hint", "LEFT"),
         args.get("description", ""),
         args.get("transform"),
-    ))
+        tenant_id or None,
+        workspace_id,
+        args["to_dataset"],
+        args["from_dataset"],
+        workspace_id,
+        workspace_id,
+    ), fetch=True, security_context=security_context) or []
+    if not rows:
+        return {"registered": False, "error": "relationship datasets not found in active workspace"}
     return {"registered": True,
             "relation": f"{args['from_dataset']}.{args['from_column']} → {args['to_dataset']}.{args['to_column']}"}
 
@@ -2001,7 +2069,7 @@ def _ensure_apps_table():
     return None
 
 
-def _publish_app(args: dict) -> dict:
+def _publish_app(args: dict, sec: dict) -> dict:
     name  = (args.get("name")  or "").strip()
     title = (args.get("title") or "").strip()
     html  = args.get("html") or ""
@@ -2017,6 +2085,10 @@ def _publish_app(args: dict) -> dict:
         return {"error": f"html looks too short ({len(html)} chars) — provide the "
                          "complete page, not a placeholder."}
     visibility = args.get("visibility") if args.get("visibility") in ("private", "shared") else "private"
+    workspace_id = str(sec.get("workspace_id") or "").strip()
+    tenant_id = str(sec.get("tenant_id") or "").strip()
+    if not workspace_id:
+        return {"error": "workspace scope required for private analytic apps"}
     # Auto-extract dataset names referenced via /api/data/<name>
     import re as _re
     datasets_used = sorted(set(_re.findall(r"/api/data/([a-zA-Z_][a-zA-Z0-9_]*)", html)))
@@ -2026,8 +2098,9 @@ def _publish_app(args: dict) -> dict:
     # infra/init/11_app_datasets_used.sql at DB init time.
     _pg_exec("""
         INSERT INTO analytic_apps (name, title, html, description, cartridge_id,
-                                   created_by_id, visibility, datasets_used, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                                   created_by_id, visibility, datasets_used,
+                                   tenant_id, workspace_id, scope_status, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::uuid, %s::uuid, 'scoped', NOW())
         ON CONFLICT (name) DO UPDATE
             SET title         = EXCLUDED.title,
                 html          = EXCLUDED.html,
@@ -2036,9 +2109,13 @@ def _publish_app(args: dict) -> dict:
                 created_by_id = COALESCE(EXCLUDED.created_by_id, analytic_apps.created_by_id),
                 visibility    = EXCLUDED.visibility,
                 datasets_used = EXCLUDED.datasets_used,
+                tenant_id     = EXCLUDED.tenant_id,
+                workspace_id  = EXCLUDED.workspace_id,
+                scope_status  = 'scoped',
                 updated_at    = NOW()
     """, (name, title, html, args.get("description", ""), args.get("cartridge_id"),
-          args.get("created_by_id"), visibility, datasets_used))
+          args.get("created_by_id"), visibility, datasets_used,
+          tenant_id or None, workspace_id), security_context=sec)
     return {"published": True, "name": name,
             "cartridge_id": args.get("cartridge_id"),
             "visibility": visibility,
@@ -2068,7 +2145,7 @@ def _get_app_details(args: dict, sec: dict) -> dict:
     rows = _pg_exec(
         "SELECT name, title, description, cartridge_id, visibility, datasets_used, created_by_id, updated_at "
         "FROM analytic_apps WHERE name = %s",
-        (name,), fetch=True,
+        (name,), fetch=True, security_context=sec,
     ) or []
     if not rows:
         return {"error": f"app '{name}' not found"}
@@ -2088,7 +2165,7 @@ def _get_app_html(args: dict, sec: dict) -> dict:
     rows = _pg_exec(
         "SELECT name, title, description, cartridge_id, visibility, datasets_used, created_by_id, html "
         "FROM analytic_apps WHERE name = %s",
-        (name,), fetch=True,
+        (name,), fetch=True, security_context=sec,
     ) or []
     if not rows:
         return {"error": f"app '{name}' not found"}
@@ -2104,6 +2181,7 @@ def _list_apps(sec: dict) -> dict:
             "SELECT name, title, description, cartridge_id, datasets_used, visibility, created_by_id, updated_at "
             "FROM analytic_apps ORDER BY updated_at DESC",
             fetch=True,
+            security_context=sec,
         ) or []
         rows = [r for r in rows if _app_visible(sec, r)]
         for r in rows:
@@ -2122,6 +2200,7 @@ def _delete_app(args: dict, sec: dict) -> dict:
         "SELECT name, visibility, cartridge_id, created_by_id FROM analytic_apps WHERE name=%s",
         (name,),
         fetch=True,
+        security_context=sec,
     ) or []
     if not existing:
         return {"deleted": False, "name": name, "error": "App not found"}
@@ -2135,6 +2214,7 @@ def _delete_app(args: dict, sec: dict) -> dict:
         "DELETE FROM analytic_apps WHERE name=%s RETURNING name",
         (name,),
         fetch=True,
+        security_context=sec,
     ) or []
     if not rows:
         return {"deleted": False, "name": name, "error": "App not found"}

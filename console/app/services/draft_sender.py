@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service, auth, email_service
+from app.services.db_scope import scoped_db_for_user
 
 
 def _extract_recipient(metadata: dict[str, Any]) -> str:
@@ -97,24 +98,40 @@ async def _restore_draft_after_validation_error(pool: Any, draft_id: str, error:
 
 
 async def send_draft(draft_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    raw_pool = await auth.pool()
+    async with scoped_db_for_user(raw_pool, user) as (pool, tenant_id, workspace_id):
+        return await _send_draft_scoped(pool, draft_id, user, tenant_id, workspace_id)
+
+
+async def _send_draft_scoped(
+    pool: Any,
+    draft_id: str,
+    user: dict[str, Any],
+    tenant_id: str | None,
+    workspace_id: str,
+) -> dict[str, Any]:
     """Deliver a draft via SMTP and persist its delivery result.
 
     ``metadata.to`` (or one of the backward-compatible aliases) is the
     recipient. ``metadata.subject`` wins over title; body is the email
     text. SMTP failures never mark a draft as sent.
     """
-    pool = await auth.pool()
     row = await pool.fetchrow(
         """
         UPDATE copilot_drafts
            SET status = 'sending', updated_at = NOW()
          WHERE id = $1
            AND user_id = $2
+           AND scope_status = 'scoped'
+           AND workspace_id = $3::uuid
+           AND ($4::uuid IS NULL OR tenant_id = $4::uuid)
            AND status = 'draft'
         RETURNING id, user_id, kind, title, body, tone, status, metadata
         """,
         draft_id,
         user["id"],
+        workspace_id,
+        tenant_id,
     )
     if row is None:
         raise HTTPException(404, "Draft not found")

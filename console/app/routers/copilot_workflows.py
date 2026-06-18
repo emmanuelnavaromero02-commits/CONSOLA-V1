@@ -22,6 +22,7 @@ from app.dependencies import require_authenticated
 from app.services import audit_service, auth, tool_manifest, tool_policy
 from app.services import workflow_executor
 from app.services.csrf import require_csrf
+from app.services.db_scope import scoped_db_for_user
 from app.services.permissions import require_permission
 
 
@@ -101,15 +102,31 @@ async def create_workflow(
         raise HTTPException(400, f"intent too long (max {_MAX_INTENT_LEN})")
 
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO workflow_runs (user_id, conversation_id, intent, status)
-        VALUES ($1, $2, $3, 'planning')
-        RETURNING id, user_id, conversation_id, intent, plan, status,
-                  current_step, error, created_at, finished_at
-        """,
-        user["id"], conv_id, intent,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        if conv_id:
+            allowed_conversation = await conn.fetchval(
+                """
+                SELECT id
+                  FROM conversations
+                 WHERE id = $1
+                   AND user_id = $2
+                   AND workspace_id = $3::uuid
+                """,
+                conv_id, user["id"], workspace_id,
+            )
+            if allowed_conversation is None:
+                raise HTTPException(404, "Workflow not found")
+        row = await conn.fetchrow(
+            """
+            INSERT INTO workflow_runs
+                (user_id, tenant_id, workspace_id, scope_status,
+                 conversation_id, intent, status)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5, 'planning')
+            RETURNING id, user_id, conversation_id, intent, plan, status,
+                      current_step, error, created_at, finished_at
+            """,
+            user["id"], tenant_id, workspace_id, conv_id, intent,
+        )
     await audit_service.record_event(
         user_id=user["id"],
         email=user.get("email"),
@@ -131,27 +148,35 @@ async def get_workflow(
     the workflow isn't this user's (no enumeration leak)."""
     workflow_id = _validate_uuid(workflow_id, label="workflow_id")
     pool = await auth.pool()
-    run = await pool.fetchrow(
-        """
-        SELECT id, user_id, conversation_id, intent, plan, status,
-               current_step, error, created_at, finished_at
-          FROM workflow_runs
-         WHERE id = $1 AND user_id = $2
-        """,
-        workflow_id, user["id"],
-    )
-    if run is None:
-        raise HTTPException(404, "Workflow not found")
-    steps = await pool.fetch(
-        """
-        SELECT id, workflow_id, step_idx, description, tool, args,
-               result, status, started_at, finished_at
-          FROM workflow_steps
-         WHERE workflow_id = $1
-         ORDER BY step_idx
-        """,
-        workflow_id,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        run = await conn.fetchrow(
+            """
+            SELECT id, user_id, conversation_id, intent, plan, status,
+                   current_step, error, created_at, finished_at
+              FROM workflow_runs
+             WHERE id = $1
+               AND user_id = $2
+               AND scope_status = 'scoped'
+               AND workspace_id = $3::uuid
+               AND ($4::uuid IS NULL OR tenant_id = $4::uuid)
+            """,
+            workflow_id, user["id"], workspace_id, tenant_id,
+        )
+        if run is None:
+            raise HTTPException(404, "Workflow not found")
+        steps = await conn.fetch(
+            """
+            SELECT id, workflow_id, step_idx, description, tool, args,
+                   result, status, started_at, finished_at
+              FROM workflow_steps
+             WHERE workflow_id = $1
+               AND scope_status = 'scoped'
+               AND workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+             ORDER BY step_idx
+            """,
+            workflow_id, workspace_id, tenant_id,
+        )
     return {
         "workflow": _serialize_run(run),
         "steps":    [_serialize_step(s) for s in steps],
@@ -162,17 +187,21 @@ async def get_workflow(
 async def list_workflows(user: dict = Depends(require_authenticated)):
     """List the current user's workflows, most recent first."""
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT id, user_id, conversation_id, intent, plan, status,
-               current_step, error, created_at, finished_at
-          FROM workflow_runs
-         WHERE user_id = $1
-         ORDER BY created_at DESC
-         LIMIT 50
-        """,
-        user["id"],
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(
+            """
+            SELECT id, user_id, conversation_id, intent, plan, status,
+                   current_step, error, created_at, finished_at
+              FROM workflow_runs
+             WHERE user_id = $1
+               AND scope_status = 'scoped'
+               AND workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+             ORDER BY created_at DESC
+             LIMIT 50
+            """,
+            user["id"], workspace_id, tenant_id,
+        )
     return {"workflows": [_serialize_run(r) for r in rows]}
 
 
@@ -458,14 +487,19 @@ async def plan_workflow(
     """
     workflow_id = _validate_uuid(workflow_id, label="workflow_id")
     pool = await auth.pool()
-    run = await pool.fetchrow(
-        """
-        SELECT id, intent, status
-          FROM workflow_runs
-         WHERE id = $1 AND user_id = $2
-        """,
-        workflow_id, user["id"],
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        run = await conn.fetchrow(
+            """
+            SELECT id, intent, status
+              FROM workflow_runs
+             WHERE id = $1
+               AND user_id = $2
+               AND scope_status = 'scoped'
+               AND workspace_id = $3::uuid
+               AND ($4::uuid IS NULL OR tenant_id = $4::uuid)
+            """,
+            workflow_id, user["id"], workspace_id, tenant_id,
+        )
     if run is None:
         raise HTTPException(404, "Workflow not found")
     if run["status"] != "planning":
@@ -509,28 +543,35 @@ async def plan_workflow(
 
     # Persist the plan + the per-step rows. Status flips to 'running'
     # so the (next-session) executor loop knows it can start.
-    claimed = await pool.fetchrow(
-        """
-        UPDATE workflow_runs
-           SET plan = $2::jsonb, status = 'running'
-         WHERE id = $1 AND user_id = $3 AND status = 'planning'
-        RETURNING id
-        """,
-        workflow_id, json.dumps(plan), user["id"],
-    )
-    if claimed is None:
-        raise HTTPException(409, "Workflow already planned or finished")
-    for idx, step in enumerate(plan):
-        await pool.execute(
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        claimed = await conn.fetchrow(
             """
-            INSERT INTO workflow_steps
-                (workflow_id, step_idx, description, tool, args, status)
-            VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
-            ON CONFLICT (workflow_id, step_idx) DO NOTHING
+            UPDATE workflow_runs
+               SET plan = $2::jsonb, status = 'running'
+             WHERE id = $1
+               AND user_id = $3
+               AND status = 'planning'
+               AND scope_status = 'scoped'
+               AND workspace_id = $4::uuid
+               AND ($5::uuid IS NULL OR tenant_id = $5::uuid)
+            RETURNING id
             """,
-            workflow_id, idx, step["description"],
-            step["tool"], json.dumps(step["args"]),
+            workflow_id, json.dumps(plan), user["id"], workspace_id, tenant_id,
         )
+        if claimed is None:
+            raise HTTPException(409, "Workflow already planned or finished")
+        for idx, step in enumerate(plan):
+            await conn.execute(
+                """
+                INSERT INTO workflow_steps
+                    (workflow_id, tenant_id, workspace_id, scope_status,
+                     step_idx, description, tool, args, status)
+                VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5, $6, $7::jsonb, 'pending')
+                ON CONFLICT (workflow_id, step_idx) DO NOTHING
+                """,
+                workflow_id, tenant_id, workspace_id, idx, step["description"],
+                step["tool"], json.dumps(step["args"]),
+            )
 
     await audit_service.record_event(
         user_id=user["id"],

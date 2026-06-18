@@ -36,9 +36,14 @@ class FakePool:
     def __init__(self):
         self.workflow_id = str(uuid.uuid4())
         self.user_id = 7
+        self.tenant_id = "11111111-1111-1111-1111-111111111111"
+        self.workspace_id = "22222222-2222-2222-2222-222222222222"
         self.workflow = {
             "id": self.workflow_id,
             "user_id": self.user_id,
+            "tenant_id": self.tenant_id,
+            "workspace_id": self.workspace_id,
+            "scope_status": "scoped",
             "intent": "run workflow",
             "plan": [],
             "status": "running",
@@ -68,8 +73,13 @@ class FakePool:
 
     async def fetchrow(self, query: str, *args):
         q = " ".join(query.split())
-        if q.startswith("SELECT id, user_id, intent, plan"):
-            if args[0] == self.workflow_id and args[1] == self.user_id:
+        if q.startswith("SELECT id, user_id"):
+            if (
+                args[0] == self.workflow_id
+                and args[1] == self.user_id
+                and args[2] == self.workspace_id
+                and (args[3] in {None, self.tenant_id})
+            ):
                 return copy.deepcopy(self.workflow)
             return None
         if q.startswith("UPDATE workflow_steps SET status = 'running'"):
@@ -159,6 +169,8 @@ class FakePool:
 
     async def execute(self, query: str, *args):
         q = " ".join(query.split())
+        if q.startswith("SELECT set_config('app.tenant_id'"):
+            return "SELECT 1"
         if q.startswith("UPDATE workflow_runs SET step_results"):
             self.workflow["step_results"] = json.loads(args[1])
             return "UPDATE 1"
@@ -212,7 +224,13 @@ def fake_pool(executor_module, monkeypatch):
 
 @pytest.fixture()
 def user(fake_pool):
-    return {"id": fake_pool.user_id, "email": "user@example.com", "role": "admin"}
+    return {
+        "id": fake_pool.user_id,
+        "email": "user@example.com",
+        "role": "admin",
+        "active_tenant_id": fake_pool.tenant_id,
+        "active_workspace_id": fake_pool.workspace_id,
+    }
 
 
 def test_executor_runs_read_only_workflow_end_to_end(executor_module, fake_pool, user, monkeypatch):
@@ -379,7 +397,13 @@ def test_executor_human_step_resumes_after_approval(executor_module, fake_pool, 
 
 def test_executor_approval_requires_execute_permission(executor_module, fake_pool):
     fake_pool.add_step(0, None, status="waiting_approval")
-    user = {"id": fake_pool.user_id, "email": "viewer@example.com", "role": "viewer"}
+    user = {
+        "id": fake_pool.user_id,
+        "email": "viewer@example.com",
+        "role": "viewer",
+        "active_tenant_id": fake_pool.tenant_id,
+        "active_workspace_id": fake_pool.workspace_id,
+    }
 
     with pytest.raises(Exception) as exc:
         run(executor_module.approve_step(fake_pool.workflow_id, 0, user))

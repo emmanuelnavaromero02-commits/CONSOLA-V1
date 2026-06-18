@@ -125,7 +125,8 @@ def test_extract_facts_inserts_with_extracted_source():
     assert "'extracted'" in block.group(0)
     # Idempotent: ON CONFLICT lets the LLM re-observe the same fact
     # across turns without duplicates.
-    assert "ON CONFLICT (user_id, fact) DO NOTHING" in block.group(0)
+    assert "ON CONFLICT (user_id, workspace_id, fact) WHERE workspace_id IS NOT NULL" in block.group(0)
+    assert "DO NOTHING" in block.group(0)
 
 
 def test_extract_facts_caps_per_turn():

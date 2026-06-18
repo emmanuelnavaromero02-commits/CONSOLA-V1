@@ -1677,6 +1677,22 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
     )
     with conn.cursor() as cur:
         cur.execute(
+            "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+            (str(ctx.get("tenant_id") or ""), str(ctx.get("workspace_id") or "")),
+        )
+        catalog_scope_sql = ""
+        catalog_params: tuple[Any, ...] = ()
+        if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+            catalog_scope_sql = (
+                " AND scope_status = 'scoped' "
+                "AND workspace_id = %s::uuid "
+                "AND tenant_id = %s::uuid"
+            )
+            catalog_params = (
+                str(ctx.get("workspace_id") or ""),
+                str(ctx.get("tenant_id") or ""),
+            )
+        cur.execute(
             "SELECT name, layer FROM datasets WHERE cartridge = %s ORDER BY layer, name",
             (cartridge,),
         )
@@ -1685,7 +1701,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
             SELECT dataset, column_name, COALESCE(description,''), COALESCE(tags, '{}')
               FROM data_catalog
              WHERE cartridge = %s
-        """, (cartridge,))
+        """ + catalog_scope_sql, (cartridge, *catalog_params))
         desc_rows = cur.fetchall()
     conn.close()
     desc_by = {

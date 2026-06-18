@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth
 from app.services.csrf import require_csrf
+from app.services.db_scope import scoped_db_for_user
 from app.services.permissions import require_permission
 
 
@@ -53,16 +54,21 @@ async def add_fact(body: dict, user: dict = Depends(require_authenticated)):
         raise HTTPException(400, "Invalid source")
 
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO user_facts (user_id, fact, source)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, fact) DO UPDATE
-          SET source = EXCLUDED.source
-        RETURNING id, user_id, fact, source, confidence, created_at
-        """,
-        user["id"], fact, source,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        row = await conn.fetchrow(
+            """
+            INSERT INTO user_facts
+                (user_id, tenant_id, workspace_id, scope_status, fact, source)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5)
+            ON CONFLICT (user_id, workspace_id, fact) WHERE workspace_id IS NOT NULL
+            DO UPDATE
+              SET source = EXCLUDED.source,
+                  tenant_id = EXCLUDED.tenant_id,
+                  scope_status = 'scoped'
+            RETURNING id, user_id, fact, source, confidence, created_at
+            """,
+            user["id"], tenant_id, workspace_id, fact, source,
+        )
     await audit_service.record_event(
         user_id=user["id"],
         email=user.get("email"),
@@ -80,25 +86,32 @@ async def list_memory(user: dict = Depends(require_authenticated)):
     """Return facts + preferences for the current user. Pure read,
     no audit (read-of-self is non-eventful)."""
     pool = await auth.pool()
-    fact_rows = await pool.fetch(
-        """
-        SELECT id, fact, source, confidence, created_at
-          FROM user_facts
-         WHERE user_id = $1
-         ORDER BY created_at DESC
-         LIMIT 200
-        """,
-        user["id"],
-    )
-    pref_rows = await pool.fetch(
-        """
-        SELECT pref_key, pref_value, updated_at
-          FROM user_preferences
-         WHERE user_id = $1
-         ORDER BY pref_key
-        """,
-        user["id"],
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        fact_rows = await conn.fetch(
+            """
+            SELECT id, fact, source, confidence, created_at
+              FROM user_facts
+             WHERE user_id = $1
+               AND scope_status = 'scoped'
+               AND workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+             ORDER BY created_at DESC
+             LIMIT 200
+            """,
+            user["id"], workspace_id, tenant_id,
+        )
+        pref_rows = await conn.fetch(
+            """
+            SELECT pref_key, pref_value, updated_at
+              FROM user_preferences
+             WHERE user_id = $1
+               AND scope_status = 'scoped'
+               AND workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+             ORDER BY pref_key
+            """,
+            user["id"], workspace_id, tenant_id,
+        )
     return {
         "facts":       [dict(r) | {"id": int(r["id"])} for r in fact_rows],
         "preferences": [dict(r) for r in pref_rows],
@@ -116,14 +129,19 @@ async def delete_fact(
     existed" later. Only the fact owner can delete; the SQL WHERE
     clause carries user_id so this is RBAC-by-rows."""
     pool = await auth.pool()
-    deleted = await pool.fetchval(
-        """
-        DELETE FROM user_facts
-         WHERE id = $1 AND user_id = $2
-        RETURNING id
-        """,
-        fact_id, user["id"],
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        deleted = await conn.fetchval(
+            """
+            DELETE FROM user_facts
+             WHERE id = $1
+               AND user_id = $2
+               AND scope_status = 'scoped'
+               AND workspace_id = $3::uuid
+               AND ($4::uuid IS NULL OR tenant_id = $4::uuid)
+            RETURNING id
+            """,
+            fact_id, user["id"], workspace_id, tenant_id,
+        )
     if deleted is None:
         raise HTTPException(404, "Fact not found")
     await audit_service.record_event(
@@ -163,16 +181,21 @@ async def set_preference(
     if not isinstance(value, str) or len(value) > 200:
         raise HTTPException(400, "Preference value must be a string ≤ 200 chars")
     pool = await auth.pool()
-    await pool.execute(
-        """
-        INSERT INTO user_preferences (user_id, pref_key, pref_value)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, pref_key) DO UPDATE
-          SET pref_value = EXCLUDED.pref_value,
-              updated_at = NOW()
-        """,
-        user["id"], key, value,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        await conn.execute(
+            """
+            INSERT INTO user_preferences
+                (user_id, tenant_id, workspace_id, scope_status, pref_key, pref_value)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5)
+            ON CONFLICT (user_id, workspace_id, pref_key) WHERE workspace_id IS NOT NULL
+            DO UPDATE
+              SET pref_value = EXCLUDED.pref_value,
+                  tenant_id = EXCLUDED.tenant_id,
+                  scope_status = 'scoped',
+                  updated_at = NOW()
+            """,
+            user["id"], tenant_id, workspace_id, key, value,
+        )
     await audit_service.record_event(
         user_id=user["id"],
         email=user.get("email"),
