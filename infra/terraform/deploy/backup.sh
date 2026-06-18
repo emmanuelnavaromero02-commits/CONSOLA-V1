@@ -23,7 +23,7 @@ set +a
 : "${AWS_REGION:?AWS_REGION is required}"
 
 COMPOSE_FILES=(-f docker-compose.aws.yml)
-if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-false}" == "true" ]]; then
+if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
   COMPOSE_FILES+=(-f docker-compose.cartridges.yml)
 fi
 

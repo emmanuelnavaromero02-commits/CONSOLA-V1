@@ -133,7 +133,7 @@ env_value() {{
 
 compose_files() {{
   printf -- '-f docker-compose.aws.yml '
-  if [ "$(env_value DEPLOY_CARTRIDGES_SAME_HOST)" = "true" ]; then
+  if [ "$(env_value DEPLOY_CARTRIDGES_SAME_HOST || true)" != "false" ]; then
     printf -- '-f docker-compose.cartridges.yml '
   fi
 }}

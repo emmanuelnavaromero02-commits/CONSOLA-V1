@@ -28,9 +28,9 @@ echo "IMAGE_TAG=${IMAGE_TAG}"
 docker compose -f docker-compose.aws.yml pull \
   console workspace refinement vault mcp-infra airflow airflow-scheduler
 
-if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-false}" == "true" ]]; then
+if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
   docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml pull \
-    replicon sap-hcm sap-successfactors sap-s4hana
+    replicon hubspot salesforce sap-hcm sap-successfactors sap-s4hana
 fi
 
 echo "=== Release images ready ==="

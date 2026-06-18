@@ -138,6 +138,7 @@ def test_aws_cartridge_overlay_ships_release_images():
     expected = {
         "replicon": "replicon",
         "hubspot": "hubspot",
+        "salesforce": "salesforce",
         "sap-hcm": "sap_hcm",
         "sap-s4hana": "sap_s4hana",
         "sap-successfactors": "sap_successfactors",
@@ -261,7 +262,7 @@ def test_scheduled_airflow_dags_honor_release_pause_flag():
 def test_start_script_honors_cartridge_overlay_flag():
     src = AWS_START.read_text(encoding="utf-8")
     assert "COMPOSE_FILES=(-f docker-compose.aws.yml)" in src
-    assert 'DEPLOY_CARTRIDGES_SAME_HOST:-false' in src
+    assert 'DEPLOY_CARTRIDGES_SAME_HOST:-true' in src
     assert "docker-compose.cartridges.yml" in src
     assert 'docker compose "${COMPOSE_FILES[@]}" up -d' in src
 
