@@ -6,7 +6,29 @@ before reaching DuckDB.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from tests.conftest import load_cartridge_app
+
+
+@contextmanager
+def _signed_scope():
+    from app.core import request_context
+
+    token = request_context.set_security_context(
+        request_context._sign_security_context(
+            {
+                "trusted": True,
+                "source": "console",
+                "tenant_id": "tenant-1",
+                "workspace_id": "ws-1",
+            }
+        )
+    )
+    try:
+        yield
+    finally:
+        request_context.reset_security_context(token)
 
 
 def _call(sql: str, limit: int = 1):
@@ -17,7 +39,8 @@ def _call(sql: str, limit: int = 1):
     # that function, before any DuckDB / MCP transport layer.
     load_cartridge_app("replicon")
     from app.mcp_server import query_kb as fn
-    return fn(sql, limit)
+    with _signed_scope():
+        return fn(sql, limit)
 
 
 def _message(res: dict) -> str:

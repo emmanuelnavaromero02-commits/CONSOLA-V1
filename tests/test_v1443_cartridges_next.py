@@ -47,7 +47,6 @@ def test_hubspot_is_visible_in_next_cartridge_surfaces():
         NEXT_SRC / "lib/cartridges.ts",
         NEXT_SRC / "app/(shell)/cartridges/page.tsx",
         NEXT_SRC / "app/(shell)/studio/page.tsx",
-        NEXT_SRC / "app/(shell)/monitor/page.tsx",
         NEXT_SRC / "app/(shell)/data/catalog/page.tsx",
         NEXT_SRC / "app/(shell)/data/lineage/page.tsx",
         NEXT_SRC / "app/(shell)/copilot/knowledge/page.tsx",
@@ -55,6 +54,14 @@ def test_hubspot_is_visible_in_next_cartridge_surfaces():
     ]
     for path in surfaces:
         assert '"hubspot"' in _read(path), f"{path.relative_to(REPO)} omits hubspot"
+
+
+def test_monitor_surface_is_cartridge_agnostic():
+    src = _read(NEXT_SRC / "app/(shell)/monitor/page.tsx")
+
+    assert "useJobs" in src
+    assert "JobTable" in src
+    assert '"hubspot"' not in src
 
 
 def test_cartridges_helpers_target_correct_endpoints():

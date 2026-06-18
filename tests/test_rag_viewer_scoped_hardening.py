@@ -113,7 +113,10 @@ def test_freshness_viewer_rejects_uninstalled_cartridges_and_uses_scope():
     assert "def _require_cartridge" in source
     assert "cartridge not allowed for active workspace" in source
     assert "def _watermark_scope_for_user" in source
-    assert "ew.watermark_scope = $2" in source
+    assert "ew.watermark_scope = $" in source
+    assert "er_run.tenant_id =" in source
+    assert "er_run.workspace_id =" in source
+    assert "scoped_db_for_user(pool, user)" in source
     assert "_require_cartridge(user, cartridge)" in source
 
 

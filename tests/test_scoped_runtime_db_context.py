@@ -81,7 +81,8 @@ def test_control_room_uses_central_scope_helper_not_session_guc_fallback():
     execution_src = (REPO / "console/app/services/control_room/execution.py").read_text()
     core_src = (REPO / "console/app/services/control_room/core.py").read_text()
 
-    assert "from app.services.db_scope import run_with_db_scope" in core_src
+    assert "from app.services.db_scope import" in core_src
+    assert "run_with_db_scope" in core_src
     assert "return await run_with_db_scope(pool, user, work)" in execution_src
     assert "set_config('app.tenant_id', $1, false)" not in execution_src
 

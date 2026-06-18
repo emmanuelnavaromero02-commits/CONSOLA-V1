@@ -6791,7 +6791,7 @@ async def api_agents_invoke(
     visible = await _agents.get_agent(agent_id, user_context=user)
     if not visible:
         raise HTTPException(404, "agent not found")
-    agent = await _agent_runtime.load_agent(agent_id)
+    agent = await _agent_runtime.load_agent(agent_id, user_context=user)
     if not agent:
         raise HTTPException(404, "agent not found")
     message = (body.get("message") or "").strip()
@@ -6886,7 +6886,7 @@ async def api_agents_invoke_stream(
     visible = await _agents.get_agent(agent_id, user_context=user)
     if not visible:
         raise HTTPException(404, "agent not found")
-    agent = await _agent_runtime.load_agent(agent_id)
+    agent = await _agent_runtime.load_agent(agent_id, user_context=user)
     if not agent:
         raise HTTPException(404, "agent not found")
     message = (body.get("message") or "").strip()
