@@ -11,7 +11,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_CONNECTION_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_CONNECTION_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "REPLICON_API_TOKEN": ("REPLICON_API_TOKEN", "REPLICON_TOKEN", "REPLICON_API_KEY"),
@@ -72,23 +72,39 @@ def _context_cache_key(security_context: str | None) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _fetch_connection(service_name: str, security_context: str | None = None) -> dict[str, Any]:
+def _normalize_conn_id(conn_id: str | None) -> str:
+    return (conn_id or "").strip()
+
+
+def _connection_candidates(conn_id: str | None) -> tuple[str, ...]:
+    selected = _normalize_conn_id(conn_id)
+    if selected:
+        return (selected,)
+    return ("default", "analytics")
+
+
+def _fetch_connection(
+    service_name: str,
+    security_context: str | None = None,
+    conn_id: str | None = None,
+) -> dict[str, Any]:
     service = service_name.strip().lower()
     scoped_context = (security_context or "").strip() or None
-    cache_key = (service, _context_cache_key(scoped_context))
+    selected_conn_id = _normalize_conn_id(conn_id)
+    cache_key = (service, _context_cache_key(scoped_context), selected_conn_id)
     cached = _CONNECTION_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
-    for conn_id in ("default", "analytics"):
+    for candidate_conn_id in _connection_candidates(conn_id):
         for key, internal_service in _auth_options(service):
             try:
                 headers = {"x-api-key": key, "x-internal-service": internal_service}
                 if scoped_context:
                     headers["x-security-context"] = scoped_context
                 response = requests.get(
-                    f"{console_url}/api/vault/connections/{service}/{conn_id}/reveal",
+                    f"{console_url}/api/vault/connections/{service}/{candidate_conn_id}/reveal",
                     headers=headers,
                     timeout=5,
                 )
@@ -102,7 +118,7 @@ def _fetch_connection(service_name: str, security_context: str | None = None) ->
                     _CONNECTION_CACHE[cache_key] = payload
                     return payload
             except Exception as exc:
-                logger.debug("Vault reveal failed for %s/%s: %s", service, conn_id, exc)
+                logger.debug("Vault reveal failed for %s/%s: %s", service, candidate_conn_id, exc)
     return {}
 
 
@@ -118,14 +134,19 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(fields))
 
 
-def get_secret_for_worker(service_name: str, env_var_name: str, security_context: str | None = None) -> str:
+def get_secret_for_worker(
+    service_name: str,
+    env_var_name: str,
+    security_context: str | None = None,
+    conn_id: str | None = None,
+) -> str:
     """Resolve a worker credential from env first, then Console Vault."""
     for candidate in _ENV_ALIASES.get(env_var_name, (env_var_name,)):
         value = os.environ.get(candidate)
         if value:
             return value
 
-    payload = _fetch_connection(service_name, security_context=security_context)
+    payload = _fetch_connection(service_name, security_context=security_context, conn_id=conn_id)
     for field in _candidate_fields(env_var_name):
         value = payload.get(field)
         if value is not None and str(value).strip():
@@ -133,29 +154,50 @@ def get_secret_for_worker(service_name: str, env_var_name: str, security_context
     return ""
 
 
-def get_connection_for_worker(service_name: str, security_context: str | None = None) -> dict[str, Any]:
+def get_connection_for_worker(
+    service_name: str,
+    security_context: str | None = None,
+    conn_id: str | None = None,
+) -> dict[str, Any]:
     """Return the resolved Console Vault connection payload for a worker."""
-    return dict(_fetch_connection(service_name, security_context=security_context))
+    return dict(_fetch_connection(service_name, security_context=security_context, conn_id=conn_id))
 
 
-def get_replicon_connection(security_context: str | None = None) -> dict[str, Any]:
+def get_replicon_connection(
+    security_context: str | None = None,
+    conn_id: str | None = None,
+) -> dict[str, Any]:
     """Return Replicon connection material from env first, then Console Vault."""
-    payload = get_connection_for_worker("replicon", security_context=security_context)
+    payload = get_connection_for_worker("replicon", security_context=security_context, conn_id=conn_id)
     connection = dict(payload)
     connection["base_url"] = (
-        get_secret_for_worker("replicon", "REPLICON_BASE_URL", security_context=security_context)
+        get_secret_for_worker(
+            "replicon",
+            "REPLICON_BASE_URL",
+            security_context=security_context,
+            conn_id=conn_id,
+        )
         or settings.replicon_base_url
     )
     auth_method = str(connection.get("auth_method") or "bearer_token").strip().lower()
     if auth_method == "basic":
-        user = get_secret_for_worker("replicon", "REPLICON_USER", security_context=security_context)
-        password = get_secret_for_worker("replicon", "REPLICON_PASSWORD", security_context=security_context)
+        user = get_secret_for_worker("replicon", "REPLICON_USER", security_context=security_context, conn_id=conn_id)
+        password = get_secret_for_worker("replicon", "REPLICON_PASSWORD", security_context=security_context, conn_id=conn_id)
         if user:
             connection["user"] = user
         if password:
             connection["password"] = password
     else:
-        token = get_secret_for_worker("replicon", "REPLICON_API_TOKEN", security_context=security_context) or settings.replicon_api_token or ""
+        token = (
+            get_secret_for_worker(
+                "replicon",
+                "REPLICON_API_TOKEN",
+                security_context=security_context,
+                conn_id=conn_id,
+            )
+            or settings.replicon_api_token
+            or ""
+        )
         if token:
             if auth_method in {"api_key", "apikey", "x_api_key"}:
                 connection.setdefault("api_key", token)

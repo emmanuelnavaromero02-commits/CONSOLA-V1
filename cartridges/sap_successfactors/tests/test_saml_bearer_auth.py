@@ -136,6 +136,47 @@ def test_explicit_vault_connection_auth_method_wins_over_container_default(monke
     assert status["missing"] == []
 
 
+def test_saml_bearer_token_401_reports_successfactors_rejection(monkeypatch):
+    sap_client = _import_client()
+    token_url = "https://api68sales.successfactors.com/oauth/token"
+
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "successfactors_sfapi",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": token_url,
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
+
+    class RejectingSession:
+        def post(self, *_args, **_kwargs):
+            response = requests.Response()
+            response.status_code = 401
+            response.url = token_url
+            response._content = b'{"error":"invalid_grant"}'
+            return response
+
+    client = sap_client.SapSfClient(conn_id="successfactors_sfapi")
+    client._session = RejectingSession()
+    monkeypatch.setattr(client, "_request_saml_assertion_from_successfactors", lambda: "assertion")
+
+    with pytest.raises(sap_client.SAPClientError) as exc_info:
+        client._request_uncached_saml_bearer_token(("unit-test",))
+
+    message = str(exc_info.value)
+    assert "SAML bearer token rejected by SuccessFactors (HTTP 401)" in message
+    assert "company_id, client_id, admin_user, private_key_pem" in message
+    assert "Vault fields were present" in message
+
+
 def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):
     """The SAML subject must come from admin_user, not UI/example usernames."""
     monkeypatch.setenv("SF_ADMIN_USER", "env-should-not-win")

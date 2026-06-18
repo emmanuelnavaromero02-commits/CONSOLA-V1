@@ -169,6 +169,16 @@ class SAPClientError(RuntimeError):
     pass
 
 
+def _token_rejected_message(auth_label: str, exc: requests.HTTPError, checklist: str) -> str:
+    response = exc.response
+    status = response.status_code if response is not None else "unknown"
+    return (
+        f"{auth_label} token rejected by SuccessFactors (HTTP {status}); "
+        f"verify {checklist}. "
+        "Vault fields were present, but SAP did not accept the token exchange."
+    )
+
+
 class CircuitBreakerOpen(SAPClientError):
     pass
 
@@ -617,6 +627,14 @@ class SapSfClient:
         except requests.RequestException as exc:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
+            if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code in {401, 403}:
+                raise SAPClientError(
+                    _token_rejected_message(
+                        "OAuth",
+                        exc,
+                        "company_id, client_id, client_secret, token_url, and SuccessFactors datacenter",
+                    )
+                ) from exc
             raise SAPClientError(f"OAuth token request failed: {exc}") from exc
 
         token = payload.get("access_token")
@@ -680,6 +698,14 @@ class SapSfClient:
         except requests.RequestException as exc:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
+            if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code in {401, 403}:
+                raise SAPClientError(
+                    _token_rejected_message(
+                        "SAML bearer",
+                        exc,
+                        "company_id, client_id, admin_user, private_key_pem, token_url, and SuccessFactors datacenter",
+                    )
+                ) from exc
             raise SAPClientError(f"SAML bearer token request failed: {exc}") from exc
 
         token = payload.get("access_token")

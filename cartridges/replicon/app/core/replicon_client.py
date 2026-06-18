@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import time
+from urllib.parse import urlsplit
 from typing import Any
 
 import pandas as pd
@@ -68,10 +69,11 @@ class RepliconClient:
       4. Parse CSV → list[dict]
     """
 
-    def __init__(self, security_context: str | None = None) -> None:
-        connection = get_replicon_connection(security_context=security_context)
+    def __init__(self, security_context: str | None = None, conn_id: str | None = None) -> None:
+        connection = get_replicon_connection(security_context=security_context, conn_id=conn_id)
         self.base_url = str(connection.get("base_url") or "").rstrip("/")
         self._auth_connection = connection
+        self._conn_id = (conn_id or "").strip()
 
         if not self.base_url:
             raise EnvironmentError("Replicon base_url is required (set env or Vault connection)")
@@ -323,6 +325,22 @@ class RepliconClient:
             return {
                 "status": "error",
                 "reachable": False,
-                "error": str(exc),
+                "error": _request_error_message(exc, self.base_url),
+                "base_url_host": _safe_host(self.base_url),
+                **({"conn_id": self._conn_id} if self._conn_id else {}),
                 "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
             }
+
+
+def _safe_host(url: str) -> str | None:
+    host = urlsplit(str(url or "")).netloc
+    return host or None
+
+
+def _request_error_message(exc: requests.RequestException, base_url: str) -> str:
+    text = str(exc)
+    lowered = text.lower()
+    if "name resolution" in lowered or "nodename nor servname provided" in lowered:
+        host = _safe_host(base_url) or "configured host"
+        return f"Replicon host could not be resolved by DNS: {host}"
+    return text
