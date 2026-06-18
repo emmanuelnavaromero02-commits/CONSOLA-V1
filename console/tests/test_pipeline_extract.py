@@ -40,6 +40,17 @@ async def _empty_list_async(*args, **kwargs):
     return []
 
 
+def _scoped_pipeline_user() -> dict:
+    return {
+        "id": 10,
+        "email": "workspace-admin@example.test",
+        "role": "workspace_admin",
+        "active_tenant_id": "11111111-1111-1111-1111-111111111111",
+        "active_workspace_id": "22222222-2222-2222-2222-222222222222",
+        "allowed_cartridges": ["replicon"],
+    }
+
+
 class _FakeResponse:
     def __init__(self, data, status_code=200):
         self._data = data
@@ -61,6 +72,10 @@ def console_main(monkeypatch):
     monkeypatch.setenv("JWT_ALGORITHM", "HS256")
     monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost/test")
+    monkeypatch.setenv(
+        "SECURITY_CONTEXT_SIGNING_KEY",
+        "unit_security_context_signing_key_32_chars",
+    )
 
     auth_stub = _module(
         COOKIE_NAME="mod_session",
@@ -73,6 +88,18 @@ def console_main(monkeypatch):
     asyncpg_stub = _module(executed=[], fetch_rows=[])
 
     class FakePool:
+        def acquire(self):
+            return self
+
+        def transaction(self):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
         async def execute(self, query, *args):
             asyncpg_stub.executed.append((query, args))
             return "OK"
@@ -178,6 +205,34 @@ async def test_dag_based_cartridge_triggers_airflow_dag(console_main, monkeypatc
     assert args[3] == "Department"
     assert args[5] == "full"
     assert args[6] == "queued"
+
+
+@pytest.mark.anyio
+async def test_record_dag_pipeline_trigger_sets_rls_scope(console_main, monkeypatch):
+    async def table_has_column(table, column):
+        return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}
+
+    monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
+
+    await console_main._record_dag_pipeline_trigger(
+        cartridge="sap_successfactors",
+        entity="Candidate",
+        dag_id="sap_successfactors_extract",
+        dag_run_id="manual__scoped",
+        mode="incremental",
+        status="queued",
+        conf={"tenant_id": "11111111-1111-1111-1111-111111111111"},
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+    )
+
+    queries = [query for query, _args in console_main._test_asyncpg_stub.executed]
+    assert "set_config('app.tenant_id'" in queries[0]
+    assert console_main._test_asyncpg_stub.executed[0][1] == (
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    )
+    assert "INSERT INTO pipeline_runs" in queries[-1]
 
 
 @pytest.mark.anyio
@@ -400,7 +455,7 @@ async def test_api_pipeline_uses_physical_bronze_when_run_metadata_missing(conso
     monkeypatch.setattr(console_main, "_bronze_physical_snapshot", physical_snapshot)
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
 
-    result = await console_main.api_pipeline("replicon")
+    result = await console_main.api_pipeline("replicon", user=_scoped_pipeline_user())
     department = result["pipeline"][0]
 
     assert department["entity"] == "Department"
@@ -481,7 +536,7 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
     monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
 
-    result = await console_main.api_pipeline("replicon")
+    result = await console_main.api_pipeline("replicon", user=_scoped_pipeline_user())
     department = result["pipeline"][0]
 
     assert department["bronze"]["status"] != "never"
