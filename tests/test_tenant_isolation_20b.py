@@ -119,6 +119,13 @@ def test_catalog_refinement_and_mcp_infra_set_db_scope_before_catalog_access():
     assert "scope_status = 'scoped'" in mcp
 
 
+def test_workspace_cartridge_resolution_sets_scope_before_entitlements():
+    deps = _read(REPO / "console/app/dependencies.py")
+    assert "from app.services.db_scope import scoped_db" in deps
+    assert "SELECT tenant_id::text FROM workspaces" in deps
+    assert "scoped_db(p, tenant_id, workspace_id)" in deps
+
+
 def test_startup_seeders_declare_platform_or_workspace_scope():
     packaged_apps = _read(REPO / "console/app/services/seed_packaged_apps.py")
     assert "tenant_id, workspace_id, scope_status" in packaged_apps
