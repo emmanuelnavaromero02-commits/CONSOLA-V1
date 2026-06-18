@@ -103,8 +103,8 @@ class DatasetStore:
         sources        = ds.get("sources") or []
         column_mapping = ds.get("column_mapping") or {}
         with _conn() as conn, conn.cursor() as cur:
-            _apply_scope(cur, ds.get("tenant_id"), ds.get("workspace_id"))
             workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)
+            _apply_scope(cur, ds.get("tenant_id"), workspace_id)
             cur.execute("""
                 INSERT INTO datasets
                   (name, layer, cartridge, sources, sql_def, description,

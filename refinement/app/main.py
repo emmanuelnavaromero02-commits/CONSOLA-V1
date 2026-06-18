@@ -1802,6 +1802,25 @@ def _pg_exec(query: str, params=None, fetch=False, security_context: dict | None
     return result
 
 
+def _default_workspace_security_context() -> dict | None:
+    rows = _pg_exec(
+        """
+        SELECT w.id::text AS workspace_id, w.tenant_id::text AS tenant_id
+          FROM workspaces w
+         ORDER BY w.created_at ASC
+         LIMIT 1
+        """,
+        fetch=True,
+    ) or []
+    if not rows or not rows[0].get("workspace_id"):
+        return None
+    return {
+        "trusted": True,
+        "tenant_id": rows[0].get("tenant_id") or "",
+        "workspace_id": rows[0]["workspace_id"],
+    }
+
+
 def _ensure_semantic_catalog_tables() -> None:
     """Sprint v1.21.1 hotfix: this helper used to run CREATE TABLE
     IF NOT EXISTS for data_catalog and data_relationships. After v1.19,
@@ -2291,6 +2310,12 @@ def _seed_catalog_from_existing() -> int:
 
 def _seed_relationships() -> int:
     """Register known Replicon model relationships if not already present."""
+    security_context = _default_workspace_security_context()
+    if not security_context:
+        logger.info("skip relationship seed: no default workspace")
+        return 0
+    tenant_id = str(security_context.get("tenant_id") or "").strip() or None
+    workspace_id = str(security_context["workspace_id"])
     relationships = [
         # TimeEntry → Proyectos
         ("replicon_timeentry_latest", "projectcode",
@@ -2341,10 +2366,25 @@ def _seed_relationships() -> int:
             _pg_exec("""
                 INSERT INTO data_relationships
                     (from_dataset, from_column, to_dataset, to_column,
-                     join_hint, description, transform)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (from_dataset, from_column, to_dataset, to_column) DO NOTHING
-            """, rel)
+                     join_hint, description, transform, tenant_id, workspace_id, scope_status)
+                SELECT %s,%s,%s,%s,%s,%s,%s,%s::uuid,%s::uuid,'scoped'
+                  FROM datasets from_ds
+                  JOIN datasets to_ds ON to_ds.name = %s
+                 WHERE from_ds.name = %s
+                   AND from_ds.workspace_id = %s::uuid
+                   AND to_ds.workspace_id = %s::uuid
+                ON CONFLICT (workspace_id, from_dataset, from_column, to_dataset, to_column)
+                WHERE workspace_id IS NOT NULL
+                DO NOTHING
+            """, (
+                *rel,
+                tenant_id,
+                workspace_id,
+                rel[2],
+                rel[0],
+                workspace_id,
+                workspace_id,
+            ), security_context=security_context)
             seeded += 1
         except Exception:
             logger.exception(

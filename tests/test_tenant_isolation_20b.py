@@ -103,6 +103,7 @@ def test_catalog_refinement_and_mcp_infra_set_db_scope_before_catalog_access():
     refinement = _read(REPO / "refinement/app/main.py")
     assert "def _pg_set_scope" in refinement
     assert "set_config('app.tenant_id'" in refinement
+    assert "def _default_workspace_security_context" in refinement
     assert "scope_status = 'scoped'" in refinement
     assert "ON CONFLICT (workspace_id, dataset, column_name)" in refinement
     assert "ON CONFLICT (workspace_id, from_dataset, from_column, to_dataset, to_column)" in refinement
@@ -116,6 +117,24 @@ def test_catalog_refinement_and_mcp_infra_set_db_scope_before_catalog_access():
     assert "def _set_pg_scope" in mcp
     assert "def _catalog_scope_sql" in mcp
     assert "scope_status = 'scoped'" in mcp
+
+
+def test_startup_seeders_declare_platform_or_workspace_scope():
+    packaged_apps = _read(REPO / "console/app/services/seed_packaged_apps.py")
+    assert "tenant_id, workspace_id, scope_status" in packaged_apps
+    assert "NULL, NULL, 'platform_template'" in packaged_apps
+    assert "scope_status = 'platform_template'" in packaged_apps
+
+    dataset_store = _read(REPO / "refinement/app/dataset_store.py")
+    save_dataset = dataset_store.split("def save_dataset", 1)[1].split("def delete_dataset", 1)[0]
+    assert "workspace_id = ds.get(\"workspace_id\") or _default_workspace_id(cur)" in save_dataset
+    assert "_apply_scope(cur, ds.get(\"tenant_id\"), workspace_id)" in save_dataset
+
+    refinement = _read(REPO / "refinement/app/main.py")
+    seed_relationships = refinement.split("def _seed_relationships", 1)[1].split("# ── REST API", 1)[0]
+    assert "_default_workspace_security_context()" in seed_relationships
+    assert "tenant_id, workspace_id, scope_status" in seed_relationships
+    assert "security_context=security_context" in seed_relationships
 
 
 def _tenant_like_tables(sql: str) -> set[str]:

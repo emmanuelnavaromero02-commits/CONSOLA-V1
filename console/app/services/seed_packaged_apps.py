@@ -79,8 +79,9 @@ async def seed_packaged_apps(pool: asyncpg.Pool) -> None:
                 await conn.execute(
                     """INSERT INTO analytic_apps
                           (name, title, html, description, cartridge_id, visibility,
-                           datasets_used, updated_at)
-                       VALUES ($1, $2, $3, $4, $5, 'shared', $6::text[], NOW())
+                           datasets_used, tenant_id, workspace_id, scope_status, updated_at)
+                       VALUES ($1, $2, $3, $4, $5, 'shared', $6::text[],
+                               NULL, NULL, 'platform_template', NOW())
                        ON CONFLICT (name) DO UPDATE
                           SET title = EXCLUDED.title,
                               html = EXCLUDED.html,
@@ -88,13 +89,19 @@ async def seed_packaged_apps(pool: asyncpg.Pool) -> None:
                               cartridge_id = EXCLUDED.cartridge_id,
                               visibility = EXCLUDED.visibility,
                               datasets_used = EXCLUDED.datasets_used,
+                              tenant_id = NULL,
+                              workspace_id = NULL,
+                              scope_status = 'platform_template',
                               updated_at = NOW()""",
                     name, title, html, description, cartridge_id, datasets_used,
                 )
                 names.append(name)
             if names:
                 await conn.execute(
-                    "DELETE FROM analytic_apps WHERE cartridge_id = $1 AND NOT (name = ANY($2::text[]))",
+                    """DELETE FROM analytic_apps
+                        WHERE cartridge_id = $1
+                          AND scope_status = 'platform_template'
+                          AND NOT (name = ANY($2::text[]))""",
                     cartridge_id, names,
                 )
                 logger.info("[seed_packaged_apps] %s: seeded %d apps", cartridge_id, len(names))
