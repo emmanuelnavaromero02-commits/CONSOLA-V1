@@ -105,6 +105,21 @@ export interface MarketplaceMutationResponse {
   order_id?: string;
 }
 
+export interface MarketplaceAdminScope {
+  tenantId?: string | null;
+  workspaceId?: string | null;
+}
+
+function adminScopeQuery(scope?: MarketplaceAdminScope): string {
+  const params = new URLSearchParams();
+  const tenantId = scope?.tenantId?.trim();
+  const workspaceId = scope?.workspaceId?.trim();
+  if (tenantId) params.set("tenant_id", tenantId);
+  if (workspaceId) params.set("workspace_id", workspaceId);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 export async function listMarketplaceProducts(): Promise<MarketplaceProductsResponse> {
   const { data } = await api.get<MarketplaceProductsResponse>("/api/marketplace/products");
   return { ...data, products: data.products ?? [] };
@@ -131,25 +146,31 @@ export async function retryMarketplaceInstallation(installationId: string): Prom
   return data;
 }
 
-export async function listAdminInstallations(): Promise<MarketplaceInstallationsResponse> {
-  const { data } = await api.get<MarketplaceInstallationsResponse>("/api/admin/installations");
+export async function listAdminInstallations(scope?: MarketplaceAdminScope): Promise<MarketplaceInstallationsResponse> {
+  const { data } = await api.get<MarketplaceInstallationsResponse>(
+    `/api/admin/installations${adminScopeQuery(scope)}`,
+  );
   return { ...data, installations: data.installations ?? [] };
 }
 
 export async function runAdminInstallationAction(
   installationId: string,
   action: AdminInstallationAction,
+  scope?: MarketplaceAdminScope,
 ): Promise<MarketplaceMutationResponse> {
   const { data } = await api.post<MarketplaceMutationResponse>(
-    `/api/admin/installations/${encodeURIComponent(installationId)}/${action}`,
+    `/api/admin/installations/${encodeURIComponent(installationId)}/${action}${adminScopeQuery(scope)}`,
     {},
   );
   return data;
 }
 
-export async function getInstallationAccess(installationId: string): Promise<InstallationAccessResponse> {
+export async function getInstallationAccess(
+  installationId: string,
+  scope?: MarketplaceAdminScope,
+): Promise<InstallationAccessResponse> {
   const { data } = await api.get<InstallationAccessResponse>(
-    `/api/admin/installations/${encodeURIComponent(installationId)}/access`,
+    `/api/admin/installations/${encodeURIComponent(installationId)}/access${adminScopeQuery(scope)}`,
   );
   return { ...data, users: data.users ?? [] };
 }
@@ -158,9 +179,10 @@ export async function setInstallationUserAccess(
   installationId: string,
   userId: number,
   mode: InstallationAccessMode,
+  scope?: MarketplaceAdminScope,
 ): Promise<InstallationAccessResponse> {
   const { data } = await api.patch<InstallationAccessResponse>(
-    `/api/admin/installations/${encodeURIComponent(installationId)}/access/${encodeURIComponent(userId)}`,
+    `/api/admin/installations/${encodeURIComponent(installationId)}/access/${encodeURIComponent(userId)}${adminScopeQuery(scope)}`,
     { mode },
   );
   return { ...data, users: data.users ?? [] };

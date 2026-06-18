@@ -241,6 +241,10 @@ def test_marketplace_permissions_follow_selected_workspace_header():
 def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     main = console_route_source()
     service = read("console/app/services/marketplace_service.py")
+    router = read("console/app/routers/marketplace.py")
+    v1_router = read("console/app/routers/v1/marketplace_apps.py")
+    lib = read("console-next/src/lib/marketplace.ts")
+    companies = read("console-next/src/components/operations/CompaniesConsole.tsx")
     js = read("console/app/static/js/marketplace.js")
     access_section = service.split("async def set_installation_user_access", 1)[
         1
@@ -261,6 +265,25 @@ def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     assert 'value="allow"' not in js
     assert "Heredar workspace" in js
     assert "Bloquear" in js
+    assert "get_current_global_user" not in router
+    assert "get_current_global_user" not in v1_router
+    for route_source in (router, v1_router):
+        assert "tenant_id: str | None = None" in route_source
+        assert "workspace_id: str | None = None" in route_source
+        assert 'Depends(require_permission("marketplace.admin"))' in route_source
+        assert "tenant_id=tenant_id" in route_source
+        assert "workspace_id=workspace_id" in route_source
+    assert "GLOBAL_ADMIN_ROLES" in service
+    assert "def _admin_scoped_user" in service
+    assert '"workspace access forbidden"' in service
+    assert "tenant_id and workspace_id are required together" in service
+    assert "MarketplaceAdminScope" in lib
+    assert "function adminScopeQuery" in lib
+    assert "listAdminInstallations(scope?: MarketplaceAdminScope)" in lib
+    assert "runAdminInstallationAction(\n  installationId: string,\n  action: AdminInstallationAction,\n  scope?: MarketplaceAdminScope," in lib
+    assert "selectedMarketplaceScope" in companies
+    assert "listAdminInstallations(selectedMarketplaceScope)" in companies
+    assert "runAdminInstallationAction(id, action, selectedMarketplaceScope)" in companies
 
 
 def test_marketplace_rls_tables_use_scoped_db_context():

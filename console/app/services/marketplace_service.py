@@ -21,6 +21,7 @@ _SCHEMA_READY = False
 ACTIVE_ENTITLEMENT_STATUS = "active"
 READY_INSTALLATION_STATUS = "ready"
 CUSTOMER_PRODUCT_STATUSES = {"active"}
+GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
 
 
 COMMERCIAL_PROFILES: dict[str, dict[str, Any]] = {
@@ -135,6 +136,47 @@ def _scope(user: dict) -> tuple[str, str]:
     if not tenant_id or not workspace_id:
         raise MarketplaceError("workspace context required")
     return str(tenant_id), str(workspace_id)
+
+
+def _admin_scoped_user(
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    requested_tenant = str(tenant_id or "").strip()
+    requested_workspace = str(workspace_id or "").strip()
+    if not requested_tenant and not requested_workspace:
+        return user
+    if not requested_tenant or not requested_workspace:
+        raise MarketplaceError("tenant_id and workspace_id are required together")
+
+    workspaces = user.get("workspaces") or []
+    match = next(
+        (
+            ws
+            for ws in workspaces
+            if str(ws.get("tenant_id") or "") == requested_tenant
+            and str(ws.get("workspace_id") or "") == requested_workspace
+        ),
+        None,
+    )
+    if not match:
+        raise MarketplaceError("workspace access forbidden")
+
+    active_workspace = str(user.get("active_workspace_id") or user.get("workspace_id") or "")
+    if requested_workspace != active_workspace and user.get("role") not in GLOBAL_ADMIN_ROLES:
+        raise MarketplaceError("workspace access forbidden")
+
+    scoped = dict(user)
+    scoped.update(
+        {
+            "active_tenant_id": requested_tenant,
+            "active_workspace_id": requested_workspace,
+            "workspace_role": match.get("workspace_role") or user.get("workspace_role"),
+        }
+    )
+    return scoped
 
 
 def _can_admin_marketplace(user: dict | None) -> bool:
@@ -642,7 +684,13 @@ async def list_installations(user: dict) -> dict[str, Any]:
     }
 
 
-async def list_admin_installations(user: dict) -> dict[str, Any]:
+async def list_admin_installations(
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    user = _admin_scoped_user(user, tenant_id=tenant_id, workspace_id=workspace_id)
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     tenant_id, workspace_id = _scope(user)
@@ -698,7 +746,14 @@ async def list_admin_installations(user: dict) -> dict[str, Any]:
     return {"installations": [_decorate_installation(_row(r) or {}) for r in rows]}
 
 
-async def get_admin_installation(installation_id: str, user: dict) -> dict[str, Any]:
+async def get_admin_installation(
+    installation_id: str,
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    user = _admin_scoped_user(user, tenant_id=tenant_id, workspace_id=workspace_id)
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
@@ -709,7 +764,14 @@ async def get_admin_installation(installation_id: str, user: dict) -> dict[str, 
     return {"installation": _decorate_installation(row)}
 
 
-async def approve_installation(installation_id: str, user: dict, *, source: str = "console_admin") -> dict[str, Any]:
+async def approve_installation(
+    installation_id: str,
+    user: dict,
+    *,
+    source: str = "console_admin",
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
     return await _set_installation_state(
         installation_id,
         user,
@@ -719,6 +781,8 @@ async def approve_installation(installation_id: str, user: dict, *, source: str 
         action="cartridge_activated",
         message="Cartucho aprobado por el administrador y habilitado para el workspace.",
         source=source,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         allowed_installation_statuses={"requested", "pending_connection", "waiting_credentials", "failed", "ready"},
         # CISO R3 hardening: re-check internal_only/status inside the
         # transaction so a concurrent metadata flip cannot slip through
@@ -727,7 +791,13 @@ async def approve_installation(installation_id: str, user: dict, *, source: str 
     )
 
 
-async def pause_installation(installation_id: str, user: dict) -> dict[str, Any]:
+async def pause_installation(
+    installation_id: str,
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
     return await _set_installation_state(
         installation_id,
         user,
@@ -736,11 +806,19 @@ async def pause_installation(installation_id: str, user: dict) -> dict[str, Any]
         current_step="paused_by_admin",
         action="cartridge_paused",
         message="Acceso pausado; la configuración se conserva.",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         allowed_installation_statuses={"ready", "pending_connection", "failed", "paused"},
     )
 
 
-async def revoke_installation(installation_id: str, user: dict) -> dict[str, Any]:
+async def revoke_installation(
+    installation_id: str,
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
     return await _set_installation_state(
         installation_id,
         user,
@@ -750,6 +828,8 @@ async def revoke_installation(installation_id: str, user: dict) -> dict[str, Any
         action="cartridge_revoked",
         message="Acceso revocado; historial y configuración permanecen para soporte.",
         ends_now=True,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         allowed_installation_statuses={"requested", "pending_connection", "waiting_credentials", "ready", "failed", "paused", "expired", "suspended", "revoked"},
     )
 
@@ -780,7 +860,13 @@ async def _assert_product_activatable(conn, cartridge_id: str) -> None:
         )
 
 
-async def reactivate_installation(installation_id: str, user: dict) -> dict[str, Any]:
+async def reactivate_installation(
+    installation_id: str,
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
     # Phase-0 P0 + CISO R3 hardening:
     # 1) Reactivation must NOT bypass internal_only / status checks.
     # 2) The validation must run INSIDE the same transaction as the state
@@ -795,6 +881,8 @@ async def reactivate_installation(installation_id: str, user: dict) -> dict[str,
         current_step="reactivated_ready",
         action="cartridge_reactivated",
         message="Acceso reactivado para el workspace.",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
         allowed_installation_statuses={"paused", "revoked", "expired", "suspended"},
         assert_product_activatable=True,
     )
@@ -864,7 +952,14 @@ async def retry_installation(installation_id: str, user: dict) -> dict[str, Any]
     return {"installation": _decorate_installation(installation)}
 
 
-async def list_installation_access(installation_id: str, user: dict) -> dict[str, Any]:
+async def list_installation_access(
+    installation_id: str,
+    user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    user = _admin_scoped_user(user, tenant_id=tenant_id, workspace_id=workspace_id)
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
@@ -923,7 +1018,11 @@ async def set_installation_user_access(
     mode: str,
     reason: str | None,
     user: dict,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> dict[str, Any]:
+    user = _admin_scoped_user(user, tenant_id=tenant_id, workspace_id=workspace_id)
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     try:
@@ -1055,7 +1154,12 @@ async def set_installation_user_access(
         },
         critical=True,
     )
-    return await list_installation_access(installation_id, user)
+    return await list_installation_access(
+        installation_id,
+        user,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
 
 
 async def _set_installation_state(
@@ -1071,7 +1175,10 @@ async def _set_installation_state(
     ends_now: bool = False,
     allowed_installation_statuses: set[str] | None = None,
     assert_product_activatable: bool = False,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> dict[str, Any]:
+    user = _admin_scoped_user(user, tenant_id=tenant_id, workspace_id=workspace_id)
     if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     user_id = user.get("id")
