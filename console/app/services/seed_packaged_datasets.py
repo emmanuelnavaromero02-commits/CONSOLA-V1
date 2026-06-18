@@ -71,6 +71,63 @@ def _parse_dataset(sql_path: pathlib.Path) -> dict:
     }
 
 
+async def _set_seed_scope(conn: asyncpg.Connection, tenant_id: object, workspace_id: object) -> None:
+    await conn.execute(
+        """
+        SELECT
+            set_config('app.tenant_id', $1, true),
+            set_config('app.workspace_id', $2, true)
+        """,
+        str(tenant_id),
+        str(workspace_id),
+    )
+
+
+async def _dataset_scope_for_name(
+    conn: asyncpg.Connection,
+    *,
+    name: str,
+    workspaces: list[asyncpg.Record],
+    has_tenant_id: bool,
+) -> tuple[object, object]:
+    """Return the existing dataset scope when RLS makes a global lookup impossible.
+
+    ``datasets.name`` is still globally unique in this schema generation, but
+    the table is now FORCE RLS. A startup seed running under one workspace
+    cannot update an older packaged row owned by another workspace; the
+    conflict row is invisible and Postgres rejects the update. Probe each
+    visible workspace scope and update existing rows in place. New rows keep
+    the historical first-workspace seed behavior.
+    """
+
+    for workspace in workspaces:
+        await _set_seed_scope(conn, workspace["tenant_id"], workspace["id"])
+        if has_tenant_id:
+            row = await conn.fetchrow(
+                """
+                SELECT tenant_id, workspace_id
+                  FROM datasets
+                 WHERE name = $1
+                """,
+                name,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                SELECT w.tenant_id, d.workspace_id
+                  FROM datasets d
+                  JOIN workspaces w ON w.id = d.workspace_id
+                 WHERE d.name = $1
+                """,
+                name,
+            )
+        if row:
+            return row["tenant_id"], row["workspace_id"]
+
+    default_workspace = workspaces[0]
+    return default_workspace["tenant_id"], default_workspace["id"]
+
+
 async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
     packaged = _dataset_files()
     if not packaged:
@@ -78,19 +135,16 @@ async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
         return
 
     async with pool.acquire() as conn:
-        workspace = await conn.fetchrow(
+        workspaces = await conn.fetch(
             """
             SELECT id, tenant_id
               FROM workspaces
              ORDER BY created_at ASC, name ASC
-             LIMIT 1
             """,
         )
-        if not workspace:
+        if not workspaces:
             logger.warning("[seed_packaged_datasets] no workspace found; skipping")
             return
-        workspace_id = workspace["id"]
-        tenant_id = workspace["tenant_id"]
         has_tenant_id = await conn.fetchval(
             """
             SELECT EXISTS (
@@ -104,24 +158,24 @@ async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
         )
 
         async with conn.transaction():
-            await conn.execute(
-                """
-                SELECT
-                    set_config('app.tenant_id', $1, true),
-                    set_config('app.workspace_id', $2, true)
-                """,
-                str(tenant_id),
-                str(workspace_id),
-            )
-
             for cartridge_id, sql_files in packaged.items():
                 names: list[str] = []
+                touched_scopes: set[tuple[str, str]] = set()
                 for sql_path in sql_files:
                     try:
                         dataset = _parse_dataset(sql_path)
                     except Exception as exc:
                         logger.warning("[seed_packaged_datasets] skip %s: %s", sql_path, exc)
                         continue
+
+                    tenant_id, workspace_id = await _dataset_scope_for_name(
+                        conn,
+                        name=dataset["name"],
+                        workspaces=workspaces,
+                        has_tenant_id=bool(has_tenant_id),
+                    )
+                    await _set_seed_scope(conn, tenant_id, workspace_id)
+                    touched_scopes.add((str(tenant_id), str(workspace_id)))
 
                     if has_tenant_id:
                         await conn.execute(
@@ -174,11 +228,13 @@ async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
                     names.append(dataset["name"])
 
                 if names:
-                    await conn.execute(
-                        "DELETE FROM datasets WHERE cartridge = $1 AND NOT (name = ANY($2::text[]))",
-                        cartridge_id,
-                        names,
-                    )
+                    for tenant_id, workspace_id in sorted(touched_scopes):
+                        await _set_seed_scope(conn, tenant_id, workspace_id)
+                        await conn.execute(
+                            "DELETE FROM datasets WHERE cartridge = $1 AND NOT (name = ANY($2::text[]))",
+                            cartridge_id,
+                            names,
+                        )
                     logger.info(
                         "[seed_packaged_datasets] %s: seeded %d datasets",
                         cartridge_id,
