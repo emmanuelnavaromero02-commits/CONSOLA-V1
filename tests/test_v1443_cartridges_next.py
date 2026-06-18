@@ -47,7 +47,7 @@ def test_hubspot_is_visible_in_next_cartridge_surfaces():
         NEXT_SRC / "lib/cartridges.ts",
         NEXT_SRC / "app/(shell)/cartridges/page.tsx",
         NEXT_SRC / "app/(shell)/studio/page.tsx",
-        NEXT_SRC / "app/(shell)/data/catalog/page.tsx",
+        NEXT_SRC / "components/data/DataTechnicalHub.tsx",
         NEXT_SRC / "app/(shell)/data/lineage/page.tsx",
         NEXT_SRC / "app/(shell)/copilot/knowledge/page.tsx",
         NEXT_SRC / "components/operations/VaultConnectionsTable.tsx",
