@@ -5,6 +5,8 @@ import json
 import os
 
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
+os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
+os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
 
 
 def _rows() -> list[dict]:
@@ -50,12 +52,16 @@ def _rows() -> list[dict]:
 
 
 def _ctx() -> dict:
-    return {
-        "trusted": True,
-        "source": "console",
-        "tenant_id": "tenant-a",
-        "workspace_id": "workspace-a",
-    }
+    from app.core import request_context
+
+    return request_context._sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        }
+    )
 
 
 def test_extract_all_plan_keeps_only_scoped_connection_and_reports_skips(monkeypatch):

@@ -4,6 +4,8 @@ import json
 import os
 
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsNTW7I4yf8GE=")
+os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
+os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test-security-context-signing-key-12345")
 
 from app.api import routes_console
 from app.core import minio_client
@@ -12,14 +14,22 @@ from app.services import preflight
 from app.services import extraction_service
 
 
+def _signed_ctx() -> dict:
+    from app.core import request_context
+
+    return request_context._sign_security_context(
+        {
+            "trusted": True,
+            "source": "console",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        }
+    )
+
+
 def test_console_extract_route_preserves_conn_id_and_scope(monkeypatch):
     captured: dict = {}
-    ctx = {
-        "trusted": True,
-        "source": "console",
-        "tenant_id": "tenant-a",
-        "workspace_id": "workspace-a",
-    }
+    ctx = _signed_ctx()
 
     monkeypatch.setattr(routes_console, "_get_entity_or_404", lambda _entity: {"entity": "PerPerson"})
     def fake_preflight_for_extract(*, conn_id=None, security_context=None):
