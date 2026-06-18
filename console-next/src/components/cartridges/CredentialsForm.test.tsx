@@ -39,8 +39,12 @@ describe("CredentialsForm", () => {
 
     expect(markup).toContain("Configurar en Vault");
     expect(markup).toContain("/operations/vault");
+    expect(markup).toContain("Las credenciales se administran en Vault");
     expect(markup).not.toContain("Guardar credenciales");
     expect(markup).not.toContain('type="password"');
+    expect(markup).not.toContain("Base URL");
+    expect(markup).not.toContain("API token");
+    expect(markup).not.toContain("Campos esperados");
     expect(markup).toContain("Probar conexión");
   });
 
@@ -49,7 +53,7 @@ describe("CredentialsForm", () => {
       <CredentialsForm cartridgeId="internal" schema={{ fields: [] }} />,
     );
 
-    expect(markup).toContain("Este cartucho no expone un schema de configuración.");
+    expect(markup).toContain("Este cartucho se valida con las conexiones disponibles en Vault.");
     expect(markup).toContain("Configurar en Vault");
     expect(markup).not.toContain("Guardar credenciales");
   });

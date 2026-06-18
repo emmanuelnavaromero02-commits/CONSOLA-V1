@@ -49,7 +49,7 @@ def test_skills_preserve_forwarded_workspace_scope():
         assert "def _security_context(" in source
         assert "token = _set_security_context(ctx)" in source
         assert 'scoped_config = {**config, "security_context": ctx}' in source
-        if cartridge == "sap_successfactors":
+        if cartridge in {"replicon", "sap_successfactors"}:
             assert 'scoped_config = {**scoped_config, "conn_id": conn_id}' in source
         assert "def _run_kb_with_context(" in source
         assert "return run_knowledge_bit(kb_id, ctx)" in source
@@ -87,7 +87,7 @@ def test_cartridge_job_runners_pass_scope_to_airflow_conf():
         assert 'conf["security_context"] = security_context' in source
         assert 'conf["tenant_id"] = security_context["tenant_id"]' in source
         assert 'conf["workspace_id"] = security_context["workspace_id"]' in source
-        if cartridge == "sap_successfactors":
+        if cartridge in {"replicon", "sap_successfactors"}:
             assert 'conf["conn_id"] = conn_id' in source
 
 
@@ -104,6 +104,7 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
     assert 'return f"tenant_id={tenant}/workspace_id={workspace}/"' in replicon
     assert "_upload_parquet(df, entity, run_id, tenant_id, workspace_id)" in replicon
     assert 'key = f"raw/replicon/{entity}/{scope}load_date=' in replicon
+    assert 'conf.get("conn_id") or conf.get("connection_id") or DEFAULT_CONN_ID' in replicon
     assert "skill_body = {" in hubspot
     assert 'for key in ("tenant_id", "workspace_id", "security_context")' in hubspot
     assert "json=skill_body" in hubspot

@@ -21,6 +21,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
 
   const [lastTest, setLastTest] = useState<Result | null>(null);
   const [selectedConnId, setSelectedConnId] = useState("");
+  const hasConnectorSchema = (schema.fields ?? []).length > 0;
   const connectionOptions = useMemo(
     () => uniqueConnectionIds(vaultConnections.data?.connections ?? []),
     [vaultConnections.data?.connections],
@@ -44,15 +45,18 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
     }
   };
 
-  const fields = schema.fields ?? [];
-
   return (
     <div className="space-y-6">
       <section className="space-y-4 rounded-lg border bg-card p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <ShieldCheck size={18} aria-hidden />
-            Vault scoped
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheck size={18} aria-hidden />
+              Vault scoped
+            </div>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Las credenciales se administran en Vault; esta pantalla solo prueba conexiones guardadas.
+            </p>
           </div>
           <a
             href="/operations/vault"
@@ -63,29 +67,10 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
           </a>
         </div>
 
-        {fields.length === 0 ? (
+        {hasConnectorSchema ? null : (
           <p className="text-sm text-muted-foreground">
-            Este cartucho no expone un schema de configuración.
+            Este cartucho se valida con las conexiones disponibles en Vault.
           </p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              Campos esperados por el cartucho:
-            </p>
-            <ul className="grid gap-2 sm:grid-cols-2">
-              {fields.map((field) => (
-                <li
-                  key={field.name}
-                  className="flex min-h-[40px] items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm"
-                >
-                  <span className="truncate font-medium">{field.label ?? field.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {field.required ? "requerido" : "opcional"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
         )}
 
         <div className="flex flex-wrap items-end gap-2 pt-2">

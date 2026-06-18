@@ -60,6 +60,10 @@ def run_entity(
     else:
         mode = config.get("mode", "full")
     security_context = config.get("security_context")
+    conn_id = (
+        str(config.get("conn_id") or config.get("connection_id") or "").strip()
+        or None
+    )
 
     run_id = create_run(
         cartridge_id="replicon",
@@ -70,7 +74,7 @@ def run_entity(
     )
 
     try:
-        client = RepliconClient()
+        client = RepliconClient(security_context=security_context, conn_id=conn_id)
 
         # Retrieve last watermark for incremental loads
         watermark: str | None = None
