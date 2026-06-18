@@ -27,7 +27,7 @@ interface LegacyPage {
 const PAGES: LegacyPage[] = [
   { path: "/iam",            needle: /usuarios|users|iam/i,     label: "iam (users)" },
   { path: "/operations",     needle: /operations|operaci[oó]n(?:es)?/i, label: "operations" },
-  { path: "/monitor",        needle: /monitor/i,                label: "monitor" },
+  { path: "/monitor",        needle: /ejecuciones y logs|ejecuciones recientes/i, label: "monitor" },
   { path: "/me",             needle: /perfil|profile|me/i,      label: "me" },
   { path: "/settings",       needle: /settings|ajustes/i,       label: "settings" },
   { path: "/security",       needle: /security|sesiones|security/i, label: "security" },
