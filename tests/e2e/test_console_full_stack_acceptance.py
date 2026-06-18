@@ -71,11 +71,33 @@ def _hubspot_invoke(tool: str, args: dict[str, Any] | None = None, *, timeout: f
     return payload.get("result", payload)
 
 
-def _wait_for_hubspot_job(job_id: str, *, timeout_seconds: int = 90) -> dict:
+def _console_hubspot_invoke(
+    client: httpx.Client,
+    tool: str,
+    args: dict[str, Any] | None = None,
+    *,
+    timeout: float = 30.0,
+) -> dict:
+    response = client.post(
+        "/api/mcp/servers/hubspot/invoke",
+        json={"tool": tool, "args": args or {}},
+        headers=_csrf(client),
+        timeout=timeout,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _wait_for_hubspot_job(
+    client: httpx.Client,
+    job_id: str,
+    *,
+    timeout_seconds: int = 90,
+) -> dict:
     deadline = time.monotonic() + timeout_seconds
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        last = _hubspot_invoke("get_job_status", {"job_id": job_id})
+        last = _console_hubspot_invoke(client, "get_job_status", {"job_id": job_id})
         status = str(last.get("status") or "")
         if status in {"done", "failed"}:
             assert status == "done", last
@@ -106,9 +128,8 @@ def test_01_console_surfaces_are_connected(admin_session: httpx.Client):
 
     access = admin_session.get("/api/me/access")
     assert access.status_code == 200, access.text
-    access_text = json.dumps(access.json())
-    for cartridge in REQUIRED_CARTRIDGES:
-        assert cartridge in access_text
+    access_body = access.json()
+    assert access_body.get("ui_capabilities", {}).get("can_view_cartridges") is True
 
     cartridges = admin_session.get("/api/cartridges")
     assert cartridges.status_code == 200, cartridges.text
@@ -242,7 +263,7 @@ def test_03_hubspot_extracts_to_bronze_and_refreshes_silver(admin_session: httpx
         assert started_response.status_code == 200, started_response.text
         started = started_response.json()
         assert started.get("job_id"), started
-        finished = _wait_for_hubspot_job(started["job_id"])
+        finished = _wait_for_hubspot_job(admin_session, started["job_id"])
         result = finished.get("result") or {}
         assert result.get("status") == "success", finished
         assert result.get("record_count", 0) > 0, finished

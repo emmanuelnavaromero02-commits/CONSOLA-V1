@@ -10,6 +10,7 @@ Manages async extraction jobs within the cartridge process.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import uuid
@@ -36,9 +37,12 @@ _pool: asyncpg.Pool | None = None
 
 async def _apply_scope(conn) -> tuple[str, str]:
     tenant_id, workspace_id = scope_values()
-    if tenant_id and workspace_id:
-        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
-        await conn.execute("SELECT set_config('app.workspace_id', $1, true)", workspace_id)
+    await conn.execute(
+        "SELECT set_config('app.tenant_id', $1, false), "
+        "set_config('app.workspace_id', $2, false)",
+        tenant_id or "",
+        workspace_id or "",
+    )
     return tenant_id, workspace_id
 _tasks: dict[str, asyncio.Task] = {}
 
@@ -394,8 +398,9 @@ async def _run_extract_all(
                     overridden["conn_id"] = conn_id
                 if security_context:
                     overridden["security_context"] = security_context
+                run_context = contextvars.copy_context()
                 result = await loop.run_in_executor(
-                    None, lambda c=overridden: run_entity(c)
+                    None, lambda c=overridden, ctx=run_context: ctx.run(run_entity, c)
                 )
                 count = result.get("record_count", 0)
                 await _trigger_silver_refresh(entity, security_context)
@@ -461,9 +466,10 @@ async def _run_extract(
     try:
         await _update(job_id, "running", f"Extracting {entity}…")
         loop = asyncio.get_event_loop()
+        run_context = contextvars.copy_context()
         result = await loop.run_in_executor(
             None,
-            lambda: run_entity(config, from_date=from_date, to_date=to_date),
+            lambda: run_context.run(run_entity, config, from_date=from_date, to_date=to_date),
         )
         await _trigger_silver_refresh(entity, config.get("security_context"))
         count = result.get("record_count", 0)
