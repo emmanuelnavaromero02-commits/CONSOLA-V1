@@ -560,17 +560,49 @@ async def api_admin_users_reinvite(
 @router.post("/api/admin/users/{user_id}/send-reset", dependencies=[Depends(require_csrf)])
 @_bind_to_main
 async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict = Depends(require_permission("iam.users.write"))):
-    """Email a password reset link to an existing active user."""
+    """Email a password reset link and issue a one-time admin temporary password."""
+    import secrets as _secrets
+
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user or not target_user.get("is_active"):
         raise HTTPException(404, "user not found or inactive")
     await _assert_can_manage_target_user(admin, user_id)
+    temporary_password = f"{_secrets.token_urlsafe(24)}Aa1!"
+    pool = await _auth.pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            updated = await conn.fetchrow(
+                """
+                UPDATE users
+                   SET password_hash = $1,
+                       must_change_password = TRUE,
+                       is_active = TRUE
+                 WHERE id = $2
+                   AND is_active = TRUE
+                 RETURNING id
+                """,
+                _auth.hash_password(temporary_password),
+                user_id,
+            )
+            if not updated:
+                raise HTTPException(404, "user not found or inactive")
+            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
     tok, _ = await _tokens.create(user_id, "reset")
     subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
     sent = await _email.send_email(target_user["email"], subject, html)
     await _audit.record_event(
         admin.get("id"), admin.get("email"), "password_reset.sent", "user", str(user_id),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
-        metadata={"email_sent": sent},
+        metadata={
+            "email_sent": sent,
+            "temporary_password_issued": True,
+            "password_delivery": "one_time_response",
+            "sessions_revoked": True,
+        },
     )
-    return {"sent": sent}
+    return {
+        "sent": sent,
+        "temporary_password": temporary_password,
+        "password_delivery": "one_time_response",
+    }
