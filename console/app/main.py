@@ -1285,32 +1285,40 @@ async def _record_dag_pipeline_trigger(
     has_scope = tenant_id and workspace_id and scope_columns_present
     extra = json.dumps({"raw_conf": conf, "triggered_by": "console"})
     if has_scope:
-        await pool.execute(
-            """
-            INSERT INTO pipeline_runs (
-                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                mode, status, started_at, extra, tenant_id, workspace_id
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb, $9::uuid, $10::uuid)
-            ON CONFLICT (run_id) DO UPDATE SET
-                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                mode = EXCLUDED.mode,
-                status = EXCLUDED.status,
-                tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
-                workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                extra = pipeline_runs.extra || EXCLUDED.extra
-            """,
-            dag_run_id,
-            dag_id,
-            cartridge,
-            entity,
-            dag_run_id,
-            mode,
-            _normalize_airflow_state(status),
-            extra,
-            tenant_id,
-            workspace_id,
-        )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.tenant_id', $1, true), "
+                    "set_config('app.workspace_id', $2, true)",
+                    tenant_id,
+                    workspace_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO pipeline_runs (
+                        run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                        mode, status, started_at, extra, tenant_id, workspace_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb, $9::uuid, $10::uuid)
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                        mode = EXCLUDED.mode,
+                        status = EXCLUDED.status,
+                        tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
+                        workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
+                        extra = pipeline_runs.extra || EXCLUDED.extra
+                    """,
+                    dag_run_id,
+                    dag_id,
+                    cartridge,
+                    entity,
+                    dag_run_id,
+                    mode,
+                    _normalize_airflow_state(status),
+                    extra,
+                    tenant_id,
+                    workspace_id,
+                )
     else:
         await pool.execute(
             """
@@ -1369,21 +1377,49 @@ async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
 
     try:
         pool = await _get_db_pool()
-        await pool.execute(
-            """
-            UPDATE pipeline_runs
-               SET status=$2,
-                   started_at=COALESCE($3::timestamptz, started_at),
-                   finished_at=COALESCE($4::timestamptz, finished_at),
-                   duration_seconds=COALESCE($5::numeric, duration_seconds)
-             WHERE run_id=$1
-            """,
-            row.get("run_id"),
-            new_status,
-            row.get("started_at"),
-            row.get("finished_at"),
-            row.get("duration_seconds"),
-        )
+        ctx = build_security_context(user)
+        tenant_id = row.get("tenant_id") or ctx.get("tenant_id")
+        workspace_id = row.get("workspace_id") or ctx.get("workspace_id")
+        if tenant_id and workspace_id:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config('app.tenant_id', $1, true), "
+                        "set_config('app.workspace_id', $2, true)",
+                        tenant_id,
+                        workspace_id,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE pipeline_runs
+                           SET status=$2,
+                               started_at=COALESCE($3::timestamptz, started_at),
+                               finished_at=COALESCE($4::timestamptz, finished_at),
+                               duration_seconds=COALESCE($5::numeric, duration_seconds)
+                         WHERE run_id=$1
+                        """,
+                        row.get("run_id"),
+                        new_status,
+                        row.get("started_at"),
+                        row.get("finished_at"),
+                        row.get("duration_seconds"),
+                    )
+        else:
+            await pool.execute(
+                """
+                UPDATE pipeline_runs
+                   SET status=$2,
+                       started_at=COALESCE($3::timestamptz, started_at),
+                       finished_at=COALESCE($4::timestamptz, finished_at),
+                       duration_seconds=COALESCE($5::numeric, duration_seconds)
+                 WHERE run_id=$1
+                """,
+                row.get("run_id"),
+                new_status,
+                row.get("started_at"),
+                row.get("finished_at"),
+                row.get("duration_seconds"),
+            )
     except Exception:
         logger.debug(
             "Failed to persist updated run status for %s",
