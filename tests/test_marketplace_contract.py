@@ -263,6 +263,28 @@ def test_marketplace_admin_user_access_api_is_server_side_and_audited():
     assert "Bloquear" in js
 
 
+def test_marketplace_rls_tables_use_scoped_db_context():
+    source = read("console/app/services/marketplace_service.py")
+    assert "from app.services.db_scope import scoped_db_for_user" in source
+    assert "async with p.acquire() as conn" not in source
+
+    scoped_functions = (
+        "list_products",
+        "request_product",
+        "activate_product",
+        "list_installations",
+        "list_admin_installations",
+        "get_admin_installation",
+        "retry_installation",
+        "list_installation_access",
+        "set_installation_user_access",
+        "_set_installation_state",
+    )
+    for fn in scoped_functions:
+        section = source.split(f"async def {fn}", 1)[1].split("\n\nasync def ", 1)[0]
+        assert "async with scoped_db_for_user(p, user)" in section, fn
+
+
 def test_workspace_and_mcp_are_scoped_to_active_cartridge_entitlements():
     workspace = read("workspace/app/main.py")
     assistant = read("workspace/app/services/consumer_assistant.py")
