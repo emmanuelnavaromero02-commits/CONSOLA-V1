@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.services import auth as _auth
 from app.services import audit_service as _audit
 from app.services.csrf import require_csrf
+from app.services.db_scope import scoped_db_for_user
 from app.services.jwt_auth import DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES
 from app.services.permissions import (
     PERMISSIONS,
@@ -135,7 +136,14 @@ async def _schema_status(conn) -> dict:
 
 @router.get("/sessions")
 async def get_sessions(user: dict = Depends(require_permission("security.sessions.read"))):
-    p = await _auth.pool()
+    pool = await _auth.pool()
+    if not _is_platform_admin(user):
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            return await _get_sessions_for_connection(conn, user)
+    return await _get_sessions_for_connection(pool, user)
+
+
+async def _get_sessions_for_connection(p, user: dict):
     if not await _table_exists(p, "user_sessions"):
         return []
     session_columns = await _columns(p, "user_sessions")
@@ -150,11 +158,21 @@ async def get_sessions(user: dict = Depends(require_permission("security.session
         _select_column(session_columns, "expires_at", "NULL::timestamptz"),
     ]
     order_expr = "s.last_seen DESC NULLS LAST" if "last_seen" in session_columns else "s.created_at DESC NULLS LAST"
+    args: list = []
+    where_clause = ""
+    if not _is_platform_admin(user):
+        visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
+        if not visible_user_ids:
+            return []
+        args.append(visible_user_ids)
+        where_clause = f"WHERE s.user_id = ANY(${len(args)}::bigint[])"
     rows = await p.fetch(
         f"""SELECT {", ".join(select_parts)}
            FROM user_sessions s
            JOIN users u ON u.id = s.user_id
-           ORDER BY {order_expr}"""
+           {where_clause}
+           ORDER BY {order_expr}""",
+        *args,
     )
     res = []
     for r in rows:
@@ -167,10 +185,45 @@ async def get_sessions(user: dict = Depends(require_permission("security.session
 
 @router.delete("/sessions/{token}", dependencies=[Depends(require_csrf)])
 async def revoke_session(token: str, request: Request, user: dict = Depends(require_permission("security.sessions.revoke"))):
-    p = await _auth.pool()
-    res = await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+    pool = await _auth.pool()
+    if not _is_platform_admin(user):
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            res = await _revoke_session_for_connection(conn, token, user)
+    else:
+        res = await _revoke_session_for_connection(pool, token, user)
+    if res == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Session not found")
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "session.revoked", "session", token[-8:] if token else None,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"status": "ok"}
+
+
+async def _revoke_session_for_connection(p, token: str, user: dict) -> str:
+    args: list = [token]
+    scope_clause = ""
+    if not _is_platform_admin(user):
+        visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
+        if not visible_user_ids:
+            return "DELETE 0"
+        args.append(visible_user_ids)
+        scope_clause = f" AND user_id = ANY(${len(args)}::bigint[])"
+    res = await p.execute(
+        f"DELETE FROM user_sessions WHERE token = $1{scope_clause}",
+        *args,
+    )
     if res == "DELETE 0" and len(token) == 64:
-        rows = await p.fetch("SELECT token FROM user_sessions")
+        args = []
+        where_clause = ""
+        if not _is_platform_admin(user):
+            visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
+            if not visible_user_ids:
+                return "DELETE 0"
+            args.append(visible_user_ids)
+            where_clause = f"WHERE user_id = ANY(${len(args)}::bigint[])"
+        rows = await p.fetch(f"SELECT token FROM user_sessions {where_clause}", *args)
         matched = next(
             (
                 r["token"]
@@ -180,15 +233,17 @@ async def revoke_session(token: str, request: Request, user: dict = Depends(requ
             None,
         )
         if matched:
-            res = await p.execute("DELETE FROM user_sessions WHERE token = $1", matched)
-    if res == "DELETE 0":
-        raise HTTPException(status_code=404, detail="Session not found")
-    await _audit.record_event(
-        user.get("id"), user.get("email"), "session.revoked", "session", token[-8:] if token else None,
-        ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
-    return {"status": "ok"}
+            args = [matched]
+            scope_clause = ""
+            if not _is_platform_admin(user):
+                visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
+                args.append(visible_user_ids)
+                scope_clause = f" AND user_id = ANY(${len(args)}::bigint[])"
+            res = await p.execute(
+                f"DELETE FROM user_sessions WHERE token = $1{scope_clause}",
+                *args,
+            )
+    return res
 
 @router.get("/audit")
 async def get_audit_events(user: dict = Depends(require_permission("security.audit.read"))):
@@ -343,7 +398,14 @@ async def get_permissions(user: dict = Depends(require_permission("iam.roles.rea
 
 @router.get("/login-attempts")
 async def get_login_attempts(user: dict = Depends(require_permission("security.login_attempts.read"))):
-    p = await _auth.pool()
+    pool = await _auth.pool()
+    if not _is_platform_admin(user):
+        async with scoped_db_for_user(pool, user) as (p, _tenant_id, _workspace_id):
+            return await _get_login_attempts_for_connection(p, user)
+    return await _get_login_attempts_for_connection(pool, user)
+
+
+async def _get_login_attempts_for_connection(p, user: dict):
     if not await _table_exists(p, "login_attempts"):
         return []
     attempt_columns = await _columns(p, "login_attempts")
@@ -355,11 +417,24 @@ async def get_login_attempts(user: dict = Depends(require_permission("security.l
         _select_column(attempt_columns, "created_at", "NULL::timestamptz", table_alias="la"),
     ]
     order_expr = "la.created_at DESC" if "created_at" in attempt_columns else "la.id DESC"
+    args: list = []
+    join_clause = ""
+    where_clause = ""
+    if not _is_platform_admin(user):
+        visible_user_ids = await _visible_workspace_user_ids(p, _workspace_ids(user))
+        if not visible_user_ids:
+            return []
+        args.append(visible_user_ids)
+        join_clause = "JOIN users u ON lower(u.email) = lower(la.email)"
+        where_clause = f"WHERE u.id = ANY(${len(args)}::bigint[])"
     rows = await p.fetch(
         f"""SELECT {", ".join(select_parts)}
               FROM login_attempts la
+              {join_clause}
+              {where_clause}
              ORDER BY {order_expr}
-             LIMIT 100"""
+             LIMIT 100""",
+        *args,
     )
     return [dict(row) for row in rows]
 

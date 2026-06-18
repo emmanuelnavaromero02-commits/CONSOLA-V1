@@ -154,6 +154,29 @@ def _scope_values(
     return _safe_scope_segment(tenant_id), _safe_scope_segment(workspace_id)
 
 
+def _set_pg_scope(cur: Any, security_context: dict[str, Any] | None = None) -> tuple[str, str]:
+    tenant_id, workspace_id = _scope_values(security_context)
+    cur.execute(
+        "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+        (tenant_id or "", workspace_id or ""),
+    )
+    return tenant_id, workspace_id
+
+
+def _catalog_scope_sql(tenant_id: str, workspace_id: str) -> tuple[str, tuple[Any, ...]]:
+    if not workspace_id:
+        return "", ()
+    if tenant_id:
+        return (
+            " AND scope_status = 'scoped' AND workspace_id = %s::uuid AND tenant_id = %s::uuid",
+            (workspace_id, tenant_id),
+        )
+    return (
+        " AND scope_status = 'scoped' AND workspace_id = %s::uuid",
+        (workspace_id,),
+    )
+
+
 def _has_workspace_scope(security_context: dict[str, Any] | None = None) -> bool:
     tenant_id, workspace_id = _scope_values(security_context)
     return bool(tenant_id and workspace_id)
@@ -270,8 +293,9 @@ def cartridge_get_semantic(
       - semantic_terms     (manually curated business glossary)
       - data_catalog       (per-column descriptions on Gold/Silver datasets owned by the cartridge)
     """
-    _scope_values(security_context)
     with _conn() as c, c.cursor() as cur:
+        tenant_id, workspace_id = _set_pg_scope(cur, security_context)
+        scope_sql, scope_params = _catalog_scope_sql(tenant_id, workspace_id)
         cur.execute(
             "SELECT term, definition, maps_to FROM semantic_terms "
             "WHERE cartridge_id=%s ORDER BY term",
@@ -283,8 +307,9 @@ def cartridge_get_semantic(
         cur.execute(
             "SELECT dataset, column_name, data_type, description, tags, is_metric "
             "FROM data_catalog WHERE cartridge=%s AND description IS NOT NULL "
+            f"{scope_sql} "
             "ORDER BY dataset, column_name",
-            (cartridge_id,),
+            (cartridge_id, *scope_params),
         )
         columns = [
             {
@@ -325,6 +350,8 @@ async def cartridge_sync_semantic_to_rag(
 ) -> dict[str, Any]:
     docs: list[str] = []
     with _conn() as c, c.cursor() as cur:
+        tenant_id, workspace_id = _set_pg_scope(cur, security_context)
+        scope_sql, scope_params = _catalog_scope_sql(tenant_id, workspace_id)
         # 1. Glossary terms — one doc each (few)
         cur.execute(
             "SELECT term, definition, maps_to FROM semantic_terms "
@@ -344,8 +371,9 @@ async def cartridge_sync_semantic_to_rag(
             "SELECT dataset, column_name, data_type, description, tags "
             "FROM data_catalog "
             "WHERE cartridge=%s AND description IS NOT NULL "
+            f"{scope_sql} "
             "ORDER BY dataset, column_name",
-            (cartridge_id,),
+            (cartridge_id, *scope_params),
         )
         rows_by_ds: dict[str, list[tuple]] = {}
         for ds, col, dtype, desc, tags in cur.fetchall():
@@ -435,6 +463,8 @@ async def cartridge_search_term(
     p_dash = f"%{query.replace(' ', '-')}%"
     tag = query.lower().replace(" ", "_")
     with _conn() as c, c.cursor() as cur:
+        tenant_id, workspace_id = _set_pg_scope(cur, security_context)
+        scope_sql, scope_params = _catalog_scope_sql(tenant_id, workspace_id)
         cur.execute(
             "SELECT term, definition, maps_to FROM semantic_terms "
             "WHERE cartridge_id=%s AND ("
@@ -452,8 +482,9 @@ async def cartridge_search_term(
             "  column_name ILIKE %s OR column_name ILIKE %s OR column_name ILIKE %s OR "
             "  description ILIKE %s OR description ILIKE %s OR "
             "  %s = ANY(tags)) "
+            f"{scope_sql} "
             "ORDER BY dataset, column_name",
-            (cartridge_id, p_space, p_under, p_dash, p_space, p_under, tag),
+            (cartridge_id, p_space, p_under, p_dash, p_space, p_under, tag, *scope_params),
         )
         columns = [
             {"dataset": r[0], "column": r[1], "type": r[2], "description": r[3]}

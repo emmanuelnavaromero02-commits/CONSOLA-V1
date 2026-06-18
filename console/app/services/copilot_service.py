@@ -1234,7 +1234,7 @@ async def _run_loop(
     if user_id_for_memory is not None:
         try:
             system_prompt_for_call = await memory_service.build_system_prompt_with_memory(
-                int(user_id_for_memory), SYSTEM_PROMPT,
+                int(user_id_for_memory), SYSTEM_PROMPT, user_context=user,
             )
         except Exception:                          # noqa: BLE001
             # Memory is a personalisation layer — never block a turn
@@ -1533,6 +1533,7 @@ async def _maybe_extract_facts(
         conversation_history=tail,
         llm_call=_llm_text,
         max_new_facts=3,
+        user_context=user_context,
     )
 
 

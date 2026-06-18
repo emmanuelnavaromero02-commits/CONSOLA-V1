@@ -35,6 +35,7 @@ import re
 from typing import Any, Awaitable, Callable, Iterable
 
 from app.services import auth
+from app.services.db_scope import scoped_db_for_user
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ _MAX_SUMMARIES     =  3
 
 
 async def build_system_prompt_with_memory(
-    user_id: int, base_prompt: str
+    user_id: int, base_prompt: str, *, user_context: dict | None = None
 ) -> str:
     """Return ``base_prompt`` with a "Contexto del usuario" section
     appended when the user has facts / preferences / recent
@@ -67,9 +68,9 @@ async def build_system_prompt_with_memory(
     immutable rules first, the personalisation second. Splitting it
     out keeps the immutable rules cache-friendly across users.
     """
-    facts       = await _fetch_facts(user_id, limit=_MAX_FACTS)
-    preferences = await _fetch_preferences(user_id)
-    summaries   = await _fetch_recent_summaries(user_id, limit=_MAX_SUMMARIES)
+    facts       = await _fetch_facts(user_id, limit=_MAX_FACTS, user_context=user_context)
+    preferences = await _fetch_preferences(user_id, user_context=user_context)
+    summaries   = await _fetch_recent_summaries(user_id, limit=_MAX_SUMMARIES, user_context=user_context)
 
     if not facts and not preferences and not summaries:
         return base_prompt
@@ -97,55 +98,77 @@ async def build_system_prompt_with_memory(
     return base_prompt + "".join(block)
 
 
-async def _fetch_facts(user_id: int, *, limit: int) -> list[str]:
+async def _fetch_facts(
+    user_id: int, *, limit: int, user_context: dict | None = None
+) -> list[str]:
+    if user_context is None:
+        return []
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT fact
-          FROM user_facts
-         WHERE user_id = $1
-         ORDER BY created_at DESC
-         LIMIT $2
-        """,
-        user_id, limit,
-    )
+    async with scoped_db_for_user(pool, user_context) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(
+            """
+            SELECT fact
+              FROM user_facts
+             WHERE user_id = $1
+               AND scope_status = 'scoped'
+               AND workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+             ORDER BY created_at DESC
+             LIMIT $4
+            """,
+            user_id, workspace_id, tenant_id, limit,
+        )
     return [r["fact"] for r in rows]
 
 
-async def _fetch_preferences(user_id: int) -> dict[str, str]:
+async def _fetch_preferences(user_id: int, *, user_context: dict | None = None) -> dict[str, str]:
+    if user_context is None:
+        return {}
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT pref_key, pref_value
-          FROM user_preferences
-         WHERE user_id = $1
-        """,
-        user_id,
-    )
+    async with scoped_db_for_user(pool, user_context) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(
+            """
+            SELECT pref_key, pref_value
+              FROM user_preferences
+             WHERE user_id = $1
+               AND scope_status = 'scoped'
+               AND workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+            """,
+            user_id, workspace_id, tenant_id,
+        )
     return {r["pref_key"]: r["pref_value"] for r in rows}
 
 
-async def _fetch_recent_summaries(user_id: int, *, limit: int) -> list[str]:
+async def _fetch_recent_summaries(
+    user_id: int, *, limit: int, user_context: dict | None = None
+) -> list[str]:
     """Per-conversation summaries for the user's most recent N
     conversations. Joins conversations on user_id since the summary
     table itself isn't user-scoped (one row per conversation)."""
+    if user_context is None:
+        return []
     pool = await auth.pool()
     has_conv_summary = await pool.fetchval(
         "SELECT to_regclass('public.conversation_memory_summary')"
     )
     if not has_conv_summary:
         return []
-    rows = await pool.fetch(
-        """
-        SELECT cms.summary
-          FROM conversation_memory_summary cms
-          JOIN conversations c ON c.id = cms.conversation_id
-         WHERE c.user_id = $1
-         ORDER BY cms.updated_at DESC
-         LIMIT $2
-        """,
-        user_id, limit,
-    )
+    async with scoped_db_for_user(pool, user_context) as (conn, tenant_id, workspace_id):
+        rows = await conn.fetch(
+            """
+            SELECT cms.summary
+              FROM conversation_memory_summary cms
+              JOIN conversations c ON c.id = cms.conversation_id
+             WHERE c.user_id = $1
+               AND cms.scope_status = 'scoped'
+               AND cms.workspace_id = $2::uuid
+               AND ($3::uuid IS NULL OR cms.tenant_id = $3::uuid)
+             ORDER BY cms.updated_at DESC
+             LIMIT $4
+            """,
+            user_id, workspace_id, tenant_id, limit,
+        )
     return [r["summary"] for r in rows]
 
 
@@ -181,6 +204,7 @@ async def extract_facts_from_turn(
     llm_call: LLMTextCall,
     *,
     max_new_facts: int = 5,
+    user_context: dict | None = None,
 ) -> list[dict]:
     """Run an LLM extraction pass over the recent turn and persist
     every well-formed fact into user_facts with source='extracted'.
@@ -225,21 +249,26 @@ async def extract_facts_from_turn(
 
     if not valid_texts:
         return []
+    if user_context is None:
+        return []
 
     pool = await auth.pool()
     inserted: list[dict] = []
-    for fact_text in valid_texts:
-        row = await pool.fetchrow(
-            """
-            INSERT INTO user_facts (user_id, fact, source, confidence)
-            VALUES ($1, $2, 'extracted', 0.7)
-            ON CONFLICT (user_id, fact) DO NOTHING
-            RETURNING id, fact
-            """,
-            user_id, fact_text,
-        )
-        if row is not None:
-            inserted.append({"id": int(row["id"]), "fact": row["fact"]})
+    async with scoped_db_for_user(pool, user_context) as (conn, tenant_id, workspace_id):
+        for fact_text in valid_texts:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO user_facts
+                    (user_id, tenant_id, workspace_id, scope_status, fact, source, confidence)
+                VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, 'extracted', 0.7)
+                ON CONFLICT (user_id, workspace_id, fact) WHERE workspace_id IS NOT NULL
+                DO NOTHING
+                RETURNING id, fact
+                """,
+                user_id, tenant_id, workspace_id, fact_text,
+            )
+            if row is not None:
+                inserted.append({"id": int(row["id"]), "fact": row["fact"]})
     return inserted
 
 
@@ -288,6 +317,8 @@ async def summarise_conversation(
     conversation_id: str,
     recent_messages: list[dict],
     llm_call: LLMTextCall,
+    *,
+    user_context: dict | None = None,
 ) -> str | None:
     """Generate (or refresh) the rolling summary for a conversation.
 
@@ -310,19 +341,27 @@ async def summarise_conversation(
     if len(summary) > 1000:
         summary = summary[:1000].rstrip() + "…"
 
+    if user_context is None:
+        return None
+
     pool = await auth.pool()
-    await pool.execute(
-        """
-        INSERT INTO conversation_memory_summary
-            (conversation_id, summary, token_count, updated_at)
-        VALUES ($1, $2, $3, NOW())
-        ON CONFLICT (conversation_id) DO UPDATE
-          SET summary    = EXCLUDED.summary,
-              token_count = EXCLUDED.token_count,
-              updated_at  = NOW()
-        """,
-        conversation_id, summary, _approx_tokens(summary),
-    )
+    async with scoped_db_for_user(pool, user_context) as (conn, tenant_id, workspace_id):
+        await conn.execute(
+            """
+            INSERT INTO conversation_memory_summary
+                (conversation_id, tenant_id, workspace_id, scope_status,
+                 summary, token_count, updated_at)
+            VALUES ($1, $2::uuid, $3::uuid, 'scoped', $4, $5, NOW())
+            ON CONFLICT (conversation_id) DO UPDATE
+              SET tenant_id   = EXCLUDED.tenant_id,
+                  workspace_id = EXCLUDED.workspace_id,
+                  scope_status = 'scoped',
+                  summary     = EXCLUDED.summary,
+                  token_count = EXCLUDED.token_count,
+                  updated_at  = NOW()
+            """,
+            conversation_id, tenant_id, workspace_id, summary, _approx_tokens(summary),
+        )
     return summary
 
 

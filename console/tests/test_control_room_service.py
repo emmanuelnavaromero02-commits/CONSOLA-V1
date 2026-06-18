@@ -2174,6 +2174,7 @@ def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch)
             return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
 
     monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
 
     result = sap_hcm_adapter.SapHcmAdapter().execute(
         {
@@ -2227,6 +2228,7 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
             return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
 
     monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
 
     result = sap_hcm_adapter.SapHcmAdapter().execute(
         {
@@ -2274,6 +2276,7 @@ def test_replicon_adapter_posts_realistic_writeback_payload(monkeypatch):
             return RepliconResponse()
 
     monkeypatch.setattr(replicon_adapter.httpx, "Client", RepliconClient)
+    monkeypatch.setattr(replicon_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
 
     result = replicon_adapter.RepliconAdapter().execute(
         {
@@ -2337,6 +2340,7 @@ def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
             return SapResponse()
 
     monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "validate_url", lambda url, **_kwargs: url)
 
     with pytest.raises(RuntimeError, match="CSRF token fetch failed with HTTP 403"):
         sap_hcm_adapter.SapHcmAdapter().execute(

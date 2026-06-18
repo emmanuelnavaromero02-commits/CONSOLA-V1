@@ -604,7 +604,7 @@ async def briefing_v2_endpoint(
     user: dict = Depends(require_authenticated),
 ):
     return await briefing_v2.briefing_v2_for_user(
-        _user_id(user), limit=limit,
+        _user_id(user), limit=limit, user_context=user,
     )
 
 
@@ -745,7 +745,7 @@ async def ask_with_context_endpoint(
 
     try:
         with_memory = await memory_service.build_system_prompt_with_memory(
-            uid, base_prompt,
+            uid, base_prompt, user_context=user,
         )
     except Exception:
         logger.warning("memory injection failed; continuing", exc_info=True)

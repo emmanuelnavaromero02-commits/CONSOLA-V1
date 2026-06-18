@@ -283,7 +283,10 @@ def test_workflows_get_scopes_by_user():
         src, re.DOTALL | re.MULTILINE,
     )
     assert body
-    assert "WHERE id = $1 AND user_id = $2" in body.group(0)
+    assert "WHERE id = $1" in body.group(0)
+    assert "AND user_id = $2" in body.group(0)
+    assert "AND scope_status = 'scoped'" in body.group(0)
+    assert "AND workspace_id = $3::uuid" in body.group(0)
     assert "404" in body.group(0)
 
 

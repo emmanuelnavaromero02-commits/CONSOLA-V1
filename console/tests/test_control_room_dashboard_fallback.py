@@ -64,14 +64,28 @@ def test_control_room_domain_payload_hides_modules_without_runtime_data(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_dashboard_kpis_falls_back_to_catalog_without_active_connection():
+async def test_dashboard_kpis_tenant_without_active_connection_stays_empty():
     with (
         patch.object(dashboard.auth, "pool", new=AsyncMock(return_value=_zero_pool())),
         patch.object(dashboard, "_active_scoped_cartridges", new=AsyncMock(return_value=())),
     ):
         result = await dashboard.dashboard_kpis(user=USER)
 
-    # No connection yet -> show the full built-in catalog, not an empty table.
+    # 20B: tenant users must not fall back to global KPIs when no scoped
+    # connection exists.
+    assert result["active_cartridges"] == []
+    assert result["data_freshness"] == {}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_kpis_platform_admin_falls_back_to_catalog_without_active_connection():
+    platform_user = {**USER, "role": "admin"}
+    with (
+        patch.object(dashboard.auth, "pool", new=AsyncMock(return_value=_zero_pool())),
+        patch.object(dashboard, "_active_scoped_cartridges", new=AsyncMock(return_value=())),
+    ):
+        result = await dashboard.dashboard_kpis(user=platform_user)
+
     assert result["active_cartridges"] == list(dashboard._CARTRIDGES)
     assert set(result["data_freshness"]) == set(dashboard._CARTRIDGES)
 

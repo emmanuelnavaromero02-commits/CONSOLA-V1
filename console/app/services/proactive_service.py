@@ -58,6 +58,20 @@ def _visible_cartridges(user_context: dict | None) -> set[str] | None:
     return allowed
 
 
+def _scope_values(user_context: dict | None) -> tuple[str, str, set[str] | None]:
+    tenant_id = str((user_context or {}).get("active_tenant_id") or (user_context or {}).get("tenant_id") or "").strip()
+    workspace_id = str((user_context or {}).get("active_workspace_id") or (user_context or {}).get("workspace_id") or "").strip()
+    return tenant_id, workspace_id, _visible_cartridges(user_context)
+
+
+def _cartridge_filter_sql(visible: set[str] | None, start_at: int) -> tuple[str, list[Any]]:
+    if visible is None:
+        return "", []
+    if not visible:
+        return " AND FALSE", []
+    return f" AND cartridge_id = ANY(${start_at}::text[])", [sorted(visible)]
+
+
 def _filter_visible_highlights(highlights: list[Highlight], user_context: dict | None) -> list[Highlight]:
     visible = _visible_cartridges(user_context)
     if visible is None:
@@ -105,21 +119,38 @@ def _make_highlight(
 _STALE_HOURS = 24
 
 
-async def analyze_freshness() -> list[Highlight]:
+async def analyze_freshness(user_context: dict | None = None) -> list[Highlight]:
     """Any cartridge whose last successful extraction is older than
     24 hours surfaces as a warning. Pre-existing index from migration
     49 (idx_extraction_runs_cartridge_finished_success) covers this
     query so it stays cheap to run on every briefing request."""
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT cartridge_id,
-               EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-          FROM extraction_runs
-         WHERE status = 'success'
-         GROUP BY cartridge_id
-        """
-    )
+    tenant_id, workspace_id, visible = _scope_values(user_context)
+    if workspace_id:
+        cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
+        rows = await pool.fetch(
+            f"""
+            SELECT cartridge_id,
+                   EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
+              FROM pipeline_runs
+             WHERE status = 'success'
+               AND workspace_id = $1::uuid
+               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
+               {cart_sql}
+             GROUP BY cartridge_id
+            """,
+            workspace_id, tenant_id or None, *cart_args,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT cartridge_id,
+                   EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
+              FROM extraction_runs
+             WHERE status = 'success'
+             GROUP BY cartridge_id
+            """
+        )
     by_id = {r["cartridge_id"]: r for r in rows}
 
     out: list[Highlight] = []
@@ -166,7 +197,7 @@ async def analyze_freshness() -> list[Highlight]:
 _VOLUME_DELTA_PCT = 30
 
 
-async def analyze_volume_anomaly() -> list[Highlight]:
+async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highlight]:
     """Compare yesterday's extraction count vs the median of the
     prior 7 days. A delta of more than ±30% surfaces as warning.
 
@@ -176,15 +207,26 @@ async def analyze_volume_anomaly() -> list[Highlight]:
     cartridges that haven't reported volumes don't surface here.
     """
     pool = await auth.pool()
+    tenant_id, workspace_id, visible = _scope_values(user_context)
+    source_table = "pipeline_runs" if workspace_id else "extraction_runs"
+    volume_column = "record_count" if workspace_id else "records_extracted"
+    cart_sql, cart_args = _cartridge_filter_sql(visible, 3 if workspace_id else 1)
+    scope_sql = ""
+    params: list[Any] = []
+    if workspace_id:
+        scope_sql = "AND workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)"
+        params = [workspace_id, tenant_id or None]
     rows = await pool.fetch(
-        """
+        f"""
         WITH per_day AS (
             SELECT cartridge_id,
                    date_trunc('day', finished_at) AS day,
-                   SUM(COALESCE(records_extracted, 0)) AS records
-              FROM extraction_runs
+                   SUM(COALESCE({volume_column}, 0)) AS records
+              FROM {source_table}
              WHERE status = 'success'
                AND finished_at >= NOW() - INTERVAL '8 days'
+               {scope_sql}
+               {cart_sql}
              GROUP BY cartridge_id, day
         ),
         latest AS (
@@ -204,7 +246,8 @@ async def analyze_volume_anomaly() -> list[Highlight]:
           FROM latest l
           JOIN baseline b USING (cartridge_id)
          WHERE b.median > 0
-        """
+        """,
+        *params, *cart_args,
     )
     out: list[Highlight] = []
     for row in rows:
@@ -236,21 +279,37 @@ async def analyze_volume_anomaly() -> list[Highlight]:
 # ── 3. Pending actions ───────────────────────────────────────────────────
 
 
-async def analyze_pending_actions() -> list[Highlight]:
+async def analyze_pending_actions(user_context: dict | None = None) -> list[Highlight]:
     """Jobs that have been in 'running' state for more than 24h are
     almost certainly stuck — surface as warning so the user can
     investigate (orphaned worker, missing wakeup, etc.)."""
     pool = await auth.pool()
-    rows = await pool.fetch(
+    tenant_id, workspace_id, visible = _scope_values(user_context)
+    params: list[Any] = []
+    scope_sql = ""
+    if workspace_id:
+        params.extend([tenant_id, workspace_id, sorted(visible or [])])
+        scope_sql = """
+           AND COALESCE(args->>'tenant_id', result->>'tenant_id', '') = $1
+           AND COALESCE(args->>'workspace_id', result->>'workspace_id', '') = $2
+           AND (
+                '*' = ANY($3::text[])
+                OR COALESCE(args->>'cartridge_id', args->>'cartridge',
+                            result->>'cartridge_id', result->>'cartridge', '') = ANY($3::text[])
+           )
         """
+    rows = await pool.fetch(
+        f"""
         SELECT job_id, tool,
                EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 AS age_hours
           FROM jobs
          WHERE status = 'running'
            AND created_at < NOW() - INTERVAL '24 hours'
+           {scope_sql}
          ORDER BY created_at
          LIMIT 5
-        """
+        """,
+        *params,
     )
     out: list[Highlight] = []
     for row in rows:
@@ -272,19 +331,36 @@ async def analyze_pending_actions() -> list[Highlight]:
 # ── 4. Extraction failures ───────────────────────────────────────────────
 
 
-async def analyze_extraction_failures() -> list[Highlight]:
+async def analyze_extraction_failures(user_context: dict | None = None) -> list[Highlight]:
     """Count failed extraction_runs in the last 24h per cartridge.
     More than one failure → warning; more than three → critical."""
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT cartridge_id, COUNT(*) AS failures
-          FROM extraction_runs
-         WHERE status = 'failed'
-           AND finished_at >= NOW() - INTERVAL '24 hours'
-         GROUP BY cartridge_id
-        """
-    )
+    tenant_id, workspace_id, visible = _scope_values(user_context)
+    if workspace_id:
+        cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
+        rows = await pool.fetch(
+            f"""
+            SELECT cartridge_id, COUNT(*) AS failures
+              FROM pipeline_runs
+             WHERE status = 'failed'
+               AND finished_at >= NOW() - INTERVAL '24 hours'
+               AND workspace_id = $1::uuid
+               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
+               {cart_sql}
+             GROUP BY cartridge_id
+            """,
+            workspace_id, tenant_id or None, *cart_args,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT cartridge_id, COUNT(*) AS failures
+              FROM extraction_runs
+             WHERE status = 'failed'
+               AND finished_at >= NOW() - INTERVAL '24 hours'
+             GROUP BY cartridge_id
+            """
+        )
     out: list[Highlight] = []
     for row in rows:
         cart = row["cartridge_id"]
@@ -328,10 +404,10 @@ async def briefing_for_user(
     """
     try:
         groups = (
-            await analyze_freshness(),
-            await analyze_volume_anomaly(),
-            await analyze_pending_actions(),
-            await analyze_extraction_failures(),
+            await analyze_freshness(user_context=user_context),
+            await analyze_volume_anomaly(user_context=user_context),
+            await analyze_pending_actions(user_context=user_context),
+            await analyze_extraction_failures(user_context=user_context),
         )
     except Exception:  # pragma: no cover — defensive
         logger.exception("briefing_for_user: analyzer raised; returning empty")

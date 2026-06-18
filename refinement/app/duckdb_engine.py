@@ -1370,6 +1370,7 @@ class DuckDBEngine:
             schema_fields  = schema_fields,
             column_mapping = ds.get("column_mapping", {}),
             description    = ds.get("description", ""),
+            user_context   = user_context,
         )
 
         return {"name": name, "layer": layer, "row_count": row_count,
@@ -1383,19 +1384,29 @@ class DuckDBEngine:
         schema_fields: list[dict],
         column_mapping: dict,
         description: str = "",
+        user_context: dict | None = None,
     ) -> None:
         """Upsert column entries into data_catalog after a successful materialization."""
         try:
+            tenant_id, workspace_id = self._scope_values(user_context)
+            if not workspace_id:
+                return
             conn = self._pg_conn()
             with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+                    (tenant_id or "", workspace_id),
+                )
                 for field in schema_fields:
                     col  = field["name"]
                     desc = column_mapping.get(col, "")
                     cur.execute("""
                         INSERT INTO data_catalog
-                            (dataset, layer, cartridge, column_name, data_type, description, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                        ON CONFLICT (dataset, column_name) DO UPDATE
+                            (dataset, layer, cartridge, column_name, data_type, description,
+                             tenant_id, workspace_id, scope_status, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::uuid, %s::uuid, 'scoped', NOW())
+                        ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
+                        DO UPDATE
                             SET data_type   = EXCLUDED.data_type,
                                 layer       = EXCLUDED.layer,
                                 cartridge   = EXCLUDED.cartridge,
@@ -1403,8 +1414,10 @@ class DuckDBEngine:
                                     WHEN EXCLUDED.description != '' THEN EXCLUDED.description
                                     ELSE data_catalog.description
                                 END,
+                                tenant_id   = EXCLUDED.tenant_id,
+                                scope_status = 'scoped',
                                 updated_at  = NOW()
-                    """, (name, layer, cartridge, col, field["type"], desc))
+                    """, (name, layer, cartridge, col, field["type"], desc, tenant_id or None, workspace_id))
             conn.commit()
             conn.close()
         except Exception:
