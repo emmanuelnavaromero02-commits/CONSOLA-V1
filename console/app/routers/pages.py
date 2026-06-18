@@ -276,7 +276,7 @@ async def mis_accesos_page():
     return RedirectResponse(url="/my-access", status_code=307)
 
 
-# Sprint v1.5 — admin-only gate on the IAM / Settings / Operations panels
+# Sprint v1.5 — admin-only gate on the IAM / Settings panels
 # in addition to the pre-existing permission check. Non-admin users with
 # the permission (e.g. security_admin → iam.users.read) are now also
 # rejected per the binary admin/non-admin policy the client demoed.
@@ -301,10 +301,7 @@ async def settings_page(request: Request):
 
 @router.get(
     "/operations",
-    dependencies=[
-        Depends(require_permission("operations.read")),
-        Depends(require_admin),
-    ],
+    dependencies=[Depends(require_permission("operations.read"))],
 )
 async def operations_page(request: Request):
     return _console_next_response(request, "operations/index.html")

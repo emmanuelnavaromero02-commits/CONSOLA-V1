@@ -174,6 +174,62 @@ async def _fetch_workspace_summary(conn, workspace_id: str):
     )
 
 
+async def _fetch_workspace_tenant_admins(
+    conn, tenant_id: str, workspace_id: str
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT uwr.workspace_id::text AS workspace_id,
+               u.id, u.email, u.name, u.role, u.is_active,
+               u.must_change_password, u.tenant_id, u.created_at,
+               r.name AS workspace_role
+          FROM user_workspace_roles uwr
+          JOIN workspaces w ON w.id = uwr.workspace_id
+          JOIN users u ON u.id = uwr.user_id
+          JOIN roles r ON r.id = uwr.role_id
+         WHERE w.tenant_id = $1::uuid
+           AND w.id = $2::uuid
+           AND r.name = 'tenant_admin'
+         ORDER BY lower(u.email)
+        """,
+        tenant_id,
+        workspace_id,
+    )
+    return [_tenant_admin_row(row) for row in rows]
+
+
+async def _assign_existing_tenant_admins_to_workspace(
+    conn, tenant_id: str, workspace_id: str
+) -> None:
+    role_id = await conn.fetchval("SELECT id FROM roles WHERE name = 'tenant_admin'")
+    if not role_id:
+        return
+    await conn.execute(
+        """
+        INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
+        SELECT DISTINCT uwr.user_id, $1::uuid, $2::integer
+          FROM user_workspace_roles uwr
+          JOIN workspaces source_w ON source_w.id = uwr.workspace_id
+          JOIN roles source_r ON source_r.id = uwr.role_id
+          JOIN users u ON u.id = uwr.user_id
+         WHERE source_w.tenant_id = $3::uuid
+           AND source_r.name = 'tenant_admin'
+           AND u.is_active = TRUE
+           AND (u.tenant_id IS NULL OR u.tenant_id = $3::uuid)
+           AND NOT EXISTS (
+             SELECT 1
+               FROM user_workspace_roles existing
+              WHERE existing.user_id = uwr.user_id
+                AND existing.workspace_id = $1::uuid
+           )
+        ON CONFLICT DO NOTHING
+        """,
+        workspace_id,
+        role_id,
+        tenant_id,
+    )
+
+
 async def _record(
     request: Request,
     actor: dict,
@@ -344,7 +400,13 @@ async def create_workspace(
                     created = True
                 except asyncpg.UniqueViolationError as exc:
                     raise HTTPException(409, "workspace already exists") from exc
+            await _assign_existing_tenant_admins_to_workspace(
+                conn, tenant_id, str(row["id"])
+            )
             summary = await _fetch_workspace_summary(conn, str(row["id"]))
+            tenant_admins = await _fetch_workspace_tenant_admins(
+                conn, tenant_id, str(row["id"])
+            )
     if created:
         await _record(
             request,
@@ -354,7 +416,10 @@ async def create_workspace(
             str(row["id"]),
             {"tenant_id": tenant_id, "name": name},
         )
-    return {"workspace": _workspace_row(summary), "created": created}
+    return {
+        "workspace": _workspace_row(summary, tenant_admins),
+        "created": created,
+    }
 
 
 @router.post("/{tenant_id}/bootstrap-admin", dependencies=[Depends(require_csrf)])

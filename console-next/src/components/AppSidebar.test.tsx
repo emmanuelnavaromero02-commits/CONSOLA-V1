@@ -118,6 +118,20 @@ describe("AppSidebar", () => {
     expect(markup).not.toContain("Ajustes");
   });
 
+  it("shows Studio as a direct navigation item when backend capability allows it", () => {
+    const markup = render({
+      role: { global: "super_admin", is_platform_admin: true },
+      permissions: ["studio.read"],
+      ui_capabilities: {
+        can_view_studio: true,
+      },
+    }, "/studio");
+
+    expect(markup).toContain("Studio");
+    expect(markup).toContain('href="/studio"');
+    expect(markup).toContain('aria-current="page"');
+  });
+
   it("does not show backend-guarded links when permissions exist but ui capabilities deny them", () => {
     const markup = render({
       role: { is_platform_admin: true },

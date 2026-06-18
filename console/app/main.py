@@ -182,6 +182,7 @@ from app.dependencies import (
     ROLE_ADMIN,
     ROLE_ANALYST,
     ROLE_WORKSPACE_ADMIN,
+    _workspace_access_options,
     _workspace_cartridges,
     _workspace_memberships,
     get_current_global_user,
@@ -1893,7 +1894,7 @@ async def auth_middleware(request: Request, call_next):
     user = await _auth.get_session_user(token) if token else None
     if user and (requested_workspace_id or not user.get("active_workspace_id")):
         try:
-            workspaces = await _workspace_memberships(user["id"])
+            workspaces = await _workspace_access_options(user)
             if workspaces:
                 active_workspace = workspaces[0]
                 if requested_workspace_id:
@@ -1945,7 +1946,7 @@ async def auth_middleware(request: Request, call_next):
                 claims = await verify_access_token_async(auth_header[7:])
                 jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
                 if jwt_user and jwt_user.get("is_active"):
-                    workspaces = await _workspace_memberships(jwt_user["id"])
+                    workspaces = await _workspace_access_options(jwt_user)
                     if workspaces:
                         active_workspace = workspaces[0]
                         if requested_workspace_id:
@@ -2924,10 +2925,11 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         # The front-end uses these flags to decide what to render. They are
         # *display hints only*; every action endpoint enforces its own gate.
         # IMPORTANT: each flag must replicate the FULL guard chain of the
-        # target page. /iam, /settings, /operations and global admin
-        # surfaces require both the permission AND `require_admin`
-        # (global admin role). /operations/users is the exception:
-        # tenant admins may enter, while its API remains workspace-scoped.
+        # target page. /iam, /settings and global admin surfaces require
+        # both the permission AND `require_admin` (global admin role).
+        # /operations is a mixed overview gated by operations.read; tenant
+        # admins may enter and the module cards/subroutes stay capability
+        # filtered. /operations/users is similarly workspace-scoped.
         # If we only checked the permission, a security_admin user (who
         # has iam.users.read but is not a global admin) would see the
         # link and get a 403 on click. The backend still rejects, but the

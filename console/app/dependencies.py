@@ -72,6 +72,31 @@ async def _workspace_memberships(user_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _is_global_admin_user(user: dict | None) -> bool:
+    return (user or {}).get("role") in _GLOBAL_ADMIN_ROLES
+
+
+async def _all_workspace_options() -> list[dict]:
+    p = await _auth.pool()
+    rows = await p.fetch(
+        """SELECT w.id::text AS workspace_id,
+                  w.name AS workspace_name,
+                  t.id::text AS tenant_id,
+                  t.name AS tenant_name,
+                  'workspace_admin'::text AS workspace_role
+             FROM workspaces w
+             JOIN tenants t ON t.id = w.tenant_id
+            ORDER BY lower(t.name), w.created_at ASC, lower(w.name) ASC"""
+    )
+    return [dict(row) for row in rows]
+
+
+async def _workspace_access_options(user: dict) -> list[dict]:
+    if _is_global_admin_user(user):
+        return await _all_workspace_options()
+    return await _workspace_memberships(user["id"])
+
+
 async def _workspace_cartridges(workspace_id: str | None, user_id: int | None = None) -> list[str]:
     if not workspace_id:
         return []
@@ -143,9 +168,14 @@ async def _workspace_cartridges(workspace_id: str | None, user_id: int | None = 
 
 
 async def _with_workspace_context(user: dict, requested_workspace_id: str | None) -> dict:
-    workspaces = await _workspace_memberships(user["id"])
+    workspaces = await _workspace_access_options(user)
     if not workspaces:
-        raise HTTPException(status_code=403, detail="user has no assigned workspace")
+        detail = (
+            "no workspaces configured"
+            if _is_global_admin_user(user)
+            else "user has no assigned workspace"
+        )
+        raise HTTPException(status_code=403, detail=detail)
 
     if requested_workspace_id:
         active = next((w for w in workspaces if w["workspace_id"] == requested_workspace_id), None)

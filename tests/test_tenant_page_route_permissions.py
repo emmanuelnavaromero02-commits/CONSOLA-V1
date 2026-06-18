@@ -26,6 +26,7 @@ def _route_block(source: str, route: str) -> str:
 def test_tenant_workspace_pages_do_not_require_platform_admin():
     src = _read(PAGES_PY)
     expectations = {
+        '"/operations"': "operations.read",
         '"/operations/audit"': "security.audit.read",
         '"/operations/vault"': "vault.connections.read",
         '"/operations/metrics"': "operations.read",

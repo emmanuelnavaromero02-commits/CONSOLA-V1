@@ -8,8 +8,10 @@ ROUTER = REPO / "console/app/routers/admin_tenants.py"
 MAIN = REPO / "console/app/main.py"
 AUTH = REPO / "console/app/services/auth.py"
 PAGES = REPO / "console/app/routers/pages.py"
+DEPENDENCIES = REPO / "console/app/dependencies.py"
 MIGRATION = REPO / "infra/init/99m_company_onboarding_rls.sql"
 COMPANIES_UI = REPO / "console-next/src/components/operations/CompaniesConsole.tsx"
+CREATE_USER_UI = REPO / "console-next/src/components/operations/CreateUserForm.tsx"
 
 
 def _read(path: Path) -> str:
@@ -50,6 +52,39 @@ def test_bootstrap_admin_generates_one_time_password_server_side():
     assert 'body.get("temporary_password")' not in router
     for role in ("owner", "admin", "super_admin", "security_admin", "auditor"):
         assert role in router
+
+
+def test_new_workspace_inherits_existing_tenant_admin_memberships():
+    router = _read(ROUTER)
+    create_section = router.split("async def create_workspace", 1)[1].split(
+        "@router.post(\"/{tenant_id}/bootstrap-admin\"", 1
+    )[0]
+
+    assert "async def _assign_existing_tenant_admins_to_workspace" in router
+    assert "source_w.tenant_id = $3::uuid" in router
+    assert "source_r.name = 'tenant_admin'" in router
+    assert "$2::integer" in router
+    assert "u.is_active = TRUE" in router
+    assert "existing.workspace_id = $1::uuid" in router
+    assert "ON CONFLICT DO NOTHING" in router
+    assert "await _assign_existing_tenant_admins_to_workspace(" in create_section
+    assert "_workspace_row(summary, tenant_admins)" in create_section
+
+
+def test_platform_admin_can_switch_into_any_workspace_for_operations():
+    dependencies = _read(DEPENDENCIES)
+    main = _read(MAIN)
+    create_user = _read(CREATE_USER_UI)
+
+    assert "async def _all_workspace_options()" in dependencies
+    assert "'workspace_admin'::text AS workspace_role" in dependencies
+    assert "if _is_global_admin_user(user):" in dependencies
+    assert "return await _all_workspace_options()" in dependencies
+    assert "workspaces = await _workspace_access_options(user)" in main
+    assert "workspaces = await _workspace_access_options(jwt_user)" in main
+    assert "workspaces.length > 0" in create_user
+    assert "Este formulario no crea empresas" not in create_user
+    assert "workspace_role ||" not in create_user
 
 
 def test_auth_create_user_writes_tenant_and_forces_password_change():
