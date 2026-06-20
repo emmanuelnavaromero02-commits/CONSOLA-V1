@@ -36,6 +36,10 @@ CARTRIDGE_ID    = "platform"
 ENTITY          = "DatasetRefreshChain"
 REFINEMENT_URL  = os.environ.get("REFINEMENT_URL",  "http://refinement:8500")
 MCP_INFRA_URL   = os.environ.get("MCP_INFRA_URL",   "http://mcp-infra:8010")
+CONSOLE_URL     = (
+    os.environ.get("CONSOLE_INTERNAL_URL")
+    or os.environ.get("CONSOLE_URL", "http://console:8000")
+)
 POSTGRES_DSN    = os.environ.get(
     "DATABASE_URL",
     "postgresql://postgres:postgres@postgres:5432/modecissions",
@@ -379,6 +383,63 @@ def materialize_in_order(**ctx):
 
 # ── Task 3 · record_run ──────────────────────────────────────────────────────
 
+def _successful_materialized_datasets(results: list[dict]) -> list[str]:
+    output: set[str] = set()
+    for item in results:
+        if not isinstance(item, dict) or not item.get("ok"):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name:
+            output.add(name)
+    return sorted(output)
+
+
+def _trigger_gold_refresh_intelligence(
+    *,
+    ctx: dict,
+    tenant_id: str,
+    workspace_id: str,
+    cartridge_id: str,
+    pipeline_run_id: str,
+    status: str,
+    datasets: list[str],
+    finished_at: str,
+) -> None:
+    if not datasets:
+        print("[refresh_chain] intelligence skipped: no materialized datasets")
+        return
+    payload = {
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "cartridge_id": cartridge_id,
+        "airflow_dag_run_id": ctx["run_id"],
+        "pipeline_run_id": pipeline_run_id,
+        "materialization_status": status,
+        "datasets": datasets,
+        "finished_at": finished_at,
+    }
+    try:
+        r = requests.post(
+            f"{CONSOLE_URL.rstrip('/')}/internal/intelligence/gold-refresh",
+            headers=_internal_headers("CONSOLE", ctx),
+            json=payload,
+            timeout=45,
+        )
+        try:
+            body = r.json()
+        except Exception:
+            body = {"text": r.text[:300]}
+        if r.status_code >= 400:
+            print(f"[refresh_chain] intelligence trigger HTTP {r.status_code}: {body}")
+            return
+        print(
+            "[refresh_chain] intelligence trigger "
+            f"ok={body.get('ok')} run_ref={body.get('run_ref')} "
+            f"signals={body.get('signals')} skipped={body.get('skipped')}"
+        )
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"[refresh_chain] intelligence trigger failed: {exc}")
+
 def record_run(**ctx):
     conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
     allow_partial = bool(conf.get("allow_partial"))
@@ -410,6 +471,7 @@ def record_run(**ctx):
     status = "success" if total == materialized else "partial" if materialized else "failed"
     if total == 0 and not materialize_failed and not inv.get("error"):
         status = "success"
+    pipeline_run_id = f"dataset_refresh_chain:{ctx['run_id']}"
     try:
         r = requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
@@ -418,7 +480,7 @@ def record_run(**ctx):
                   "args": {"dag_id": "dataset_refresh_chain",
                            "cartridge_id": run_cartridge,
                            "entity":       ENTITY,
-                           "run_id":       f"dataset_refresh_chain:{ctx['run_id']}",
+                           "run_id":       pipeline_run_id,
                            "airflow_dag_run_id": ctx["run_id"],
                            "mode":         "refresh",
                            "status":       status,
@@ -437,6 +499,17 @@ def record_run(**ctx):
     except Exception as exc:                                      # noqa: BLE001
         print(f"[refresh_chain] pipeline_run_save fallido: {exc}")
         raise
+    if status == "success" or (status == "partial" and allow_partial):
+        _trigger_gold_refresh_intelligence(
+            ctx=ctx,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            cartridge_id=str(run_cartridge),
+            pipeline_run_id=pipeline_run_id,
+            status=status,
+            datasets=_successful_materialized_datasets(results),
+            finished_at=ended,
+        )
     if status != "success" and not allow_partial:
         raise RuntimeError(f"dataset_refresh_chain recorded {status}: {inv}")
 

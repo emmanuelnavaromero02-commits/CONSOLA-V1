@@ -12,7 +12,7 @@ minio==7.2.9
 # dataset/RAG parquet API surface used here unchanged.
 pyarrow==23.0.1
 pandas==2.1.4
-pydantic-settings==2.14.1
+pydantic-settings==2.14.2
 duckdb==1.2.2
 sqlalchemy==2.0.34
 asyncpg==0.29.0

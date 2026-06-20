@@ -21,7 +21,7 @@ from app.services.intelligence.utils import (
 from app.version import app_version
 
 
-RUN_MODES = {"manual", "scheduled", "backtest", "smoke"}
+RUN_MODES = {"manual", "scheduled", "backtest", "smoke", "gold_refresh"}
 SUCCESS_STATUSES = {
     "success",
     "succeeded",
@@ -158,11 +158,19 @@ async def start_intelligence_run(
     source_system: str | None,
     run_mode: str,
     datasets_evaluated: list[dict[str, Any]] | None = None,
+    run_ref: str | None = None,
 ) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
     owner_user_id = _owner_user_id(user)
     pool = await auth.pool()
-    run_ref = new_run_ref()
+    safe_run_ref = str(run_ref or "").strip() or new_run_ref()
+    request_metadata = (
+        request.get("metadata")
+        if isinstance(request, dict) and isinstance(request.get("metadata"), dict)
+        else {}
+    )
+    metadata = {"created_by": user.get("email")}
+    metadata.update(request_metadata)
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         row = await conn.fetchrow(
             """
@@ -173,7 +181,7 @@ async def start_intelligence_run(
             VALUES ($1, $2, $3, $4, $5, 'running', $6::jsonb, $7::jsonb, $8, $9, $10, $11::jsonb)
             RETURNING *
             """,
-            run_ref,
+            safe_run_ref,
             tenant_id,
             workspace_id,
             source_system,
@@ -183,9 +191,32 @@ async def start_intelligence_run(
             app_version(),
             os.environ.get("DEPLOY_REF") or os.environ.get("GITHUB_SHA"),
             owner_user_id,
-            json_dumps({"created_by": user.get("email")}),
+            json_dumps(metadata),
         )
     return _row_public(row)
+
+
+async def get_run_by_ref(user: dict, run_ref: str) -> dict[str, Any] | None:
+    tenant_id, workspace_id = workspace_scope(user)
+    clean_ref = str(run_ref or "").strip()
+    if not clean_ref:
+        return None
+    params: list[Any] = [workspace_id, clean_ref]
+    tenant_clause = _tenant_clause(params, tenant_id)
+    pool = await auth.pool()
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        row = await conn.fetchrow(
+            f"""
+            SELECT *
+              FROM intelligence_runs
+             WHERE workspace_id = $1
+               AND run_ref = $2
+               {tenant_clause}
+             LIMIT 1
+            """,
+            *params,
+        )
+    return _row_public(row) if row else None
 
 
 async def finish_intelligence_run(
