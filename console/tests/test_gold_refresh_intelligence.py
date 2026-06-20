@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import pytest
+from fastapi import HTTPException
+
+from app.routers import intelligence as intelligence_router
+
+
+def _request() -> intelligence_router.GoldRefreshIntelligenceRequest:
+    return intelligence_router.GoldRefreshIntelligenceRequest(
+        tenant_id="tenant-1",
+        workspace_id="workspace-1",
+        cartridge_id="hubspot",
+        airflow_dag_run_id="scheduled__2026-06-19T00:00:00+00:00",
+        pipeline_run_id="dataset_refresh_chain:scheduled__2026-06-19T00:00:00+00:00",
+        materialization_status="success",
+        datasets=["forecast_mensual", "unused_dataset"],
+        finished_at="2026-06-19T00:05:00+00:00",
+    )
+
+
+@pytest.mark.asyncio
+async def test_gold_refresh_internal_requires_airflow_service():
+    with pytest.raises(HTTPException) as exc:
+        await intelligence_router.intelligence_gold_refresh_internal(
+            _request(),
+            internal_service="workspace",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "only airflow can trigger Gold refresh intelligence"
+
+
+@pytest.mark.asyncio
+async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatch):
+    calls: list[dict] = []
+    invalidated: list[dict] = []
+
+    async def fake_run_intelligence(user: dict, payload: dict, *, persist: bool):
+        calls.append({"user": user, "payload": payload, "persist": persist})
+        return {
+            "run_ref": payload["run_ref"],
+            "intelligence_run_id": 77,
+            "signals": [{"signal_id": "intel:test"}],
+            "skipped": [{"status": "missing_simulation_template"}],
+            "skipped_counts": {"missing_simulation_template": 1},
+            "dataset_unavailable_count": 0,
+            "insufficient_history_count": 0,
+            "idempotent": False,
+        }
+
+    def fake_invalidate(user: dict) -> None:
+        invalidated.append(user)
+
+    monkeypatch.setattr(
+        intelligence_router.intelligence_engine,
+        "run_intelligence",
+        fake_run_intelligence,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "_invalidate_control_room_cache",
+        fake_invalidate,
+    )
+
+    response = await intelligence_router.intelligence_gold_refresh_internal(
+        _request(),
+        internal_service="airflow",
+    )
+
+    assert response["ok"] is True
+    assert response["signals"] == 1
+    assert response["skipped"] == 1
+    assert response["run_ref"] == (
+        "gold-refresh:"
+        "workspace-1:"
+        "hubspot:"
+        "scheduled__2026-06-19T00:00:00+00:00"
+    )
+    assert invalidated[0]["active_workspace_id"] == "workspace-1"
+    call = calls[0]
+    assert call["persist"] is True
+    assert call["user"]["email"] == "airflow@internal"
+    assert call["user"]["tenant_id"] == "tenant-1"
+    assert call["user"]["workspace_id"] == "workspace-1"
+    assert call["payload"]["run_mode"] == "gold_refresh"
+    assert call["payload"]["include_external"] is False
+    assert call["payload"]["datasets"] == ["forecast_mensual", "unused_dataset"]
+    assert call["payload"]["metadata"]["trigger"] == "gold_refresh"
+    assert call["payload"]["metadata"]["datasets_received"] == [
+        "forecast_mensual",
+        "unused_dataset",
+    ]

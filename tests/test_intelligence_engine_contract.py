@@ -109,7 +109,9 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert "intelligence_router" in main
     assert "app.include_router(intelligence_router.router)" in main
     assert "app.include_router(intelligence_router.v1_router)" in main
+    assert "app.include_router(intelligence_router.internal_router)" in main
     assert 'APIRouter(prefix="/api/v1/intelligence"' in router
+    assert 'APIRouter(prefix="/internal/intelligence"' in router
     assert "BaseModel" in router
     assert 'extra="forbid"' in router
     assert "cartridge_id" in router
@@ -121,7 +123,11 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert '@router.get("/runs"' in router
     assert '@router.get("/history"' in router
     assert '@router.get("/calibration"' in router
-    assert 'mode: Literal["manual", "scheduled", "backtest", "smoke"] | None' in router
+    assert '"gold_refresh"' in router
+    assert '"/gold-refresh"' in router
+    assert "verify_internal_api_key" in router
+    assert "only airflow can trigger Gold refresh intelligence" in router
+    assert "gold-refresh:" in router
     assert '@router.get("/external/sources"' in router
     assert '"/external/sources/{source_id}"' in router
     assert '"/external/run"' in router
@@ -131,6 +137,28 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert "Depends(require_csrf)" in router
     assert "def _invalidate_control_room_cache" in router
     assert "_invalidate_control_room_cache(user)" in router
+
+
+def test_gold_refresh_intelligence_migration_extends_run_mode_safely():
+    migration = read("infra/init/99y_gold_refresh_intelligence.sql")
+    assert "DROP CONSTRAINT IF EXISTS intelligence_runs_mode_chk" in migration
+    assert "ADD CONSTRAINT intelligence_runs_mode_chk" in migration
+    assert "'gold_refresh'" in migration
+    assert "99y_gold_refresh_intelligence.sql" in migration
+
+
+def test_dataset_refresh_chain_notifies_console_after_pipeline_save_only_for_gold_ready():
+    source = read("airflow/dags/dataset_refresh_chain.py")
+    assert "CONSOLE_INTERNAL_URL" in source
+    assert "CONSOLE_URL" in source
+    assert 'INTERNAL_API_KEY_AIRFLOW_TO_{target}' in source
+    assert "/internal/intelligence/gold-refresh" in source
+    assert "pipeline_run_id = f\"dataset_refresh_chain:{ctx['run_id']}\"" in source
+    assert "_successful_materialized_datasets(results)" in source
+    assert "status == \"success\" or (status == \"partial\" and allow_partial)" in source
+    pipeline_save_pos = source.index('"tool": "pipeline_run_save"')
+    trigger_pos = source.rindex("_trigger_gold_refresh_intelligence(")
+    assert pipeline_save_pos < trigger_pos
 
 
 def test_scope_owner_hotfix_migration_covers_vault_and_intelligence_owner():

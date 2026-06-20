@@ -481,6 +481,8 @@ async def publish_control_room_item(
         "freshness_at": freshness_at,
         "freshness_field": freshness_field,
         "data_status": "gold_ready",
+        "source": "intelligence_engine",
+        "run_mode": signal.get("run_mode"),
         "evidence_pack_id": evidence_pack_id,
         "intelligence_run_id": signal.get("intelligence_run_id"),
         "run_ref": signal.get("run_ref"),
@@ -510,6 +512,7 @@ async def publish_control_room_item(
             "freshness_at": freshness_at,
             "freshness_field": freshness_field,
             "source": "intelligence_engine",
+            "run_mode": signal.get("run_mode"),
             "decision_intelligence_method": decision_intelligence.get("method"),
             "time_series_method": time_series.get("method"),
             "residual_z": time_series_residual.get("robust_z"),
@@ -617,6 +620,7 @@ async def publish_control_room_item(
                 "evidence_pack_id": evidence_pack_id,
                 "intelligence_run_id": signal.get("intelligence_run_id"),
                 "run_ref": signal.get("run_ref"),
+                "run_mode": signal.get("run_mode"),
             }
         ),
     )

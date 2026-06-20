@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.dependencies import require_authenticated
 from app.services import intelligence_engine
+from app.services.auth import verify_internal_api_key
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
 from app.services.intelligence import decision_orchestrator
@@ -20,6 +21,7 @@ from app.services.permissions import require_permission
 
 router = APIRouter(prefix="/api/intelligence", tags=["Intelligence"])
 v1_router = APIRouter(prefix="/api/v1/intelligence", tags=["Intelligence"])
+internal_router = APIRouter(prefix="/internal/intelligence", tags=["Intelligence (internal)"])
 DATASETS_READ_DEPENDENCY = [Depends(require_permission("datasets.read"))]
 
 
@@ -64,6 +66,26 @@ class IntelligenceRunRequest(_StrictModel):
             if int(item) < 1 or int(item) > 90:
                 raise ValueError("horizon_days must be between 1 and 90")
         return value
+
+
+class GoldRefreshIntelligenceRequest(_StrictModel):
+    tenant_id: str = Field(min_length=1, max_length=80)
+    workspace_id: str = Field(min_length=1, max_length=80)
+    cartridge_id: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+    airflow_dag_run_id: str = Field(min_length=1, max_length=256)
+    pipeline_run_id: str | None = Field(default=None, max_length=512)
+    materialization_status: Literal["success", "partial"] = "success"
+    datasets: list[str] = Field(default_factory=list, max_length=200)
+    finished_at: str | None = Field(default=None, max_length=80)
+
+    @field_validator("datasets")
+    @classmethod
+    def _validate_datasets(cls, value: list[str]) -> list[str]:
+        cleaned = [str(item).strip() for item in value if str(item or "").strip()]
+        for item in cleaned:
+            if len(item) > 128 or not item.replace("_", "").replace("-", "").isalnum():
+                raise ValueError("datasets entries must be simple identifiers")
+        return sorted(set(cleaned))
 
 
 class ExternalSourcePatchRequest(_StrictModel):
@@ -252,6 +274,78 @@ def _invalidate_control_room_cache(user: dict) -> None:
     except Exception:
         return
     _control_room_cache_invalidate(user)
+
+
+def _gold_refresh_run_ref(body: GoldRefreshIntelligenceRequest) -> str:
+    return (
+        "gold-refresh:"
+        f"{body.workspace_id}:"
+        f"{body.cartridge_id}:"
+        f"{body.airflow_dag_run_id}"
+    )
+
+
+def _gold_refresh_user(body: GoldRefreshIntelligenceRequest) -> dict[str, Any]:
+    return {
+        "id": 0,
+        "email": "airflow@internal",
+        "role": "admin",
+        "workspace_role": "workspace_admin",
+        "tenant_id": body.tenant_id,
+        "workspace_id": body.workspace_id,
+        "active_tenant_id": body.tenant_id,
+        "active_workspace_id": body.workspace_id,
+        "allowed_cartridges": [body.cartridge_id],
+    }
+
+
+@internal_router.post("/gold-refresh")
+async def intelligence_gold_refresh_internal(
+    body: GoldRefreshIntelligenceRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    if internal_service != "airflow":
+        raise HTTPException(status_code=403, detail="only airflow can trigger Gold refresh intelligence")
+    user = _gold_refresh_user(body)
+    run_ref = _gold_refresh_run_ref(body)
+    payload = {
+        "cartridge_id": body.cartridge_id,
+        "datasets": body.datasets,
+        "include_external": False,
+        "dry_run": False,
+        "run_mode": "gold_refresh",
+        "run_ref": run_ref,
+        "horizon_days": [7, 21],
+        "metadata": {
+            "trigger": "gold_refresh",
+            "pipeline_run_id": body.pipeline_run_id,
+            "airflow_dag_run_id": body.airflow_dag_run_id,
+            "materialization_status": body.materialization_status,
+            "datasets_received": body.datasets,
+            "finished_at": body.finished_at,
+        },
+    }
+    try:
+        result = await intelligence_engine.run_intelligence(user, payload, persist=True)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "run_ref": run_ref,
+            "error": str(getattr(exc, "detail", exc)),
+        }
+    _invalidate_control_room_cache(user)
+    return {
+        "ok": True,
+        "run_ref": result.get("run_ref") or run_ref,
+        "intelligence_run_id": result.get("intelligence_run_id"),
+        "status": result.get("status") or ("completed" if result.get("signals") else "not_ready"),
+        "idempotent": bool(result.get("idempotent")),
+        "signals": len(result.get("signals") or []),
+        "skipped": len(result.get("skipped") or []),
+        "dataset_unavailable_count": result.get("dataset_unavailable_count", 0),
+        "insufficient_history_count": result.get("insufficient_history_count", 0),
+        "skipped_counts": result.get("skipped_counts") or {},
+    }
 
 
 @router.post(
