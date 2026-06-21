@@ -163,6 +163,97 @@ tenant_id="${{scope%%|*}}"
 workspace_id="${{scope#*|}}"
 emit "mock workspace scope" "PASS" "tenant=${{tenant_id}} workspace=${{workspace_id}}"
 
+visibility_counts="$(psql_main "WITH scope AS (
+  SELECT '${{tenant_id}}'::uuid AS tenant_id, '${{workspace_id}}'::uuid AS workspace_id
+), product_pick AS (
+  SELECT id AS product_id
+    FROM marketplace_products
+   WHERE cartridge_id = 'replicon'
+     AND status IN ('active', 'internal')
+   ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, id
+   LIMIT 1
+), role_pick AS (
+  SELECT id AS role_id FROM roles WHERE name = 'workspace_admin' LIMIT 1
+), admin_users AS (
+  SELECT id AS user_id
+    FROM users
+   WHERE is_active IS TRUE
+     AND role IN ('super_admin', 'admin', 'owner')
+   ORDER BY id
+), memberships AS (
+  INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
+  SELECT admin_users.user_id, scope.workspace_id, role_pick.role_id
+    FROM scope, role_pick, admin_users
+  ON CONFLICT DO NOTHING
+  RETURNING 1
+), entitlement AS (
+  INSERT INTO tenant_entitlements (
+    tenant_id, workspace_id, cartridge_id, product_id, status,
+    activated_by_id, starts_at, created_at, updated_at
+  )
+  SELECT scope.tenant_id, scope.workspace_id, 'replicon', product_pick.product_id,
+         'active', (SELECT user_id FROM admin_users LIMIT 1), NOW(), NOW(), NOW()
+    FROM scope, product_pick
+  ON CONFLICT (tenant_id, workspace_id, cartridge_id) DO UPDATE
+    SET product_id = EXCLUDED.product_id,
+        status = 'active',
+        activated_by_id = EXCLUDED.activated_by_id,
+        starts_at = COALESCE(tenant_entitlements.starts_at, NOW()),
+        ends_at = NULL,
+        updated_at = NOW()
+  RETURNING 1
+), installation AS (
+  INSERT INTO cartridge_installations (
+    id, tenant_id, workspace_id, cartridge_id, product_id,
+    status, current_step, install_fingerprint, created_by_id,
+    created_at, updated_at, ready_at
+  )
+  SELECT 'mockvol_' || md5(scope.tenant_id::text || ':' || scope.workspace_id::text || ':replicon'),
+         scope.tenant_id, scope.workspace_id, 'replicon', product_pick.product_id,
+         'ready', 'seeded_by_mock_volume_probe',
+         md5(scope.tenant_id::text || ':' || scope.workspace_id::text || ':replicon'),
+         (SELECT user_id FROM admin_users LIMIT 1), NOW(), NOW(), NOW()
+    FROM scope, product_pick
+  ON CONFLICT (workspace_id, cartridge_id) DO UPDATE
+    SET product_id = EXCLUDED.product_id,
+        status = 'ready',
+        current_step = 'seeded_by_mock_volume_probe',
+        error_message = NULL,
+        ready_at = COALESCE(cartridge_installations.ready_at, NOW()),
+        updated_at = NOW()
+  RETURNING 1
+)
+SELECT
+  (SELECT COUNT(*) FROM product_pick)::text
+  || '|' ||
+  (SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id='${{workspace_id}}'::uuid)::text
+  || '|' ||
+  (SELECT COUNT(*) FROM tenant_entitlements WHERE workspace_id='${{workspace_id}}'::uuid AND cartridge_id='replicon' AND status='active')::text
+  || '|' ||
+  (SELECT COUNT(*) FROM cartridge_installations WHERE workspace_id='${{workspace_id}}'::uuid AND cartridge_id='replicon' AND status='ready')::text
+  || '|' ||
+  (SELECT COALESCE(string_agg(te.cartridge_id, ',' ORDER BY te.cartridge_id), '')
+     FROM tenant_entitlements te
+    WHERE te.workspace_id='${{workspace_id}}'::uuid
+      AND te.status='active'
+      AND EXISTS (
+        SELECT 1
+          FROM cartridge_installations ci
+         WHERE ci.tenant_id=te.tenant_id
+           AND ci.workspace_id=te.workspace_id
+           AND ci.cartridge_id=te.cartridge_id
+           AND ci.status='ready'
+      ));" || true)"
+visibility_counts="$(echo "$visibility_counts" | sed '/^$/d' | tail -n 1)"
+IFS='|' read -r product_count membership_count entitlement_count installation_count allowed_cartridges <<EOF_VISIBILITY
+$visibility_counts
+EOF_VISIBILITY
+if [ "${{product_count:-0}}" -ge 1 ] 2>/dev/null && [ "${{membership_count:-0}}" -ge 1 ] 2>/dev/null && [ "${{entitlement_count:-0}}" -ge 1 ] 2>/dev/null && [ "${{installation_count:-0}}" -ge 1 ] 2>/dev/null && echo ",${{allowed_cartridges:-}}," | grep -q ",replicon,"; then
+  emit "Mock workspace UI visibility" "PASS" "membership=${{membership_count}} entitlement=${{entitlement_count}} installation=${{installation_count}} allowed=${{allowed_cartridges}}"
+else
+  emit "Mock workspace UI visibility" "FAIL" "product=${{product_count:-unknown}} membership=${{membership_count:-unknown}} entitlement=${{entitlement_count:-unknown}} installation=${{installation_count:-unknown}} allowed=${{allowed_cartridges:-}}" "Expected replicon marketplace product, admin membership, active entitlement and ready installation."
+fi
+
 if ! gold_seed_output="$(
 docker compose $(compose_files) exec -T postgres_gold psql -v ON_ERROR_STOP=1 -U postgres -d modecissions_gold -p 5433 2>&1 <<SQL
 \\timing on
