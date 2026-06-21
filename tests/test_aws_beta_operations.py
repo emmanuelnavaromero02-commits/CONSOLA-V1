@@ -47,6 +47,12 @@ def test_makefile_exposes_aws_beta_operational_targets() -> None:
         "control-room-gold-engine-aws-probe:": (
             "scripts/aws_control_room_gold_engine_probe.py"
         ),
+        "control-room-mock-volume-aws-probe:": (
+            "scripts/aws_control_room_mock_volume_probe.py"
+        ),
+        "control-room-mock-volume-aws-cleanup:": (
+            "scripts/aws_control_room_mock_volume_probe.py --cleanup-suffix"
+        ),
     }.items():
         assert target in makefile
         assert script in makefile
@@ -169,6 +175,32 @@ def test_control_room_gold_engine_aws_probe_validates_refresh_loop() -> None:
         "metadata ? 'bayesian_calibration'",
         "metadata ? 'evidence_pack'",
         "external writeback disabled",
+        "remote_stdout_redacted.txt",
+    ):
+        assert needle in source
+
+
+def test_control_room_mock_volume_aws_probe_validates_studio_gold_flow() -> None:
+    source = _read("scripts/aws_control_room_mock_volume_probe.py")
+    ast.parse(source)
+    for needle in (
+        "OMEGA_MOCK_VOLUME_ROWS",
+        "1000000",
+        "mock_studio_events_",
+        "mock_project_margin_",
+        "mock_billable_hours_",
+        "studio_entities",
+        "silver_lineage",
+        "data_catalog",
+        "omega_apply_gold_rls_for_table",
+        "intelligence_gold_refresh_internal",
+        "generic_gold_signal",
+        "metadata ? 'math_provenance'",
+        "metadata ? 'priority'",
+        "metadata ? 'monte_carlo'",
+        "metadata ? 'bayesian_calibration'",
+        "Cleanup command",
+        "--cleanup-suffix",
         "remote_stdout_redacted.txt",
     ):
         assert needle in source
