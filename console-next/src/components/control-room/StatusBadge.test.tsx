@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MiniBar, ReadinessBadge, readinessLabels, readinessTone } from "./StatusBadge";
+import { MiniBar, OriginBadge, ReadinessBadge, originLabels, readinessLabels, readinessTone } from "./StatusBadge";
 
 describe("Control Room readiness states", () => {
   it.each([
@@ -34,5 +34,19 @@ describe("Control Room readiness states", () => {
 
     expect(markup).toContain("Listos para decidir");
     expect(markup).toContain("30%");
+  });
+
+  it.each([
+    ["rule", "Regla"],
+    ["generic_gold_signal", "Gold generico"],
+    ["intelligence_signal", "Intelligence"],
+    ["bayesian_calibration", "Bayes"],
+    ["monte_carlo", "Monte Carlo"],
+    ["agent_alert", "Agent"],
+  ] as const)("renders origin badge %s", (origin, label) => {
+    const markup = renderToStaticMarkup(<OriginBadge origin={origin} />);
+
+    expect(originLabels[origin]).toBe(label);
+    expect(markup).toContain(label);
   });
 });

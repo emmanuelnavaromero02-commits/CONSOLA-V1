@@ -702,7 +702,40 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         option["selected"] = option["id"] == selected_option_id
     lessons = _lessons_for_item(item)
     lesson_count = int(item.get("lesson_count") or 0)
-    priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
+    persisted_priority = item.get("priority") if isinstance(item.get("priority"), dict) else {}
+    if persisted_priority.get("score") is not None:
+        score = max(0, min(100, int(persisted_priority.get("score") or 0)))
+        band = persisted_priority.get("band") or (
+            "critical"
+            if score >= 90
+            else "high"
+            if score >= 75
+            else "medium"
+            if score >= 55
+            else "low"
+        )
+        raw_drivers = persisted_priority.get("drivers")
+        if isinstance(raw_drivers, dict):
+            drivers = [
+                {
+                    "label": str(key).replace("_", " ").title(),
+                    "value": value,
+                    "points": value,
+                }
+                for key, value in raw_drivers.items()
+            ]
+        elif isinstance(raw_drivers, list):
+            drivers = raw_drivers
+        else:
+            drivers = []
+        priority = {
+            **persisted_priority,
+            "score": score,
+            "band": band,
+            "drivers": drivers,
+        }
+    else:
+        priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
     alert_state = _alert_state(item)
     control_items = _control_items_for_item(
         item,

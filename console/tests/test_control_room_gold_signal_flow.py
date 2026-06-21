@@ -335,6 +335,24 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
         "hypotheses": [{"title": "Cambio de capacidad"}],
         "options": [{"label": "Investigar", "option_id": "investigate"}],
         "decision_intelligence": decision,
+        "control_origin": "intelligence_signal",
+        "math_provenance": {
+            "ruleset_version": "control_room_gold_signal.v1",
+            "control_origin": "intelligence_signal",
+            "formula": "baseline -> deviation -> robust residual/MAD -> probability",
+            "input_hash": "abc123",
+        },
+        "priority": {
+            "score": 91,
+            "formula": "severity + confidence + deviation",
+            "drivers": {"severity": 26, "confidence": 20, "deviation": 24},
+        },
+        "monte_carlo": {
+            "status": "completed",
+            "mode": "derived_mode",
+            "seed": 123,
+            "reproducibility_hash": "mc-hash",
+        },
     }
     mock_pool = AsyncMock()
     mock_pool.execute = AsyncMock()
@@ -352,6 +370,11 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
     metadata = json.loads(args[15])
     assert metadata["decision_intelligence"] == decision
     assert metadata["intelligence"]["decision_intelligence"] == decision
+    assert metadata["control_origin"] == "intelligence_signal"
+    assert metadata["math_provenance"]["ruleset_version"] == "control_room_gold_signal.v1"
+    assert metadata["priority"]["score"] == 91
+    assert metadata["priority"]["drivers"]["severity"] == 26
+    assert metadata["monte_carlo"]["mode"] == "derived_mode"
     assert metadata["details"]["decision_intelligence_method"] == "robust_residual_v0"
     assert metadata["details"]["time_series_method"] == "robust_residual_v0"
     assert metadata["details"]["residual_z"] == 94
@@ -359,6 +382,7 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
     assert metadata["details"]["recommended_decision"] == "investigate"
     assert args[16] == 10440
     assert args[17] == "USD"
+    assert args[19] == 91
 
 
 @pytest.mark.asyncio

@@ -1589,6 +1589,19 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                 "priority_score": public_row.get("priority_score"),
                 "thresholds_applied": metadata.get("thresholds_applied") or [],
                 "threshold_state": metadata.get("threshold_state") or "default",
+                "control_origin": metadata.get("control_origin"),
+                "capabilities": metadata.get("capabilities")
+                if isinstance(metadata.get("capabilities"), dict)
+                else {},
+                "math_provenance": metadata.get("math_provenance")
+                if isinstance(metadata.get("math_provenance"), dict)
+                else {},
+                "monte_carlo": metadata.get("monte_carlo")
+                if isinstance(metadata.get("monte_carlo"), dict)
+                else {},
+                "priority": metadata.get("priority")
+                if isinstance(metadata.get("priority"), dict)
+                else {},
                 "selected_option_id": public_row.get("selected_option_id")
                 or metadata.get("selected_option_id"),
                 "execution_status": public_row.get("execution_status")

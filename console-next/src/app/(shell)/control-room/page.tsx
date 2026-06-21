@@ -31,6 +31,7 @@ import { SuccessFactorsGoldPanel } from "@/components/control-room/SuccessFactor
 import {
   MiniBar,
   OperationalNotice,
+  OriginBadge,
   ReadinessBadge,
   readinessLabels,
   readinessTone,
@@ -56,6 +57,7 @@ type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;
 type AlertOperation = "ack" | "snooze" | "assign" | "false-positive";
 type AlertSourceFilter = "all" | "agent" | "system" | "intelligence";
+type ControlOrigin = "rule" | "generic_gold_signal" | "intelligence_signal" | "agent_alert" | "source_state" | "monte_carlo" | "bayesian_calibration";
 
 interface SourceStatus {
   dataset: string;
@@ -329,6 +331,8 @@ interface Omega {
 
 type DecisionMethod =
   | "robust_baseline_v0"
+  | "robust_residual_v0"
+  | "seasonal_residual_mad_v0"
   | "insufficient_history"
   | "deterministic_guardrail"
   | "dataset_unavailable"
@@ -366,6 +370,56 @@ interface DecisionIntelligence {
     minimum_required: number;
     status: DecisionQualityStatus;
     missing_fields: string[];
+  };
+  calibration?: {
+    raw_probability?: number;
+    calibrated_probability?: number;
+    calibration_applied?: boolean;
+    calibration_reason?: string;
+    calibration_group?: string | null;
+    sample_count?: number;
+    posterior_mean?: number | null;
+    posterior_alpha?: number | null;
+    posterior_beta?: number | null;
+  } | null;
+  time_series?: Record<string, unknown> | null;
+}
+
+interface MonteCarloSummary {
+  status?: string;
+  mode?: string;
+  seed?: number;
+  iterations?: number;
+  reproducibility_hash?: string;
+  distribution_summary?: {
+    p10?: number;
+    p50?: number;
+    p90?: number;
+    probability_loss?: number;
+    probability_breach_threshold?: number | null;
+    expected_value?: number;
+  };
+}
+
+interface MathProvenance {
+  ruleset_version?: string;
+  control_origin?: ControlOrigin | string;
+  formula?: string;
+  input_hash?: string;
+  bayesian_calibration?: {
+    status?: string;
+    reason?: string;
+    group?: string | null;
+    sample_count?: number;
+    raw_probability?: number | null;
+    calibrated_probability?: number | null;
+    posterior_mean?: number | null;
+  };
+  monte_carlo?: {
+    status?: string;
+    mode?: string;
+    seed?: number;
+    reproducibility_hash?: string;
   };
 }
 
@@ -448,6 +502,10 @@ interface ControlItem {
     formula?: string;
     drivers?: ImpactDriver[];
   };
+  control_origin?: ControlOrigin | string | null;
+  capabilities?: Record<string, unknown>;
+  math_provenance?: MathProvenance;
+  monte_carlo?: MonteCarloSummary;
   impact_drivers?: ImpactDriver[];
   thresholds_applied?: DetectionThreshold[];
   related_lessons?: Lesson[];
@@ -822,6 +880,25 @@ function severityTone(severity: Severity): string {
   if (severity === "high") return "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300";
   if (severity === "medium") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+}
+
+function itemOrigin(item: ControlItem): ControlOrigin | string {
+  if (item.control_origin) return item.control_origin;
+  if (item.kind === "agent_alert") return "agent_alert";
+  if (item.kind === "source_state") return "source_state";
+  if (item.kind === "intelligence_signal") return "intelligence_signal";
+  return "rule";
+}
+
+function monteCarloStatus(item: ControlItem): MonteCarloSummary | undefined {
+  const direct = item.monte_carlo;
+  if (direct?.status) return direct;
+  const fromProvenance = item.math_provenance?.monte_carlo;
+  return fromProvenance?.status ? fromProvenance : undefined;
+}
+
+function bayesOrigin(decision?: DecisionIntelligence): "bayesian_calibration" | undefined {
+  return decision?.calibration?.calibration_applied ? "bayesian_calibration" : undefined;
 }
 
 function businessStatusLabel(status?: string | null): string {
@@ -2859,6 +2936,8 @@ function LessonsBoard({ context, lessons, loading, error }: { context: ActiveCon
 }
 
 function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }) {
+  const decisionIntelligence = getDecisionIntelligence(item);
+  const mc = monteCarloStatus(item);
   return (
     <article
       className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#081423] dark:shadow-[0_0_20px_rgba(14,165,233,0.05)]"
@@ -2872,6 +2951,9 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
       <p className="mt-1 text-sm text-muted-foreground">{businessItemLabel(item)}</p>
       <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{businessItemDescription(item)}</p>
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+        <OriginBadge origin={itemOrigin(item)} compact />
+        {bayesOrigin(decisionIntelligence) ? <OriginBadge origin="bayesian_calibration" compact /> : null}
+        {mc?.status === "completed" ? <OriginBadge origin="monte_carlo" label={mc.mode === "template_mode" ? "Monte Carlo template" : "Monte Carlo derivado"} compact /> : null}
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessFrontLabel(item.module)}</span>
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessStatusLabel(item.status)}</span>
         {item.impact_estimate ? <span className="rounded-full border border-emerald-400/30 px-2 py-1 text-emerald-700 dark:text-emerald-200">{fmtMoney(item.impact_estimate, item.impact_currency)}</span> : null}
@@ -2958,7 +3040,12 @@ function DetailPage({
         </button>
         <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(item.severity))}>{severityLabels[item.severity]}</span>
+            <div className="flex flex-wrap gap-2">
+              <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(item.severity))}>{severityLabels[item.severity]}</span>
+              <OriginBadge origin={itemOrigin(item)} compact />
+              {bayesOrigin(getDecisionIntelligence(item)) ? <OriginBadge origin="bayesian_calibration" compact /> : null}
+              {monteCarloStatus(item)?.status === "completed" ? <OriginBadge origin="monte_carlo" compact /> : null}
+            </div>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight">{businessItemTitle(item)}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{businessFrontLabel(item.module)} · {businessItemLabel(item)}</p>
             <p className="mt-3 max-w-3xl text-sm text-muted-foreground">{businessItemDescription(item)}</p>
@@ -3059,6 +3146,8 @@ function ImpactSnapshot({
   const estimate = impact?.estimate ?? item.impact_estimate ?? null;
   const currency = impact?.currency || item.impact_currency || "USD";
   const confidence = typeof impact?.confidence === "number" ? `${Math.round(impact.confidence * 100)}%` : "N/D";
+  const mc = monteCarloStatus(item);
+  const mcSummary = mc?.distribution_summary;
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Impacto operativo">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -3075,6 +3164,30 @@ function ImpactSnapshot({
       {loading ? <div className="mt-3"><StatePanel icon={Loader2} text="Cargando impacto operativo..." spinning /></div> : null}
       {error ? <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
       {impact?.formula ? <p className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">Fórmula: {impact.formula}</p> : null}
+      {item.math_provenance?.formula || item.math_provenance?.input_hash ? (
+        <div className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">
+          <p>Regla matemática: {item.math_provenance?.formula || "Control Room Gold Engine"}</p>
+          {item.math_provenance?.ruleset_version ? <p>Versión: {item.math_provenance.ruleset_version}</p> : null}
+          {item.math_provenance?.input_hash ? <p>Hash de entrada: {item.math_provenance.input_hash}</p> : null}
+        </div>
+      ) : null}
+      {mc?.status ? (
+        <div className="mt-3 rounded-md border bg-background p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <OriginBadge origin="monte_carlo" label={mc.status === "completed" ? "Monte Carlo" : "Monte Carlo no aplicado"} compact />
+            {mc.mode ? <span className="text-xs text-muted-foreground">{mc.mode === "template_mode" ? "template" : "derivado"}</span> : null}
+            {mc.seed !== undefined ? <span className="text-xs text-muted-foreground">seed {mc.seed}</span> : null}
+          </div>
+          {mcSummary ? (
+            <div className="mt-3 grid gap-2 md:grid-cols-4">
+              <InfoBlock label="P10/P50/P90" value={[mcSummary.p10, mcSummary.p50, mcSummary.p90].filter((value) => typeof value === "number").map((value) => formatIntelligenceNumber(value)).join(" / ") || "N/D"} />
+              <InfoBlock label="Riesgo pérdida" value={formatIntelligencePercent(mcSummary.probability_loss)} />
+              <InfoBlock label="Brecha" value={formatIntelligencePercent(mcSummary.probability_breach_threshold ?? undefined)} />
+              <InfoBlock label="Hash" value={mc.reproducibility_hash ? mc.reproducibility_hash.slice(0, 12) : "N/D"} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {drivers.length ? (
         <div className="mt-3 grid gap-2 md:grid-cols-3">
           {drivers.slice(0, 6).map((driver, index) => (
@@ -3214,10 +3327,18 @@ function isDecisionIntelligence(value: unknown): value is DecisionIntelligence {
 
 function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntelligence: DecisionIntelligence }) {
   const quality = decisionIntelligence.data_quality;
+  const calibration = decisionIntelligence.calibration;
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Decision intelligence">
       <div className="flex flex-col gap-1">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Decisión bajo incertidumbre</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Decisión bajo incertidumbre</p>
+          {calibration?.calibration_applied ? (
+            <OriginBadge origin="bayesian_calibration" compact />
+          ) : (
+            <OriginBadge origin="bayesian_calibration" label="Bayes no calibrado" compact className="opacity-80" />
+          )}
+        </div>
         <h4 className="text-base font-semibold">{decisionLabel(decisionIntelligence.recommended_decision)}</h4>
         <p className="text-sm text-muted-foreground">{decisionIntelligence.recommended_next_step}</p>
       </div>
@@ -3233,6 +3354,14 @@ function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntellige
         <InfoBlock label="Riesgo bajista" value={formatDecisionMoney(decisionIntelligence.downside_risk.value, decisionIntelligence.downside_risk.currency)} />
         <InfoBlock label="Intervalo" value={formatDecisionInterval(decisionIntelligence.confidence_interval)} />
       </div>
+      {calibration ? (
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <InfoBlock label="Prob. raw" value={formatDecisionProbability(calibration.raw_probability)} />
+          <InfoBlock label="Prob. calibrada" value={formatDecisionProbability(calibration.calibrated_probability)} />
+          <InfoBlock label="Muestras Bayes" value={calibration.sample_count ?? 0} />
+          <InfoBlock label="Posterior" value={typeof calibration.posterior_mean === "number" ? formatDecisionProbability(calibration.posterior_mean) : calibration.calibration_reason || "No aplicado"} />
+        </div>
+      ) : null}
       <div className="mt-3 rounded-md border bg-background p-3">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div>
@@ -3712,6 +3841,8 @@ function formatDecisionInterval(interval: DecisionIntelligence["confidence_inter
 function methodLabel(method: DecisionMethod) {
   return {
     robust_baseline_v0: "Baseline robusto v0",
+    robust_residual_v0: "Residual robusto v0",
+    seasonal_residual_mad_v0: "Residual estacional MAD v0",
     insufficient_history: "Historia insuficiente",
     deterministic_guardrail: "Regla determinística",
     dataset_unavailable: "Dataset no disponible",

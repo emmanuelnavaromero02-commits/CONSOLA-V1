@@ -322,6 +322,8 @@ export interface Omega {
 
 export type DecisionMethod =
   | "robust_baseline_v0"
+  | "robust_residual_v0"
+  | "seasonal_residual_mad_v0"
   | "insufficient_history"
   | "deterministic_guardrail"
   | "dataset_unavailable"
@@ -359,6 +361,65 @@ export interface DecisionIntelligence {
     minimum_required: number;
     status: DecisionQualityStatus;
     missing_fields: string[];
+  };
+  calibration?: {
+    raw_probability?: number;
+    calibrated_probability?: number;
+    calibration_applied?: boolean;
+    calibration_reason?: string;
+    calibration_group?: string | null;
+    sample_count?: number;
+    posterior_mean?: number | null;
+    posterior_alpha?: number | null;
+    posterior_beta?: number | null;
+  } | null;
+  time_series?: Record<string, unknown> | null;
+}
+
+export type ControlOrigin =
+  | "rule"
+  | "generic_gold_signal"
+  | "intelligence_signal"
+  | "agent_alert"
+  | "source_state"
+  | "monte_carlo"
+  | "bayesian_calibration";
+
+export interface MonteCarloSummary {
+  status?: string;
+  mode?: string;
+  seed?: number;
+  iterations?: number;
+  reproducibility_hash?: string;
+  distribution_summary?: {
+    p10?: number;
+    p50?: number;
+    p90?: number;
+    probability_loss?: number;
+    probability_breach_threshold?: number | null;
+    expected_value?: number;
+  };
+}
+
+export interface MathProvenance {
+  ruleset_version?: string;
+  control_origin?: ControlOrigin | string;
+  formula?: string;
+  input_hash?: string;
+  bayesian_calibration?: {
+    status?: string;
+    reason?: string;
+    group?: string | null;
+    sample_count?: number;
+    raw_probability?: number | null;
+    calibrated_probability?: number | null;
+    posterior_mean?: number | null;
+  };
+  monte_carlo?: {
+    status?: string;
+    mode?: string;
+    seed?: number;
+    reproducibility_hash?: string;
   };
 }
 
@@ -441,6 +502,10 @@ export interface ControlItem {
     formula?: string;
     drivers?: ImpactDriver[];
   };
+  control_origin?: ControlOrigin | string | null;
+  capabilities?: Record<string, unknown>;
+  math_provenance?: MathProvenance;
+  monte_carlo?: MonteCarloSummary;
   impact_drivers?: ImpactDriver[];
   thresholds_applied?: DetectionThreshold[];
   related_lessons?: Lesson[];

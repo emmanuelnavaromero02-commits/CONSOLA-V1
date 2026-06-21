@@ -452,6 +452,37 @@ async def publish_control_room_item(
         if isinstance(decision_intelligence.get("expected_impact"), dict)
         else {}
     )
+    control_origin = str(
+        artifact.get("control_origin")
+        or signal.get("control_origin")
+        or "intelligence_signal"
+    )
+    math_provenance = (
+        artifact.get("math_provenance")
+        if isinstance(artifact.get("math_provenance"), dict)
+        else signal.get("math_provenance")
+        if isinstance(signal.get("math_provenance"), dict)
+        else {}
+    )
+    monte_carlo_payload = (
+        artifact.get("monte_carlo")
+        if isinstance(artifact.get("monte_carlo"), dict)
+        else signal.get("monte_carlo")
+        if isinstance(signal.get("monte_carlo"), dict)
+        else {}
+    )
+    priority_payload = (
+        artifact.get("priority")
+        if isinstance(artifact.get("priority"), dict)
+        else signal.get("priority")
+        if isinstance(signal.get("priority"), dict)
+        else {}
+    )
+    capabilities = (
+        artifact.get("capabilities")
+        if isinstance(artifact.get("capabilities"), dict)
+        else {}
+    )
     time_series = (
         decision_intelligence.get("time_series")
         if isinstance(decision_intelligence.get("time_series"), dict)
@@ -481,7 +512,16 @@ async def publish_control_room_item(
         "freshness_at": freshness_at,
         "freshness_field": freshness_field,
         "data_status": "gold_ready",
-        "source": "intelligence_engine",
+        "source": (
+            "gold_control_room_engine"
+            if control_origin == "generic_gold_signal"
+            else "intelligence_engine"
+        ),
+        "control_origin": control_origin,
+        "capabilities": public_json(capabilities),
+        "math_provenance": public_json(math_provenance),
+        "priority": public_json(priority_payload),
+        "monte_carlo": public_json(monte_carlo_payload),
         "run_mode": signal.get("run_mode"),
         "evidence_pack_id": evidence_pack_id,
         "intelligence_run_id": signal.get("intelligence_run_id"),
@@ -512,8 +552,12 @@ async def publish_control_room_item(
             "freshness_at": freshness_at,
             "freshness_field": freshness_field,
             "source": "intelligence_engine",
+            "control_origin": control_origin,
             "run_mode": signal.get("run_mode"),
             "decision_intelligence_method": decision_intelligence.get("method"),
+            "math_ruleset_version": math_provenance.get("ruleset_version"),
+            "monte_carlo_status": monte_carlo_payload.get("status"),
+            "monte_carlo_mode": monte_carlo_payload.get("mode"),
             "time_series_method": time_series.get("method"),
             "residual_z": time_series_residual.get("robust_z"),
             "seasonality_status": time_series_seasonality.get("status"),
@@ -524,18 +568,21 @@ async def publish_control_room_item(
         "sql": (evidence_items or [{}])[0].get("query_text"),
         "intelligence": public_json(artifact),
     }
-    priority_score = int(
-        max(
-            0,
-            min(
-                100,
-                round(
-                    float(signal["confidence"]) * 45
-                    + abs(float(signal["deviation_pct"])) * 55
+    if priority_payload.get("score") is not None:
+        priority_score = int(priority_payload["score"])
+    else:
+        priority_score = int(
+            max(
+                0,
+                min(
+                    100,
+                    round(
+                        float(signal["confidence"]) * 45
+                        + abs(float(signal["deviation_pct"])) * 55
+                    ),
                 ),
-            ),
+            )
         )
-    )
     await pool.execute(
         """
         INSERT INTO control_room_items (

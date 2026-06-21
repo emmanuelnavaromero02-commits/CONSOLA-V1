@@ -1,11 +1,24 @@
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, CheckCircle2, Clock3, LockKeyhole, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, BrainCircuit, CheckCircle2, Clock3, Cpu, Database, LockKeyhole, SlidersHorizontal, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { DataReadiness, SourceRollup, SourceState } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 export type ControlRoomStatus = DataReadiness | SourceState | SourceRollup | "error";
+export type ControlOrigin =
+  | "rule"
+  | "generic_gold_signal"
+  | "gold_generic"
+  | "intelligence_signal"
+  | "intelligence"
+  | "bayes"
+  | "bayesian_calibration"
+  | "monte_carlo"
+  | "agent_alert"
+  | "agent"
+  | "source_health"
+  | "source_state";
 
 export const readinessLabels: Record<string, string> = {
   ready: "Listo",
@@ -70,6 +83,79 @@ export function ReadinessBadge({
     >
       <ReadinessStatusIcon status={status} className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
       {label || readinessLabels[status || "missing"] || String(status || "missing")}
+    </span>
+  );
+}
+
+export const originLabels: Record<string, string> = {
+  rule: "Regla",
+  generic_gold_signal: "Gold generico",
+  gold_generic: "Gold generico",
+  intelligence_signal: "Intelligence",
+  intelligence: "Intelligence",
+  bayes: "Bayes",
+  bayesian_calibration: "Bayes",
+  monte_carlo: "Monte Carlo",
+  agent_alert: "Agent",
+  agent: "Agent",
+  source_health: "Salud fuente",
+  source_state: "Salud fuente",
+};
+
+function originTone(origin?: string): string {
+  if (origin === "generic_gold_signal" || origin === "gold_generic") {
+    return "border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300";
+  }
+  if (origin === "intelligence_signal" || origin === "intelligence") {
+    return "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300";
+  }
+  if (origin === "bayes" || origin === "bayesian_calibration") {
+    return "border-indigo-500/40 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
+  }
+  if (origin === "monte_carlo") {
+    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  }
+  if (origin === "agent_alert" || origin === "agent") {
+    return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  if (origin === "source_health" || origin === "source_state") {
+    return "border-slate-500/40 bg-slate-500/10 text-slate-700 dark:text-slate-300";
+  }
+  return "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+}
+
+function OriginIcon({ origin, className }: { origin?: string; className: string }) {
+  if (origin === "generic_gold_signal" || origin === "gold_generic") return <Database aria-hidden className={className} />;
+  if (origin === "intelligence_signal" || origin === "intelligence") return <BrainCircuit aria-hidden className={className} />;
+  if (origin === "bayes" || origin === "bayesian_calibration") return <SlidersHorizontal aria-hidden className={className} />;
+  if (origin === "monte_carlo") return <Cpu aria-hidden className={className} />;
+  if (origin === "agent_alert" || origin === "agent") return <Bot aria-hidden className={className} />;
+  return <CheckCircle2 aria-hidden className={className} />;
+}
+
+export function OriginBadge({
+  origin,
+  label,
+  compact = false,
+  className,
+}: {
+  origin?: ControlOrigin | string | null;
+  label?: string;
+  compact?: boolean;
+  className?: string;
+}) {
+  const key = String(origin || "rule");
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border font-medium",
+        compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs",
+        originTone(key),
+        className,
+      )}
+    >
+      <OriginIcon origin={key} className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
+      {label || originLabels[key] || key}
     </span>
   );
 }

@@ -12,6 +12,7 @@ from app.services.intelligence.decision_intelligence import (
 )
 from app.services.intelligence.evidence import dataset_evidence_pack
 from app.services.intelligence.external import build_external_evidence
+from app.services.intelligence.gold_control_room import enrich_artifact
 from app.services.intelligence.hypotheses import hypotheses
 from app.services.intelligence.prediction import build_prediction_signal
 from app.services.intelligence.scoring import decision_options
@@ -403,7 +404,7 @@ def _artifact(
             calibration_group=calibration_group,
         )
     signal["decision_intelligence"] = decision_intelligence
-    return {
+    artifact = {
         "baseline": baseline_payload,
         "signal": signal,
         "evidence_pack": evidence,
@@ -412,6 +413,7 @@ def _artifact(
         "options": decision_options(signal, metric),
         "outcome": None,
     }
+    return enrich_artifact(artifact, metric=metric)
 
 
 def _select_calibration_state(

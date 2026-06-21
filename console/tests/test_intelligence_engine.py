@@ -844,9 +844,56 @@ async def test_run_intelligence_gold_refresh_filters_datasets_and_uses_run_ref(
     assert result["datasets_requested"] == ["forecast_mensual"]
     assert finished[0]["status"] == "completed"
     assert finished[0]["datasets_evaluated"][0]["dataset"] == "forecast_mensual"
-    assert result["skipped_counts"] == {"missing_simulation_template": 1}
+    assert result["skipped_counts"] == {}
+    assert result["monte_carlo_counts"] == {"completed": 1}
+    assert result["math_ruleset_version"] == "control_room_gold_signal.v1"
     assert events[0]["metadata"]["run_mode"] == "gold_refresh"
     assert events[0]["metadata"]["datasets_requested"] == ["forecast_mensual"]
+    assert events[0]["metadata"]["monte_carlo_counts"] == {"completed": 1}
+
+
+@pytest.mark.asyncio
+async def test_run_intelligence_gold_refresh_infers_generic_signal_for_missing_contract(
+    monkeypatch,
+):
+    async def fake_fetcher(dataset: str, user: dict | None, limit: int):
+        assert dataset == "new_gold_dataset"
+        assert user == USER
+        assert limit >= 3
+        return [
+            {"mes": "2026-01-01", "account": "A", "amount": 100},
+            {"mes": "2026-02-01", "account": "A", "amount": 110},
+            {"mes": "2026-03-01", "account": "A", "amount": 220},
+        ]
+
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
+    )
+
+    result = await intelligence_engine.run_intelligence(
+        USER,
+        {
+            "cartridge_id": "hubspot",
+            "datasets": ["new_gold_dataset"],
+            "run_mode": "gold_refresh",
+        },
+        fetcher=fake_fetcher,
+        persist=False,
+    )
+
+    assert result["generic_gold_signal_count"] == 1
+    assert result["monte_carlo_counts"] == {"completed": 1}
+    assert result["skipped_counts"]["missing_contract"] == 1
+    artifact = result["artifacts"][0]
+    assert artifact["control_origin"] == "generic_gold_signal"
+    assert artifact["signal"]["control_origin"] == "generic_gold_signal"
+    assert artifact["signal"]["dataset"] == "new_gold_dataset"
+    assert artifact["signal"]["metric"] == "generic_amount"
+    assert artifact["math_provenance"]["control_origin"] == "generic_gold_signal"
+    assert artifact["monte_carlo"]["mode"] == "derived_mode"
+    assert artifact["monte_carlo"]["reproducibility_hash"]
 
 
 @pytest.mark.asyncio

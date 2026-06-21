@@ -46,6 +46,16 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("expected_outcome");
   });
 
+  it("surfaces deterministic math provenance and control origins", () => {
+    expect(pageSource).toContain("OriginBadge");
+    expect(pageSource).toContain("type ControlOrigin");
+    expect(pageSource).toContain("math_provenance");
+    expect(pageSource).toContain("monte_carlo");
+    expect(pageSource).toContain("generic_gold_signal");
+    expect(pageSource).toContain("bayesian_calibration");
+    expect(pageSource).toContain("monte_carlo");
+  });
+
   it("keeps the executive room self-contained and does not depend on the reference HTML", () => {
     expect(pageSource).not.toContain("sourceCatalogHref");
     expect(pageSource).not.toContain("sourceDataHref");
