@@ -64,6 +64,9 @@ compose_files() {
 psql_main() {
   docker compose $(compose_files) exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d modecissions -tAc "$1" 2>&1 | tr -d '\r'
 }
+psql_gold() {
+  docker compose $(compose_files) exec -T postgres_gold psql -v ON_ERROR_STOP=1 -U postgres -d modecissions_gold -p 5433 -tAc "$1" 2>&1 | tr -d '\r'
+}
 cd "$DEPLOY_DIR"
 
 writeback="$(env_value CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK | tr '[:upper:]' '[:lower:]')"
@@ -76,7 +79,7 @@ case "$writeback" in
     ;;
 esac
 
-scope="$(psql_main "
+scope="$(psql_gold "
 SELECT tenant_id::text || '|' || workspace_id::text
   FROM public.gold_consultor_mensual
  WHERE tenant_id IS NOT NULL
