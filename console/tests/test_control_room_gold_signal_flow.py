@@ -341,6 +341,12 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
             "control_origin": "intelligence_signal",
             "formula": "baseline -> deviation -> robust residual/MAD -> probability",
             "input_hash": "abc123",
+            "bayesian_calibration": {
+                "status": "not_calibrated",
+                "reason": "missing_calibration_state",
+                "sample_count": 0,
+                "raw_probability": 0.88,
+            },
         },
         "priority": {
             "score": 91,
@@ -352,6 +358,12 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
             "mode": "derived_mode",
             "seed": 123,
             "reproducibility_hash": "mc-hash",
+        },
+        "bayesian_calibration": {
+            "status": "not_calibrated",
+            "reason": "missing_calibration_state",
+            "sample_count": 0,
+            "raw_probability": 0.88,
         },
     }
     mock_pool = AsyncMock()
@@ -375,6 +387,8 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
     assert metadata["priority"]["score"] == 91
     assert metadata["priority"]["drivers"]["severity"] == 26
     assert metadata["monte_carlo"]["mode"] == "derived_mode"
+    assert metadata["bayesian_calibration"]["status"] == "not_calibrated"
+    assert metadata["details"]["bayesian_calibration_status"] == "not_calibrated"
     assert metadata["details"]["decision_intelligence_method"] == "robust_residual_v0"
     assert metadata["details"]["time_series_method"] == "robust_residual_v0"
     assert metadata["details"]["residual_z"] == 94
@@ -496,6 +510,12 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
                 "missing_fields": [],
             },
         },
+        "bayesian_calibration": {
+            "status": "not_calibrated",
+            "reason": "missing_calibration_state",
+            "sample_count": 0,
+            "raw_probability": 0.95,
+        },
         "intelligence": {
             "signal": {"signal_id": "intel:replicon-gold"},
             "decision_intelligence": {
@@ -566,6 +586,7 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
     assert item["intelligence"]["decision_intelligence"] == decision
     assert item["omega"]["decision_intelligence"] == decision
     assert item["omega"]["intelligence"]["decision_intelligence"] == decision
+    assert item["bayesian_calibration"]["status"] == "not_calibrated"
 
 
 @pytest.mark.asyncio

@@ -223,6 +223,76 @@ def test_build_metric_artifacts_applies_live_bayesian_calibration_metadata():
     assert "not a calibrated Bayesian posterior" not in decision["rationale"]
 
 
+def test_build_metric_artifacts_runs_template_monte_carlo_and_explicit_bayes_status():
+    rows = [
+        {
+            "mes": "2026-01-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        },
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 120,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 110,
+        },
+        {
+            "mes": "2026-04-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 200,
+        },
+    ]
+    metric = {
+        **_metric(),
+        "simulation_template": {
+            "id": "forecast_recovery_v1",
+            "iterations": 250,
+            "output_metric": "net_value",
+            "breach_threshold": "$signal.expected_value",
+            "breach_direction": "below",
+            "input_variables": {
+                "baseline_value": {"type": "fixed", "value": "$signal.expected_value"},
+                "expected_delta": {
+                    "type": "normal",
+                    "mean": "$signal.deviation_value",
+                    "stddev": 5,
+                },
+                "cost_per_day": {
+                    "type": "fixed",
+                    "value": "$decision.cost_of_delay.value_per_day",
+                },
+                "delay_days": {"type": "triangular", "low": 0, "mode": 1, "high": 7},
+                "probability_of_delay": {"type": "fixed", "value": 0.5},
+            },
+        },
+    }
+
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(), metric, rows
+    )
+
+    assert skipped == []
+    artifact = artifacts[0]
+    decision = artifact["decision_intelligence"]
+    assert artifact["monte_carlo"]["status"] == "completed"
+    assert artifact["monte_carlo"]["mode"] == "template_mode"
+    assert artifact["monte_carlo"]["reproducibility_hash"]
+    assert artifact["math_provenance"]["monte_carlo"]["mode"] == "template_mode"
+    assert artifact["bayesian_calibration"]["status"] == "not_calibrated"
+    assert artifact["bayesian_calibration"]["raw_probability"] == pytest.approx(
+        decision["anomaly_probability"]
+    )
+    assert artifact["capabilities"]["bayesian_calibration"] == "not_calibrated"
+
+
 def test_control_room_event_actor_id_accepts_numeric_strings_only():
     assert intelligence_persistence._actor_id(7) == 7
     assert intelligence_persistence._actor_id("7") == 7

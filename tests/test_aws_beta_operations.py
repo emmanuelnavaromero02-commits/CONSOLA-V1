@@ -44,6 +44,9 @@ def test_makefile_exposes_aws_beta_operational_targets() -> None:
         "backup-aws:": "scripts/aws_backup.py",
         "dr-rehearsal-aws:": "scripts/aws_dr_rehearsal.py",
         "rollback-aws:": "scripts/aws_rollback.py",
+        "control-room-gold-engine-aws-probe:": (
+            "scripts/aws_control_room_gold_engine_probe.py"
+        ),
     }.items():
         assert target in makefile
         assert script in makefile
@@ -146,6 +149,26 @@ def test_seed_replicon_beta_gold_aws_requires_scope_and_three_runs() -> None:
         "OMEGA_SEED_VERIFY_IDEMPOTENT_RUNS",
         "Replicon seed idempotent",
         "before_equals_after",
+        "remote_stdout_redacted.txt",
+    ):
+        assert needle in source
+
+
+def test_control_room_gold_engine_aws_probe_validates_refresh_loop() -> None:
+    source = _read("scripts/aws_control_room_gold_engine_probe.py")
+    ast.parse(source)
+    for needle in (
+        "/internal/intelligence/gold-refresh",
+        "intelligence_gold_refresh_internal",
+        "gold-refresh:${workspace_id}:replicon:${dag_run_id}",
+        "idempotent",
+        "control_room_item_events",
+        "metadata ? 'math_provenance'",
+        "metadata ? 'priority'",
+        "metadata ? 'monte_carlo'",
+        "metadata ? 'bayesian_calibration'",
+        "metadata ? 'evidence_pack'",
+        "external writeback disabled",
         "remote_stdout_redacted.txt",
     ):
         assert needle in source

@@ -478,6 +478,15 @@ async def publish_control_room_item(
         if isinstance(signal.get("priority"), dict)
         else {}
     )
+    bayesian_calibration = (
+        artifact.get("bayesian_calibration")
+        if isinstance(artifact.get("bayesian_calibration"), dict)
+        else signal.get("bayesian_calibration")
+        if isinstance(signal.get("bayesian_calibration"), dict)
+        else math_provenance.get("bayesian_calibration")
+        if isinstance(math_provenance.get("bayesian_calibration"), dict)
+        else {}
+    )
     capabilities = (
         artifact.get("capabilities")
         if isinstance(artifact.get("capabilities"), dict)
@@ -522,6 +531,7 @@ async def publish_control_room_item(
         "math_provenance": public_json(math_provenance),
         "priority": public_json(priority_payload),
         "monte_carlo": public_json(monte_carlo_payload),
+        "bayesian_calibration": public_json(bayesian_calibration),
         "run_mode": signal.get("run_mode"),
         "evidence_pack_id": evidence_pack_id,
         "intelligence_run_id": signal.get("intelligence_run_id"),
@@ -558,6 +568,8 @@ async def publish_control_room_item(
             "math_ruleset_version": math_provenance.get("ruleset_version"),
             "monte_carlo_status": monte_carlo_payload.get("status"),
             "monte_carlo_mode": monte_carlo_payload.get("mode"),
+            "bayesian_calibration_status": bayesian_calibration.get("status"),
+            "bayesian_calibration_reason": bayesian_calibration.get("reason"),
             "time_series_method": time_series.get("method"),
             "residual_z": time_series_residual.get("robust_z"),
             "seasonality_status": time_series_seasonality.get("status"),

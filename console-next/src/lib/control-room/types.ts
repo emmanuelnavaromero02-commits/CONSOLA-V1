@@ -401,20 +401,24 @@ export interface MonteCarloSummary {
   };
 }
 
+export interface BayesianCalibrationSummary {
+  status?: string;
+  reason?: string;
+  group?: string | null;
+  sample_count?: number;
+  raw_probability?: number | null;
+  calibrated_probability?: number | null;
+  posterior_mean?: number | null;
+  posterior_alpha?: number | null;
+  posterior_beta?: number | null;
+}
+
 export interface MathProvenance {
   ruleset_version?: string;
   control_origin?: ControlOrigin | string;
   formula?: string;
   input_hash?: string;
-  bayesian_calibration?: {
-    status?: string;
-    reason?: string;
-    group?: string | null;
-    sample_count?: number;
-    raw_probability?: number | null;
-    calibrated_probability?: number | null;
-    posterior_mean?: number | null;
-  };
+  bayesian_calibration?: BayesianCalibrationSummary;
   monte_carlo?: {
     status?: string;
     mode?: string;
@@ -506,6 +510,7 @@ export interface ControlItem {
   capabilities?: Record<string, unknown>;
   math_provenance?: MathProvenance;
   monte_carlo?: MonteCarloSummary;
+  bayesian_calibration?: BayesianCalibrationSummary;
   impact_drivers?: ImpactDriver[];
   thresholds_applied?: DetectionThreshold[];
   related_lessons?: Lesson[];

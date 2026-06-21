@@ -40,6 +40,47 @@ metrics:
     signal_rules:
       warning_pct: 0.18
       critical_pct: 0.35
+    simulation_template:
+      id: project_margin_recovery_v1
+      iterations: 1000
+      output_metric: net_value
+      breach_threshold: "$signal.expected_value"
+      breach_direction: below
+      input_variables:
+        baseline_value:
+          type: fixed
+          value: "$signal.expected_value"
+        expected_delta:
+          type: normal
+          mean: "$signal.deviation_value"
+          stddev: 2500
+        cost_per_day:
+          type: fixed
+          value: "$decision.cost_of_delay.value_per_day"
+        delay_days:
+          type: triangular
+          low: 0
+          mode: 3
+          high: 14
+        probability_of_delay:
+          type: fixed
+          value: 0.5
+        adoption_rate:
+          type: triangular
+          low: 0.4
+          mode: 0.75
+          high: 0.95
+        recovery_rate:
+          type: triangular
+          low: 0.1
+          mode: 0.35
+          high: 0.65
+        fixed_cost:
+          type: fixed
+          value: 900
+      assumptions:
+        contract_version: replicon_project_margin_v1
+        writeback: supervised_internal_only
     action_templates:
       - id: review_project_margin
         label: Revisar margen con Revenue Manager
@@ -91,6 +132,47 @@ metrics:
     signal_rules:
       warning_pct: 0.20
       critical_pct: 0.40
+    simulation_template:
+      id: billable_hours_recovery_v1
+      iterations: 1000
+      output_metric: net_value
+      breach_threshold: "$signal.expected_value"
+      breach_direction: below
+      input_variables:
+        baseline_value:
+          type: fixed
+          value: "$signal.expected_value"
+        expected_delta:
+          type: normal
+          mean: "$signal.deviation_value"
+          stddev: 8
+        cost_per_day:
+          type: fixed
+          value: "$decision.cost_of_delay.value_per_day"
+        delay_days:
+          type: triangular
+          low: 0
+          mode: 2
+          high: 10
+        probability_of_delay:
+          type: fixed
+          value: 0.55
+        adoption_rate:
+          type: triangular
+          low: 0.45
+          mode: 0.75
+          high: 0.95
+        recovery_rate:
+          type: triangular
+          low: 0.2
+          mode: 0.5
+          high: 0.8
+        fixed_cost:
+          type: fixed
+          value: 200
+      assumptions:
+        contract_version: replicon_billable_hours_v1
+        writeback: supervised_internal_only
     action_templates:
       - id: rebalance_assignment
         label: Rebalancear asignacion del consultor

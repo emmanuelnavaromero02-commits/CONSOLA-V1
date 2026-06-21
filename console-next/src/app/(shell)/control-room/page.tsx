@@ -401,20 +401,24 @@ interface MonteCarloSummary {
   };
 }
 
+interface BayesianCalibrationSummary {
+  status?: string;
+  reason?: string;
+  group?: string | null;
+  sample_count?: number;
+  raw_probability?: number | null;
+  calibrated_probability?: number | null;
+  posterior_mean?: number | null;
+  posterior_alpha?: number | null;
+  posterior_beta?: number | null;
+}
+
 interface MathProvenance {
   ruleset_version?: string;
   control_origin?: ControlOrigin | string;
   formula?: string;
   input_hash?: string;
-  bayesian_calibration?: {
-    status?: string;
-    reason?: string;
-    group?: string | null;
-    sample_count?: number;
-    raw_probability?: number | null;
-    calibrated_probability?: number | null;
-    posterior_mean?: number | null;
-  };
+  bayesian_calibration?: BayesianCalibrationSummary;
   monte_carlo?: {
     status?: string;
     mode?: string;
@@ -506,6 +510,7 @@ interface ControlItem {
   capabilities?: Record<string, unknown>;
   math_provenance?: MathProvenance;
   monte_carlo?: MonteCarloSummary;
+  bayesian_calibration?: BayesianCalibrationSummary;
   impact_drivers?: ImpactDriver[];
   thresholds_applied?: DetectionThreshold[];
   related_lessons?: Lesson[];
@@ -897,8 +902,30 @@ function monteCarloStatus(item: ControlItem): MonteCarloSummary | undefined {
   return fromProvenance?.status ? fromProvenance : undefined;
 }
 
-function bayesOrigin(decision?: DecisionIntelligence): "bayesian_calibration" | undefined {
-  return decision?.calibration?.calibration_applied ? "bayesian_calibration" : undefined;
+function bayesianCalibrationStatus(
+  item: ControlItem,
+  decision?: DecisionIntelligence,
+): BayesianCalibrationSummary | undefined {
+  if (item.bayesian_calibration?.status) return item.bayesian_calibration;
+  const fromProvenance = item.math_provenance?.bayesian_calibration;
+  if (fromProvenance?.status) return fromProvenance;
+  const calibration = decision?.calibration;
+  if (!calibration) return undefined;
+  return {
+    status: calibration.calibration_applied ? "calibrated" : "not_calibrated",
+    reason: calibration.calibration_reason,
+    group: calibration.calibration_group,
+    sample_count: calibration.sample_count,
+    raw_probability: calibration.raw_probability,
+    calibrated_probability: calibration.calibrated_probability,
+    posterior_mean: calibration.posterior_mean,
+    posterior_alpha: calibration.posterior_alpha,
+    posterior_beta: calibration.posterior_beta,
+  };
+}
+
+function bayesianBadgeLabel(calibration?: BayesianCalibrationSummary): string {
+  return calibration?.status === "calibrated" ? "Bayes calibrado" : "Bayes no calibrado";
 }
 
 function businessStatusLabel(status?: string | null): string {
@@ -2938,6 +2965,7 @@ function LessonsBoard({ context, lessons, loading, error }: { context: ActiveCon
 function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }) {
   const decisionIntelligence = getDecisionIntelligence(item);
   const mc = monteCarloStatus(item);
+  const bayesian = bayesianCalibrationStatus(item, decisionIntelligence);
   return (
     <article
       className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#081423] dark:shadow-[0_0_20px_rgba(14,165,233,0.05)]"
@@ -2952,7 +2980,7 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
       <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{businessItemDescription(item)}</p>
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
         <OriginBadge origin={itemOrigin(item)} compact />
-        {bayesOrigin(decisionIntelligence) ? <OriginBadge origin="bayesian_calibration" compact /> : null}
+        {bayesian ? <OriginBadge origin="bayesian_calibration" label={bayesianBadgeLabel(bayesian)} compact className={bayesian.status === "calibrated" ? undefined : "opacity-80"} /> : null}
         {mc?.status === "completed" ? <OriginBadge origin="monte_carlo" label={mc.mode === "template_mode" ? "Monte Carlo template" : "Monte Carlo derivado"} compact /> : null}
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessFrontLabel(item.module)}</span>
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessStatusLabel(item.status)}</span>
@@ -3032,6 +3060,8 @@ function DetailPage({
   onRecordIntelligenceOutcome: (item: ControlItem, draft: IntelligenceOutcomeDraft) => void;
   onApplyLesson: (item: ControlItem, lesson: Lesson) => void;
 }) {
+  const decisionIntelligence = getDecisionIntelligence(item);
+  const bayesian = bayesianCalibrationStatus(item, decisionIntelligence);
   return (
     <section className="space-y-4">
       <div className="rounded-lg border bg-card p-4">
@@ -3043,7 +3073,7 @@ function DetailPage({
             <div className="flex flex-wrap gap-2">
               <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(item.severity))}>{severityLabels[item.severity]}</span>
               <OriginBadge origin={itemOrigin(item)} compact />
-              {bayesOrigin(getDecisionIntelligence(item)) ? <OriginBadge origin="bayesian_calibration" compact /> : null}
+              {bayesian ? <OriginBadge origin="bayesian_calibration" label={bayesianBadgeLabel(bayesian)} compact className={bayesian.status === "calibrated" ? undefined : "opacity-80"} /> : null}
               {monteCarloStatus(item)?.status === "completed" ? <OriginBadge origin="monte_carlo" compact /> : null}
             </div>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight">{businessItemTitle(item)}</h2>

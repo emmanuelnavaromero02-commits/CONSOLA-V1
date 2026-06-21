@@ -38,15 +38,18 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
 
     async def fake_run_intelligence(user: dict, payload: dict, *, persist: bool):
         calls.append({"user": user, "payload": payload, "persist": persist})
+        idempotent = len(calls) > 1
         return {
             "run_ref": payload["run_ref"],
             "intelligence_run_id": 77,
-            "signals": [{"signal_id": "intel:test"}],
-            "skipped": [{"status": "missing_simulation_template"}],
-            "skipped_counts": {"missing_simulation_template": 1},
+            "signals": [] if idempotent else [{"signal_id": "intel:test"}],
+            "skipped": [] if idempotent else [{"status": "missing_simulation_template"}],
+            "skipped_counts": {}
+            if idempotent
+            else {"missing_simulation_template": 1},
             "dataset_unavailable_count": 0,
             "insufficient_history_count": 0,
-            "idempotent": False,
+            "idempotent": idempotent,
         }
 
     def fake_invalidate(user: dict) -> None:
@@ -67,10 +70,19 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
         _request(),
         internal_service="airflow",
     )
+    retry_response = await intelligence_router.intelligence_gold_refresh_internal(
+        _request(),
+        internal_service="airflow",
+    )
 
     assert response["ok"] is True
     assert response["signals"] == 1
     assert response["skipped"] == 1
+    assert response["idempotent"] is False
+    assert retry_response["ok"] is True
+    assert retry_response["signals"] == 0
+    assert retry_response["skipped"] == 0
+    assert retry_response["idempotent"] is True
     assert response["run_ref"] == (
         "gold-refresh:"
         "workspace-1:"
@@ -78,6 +90,8 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
         "scheduled__2026-06-19T00:00:00+00:00"
     )
     assert invalidated[0]["active_workspace_id"] == "workspace-1"
+    assert invalidated[1]["active_workspace_id"] == "workspace-1"
+    assert len(calls) == 2
     call = calls[0]
     assert call["persist"] is True
     assert call["user"]["email"] == "airflow@internal"

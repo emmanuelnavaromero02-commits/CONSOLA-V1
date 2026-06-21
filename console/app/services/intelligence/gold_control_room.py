@@ -33,6 +33,7 @@ def enrich_artifact(
         decision=decision,
         metric=metric,
     )
+    bayesian_calibration = bayesian_calibration_payload(decision)
     priority = priority_breakdown(
         signal=signal,
         decision=decision,
@@ -46,28 +47,62 @@ def enrich_artifact(
         control_origin=control_origin,
         priority=priority,
         monte_carlo_payload=monte_carlo_payload,
+        bayesian_calibration=bayesian_calibration,
     )
     artifact["control_origin"] = control_origin
-    artifact["capabilities"] = capabilities_for_metric(metric, monte_carlo_payload)
+    artifact["capabilities"] = capabilities_for_metric(
+        metric,
+        monte_carlo_payload,
+        bayesian_calibration,
+    )
     artifact["math_provenance"] = provenance
     artifact["priority"] = priority
     artifact["monte_carlo"] = monte_carlo_payload
+    artifact["bayesian_calibration"] = bayesian_calibration
     signal["control_origin"] = control_origin
     signal["math_provenance"] = provenance
     signal["priority"] = priority
     signal["monte_carlo"] = monte_carlo_payload
+    signal["bayesian_calibration"] = bayesian_calibration
     return artifact
+
+
+def bayesian_calibration_payload(decision: dict[str, Any]) -> dict[str, Any]:
+    calibration = (
+        decision.get("calibration")
+        if isinstance(decision.get("calibration"), dict)
+        else {}
+    )
+    raw_probability = calibration.get("raw_probability")
+    if raw_probability is None:
+        raw_probability = decision.get("anomaly_probability")
+    applied = bool(calibration.get("calibration_applied"))
+    return {
+        "status": "calibrated" if applied else "not_calibrated",
+        "reason": calibration.get("calibration_reason") or "not_available",
+        "group": calibration.get("calibration_group"),
+        "sample_count": calibration.get("sample_count", 0),
+        "raw_probability": raw_probability,
+        "calibrated_probability": calibration.get("calibrated_probability")
+        if applied
+        else None,
+        "posterior_mean": calibration.get("posterior_mean"),
+        "posterior_alpha": calibration.get("posterior_alpha"),
+        "posterior_beta": calibration.get("posterior_beta"),
+    }
 
 
 def capabilities_for_metric(
     metric: dict[str, Any],
     monte_carlo_payload: dict[str, Any],
+    bayesian_calibration: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "readiness": "gold_ready",
         "contract": "declared" if metric.get("_generic_inferred") is not True else "inferred",
         "intelligence": "available",
-        "bayesian_calibration": "available_when_observed_outcomes_exist",
+        "bayesian_calibration": bayesian_calibration.get("status", "not_calibrated"),
+        "bayesian_calibration_reason": bayesian_calibration.get("reason"),
         "monte_carlo": monte_carlo_payload.get("status", "skipped"),
         "monte_carlo_mode": monte_carlo_payload.get("mode"),
         "action": "supervised_internal",
@@ -83,12 +118,8 @@ def math_provenance(
     control_origin: str,
     priority: dict[str, Any],
     monte_carlo_payload: dict[str, Any],
+    bayesian_calibration: dict[str, Any],
 ) -> dict[str, Any]:
-    calibration = (
-        decision.get("calibration")
-        if isinstance(decision.get("calibration"), dict)
-        else None
-    )
     time_series = (
         decision.get("time_series")
         if isinstance(decision.get("time_series"), dict)
@@ -135,17 +166,7 @@ def math_provenance(
         }
         if time_series
         else None,
-        "bayesian_calibration": {
-            "status": "calibrated" if calibration and calibration.get("calibration_applied") else "not_calibrated",
-            "reason": (calibration or {}).get("calibration_reason") or "not_available",
-            "group": (calibration or {}).get("calibration_group"),
-            "sample_count": (calibration or {}).get("sample_count", 0),
-            "raw_probability": (calibration or {}).get("raw_probability"),
-            "calibrated_probability": (calibration or {}).get("calibrated_probability"),
-            "posterior_mean": (calibration or {}).get("posterior_mean"),
-            "posterior_alpha": (calibration or {}).get("posterior_alpha"),
-            "posterior_beta": (calibration or {}).get("posterior_beta"),
-        },
+        "bayesian_calibration": bayesian_calibration,
         "monte_carlo": {
             "status": monte_carlo_payload.get("status"),
             "mode": monte_carlo_payload.get("mode"),

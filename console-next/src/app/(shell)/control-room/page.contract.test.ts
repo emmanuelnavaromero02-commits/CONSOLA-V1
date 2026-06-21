@@ -51,6 +51,8 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("type ControlOrigin");
     expect(pageSource).toContain("math_provenance");
     expect(pageSource).toContain("monte_carlo");
+    expect(pageSource).toContain("bayesianCalibrationStatus");
+    expect(pageSource).toContain("bayesian_calibration");
     expect(pageSource).toContain("generic_gold_signal");
     expect(pageSource).toContain("bayesian_calibration");
     expect(pageSource).toContain("monte_carlo");

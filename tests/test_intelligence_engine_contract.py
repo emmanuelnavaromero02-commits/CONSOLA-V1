@@ -93,6 +93,19 @@ def test_priority_cartridges_have_valid_intelligence_contracts():
             assert metric["impact"]["currency"]
             assert metric["hypotheses"]
             assert metric["action_templates"]
+            if cartridge_id == "replicon" and metric["id"] in {
+                "project_margin",
+                "billable_hours",
+            }:
+                template = metric.get("simulation_template")
+                assert template, f"missing simulation_template for {metric['id']}"
+                assert template["output_metric"] == "net_value"
+                assert template["input_variables"]["baseline_value"]["value"] == (
+                    "$signal.expected_value"
+                )
+                assert template["input_variables"]["expected_delta"]["mean"] == (
+                    "$signal.deviation_value"
+                )
 
 
 def test_intelligence_contract_loader_reads_packaged_contracts():
