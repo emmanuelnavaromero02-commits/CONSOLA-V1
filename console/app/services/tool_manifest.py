@@ -89,6 +89,12 @@ ADVISORY_WRITE_TOOLS = {
     # Advisory-only internal write: creates/updates a Control Room alert but
     # cannot approve, execute, write back externally, or mark decisions done.
     "control_room__raise_alert",
+    "control_room__raise_analysis_alert",
+    # AgentOps compute tools persist internal evidence only. They cannot write
+    # back to an external system or execute destructive actions.
+    "simulation__monte_carlo_run",
+    "decision__orchestrate",
+    "wisdom_bits__run",
 }
 
 DEFAULT_FRESHNESS_MINUTES = 60

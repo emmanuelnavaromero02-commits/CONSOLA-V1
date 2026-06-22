@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 
 import type {
   ActivityPayload,
+  ControlRoomAgentsOpsPayload,
   Dashboard,
   ImpactPayload,
   LessonsPayload,
@@ -21,6 +22,7 @@ export const CONTROL_ROOM_PATHS = {
   dashboard: "/api/control-room/dashboard",
   lessons: "/api/control-room/lessons",
   thresholds: "/api/control-room/thresholds",
+  agentsOps: "/api/control-room/agents/ops",
   sfGoldKpis: "/api/control-room/sap-successfactors/gold-kpis",
   sfTalentKpis: "/api/control-room/sap-successfactors/talent-kpis",
   sfTalentOverview: "/api/control-room/sap-successfactors/talent/overview",
@@ -62,6 +64,11 @@ export async function getControlRoomLessons(cartridgeId?: string): Promise<Lesso
 
 export async function getControlRoomThresholds(): Promise<ThresholdPayload> {
   const response = await api.get<ThresholdPayload>(CONTROL_ROOM_PATHS.thresholds);
+  return response.data;
+}
+
+export async function getControlRoomAgentsOps(): Promise<ControlRoomAgentsOpsPayload> {
+  const response = await api.get<ControlRoomAgentsOpsPayload>(CONTROL_ROOM_PATHS.agentsOps);
   return response.data;
 }
 

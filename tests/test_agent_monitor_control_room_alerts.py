@@ -193,7 +193,9 @@ def test_control_room_alert_tool_source_contract_is_advisory_only():
 
 def test_mcp_main_enforces_control_room_alert_scope():
     source = (REPO / "mcp-infra/app/main.py").read_text(encoding="utf-8")
-    assert '_CONTROL_ROOM_ALERT_TOOLS = {"control_room__raise_alert"}' in source
+    assert '"control_room__raise_alert"' in source
+    assert '"control_room__raise_analysis_alert"' in source
+    assert "_CONTROL_ROOM_ANALYSIS_TOOLS" in source
     assert '_require_context_permission(req, "control_room.write", internal_service)' in source
     assert "control room alerts require tenant/workspace scope" in source
     assert "backend-owned arg is not allowed" in source
