@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+import psycopg2
+import psycopg2.extras
+
 
 SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
     "sap_successfactors_employee_360",
@@ -26,7 +29,42 @@ SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
     "sap_successfactors_manager_hierarchy",
 ]
 
-ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER)
+SUCCESSFACTORS_GOLD_TALENT_ORDER = [
+    "sap_successfactors_talent_employee_profile",
+    "sap_successfactors_talent_role_profile",
+    "sap_successfactors_talent_mobility_history",
+    "sap_successfactors_talent_cpa_scores",
+    "sap_successfactors_talent_readiness",
+    "sap_successfactors_talent_9box",
+    "sap_successfactors_talent_9box_operational",
+    "sap_successfactors_talent_retention_risk",
+    "sap_successfactors_talent_promotion_alignment",
+    "sap_successfactors_talent_calibration_sensitivity",
+    "sap_successfactors_talent_role_fit_assignments",
+    "sap_successfactors_talent_action_candidates",
+    "sap_successfactors_talent_signals",
+]
+
+SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER = [
+    "sap_successfactors_talent_employee_profile",
+    "sap_successfactors_talent_role_profile",
+    "sap_successfactors_talent_mobility_history",
+    "sap_successfactors_talent_cpa_scores",
+    "sap_successfactors_talent_readiness",
+    "sap_successfactors_talent_9box",
+]
+
+SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER = [
+    "sap_successfactors_talent_9box_operational",
+    "sap_successfactors_talent_retention_risk",
+    "sap_successfactors_talent_promotion_alignment",
+    "sap_successfactors_talent_calibration_sensitivity",
+    "sap_successfactors_talent_role_fit_assignments",
+    "sap_successfactors_talent_action_candidates",
+    "sap_successfactors_talent_signals",
+]
+
+ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) | set(SUCCESSFACTORS_GOLD_TALENT_ORDER)
 
 
 class MaterializationContractError(RuntimeError):
@@ -54,6 +92,20 @@ def _split_datasets(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _datasets_for_phase(phase: str, explicit: str | None) -> list[str]:
+    if explicit:
+        return _split_datasets(explicit)
+    if phase == "foundation":
+        return list(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER)
+    if phase == "talent_contract":
+        return list(SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER)
+    if phase == "talent_operational":
+        return list(SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER)
+    if phase == "all":
+        return list(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) + list(SUCCESSFACTORS_GOLD_TALENT_ORDER)
+    raise MaterializationContractError(f"Unknown SuccessFactors materialization phase: {phase}")
+
+
 def _scope_context(tenant_id: str, workspace_id: str) -> dict[str, object]:
     return {
         "tenant_id": tenant_id,
@@ -63,6 +115,72 @@ def _scope_context(tenant_id: str, workspace_id: str) -> dict[str, object]:
         "role": "super_admin",
         "_server_trusted_context": True,
     }
+
+
+def _scoped_dsn() -> str:
+    return (
+        os.environ.get("DATABASE_URL", "")
+        .replace("postgresql+psycopg2://", "postgresql://")
+    )
+
+
+class ScopedDatasetStore:
+    """DatasetStore-compatible catalog access for this scoped CLI runner."""
+
+    def __init__(self, tenant_id: str, workspace_id: str):
+        self.tenant_id = tenant_id
+        self.workspace_id = workspace_id
+
+    def _conn(self):
+        return psycopg2.connect(_scoped_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
+
+    def _set_scope(self, cur) -> None:
+        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (self.tenant_id,))
+        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (self.workspace_id,))
+        cur.execute("SELECT set_config('app.platform_admin', %s, true)", ("false",))
+
+    def get_dataset(self, name: str) -> dict | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            self._set_scope(cur)
+            cur.execute(
+                """
+                SELECT name, layer, cartridge, sources, sql_def,
+                       column_mapping, schedule, description, last_refresh, row_count,
+                       workspace_id, created_by_id
+                FROM datasets WHERE name = %s
+                """,
+                (name,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "name": row["name"],
+            "layer": row["layer"],
+            "cartridge": row["cartridge"] or "unknown",
+            "sources": row["sources"] or [],
+            "sql_def": row["sql_def"] or "",
+            "column_mapping": row["column_mapping"] or {},
+            "schedule": row["schedule"],
+            "description": row["description"] or "",
+            "last_refresh": row["last_refresh"].isoformat() if row.get("last_refresh") else None,
+            "row_count": row["row_count"],
+            "workspace_id": str(row["workspace_id"]) if row.get("workspace_id") else None,
+            "created_by_id": row["created_by_id"],
+        }
+
+    def update_refresh(self, name: str, row_count: int) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            self._set_scope(cur)
+            cur.execute(
+                """
+                UPDATE datasets
+                SET last_refresh = NOW(), row_count = %s, updated_at = NOW()
+                WHERE name = %s
+                """,
+                (row_count, name),
+            )
+            conn.commit()
 
 
 def _contract_checked_dataset(store, name: str) -> dict:
@@ -132,10 +250,9 @@ def materialize_foundation(
 def _load_live_dependencies():
     service_root = _repo_root()
     sys.path.insert(0, str(service_root))
-    from app.dataset_store import DatasetStore
     from app.duckdb_engine import DuckDBEngine
 
-    return DatasetStore(), DuckDBEngine()
+    return DuckDBEngine()
 
 
 def _write_evidence(evidence_dir: Path, summary: dict[str, object]) -> None:
@@ -188,6 +305,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("OMEGA_WORKSPACE_ID") or os.environ.get("WORKSPACE_ID"),
     )
     parser.add_argument("--datasets", default=os.environ.get("OMEGA_SF_FOUNDATION_DATASETS"))
+    parser.add_argument(
+        "--phase",
+        choices=["foundation", "talent_contract", "talent_operational", "all"],
+        default=os.environ.get("OMEGA_SF_MATERIALIZATION_PHASE", "foundation"),
+        help="Dataset phase to materialize when --datasets is omitted.",
+    )
     parser.add_argument("--evidence-dir", type=Path, default=_default_evidence_dir())
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -203,13 +326,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        store, engine = _load_live_dependencies()
+        engine = _load_live_dependencies()
+        store = ScopedDatasetStore(args.tenant_id, args.workspace_id)
         summary = materialize_foundation(
             store=store,
             engine=engine,
             tenant_id=args.tenant_id,
             workspace_id=args.workspace_id,
-            datasets=_split_datasets(args.datasets),
+            datasets=_datasets_for_phase(args.phase, args.datasets),
             dry_run=args.dry_run,
         )
         summary["evidence_dir"] = str(evidence_dir)

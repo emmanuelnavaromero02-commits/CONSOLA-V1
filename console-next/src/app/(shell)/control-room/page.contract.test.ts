@@ -13,6 +13,7 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("getControlRoomLessons");
     expect(pageSource).toContain("getControlRoomThresholds");
     expect(pageSource).toContain("getSuccessFactorsGoldKpis");
+    expect(pageSource).toContain("getSuccessFactorsTalentKpis");
     expect(pageSource).toContain("getSuccessFactorsDecisionModel");
     expect(pageSource).toContain("SuccessFactorsGoldPanel");
     expect(pageSource).toContain("SourceInventoryPanel");

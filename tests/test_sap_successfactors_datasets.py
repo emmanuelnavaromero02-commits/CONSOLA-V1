@@ -1,9 +1,9 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-22 silver + 10 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
+22 silver + 23 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
 registered in the `datasets` catalog via
-infra/init/82_sap_successfactors_datasets_seed.sql (a migration, mirroring the
-HCM/S4 datasets seeds).
+infra/init/82_sap_successfactors_datasets_seed.sql plus the incremental
+infra/init/99p_sap_successfactors_talent_datasets.sql migration.
 
 All dataset names are prefixed `sap_successfactors_` because `datasets.name` is a
 global primary key (headcount_by_department / manager_hierarchy /
@@ -24,12 +24,13 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATASETS_DIR = REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
-MIGRATION = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
+BASE_MIGRATION = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
+TALENT_MIGRATION = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
 EXPECTED_SILVER = 22
-EXPECTED_GOLD = 10
+EXPECTED_GOLD = 23
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 DEDUP_LATEST_KEYS = {
     "sap_successfactors_perperson_latest.sql": ("personIdExternal",),
@@ -74,7 +75,7 @@ def _parse_header(path: Path) -> tuple[str, str, list[str], str]:
     return name, layer, sources, desc_m.group(1)
 
 
-def test_there_are_32_datasets():
+def test_there_are_38_datasets():
     assert len(_dataset_files()) == EXPECTED_SILVER + EXPECTED_GOLD
 
 
@@ -104,8 +105,13 @@ def test_all_names_prefixed_to_avoid_pk_collision():
 
 
 def _migration_rows() -> dict[str, str]:
-    sql = MIGRATION.read_text(encoding="utf-8")
-    return dict(re.findall(r"\$seed\$([A-Za-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$", sql))
+    rows: dict[str, str] = {}
+    for migration in (BASE_MIGRATION, TALENT_MIGRATION):
+        sql = migration.read_text(encoding="utf-8")
+        for name, layer in re.findall(r"\$seed\$([A-Za-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$", sql):
+            assert name not in rows, f"{name} registered more than once"
+            rows[name] = layer
+    return rows
 
 
 def test_migration_matches_files():
@@ -117,19 +123,26 @@ def test_migration_matches_files():
 
 
 def test_migration_sets_workspace_id_on_every_row():
-    sql = MIGRATION.read_text(encoding="utf-8")
-    rows = sql.count("$seed$sap_successfactors$seed$")
-    ws = sql.count("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
+    rows = 0
+    ws = 0
+    for migration in (BASE_MIGRATION, TALENT_MIGRATION):
+        sql = migration.read_text(encoding="utf-8")
+        rows += sql.count("$seed$sap_successfactors$seed$")
+        ws += sql.count("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
     assert rows == EXPECTED_SILVER + EXPECTED_GOLD, f"expected {EXPECTED_SILVER + EXPECTED_GOLD} rows, got {rows}"
     assert ws == rows, f"workspace_id missing on some rows: {ws} of {rows}"
 
 
 def test_migration_idempotent_and_scoped():
-    sql = MIGRATION.read_text(encoding="utf-8")
+    sql = BASE_MIGRATION.read_text(encoding="utf-8")
+    talent_sql = TALENT_MIGRATION.read_text(encoding="utf-8")
     assert "ON CONFLICT (name) DO NOTHING" in sql
+    assert "ON CONFLICT (name) DO UPDATE" in talent_sql
     assert "'82_sap_successfactors_datasets_seed.sql'" in sql
+    assert "'99p_sap_successfactors_talent_datasets.sql'" in talent_sql
+    combined = sql + talent_sql
     for other in ("$seed$replicon$seed$", "$seed$sap_hcm$seed$", "$seed$sap_s4hana$seed$"):
-        assert other not in sql, f"migration seeds another cartridge: {other}"
+        assert other not in combined, f"migration seeds another cartridge: {other}"
 
 
 def test_live_successfactors_silver_entities_present():
