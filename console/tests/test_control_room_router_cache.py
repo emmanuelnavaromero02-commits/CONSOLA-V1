@@ -71,6 +71,19 @@ async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_control_room_talent_kpis_cache_reuses_same_scope(monkeypatch):
+    monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
+    fetch = AsyncMock(return_value={"profile": {"wisdom_bit": "WB-TALENTO"}})
+    monkeypatch.setattr(control_room.control_room_service, "sap_successfactors_talent_kpis", fetch)
+
+    first = await control_room.control_room_sap_successfactors_talent_kpis(USER)
+    second = await control_room.control_room_sap_successfactors_talent_kpis(USER)
+
+    assert first == second == {"profile": {"wisdom_bit": "WB-TALENTO"}}
+    assert fetch.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_control_room_dashboard_cache_singleflights_concurrent_cold_reads(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
     fetch = AsyncMock(return_value={"items": [{"id": "sf"}]})

@@ -9,6 +9,7 @@ import {
   getControlRoomThresholds,
   getSuccessFactorsDecisionModel,
   getSuccessFactorsGoldKpis,
+  getSuccessFactorsTalentKpis,
 } from "./client";
 
 vi.mock("@/lib/api", () => ({
@@ -30,13 +31,15 @@ describe("control-room client", () => {
 
     await getControlRoomDashboard();
     await getSuccessFactorsGoldKpis();
+    await getSuccessFactorsTalentKpis();
     await getSuccessFactorsDecisionModel();
     await getControlRoomThresholds();
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/dashboard");
     expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/sap-successfactors/gold-kpis");
-    expect(apiMock.get).toHaveBeenNthCalledWith(3, "/api/semantic?cartridge=sap_successfactors");
-    expect(apiMock.get).toHaveBeenNthCalledWith(4, "/api/control-room/thresholds");
+    expect(apiMock.get).toHaveBeenNthCalledWith(3, "/api/control-room/sap-successfactors/talent-kpis");
+    expect(apiMock.get).toHaveBeenNthCalledWith(4, "/api/semantic?cartridge=sap_successfactors");
+    expect(apiMock.get).toHaveBeenNthCalledWith(5, "/api/control-room/thresholds");
   });
 
   it("keeps item-scoped activity and impact endpoints encoded", async () => {

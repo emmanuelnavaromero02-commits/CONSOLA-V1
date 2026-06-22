@@ -162,6 +162,7 @@ export interface SfGoldWidget {
   title: string;
   value: number | null;
   dataset: string;
+  href?: string;
   rows: SfGoldWidgetRow[];
   status?: DataReadiness | SourceState | "ready";
   error?: string | null;
@@ -173,6 +174,62 @@ export interface SfGoldKpisPayload {
   tenant_id?: string;
   workspace_id?: string;
   widgets: SfGoldWidget[];
+}
+
+export interface SfTalentWidget {
+  id: string;
+  title: string;
+  value: number | null;
+  dataset: string;
+  href?: string;
+  status?: DataReadiness | SourceState | "ready" | "partial";
+  detail?: string;
+  rows?: SfGoldWidgetRow[];
+}
+
+export interface SfTalentSignal {
+  id: string;
+  type: string;
+  severity: Severity | string;
+  title: string;
+  affected_count?: number;
+  recommendation?: string;
+  status?: string;
+}
+
+export interface SfTalentBlocker {
+  id: string;
+  status: DataReadiness | SourceState | "partial";
+  title: string;
+  detail: string;
+  items?: string[];
+}
+
+export interface SfTalentKpisPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  profile: {
+    industry: string;
+    company_profile: string;
+    wisdom_bit: string;
+    decision_mode: string;
+    compensation_enabled: boolean;
+    write_back_enabled: boolean;
+  };
+  readiness: {
+    ready_min: number;
+    near_min: number;
+    profiled_employees: number;
+    calculable_employees: number;
+    insufficient_data_employees: number;
+    nine_box_available: number;
+    status: DataReadiness | SourceState | "partial";
+  };
+  widgets: SfTalentWidget[];
+  signals: SfTalentSignal[];
+  blockers: SfTalentBlocker[];
 }
 
 export interface SfDecisionTerm {

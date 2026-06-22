@@ -7,6 +7,7 @@ import type {
   LessonsPayload,
   SfDecisionModelPayload,
   SfGoldKpisPayload,
+  SfTalentKpisPayload,
   ThresholdPayload,
 } from "./types";
 
@@ -15,6 +16,7 @@ export const CONTROL_ROOM_PATHS = {
   lessons: "/api/control-room/lessons",
   thresholds: "/api/control-room/thresholds",
   sfGoldKpis: "/api/control-room/sap-successfactors/gold-kpis",
+  sfTalentKpis: "/api/control-room/sap-successfactors/talent-kpis",
   sfDecisionModel: "/api/semantic?cartridge=sap_successfactors",
 } as const;
 
@@ -54,6 +56,11 @@ export async function getControlRoomThresholds(): Promise<ThresholdPayload> {
 
 export async function getSuccessFactorsGoldKpis(): Promise<SfGoldKpisPayload> {
   const response = await api.get<SfGoldKpisPayload>(CONTROL_ROOM_PATHS.sfGoldKpis);
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentKpis(): Promise<SfTalentKpisPayload> {
+  const response = await api.get<SfTalentKpisPayload>(CONTROL_ROOM_PATHS.sfTalentKpis);
   return response.data;
 }
 

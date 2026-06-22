@@ -123,6 +123,14 @@ async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require
     )
 
 
+@router.get("/sap-successfactors/talent-kpis", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_kpis(user: dict = Depends(require_authenticated)):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-talent-kpis",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_kpis(user),
+    )
+
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
     """Lightweight, pollable operational summary (persisted state only)."""

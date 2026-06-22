@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { SfDecisionModelPayload, SfGoldKpisPayload, SourceStatus } from "@/lib/control-room/types";
+import type { SfDecisionModelPayload, SfGoldKpisPayload, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
 
 import { SuccessFactorsGoldPanel } from "./SuccessFactorsGoldPanel";
 
@@ -124,6 +124,63 @@ describe("SuccessFactorsGoldPanel", () => {
 
     expect(markup).toContain("No se pudo actualizar información ejecutiva");
     expect(markup).toContain("S3 404");
+  });
+
+  it("renders Talent WisdomBit blockers and recommendation-only signals", () => {
+    const talent: SfTalentKpisPayload = {
+      generated_at: "2026-06-22T18:00:00Z",
+      profile: {
+        industry: "retail",
+        company_profile: "femsa",
+        wisdom_bit: "WB-TALENTO",
+        decision_mode: "recommendation_only",
+        compensation_enabled: false,
+        write_back_enabled: false,
+      },
+      readiness: {
+        ready_min: 80,
+        near_min: 60,
+        profiled_employees: 12,
+        calculable_employees: 0,
+        insufficient_data_employees: 12,
+        nine_box_available: 0,
+        status: "partial",
+      },
+      widgets: [
+        { id: "sf_talent_roles_profiled", title: "Roles derivados", value: 3, dataset: "sap_successfactors_talent_role_profile", status: "partial" },
+      ],
+      signals: [
+        {
+          id: "talent_cpa_missing_inputs",
+          type: "priorizacion",
+          severity: "medium",
+          title: "Fit Score bloqueado por falta de C/P/A",
+          affected_count: 12,
+          recommendation: "Habilitar desempeno, competencias y aspiracion para calcular readiness real.",
+          status: "recommendation_only",
+        },
+      ],
+      blockers: [
+        {
+          id: "talent_cpa_inputs_missing",
+          status: "blocked",
+          title: "C/P/A pendiente",
+          detail: "Fit Score, readiness real y 9-box requieren competencia, desempeno y aspiracion.",
+          items: ["KB-COMPETENCIAS blocked", "KB-DESEMPENO blocked"],
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      <SuccessFactorsGoldPanel payload={{ widgets: [] }} loading={false} error="" sources={[source]} talent={talent} />,
+    );
+
+    expect(markup).toContain("WB-TALENTO");
+    expect(markup).toContain("Readiness calculable");
+    expect(markup).toContain("0/12");
+    expect(markup).toContain("C/P/A pendiente");
+    expect(markup).toContain("Fit Score bloqueado");
+    expect(markup).toContain("recommendation_only");
   });
 
   it("covers all SuccessFactors business fronts and translates the decision model", () => {

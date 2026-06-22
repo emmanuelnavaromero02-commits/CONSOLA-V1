@@ -1,7 +1,7 @@
 import { AlertTriangle, BookOpen, BriefcaseBusiness, Building2, CalendarDays, CreditCard, GraduationCap, Network, ShieldCheck, TrendingDown, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SourceStatus } from "@/lib/control-room/types";
+import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, readinessLabels } from "./StatusBadge";
@@ -381,6 +381,9 @@ export function SuccessFactorsGoldPanel({
   loading,
   error,
   sources,
+  talent,
+  talentLoading = false,
+  talentError = "",
   decisionModel,
   decisionModelLoading = false,
   decisionModelError = "",
@@ -389,6 +392,9 @@ export function SuccessFactorsGoldPanel({
   loading: boolean;
   error: string;
   sources: SourceStatus[];
+  talent?: SfTalentKpisPayload | null;
+  talentLoading?: boolean;
+  talentError?: string;
   decisionModel?: SfDecisionModelPayload | null;
   decisionModelLoading?: boolean;
   decisionModelError?: string;
@@ -406,6 +412,18 @@ export function SuccessFactorsGoldPanel({
   const employeeStatus = widgetStatus(employeeWidget);
   const orgStatus = widgetStatus(orgWidget);
   const readyHeadcountWidgets = headcountWidgets.filter((widget) => ["ready", "ok", "empty"].includes(widgetStatus(widget)));
+
+  const talentWidgets = talent?.widgets ?? [];
+  const talentSignals = talent?.signals ?? [];
+  const talentBlockers = talent?.blockers ?? [];
+  const talentWidgetById = (id: string) => talentWidgets.find((widget) => widget.id === id);
+  const talentNumber = (id: string) => {
+    const value = talentWidgetById(id)?.value;
+    return typeof value === "number" ? value : null;
+  };
+  const talentReadinessTotal = talent?.readiness.profiled_employees ?? talentNumber("sf_talent_profiled_employees") ?? 0;
+  const talentReadinessCalculable = talent?.readiness.calculable_employees ?? talentNumber("sf_talent_readiness_calculable") ?? 0;
+  const talentNineBoxAvailable = talent?.readiness.nine_box_available ?? talentNumber("sf_talent_9box_available") ?? 0;
 
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-emerald-400/20 dark:bg-[#081423] dark:shadow-[0_0_30px_rgba(16,185,129,0.08)]" aria-label="Indicadores ejecutivos de personal">
@@ -469,6 +487,98 @@ export function SuccessFactorsGoldPanel({
             tone={blockedSources ? "warning" : "good"}
           />
         </div>
+
+        {talentLoading ? <OperationalNotice tone="info" title="Actualizando Talento">Consultando WisdomBit Talento y cobertura C/P/A.</OperationalNotice> : null}
+        {talentError ? (
+          <OperationalNotice tone="warning" title="Talento parcialmente disponible">
+            No se pudo actualizar el bloque de Talento; la vista mantiene los bloqueos visibles.
+          </OperationalNotice>
+        ) : null}
+        {talent ? (
+          <div className="rounded-xl border bg-background p-4 shadow-sm dark:border-violet-400/15 dark:bg-[#06111f]">
+            <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">WB-TALENTO · {talent.profile.industry}/{talent.profile.company_profile}</p>
+                <h3 className="text-lg font-semibold text-foreground dark:text-white">Talento, readiness y 9-box</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Recomendaciones sin write-back, compensación apagada y C/P/A bloqueado hasta validar metadata SAP.
+                </p>
+              </div>
+              <ReadinessBadge status={talent.readiness.status} compact />
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <CommandMetric
+                label="Readiness calculable"
+                value={`${formatNumber(talentReadinessCalculable)}/${formatNumber(talentReadinessTotal)}`}
+                detail={`${formatNumber(talent.readiness.insufficient_data_employees)} en insufficient_data`}
+                icon={ShieldCheck}
+                tone={talentReadinessCalculable ? "good" : "warning"}
+              />
+              <CommandMetric
+                label="9-box disponible"
+                value={formatNumber(talentNineBoxAvailable)}
+                detail={talentNineBoxAvailable ? "personas clasificables" : "bloqueado por C/P/A"}
+                icon={Network}
+                tone={talentNineBoxAvailable ? "good" : "warning"}
+              />
+              <CommandMetric
+                label="Roles derivados"
+                value={formatNumber(talentNumber("sf_talent_roles_profiled") ?? 0)}
+                detail="desde job_code y FOJobCode"
+                icon={BriefcaseBusiness}
+                tone={(talentNumber("sf_talent_roles_profiled") ?? 0) ? "good" : "warning"}
+              />
+              <CommandMetric
+                label="Señales Talento"
+                value={formatNumber(talentSignals.length)}
+                detail="solo recomendaciones"
+                icon={GraduationCap}
+                tone={talentSignals.length ? "warning" : "neutral"}
+              />
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg border bg-card p-3 dark:border-violet-400/15 dark:bg-[#081423]">
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">Bloqueos reales</p>
+                <div className="mt-3 space-y-3">
+                  {talentBlockers.slice(0, 3).map((blocker) => (
+                    <div key={blocker.id} className="rounded-md border bg-background/70 p-3 text-sm dark:border-violet-400/10 dark:bg-[#06111f]">
+                      <div className="flex items-start justify-between gap-2">
+                        <strong className="text-foreground dark:text-white">{blocker.title}</strong>
+                        <ReadinessBadge status={blocker.status} compact />
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{blocker.detail}</p>
+                      {blocker.items?.length ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{blocker.items.slice(0, 3).join(" · ")}</p> : null}
+                    </div>
+                  ))}
+                  {!talentBlockers.length ? <p className="text-sm text-muted-foreground">Sin bloqueos reportados para Talento.</p> : null}
+                </div>
+              </div>
+
+              <div className="rounded-lg border bg-card p-3 dark:border-violet-400/15 dark:bg-[#081423]">
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">Señales WisdomBit</p>
+                <div className="mt-3 space-y-3">
+                  {talentSignals.slice(0, 3).map((signal) => (
+                    <div key={signal.id} className="rounded-md border bg-background/70 p-3 text-sm dark:border-violet-400/10 dark:bg-[#06111f]">
+                      <div className="flex items-start justify-between gap-2">
+                        <strong className="text-foreground dark:text-white">{signal.title}</strong>
+                        <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-violet-400/15">
+                          {signal.severity}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{signal.recommendation || "Revisar cobertura antes de decidir."}</p>
+                      <p className="mt-2 text-xs font-medium text-violet-700 dark:text-violet-300">
+                        {formatNumber(signal.affected_count ?? 0)} afectados · {signal.status || "recommendation_only"}
+                      </p>
+                    </div>
+                  ))}
+                  {!talentSignals.length ? <p className="text-sm text-muted-foreground">Sin señales activas para este contexto.</p> : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="rounded-xl border bg-background p-4 shadow-sm dark:border-cyan-400/15 dark:bg-[#06111f]">
           <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">

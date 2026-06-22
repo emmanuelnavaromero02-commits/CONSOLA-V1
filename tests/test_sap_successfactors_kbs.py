@@ -1,6 +1,6 @@
 """Phase 2 Block C3 — SAP SuccessFactors Knowledge Bits.
 
-8 new copilot KBs (prefixed kb_sap_successfactors_) appended to the existing ones,
+14 new copilot KBs (prefixed kb_sap_successfactors_) appended to the existing ones,
 following the kb_sap_hcm_* / kb_sap_s4hana_* mold (id / name / description / sql,
 folded scalar) and the real execution model (DuckDB over the Block-B parquet via
 read_parquet, NOT pggold). SF gold dataset names carry the sap_successfactors_
@@ -18,6 +18,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KBS_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "knowledge_bits.yaml"
 MIGRATION_82 = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
+MIGRATION_99P = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
 HCM_KBS = REPO_ROOT / "cartridges" / "sap_hcm" / "app" / "config" / "knowledge_bits.yaml"
 S4_KBS = REPO_ROOT / "cartridges" / "sap_s4hana" / "app" / "config" / "knowledge_bits.yaml"
 
@@ -35,8 +36,14 @@ NEW_KB_IDS = {
     "kb_sap_successfactors_manager_hierarchy_depth",
     "kb_sap_successfactors_employees_anomalies",
     "kb_sap_successfactors_workforce_distribution",
+    "kb_sap_successfactors_talent_employee_profile",
+    "kb_sap_successfactors_talent_role_profile",
+    "kb_sap_successfactors_talent_mobility_history",
+    "kb_sap_successfactors_talent_readiness",
+    "kb_sap_successfactors_talent_9box",
+    "kb_sap_successfactors_talent_signals",
 }
-EXPECTED_GOLD_DATASETS = 10
+EXPECTED_GOLD_DATASETS = 16
 
 
 def _kbs(path: Path = KBS_YAML) -> list[dict]:
@@ -45,9 +52,12 @@ def _kbs(path: Path = KBS_YAML) -> list[dict]:
 
 
 def _dataset_names(layer: str | None = None) -> set[str]:
-    sql = MIGRATION_82.read_text(encoding="utf-8")
     pat = r"\$seed\$([A-Za-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$"
-    return {n for n, lay in re.findall(pat, sql) if layer is None or lay == layer}
+    names: set[str] = set()
+    for migration in (MIGRATION_82, MIGRATION_99P):
+        sql = migration.read_text(encoding="utf-8")
+        names.update(n for n, lay in re.findall(pat, sql) if layer is None or lay == layer)
+    return names
 
 
 def test_yaml_loads_with_required_fields():
@@ -89,7 +99,7 @@ def test_new_kbs_read_existing_datasets():
     all_datasets = _dataset_names()
     golds = _dataset_names("gold")
     assert len(golds) == EXPECTED_GOLD_DATASETS, (
-        f"expected {EXPECTED_GOLD_DATASETS} golds in migration 82, got {len(golds)}"
+        f"expected {EXPECTED_GOLD_DATASETS} golds in SuccessFactors migrations, got {len(golds)}"
     )
     for kb in _kbs():
         if kb["id"] not in NEW_KB_IDS:
@@ -97,7 +107,7 @@ def test_new_kbs_read_existing_datasets():
         refs = re.findall(r"/(?:gold|silver)/sap_successfactors/([a-z0-9_]+)/", kb["sql"])
         assert refs, f"{kb['id']}: reads no sap_successfactors dataset parquet"
         for name in refs:
-            assert name in all_datasets, f"{kb['id']}: dataset {name!r} not seeded in migration 82"
+            assert name in all_datasets, f"{kb['id']}: dataset {name!r} not seeded in SuccessFactors migrations"
 
 
 def test_new_kb_sql_uses_parquet_not_pggold():

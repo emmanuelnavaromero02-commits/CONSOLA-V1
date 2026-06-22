@@ -21,6 +21,7 @@ AGENTS_MIGRATION = REPO_ROOT / "infra" / "init" / "88_sap_successfactors_agents_
 CARTRIDGE_SEED = REPO_ROOT / "cartridges" / "sap_successfactors" / "config" / "seed.sql"
 KBS_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "knowledge_bits.yaml"
 MIGRATION_82 = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
+MIGRATION_99P = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
 APPS_DIR = REPO_ROOT / "cartridges" / "sap_successfactors" / "apps"
 
 MAX_HINTS_CHARS = 8000
@@ -51,9 +52,12 @@ def _kb_ids() -> set[str]:
 
 
 def _dataset_names() -> set[str]:
-    sql = MIGRATION_82.read_text(encoding="utf-8")
     pat = r"\$seed\$([a-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$"
-    return {n for n, _ in re.findall(pat, sql)}
+    names: set[str] = set()
+    for migration in (MIGRATION_82, MIGRATION_99P):
+        sql = migration.read_text(encoding="utf-8")
+        names.update(n for n, _ in re.findall(pat, sql))
+    return names
 
 
 def _triggers_by_agent(sql: str) -> list[list[str]]:
@@ -165,11 +169,10 @@ def test_agents_migration_scope():
 # Holistic SuccessFactors inventory (Blocks A-E).
 def test_sf_inventory_blocks_a_to_e():
     kb_ids = _kb_ids()
-    assert len(kb_ids) == 14, f"expected 14 KBs, got {len(kb_ids)}"
-    assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 8
-    sql82 = MIGRATION_82.read_text(encoding="utf-8")
-    n_datasets = len(re.findall(r"\$seed\$[a-z0-9_]+\$seed\$,\s*\$seed\$(?:silver|gold)\$seed\$", sql82))
-    assert n_datasets == 32, f"expected 32 datasets, got {n_datasets}"
+    assert len(kb_ids) == 20, f"expected 20 KBs, got {len(kb_ids)}"
+    assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 14
+    n_datasets = len(_dataset_names())
+    assert n_datasets == 38, f"expected 38 datasets, got {n_datasets}"
     apps = sorted(p.stem for p in APPS_DIR.glob("*.html"))
     assert apps == ["sap_successfactors_talent_health", "sap_successfactors_workforce_overview"]
     assert HINTS.is_file()

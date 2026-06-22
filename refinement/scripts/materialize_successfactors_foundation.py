@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+import psycopg2
+import psycopg2.extras
+
 
 SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
     "sap_successfactors_employee_360",
@@ -26,7 +29,16 @@ SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
     "sap_successfactors_manager_hierarchy",
 ]
 
-ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER)
+SUCCESSFACTORS_GOLD_TALENT_ORDER = [
+    "sap_successfactors_talent_employee_profile",
+    "sap_successfactors_talent_role_profile",
+    "sap_successfactors_talent_mobility_history",
+    "sap_successfactors_talent_readiness",
+    "sap_successfactors_talent_9box",
+    "sap_successfactors_talent_signals",
+]
+
+ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) | set(SUCCESSFACTORS_GOLD_TALENT_ORDER)
 
 
 class MaterializationContractError(RuntimeError):
@@ -63,6 +75,72 @@ def _scope_context(tenant_id: str, workspace_id: str) -> dict[str, object]:
         "role": "super_admin",
         "_server_trusted_context": True,
     }
+
+
+def _scoped_dsn() -> str:
+    return (
+        os.environ.get("DATABASE_URL", "")
+        .replace("postgresql+psycopg2://", "postgresql://")
+    )
+
+
+class ScopedDatasetStore:
+    """DatasetStore-compatible catalog access for this scoped CLI runner."""
+
+    def __init__(self, tenant_id: str, workspace_id: str):
+        self.tenant_id = tenant_id
+        self.workspace_id = workspace_id
+
+    def _conn(self):
+        return psycopg2.connect(_scoped_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
+
+    def _set_scope(self, cur) -> None:
+        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (self.tenant_id,))
+        cur.execute("SELECT set_config('app.workspace_id', %s, true)", (self.workspace_id,))
+        cur.execute("SELECT set_config('app.platform_admin', %s, true)", ("false",))
+
+    def get_dataset(self, name: str) -> dict | None:
+        with self._conn() as conn, conn.cursor() as cur:
+            self._set_scope(cur)
+            cur.execute(
+                """
+                SELECT name, layer, cartridge, sources, sql_def,
+                       column_mapping, schedule, description, last_refresh, row_count,
+                       workspace_id, created_by_id
+                FROM datasets WHERE name = %s
+                """,
+                (name,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "name": row["name"],
+            "layer": row["layer"],
+            "cartridge": row["cartridge"] or "unknown",
+            "sources": row["sources"] or [],
+            "sql_def": row["sql_def"] or "",
+            "column_mapping": row["column_mapping"] or {},
+            "schedule": row["schedule"],
+            "description": row["description"] or "",
+            "last_refresh": row["last_refresh"].isoformat() if row.get("last_refresh") else None,
+            "row_count": row["row_count"],
+            "workspace_id": str(row["workspace_id"]) if row.get("workspace_id") else None,
+            "created_by_id": row["created_by_id"],
+        }
+
+    def update_refresh(self, name: str, row_count: int) -> None:
+        with self._conn() as conn, conn.cursor() as cur:
+            self._set_scope(cur)
+            cur.execute(
+                """
+                UPDATE datasets
+                SET last_refresh = NOW(), row_count = %s, updated_at = NOW()
+                WHERE name = %s
+                """,
+                (row_count, name),
+            )
+            conn.commit()
 
 
 def _contract_checked_dataset(store, name: str) -> dict:
@@ -132,10 +210,9 @@ def materialize_foundation(
 def _load_live_dependencies():
     service_root = _repo_root()
     sys.path.insert(0, str(service_root))
-    from app.dataset_store import DatasetStore
     from app.duckdb_engine import DuckDBEngine
 
-    return DatasetStore(), DuckDBEngine()
+    return DuckDBEngine()
 
 
 def _write_evidence(evidence_dir: Path, summary: dict[str, object]) -> None:
@@ -203,7 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        store, engine = _load_live_dependencies()
+        engine = _load_live_dependencies()
+        store = ScopedDatasetStore(args.tenant_id, args.workspace_id)
         summary = materialize_foundation(
             store=store,
             engine=engine,

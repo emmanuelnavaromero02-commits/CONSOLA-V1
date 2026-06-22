@@ -348,6 +348,278 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
 
 
 @_bind_to_core
+async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
+    """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
+
+    The endpoint intentionally returns aggregate coverage and blockers only.
+    C/P/A scores, salary values and individual PII are not exposed here.
+    """
+
+    datasets = {
+        "employee_profile": "sap_successfactors_talent_employee_profile",
+        "role_profile": "sap_successfactors_talent_role_profile",
+        "mobility_history": "sap_successfactors_talent_mobility_history",
+        "readiness": "sap_successfactors_talent_readiness",
+        "nine_box": "sap_successfactors_talent_9box",
+        "signals": "sap_successfactors_talent_signals",
+    }
+
+    def dataset_href(dataset: str) -> str:
+        return (
+            "/data/catalog?layer=gold&cartridge=sap_successfactors"
+            f"&datasets={dataset}"
+        )
+
+    def public_value(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+    def int_value(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def clean_status(value: Any) -> str:
+        status = str(value or "unavailable").strip().lower()
+        return status or "unavailable"
+
+    def extract_blockers(rows: list[dict[str, Any]]) -> list[str]:
+        blockers: set[str] = set()
+        for row in rows:
+            raw = row.get("blockers")
+            parsed: Any = raw
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = [raw]
+            if isinstance(parsed, list):
+                blockers.update(str(item).strip() for item in parsed if str(item).strip())
+            elif isinstance(parsed, str) and parsed.strip():
+                blockers.add(parsed.strip())
+        return sorted(blockers)
+
+    async def gold_result(dataset: str, limit: int) -> dict[str, Any]:
+        try:
+            rows = await query_dataset_rows(dataset, user, limit)
+        except HTTPException as exc:
+            status = {
+                403: "no_permission",
+                404: "missing",
+                503: "unavailable",
+            }.get(exc.status_code, "unavailable")
+            return {
+                "rows": [],
+                "status": status,
+                "error": str(exc.detail or f"{dataset} unavailable"),
+            }
+        except Exception as exc:
+            return {
+                "rows": [],
+                "status": "unavailable",
+                "error": str(exc),
+            }
+        clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
+        return {
+            "rows": clean_rows,
+            "status": "empty" if not clean_rows else "ready",
+            "error": None,
+        }
+
+    profile_result = await gold_result(datasets["employee_profile"], 5000)
+    role_result = await gold_result(datasets["role_profile"], 1000)
+    mobility_result = await gold_result(datasets["mobility_history"], 5000)
+    readiness_result = await gold_result(datasets["readiness"], 5000)
+    nine_box_result = await gold_result(datasets["nine_box"], 5000)
+    signals_result = await gold_result(datasets["signals"], 100)
+
+    profile_rows = profile_result["rows"]
+    role_rows = role_result["rows"]
+    mobility_rows = mobility_result["rows"]
+    readiness_rows = readiness_result["rows"]
+    nine_box_rows = nine_box_result["rows"]
+    signal_rows = signals_result["rows"]
+
+    profiled_employees = len(profile_rows)
+    roles_profiled = len(role_rows)
+    mobility_observed = sum(1 for row in mobility_rows if int_value(row.get("movement_events")) > 0)
+    readiness_calculable = sum(
+        1
+        for row in readiness_rows
+        if clean_status(row.get("readiness_status")) not in {"insufficient_data", "blocked", "missing"}
+    )
+    readiness_insufficient = sum(
+        1
+        for row in readiness_rows
+        if clean_status(row.get("readiness_status")) == "insufficient_data"
+    )
+    nine_box_available = sum(
+        1
+        for row in nine_box_rows
+        if clean_status(row.get("box_status")) not in {"blocked", "insufficient_data", "missing"}
+    )
+
+    profile_blockers = extract_blockers(profile_rows) or [
+        "KB-COMPETENCIAS blocked",
+        "KB-DESEMPENO blocked",
+        "KB-ASPIRACION blocked",
+    ]
+    role_blockers = extract_blockers(role_rows)
+    system_errors = [
+        str(result.get("error"))
+        for result in (
+            profile_result,
+            role_result,
+            mobility_result,
+            readiness_result,
+            nine_box_result,
+            signals_result,
+        )
+        if result.get("error")
+    ]
+
+    blockers = [
+        {
+            "id": "talent_cpa_inputs_missing",
+            "status": "blocked",
+            "title": "C/P/A pendiente",
+            "detail": "Fit Score, readiness real y 9-box requieren competencia, desempeno y aspiracion validados en metadata SAP.",
+            "items": profile_blockers,
+        },
+        {
+            "id": "talent_role_requirements_partial",
+            "status": "partial",
+            "title": "Roles parciales",
+            "detail": "Los roles salen de job_code/FOJobCode; requisitos de Position y skills quedan pendientes.",
+            "items": role_blockers or ["Position requirements pending", "Skills/competencies metadata pending"],
+        },
+    ]
+    if system_errors:
+        blockers.append({
+            "id": "talent_dataset_availability",
+            "status": "unavailable",
+            "title": "Datasets no disponibles",
+            "detail": "Algunos golds de Talento no pudieron leerse en este workspace.",
+            "items": system_errors,
+        })
+
+    signals = [
+        {
+            "id": str(row.get("signal_id") or f"signal_{idx}"),
+            "type": str(row.get("signal_type") or "priorizacion"),
+            "severity": str(row.get("severity") or "medium"),
+            "title": str(row.get("title") or "Senal Talento"),
+            "affected_count": int_value(row.get("affected_count")),
+            "recommendation": str(row.get("recommendation") or ""),
+            "status": str(row.get("status") or "recommendation_only"),
+        }
+        for idx, row in enumerate(signal_rows)
+    ]
+
+    role_samples = sorted(
+        [
+            {
+                "label": str(row.get("role_name") or row.get("job_code") or "Sin rol"),
+                "job_code": public_value(row.get("job_code")),
+                "headcount": int_value(row.get("active_employee_count")),
+                "status": str(row.get("role_profile_status") or "partial"),
+            }
+            for row in role_rows
+        ],
+        key=lambda item: (-int_value(item["headcount"]), str(item["label"])),
+    )[:5]
+
+    generated_at = datetime.now(UTC).isoformat()
+    tenant_id, workspace_id = _workspace_scope(user)
+
+    widgets = [
+        {
+            "id": "sf_talent_profiled_employees",
+            "title": "Empleados perfil Talento",
+            "value": profiled_employees,
+            "dataset": datasets["employee_profile"],
+            "href": dataset_href(datasets["employee_profile"]),
+            "status": profile_result["status"],
+        },
+        {
+            "id": "sf_talent_roles_profiled",
+            "title": "Roles derivados",
+            "value": roles_profiled,
+            "dataset": datasets["role_profile"],
+            "href": dataset_href(datasets["role_profile"]),
+            "status": role_result["status"],
+            "rows": role_samples,
+        },
+        {
+            "id": "sf_talent_readiness_calculable",
+            "title": "Readiness calculable",
+            "value": readiness_calculable,
+            "dataset": datasets["readiness"],
+            "href": dataset_href(datasets["readiness"]),
+            "status": "partial" if readiness_insufficient else readiness_result["status"],
+            "detail": f"{readiness_insufficient} empleados en insufficient_data",
+        },
+        {
+            "id": "sf_talent_9box_available",
+            "title": "9-box disponible",
+            "value": nine_box_available,
+            "dataset": datasets["nine_box"],
+            "href": dataset_href(datasets["nine_box"]),
+            "status": "blocked" if nine_box_rows and nine_box_available == 0 else nine_box_result["status"],
+        },
+        {
+            "id": "sf_talent_mobility_observed",
+            "title": "Movilidad observada",
+            "value": mobility_observed,
+            "dataset": datasets["mobility_history"],
+            "href": dataset_href(datasets["mobility_history"]),
+            "status": mobility_result["status"],
+        },
+        {
+            "id": "sf_talent_active_signals",
+            "title": "Senales Talento",
+            "value": len(signals),
+            "dataset": datasets["signals"],
+            "href": dataset_href(datasets["signals"]),
+            "status": signals_result["status"],
+        },
+    ]
+
+    return {
+        "generated_at": generated_at,
+        "connection_id": "femsa_sf",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "profile": {
+            "industry": "retail",
+            "company_profile": "femsa",
+            "wisdom_bit": "WB-TALENTO",
+            "decision_mode": "recommendation_only",
+            "compensation_enabled": False,
+            "write_back_enabled": False,
+        },
+        "readiness": {
+            "ready_min": 80,
+            "near_min": 60,
+            "profiled_employees": profiled_employees,
+            "calculable_employees": readiness_calculable,
+            "insufficient_data_employees": readiness_insufficient,
+            "nine_box_available": nine_box_available,
+            "status": "partial" if readiness_insufficient or blockers else "ready",
+        },
+        "widgets": widgets,
+        "signals": signals,
+        "blockers": blockers,
+    }
+
+
+@_bind_to_core
 def _details(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
