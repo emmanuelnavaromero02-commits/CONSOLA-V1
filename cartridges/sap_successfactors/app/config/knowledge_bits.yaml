@@ -245,3 +245,139 @@ knowledge_bits:
         AND (end_date IS NULL OR CAST(end_date AS DATE) >= CURRENT_DATE)
       GROUP BY employee_class
       ORDER BY headcount DESC
+
+  - id: kb_sap_successfactors_talent_employee_profile
+    name: "KB-EMPLEADOS Talento"
+    description: "Perfil base de Talento: empleados activos, estructura, jerarquía, tenure y bloqueos C/P/A explícitos."
+    sql: >
+      SELECT user_id, full_name, company_name, department_name, location_name,
+             job_code, manager_id, direct_reports, hierarchy_depth, tenure_months,
+             cpa_status, profile_status
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_employee_profile/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY department_name, user_id
+
+  - id: kb_sap_successfactors_talent_role_profile
+    name: "KB-ROLES Talento"
+    description: "Perfil de roles derivado desde FOJobCode/job_code. Parcial hasta validar requisitos de puesto y skills."
+    sql: >
+      SELECT job_code, role_name, active_employee_count, departments_count,
+             locations_count, required_skills_status, role_profile_status
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_role_profile/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY active_employee_count DESC, job_code
+
+  - id: kb_sap_successfactors_talent_mobility_history
+    name: "KB-EMPLEADOS Movilidad"
+    description: "Historial de movilidad básico desde EmpJob efectivo-fechado: cambios de puesto, área, ubicación y manager."
+    sql: >
+      SELECT user_id, full_name, company_name, department_name, job_code,
+             movement_events, distinct_departments, distinct_locations,
+             distinct_job_codes, distinct_managers, mobility_status
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_mobility_history/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY movement_events DESC, user_id
+
+  - id: kb_sap_successfactors_talent_readiness
+    name: "KB-READINESS Talento"
+    description: "Readiness y Fit Score v1. Marca insufficient_data cuando falta desempeño, competencias o aspiración."
+    sql: >
+      SELECT readiness_status, readiness_label, role_profile_status,
+             required_skills_status, COUNT(*) AS employees
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_readiness/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY readiness_status, readiness_label, role_profile_status, required_skills_status
+      ORDER BY employees DESC
+
+  - id: kb_sap_successfactors_talent_cpa_scores
+    name: "KB-C/P/A Talento"
+    description: "Componentes Competency, Performance y Aspiration normalizados. Calcula Fit Score solo cuando los tres insumos existen."
+    sql: >
+      SELECT cpa_status, role_profile_status, required_skills_status,
+             COUNT(*) AS employees,
+             ROUND(AVG(fit_score), 2) AS avg_fit_score
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_cpa_scores/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY cpa_status, role_profile_status, required_skills_status
+      ORDER BY employees DESC
+
+  - id: kb_sap_successfactors_talent_9box
+    name: "KB-9BOX Talento"
+    description: "9-box Talento. Clasifica performance y potencial si C/P/A existe; si no, conserva blocked/insufficient_data."
+    sql: >
+      SELECT box_status, box_label, performance_band, potential_band, COUNT(*) AS employees
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_9box/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY box_status, box_label, performance_band, potential_band
+      ORDER BY employees DESC
+
+  - id: kb_sap_successfactors_talent_9box_operational
+    name: "KB-9BOX Operativo"
+    description: "Distribucion agregada de las nueve cajas para Control Room, sin PII ni identificadores individuales."
+    sql: >
+      SELECT box_key, box_label, potential_band, performance_band,
+             employee_count, ready_count, blocked_count, box_status
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_9box_operational/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY display_order
+
+  - id: kb_sap_successfactors_talent_retention_risk
+    name: "KB-RIESGO Talento"
+    description: "Riesgo de salida recomendativo sin compensacion sensible. Bloquea si falta Fit Score."
+    sql: >
+      SELECT risk_band, status, COUNT(*) AS employees
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_retention_risk/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY risk_band, status
+      ORDER BY employees DESC
+
+  - id: kb_sap_successfactors_talent_promotion_alignment
+    name: "KB-PROMOCIONES Talento"
+    description: "Alineacion de promociones observadas contra cajas 9-box."
+    sql: >
+      SELECT box_key, box_label, promotion_count, aligned_count, misaligned_count, status
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_promotion_alignment/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY promotion_count DESC
+
+  - id: kb_sap_successfactors_talent_calibration_sensitivity
+    name: "KB-SENSIBILIDAD Talento"
+    description: "Casos cercanos a cortes 9-box 3.0/4.0 para revision humana."
+    sql: >
+      SELECT employee_count, classified_count, near_cut_count, near_cut_pct, status
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_calibration_sensitivity/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+
+  - id: kb_sap_successfactors_talent_role_fit_assignments
+    name: "KB-ASIGNACION Talento"
+    description: "Recomendaciones de movilidad por Fit Score y requisitos de rol. Bloquea si faltan C/P/A o skills requeridas."
+    sql: >
+      SELECT assignment_recommendation, status, COUNT(*) AS employees
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_role_fit_assignments/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY assignment_recommendation, status
+      ORDER BY employees DESC
+
+  - id: kb_sap_successfactors_talent_action_candidates
+    name: "KB-ACCIONES Talento"
+    description: "Candidatos de accion WB-TALENTO. Solo recomendaciones; sin write-back."
+    sql: >
+      SELECT action_type, severity, method, status,
+             COUNT(*) AS actions,
+             SUM(affected_count) AS affected_count
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_action_candidates/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY action_type, severity, method, status
+      ORDER BY affected_count DESC, actions DESC
+
+  - id: kb_sap_successfactors_talent_signals
+    name: "KB-SEÑALES Talento"
+    description: "Señales WisdomBit como recomendaciones solamente: priorización, pipeline y asignación, sin acciones automáticas."
+    sql: >
+      SELECT signal_type, severity, status,
+             COUNT(*) AS signals,
+             SUM(affected_count) AS affected_count
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_signals/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY signal_type, severity, status
+      ORDER BY affected_count DESC, signals DESC

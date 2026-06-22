@@ -10,7 +10,7 @@ import pytest
 
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPT = REPO / "scripts" / "materialize_successfactors_foundation.py"
+SCRIPT = REPO / "refinement" / "scripts" / "materialize_successfactors_foundation.py"
 REFINEMENT_DOCKERFILE = REPO / "refinement" / "Dockerfile"
 
 
@@ -77,6 +77,38 @@ def test_successfactors_foundation_materializes_gold_in_dependency_order():
     assert result["workspace_id"] == "workspace-a"
     assert all(item["status"] == "PASS" for item in result["datasets"])
     assert all(ctx["_server_trusted_context"] is True for _name, ctx in engine.calls)
+
+
+def test_successfactors_foundation_can_materialize_talent_when_explicit():
+    module = _load_script()
+    store = _FakeStore()
+    engine = _FakeEngine()
+
+    result = module.materialize_foundation(
+        store=store,
+        engine=engine,
+        tenant_id="tenant-a",
+        workspace_id="workspace-a",
+        datasets=module.SUCCESSFACTORS_GOLD_TALENT_ORDER,
+    )
+
+    assert [name for name, _ctx in engine.calls] == module.SUCCESSFACTORS_GOLD_TALENT_ORDER
+    assert result["status"] == "PASS"
+    assert all(item["status"] == "PASS" for item in result["datasets"])
+
+
+def test_successfactors_foundation_phase_helpers_keep_talent_layers_ordered():
+    module = _load_script()
+
+    assert module._datasets_for_phase("foundation", None) == module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
+    assert module._datasets_for_phase("talent_contract", None) == module.SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER
+    assert module._datasets_for_phase("talent_operational", None) == module.SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER
+    assert module._datasets_for_phase("all", None) == (
+        module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER + module.SUCCESSFACTORS_GOLD_TALENT_ORDER
+    )
+    assert module._datasets_for_phase("foundation", "sap_successfactors_talent_readiness") == [
+        "sap_successfactors_talent_readiness"
+    ]
 
 
 def test_successfactors_foundation_refuses_non_gold_dataset_before_writes():

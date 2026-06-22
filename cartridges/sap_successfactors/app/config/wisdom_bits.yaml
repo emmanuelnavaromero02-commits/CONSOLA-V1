@@ -1,0 +1,103 @@
+version: 1
+wisdom_bits:
+  - id: WB-TALENTO
+    cartridge: sap_successfactors
+    title: WisdomBit Talento
+    status: partial
+    decision_mode: recommendation_only
+    write_back_enabled: false
+    compensation_enabled: false
+    pii_exposure: masked
+    default_profile:
+      industry: retail
+      company_profile: femsa
+    fit_score:
+      components:
+        competency:
+          weight: 0.45
+          kb: KB-COMPETENCIAS
+          status: blocked
+        performance:
+          weight: 0.30
+          kb: KB-DESEMPENO
+          status: blocked
+        aspiration:
+          weight: 0.25
+          kb: KB-ASPIRACION
+          status: blocked
+      insufficient_data_status: insufficient_data
+    readiness:
+      ready_min: 80
+      near_min: 60
+      labels:
+        ready: Ready
+        near: Near
+        not_ready: Not ready
+        insufficient_data: Insufficient data
+    nine_box:
+      potential_formula:
+        competency: 0.60
+        aspiration: 0.40
+      performance_cuts:
+        medium_min: 3.0
+        high_min: 4.0
+      potential_cuts:
+        medium_min: 3.0
+        high_min: 4.0
+      insufficient_data_label: Sin datos C/P/A
+    signals:
+      - riesgo_salida
+      - asignacion
+      - pipeline
+      - sesgo
+      - sensibilidad
+      - priorizacion
+    operational_outputs:
+      - sap_successfactors_talent_cpa_scores
+      - sap_successfactors_talent_9box_operational
+      - sap_successfactors_talent_retention_risk
+      - sap_successfactors_talent_promotion_alignment
+      - sap_successfactors_talent_calibration_sensitivity
+      - sap_successfactors_talent_role_fit_assignments
+      - sap_successfactors_talent_action_candidates
+    action_policy:
+      mode: recommendation_only
+      write_back_enabled: false
+      preview_only: true
+    privacy:
+      control_room_roster: masked
+      forbidden_fields:
+        - full_name
+        - user_id
+        - pernr
+        - paycomp_value
+        - salary
+        - date_of_birth
+        - national_id
+    phase_1_sources:
+      - sap_successfactors_employee_360
+      - sap_successfactors_manager_hierarchy
+      - sap_successfactors_headcount_by_department
+      - sap_successfactors_headcount_by_location
+      - sap_successfactors_fojobcode_latest
+      - sap_successfactors_empjob_latest
+    metadata_blockers:
+      - entity: JobApplication
+        reason: Validate in tenant metadata before recruiting applications extraction.
+      - entity: PerformanceReview
+        odata_entity: FormHeader
+        reason: Validate performance forms and rating fields.
+      - entity: GoalPlan
+        odata_entity: Goal
+        reason: Validate goal plans and scoring fields.
+      - entity: CompetencySkill
+        reason: Tenant-specific skills/competencies entity is not stable across SuccessFactors tenants.
+      - entity: LearningItem
+        odata_entity: Item
+        reason: Enrichment only, not required for Fit Score v1.
+      - entity: Position
+        reason: Use when available to enrich role profiles.
+      - entity: FOCostCenter
+        reason: Cost enrichment stays disabled for v1.
+      - entity: EmpEmploymentTermination
+        reason: Use after metadata validation to strengthen attrition signals.

@@ -32,6 +32,9 @@ asistente sigue estas reglas además de las globales.
   `..._headcount_by_location`, `..._headcount_by_company`, `..._compensation_distribution`,
   `..._recruitment_funnel`, `..._turnover_by_period`, `..._manager_hierarchy`,
   `..._employees_anomalies`.
+- **Golds Talento / WisdomBit:** `gold_sap_successfactors_talent_employee_profile`,
+  `..._talent_role_profile`, `..._talent_mobility_history`, `..._talent_readiness`,
+  `..._talent_9box`, `..._talent_signals`.
 
 ## 3. Convenciones
 
@@ -58,8 +61,16 @@ asistente sigue estas reglas además de las globales.
 6. **Composición por tipo de empleo** → KB `kb_sap_successfactors_workforce_distribution`
    (lee del silver `sap_successfactors_empemployment_latest`, porque ningún gold expone
    `employee_class`).
-7. **Distribución de compensación** → NO es posible: `payCompValue` está cifrado.
-8. Antes de inventar SQL, confirma columnas reales con `search_rag` o `get_schema`. Al
+7. **Talento / WisdomBit** → usa los golds `talent_*`. `KB-EMPLEADOS` y movilidad salen
+   de `employee_360`, jerarquía, `EmpJob` y `FOJobCode`; `KB-ROLES` es parcial; Fit Score,
+   readiness y 9-box deben responder `insufficient_data` hasta tener desempeño,
+   competencias y aspiración. KBs: `kb_sap_successfactors_talent_employee_profile`,
+   `kb_sap_successfactors_talent_role_profile`, `kb_sap_successfactors_talent_mobility_history`,
+   `kb_sap_successfactors_talent_readiness`, `kb_sap_successfactors_talent_9box`,
+   `kb_sap_successfactors_talent_signals`.
+8. **Distribución de compensación** → NO es posible: `payCompValue` está cifrado. El
+   WisdomBit Talento tiene compensación apagada.
+9. Antes de inventar SQL, confirma columnas reales con `search_rag` o `get_schema`. Al
    leer `raw/sap_successfactors/*` con `read_parquet`, incluye siempre
    `hive_partitioning=true, union_by_name=true`. Si la pregunta no la cubre ningún gold,
    baja al silver; si tampoco, explica la limitación y escala con `request_admin_help`.
@@ -82,3 +93,8 @@ asistente sigue estas reglas además de las globales.
 - **Composición por tipo de empleo** se lee del silver (no hay gold dedicado).
 - El entityset de Learning (`LearningItem`) usa el default y no está verificado contra un
   entorno externo.
+- **Talento C/P/A**: desempeño (`PerformanceReview`/`FormHeader`), objetivos (`GoalPlan`),
+  competencias/skills y aspiración dependen de `$metadata` real del tenant. Si faltan, no
+  inventes scores: reporta `insufficient_data` y los blockers.
+- **WisdomBit Talento** usa perfil `retail/femsa`, pesos C/P/A 0.45/0.30/0.25 y señales
+  de recomendación solamente; no hace write-back a SuccessFactors.

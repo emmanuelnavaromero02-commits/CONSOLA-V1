@@ -45,6 +45,7 @@ import {
   getControlRoomThresholds,
   getSuccessFactorsDecisionModel,
   getSuccessFactorsGoldKpis,
+  getSuccessFactorsTalentKpis,
 } from "@/lib/control-room/client";
 import type { ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
@@ -203,6 +204,7 @@ interface SfGoldWidget {
   title: string;
   value: number | null;
   dataset: string;
+  href?: string;
   rows: SfGoldWidgetRow[];
   status?: SourceState | DataReadiness | "ready";
   error?: string | null;
@@ -214,6 +216,62 @@ interface SfGoldKpisPayload {
   tenant_id?: string;
   workspace_id?: string;
   widgets: SfGoldWidget[];
+}
+
+interface SfTalentWidget {
+  id: string;
+  title: string;
+  value: number | null;
+  dataset: string;
+  href?: string;
+  status?: SourceState | DataReadiness | "ready" | "partial";
+  detail?: string;
+  rows?: SfGoldWidgetRow[];
+}
+
+interface SfTalentSignal {
+  id: string;
+  type: string;
+  severity: Severity | string;
+  title: string;
+  affected_count?: number;
+  recommendation?: string;
+  status?: string;
+}
+
+interface SfTalentBlocker {
+  id: string;
+  status: SourceState | DataReadiness | "partial";
+  title: string;
+  detail: string;
+  items?: string[];
+}
+
+interface SfTalentKpisPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  profile: {
+    industry: string;
+    company_profile: string;
+    wisdom_bit: string;
+    decision_mode: string;
+    compensation_enabled: boolean;
+    write_back_enabled: boolean;
+  };
+  readiness: {
+    ready_min: number;
+    near_min: number;
+    profiled_employees: number;
+    calculable_employees: number;
+    insufficient_data_employees: number;
+    nine_box_available: number;
+    status: SourceState | DataReadiness | "partial";
+  };
+  widgets: SfTalentWidget[];
+  signals: SfTalentSignal[];
+  blockers: SfTalentBlocker[];
 }
 
 interface ThresholdCandidate extends DetectionThreshold {
@@ -1035,6 +1093,9 @@ export default function ControlRoomPage() {
   const [sfGoldKpis, setSfGoldKpis] = useState<SfGoldKpisPayload | null>(null);
   const [sfGoldLoading, setSfGoldLoading] = useState(false);
   const [sfGoldError, setSfGoldError] = useState("");
+  const [sfTalentKpis, setSfTalentKpis] = useState<SfTalentKpisPayload | null>(null);
+  const [sfTalentLoading, setSfTalentLoading] = useState(false);
+  const [sfTalentError, setSfTalentError] = useState("");
   const [sfDecisionModel, setSfDecisionModel] = useState<SfDecisionModelPayload | null>(null);
   const [sfDecisionModelLoading, setSfDecisionModelLoading] = useState(false);
   const [sfDecisionModelError, setSfDecisionModelError] = useState("");
@@ -1145,6 +1206,20 @@ export default function ControlRoomPage() {
     }
   }, []);
 
+  const loadSfTalentKpis = useCallback(async () => {
+    setSfTalentLoading(true);
+    setSfTalentError("");
+    try {
+      const payload = await getSuccessFactorsTalentKpis();
+      setSfTalentKpis(payload);
+    } catch (err) {
+      setSfTalentError(errorMessage(err, "No se pudieron cargar KPIs de Talento SuccessFactors"));
+    } finally {
+      setSfTalentLoading(false);
+    }
+  }, []);
+
+
   const loadSfDecisionModel = useCallback(async () => {
     setSfDecisionModelLoading(true);
     setSfDecisionModelError("");
@@ -1168,6 +1243,9 @@ export default function ControlRoomPage() {
     setSfGoldKpis(null);
     setSfGoldLoading(false);
     setSfGoldError("");
+    setSfTalentKpis(null);
+    setSfTalentLoading(false);
+    setSfTalentError("");
     setSfDecisionModel(null);
     setSfDecisionModelLoading(false);
     setSfDecisionModelError("");
@@ -1195,6 +1273,7 @@ export default function ControlRoomPage() {
         void loadThresholds();
         if (successFactorsAvailable) {
           void loadSfGoldKpis();
+          void loadSfTalentKpis();
           void loadSfDecisionModel();
         } else {
           clearSuccessFactorsState();
@@ -1202,7 +1281,7 @@ export default function ControlRoomPage() {
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
+  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -1211,13 +1290,14 @@ export default function ControlRoomPage() {
       void loadThresholds();
       if (successFactorsAvailable) {
         void loadSfGoldKpis();
+        void loadSfTalentKpis();
         void loadSfDecisionModel();
       } else {
         clearSuccessFactorsState();
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, clearSuccessFactorsState, domain, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, state, successFactorsAvailable]);
+  }, [cartridge, clearSuccessFactorsState, domain, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, state, successFactorsAvailable]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -1808,7 +1888,7 @@ export default function ControlRoomPage() {
       loadThresholds(),
     ];
     if (successFactorsAvailable) {
-      tasks.push(loadSfGoldKpis(), loadSfDecisionModel());
+      tasks.push(loadSfGoldKpis(), loadSfTalentKpis(), loadSfDecisionModel());
     } else {
       clearSuccessFactorsState();
     }
@@ -1928,6 +2008,9 @@ export default function ControlRoomPage() {
             sfGoldKpis={sfGoldKpis}
             sfGoldLoading={sfGoldLoading}
             sfGoldError={sfGoldError}
+            sfTalentKpis={sfTalentKpis}
+            sfTalentLoading={sfTalentLoading}
+            sfTalentError={sfTalentError}
             sfDecisionModel={sfDecisionModel}
             sfDecisionModelLoading={sfDecisionModelLoading}
             sfDecisionModelError={sfDecisionModelError}
@@ -2179,6 +2262,9 @@ function DashboardView({
   sfGoldKpis,
   sfGoldLoading,
   sfGoldError,
+  sfTalentKpis,
+  sfTalentLoading,
+  sfTalentError,
   sfDecisionModel,
   sfDecisionModelLoading,
   sfDecisionModelError,
@@ -2228,6 +2314,9 @@ function DashboardView({
   sfGoldKpis: SfGoldKpisPayload | null;
   sfGoldLoading: boolean;
   sfGoldError: string;
+  sfTalentKpis: SfTalentKpisPayload | null;
+  sfTalentLoading: boolean;
+  sfTalentError: string;
   sfDecisionModel: SfDecisionModelPayload | null;
   sfDecisionModelLoading: boolean;
   sfDecisionModelError: string;
@@ -2288,6 +2377,9 @@ function DashboardView({
             loading={sfGoldLoading}
             error={sfGoldError}
             sources={contextSources}
+            talent={sfTalentKpis}
+            talentLoading={sfTalentLoading}
+            talentError={sfTalentError}
             decisionModel={sfDecisionModel}
             decisionModelLoading={sfDecisionModelLoading}
             decisionModelError={sfDecisionModelError}
@@ -2388,8 +2480,11 @@ function ExecutiveCommandStrip({
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const impactTotal = impactValues.reduce((sum, value) => sum + value, 0);
   const readySources = sources.filter((source) => source.operationally_ready || source.data_readiness === "ready").length;
-  const sfRows = sfGoldKpis?.widgets.reduce((sum, widget) => sum + (typeof widget.value === "number" && Number.isFinite(widget.value) ? widget.value : 0), 0) ?? 0;
-  const topDataset = sfGoldKpis?.widgets.find((widget) => typeof widget.value === "number" && widget.value > 0);
+  const headcountWidget =
+    sfGoldKpis?.widgets.find((widget) => widget.id === "sf_active_headcount") ??
+    sfGoldKpis?.widgets.find((widget) => widget.dataset.includes("employee_360"));
+  const sfRows = typeof headcountWidget?.value === "number" && Number.isFinite(headcountWidget.value) ? headcountWidget.value : 0;
+  const topDataset = headcountWidget ?? sfGoldKpis?.widgets.find((widget) => typeof widget.value === "number" && widget.value > 0);
   const severitySeries = (["low", "medium", "high", "critical"] as Severity[]).map((level) => items.filter((item) => item.severity === level).length);
   const sourceSeries = [
     readySources,

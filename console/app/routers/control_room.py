@@ -123,6 +123,77 @@ async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require
     )
 
 
+@router.get("/sap-successfactors/talent-kpis", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_kpis(user: dict = Depends(require_authenticated)):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-talent-kpis",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_kpis(user),
+    )
+
+
+@router.get("/sap-successfactors/talent/overview", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_overview(user: dict = Depends(require_authenticated)):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-talent-overview",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_overview(user),
+    )
+
+
+@router.get("/sap-successfactors/talent/9box", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_9box(user: dict = Depends(require_authenticated)):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-talent-9box",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_9box(user),
+    )
+
+
+@router.get("/sap-successfactors/talent/9box/{box_id}", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_9box_box(
+    box_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    return await _control_room_cache_get_or_set(
+        f"sap-successfactors-talent-9box-{box_id}",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_9box_box(user, box_id),
+    )
+
+
+@router.get("/sap-successfactors/talent/anomalies", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_anomalies(user: dict = Depends(require_authenticated)):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-talent-anomalies",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_anomalies(user),
+    )
+
+
+@router.get("/sap-successfactors/talent/metadata-readiness", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_talent_metadata_readiness(user: dict = Depends(require_authenticated)):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-talent-metadata-readiness",
+        user,
+        lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+    )
+
+
+@router.post(
+    "/sap-successfactors/talent/actions/preview",
+    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_talent_action_preview(
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.sap_successfactors_talent_action_preview(
+        user,
+        body if isinstance(body, dict) else {},
+    )
+
+
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
     """Lightweight, pollable operational summary (persisted state only)."""

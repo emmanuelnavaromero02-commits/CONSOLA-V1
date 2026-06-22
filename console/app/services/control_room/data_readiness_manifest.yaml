@@ -117,6 +117,123 @@ datasets:
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_turnover_by_period.sql
       - infra/init/82_sap_successfactors_datasets_seed.sql
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_employee_profile
+    readiness: partial
+    reason: "Uses validated foundation data only: employee_360 plus manager_hierarchy; C/P/A fields are explicitly null and flagged."
+    blockers:
+      - "Enable C/P/A entities before treating this as a complete talent profile."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_employee_profile.sql
+      - cartridges/sap_successfactors/specs/talent_kb_wisdombit.md
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_role_profile
+    readiness: partial
+    reason: "Role profile is derived from job_code/FOJobCode; required skills and position requirements need tenant metadata."
+    blockers:
+      - "Validate Position and tenant-specific skill/competency entities before claiming full role requirements coverage."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_role_profile.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_mobility_history
+    readiness: partial
+    reason: "Mobility comes from effective-dated EmpJob history; it is observed movement, not declared career aspiration."
+    blockers:
+      - "Validate career interest or aspiration entities before using mobility as aspiration evidence."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_mobility_history.sql
+      - cartridges/sap_successfactors/specs/talent_kb_wisdombit.md
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_readiness
+    readiness: partial
+    reason: "The dataset keeps the readiness contract stable but returns insufficient_data while competency, performance and aspiration are missing."
+    blockers:
+      - "Validate and extract performance, competency and aspiration entities before calculating Fit Score."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_readiness.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_cpa_scores
+    readiness: partial
+    reason: "C/P/A score columns are contract-ready but remain insufficient_data until performance, competency and aspiration entities are validated."
+    blockers:
+      - "Run SuccessFactors metadata preflight for performance reviews, competency/skills MDF and career aspiration entities."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_cpa_scores.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_9box
+    readiness: partial
+    reason: "The 9-box contract is materialized, but performance and potential bands are blocked until C/P/A components exist."
+    blockers:
+      - "Enable performance plus competency/aspiration components before calculating 9-box placement."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_9box.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_9box_operational
+    readiness: partial
+    reason: "Aggregates the native 9-box contract for Control Room; boxes stay blocked when C/P/A is incomplete."
+    blockers:
+      - "Materialize C/P/A, readiness and 9-box before using this as an operational matrix."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_9box_operational.sql
+      - console-next/src/components/control-room/talent/TalentControlRoom.tsx
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_retention_risk
+    readiness: partial
+    reason: "Retention risk is recommendation-only and excludes sensitive compensation; it depends on Fit Score plus mobility."
+    blockers:
+      - "Calculate Fit Score from real C/P/A before treating retention risk as actionable."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_retention_risk.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_promotion_alignment
+    readiness: partial
+    reason: "Promotion alignment uses observed job movements and 9-box placement; calibration entities are still pending."
+    blockers:
+      - "Validate succession/calibration entities before claiming promotion calibration coverage."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_promotion_alignment.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_calibration_sensitivity
+    readiness: partial
+    reason: "Sensitivity detects records near 9-box cuts and remains advisory while C/P/A inputs are incomplete."
+    blockers:
+      - "Validate score distributions and business cuts with real C/P/A values."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_calibration_sensitivity.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_role_fit_assignments
+    readiness: partial
+    reason: "Role-fit assignments are recommendations from Fit Score and 9-box; Position requirements are not yet authoritative."
+    blockers:
+      - "Validate Position and required skills metadata before recommending role assignment changes."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_role_fit_assignments.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_action_candidates
+    readiness: partial
+    reason: "Action candidates are Control Room recommendations only; no write-back or compensation-sensitive action is enabled."
+    blockers:
+      - "Approve action thresholds and governance before promoting previews into supervised decisions."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_action_candidates.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_talent_signals
+    readiness: partial
+    reason: "Signals are recommendations derived from action candidates; they are not automatic actions."
+    blockers:
+      - "Validate C/P/A entities and signal thresholds before promoting signals to operational decisions."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_talent_signals.sql
+      - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
 knowledge_bits:
   - cartridge: sap_hcm
     id: kb_sap_hcm_employees_anomalies_active
@@ -174,3 +291,107 @@ knowledge_bits:
     reason: "This KB reads an anomaly dataset with incomplete active-with-termination coverage."
     blockers:
       - "Validate EmpEmploymentTermination joins before exposing the KB as full anomaly coverage."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_employee_profile
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_employee_profile
+    reason: "KB-EMPLEADOS Talent reads validated foundation data and exposes C/P/A blockers explicitly."
+    blockers:
+      - "Enable C/P/A entities before treating this as a complete talent profile."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_role_profile
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_role_profile
+    reason: "KB-ROLES is available from job_code/FOJobCode but required skills are pending metadata validation."
+    blockers:
+      - "Validate Position and skill/competency entities before exposing full role requirements."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_mobility_history
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_mobility_history
+    reason: "Mobility is observed from EmpJob and should not be treated as declared aspiration."
+    blockers:
+      - "Validate aspiration or career interest entities before using mobility as an aspiration component."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_readiness
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_readiness
+    reason: "Readiness returns insufficient_data until competency, performance and aspiration components exist."
+    blockers:
+      - "Enable C/P/A entities before calculating Fit Score."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_cpa_scores
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_cpa_scores
+    reason: "C/P/A score KB is contract-ready but blocked by missing performance, competency and aspiration entities."
+    blockers:
+      - "Run metadata preflight and extract C/P/A entities before answering individual fit questions."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_9box
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_9box
+    reason: "9-box is blocked until performance and potential are calculable."
+    blockers:
+      - "Enable C/P/A entities before calculating 9-box placement."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_9box_operational
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_9box_operational
+    reason: "Operational 9-box aggregates are available, but cells remain blocked until C/P/A is complete."
+    blockers:
+      - "Materialize real C/P/A and 9-box before using operational box counts as decision coverage."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_retention_risk
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_retention_risk
+    reason: "Retention-risk KB is recommendation-only and does not use compensation-sensitive values."
+    blockers:
+      - "Calculate Fit Score from real C/P/A before using retention-risk recommendations."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_promotion_alignment
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_promotion_alignment
+    reason: "Promotion alignment is derived from observed movement and needs calibration entities for full authority."
+    blockers:
+      - "Validate succession/calibration entities before using promotion alignment as governance evidence."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_calibration_sensitivity
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_calibration_sensitivity
+    reason: "Calibration sensitivity is advisory while score inputs and business cuts are still being validated."
+    blockers:
+      - "Validate C/P/A score distributions and cut thresholds before final calibration decisions."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_role_fit_assignments
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_role_fit_assignments
+    reason: "Role-fit assignment KB needs Position requirements and skills metadata before recommending movement."
+    blockers:
+      - "Validate Position and required skills metadata before using role-fit recommendations."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_action_candidates
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_action_candidates
+    reason: "Action candidates are preview-only recommendations and do not write back to SuccessFactors."
+    blockers:
+      - "Approve thresholds and governance before turning previews into supervised decision workflows."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_talent_signals
+    readiness: partial
+    datasets:
+      - sap_successfactors_talent_signals
+    reason: "Signals are recommendation-only and derived from action candidates while coverage is partial."
+    blockers:
+      - "Validate signal thresholds and C/P/A coverage before promoting operational decisions."

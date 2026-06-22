@@ -7,6 +7,13 @@ import type {
   LessonsPayload,
   SfDecisionModelPayload,
   SfGoldKpisPayload,
+  SfTalentActionPreviewPayload,
+  SfTalentAnomaliesPayload,
+  SfTalentKpisPayload,
+  SfTalentMetadataReadinessPayload,
+  SfTalentNineBoxPayload,
+  SfTalentOverviewPayload,
+  SfTalentRosterPayload,
   ThresholdPayload,
 } from "./types";
 
@@ -15,6 +22,12 @@ export const CONTROL_ROOM_PATHS = {
   lessons: "/api/control-room/lessons",
   thresholds: "/api/control-room/thresholds",
   sfGoldKpis: "/api/control-room/sap-successfactors/gold-kpis",
+  sfTalentKpis: "/api/control-room/sap-successfactors/talent-kpis",
+  sfTalentOverview: "/api/control-room/sap-successfactors/talent/overview",
+  sfTalentNineBox: "/api/control-room/sap-successfactors/talent/9box",
+  sfTalentAnomalies: "/api/control-room/sap-successfactors/talent/anomalies",
+  sfTalentMetadataReadiness: "/api/control-room/sap-successfactors/talent/metadata-readiness",
+  sfTalentActionPreview: "/api/control-room/sap-successfactors/talent/actions/preview",
   sfDecisionModel: "/api/semantic?cartridge=sap_successfactors",
 } as const;
 
@@ -54,6 +67,51 @@ export async function getControlRoomThresholds(): Promise<ThresholdPayload> {
 
 export async function getSuccessFactorsGoldKpis(): Promise<SfGoldKpisPayload> {
   const response = await api.get<SfGoldKpisPayload>(CONTROL_ROOM_PATHS.sfGoldKpis);
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentKpis(): Promise<SfTalentKpisPayload> {
+  const response = await api.get<SfTalentKpisPayload>(CONTROL_ROOM_PATHS.sfTalentKpis);
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentOverview(): Promise<SfTalentOverviewPayload> {
+  const response = await api.get<SfTalentOverviewPayload>(CONTROL_ROOM_PATHS.sfTalentOverview);
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentNineBox(): Promise<SfTalentNineBoxPayload> {
+  const response = await api.get<SfTalentNineBoxPayload>(CONTROL_ROOM_PATHS.sfTalentNineBox);
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentBoxRoster(boxId: string): Promise<SfTalentRosterPayload> {
+  const response = await api.get<SfTalentRosterPayload>(
+    `${CONTROL_ROOM_PATHS.sfTalentNineBox}/${encodeURIComponent(boxId)}`,
+  );
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentAnomalies(): Promise<SfTalentAnomaliesPayload> {
+  const response = await api.get<SfTalentAnomaliesPayload>(CONTROL_ROOM_PATHS.sfTalentAnomalies);
+  return response.data;
+}
+
+export async function getSuccessFactorsTalentMetadataReadiness(): Promise<SfTalentMetadataReadinessPayload> {
+  const response = await api.get<SfTalentMetadataReadinessPayload>(
+    CONTROL_ROOM_PATHS.sfTalentMetadataReadiness,
+  );
+  return response.data;
+}
+
+export async function previewSuccessFactorsTalentAction(payload: {
+  action_id: string;
+  box_id?: string | null;
+}): Promise<SfTalentActionPreviewPayload> {
+  const response = await api.post<SfTalentActionPreviewPayload>(
+    CONTROL_ROOM_PATHS.sfTalentActionPreview,
+    payload,
+  );
   return response.data;
 }
 

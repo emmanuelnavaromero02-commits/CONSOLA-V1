@@ -162,6 +162,7 @@ export interface SfGoldWidget {
   title: string;
   value: number | null;
   dataset: string;
+  href?: string;
   rows: SfGoldWidgetRow[];
   status?: DataReadiness | SourceState | "ready";
   error?: string | null;
@@ -173,6 +174,235 @@ export interface SfGoldKpisPayload {
   tenant_id?: string;
   workspace_id?: string;
   widgets: SfGoldWidget[];
+}
+
+export interface SfTalentWidget {
+  id: string;
+  title: string;
+  value: number | null;
+  dataset: string;
+  href?: string;
+  status?: DataReadiness | SourceState | "ready" | "partial";
+  detail?: string;
+  rows?: SfGoldWidgetRow[];
+}
+
+export interface SfTalentSignal {
+  id: string;
+  type: string;
+  severity: Severity | string;
+  title: string;
+  affected_count?: number;
+  recommendation?: string;
+  status?: string;
+}
+
+export interface SfTalentBlocker {
+  id: string;
+  status: DataReadiness | SourceState | "partial";
+  title: string;
+  detail: string;
+  items?: string[];
+}
+
+export interface SfTalentKpisPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  profile: {
+    industry: string;
+    company_profile: string;
+    wisdom_bit: string;
+    decision_mode: string;
+    compensation_enabled: boolean;
+    write_back_enabled: boolean;
+  };
+  readiness: {
+    ready_min: number;
+    near_min: number;
+    profiled_employees: number;
+    calculable_employees: number;
+    insufficient_data_employees: number;
+    nine_box_available: number;
+    status: DataReadiness | SourceState | "partial";
+  };
+  widgets: SfTalentWidget[];
+  signals: SfTalentSignal[];
+  blockers: SfTalentBlocker[];
+}
+
+export interface SfTalentNineBoxCell {
+  box_id: string;
+  box_label: string;
+  potential_band: "low" | "medium" | "high" | string;
+  performance_band: "low" | "medium" | "high" | string;
+  movement_action: string;
+  display_order: number;
+  employee_count: number;
+  ready_count: number;
+  blocked_count: number;
+  status: DataReadiness | SourceState | "ready" | "partial";
+  href?: string;
+}
+
+export interface SfTalentNineBoxPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  dataset: string;
+  status: DataReadiness | SourceState | "ready" | "partial";
+  totals: {
+    employees: number;
+    ready: number;
+    blocked: number;
+    cells: number;
+  };
+  cells: SfTalentNineBoxCell[];
+  blockers: SfTalentBlocker[];
+  privacy?: {
+    roster?: string;
+    forbidden_fields?: string[];
+  };
+}
+
+export interface SfTalentRosterRow {
+  employee_key: string;
+  display_name: string;
+  role: string;
+  unit: string;
+  region: string;
+  readiness_status: string;
+  box_id: string;
+  box_label: string;
+  performance_band: string;
+  potential_band: string;
+  fit_band: string;
+  movement_age_bucket: string;
+  data_status: string;
+}
+
+export interface SfTalentRosterPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  dataset: string;
+  box: {
+    box_id: string;
+    box_label: string;
+    potential_band: string;
+    performance_band: string;
+    movement_action: string;
+    display_order: number;
+  };
+  status: DataReadiness | SourceState | "ready" | "partial";
+  count: number;
+  roster: SfTalentRosterRow[];
+  blockers: SfTalentBlocker[];
+  privacy?: {
+    masked?: boolean;
+    excluded_fields?: string[];
+  };
+}
+
+export interface SfTalentAnomaly {
+  id: string;
+  type: string;
+  severity: Severity | string;
+  title: string;
+  detail: string;
+  affected_count: number;
+  recommendation: string;
+  status: string;
+  method: string;
+  preview_available: boolean;
+}
+
+export interface SfTalentAnomaliesPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  dataset: string;
+  status: DataReadiness | SourceState | "ready" | "partial";
+  summary: {
+    total: number;
+    high: number;
+    recommendation_only: number;
+  };
+  items: SfTalentAnomaly[];
+  blockers: SfTalentBlocker[];
+}
+
+export interface SfTalentMetadataEntity {
+  id: string;
+  kb: string;
+  entity: string;
+  required_for: string;
+  status: DataReadiness | SourceState | "ready" | "partial";
+  blockers: string[];
+}
+
+export interface SfTalentMetadataReadinessPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  status: DataReadiness | SourceState | "ready" | "partial";
+  summary: {
+    cpa_ready_employees: number;
+    cpa_insufficient_employees: number;
+    entities: number;
+    blocked_entities: number;
+  };
+  entities: SfTalentMetadataEntity[];
+  blockers: SfTalentBlocker[];
+}
+
+export interface SfTalentOverviewPayload extends SfTalentKpisPayload {
+  nine_box: {
+    status?: DataReadiness | SourceState | "ready" | "partial";
+    totals?: SfTalentNineBoxPayload["totals"];
+    cells: SfTalentNineBoxCell[];
+    blockers: SfTalentBlocker[];
+  };
+  anomalies: {
+    status?: DataReadiness | SourceState | "ready" | "partial";
+    summary?: SfTalentAnomaliesPayload["summary"];
+    items: SfTalentAnomaly[];
+  };
+  metadata_readiness: {
+    status?: DataReadiness | SourceState | "ready" | "partial";
+    summary?: SfTalentMetadataReadinessPayload["summary"];
+    entities: SfTalentMetadataEntity[];
+  };
+}
+
+export interface SfTalentActionPreviewPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  status: "preview_only" | string;
+  action_id: string;
+  box_id?: string | null;
+  title?: string;
+  severity?: Severity | string;
+  affected_count: number;
+  recommendation?: string;
+  method?: string;
+  recommendation_only: boolean;
+  write_back_enabled: boolean;
+  compensation_enabled: boolean;
+  requires_approval: boolean;
+  external_mutations: unknown[];
+  steps: Array<{
+    id: string;
+    label: string;
+    status: string;
+  }>;
 }
 
 export interface SfDecisionTerm {
