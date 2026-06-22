@@ -150,6 +150,58 @@ export interface ThresholdPayload {
   };
 }
 
+export interface ControlRoomAgentsOpsRun {
+  id: number;
+  agent_id: string;
+  agent_slug: string;
+  agent_name: string;
+  cartridge_id: string;
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  tool_count: number;
+  tools: string[];
+  error?: string | null;
+}
+
+export interface ControlRoomAgentsOpsAgent {
+  id: string;
+  cartridge_id: string;
+  slug: string;
+  name: string;
+  active: boolean;
+  role: string;
+  monitor: boolean;
+  schedule?: Record<string, unknown>;
+  monitor_contract?: Record<string, unknown>;
+  allowed_tools: string[];
+  last_run?: ControlRoomAgentsOpsRun | null;
+  alerts: {
+    total: number;
+    open: number;
+    last_seen_at?: string | null;
+  };
+}
+
+export interface ControlRoomAgentsOpsPayload {
+  generated_at?: string;
+  tenant?: string | null;
+  active_workspace?: string;
+  summary: {
+    agents_total: number;
+    active_agents: number;
+    monitor_agents: number;
+    recent_runs: number;
+    failed_recent_runs: number;
+    open_agent_alerts: number;
+    agent_alerts_total: number;
+  };
+  agents: ControlRoomAgentsOpsAgent[];
+  recent_runs: ControlRoomAgentsOpsRun[];
+  tools_used: Array<{ tool: string; count: number }>;
+  origins: Array<{ origin: string; count: number }>;
+}
+
 export interface SfGoldWidgetRow {
   label?: string;
   id?: string | null;

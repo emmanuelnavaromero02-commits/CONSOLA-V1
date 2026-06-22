@@ -200,6 +200,18 @@ async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
     return await control_room_service.ops_summary(user)
 
 
+@router.get("/agents/ops", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_agents_ops(
+    limit: int = Query(default=12, ge=1, le=50),
+    user: dict = Depends(require_authenticated),
+):
+    return await _control_room_cache_get_or_set(
+        f"agents-ops-{limit}",
+        user,
+        lambda: control_room_service.agents_ops(user, limit=limit),
+    )
+
+
 @router.get("/decision-intelligence/runs", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_decision_intelligence_runs(
     limit: int = Query(default=50, ge=1, le=250),

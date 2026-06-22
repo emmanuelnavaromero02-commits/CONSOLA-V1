@@ -44,7 +44,16 @@ _SERVER_ENV_KEYS = {
 
 _DEFAULT_MAX_TOOL_CALLS = 8
 _DEFAULT_SCHEDULED_MAX_TOOL_CALLS = 5
-_CONTROL_ROOM_ALERT_TOOL = "mcp-infra__control_room__raise_alert"
+_CONTROL_ROOM_ADVISORY_TOOLS = {
+    "mcp-infra__control_room__raise_alert",
+    "mcp-infra__control_room__raise_analysis_alert",
+}
+_AGENTOPS_COMPUTE_TOOLS = {
+    "mcp-infra__simulation__monte_carlo_run",
+    "mcp-infra__decision__orchestrate",
+    "mcp-infra__wisdom_bits__run",
+}
+_SCHEDULED_MONITOR_WRITE_TOOLS = _CONTROL_ROOM_ADVISORY_TOOLS | _AGENTOPS_COMPUTE_TOOLS
 _SIGNED_CONTEXT_FIELDS = {"_signature", "_signed_at", "_signature_version"}
 
 
@@ -327,7 +336,7 @@ def _resign_context(ctx: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
 
 def _scheduled_permissions(agent: Agent) -> list[str]:
     permissions = {"datasets.read", "cartridges.read"}
-    if _is_monitor_agent(agent) and _CONTROL_ROOM_ALERT_TOOL in set(agent.allowed_tools or []):
+    if _is_monitor_agent(agent) and _SCHEDULED_MONITOR_WRITE_TOOLS & set(agent.allowed_tools or []):
         permissions.add("control_room.write")
     return sorted(permissions)
 
@@ -497,17 +506,18 @@ def _make_invoke(
         except tool_policy.ToolPolicyError as exc:
             return await deny("invalid_args", str(exc))
 
-        scheduled_advisory_alert = (
+        scheduled_monitor_write = (
             scheduled
-            and full_name == _CONTROL_ROOM_ALERT_TOOL
+            and full_name in _SCHEDULED_MONITOR_WRITE_TOOLS
             and risk == "write"
             and _is_monitor_agent(agent)
         )
 
         # Scheduled runs have no human in the loop. They may read and raise
-        # advisory Control Room alerts; no other write/delete/change state is
-        # allowed without a future scheduler approval token wired server-side.
-        if scheduled and risk != "read" and not scheduled_advisory_alert:
+        # advisory Control Room/AgentOps evidence; no external write/delete
+        # action is allowed without a future scheduler approval token wired
+        # server-side.
+        if scheduled and risk != "read" and not scheduled_monitor_write:
             return await deny(
                 "scheduled_action_blocked",
                 "scheduled agents cannot execute write/destructive tools without approval",
@@ -517,7 +527,7 @@ def _make_invoke(
         # Manual runs still require the Copilot-style approval card for every
         # write/destructive tool. The agent runtime records a pending action
         # instead of executing it; UI/API can surface that state safely.
-        if meta["requires_approval"] and not scheduled_advisory_alert:
+        if meta["requires_approval"] and not scheduled_monitor_write:
             await _audit_agent_tool(
                 agent=agent, run_id=run_id, user=user, server_id=server_id,
                 tool=tool, args=args, risk_level=risk, status="pending_approval",

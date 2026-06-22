@@ -3258,6 +3258,206 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
 
 
 @_bind_to_core
+async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
+    """Persisted AgentOps snapshot for Control Room.
+
+    This intentionally reads only agents, agent_runs and persisted
+    control_room_items; it never starts agents or simulations from the
+    dashboard polling path.
+    """
+    tenant_id, workspace_id = _workspace_scope(user)
+    pool = await auth.pool()
+    limit = max(1, min(int(limit or 12), 50))
+
+    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
+        agents = await conn.fetch(
+            """
+            SELECT id::text AS id, cartridge_id, slug, name, is_active,
+                   allowed_tools, extra, updated_at
+              FROM agents
+             WHERE (workspace_id = $1::uuid OR workspace_id IS NULL)
+               AND ($2::uuid IS NULL OR tenant_id = $2::uuid OR tenant_id IS NULL)
+             ORDER BY is_active DESC, updated_at DESC, cartridge_id, slug
+             LIMIT 100
+            """,
+            workspace_id,
+            tenant_id,
+        )
+        runs = await conn.fetch(
+            """
+            SELECT r.id, r.agent_id::text AS agent_id, r.started_at, r.finished_at,
+                   r.status, r.tool_calls, r.error_message,
+                   a.slug, a.name, a.cartridge_id
+              FROM agent_runs r
+              JOIN agents a ON a.id = r.agent_id
+             WHERE (r.workspace_id = $1::uuid OR (r.workspace_id IS NULL AND a.workspace_id = $1::uuid))
+             ORDER BY r.started_at DESC
+             LIMIT $2
+            """,
+            workspace_id,
+            limit,
+        )
+        alert_rows = await conn.fetch(
+            """
+            SELECT metadata->>'agent_id' AS agent_id,
+                   COUNT(*)::int AS total,
+                   COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+                   MAX(last_seen_at) AS last_seen_at
+              FROM control_room_items
+             WHERE workspace_id = $1::uuid
+               AND item_kind = 'agent_alert'
+             GROUP BY metadata->>'agent_id'
+            """,
+            workspace_id,
+        )
+        origin_rows = await conn.fetch(
+            """
+            SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
+                   COUNT(*)::int AS total
+              FROM control_room_items
+             WHERE workspace_id = $1::uuid
+               AND item_kind = 'agent_alert'
+             GROUP BY 1
+             ORDER BY 2 DESC, 1
+            """,
+            workspace_id,
+        )
+        return {
+            "agents": agents,
+            "runs": runs,
+            "alert_rows": alert_rows,
+            "origin_rows": origin_rows,
+        }
+
+    raw = await run_with_db_scope(pool, user or {}, _load)
+
+    def _json_value(value: Any, fallback: Any) -> Any:
+        if value is None:
+            return fallback
+        if isinstance(value, (dict, list)):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, type(fallback)) else fallback
+            except Exception:
+                return fallback
+        return fallback
+
+    alerts_by_agent = {
+        str(row["agent_id"] or ""): {
+            "total": int(row["total"] or 0),
+            "open": int(row["open"] or 0),
+            "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+        }
+        for row in raw["alert_rows"]
+        if str(row["agent_id"] or "")
+    }
+    runs_by_agent: dict[str, list[dict[str, Any]]] = {}
+    tool_usage: dict[str, int] = {}
+    run_payloads: list[dict[str, Any]] = []
+    for row in raw["runs"]:
+        tool_calls = _json_value(row["tool_calls"], [])
+        for call in tool_calls if isinstance(tool_calls, list) else []:
+            tool = str(call.get("tool") or call.get("name") or "").strip()
+            server = str(call.get("server") or "").strip()
+            full_tool = f"{server}__{tool}" if server and "__" not in tool else tool
+            if full_tool:
+                tool_usage[full_tool] = tool_usage.get(full_tool, 0) + 1
+        payload = {
+            "id": int(row["id"]),
+            "agent_id": str(row["agent_id"]),
+            "agent_slug": row["slug"],
+            "agent_name": row["name"],
+            "cartridge_id": row["cartridge_id"],
+            "status": row["status"],
+            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+            "tool_count": len(tool_calls) if isinstance(tool_calls, list) else 0,
+            "tools": [
+                str(call.get("tool") or call.get("name") or "")
+                for call in tool_calls[:8]
+                if isinstance(call, dict)
+            ]
+            if isinstance(tool_calls, list)
+            else [],
+            "error": row["error_message"][:500] if row["error_message"] else None,
+        }
+        run_payloads.append(payload)
+        runs_by_agent.setdefault(payload["agent_id"], []).append(payload)
+
+    agents_payload: list[dict[str, Any]] = []
+    monitor_count = 0
+    active_count = 0
+    for row in raw["agents"]:
+        extra = _json_value(row["extra"], {})
+        allowed_tools = _json_value(row["allowed_tools"], [])
+        monitor = extra.get("monitor") if isinstance(extra, dict) else {}
+        role = str((extra or {}).get("role") or "").strip().lower() if isinstance(extra, dict) else ""
+        is_monitor = role == "monitor" or isinstance(monitor, dict)
+        if is_monitor:
+            monitor_count += 1
+        if row["is_active"]:
+            active_count += 1
+        schedule = {}
+        if isinstance(extra, dict):
+            schedule = extra.get("schedule") or (monitor.get("schedule") if isinstance(monitor, dict) else {}) or {}
+        agent_id = str(row["id"])
+        last_run = (runs_by_agent.get(agent_id) or [None])[0]
+        agents_payload.append({
+            "id": agent_id,
+            "cartridge_id": row["cartridge_id"],
+            "slug": row["slug"],
+            "name": row["name"],
+            "active": bool(row["is_active"]),
+            "role": role or ("monitor" if is_monitor else "agent"),
+            "monitor": bool(is_monitor),
+            "schedule": schedule,
+            "monitor_contract": monitor if isinstance(monitor, dict) else {},
+            "allowed_tools": [
+                tool for tool in allowed_tools
+                if isinstance(tool, str)
+                and (
+                    tool.startswith("mcp-infra__simulation__")
+                    or tool.startswith("mcp-infra__decision__")
+                    or tool.startswith("mcp-infra__wisdom_bits__")
+                    or tool.startswith("mcp-infra__control_room__")
+                )
+            ],
+            "last_run": last_run,
+            "alerts": alerts_by_agent.get(agent_id, {"total": 0, "open": 0, "last_seen_at": None}),
+        })
+
+    failed_recent = sum(1 for run in run_payloads if str(run.get("status")) == "error")
+    open_alerts = sum(row.get("open", 0) for row in alerts_by_agent.values())
+    total_alerts = sum(row.get("total", 0) for row in alerts_by_agent.values())
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "tenant": tenant_id,
+        "active_workspace": workspace_id,
+        "summary": {
+            "agents_total": len(agents_payload),
+            "active_agents": active_count,
+            "monitor_agents": monitor_count,
+            "recent_runs": len(run_payloads),
+            "failed_recent_runs": failed_recent,
+            "open_agent_alerts": open_alerts,
+            "agent_alerts_total": total_alerts,
+        },
+        "agents": agents_payload,
+        "recent_runs": run_payloads,
+        "tools_used": [
+            {"tool": tool, "count": count}
+            for tool, count in sorted(tool_usage.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "origins": [
+            {"origin": str(row["origin"] or "unknown"), "count": int(row["total"] or 0)}
+            for row in raw["origin_rows"]
+        ],
+    }
+
+
+@_bind_to_core
 async def get_item(
     item_id: str, user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows
 ) -> dict[str, Any]:
@@ -3396,6 +3596,7 @@ __all__ = (
     "list_anomalies",
     "summary",
     "ops_summary",
+    "agents_ops",
     "get_item",
     "get_anomaly",
     "_record_action_execution",

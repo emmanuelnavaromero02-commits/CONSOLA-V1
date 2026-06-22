@@ -17,6 +17,7 @@ from app.services.intelligence import orchestrator_execution
 from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
+from app.services.security_context import verify_signed_security_context
 
 
 router = APIRouter(prefix="/api/intelligence", tags=["Intelligence"])
@@ -86,6 +87,41 @@ class GoldRefreshIntelligenceRequest(_StrictModel):
             if len(item) > 128 or not item.replace("_", "").replace("-", "").isalnum():
                 raise ValueError("datasets entries must be simple identifiers")
         return sorted(set(cleaned))
+
+
+class InternalMcpRequest(_StrictModel):
+    security_context: dict[str, Any]
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def _validate_payload_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _reject_scope_fields(value)
+        return value
+
+
+class InternalMcpDecisionRequest(InternalMcpRequest):
+    execute_engines: bool = False
+    engine_inputs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("engine_inputs")
+    @classmethod
+    def _validate_engine_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _reject_scope_fields(value)
+        return value
+
+
+class InternalMcpWisdomBitRequest(_StrictModel):
+    security_context: dict[str, Any]
+    wisdom_bit_id: str = Field(min_length=1, max_length=120)
+    cartridge_id: str = Field(default="sap_successfactors", max_length=120)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def _validate_wisdom_payload_scope(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _reject_scope_fields(value)
+        return value
 
 
 class ExternalSourcePatchRequest(_StrictModel):
@@ -299,6 +335,43 @@ def _gold_refresh_user(body: GoldRefreshIntelligenceRequest) -> dict[str, Any]:
     }
 
 
+def _internal_mcp_user(
+    body: InternalMcpRequest | InternalMcpWisdomBitRequest,
+    internal_service: str,
+    *,
+    permission: str = "control_room.write",
+) -> dict[str, Any]:
+    if internal_service != "mcp-infra":
+        raise HTTPException(status_code=403, detail="only mcp-infra can use this internal route")
+    try:
+        ctx = verify_signed_security_context(body.security_context)
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail=f"invalid security_context: {exc}") from exc
+    if not ctx.get("trusted"):
+        raise HTTPException(status_code=403, detail="trusted security_context required")
+    permissions = {str(item) for item in (ctx.get("permissions") or [])}
+    if permission not in permissions:
+        raise HTTPException(status_code=403, detail=f"permission required: {permission}")
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        raise HTTPException(status_code=403, detail="tenant/workspace scope required")
+    return {
+        "id": ctx.get("user_id") or 0,
+        "email": ctx.get("email") or "agent-runner@omega.local",
+        "role": ctx.get("role") or "agent",
+        "workspace_role": ctx.get("workspace_role"),
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "active_tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
+        "allowed_cartridges": list(ctx.get("allowed_cartridges") or []),
+        "agent_id": ctx.get("agent_id"),
+        "agent_slug": ctx.get("agent_slug"),
+        "agent_run_id": ctx.get("agent_run_id"),
+    }
+
+
 @internal_router.post("/gold-refresh")
 async def intelligence_gold_refresh_internal(
     body: GoldRefreshIntelligenceRequest,
@@ -345,6 +418,90 @@ async def intelligence_gold_refresh_internal(
         "dataset_unavailable_count": result.get("dataset_unavailable_count", 0),
         "insufficient_history_count": result.get("insufficient_history_count", 0),
         "skipped_counts": result.get("skipped_counts") or {},
+    }
+
+
+@internal_router.post("/monte-carlo/run")
+async def intelligence_monte_carlo_run_internal(
+    body: InternalMcpRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    user = _internal_mcp_user(body, internal_service)
+    request = MonteCarloRunRequest.model_validate(body.payload)
+    return await monte_carlo_service.run_simulation(user, _payload(request))
+
+
+@internal_router.post("/orchestrate")
+async def intelligence_orchestrate_internal(
+    body: InternalMcpDecisionRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    user = _internal_mcp_user(body, internal_service)
+    request = OrchestrationRequest.model_validate(body.payload)
+    try:
+        orchestration = await decision_orchestrator.orchestrate(user, _payload(request))
+        if not body.execute_engines:
+            return orchestration
+        orchestration_row = orchestration.get("orchestration") if isinstance(orchestration, dict) else {}
+        orchestration_id = str((orchestration_row or {}).get("orchestration_id") or "")
+        if not orchestration_id:
+            raise HTTPException(status_code=500, detail="orchestration_id missing")
+        execution_request = OrchestrationExecuteEnginesRequest.model_validate(
+            {"engine_inputs": body.engine_inputs}
+        )
+        execution = await orchestrator_execution.execute_engines(
+            user,
+            orchestration_id,
+            _payload(execution_request),
+        )
+        return {**orchestration, "engine_execution": execution}
+    except decision_orchestrator.DecisionOrchestratorError as exc:
+        raise _orchestrator_error(exc) from exc
+    except orchestrator_execution.OrchestratorExecutionError as exc:
+        raise _orchestrator_error(exc) from exc
+
+
+@internal_router.post("/wisdom-bits/run")
+async def intelligence_wisdom_bits_run_internal(
+    body: InternalMcpWisdomBitRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    user = _internal_mcp_user(body, internal_service)
+    wisdom_bit_id = body.wisdom_bit_id.strip().upper()
+    if wisdom_bit_id != "WB-TALENTO":
+        raise HTTPException(status_code=404, detail="wisdom_bit_id is not available")
+    if body.cartridge_id not in {"sap_successfactors", "sap-successfactors"}:
+        raise HTTPException(status_code=400, detail="WB-TALENTO belongs to sap_successfactors")
+
+    from app.services import control_room_service
+
+    overview = await control_room_service.sap_successfactors_talent_overview(user)
+    metadata = await control_room_service.sap_successfactors_talent_metadata_readiness(user)
+    anomalies = await control_room_service.sap_successfactors_talent_anomalies(user)
+    blockers = list(metadata.get("blockers") or [])
+    if not blockers:
+        blockers = list(overview.get("blockers") or [])
+    return {
+        "ok": True,
+        "wisdom_bit_id": "WB-TALENTO",
+        "cartridge_id": "sap_successfactors",
+        "decision_mode": "recommendation_only",
+        "writeback_enabled": False,
+        "compensation_enabled": False,
+        "status": overview.get("status") or metadata.get("status") or "partial",
+        "generated_at": overview.get("generated_at") or metadata.get("generated_at"),
+        "profile": overview.get("profile") or {},
+        "coverage": metadata.get("coverage") or metadata.get("components") or {},
+        "blockers": blockers,
+        "signals": {
+            "count": len(anomalies.get("anomalies") or anomalies.get("signals") or []),
+            "items": (anomalies.get("anomalies") or anomalies.get("signals") or [])[:10],
+        },
+        "evidence": {
+            "overview_status": overview.get("status"),
+            "metadata_status": metadata.get("status"),
+            "recommendation_only": True,
+        },
     }
 
 

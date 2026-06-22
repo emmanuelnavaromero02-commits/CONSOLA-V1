@@ -316,7 +316,15 @@ _VAULT_DESTRUCTIVE_TOOLS = {"vault_delete_connection"}
 _AGENT_READ_TOOLS = {"agent_list", "agent_get"}
 _AGENT_WRITE_TOOLS = {"agent_create", "agent_update"}
 _AGENT_DESTRUCTIVE_TOOLS = {"agent_delete"}
-_CONTROL_ROOM_ALERT_TOOLS = {"control_room__raise_alert"}
+_CONTROL_ROOM_ALERT_TOOLS = {
+    "control_room__raise_alert",
+    "control_room__raise_analysis_alert",
+}
+_CONTROL_ROOM_ANALYSIS_TOOLS = {
+    "simulation__monte_carlo_run",
+    "decision__orchestrate",
+    "wisdom_bits__run",
+}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
@@ -1154,7 +1162,7 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "studio.write", internal_service)
     elif tool in _AGENT_DESTRUCTIVE_TOOLS:
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
-    elif tool in _CONTROL_ROOM_ALERT_TOOLS:
+    elif tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS:
         ctx = _require_context_permission(req, "control_room.write", internal_service)
     elif tool.startswith("cartridge_"):
         raise HTTPException(403, detail="cartridge tool lacks tenancy metadata")
@@ -1221,14 +1229,17 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             _require_cartridge_scope(ctx, vault_scope)
         args["security_context"] = ctx
 
-    if tool in _CONTROL_ROOM_ALERT_TOOLS:
+    if tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS:
         if not _has_tenant_workspace_scope(ctx):
             raise HTTPException(403, detail="control room alerts require tenant/workspace scope")
         forbidden_scope_args = {"tenant_id", "workspace_id", "user_id", "security_context"}
         supplied = sorted(key for key in forbidden_scope_args if key in args)
         if supplied:
             raise HTTPException(403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}")
-        _require_cartridge_scope(ctx, str(args.get("cartridge_id") or ""))
+        if tool in _CONTROL_ROOM_ALERT_TOOLS or args.get("cartridge_id"):
+            _require_cartridge_scope(ctx, str(args.get("cartridge_id") or ""))
+        if tool == "wisdom_bits__run":
+            _require_cartridge_scope(ctx, str(args.get("cartridge_id") or "sap_successfactors"))
         args["security_context"] = ctx
 
     if tool.startswith("postgres_"):

@@ -75,10 +75,10 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "cartridge-salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
+    "mcp-infra": "INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE",
     # The old whitelist allowed these too; kept via legacy key only outside prod.
     "console": None,
     "refinement": None,
-    "mcp-infra": None,
 }
 
 

@@ -27,6 +27,7 @@ import type { LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { AgentsOpsPanel } from "@/components/control-room/AgentsOpsPanel";
 import { SuccessFactorsGoldPanel } from "@/components/control-room/SuccessFactorsGoldPanel";
 import {
   MiniBar,
@@ -39,6 +40,7 @@ import {
 import { api, isApiError } from "@/lib/api";
 import {
   getControlRoomActivity,
+  getControlRoomAgentsOps,
   getControlRoomDashboard,
   getControlRoomImpact,
   getControlRoomLessons,
@@ -47,7 +49,7 @@ import {
   getSuccessFactorsGoldKpis,
   getSuccessFactorsTalentKpis,
 } from "@/lib/control-room/client";
-import type { ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
+import type { ControlRoomAgentsOpsPayload, ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 type Severity = "critical" | "high" | "medium" | "low";
@@ -1090,6 +1092,9 @@ export default function ControlRoomPage() {
   const [thresholdSaving, setThresholdSaving] = useState(false);
   const [thresholdSaveMessage, setThresholdSaveMessage] = useState("");
   const [thresholdSaveError, setThresholdSaveError] = useState("");
+  const [agentsOps, setAgentsOps] = useState<ControlRoomAgentsOpsPayload | null>(null);
+  const [agentsOpsLoading, setAgentsOpsLoading] = useState(false);
+  const [agentsOpsError, setAgentsOpsError] = useState("");
   const [sfGoldKpis, setSfGoldKpis] = useState<SfGoldKpisPayload | null>(null);
   const [sfGoldLoading, setSfGoldLoading] = useState(false);
   const [sfGoldError, setSfGoldError] = useState("");
@@ -1193,6 +1198,19 @@ export default function ControlRoomPage() {
     }
   }, []);
 
+  const loadAgentsOps = useCallback(async () => {
+    setAgentsOpsLoading(true);
+    setAgentsOpsError("");
+    try {
+      const payload = await getControlRoomAgentsOps();
+      setAgentsOps(payload);
+    } catch (err) {
+      setAgentsOpsError(errorMessage(err, "No se pudo cargar AgentOps"));
+    } finally {
+      setAgentsOpsLoading(false);
+    }
+  }, []);
+
   const loadSfGoldKpis = useCallback(async () => {
     setSfGoldLoading(true);
     setSfGoldError("");
@@ -1271,6 +1289,7 @@ export default function ControlRoomPage() {
         void loadDashboard(selectedId, true);
         void loadLessons();
         void loadThresholds();
+        void loadAgentsOps();
         if (successFactorsAvailable) {
           void loadSfGoldKpis();
           void loadSfTalentKpis();
@@ -1281,13 +1300,14 @@ export default function ControlRoomPage() {
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
+  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadAgentsOps, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
 
   useEffect(() => {
     if (state !== "ready") return;
     const timer = window.setTimeout(() => {
       void loadLessons();
       void loadThresholds();
+      void loadAgentsOps();
       if (successFactorsAvailable) {
         void loadSfGoldKpis();
         void loadSfTalentKpis();
@@ -1297,7 +1317,7 @@ export default function ControlRoomPage() {
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, clearSuccessFactorsState, domain, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, state, successFactorsAvailable]);
+  }, [cartridge, clearSuccessFactorsState, domain, loadAgentsOps, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, state, successFactorsAvailable]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -1886,6 +1906,7 @@ export default function ControlRoomPage() {
       loadDashboard(selectedId, false),
       loadLessons(),
       loadThresholds(),
+      loadAgentsOps(),
     ];
     if (successFactorsAvailable) {
       tasks.push(loadSfGoldKpis(), loadSfTalentKpis(), loadSfDecisionModel());
@@ -1998,6 +2019,9 @@ export default function ControlRoomPage() {
             thresholdSaving={thresholdSaving}
             thresholdSaveError={thresholdSaveError}
             thresholdSaveMessage={thresholdSaveMessage}
+            agentsOps={agentsOps}
+            agentsOpsLoading={agentsOpsLoading}
+            agentsOpsError={agentsOpsError}
             alertActionError={alertActionError}
             alertActionMessage={alertActionMessage}
             busyAction={busyAction}
@@ -2252,6 +2276,9 @@ function DashboardView({
   thresholdSaving,
   thresholdSaveError,
   thresholdSaveMessage,
+  agentsOps,
+  agentsOpsLoading,
+  agentsOpsError,
   alertActionError,
   alertActionMessage,
   busyAction,
@@ -2304,6 +2331,9 @@ function DashboardView({
   thresholdSaving: boolean;
   thresholdSaveError: string;
   thresholdSaveMessage: string;
+  agentsOps: ControlRoomAgentsOpsPayload | null;
+  agentsOpsLoading: boolean;
+  agentsOpsError: string;
   alertActionError: string;
   alertActionMessage: string;
   busyAction: string;
@@ -2383,6 +2413,13 @@ function DashboardView({
             decisionModel={sfDecisionModel}
             decisionModelLoading={sfDecisionModelLoading}
             decisionModelError={sfDecisionModelError}
+          />
+          <AgentsOpsPanel
+            payload={agentsOps}
+            loading={agentsOpsLoading}
+            error={agentsOpsError}
+            collapsed={collapsed.has("agentops")}
+            onToggle={() => onToggleDomain("agentops")}
           />
 
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.7fr)]" aria-label="Ciclo, salud y mapa operativo">
