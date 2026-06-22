@@ -1,4 +1,4 @@
--- v1.45.113 AgentOps: workspace-scoped SuccessFactors Talent monitor.
+-- v1.45.114 AgentOps: workspace-scoped SuccessFactors Talent monitor.
 --
 -- This is intentionally separate from 88_sap_successfactors_agents_seed.sql:
 -- the original two agents are conversational global templates. Scheduled
