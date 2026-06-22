@@ -166,13 +166,13 @@ def test_agents_migration_scope():
     assert targets == {"agents", "schema_migrations"}, f"unexpected targets: {targets}"
 
 
-# Holistic SuccessFactors inventory (Blocks A-E).
+# Holistic SuccessFactors inventory (Blocks A-E + Talent/WB-TALENTO).
 def test_sf_inventory_blocks_a_to_e():
     kb_ids = _kb_ids()
-    assert len(kb_ids) == 20, f"expected 20 KBs, got {len(kb_ids)}"
-    assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 14
+    assert len(kb_ids) == 27, f"expected 27 KBs, got {len(kb_ids)}"
+    assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 21
     n_datasets = len(_dataset_names())
-    assert n_datasets == 38, f"expected 38 datasets, got {n_datasets}"
+    assert n_datasets == 45, f"expected 45 datasets, got {n_datasets}"
     apps = sorted(p.stem for p in APPS_DIR.glob("*.html"))
     assert apps == ["sap_successfactors_talent_health", "sap_successfactors_workforce_overview"]
     assert HINTS.is_file()
