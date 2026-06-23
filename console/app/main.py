@@ -6031,9 +6031,16 @@ async def api_pipeline_extract_all(
         entity = row.get("entity")
         if not entity:
             continue
+        extract_body = dict(body)
+        scoped_idempotency_key = _sync_entity_idempotency_key(
+            body.get("idempotency_key") or body.get("request_id"),
+            entity,
+        )
+        if scoped_idempotency_key:
+            extract_body["idempotency_key"] = scoped_idempotency_key
         try:
             result = await _call_with_optional_user(
-                api_pipeline_extract, cartridge, entity, body, user=user
+                api_pipeline_extract, cartridge, entity, extract_body, user=user
             )
             triggered.append(
                 {
@@ -6142,6 +6149,20 @@ def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
     return "success"
 
 
+def _sync_entity_idempotency_key(base_key: object | None, entity: object | None) -> str | None:
+    if base_key is None:
+        return None
+    base = str(base_key).strip()
+    if not base:
+        return None
+    entity_name = str(entity or "").strip() or "entity"
+    candidate = f"{base}:{entity_name}"
+    if len(candidate) <= 160:
+        return candidate
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, candidate).hex
+    return f"{base[:100]}:{digest}"
+
+
 def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
     if not row:
         return {}
@@ -6155,6 +6176,45 @@ def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+async def _fetch_active_sync_run(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    user: dict | None,
+) -> dict[str, Any] | None:
+    pool = await _get_db_pool()
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 6)
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            f"""
+            SELECT *
+              FROM pipeline_runs
+             WHERE cartridge_id=$1
+               AND entity='{_SYNC_NOW_ENTITY}'
+               AND status <> ALL($2::text[])
+               AND mode=$3
+               AND COALESCE(extra->>'target', 'all')=$4
+               AND (
+                    ($5::text IS NULL AND NULLIF(extra->>'conn_id', '') IS NULL)
+                    OR extra->>'conn_id'=$5
+               )
+               AND started_at > NOW() - INTERVAL '4 hours'
+               {scope_sql}
+             ORDER BY started_at DESC
+             LIMIT 1
+            """,
+            cartridge,
+            list(_SYNC_TERMINAL_STATUSES),
+            mode,
+            target,
+            conn_id,
+            *scope_values,
+        )
+    return dict(row) if row else None
 
 
 def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -6193,6 +6253,12 @@ async def _upsert_sync_run(
     scope_columns_present = await _table_has_column(
         "pipeline_runs", "tenant_id"
     ) and await _table_has_column("pipeline_runs", "workspace_id")
+    if (
+        scope_columns_present
+        and cartridge != "platform"
+        and not (tenant_id and workspace_id)
+    ):
+        raise HTTPException(403, "sync run tenant/workspace scope is required")
     has_scope = bool(tenant_id and workspace_id and scope_columns_present)
     finished = status in _SYNC_TERMINAL_STATUSES
     extra_json = json.dumps(extra)
@@ -6278,20 +6344,21 @@ async def _fetch_sync_run(
 ) -> dict[str, Any] | None:
     pool = await _get_db_pool()
     scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
-    row = await pool.fetchrow(
-        f"""
-        SELECT *
-          FROM pipeline_runs
-         WHERE cartridge_id=$1
-           AND run_id=$2
-           AND entity='{_SYNC_NOW_ENTITY}'
-           {scope_sql}
-         LIMIT 1
-        """,
-        cartridge,
-        run_id,
-        *scope_values,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            f"""
+            SELECT *
+              FROM pipeline_runs
+             WHERE cartridge_id=$1
+               AND run_id=$2
+               AND entity='{_SYNC_NOW_ENTITY}'
+               {scope_sql}
+             LIMIT 1
+            """,
+            cartridge,
+            run_id,
+            *scope_values,
+        )
     return dict(row) if row else None
 
 
@@ -6319,18 +6386,19 @@ async def _sync_child_runs(
         return []
     pool = await _get_db_pool()
     scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
-    rows = await pool.fetch(
-        f"""
-        SELECT *
-          FROM pipeline_runs
-         WHERE run_id = ANY($1::text[])
-           AND cartridge_id=$2
-           {scope_sql}
-        """,
-        run_ids,
-        cartridge,
-        *scope_values,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        rows = await conn.fetch(
+            f"""
+            SELECT *
+              FROM pipeline_runs
+             WHERE run_id = ANY($1::text[])
+               AND cartridge_id=$2
+               {scope_sql}
+            """,
+            run_ids,
+            cartridge,
+            *scope_values,
+        )
     refreshed: list[dict[str, Any]] = []
     for row in rows:
         refreshed.append(await _refresh_dag_run_status(dict(row), user))
@@ -6521,6 +6589,16 @@ async def api_cartridge_sync_now(
     if target not in _SYNC_VALID_TARGETS:
         raise HTTPException(400, "target must be all, foundation or talent")
     conn_id = _normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    active_row = await _fetch_active_sync_run(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        user=user,
+    )
+    if active_row:
+        return await _build_sync_run_status(cartridge=cartridge, row=active_row, user=user)
+
     run_id = f"sync_now:{cartridge}:{uuid.uuid4().hex}"
     steps = _merge_sync_steps(
         _initial_sync_steps(),
@@ -6549,7 +6627,12 @@ async def api_cartridge_sync_now(
         },
     )
 
-    extract_body = {"mode": mode, "target": target, **({"conn_id": conn_id} if conn_id else {})}
+    extract_body = {
+        "mode": mode,
+        "target": target,
+        "idempotency_key": run_id,
+        **({"conn_id": conn_id} if conn_id else {}),
+    }
     result: dict[str, Any] = {}
     attempts = 0
     for attempt in range(1, 4):

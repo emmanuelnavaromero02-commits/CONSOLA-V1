@@ -236,6 +236,112 @@ async def test_record_dag_pipeline_trigger_sets_rls_scope(console_main, monkeypa
 
 
 @pytest.mark.anyio
+async def test_fetch_sync_run_sets_rls_scope_before_select(console_main, monkeypatch):
+    async def table_has_column(table, column):
+        return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}
+
+    monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
+    console_main._test_asyncpg_stub.executed.clear()
+    console_main._test_asyncpg_stub.fetch_rows = [
+        {
+            "run_id": "sync_now:replicon:test",
+            "dag_id": "sync_now",
+            "cartridge_id": "replicon",
+            "entity": "__sync_now__",
+            "mode": "incremental",
+            "status": "running",
+            "started_at": None,
+            "finished_at": None,
+            "error_message": None,
+            "extra": {},
+            "tenant_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_id": "22222222-2222-2222-2222-222222222222",
+        }
+    ]
+
+    row = await console_main._fetch_sync_run(
+        cartridge="replicon",
+        run_id="sync_now:replicon:test",
+        user=_scoped_pipeline_user(),
+    )
+
+    assert row and row["run_id"] == "sync_now:replicon:test"
+    queries = [query for query, _args in console_main._test_asyncpg_stub.executed]
+    assert "set_config('app.tenant_id'" in queries[0]
+    assert console_main._test_asyncpg_stub.executed[0][1] == (
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_active_sync_run_sets_rls_scope(console_main, monkeypatch):
+    async def table_has_column(table, column):
+        return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}
+
+    monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
+    console_main._test_asyncpg_stub.executed.clear()
+    console_main._test_asyncpg_stub.fetch_rows = [
+        {
+            "run_id": "sync_now:replicon:active",
+            "dag_id": "sync_now",
+            "cartridge_id": "replicon",
+            "entity": "__sync_now__",
+            "mode": "incremental",
+            "status": "running",
+            "started_at": None,
+            "finished_at": None,
+            "error_message": None,
+            "extra": {"target": "all"},
+            "tenant_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_id": "22222222-2222-2222-2222-222222222222",
+        }
+    ]
+
+    row = await console_main._fetch_active_sync_run(
+        cartridge="replicon",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        user=_scoped_pipeline_user(),
+    )
+
+    assert row and row["run_id"] == "sync_now:replicon:active"
+    queries = [query for query, _args in console_main._test_asyncpg_stub.executed]
+    assert "set_config('app.tenant_id'" in queries[0]
+
+
+@pytest.mark.anyio
+async def test_extract_all_scopes_idempotency_key_per_entity(console_main, monkeypatch):
+    async def pipeline(cartridge, user=None):
+        return {
+            "pipeline": [
+                {"entity": "TimeEntry"},
+                {"entity": "Project"},
+            ]
+        }
+
+    calls = []
+
+    async def extract(cartridge, entity, body, user=None):
+        calls.append((entity, dict(body)))
+        return {"dag_run_id": f"manual__{entity}", "state": "queued"}
+
+    monkeypatch.setattr(console_main, "api_pipeline", pipeline)
+    monkeypatch.setattr(console_main, "api_pipeline_extract", extract)
+
+    result = await console_main.api_pipeline_extract_all(
+        "replicon",
+        {"mode": "incremental", "idempotency_key": "sync_now:replicon:test"},
+        user=_scoped_pipeline_user(),
+    )
+
+    assert result["count"] == 2
+    assert calls[0][1]["idempotency_key"] == "sync_now:replicon:test:TimeEntry"
+    assert calls[1][1]["idempotency_key"] == "sync_now:replicon:test:Project"
+
+
+@pytest.mark.anyio
 async def test_dag_based_incremental_conf_preserves_dates(console_main, monkeypatch):
     async def metadata(cartridge, entity):
         return {
