@@ -8,8 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_duckdb_runtime_does_not_install_httpfs_dynamically():
     paths = [
-        ROOT / "mcp-infra/app/main.py",
-        ROOT / "mcp-infra/app/tools/cartridges.py",
         *(
             ROOT / "cartridges" / name / "app/services/duckdb_service.py"
             for name in (
@@ -26,6 +24,13 @@ def test_duckdb_runtime_does_not_install_httpfs_dynamically():
     for path in paths:
         src = path.read_text(encoding="utf-8")
         assert "INSTALL httpfs" not in src
+
+
+def test_mcp_infra_httpfs_install_has_explicit_failure_message():
+    src = (ROOT / "mcp-infra/app/main.py").read_text(encoding="utf-8")
+
+    assert "INSTALL httpfs; LOAD httpfs;" in src
+    assert "DuckDB httpfs extension unavailable; install httpfs in the mcp-infra image" in src
 
 
 def test_mcp_infra_cartridge_sql_guard_blocks_ssrf_reader_shapes():

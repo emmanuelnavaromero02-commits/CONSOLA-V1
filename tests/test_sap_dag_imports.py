@@ -23,6 +23,7 @@ SAP_DAGS = (
 def _install_airflow_stubs(monkeypatch):
     airflow = types.ModuleType("airflow")
     decorators = types.ModuleType("airflow.decorators")
+    exceptions = types.ModuleType("airflow.exceptions")
 
     def dag(*_args, **_kwargs):
         def decorate(fn):
@@ -39,8 +40,10 @@ def _install_airflow_stubs(monkeypatch):
 
     decorators.dag = dag
     decorators.task = task
+    exceptions.AirflowFailException = RuntimeError
     monkeypatch.setitem(sys.modules, "airflow", airflow)
     monkeypatch.setitem(sys.modules, "airflow.decorators", decorators)
+    monkeypatch.setitem(sys.modules, "airflow.exceptions", exceptions)
 
 
 @pytest.mark.parametrize("path", SAP_DAGS)
