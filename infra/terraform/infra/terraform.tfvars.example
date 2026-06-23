@@ -1,6 +1,6 @@
 aws_region = "us-east-1"
 
-github_repo_url = "git@github.com:emmanuelnavaromero02-commits/CONSOLA-BETA.git"
+github_repo_url = "git@github.com:emmanuelnavaromero02-commits/CONSOLA-V1.git"
 deploy_ref      = "v1.0.0-rc3"
 image_tag       = "v1.0.0-rc3"
 
