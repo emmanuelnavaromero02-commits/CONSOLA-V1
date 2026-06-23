@@ -228,7 +228,7 @@ async def test_dag_based_cartridge_triggers_airflow_dag(console_main, monkeypatc
 
 @pytest.mark.anyio
 async def test_record_dag_pipeline_trigger_sets_rls_scope(console_main, monkeypatch):
-    async def table_has_column(table, column):
+    async def table_has_column(table, column, **_kwargs):
         return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}
 
     monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
@@ -256,7 +256,7 @@ async def test_record_dag_pipeline_trigger_sets_rls_scope(console_main, monkeypa
 
 @pytest.mark.anyio
 async def test_fetch_sync_run_sets_rls_scope_before_select(console_main, monkeypatch):
-    async def table_has_column(table, column):
+    async def table_has_column(table, column, **_kwargs):
         return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}
 
     monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
@@ -295,7 +295,7 @@ async def test_fetch_sync_run_sets_rls_scope_before_select(console_main, monkeyp
 
 @pytest.mark.anyio
 async def test_fetch_active_sync_run_sets_rls_scope(console_main, monkeypatch):
-    async def table_has_column(table, column):
+    async def table_has_column(table, column, **_kwargs):
         return table == "pipeline_runs" and column in {"tenant_id", "workspace_id"}
 
     monkeypatch.setattr(console_main, "_table_has_column", table_has_column)

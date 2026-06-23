@@ -6385,7 +6385,7 @@ async def _upsert_sync_run(
     user: dict | None,
     extra: dict[str, Any],
     error_message: str | None = None,
-) -> None:
+) -> dict[str, Any]:
     pool = await _get_db_pool()
     ctx = build_security_context(user)
     tenant_id = str(ctx.get("tenant_id") or "").strip() or None
@@ -6402,6 +6402,7 @@ async def _upsert_sync_run(
     has_scope = bool(tenant_id and workspace_id and scope_columns_present)
     finished = status in _SYNC_TERMINAL_STATUSES
     extra_json = json.dumps(extra)
+    command_status = ""
 
     if has_scope:
         async with pool.acquire() as conn:
@@ -6412,7 +6413,7 @@ async def _upsert_sync_run(
                     tenant_id,
                     workspace_id,
                 )
-                await conn.execute(
+                command_status = await conn.execute(
                     """
                     INSERT INTO pipeline_runs (
                         run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
@@ -6446,7 +6447,7 @@ async def _upsert_sync_run(
                     workspace_id,
                 )
     else:
-        await pool.execute(
+        command_status = await pool.execute(
             """
             INSERT INTO pipeline_runs (
                 run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
@@ -6474,6 +6475,13 @@ async def _upsert_sync_run(
             error_message,
             extra_json,
         )
+    return {
+        "command_status": command_status,
+        "scope_columns_present": scope_columns_present,
+        "has_scope": has_scope,
+        "tenant_id_present": bool(tenant_id),
+        "workspace_id_present": bool(workspace_id),
+    }
 
 
 async def _fetch_sync_run(
@@ -6940,7 +6948,7 @@ async def api_cartridge_sync_now(
         },
     )
     status = _sync_status_from_steps(steps)
-    await _upsert_sync_run(
+    upsert_debug = await _upsert_sync_run(
         run_id=run_id,
         cartridge=cartridge,
         mode=mode,
@@ -6966,7 +6974,24 @@ async def api_cartridge_sync_now(
     )
     row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
     if not row:
-        raise HTTPException(500, "sync run was not recorded")
+        ctx = build_security_context(user)
+        scope_sql, scope_values = await _pipeline_runs_scope_predicate(
+            user, 3, refresh_columns=True
+        )
+        diagnostics = {
+            "run_id": run_id,
+            "cartridge": cartridge,
+            "mode": mode,
+            "target": target,
+            "conn_id_present": bool(conn_id),
+            "scope_predicate_present": bool(scope_sql),
+            "scope_value_count": len(scope_values),
+            "tenant_id_present": bool(ctx.get("tenant_id")),
+            "workspace_id_present": bool(ctx.get("workspace_id")),
+            **upsert_debug,
+        }
+        logger.error("sync_now_run_missing diagnostics=%s", diagnostics)
+        raise HTTPException(500, "sync run was not recorded; scope diagnostics logged")
     return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
 
 

@@ -17,6 +17,7 @@ Errors:
 from __future__ import annotations
 
 import anyio
+import hashlib
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
@@ -52,6 +53,18 @@ def _get_entity_or_404(entity_id: str) -> dict:
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
     return config
+
+
+def _entity_idempotency_key(base_key: str | None, entity: object) -> str | None:
+    base = str(base_key or "").strip()
+    entity_name = str(entity or "").strip()
+    if not (base and entity_name):
+        return None
+    candidate = f"{base}:{entity_name}"
+    if len(candidate) <= 180:
+        return candidate
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:24]
+    return f"{base[:120]}:{digest}"
 
 
 def _degraded_503(report: dict) -> JSONResponse:
@@ -233,6 +246,7 @@ def extract_all(
     mode: str = Query("incremental", pattern="^(full|incremental)$"),
     target: str = Query("all", pattern="^(all|foundation|talent)$"),
     conn_id: str | None = Query(default=None, max_length=128),
+    idempotency_key: str | None = Query(default=None, max_length=180),
     body: dict[str, Any] | None = Body(None),
 ):
     """Run every enabled entity, one after the other."""
@@ -251,9 +265,16 @@ def extract_all(
         )
         for config in entities:
             effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
+            entity_idempotency_key = _entity_idempotency_key(
+                idempotency_key, config.get("entity")
+            )
+            run_config = {**config, "mode": effective_mode}
+            if entity_idempotency_key:
+                run_config["idempotency_key"] = entity_idempotency_key
+                run_config["parent_idempotency_key"] = idempotency_key
             try:
                 result = run_entity(
-                    _with_optional_conn(_scoped_config({**config, "mode": effective_mode}, ctx), conn_id)
+                    _with_optional_conn(_scoped_config(run_config, ctx), conn_id)
                 )
                 _mark_external_job(_trigger_silver_refresh, config.get("entity"), ctx)
                 results.append(classify_successful_extraction(result))

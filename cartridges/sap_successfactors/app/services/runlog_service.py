@@ -13,8 +13,9 @@ def create_run(
     run_type: str,
     status: str,
     started_at: datetime,
+    requested_run_id: str | None = None,
 ) -> str:
-    run_id = str(uuid.uuid4())
+    run_id = str(requested_run_id or "").strip() or str(uuid.uuid4())
     tenant_id, workspace_id = scope_values()
     conn = get_connection()
     try:
@@ -25,6 +26,19 @@ def create_run(
                     (run_id, cartridge_id, entity_name, run_type, status, started_at,
                      tenant_id, workspace_id, scope_status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'scoped')
+                ON CONFLICT (run_id) DO UPDATE SET
+                    cartridge_id = EXCLUDED.cartridge_id,
+                    entity_name = EXCLUDED.entity_name,
+                    run_type = EXCLUDED.run_type,
+                    status = EXCLUDED.status,
+                    records_extracted = NULL,
+                    storage_uri = NULL,
+                    error_message = NULL,
+                    started_at = EXCLUDED.started_at,
+                    finished_at = NULL,
+                    tenant_id = EXCLUDED.tenant_id,
+                    workspace_id = EXCLUDED.workspace_id,
+                    scope_status = EXCLUDED.scope_status
                 """,
                 (run_id, cartridge_id, entity_name, run_type, status, started_at, tenant_id, workspace_id),
             )

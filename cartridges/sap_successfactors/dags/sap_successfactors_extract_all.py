@@ -147,6 +147,7 @@ def sap_successfactors_extract_all():
                     "mode": conf.get("mode") or "incremental",
                     "target": conf.get("target") or "all",
                     "conn_id": conf.get("conn_id") or conf.get("connection_id") or None,
+                    "idempotency_key": conf.get("idempotency_key") or None,
                 }.items() if v
             }
             res = client.post(

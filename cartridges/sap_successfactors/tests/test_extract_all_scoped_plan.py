@@ -215,10 +215,12 @@ def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
         mode="incremental",
         target="talent",
         conn_id="femsa_sf",
+        idempotency_key="sync_now:sap_successfactors:test",
         body={"security_context": _ctx()},
     )
 
     assert captured == ["PerPerson"]
+    assert captured_plan_kwargs["conn_id"] == "femsa_sf"
     assert captured_plan_kwargs["target"] == "talent"
     assert response["status"] == "success"
     assert response["target"] == "talent"
@@ -226,6 +228,38 @@ def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
     assert response["skipped"] == [
         {"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}
     ]
+
+
+def test_console_extract_all_passes_entity_idempotency_key(monkeypatch):
+    from app.api import routes_console
+
+    captured: list[dict] = []
+    monkeypatch.setattr(routes_console, "preflight_for_extract", lambda **_kwargs: None)
+    monkeypatch.setattr(routes_console, "_mark_external_job", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        routes_console,
+        "get_extract_all_plan",
+        lambda **_kwargs: (
+            [{"entity": "PerPerson", "watermark_field": "lastModifiedDateTime"}],
+            [],
+        ),
+    )
+
+    def fake_run_entity(config, **_kwargs):
+        captured.append(config)
+        return {"entity": config["entity"], "status": "success", "record_count": 7}
+
+    monkeypatch.setattr(routes_console, "run_entity", fake_run_entity)
+
+    routes_console.extract_all(
+        mode="incremental",
+        conn_id="femsa_sf",
+        idempotency_key="sync_now:sap_successfactors:test",
+        body={"security_context": _ctx()},
+    )
+
+    assert captured[0]["idempotency_key"] == "sync_now:sap_successfactors:test:PerPerson"
+    assert captured[0]["parent_idempotency_key"] == "sync_now:sap_successfactors:test"
 
 
 def test_console_extract_all_classifies_entity_auth_blocks_without_global_502(monkeypatch):
