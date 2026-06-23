@@ -6080,6 +6080,564 @@ async def api_pipeline_extract_all(
     }
 
 
+_SYNC_NOW_ENTITY = "__sync_now__"
+_SYNC_NOW_DAG_ID = "sync_now"
+_SYNC_TERMINAL_STATUSES = {"success", "partial", "failed"}
+_SYNC_VALID_MODES = {"incremental", "full"}
+_SYNC_VALID_TARGETS = {"all", "foundation", "talent"}
+
+
+def _sync_step(
+    step_id: str,
+    label: str,
+    status: str,
+    detail: str = "",
+    *,
+    attempts: int = 0,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": step_id,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "attempts": attempts,
+        **({"error": error} if error else {}),
+    }
+
+
+def _initial_sync_steps() -> list[dict[str, Any]]:
+    return [
+        _sync_step("connection", "Conexión", "queued", "Esperando preflight de extracción."),
+        _sync_step("bronze", "Bronze", "queued", "Extracción pendiente."),
+        _sync_step("silver_gold", "Silver/Gold", "queued", "Materialización pendiente."),
+        _sync_step("control_room", "Control Room", "queued", "Refresh pendiente."),
+    ]
+
+
+def _merge_sync_steps(
+    current: list[dict[str, Any]] | None,
+    updates: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    base = {
+        str(step.get("id")): dict(step)
+        for step in (current or _initial_sync_steps())
+        if isinstance(step, dict) and step.get("id")
+    }
+    for step_id, update in updates.items():
+        merged = {**base.get(step_id, {}), **update, "id": step_id}
+        base[step_id] = merged
+    order = ["connection", "bronze", "silver_gold", "control_room"]
+    return [base[item] for item in order if item in base]
+
+
+def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
+    statuses = {str(step.get("status") or "") for step in steps}
+    if "failed" in statuses:
+        return "failed"
+    if "running" in statuses or "queued" in statuses:
+        return "running"
+    if "partial" in statuses:
+        return "partial"
+    return "success"
+
+
+def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not row:
+        return {}
+    raw = row.get("extra")
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else _initial_sync_steps()
+    status = str(row.get("status") or extra.get("status") or "running")
+    return {
+        "run_id": row.get("run_id"),
+        "cartridge_id": row.get("cartridge_id"),
+        "status": status,
+        "mode": row.get("mode") or extra.get("mode") or "incremental",
+        "target": extra.get("target") or "all",
+        "steps": steps,
+        "triggered_entities": extra.get("triggered_entities") or [],
+        "errors": extra.get("errors") or [],
+        "control_room_ready": bool(extra.get("control_room_ready")),
+        "started_at": row.get("started_at").isoformat() if row.get("started_at") else None,
+        "finished_at": row.get("finished_at").isoformat() if row.get("finished_at") else None,
+        "error_message": row.get("error_message"),
+    }
+
+
+async def _upsert_sync_run(
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    status: str,
+    user: dict | None,
+    extra: dict[str, Any],
+    error_message: str | None = None,
+) -> None:
+    pool = await _get_db_pool()
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "").strip() or None
+    workspace_id = str(ctx.get("workspace_id") or "").strip() or None
+    scope_columns_present = await _table_has_column(
+        "pipeline_runs", "tenant_id"
+    ) and await _table_has_column("pipeline_runs", "workspace_id")
+    has_scope = bool(tenant_id and workspace_id and scope_columns_present)
+    finished = status in _SYNC_TERMINAL_STATUSES
+    extra_json = json.dumps(extra)
+
+    if has_scope:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.tenant_id', $1, true), "
+                    "set_config('app.workspace_id', $2, true)",
+                    tenant_id,
+                    workspace_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO pipeline_runs (
+                        run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                        mode, status, started_at, finished_at, error_message,
+                        extra, tenant_id, workspace_id
+                    )
+                    VALUES (
+                        $1, $2, $3, $4, $1, $5, $6, NOW(),
+                        CASE WHEN $7 THEN NOW() ELSE NULL END,
+                        $8, $9::jsonb, $10::uuid, $11::uuid
+                    )
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        mode = EXCLUDED.mode,
+                        finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
+                        error_message = EXCLUDED.error_message,
+                        tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
+                        workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
+                        extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+                    """,
+                    run_id,
+                    _SYNC_NOW_DAG_ID,
+                    cartridge,
+                    _SYNC_NOW_ENTITY,
+                    mode,
+                    status,
+                    finished,
+                    error_message,
+                    extra_json,
+                    tenant_id,
+                    workspace_id,
+                )
+    else:
+        await pool.execute(
+            """
+            INSERT INTO pipeline_runs (
+                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                mode, status, started_at, finished_at, error_message, extra
+            )
+            VALUES (
+                $1, $2, $3, $4, $1, $5, $6, NOW(),
+                CASE WHEN $7 THEN NOW() ELSE NULL END,
+                $8, $9::jsonb
+            )
+            ON CONFLICT (run_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                mode = EXCLUDED.mode,
+                finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
+                error_message = EXCLUDED.error_message,
+                extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+            """,
+            run_id,
+            _SYNC_NOW_DAG_ID,
+            cartridge,
+            _SYNC_NOW_ENTITY,
+            mode,
+            status,
+            finished,
+            error_message,
+            extra_json,
+        )
+
+
+async def _fetch_sync_run(
+    *,
+    cartridge: str,
+    run_id: str,
+    user: dict | None,
+) -> dict[str, Any] | None:
+    pool = await _get_db_pool()
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
+    row = await pool.fetchrow(
+        f"""
+        SELECT *
+          FROM pipeline_runs
+         WHERE cartridge_id=$1
+           AND run_id=$2
+           AND entity='{_SYNC_NOW_ENTITY}'
+           {scope_sql}
+         LIMIT 1
+        """,
+        cartridge,
+        run_id,
+        *scope_values,
+    )
+    return dict(row) if row else None
+
+
+def _sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
+    if not errors:
+        return False
+    for error in errors:
+        status_code = int(error.get("status_code") or 0)
+        message = str(error.get("error") or "").lower()
+        if status_code >= 500:
+            continue
+        if any(token in message for token in ("timeout", "tempor", "airflow trigger failed", "connection reset")):
+            continue
+        return False
+    return True
+
+
+async def _sync_child_runs(
+    *,
+    cartridge: str,
+    run_ids: list[str],
+    user: dict | None,
+) -> list[dict[str, Any]]:
+    if not run_ids:
+        return []
+    pool = await _get_db_pool()
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
+    rows = await pool.fetch(
+        f"""
+        SELECT *
+          FROM pipeline_runs
+         WHERE run_id = ANY($1::text[])
+           AND cartridge_id=$2
+           {scope_sql}
+        """,
+        run_ids,
+        cartridge,
+        *scope_values,
+    )
+    refreshed: list[dict[str, Any]] = []
+    for row in rows:
+        refreshed.append(await _refresh_dag_run_status(dict(row), user))
+    return refreshed
+
+
+async def _build_sync_run_status(
+    *,
+    cartridge: str,
+    row: dict[str, Any],
+    user: dict | None,
+) -> dict[str, Any]:
+    extra = _sync_extra_from_row(row)
+    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else _initial_sync_steps()
+    triggered = extra.get("triggered_entities") if isinstance(extra.get("triggered_entities"), list) else []
+    errors = extra.get("errors") if isinstance(extra.get("errors"), list) else []
+    child_run_ids = [
+        str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+        for item in triggered
+        if isinstance(item, dict) and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+    ]
+    child_rows = await _sync_child_runs(cartridge=cartridge, run_ids=child_run_ids, user=user)
+    child_statuses = [str(item.get("status") or "").lower() for item in child_rows]
+    running_children = any(status in {"queued", "running", "unknown"} for status in child_statuses)
+    failed_children = sum(1 for status in child_statuses if status in {"failed", "error"})
+    success_children = sum(1 for status in child_statuses if status == "success")
+
+    try:
+        pipeline_payload = await _call_with_optional_user(api_pipeline, cartridge, user=user)
+        pipeline_rows = pipeline_payload.get("pipeline") or []
+    except Exception as exc:
+        pipeline_rows = []
+        errors = [*errors, {"entity": "__pipeline__", "status_code": 503, "error": str(exc)}]
+
+    bronze_rows = [item for item in pipeline_rows if isinstance(item, dict)]
+    bronze_ready = sum(
+        1
+        for item in bronze_rows
+        if str(((item.get("bronze") or {}).get("status")) or "") in {"fresh", "stale"}
+    )
+    silver_nodes = [
+        node
+        for item in bronze_rows
+        for node in (item.get("silver") or [])
+        if isinstance(node, dict)
+    ]
+    gold_nodes = [
+        node
+        for item in bronze_rows
+        for node in (item.get("gold") or [])
+        if isinstance(node, dict)
+    ]
+    silver_ready = sum(1 for node in silver_nodes if str(node.get("status") or "") in {"fresh", "stale"})
+    gold_ready = sum(1 for node in gold_nodes if str(node.get("status") or "") in {"fresh", "stale"})
+
+    updates: dict[str, dict[str, Any]] = {
+        "connection": {
+            "label": "Conexión",
+            "status": "success" if triggered or child_rows or bronze_ready else "running",
+            "detail": "Scope y conexión aceptados por el pipeline." if triggered or child_rows or bronze_ready else "Validando al iniciar extracción.",
+        }
+    }
+    if running_children:
+        updates["bronze"] = {
+            "label": "Bronze",
+            "status": "running",
+            "detail": f"{len(child_rows)} corridas en curso.",
+        }
+    elif failed_children and not success_children:
+        updates["bronze"] = {
+            "label": "Bronze",
+            "status": "failed",
+            "detail": "Las extracciones fallaron antes de completar Bronze.",
+        }
+    elif failed_children or errors:
+        updates["bronze"] = {
+            "label": "Bronze",
+            "status": "partial",
+            "detail": f"{success_children} entidades OK; {failed_children + len(errors)} con error.",
+        }
+    elif success_children or bronze_ready:
+        updates["bronze"] = {
+            "label": "Bronze",
+            "status": "success",
+            "detail": f"{bronze_ready or success_children} entidades con datos raw.",
+        }
+
+    if updates.get("bronze", {}).get("status") in {"queued", "running"} or running_children:
+        updates["silver_gold"] = {
+            "label": "Silver/Gold",
+            "status": "queued",
+            "detail": "Esperando a que Airflow termine extracción.",
+        }
+    elif gold_ready:
+        updates["silver_gold"] = {
+            "label": "Silver/Gold",
+            "status": "success" if not failed_children else "partial",
+            "detail": f"{silver_ready} Silver · {gold_ready} Gold frescos o disponibles.",
+        }
+    elif silver_ready:
+        updates["silver_gold"] = {
+            "label": "Silver/Gold",
+            "status": "partial",
+            "detail": f"{silver_ready} Silver disponibles; Gold todavía incompleto.",
+        }
+    elif failed_children or errors:
+        updates["silver_gold"] = {
+            "label": "Silver/Gold",
+            "status": "failed",
+            "detail": "No se pudo confirmar materialización downstream.",
+        }
+
+    control_room_ready = False
+    if cartridge == "sap_successfactors" and gold_ready:
+        try:
+            from app.services import control_room_service
+
+            gold_kpis = await control_room_service.sap_successfactors_gold_kpis(user)
+            talent_kpis = await control_room_service.sap_successfactors_talent_kpis(user)
+            control_room_ready = bool(gold_kpis) and bool(talent_kpis)
+            updates["control_room"] = {
+                "label": "Control Room",
+                "status": "success" if control_room_ready else "partial",
+                "detail": "KPIs Gold/Talent disponibles." if control_room_ready else "Gold existe, pero Control Room devolvió datos parciales.",
+            }
+        except Exception as exc:
+            updates["control_room"] = {
+                "label": "Control Room",
+                "status": "partial",
+                "detail": "Gold existe, pero Control Room aún no respondió completo.",
+                "error": str(exc)[:300],
+            }
+    elif cartridge == "sap_successfactors":
+        updates["control_room"] = {
+            "label": "Control Room",
+            "status": "queued" if running_children else "partial",
+            "detail": "Esperando Gold de SuccessFactors.",
+        }
+    else:
+        control_room_ready = bool(gold_ready)
+        updates["control_room"] = {
+            "label": "Control Room",
+            "status": "success" if gold_ready else "skipped",
+            "detail": "Control Room específico no aplica para este cartucho." if not gold_ready else "Gold disponible para consumo.",
+        }
+
+    steps = _merge_sync_steps(steps, updates)
+    status = _sync_status_from_steps(steps)
+    updated_extra = {
+        "steps": steps,
+        "triggered_entities": triggered,
+        "errors": errors,
+        "control_room_ready": control_room_ready,
+        "target": extra.get("target") or "all",
+        "mode": extra.get("mode") or row.get("mode") or "incremental",
+    }
+    await _upsert_sync_run(
+        run_id=str(row["run_id"]),
+        cartridge=cartridge,
+        mode=str(row.get("mode") or updated_extra["mode"]),
+        status=status,
+        user=user,
+        extra=updated_extra,
+        error_message="; ".join(str(item.get("error") or "") for item in errors[:3] if isinstance(item, dict)) or None,
+    )
+    refreshed = await _fetch_sync_run(cartridge=cartridge, run_id=str(row["run_id"]), user=user)
+    return _sync_public_payload(refreshed or row, {**extra, **updated_extra})
+
+
+@app.post(
+    "/api/cartridges/{cartridge_id}/sync-now",
+    dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)],
+)
+async def api_cartridge_sync_now(
+    cartridge_id: str,
+    body: dict | None = Body(default_factory=dict),
+    user: dict = Depends(require_permission("pipelines.run")),
+):
+    body = body or {}
+    user = _runtime_user(user)
+    cartridge, _active = await _resolve_scoped_operation_cartridge(
+        user, cartridge_id, fallback=cartridge_id
+    )
+    mode = str(body.get("mode") or "incremental").strip().lower()
+    if mode not in _SYNC_VALID_MODES:
+        raise HTTPException(400, "mode must be incremental or full")
+    target = str(body.get("target") or "all").strip().lower()
+    if target not in _SYNC_VALID_TARGETS:
+        raise HTTPException(400, "target must be all, foundation or talent")
+    conn_id = _normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    run_id = f"sync_now:{cartridge}:{uuid.uuid4().hex}"
+    steps = _merge_sync_steps(
+        _initial_sync_steps(),
+        {
+            "connection": {
+                "label": "Conexión",
+                "status": "running",
+                "detail": "Validando scope y conexión del cartucho.",
+            }
+        },
+    )
+    await _upsert_sync_run(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status="running",
+        user=user,
+        extra={
+            "mode": mode,
+            "target": target,
+            "conn_id": conn_id,
+            "steps": steps,
+            "triggered_entities": [],
+            "errors": [],
+            "control_room_ready": False,
+        },
+    )
+
+    extract_body = {"mode": mode, "target": target, **({"conn_id": conn_id} if conn_id else {})}
+    result: dict[str, Any] = {}
+    attempts = 0
+    for attempt in range(1, 4):
+        attempts = attempt
+        result = await _call_with_optional_user(api_pipeline_extract_all, cartridge, extract_body, user=user)
+        errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+        triggered = result.get("triggered") if isinstance(result.get("triggered"), list) else []
+        if triggered or not _sync_errors_retryable(errors) or attempt == 3:
+            break
+        await asyncio.sleep(2 * attempt)
+
+    triggered_entities = result.get("triggered") if isinstance(result.get("triggered"), list) else []
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    bronze_status = "running" if triggered_entities else "failed" if errors else "partial"
+    steps = _merge_sync_steps(
+        steps,
+        {
+            "connection": {
+                "label": "Conexión",
+                "status": "success" if triggered_entities or not errors else "partial",
+                "detail": "El pipeline aceptó la sincronización." if triggered_entities else "El pipeline respondió sin entidades disparadas.",
+                "attempts": attempts,
+            },
+            "bronze": {
+                "label": "Bronze",
+                "status": bronze_status,
+                "detail": f"{len(triggered_entities)} entidades disparadas; {len(errors)} errores iniciales.",
+                "attempts": attempts,
+            },
+            "silver_gold": {
+                "label": "Silver/Gold",
+                "status": "queued" if triggered_entities else "failed",
+                "detail": "Airflow encadenará materialización downstream." if triggered_entities else "No hay extracción base para materializar.",
+            },
+            "control_room": {
+                "label": "Control Room",
+                "status": "queued" if triggered_entities else "failed",
+                "detail": "Esperando Gold para refrescar señales." if triggered_entities else "No hay Gold nuevo disponible.",
+            },
+        },
+    )
+    status = _sync_status_from_steps(steps)
+    await _upsert_sync_run(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status=status,
+        user=user,
+        extra={
+            "mode": mode,
+            "target": target,
+            "conn_id": conn_id,
+            "steps": steps,
+            "triggered_entities": triggered_entities,
+            "errors": errors,
+            "control_room_ready": False,
+            "extract_all_result": result,
+        },
+        error_message="; ".join(str(item.get("error") or "") for item in errors[:3] if isinstance(item, dict)) or None,
+    )
+    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+    if not row:
+        raise HTTPException(500, "sync run was not recorded")
+    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+
+
+@app.get(
+    "/api/cartridges/{cartridge_id}/sync-runs/{run_id}",
+    dependencies=[Depends(require_permission("pipelines.read"))],
+)
+async def api_cartridge_sync_run(
+    cartridge_id: str,
+    run_id: str,
+    user: dict = Depends(require_permission("pipelines.read")),
+):
+    user = _runtime_user(user)
+    cartridge, _active = await _resolve_scoped_operation_cartridge(
+        user, cartridge_id, fallback=cartridge_id
+    )
+    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+    if not row:
+        raise HTTPException(404, "sync run not found")
+    status = str(row.get("status") or "")
+    if status in _SYNC_TERMINAL_STATUSES:
+        return _sync_public_payload(row, _sync_extra_from_row(row))
+    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+
+
 async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
     pool = await _get_db_pool()
     row = await pool.fetchrow(
