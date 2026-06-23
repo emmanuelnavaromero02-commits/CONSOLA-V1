@@ -3390,9 +3390,7 @@ def _context_visible_cartridges(user: dict | None) -> set[str] | None:
     if _is_security_admin_context(ctx):
         return None
     allowed = {
-        str(c).strip()
-        for c in (ctx.get("allowed_cartridges") or [])
-        if str(c).strip()
+        str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()
     }
     if "*" in allowed:
         return None
@@ -3458,9 +3456,13 @@ def _technical_source_allowed(user: dict | None, source: str) -> bool:
     parts = str(source or "").strip("/").split("/")
     tenant_markers = [part for part in parts if part.startswith("tenant_id=")]
     workspace_markers = [part for part in parts if part.startswith("workspace_id=")]
-    if tenant_markers and any(part != f"tenant_id={tenant_id}" for part in tenant_markers):
+    if tenant_markers and any(
+        part != f"tenant_id={tenant_id}" for part in tenant_markers
+    ):
         return False
-    if workspace_markers and any(part != f"workspace_id={workspace_id}" for part in workspace_markers):
+    if workspace_markers and any(
+        part != f"workspace_id={workspace_id}" for part in workspace_markers
+    ):
         return False
     if workspace_markers and not tenant_markers:
         return False
@@ -3474,7 +3476,8 @@ def _require_technical_source_access(user: dict | None, source: str) -> None:
 
 def _filter_technical_sources(user: dict | None, sources: list) -> list:
     return [
-        source for source in sources
+        source
+        for source in sources
         if isinstance(source, str) and _technical_source_allowed(user, source)
     ]
 
@@ -6088,10 +6091,15 @@ async def api_pipeline_extract_all(
 
 
 _SYNC_NOW_ENTITY = "__sync_now__"
+_SYNC_AGGREGATE_ENTITY = "__extract_all__"
 _SYNC_NOW_DAG_ID = "sync_now"
 _SYNC_TERMINAL_STATUSES = {"success", "partial", "failed"}
 _SYNC_VALID_MODES = {"incremental", "full"}
 _SYNC_VALID_TARGETS = {"all", "foundation", "talent"}
+_SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 60)
+_SYNC_EXTRACT_ALL_DAGS = {
+    "sap_successfactors": "sap_successfactors_extract_all",
+}
 
 
 def _sync_step(
@@ -6115,9 +6123,13 @@ def _sync_step(
 
 def _initial_sync_steps() -> list[dict[str, Any]]:
     return [
-        _sync_step("connection", "Conexión", "queued", "Esperando preflight de extracción."),
+        _sync_step(
+            "connection", "Conexión", "queued", "Esperando preflight de extracción."
+        ),
         _sync_step("bronze", "Bronze", "queued", "Extracción pendiente."),
-        _sync_step("silver_gold", "Silver/Gold", "queued", "Materialización pendiente."),
+        _sync_step(
+            "silver_gold", "Silver/Gold", "queued", "Materialización pendiente."
+        ),
         _sync_step("control_room", "Control Room", "queued", "Refresh pendiente."),
     ]
 
@@ -6149,7 +6161,9 @@ def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
     return "success"
 
 
-def _sync_entity_idempotency_key(base_key: object | None, entity: object | None) -> str | None:
+def _sync_entity_idempotency_key(
+    base_key: object | None, entity: object | None
+) -> str | None:
     if base_key is None:
         return None
     base = str(base_key).strip()
@@ -6161,6 +6175,19 @@ def _sync_entity_idempotency_key(base_key: object | None, entity: object | None)
         return candidate
     digest = uuid.uuid5(uuid.NAMESPACE_URL, candidate).hex
     return f"{base[:100]}:{digest}"
+
+
+def _sync_run_age_seconds(row: dict[str, Any]) -> float | None:
+    started_at = row.get("started_at")
+    if isinstance(started_at, str):
+        started_at = _parse_iso_datetime(started_at)
+    if not started_at:
+        return None
+    from datetime import datetime as _dt, timezone as _tz
+
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=_tz.utc)
+    return max((_dt.now(_tz.utc) - started_at).total_seconds(), 0.0)
 
 
 def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
@@ -6217,8 +6244,85 @@ async def _fetch_active_sync_run(
     return dict(row) if row else None
 
 
+async def _trigger_sync_aggregate_extract_all(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    run_id: str,
+    user: dict | None,
+) -> dict[str, Any] | None:
+    dag_id = _SYNC_EXTRACT_ALL_DAGS.get(cartridge)
+    if not dag_id:
+        return None
+
+    conf = {
+        "cartridge_id": cartridge,
+        "mode": mode,
+        "target": target,
+    }
+    if conn_id:
+        conf["conn_id"] = conn_id
+    conf = _apply_user_scope_to_dag_conf(conf, user)
+    requested_dag_run_id = _dag_run_id_from_idempotency_key(dag_id, run_id)
+    result = await _trigger_airflow_extract_dag(
+        dag_id, conf, user, requested_dag_run_id
+    )
+    if result.get("error"):
+        return {
+            "cartridge": cartridge,
+            "triggered": [],
+            "errors": [
+                {
+                    "entity": _SYNC_AGGREGATE_ENTITY,
+                    "status_code": 502,
+                    "error": f"Airflow trigger failed: {result['error']}",
+                }
+            ],
+            "count": 0,
+            "error_count": 1,
+            "trigger_strategy": "aggregate_dag",
+        }
+
+    dag_run_id = (
+        result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
+    )
+    await _record_dag_pipeline_trigger(
+        cartridge=cartridge,
+        entity=_SYNC_AGGREGATE_ENTITY,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        mode=conf.get("mode", mode),
+        status=result.get("state") or "queued",
+        conf=conf,
+        tenant_id=conf.get("tenant_id"),
+        workspace_id=conf.get("workspace_id"),
+    )
+    triggered = {
+        "entity": _SYNC_AGGREGATE_ENTITY,
+        "job_id": dag_run_id,
+        "dag_run_id": dag_run_id,
+        "dag_id": dag_id,
+        "state": result.get("state"),
+        "result": result,
+    }
+    return {
+        "cartridge": cartridge,
+        "triggered": [triggered],
+        "errors": [],
+        "count": 1,
+        "error_count": 0,
+        "trigger_strategy": "aggregate_dag",
+    }
+
+
 def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else _initial_sync_steps()
+    steps = (
+        extra.get("steps")
+        if isinstance(extra.get("steps"), list)
+        else _initial_sync_steps()
+    )
     status = str(row.get("status") or extra.get("status") or "running")
     return {
         "run_id": row.get("run_id"),
@@ -6230,8 +6334,12 @@ def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str
         "triggered_entities": extra.get("triggered_entities") or [],
         "errors": extra.get("errors") or [],
         "control_room_ready": bool(extra.get("control_room_ready")),
-        "started_at": row.get("started_at").isoformat() if row.get("started_at") else None,
-        "finished_at": row.get("finished_at").isoformat() if row.get("finished_at") else None,
+        "started_at": row.get("started_at").isoformat()
+        if row.get("started_at")
+        else None,
+        "finished_at": row.get("finished_at").isoformat()
+        if row.get("finished_at")
+        else None,
         "error_message": row.get("error_message"),
     }
 
@@ -6370,7 +6478,15 @@ def _sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
         message = str(error.get("error") or "").lower()
         if status_code >= 500:
             continue
-        if any(token in message for token in ("timeout", "tempor", "airflow trigger failed", "connection reset")):
+        if any(
+            token in message
+            for token in (
+                "timeout",
+                "tempor",
+                "airflow trigger failed",
+                "connection reset",
+            )
+        ):
             continue
         return False
     return True
@@ -6412,26 +6528,63 @@ async def _build_sync_run_status(
     user: dict | None,
 ) -> dict[str, Any]:
     extra = _sync_extra_from_row(row)
-    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else _initial_sync_steps()
-    triggered = extra.get("triggered_entities") if isinstance(extra.get("triggered_entities"), list) else []
+    steps = (
+        extra.get("steps")
+        if isinstance(extra.get("steps"), list)
+        else _initial_sync_steps()
+    )
+    triggered = (
+        extra.get("triggered_entities")
+        if isinstance(extra.get("triggered_entities"), list)
+        else []
+    )
     errors = extra.get("errors") if isinstance(extra.get("errors"), list) else []
     child_run_ids = [
         str(item.get("dag_run_id") or item.get("job_id") or "").strip()
         for item in triggered
-        if isinstance(item, dict) and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+        if isinstance(item, dict)
+        and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
     ]
-    child_rows = await _sync_child_runs(cartridge=cartridge, run_ids=child_run_ids, user=user)
+    child_rows = await _sync_child_runs(
+        cartridge=cartridge, run_ids=child_run_ids, user=user
+    )
     child_statuses = [str(item.get("status") or "").lower() for item in child_rows]
-    running_children = any(status in {"queued", "running", "unknown"} for status in child_statuses)
-    failed_children = sum(1 for status in child_statuses if status in {"failed", "error"})
+    running_children = any(
+        status in {"queued", "running", "unknown"} for status in child_statuses
+    )
+    failed_children = sum(
+        1 for status in child_statuses if status in {"failed", "error"}
+    )
     success_children = sum(1 for status in child_statuses if status == "success")
+    stale_running = (
+        str(row.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES
+        and running_children
+        and not success_children
+        and (_sync_run_age_seconds(row) or 0) > _SYNC_NOW_STALE_AFTER_SECONDS
+    )
+    if stale_running:
+        running_children = False
+        failed_children = max(failed_children, 1)
+        errors = [
+            *errors,
+            {
+                "entity": _SYNC_NOW_ENTITY,
+                "status_code": 504,
+                "error": "Airflow sync run timed out before completing; start a new sync.",
+            },
+        ]
 
     try:
-        pipeline_payload = await _call_with_optional_user(api_pipeline, cartridge, user=user)
+        pipeline_payload = await _call_with_optional_user(
+            api_pipeline, cartridge, user=user
+        )
         pipeline_rows = pipeline_payload.get("pipeline") or []
     except Exception as exc:
         pipeline_rows = []
-        errors = [*errors, {"entity": "__pipeline__", "status_code": 503, "error": str(exc)}]
+        errors = [
+            *errors,
+            {"entity": "__pipeline__", "status_code": 503, "error": str(exc)},
+        ]
 
     bronze_rows = [item for item in pipeline_rows if isinstance(item, dict)]
     bronze_ready = sum(
@@ -6451,14 +6604,24 @@ async def _build_sync_run_status(
         for node in (item.get("gold") or [])
         if isinstance(node, dict)
     ]
-    silver_ready = sum(1 for node in silver_nodes if str(node.get("status") or "") in {"fresh", "stale"})
-    gold_ready = sum(1 for node in gold_nodes if str(node.get("status") or "") in {"fresh", "stale"})
+    silver_ready = sum(
+        1
+        for node in silver_nodes
+        if str(node.get("status") or "") in {"fresh", "stale"}
+    )
+    gold_ready = sum(
+        1 for node in gold_nodes if str(node.get("status") or "") in {"fresh", "stale"}
+    )
 
     updates: dict[str, dict[str, Any]] = {
         "connection": {
             "label": "Conexión",
-            "status": "success" if triggered or child_rows or bronze_ready else "running",
-            "detail": "Scope y conexión aceptados por el pipeline." if triggered or child_rows or bronze_ready else "Validando al iniciar extracción.",
+            "status": "success"
+            if triggered or child_rows or bronze_ready
+            else "running",
+            "detail": "Scope y conexión aceptados por el pipeline."
+            if triggered or child_rows or bronze_ready
+            else "Validando al iniciar extracción.",
         }
     }
     if running_children:
@@ -6486,7 +6649,10 @@ async def _build_sync_run_status(
             "detail": f"{bronze_ready or success_children} entidades con datos raw.",
         }
 
-    if updates.get("bronze", {}).get("status") in {"queued", "running"} or running_children:
+    if (
+        updates.get("bronze", {}).get("status") in {"queued", "running"}
+        or running_children
+    ):
         updates["silver_gold"] = {
             "label": "Silver/Gold",
             "status": "queued",
@@ -6517,12 +6683,16 @@ async def _build_sync_run_status(
             from app.services import control_room_service
 
             gold_kpis = await control_room_service.sap_successfactors_gold_kpis(user)
-            talent_kpis = await control_room_service.sap_successfactors_talent_kpis(user)
+            talent_kpis = await control_room_service.sap_successfactors_talent_kpis(
+                user
+            )
             control_room_ready = bool(gold_kpis) and bool(talent_kpis)
             updates["control_room"] = {
                 "label": "Control Room",
                 "status": "success" if control_room_ready else "partial",
-                "detail": "KPIs Gold/Talent disponibles." if control_room_ready else "Gold existe, pero Control Room devolvió datos parciales.",
+                "detail": "KPIs Gold/Talent disponibles."
+                if control_room_ready
+                else "Gold existe, pero Control Room devolvió datos parciales.",
             }
         except Exception as exc:
             updates["control_room"] = {
@@ -6542,7 +6712,9 @@ async def _build_sync_run_status(
         updates["control_room"] = {
             "label": "Control Room",
             "status": "success" if gold_ready else "skipped",
-            "detail": "Control Room específico no aplica para este cartucho." if not gold_ready else "Gold disponible para consumo.",
+            "detail": "Control Room específico no aplica para este cartucho."
+            if not gold_ready
+            else "Gold disponible para consumo.",
         }
 
     steps = _merge_sync_steps(steps, updates)
@@ -6562,9 +6734,16 @@ async def _build_sync_run_status(
         status=status,
         user=user,
         extra=updated_extra,
-        error_message="; ".join(str(item.get("error") or "") for item in errors[:3] if isinstance(item, dict)) or None,
+        error_message="; ".join(
+            str(item.get("error") or "")
+            for item in errors[:3]
+            if isinstance(item, dict)
+        )
+        or None,
     )
-    refreshed = await _fetch_sync_run(cartridge=cartridge, run_id=str(row["run_id"]), user=user)
+    refreshed = await _fetch_sync_run(
+        cartridge=cartridge, run_id=str(row["run_id"]), user=user
+    )
     return _sync_public_payload(refreshed or row, {**extra, **updated_extra})
 
 
@@ -6588,7 +6767,9 @@ async def api_cartridge_sync_now(
     target = str(body.get("target") or "all").strip().lower()
     if target not in _SYNC_VALID_TARGETS:
         raise HTTPException(400, "target must be all, foundation or talent")
-    conn_id = _normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    conn_id = _normalize_pipeline_conn_id(
+        body.get("conn_id") or body.get("connection_id")
+    )
     active_row = await _fetch_active_sync_run(
         cartridge=cartridge,
         mode=mode,
@@ -6597,7 +6778,14 @@ async def api_cartridge_sync_now(
         user=user,
     )
     if active_row:
-        return await _build_sync_run_status(cartridge=cartridge, row=active_row, user=user)
+        active_status = await _build_sync_run_status(
+            cartridge=cartridge, row=active_row, user=user
+        )
+        if (
+            str(active_status.get("status") or "").lower()
+            not in _SYNC_TERMINAL_STATUSES
+        ):
+            return active_status
 
     run_id = f"sync_now:{cartridge}:{uuid.uuid4().hex}"
     steps = _merge_sync_steps(
@@ -6637,23 +6825,45 @@ async def api_cartridge_sync_now(
     attempts = 0
     for attempt in range(1, 4):
         attempts = attempt
-        result = await _call_with_optional_user(api_pipeline_extract_all, cartridge, extract_body, user=user)
+        aggregate_result = await _trigger_sync_aggregate_extract_all(
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            run_id=run_id,
+            user=user,
+        )
+        result = (
+            aggregate_result
+            if aggregate_result is not None
+            else await _call_with_optional_user(
+                api_pipeline_extract_all, cartridge, extract_body, user=user
+            )
+        )
         errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-        triggered = result.get("triggered") if isinstance(result.get("triggered"), list) else []
+        triggered = (
+            result.get("triggered") if isinstance(result.get("triggered"), list) else []
+        )
         if triggered or not _sync_errors_retryable(errors) or attempt == 3:
             break
         await asyncio.sleep(2 * attempt)
 
-    triggered_entities = result.get("triggered") if isinstance(result.get("triggered"), list) else []
+    triggered_entities = (
+        result.get("triggered") if isinstance(result.get("triggered"), list) else []
+    )
     errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-    bronze_status = "running" if triggered_entities else "failed" if errors else "partial"
+    bronze_status = (
+        "running" if triggered_entities else "failed" if errors else "partial"
+    )
     steps = _merge_sync_steps(
         steps,
         {
             "connection": {
                 "label": "Conexión",
                 "status": "success" if triggered_entities or not errors else "partial",
-                "detail": "El pipeline aceptó la sincronización." if triggered_entities else "El pipeline respondió sin entidades disparadas.",
+                "detail": "El pipeline aceptó la sincronización."
+                if triggered_entities
+                else "El pipeline respondió sin entidades disparadas.",
                 "attempts": attempts,
             },
             "bronze": {
@@ -6665,12 +6875,16 @@ async def api_cartridge_sync_now(
             "silver_gold": {
                 "label": "Silver/Gold",
                 "status": "queued" if triggered_entities else "failed",
-                "detail": "Airflow encadenará materialización downstream." if triggered_entities else "No hay extracción base para materializar.",
+                "detail": "Airflow encadenará materialización downstream."
+                if triggered_entities
+                else "No hay extracción base para materializar.",
             },
             "control_room": {
                 "label": "Control Room",
                 "status": "queued" if triggered_entities else "failed",
-                "detail": "Esperando Gold para refrescar señales." if triggered_entities else "No hay Gold nuevo disponible.",
+                "detail": "Esperando Gold para refrescar señales."
+                if triggered_entities
+                else "No hay Gold nuevo disponible.",
             },
         },
     )
@@ -6690,8 +6904,14 @@ async def api_cartridge_sync_now(
             "errors": errors,
             "control_room_ready": False,
             "extract_all_result": result,
+            "trigger_strategy": result.get("trigger_strategy") or "fanout",
         },
-        error_message="; ".join(str(item.get("error") or "") for item in errors[:3] if isinstance(item, dict)) or None,
+        error_message="; ".join(
+            str(item.get("error") or "")
+            for item in errors[:3]
+            if isinstance(item, dict)
+        )
+        or None,
     )
     row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
     if not row:
