@@ -96,6 +96,16 @@ def test_direct_cartridge_watermark_services_use_scoped_conflict_key():
         assert "set_config('app.tenant_id'" in source, path
 
 
+def test_successfactors_watermark_update_does_not_move_backwards():
+    source = _read(
+        ROOT / "cartridges/sap_successfactors/app/services/watermark_service.py"
+    )
+    assert (
+        "WHERE COALESCE(entity_watermarks.last_watermark_value, '') "
+        "<= EXCLUDED.last_watermark_value"
+    ) in source
+
+
 def test_technical_viewer_endpoints_have_backend_scope_guards():
     source = _read(CONSOLE_MAIN)
 

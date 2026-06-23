@@ -74,7 +74,19 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
             "dedup_key": "sap_successfactors:WB-TALENTO:workspace",
             "recommended_action": "Revisar blockers C/P/A, validar metadata y priorizar acciones supervisadas en Control Room.",
             "recommendation_only": true,
-            "writeback_enabled": false
+            "writeback_enabled": false,
+            "engines": [
+              {
+                "name": "monte_carlo",
+                "enabled": false,
+                "blocked_reason": "Requiere distribuciones numericas C/P/A o blue-collar validadas desde Gold; no se inventan parametros."
+              },
+              {
+                "name": "decision_orchestrator",
+                "enabled": false,
+                "blocked_reason": "Requiere una senal concreta source_type/source_id antes de comparar opciones."
+              }
+            ]
           }
         }'::jsonb AS extra
     FROM scope

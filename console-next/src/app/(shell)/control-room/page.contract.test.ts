@@ -47,6 +47,15 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("expected_outcome");
   });
 
+  it("keeps Sync Now scope explicit in the Control Room header", () => {
+    expect(pageSource).toContain("Alcance de sincronización");
+    expect(pageSource).toContain('const [controlSyncTarget, setControlSyncTarget] = useState<SyncTarget>("all")');
+    expect(pageSource).toContain("syncTargetSupportsTalent");
+    expect(pageSource).toContain('<option value="talent">Talento</option>');
+    expect(pageSource).toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target })");
+    expect(pageSource).not.toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target: \"all\" })");
+  });
+
   it("surfaces deterministic math provenance and control origins", () => {
     expect(pageSource).toContain("OriginBadge");
     expect(pageSource).toContain("type ControlOrigin");

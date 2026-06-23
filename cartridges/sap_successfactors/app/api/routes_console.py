@@ -37,7 +37,7 @@ from app.core.request_context import SecurityContextError, reset_security_contex
 from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
 from app.services.extraction_service import run_entity
-from app.services.preflight import preflight_for_extract
+from app.services.preflight import preflight_for_extract, talent_metadata_readiness
 from app.services.runlog_service import get_last_run_status
 from app.services.watermark_service import list_watermarks
 
@@ -131,6 +131,20 @@ def diagnostics_config(
     return client.sanitized_config_diagnostics()
 
 
+@router.get("/talent/metadata-readiness")
+def talent_metadata_readiness_probe(
+    request: Request,
+    conn_id: str | None = Query(default=None, max_length=128),
+    sample: bool = Query(default=True),
+) -> dict:
+    """Validate live SuccessFactors metadata/permission readiness for WB-TALENTO C/P/A."""
+    return talent_metadata_readiness(
+        conn_id=conn_id,
+        security_context=_header_security_context(request),
+        sample=sample,
+    )
+
+
 # ── Preview ──────────────────────────────────────────────────────────────────
 
 @router.get("/entities/{entity_id}/preview")
@@ -217,6 +231,7 @@ def entity_extract(
 @router.post("/extract-all")
 def extract_all(
     mode: str = Query("incremental", pattern="^(full|incremental)$"),
+    target: str = Query("all", pattern="^(all|foundation|talent)$"),
     conn_id: str | None = Query(default=None, max_length=128),
     body: dict[str, Any] | None = Body(None),
 ):
@@ -229,7 +244,11 @@ def extract_all(
     token = _set_security_context(ctx)
     try:
         results = []
-        entities, skipped = get_extract_all_plan(conn_id=conn_id, security_context=ctx)
+        entities, skipped = get_extract_all_plan(
+            conn_id=conn_id,
+            security_context=ctx,
+            target=target,
+        )
         for config in entities:
             effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
             try:
@@ -248,7 +267,13 @@ def extract_all(
     status_text = "success" if not any(
         summary[key] for key in ("auth_blocked", "permission_blocked", "failed_open")
     ) else "completed_with_blocks"
-    return {"status": status_text, "summary": summary, "results": results, "skipped": skipped}
+    return {
+        "status": status_text,
+        "target": target,
+        "summary": summary,
+        "results": results,
+        "skipped": skipped,
+    }
 
 
 # ── Observability ────────────────────────────────────────────────────────────

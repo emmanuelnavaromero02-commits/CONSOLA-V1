@@ -386,6 +386,195 @@ def _max_tool_calls(agent: Agent, *, scheduled: bool) -> int:
     return max(1, min(value, 20))
 
 
+def _monitor_contract(agent: Agent) -> dict[str, Any]:
+    extra = agent.extra if isinstance(agent.extra, dict) else {}
+    monitor = extra.get("monitor") if isinstance(extra, dict) else {}
+    return monitor if isinstance(monitor, dict) else {}
+
+
+def _monitor_result_payload(result: Any) -> dict[str, Any]:
+    if isinstance(result, dict) and isinstance(result.get("result"), dict):
+        return result["result"]
+    return result if isinstance(result, dict) else {}
+
+
+def _monitor_signal_count(payload: dict[str, Any]) -> int:
+    signals = payload.get("signals")
+    if isinstance(signals, dict):
+        try:
+            return int(signals.get("count") or len(signals.get("items") or []))
+        except Exception:
+            return 0
+    if isinstance(signals, list):
+        return len(signals)
+    return 0
+
+
+def _monitor_blockers(payload: dict[str, Any]) -> list[Any]:
+    blockers = payload.get("blockers")
+    return blockers if isinstance(blockers, list) else []
+
+
+def _monitor_engine_specs(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = contract.get("engines")
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    return [dict(item) for item in raw if isinstance(item, dict)]
+
+
+def _monitor_engine_name(spec: dict[str, Any]) -> str:
+    return str(spec.get("name") or spec.get("engine") or "").strip().lower()
+
+
+def _monitor_engine_scope_blocked(spec: dict[str, Any]) -> str | None:
+    forbidden = {
+        "tenant_id",
+        "workspace_id",
+        "security_context",
+        "user_context",
+        "allowed_prefixes",
+        "allowed_buckets",
+    }
+    present = sorted(key for key in forbidden if key in spec)
+    if present:
+        return f"engine spec contains backend-owned scope fields: {', '.join(present)}"
+    return None
+
+
+def _monitor_clean_args(args: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in args.items() if value is not None}
+
+
+def _monitor_engine_ref(result: dict[str, Any]) -> dict[str, Any]:
+    payload = _monitor_result_payload(result)
+    simulation = payload.get("simulation") if isinstance(payload.get("simulation"), dict) else {}
+    orchestration = (
+        payload.get("orchestration")
+        if isinstance(payload.get("orchestration"), dict)
+        else {}
+    )
+    return {
+        "kind": str(result.get("engine") or payload.get("engine") or "monitor_engine"),
+        "engine_run_id": (
+            simulation.get("simulation_id")
+            or orchestration.get("orchestration_id")
+            or payload.get("simulation_id")
+            or payload.get("orchestration_id")
+            or payload.get("run_id")
+        ),
+        "status": "completed" if not result.get("error") else "error",
+    }
+
+
+def _monitor_with_engine_results(
+    payload: dict[str, Any],
+    engine_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not engine_results:
+        return payload
+    blockers = list(_monitor_blockers(payload))
+    for item in engine_results:
+        if item.get("status") == "blocked":
+            blockers.append(
+                {
+                    "code": "monitor_engine_blocked",
+                    "engine": item.get("engine"),
+                    "reason": item.get("reason"),
+                }
+            )
+    evidence = dict(payload.get("evidence") or {})
+    evidence["engine_results"] = engine_results
+    return {**payload, "blockers": blockers, "evidence": evidence}
+
+
+def _monitor_should_alert(contract: dict[str, Any], payload: dict[str, Any]) -> bool:
+    threshold = contract.get("threshold") if isinstance(contract.get("threshold"), dict) else {}
+    status = str(payload.get("status") or "").strip().lower()
+    blocked = bool(_monitor_blockers(payload))
+    signal_count = _monitor_signal_count(payload)
+
+    status_not_in = threshold.get("status_not_in")
+    if isinstance(status_not_in, list) and status and status not in {str(item).lower() for item in status_not_in}:
+        return True
+    if threshold.get("blockers_present") and blocked:
+        return True
+    try:
+        if signal_count >= int(threshold.get("min_signal_count") or 0) and signal_count > 0:
+            return True
+    except Exception:
+        pass
+    return bool(blocked or signal_count or (status and status != "ready"))
+
+
+def _monitor_alert_args(
+    *,
+    agent: Agent,
+    run_id: int,
+    contract: dict[str, Any],
+    payload: dict[str, Any],
+    scheduled_fire_at: str | None = None,
+    engine_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    wisdom_bit_id = str(contract.get("wisdom_bit_id") or payload.get("wisdom_bit_id") or "wisdom_bit")
+    blockers = _monitor_blockers(payload)
+    signal_count = _monitor_signal_count(payload)
+    status = str(payload.get("status") or "partial")
+    source_dataset = str(contract.get("dataset") or "agent_monitor")
+    dedup_key = str(contract.get("dedup_key") or f"{agent.cartridge_id}:{agent.slug}:{wisdom_bit_id}")
+    severity = str(contract.get("severity") or "medium")
+    recommendation = str(contract.get("recommended_action") or "Revisar evidencia del monitor en Control Room.")
+    metrics = {
+        "status": status,
+        "signal_count": signal_count,
+        "blocker_count": len(blockers),
+        "scheduled_fire_at": scheduled_fire_at,
+        "engine_count": len(engine_results or []),
+        "engine_completed_count": sum(
+            1 for item in (engine_results or []) if item.get("status") == "completed"
+        ),
+        "engine_blocked_count": sum(
+            1 for item in (engine_results or []) if item.get("status") == "blocked"
+        ),
+    }
+    evidence_refs = [
+        {
+            "kind": "wisdom_bit_monitor",
+            "wisdom_bit_id": wisdom_bit_id,
+            "agent_run_id": run_id,
+            "scheduled_fire_at": scheduled_fire_at,
+        }
+    ]
+    for item in engine_results or []:
+        if item.get("status") == "completed":
+            evidence_refs.append(_monitor_engine_ref(item))
+    return {
+        "analysis_type": str(contract.get("analysis_type") or f"{wisdom_bit_id.lower()}_monitor"),
+        "engine": str(contract.get("engine") or "wisdom_bit"),
+        "engine_run_id": f"agent:{agent.id}:run:{run_id}:wisdombit:{wisdom_bit_id}",
+        "alert_type": str(contract.get("alert_type") or "wisdombit_monitor"),
+        "cartridge_id": agent.cartridge_id,
+        "domain": str(contract.get("domain") or "Recursos Humanos"),
+        "source_dataset": source_dataset,
+        "entity_key": dedup_key,
+        "entity_label": wisdom_bit_id,
+        "title": str(contract.get("title") or f"{agent.name}: {wisdom_bit_id} requiere atencion"),
+        "message": (
+            f"Monitor {agent.slug} evaluo {wisdom_bit_id}: status={status}, "
+            f"signals={signal_count}, blockers={len(blockers)}."
+        ),
+        "severity": severity,
+        "confidence": float(contract.get("confidence") or 0.8),
+        "recommendation": recommendation,
+        "evidence_refs": evidence_refs,
+        "hypothesis": str(contract.get("hypothesis") or "El monitor detecto estado no listo o senales activas."),
+        "expected_outcome": str(contract.get("expected_outcome") or "Control Room mantiene recomendacion advisory con evidencia."),
+        "metrics": metrics,
+        "blockers": blockers,
+    }
+
+
 def _tool_lookup(tools: list[dict]) -> dict[str, dict]:
     return {str(t.get("name")): t for t in tools if t.get("name")}
 
@@ -423,7 +612,7 @@ async def _audit_agent_tool(
         tool_args=tool_policy.clip_args(tool_policy.scrub_args(args)),
         tool_result_status=status,
         risk_level=risk_level,
-        conversation_id=f"agent_run:{run_id}" if run_id is not None else None,
+        conversation_id=None,
         critical=True,
     )
 
@@ -805,7 +994,7 @@ async def run(
         resource_id=agent.id,
         status="scheduled" if user is None else "started",
         metadata={"agent_slug": agent.slug, "cartridge_id": agent.cartridge_id, "run_id": run_id},
-        conversation_id=f"agent_run:{run_id}",
+        conversation_id=None,
     )
     invoke  = _make_invoke(agent, user=user, tools=tools, run_id=run_id)
 
@@ -849,7 +1038,7 @@ async def run(
             resource_id=agent.id,
             status="cancelled",
             metadata={"run_id": run_id},
-            conversation_id=f"agent_run:{run_id}",
+            conversation_id=None,
         )
         raise
     except Exception as exc:
@@ -863,7 +1052,7 @@ async def run(
             resource_id=agent.id,
             status="failed",
             metadata={"run_id": run_id, "error": f"{type(exc).__name__}: {exc}"},
-            conversation_id=f"agent_run:{run_id}",
+            conversation_id=None,
         )
         raise
 
@@ -883,7 +1072,7 @@ async def run(
         resource_id=agent.id,
         status="completed",
         metadata={"run_id": run_id, "tool_calls": len(tool_calls_log)},
-        conversation_id=f"agent_run:{run_id}",
+        conversation_id=None,
     )
 
     return {
@@ -893,6 +1082,313 @@ async def run(
         "agent_id":    agent.id,
         "run_id":      run_id,
     }
+
+
+async def run_scheduled_monitor(
+    agent: Agent,
+    message: str,
+    *,
+    scheduled_fire_at: str | None = None,
+) -> dict:
+    """Execute a scheduled monitor through a fixed AgentOps tool chain."""
+    if not agent.is_active:
+        return {
+            "reply": "(agent inactive)",
+            "viewer_urls": [],
+            "messages": [],
+            "agent_id": agent.id,
+            "run_id": None,
+            "deterministic_monitor": True,
+        }
+
+    contract = _monitor_contract(agent)
+    if not contract:
+        return await run(agent, message, history=[], user=None)
+
+    input_messages = [{"role": "user", "content": message}]
+    tools, _server_map = await _discover_agent_tools(agent)
+    run_id = await _start_run(agent.id, None, input_messages, user=None, agent=agent)
+    await audit_service.record_event(
+        user_id=None,
+        email="agent-runner@omega.local",
+        action="agent.invoke",
+        resource_type="agent",
+        resource_id=agent.id,
+        status="scheduled_monitor",
+        metadata={
+            "agent_slug": agent.slug,
+            "cartridge_id": agent.cartridge_id,
+            "run_id": run_id,
+            "scheduled_fire_at": scheduled_fire_at,
+            "monitor": contract,
+        },
+        conversation_id=None,
+    )
+
+    invoke = _make_invoke(agent, user=None, tools=tools, run_id=run_id)
+    tool_calls_log: list[dict] = []
+
+    async def _call(full_name: str, args: dict[str, Any]) -> Any:
+        server_id, tool = full_name.split("__", 1)
+        entry = {
+            "tool": tool,
+            "server": server_id,
+            "args": tool_policy.clip_args(tool_policy.scrub_args(args)),
+            "status": "started",
+        }
+        tool_calls_log.append(entry)
+        result = await invoke(server_id, tool, args)
+        is_error = isinstance(result, dict) and bool(result.get("error"))
+        entry["summary"] = str(result.get("message") or result.get("error") if is_error else "ok")[:500]
+        entry["status"] = "error" if is_error else "completed"
+        return result
+
+    try:
+        wisdom_bit_id = str(contract.get("wisdom_bit_id") or "WB-TALENTO")
+        wisdom_result = await _call(
+            "mcp-infra__wisdom_bits__run",
+            {
+                "wisdom_bit_id": wisdom_bit_id,
+                "cartridge_id": agent.cartridge_id,
+                "payload": {
+                    "scheduled_fire_at": scheduled_fire_at,
+                    "recommendation_only": True,
+                },
+            },
+        )
+        if isinstance(wisdom_result, dict) and wisdom_result.get("error"):
+            raise RuntimeError(str(wisdom_result.get("message") or wisdom_result.get("error")))
+
+        payload = _monitor_result_payload(wisdom_result)
+        engine_results: list[dict[str, Any]] = []
+        for spec in _monitor_engine_specs(contract):
+            engine = _monitor_engine_name(spec)
+            if not engine:
+                continue
+            if spec.get("enabled") is False:
+                engine_results.append(
+                    {
+                        "engine": engine,
+                        "status": "skipped",
+                        "reason": str(spec.get("reason") or spec.get("blocked_reason") or "disabled"),
+                    }
+                )
+                continue
+            scope_error = _monitor_engine_scope_blocked(spec)
+            if scope_error:
+                engine_results.append(
+                    {"engine": engine, "status": "blocked", "reason": scope_error}
+                )
+                continue
+            if engine in {"monte_carlo", "simulation__monte_carlo_run"}:
+                input_variables = spec.get("input_variables")
+                if not isinstance(input_variables, dict) or not input_variables:
+                    engine_results.append(
+                        {
+                            "engine": "monte_carlo",
+                            "status": "blocked",
+                            "reason": "monte_carlo requires explicit input_variables",
+                        }
+                    )
+                    continue
+                if spec.get("seed") is None:
+                    engine_results.append(
+                        {
+                            "engine": "monte_carlo",
+                            "status": "blocked",
+                            "reason": "monte_carlo requires explicit seed",
+                        }
+                    )
+                    continue
+                result = await _call(
+                    "mcp-infra__simulation__monte_carlo_run",
+                    _monitor_clean_args({
+                        "source_type": str(spec.get("source_type") or "signal"),
+                        "source_id": str(
+                            spec.get("source_id")
+                            or payload.get("wisdom_bit_id")
+                            or wisdom_bit_id
+                        ),
+                        "horizon_days": int(spec.get("horizon_days") or 30),
+                        "iterations": int(spec.get("iterations") or 1000),
+                        "seed": int(spec.get("seed")),
+                        "model_version": spec.get("model_version"),
+                        "input_variables": input_variables,
+                        "assumptions": spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {},
+                        "output_metric": str(spec.get("output_metric") or "net_value"),
+                        "breach_threshold": spec.get("breach_threshold"),
+                        "breach_direction": spec.get("breach_direction"),
+                        "evidence_refs": spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else [],
+                        "options": spec.get("options") if isinstance(spec.get("options"), list) else None,
+                    }),
+                )
+                engine_results.append(
+                    {
+                        "engine": "monte_carlo",
+                        "status": "error" if isinstance(result, dict) and result.get("error") else "completed",
+                        "result": result,
+                    }
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    raise RuntimeError(str(result.get("message") or result.get("error")))
+                continue
+            if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:
+                source_type = str(spec.get("source_type") or "").strip()
+                source_id = str(spec.get("source_id") or "").strip()
+                if not source_type or not source_id:
+                    engine_results.append(
+                        {
+                            "engine": "decision_orchestrator",
+                            "status": "blocked",
+                            "reason": "decision_orchestrator requires source_type and source_id",
+                        }
+                    )
+                    continue
+                result = await _call(
+                    "mcp-infra__decision__orchestrate",
+                    _monitor_clean_args({
+                        "source_type": source_type,
+                        "source_id": source_id,
+                        "title": spec.get("title"),
+                        "description": spec.get("description"),
+                        "metrics": spec.get("metrics") if isinstance(spec.get("metrics"), dict) else {},
+                        "entities": spec.get("entities") if isinstance(spec.get("entities"), list) else [],
+                        "time_horizon": spec.get("time_horizon"),
+                        "constraints": spec.get("constraints") if isinstance(spec.get("constraints"), dict) else {},
+                        "evidence_refs": spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else [],
+                        "execute_engines": bool(spec.get("execute_engines", True)),
+                        "engine_inputs": spec.get("engine_inputs") if isinstance(spec.get("engine_inputs"), dict) else {},
+                    }),
+                )
+                engine_results.append(
+                    {
+                        "engine": "decision_orchestrator",
+                        "status": "error" if isinstance(result, dict) and result.get("error") else "completed",
+                        "result": result,
+                    }
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    raise RuntimeError(str(result.get("message") or result.get("error")))
+                continue
+            engine_results.append(
+                {
+                    "engine": engine,
+                    "status": "blocked",
+                    "reason": "unsupported monitor engine",
+                }
+            )
+
+        payload_with_engines = _monitor_with_engine_results(payload, engine_results)
+        should_alert = _monitor_should_alert(contract, payload_with_engines)
+        alert_result = None
+        if should_alert:
+            alert_result = await _call(
+                "mcp-infra__control_room__raise_analysis_alert",
+                _monitor_alert_args(
+                    agent=agent,
+                    run_id=run_id,
+                    contract=contract,
+                    payload=payload_with_engines,
+                    scheduled_fire_at=scheduled_fire_at,
+                    engine_results=engine_results,
+                ),
+            )
+            if isinstance(alert_result, dict) and alert_result.get("error"):
+                raise RuntimeError(str(alert_result.get("message") or alert_result.get("error")))
+
+        signal_count = _monitor_signal_count(payload_with_engines)
+        blocker_count = len(_monitor_blockers(payload_with_engines))
+        status = str(payload_with_engines.get("status") or "unknown")
+        reply = (
+            f"Monitor {agent.slug} ejecuto {wisdom_bit_id}: status={status}, "
+            f"signals={signal_count}, blockers={blocker_count}, "
+            f"engines={len(engine_results)}, alert={'yes' if alert_result else 'no'}."
+        )
+        await _finish_run(
+            run_id,
+            status="ok",
+            output_text=reply,
+            tool_calls=tool_calls_log,
+            user=None,
+            agent=agent,
+        )
+        await audit_service.record_event(
+            user_id=None,
+            email="agent-runner@omega.local",
+            action="agent.invoke",
+            resource_type="agent",
+            resource_id=agent.id,
+            status="completed",
+            metadata={
+                "run_id": run_id,
+                "tool_calls": len(tool_calls_log),
+                "deterministic_monitor": True,
+                "alert_created": bool(alert_result),
+                "engine_results": engine_results,
+            },
+            conversation_id=None,
+        )
+        return {
+            "reply": reply,
+            "viewer_urls": [],
+            "messages": [],
+            "agent_id": agent.id,
+            "run_id": run_id,
+            "deterministic_monitor": True,
+            "monitor": {
+                "wisdom_bit_id": wisdom_bit_id,
+                "status": status,
+                "signals": signal_count,
+                "blockers": blocker_count,
+                "engines": engine_results,
+                "alerted": bool(alert_result),
+            },
+            "alert": alert_result,
+        }
+    except _asyncio.CancelledError:
+        await _finish_run(
+            run_id,
+            status="cancelled",
+            tool_calls=tool_calls_log,
+            error_message="Cancelled",
+            user=None,
+            agent=agent,
+        )
+        await audit_service.record_event(
+            user_id=None,
+            email="agent-runner@omega.local",
+            action="agent.invoke",
+            resource_type="agent",
+            resource_id=agent.id,
+            status="cancelled",
+            metadata={"run_id": run_id, "deterministic_monitor": True},
+            conversation_id=None,
+        )
+        raise
+    except Exception as exc:
+        await _finish_run(
+            run_id,
+            status="error",
+            tool_calls=tool_calls_log,
+            error_message=f"{type(exc).__name__}: {exc}",
+            user=None,
+            agent=agent,
+        )
+        await audit_service.record_event(
+            user_id=None,
+            email="agent-runner@omega.local",
+            action="agent.invoke",
+            resource_type="agent",
+            resource_id=agent.id,
+            status="failed",
+            metadata={
+                "run_id": run_id,
+                "deterministic_monitor": True,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+            conversation_id=None,
+        )
+        raise
 
 
 def invalidate_hint_cache(cartridge_id: str | None = None):

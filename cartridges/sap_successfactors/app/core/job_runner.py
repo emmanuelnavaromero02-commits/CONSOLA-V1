@@ -216,21 +216,28 @@ async def create_extract_job(
     }
 
 
-async def create_extract_all_job(mode: str = "incremental", conn_id: str | None = None) -> dict:
+async def create_extract_all_job(
+    mode: str = "incremental",
+    conn_id: str | None = None,
+    target: str = "all",
+) -> dict:
     """
     Extract all enabled entities in parallel (max 4 concurrent).
     Logs progress to run_logs; updates job message after each entity.
     """
     job_id = str(uuid.uuid4())[:8]
     selected_conn_id = (conn_id or "").strip() or None
-    args = {"mode": mode}
+    normalized_target = str(target or "all").strip().lower()
+    if normalized_target not in {"all", "foundation", "talent"}:
+        normalized_target = "all"
+    args = {"mode": mode, "target": normalized_target}
     if selected_conn_id:
         args["conn_id"] = selected_conn_id
     await _insert(job_id, "sap_successfactors__extract_all", args)
     security_context = get_security_context()
 
     task = asyncio.create_task(
-        _run_extract_all(job_id, mode, security_context, selected_conn_id),
+        _run_extract_all(job_id, mode, security_context, selected_conn_id, normalized_target),
         name=f"extract-all-{job_id}",
     )
     _tasks[job_id] = task
@@ -239,6 +246,7 @@ async def create_extract_all_job(mode: str = "incremental", conn_id: str | None 
         "job_id":  job_id,
         "status":  "running",
         "mode":    mode,
+        "target":  normalized_target,
         "message": "Extracción batch iniciada. Use get_job_status(job_id) para ver avance.",
     }
 
@@ -347,6 +355,7 @@ async def _run_extract_all(
     mode: str,
     security_context: dict | None = None,
     conn_id: str | None = None,
+    target: str = "all",
 ) -> None:
     from app.services.catalog_service import get_extract_all_plan
     from app.services.extraction_service import run_entity
@@ -354,6 +363,7 @@ async def _run_extract_all(
     entities, skipped = get_extract_all_plan(
         conn_id=conn_id,
         security_context=security_context,
+        target=target,
     )
     total = len(entities)
     completed = 0
@@ -364,14 +374,14 @@ async def _run_extract_all(
     await _update(
         job_id,
         "running",
-        f"Iniciando — {total} entidades scoped en modo {mode}; {len(skipped_results)} omitidas",
+        f"Iniciando — {total} entidades scoped en modo {mode}; target={target}; {len(skipped_results)} omitidas",
     )
     await _log(
         job_id,
         None,
         "INFO",
-        f"Batch iniciado: {total} entidades scoped, {len(skipped_results)} omitidas, modo={mode}",
-        {"skipped": skipped_results},
+        f"Batch iniciado: {total} entidades scoped, {len(skipped_results)} omitidas, modo={mode}, target={target}",
+        {"target": target, "skipped": skipped_results},
     )
 
     default_concurrency = 1 if conn_id else 4
@@ -446,6 +456,7 @@ async def _run_extract_all(
                 "completed": completed, "failed": failed,
                 "summary": result_summary,
                 "skipped": skipped_results,
+                "target": target,
                 "selected": total,
                 "concurrency": concurrency},
         error="" if final_status == "done" else f"{failed} entities failed-open",

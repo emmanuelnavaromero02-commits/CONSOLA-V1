@@ -909,6 +909,49 @@ def _sf_talent_blockers_from_results(results: list[dict[str, Any]]) -> list[dict
 
 
 @_bind_to_core
+async def _sf_talent_live_metadata_readiness(user: dict | None) -> dict[str, Any] | None:
+    """Fetch live SAP C/P/A metadata readiness from the cartridge service.
+
+    Control Room must degrade, not fail, when the SAP cartridge is offline or
+    credentials are pending. The payload carries no sample values/PII.
+    """
+    base_url = os.environ.get("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203").rstrip("/")
+    headers = _internal_headers("CARTRIDGE")
+    headers["X-Security-Context"] = json.dumps(build_security_context(user), ensure_ascii=False)
+    try:
+        async with httpx.AsyncClient(timeout=20.0, headers=headers) as client:
+            response = await client.get(
+                f"{base_url}/talent/metadata-readiness",
+                params={"sample": "true"},
+            )
+        if response.status_code >= 400:
+            return {
+                "status": "unavailable",
+                "error": f"metadata readiness HTTP {response.status_code}",
+                "blockers": [
+                    {
+                        "component": "metadata_preflight",
+                        "reason": "cartridge_http_error",
+                        "status_code": response.status_code,
+                    }
+                ],
+            }
+        payload = response.json()
+        return payload if isinstance(payload, dict) else None
+    except Exception as exc:  # noqa: BLE001 - dashboard must stay available.
+        return {
+            "status": "unavailable",
+            "error": str(exc)[:240],
+            "blockers": [
+                {
+                    "component": "metadata_preflight",
+                    "reason": "cartridge_unavailable",
+                }
+            ],
+        }
+
+
+@_bind_to_core
 async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     dataset = "sap_successfactors_talent_9box_operational"
     result = await _sf_talent_gold_result(dataset, user, 100)
@@ -1064,6 +1107,7 @@ async def sap_successfactors_talent_metadata_readiness(
     user: dict | None,
 ) -> dict[str, Any]:
     cpa = await _sf_talent_gold_result("sap_successfactors_talent_cpa_scores", user, 1000)
+    live = await _sf_talent_live_metadata_readiness(user)
     cpa_rows = cpa["rows"]
     ready_cpa = sum(1 for row in cpa_rows if _sf_talent_status(row.get("cpa_status")) == "ready")
     insufficient = sum(
@@ -1072,6 +1116,23 @@ async def sap_successfactors_talent_metadata_readiness(
         if _sf_talent_status(row.get("cpa_status")) in {"insufficient_data", "blocked"}
     )
     entities = _sf_talent_metadata_entities()
+    live_components = {
+        str(component.get("id")): component
+        for component in (live or {}).get("components", [])
+        if isinstance(component, dict)
+    }
+    if live_components:
+        entities = [
+            {
+                **entity,
+                "live_status": live_components.get(entity["id"], {}).get("status"),
+                "live_selected_entity": live_components.get(entity["id"], {}).get("selected_entity"),
+                "live_candidates": live_components.get(entity["id"], {}).get("candidates", []),
+            }
+            if entity["id"] in live_components
+            else entity
+            for entity in entities
+        ]
     if ready_cpa:
         entities = [
             {**entity, "status": "ready", "blockers": []}
@@ -1079,6 +1140,50 @@ async def sap_successfactors_talent_metadata_readiness(
             else entity
             for entity in entities
         ]
+
+    dataset_blockers = _sf_talent_blockers_from_results([cpa])
+    live_status = str((live or {}).get("status") or "unavailable")
+    live_summary = (live or {}).get("summary") if isinstance((live or {}).get("summary"), dict) else {}
+    live_required_ready = _sf_talent_int(live_summary.get("required_ready"))
+    live_required_total = _sf_talent_int(live_summary.get("required_total"))
+    live_blockers_raw = [
+        item for item in (live or {}).get("blockers", []) if isinstance(item, dict)
+    ]
+    live_blockers: list[dict[str, Any]] = []
+    if live_status == "unavailable":
+        live_blockers.append(
+            {
+                "id": "talent_metadata_preflight_unavailable",
+                "status": "unavailable",
+                "title": "Preflight SAP no disponible",
+                "detail": str((live or {}).get("error") or "No se pudo consultar metadata viva de SuccessFactors."),
+                "items": [str(item.get("reason") or item.get("component") or item) for item in live_blockers_raw] or ["cartridge_unavailable"],
+            }
+        )
+    elif live_required_total and live_required_ready < live_required_total:
+        live_blockers.append(
+            {
+                "id": "talent_metadata_cpa_inputs_missing",
+                "status": "blocked",
+                "title": "Metadata C/P/A incompleta",
+                "detail": "SuccessFactors todavia no expone todas las entidades/campos/permisos para competencia, desempeno y aspiracion.",
+                "items": [
+                    ", ".join(str(entity) for entity in item.get("entities_checked", []) if entity)
+                    or str(item.get("component") or item.get("reason") or "metadata")
+                    for item in live_blockers_raw
+                ],
+            }
+        )
+    elif live_required_total and ready_cpa == 0:
+        live_blockers.append(
+            {
+                "id": "talent_cpa_materialization_pending",
+                "status": "partial",
+                "title": "C/P/A listo en metadata, pendiente en Gold",
+                "detail": "SAP expone las entidades requeridas; falta extraer/materializar los scores C/P/A para desbloquear 9-box real.",
+                "items": ["sap_successfactors_talent_cpa_scores"],
+            }
+        )
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1092,9 +1197,16 @@ async def sap_successfactors_talent_metadata_readiness(
             "cpa_insufficient_employees": insufficient,
             "entities": len(entities),
             "blocked_entities": sum(1 for entity in entities if entity["status"] == "blocked"),
+            "live_required_ready": live_required_ready,
+            "live_required_total": live_required_total,
+            "live_status": live_status,
         },
         "entities": entities,
-        "blockers": _sf_talent_blockers_from_results([cpa]),
+        "blockers": dataset_blockers + live_blockers,
+        "live_preflight": live or {
+            "status": "unavailable",
+            "blockers": [{"reason": "no_live_preflight_payload"}],
+        },
     }
 
 

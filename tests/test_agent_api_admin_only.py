@@ -29,7 +29,11 @@ def test_scheduled_agent_invoke_requires_enabled_cron_and_constant_time_token():
     assert "agent schedule is not enabled" in section
     assert "agent schedule cron is required" in section
     assert "agent schedule is not due" in section
-    assert "_agent_schedule_due(schedule)" in section
+    assert "_agent_schedule_due(schedule, scheduled_fire_at=scheduled_fire_at)" in section
+    assert "reserve_scheduled_run(" in section
+    assert "finish_scheduled_run(" in section
+    assert "run_scheduled_monitor(" in section
+    assert '"scheduled run already recorded"' in section
     assert 'extra.get("schedule")' in section
     assert "load_agent(agent_id, user_context=user)" not in section
     assert "scheduled agent requires tenant/workspace scope" in section

@@ -21,14 +21,29 @@ VALUES
 -- sources: ["raw/sap_successfactors/Candidate"]
 -- description: Última extracción de candidatos (Recruiting). candidateId shadowed y nombre masked desde bronze.
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY candidateId
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE candidateId IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     candidateId          AS candidate_id,       -- shadowed en bronze (FK)
@@ -101,14 +116,29 @@ $seed$, $seed$Componentes de compensación por empleado (cabecera + recurrentes 
 -- description: Última extracción de EmpCompensation (cabecera de compensación: grupo de pago, frecuencia). userId plano.
 
 -- NOTA: EmpCompensation no declara select_fields; campos SF estándar de cabecera.
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpCompensation/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpCompensation/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY userId, startDate
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE userId IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     userId               AS user_id,            -- plano
@@ -130,13 +160,80 @@ WITH raw AS (
                       hive_partitioning = true,
                       union_by_name   = true)
 ),
+typed AS (
+    SELECT
+        raw.*,
+        CASE
+            WHEN regexp_extract(startDate, '(-?[0-9]+)', 1) <> ''
+            THEN CAST(to_timestamp(CAST(regexp_extract(startDate, '(-?[0-9]+)', 1) AS DOUBLE) / 1000) AS DATE)
+            ELSE TRY_CAST(startDate AS DATE)
+        END AS parsed_start_date,
+        CASE
+            WHEN regexp_extract(endDate, '(-?[0-9]+)', 1) <> ''
+            THEN CAST(to_timestamp(CAST(regexp_extract(endDate, '(-?[0-9]+)', 1) AS DOUBLE) / 1000) AS DATE)
+            ELSE TRY_CAST(endDate AS DATE)
+        END AS parsed_end_date,
+        CASE
+            WHEN regexp_extract(originalStartDate, '(-?[0-9]+)', 1) <> ''
+            THEN CAST(to_timestamp(CAST(regexp_extract(originalStartDate, '(-?[0-9]+)', 1) AS DOUBLE) / 1000) AS DATE)
+            ELSE TRY_CAST(originalStartDate AS DATE)
+        END AS parsed_original_start_date,
+        CASE
+            WHEN regexp_extract(lastModifiedDateTime, '(-?[0-9]+)', 1) <> ''
+            THEN to_timestamp(CAST(regexp_extract(lastModifiedDateTime, '(-?[0-9]+)', 1) AS DOUBLE) / 1000)
+            ELSE TRY_CAST(lastModifiedDateTime AS TIMESTAMP)
+        END AS parsed_last_modified_at
+    FROM raw
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            typed.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY personIdExternal, userId, startDate
+                ORDER BY
+                    parsed_last_modified_at DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM typed
+        WHERE userId IS NOT NULL
+    )
+    WHERE _rn = 1
+)
+SELECT
+    personIdExternal     AS person_id_external,   -- plano
+    userId               AS user_id,              -- plano
+    parsed_start_date    AS start_date,
+    parsed_end_date      AS end_date,
+    assignmentClass      AS employee_class,
+    parsed_original_start_date AS original_start_date,
+    load_date
+FROM latest
+ORDER BY user_id, start_date
+$seed$, $seed$Última extracción de EmpEmployment (relación laboral). Puente entre userId y personIdExternal (ambos planos).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
+($seed$sap_successfactors_empemploymenttermination_latest$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmploymentTermination"]$seed$::jsonb, $seed$
+-- sap_successfactors_empemploymenttermination_latest  (silver)  cartridge: sap_successfactors
+-- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]
+-- description: Última extracción de bajas (EmpEmploymentTermination). userId plano; la entidad está registrada para extracción.
+
+-- Dedupe por empleado + fecha + motivo para conservar una baja real por evento
+-- y descartar snapshots repetidos de Bronze.
+WITH raw AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmploymentTermination/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name   = true)
+),
 latest AS (
     SELECT *
     FROM (
         SELECT
             raw.*,
             ROW_NUMBER() OVER (
-                PARTITION BY personIdExternal, userId, startDate
+                PARTITION BY userId, endDate, eventReasonExternalCode
                 ORDER BY
                     TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
@@ -147,33 +244,6 @@ latest AS (
         WHERE userId IS NOT NULL
     )
     WHERE _rn = 1
-)
-SELECT
-    personIdExternal     AS person_id_external,   -- plano
-    userId               AS user_id,              -- plano
-    TRY_CAST(startDate AS DATE)     AS start_date,
-    TRY_CAST(endDate AS DATE)       AS end_date,
-    assignmentClass      AS employee_class,
-    TRY_CAST(originalStartDate AS DATE) AS original_start_date,
-    load_date
-FROM latest
-ORDER BY user_id, start_date
-$seed$, $seed$Última extracción de EmpEmployment (relación laboral). Puente entre userId y personIdExternal (ambos planos).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_empemploymenttermination_latest$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmploymentTermination"]$seed$::jsonb, $seed$
--- sap_successfactors_empemploymenttermination_latest  (silver)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]
--- description: Última extracción de bajas (EmpEmploymentTermination). userId plano; la entidad está registrada para extracción.
-
--- NOTA: EmpEmploymentTermination está registrado en entity_config por el seed de
--- completitud de SAP SuccessFactors; nombres SF estándar.
-WITH latest AS (
-    SELECT *
-    FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmploymentTermination/**/*.parquet',
-                      hive_partitioning = true,
-                      union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmploymentTermination/**/*.parquet',
-                                          hive_partitioning = true))
 )
 SELECT
     userId                     AS user_id,            -- plano
@@ -341,14 +411,29 @@ $seed$, $seed$Detección automática de irregularidades en empleados activos (pr
 -- sources: ["raw/sap_successfactors/EmpPayCompNonRecurring"]
 -- description: Última extracción de pagos no recurrentes (bonos, pagos únicos). paycompValue encrypted desde bronze (caja negra; NO agregable).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpPayCompNonRecurring/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpPayCompNonRecurring/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY userId, payComponent, payDate
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE userId IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     userId               AS user_id,            -- plano
@@ -365,14 +450,29 @@ $seed$, $seed$Última extracción de pagos no recurrentes (bonos, pagos únicos)
 -- sources: ["raw/sap_successfactors/EmpPayCompRecurring"]
 -- description: Última extracción de pagos recurrentes (salario base, complementos). paycompValue llega encrypted desde bronze (caja negra; NO agregable en SQL).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpPayCompRecurring/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpPayCompRecurring/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY userId, payComponent, startDate
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE userId IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     userId               AS user_id,            -- plano
@@ -390,14 +490,29 @@ $seed$, $seed$Última extracción de pagos recurrentes (salario base, complement
 -- sources: ["raw/sap_successfactors/FOBusinessUnit"]
 -- description: Última extracción del objeto de fundación Unidad de Negocio (FOBusinessUnit).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOBusinessUnit/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOBusinessUnit/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY externalCode
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE externalCode IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     externalCode         AS business_unit_id,
@@ -411,16 +526,31 @@ $seed$, $seed$Última extracción del objeto de fundación Unidad de Negocio (FO
 -- sources: ["raw/sap_successfactors/FOCompany"]
 -- description: Última extracción del objeto de fundación Compañía (FOCompany).
 
--- NOTA: FO* no declaran select_fields; el nombre vive en name_defaultValue
--- (confirmado por los KBs existentes). externalCode es plano (casa con EmpJob).
-WITH latest AS (
+-- externalCode es plano (casa con EmpJob). Dedupe por clave de negocio para
+-- que _latest no acumule snapshots de pruebas o corridas diarias.
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOCompany/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOCompany/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY externalCode
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE externalCode IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     externalCode         AS company_id,
@@ -435,14 +565,29 @@ $seed$, $seed$Última extracción del objeto de fundación Compañía (FOCompany
 -- sources: ["raw/sap_successfactors/FODepartment"]
 -- description: Última extracción del objeto de fundación Departamento (FODepartment).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FODepartment/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FODepartment/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY externalCode
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE externalCode IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     externalCode         AS department_id,
@@ -457,14 +602,29 @@ $seed$, $seed$Última extracción del objeto de fundación Departamento (FODepar
 -- sources: ["raw/sap_successfactors/FODivision"]
 -- description: Última extracción del objeto de fundación División (FODivision).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FODivision/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FODivision/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY externalCode
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE externalCode IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     externalCode         AS division_id,
@@ -478,14 +638,29 @@ $seed$, $seed$Última extracción del objeto de fundación División (FODivision
 -- sources: ["raw/sap_successfactors/FOJobCode"]
 -- description: Última extracción del objeto de fundación Código de Puesto (FOJobCode).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOJobCode/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOJobCode/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY externalCode
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE externalCode IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     externalCode         AS job_code,
@@ -597,14 +772,29 @@ $seed$, $seed$Empleados activos por ubicación (snapshot del mes en curso).$seed
 -- sources: ["raw/sap_successfactors/JobRequisition"]
 -- description: Última extracción de requisiciones de empleo (Recruiting).
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/JobRequisition/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/JobRequisition/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY jobReqId
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE jobReqId IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     jobReqId             AS job_req_id,
@@ -867,14 +1057,29 @@ $seed$, $seed$Última extracción de PerPersonal (datos personales efectivo-fech
 -- description: Última extracción de Position Management (posiciones).
 
 -- NOTA: Position no declara select_fields; campos SF estándar (code, nombre, org).
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Position/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Position/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY code
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE code IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     code                       AS position_id,
@@ -959,14 +1164,29 @@ $seed$, $seed$Rotación de personal: bajas por mes y motivo desde EmpEmploymentT
 -- sources: ["raw/sap_successfactors/User"]
 -- description: Última extracción del maestro de usuarios (User). userId llega shadowed y nombre/email masked desde bronze.
 
-WITH latest AS (
+WITH raw AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/User/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date)
-                       FROM read_parquet('s3://{bucket}/raw/sap_successfactors/User/**/*.parquet',
-                                          hive_partitioning = true))
+),
+latest AS (
+    SELECT *
+    FROM (
+        SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY userId
+                ORDER BY
+                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
+                    TRY_CAST(load_date AS DATE) DESC NULLS LAST,
+                    CAST(batch_id AS VARCHAR) DESC NULLS LAST
+            ) AS _rn
+        FROM raw
+        WHERE userId IS NOT NULL
+    )
+    WHERE _rn = 1
 )
 SELECT
     userId               AS user_id,            -- shadowed en bronze (hash; NO casa con userId plano de Emp*)

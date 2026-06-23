@@ -395,6 +395,21 @@ export interface SfTalentMetadataEntity {
   required_for: string;
   status: DataReadiness | SourceState | "ready" | "partial";
   blockers: string[];
+  live_status?: string | null;
+  live_selected_entity?: string | null;
+  live_candidates?: Array<Record<string, unknown>>;
+}
+
+export interface SfTalentExtractionTarget {
+  component: string;
+  component_label?: string;
+  component_code?: string;
+  required?: boolean;
+  entity: string;
+  odata_entity?: string;
+  status?: string;
+  sample_status?: string;
+  fields_present?: string[];
 }
 
 export interface SfTalentMetadataReadinessPayload {
@@ -408,9 +423,15 @@ export interface SfTalentMetadataReadinessPayload {
     cpa_insufficient_employees: number;
     entities: number;
     blocked_entities: number;
+    live_required_ready?: number;
+    live_required_total?: number;
+    live_status?: string;
   };
   entities: SfTalentMetadataEntity[];
   blockers: SfTalentBlocker[];
+  live_preflight?: Record<string, unknown> & {
+    extraction_targets?: SfTalentExtractionTarget[];
+  };
 }
 
 export interface SfTalentOverviewPayload extends SfTalentKpisPayload {

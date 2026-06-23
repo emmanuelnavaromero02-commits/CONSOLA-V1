@@ -81,8 +81,13 @@ def _run_all_kbs_with_context(body: dict[str, Any] | None) -> list[dict]:
 def _extract_all_plan_with_context(
     body: dict[str, Any] | None,
     conn_id: str | None,
+    target: str = "all",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    return get_extract_all_plan(conn_id=conn_id, security_context=_security_context(body))
+    return get_extract_all_plan(
+        conn_id=conn_id,
+        security_context=_security_context(body),
+        target=target,
+    )
 
 
 def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse:
@@ -217,10 +222,11 @@ def run_incremental(
 @router.post("/run_full_load_all")
 def run_full_load_all(
     conn_id: str | None = Query(default=None, max_length=128),
+    target: str = Query("all", pattern="^(all|foundation|talent)$"),
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
-    entities, skipped = _extract_all_plan_with_context(body, conn_id)
+    entities, skipped = _extract_all_plan_with_context(body, conn_id, target)
     for config in entities:
         try:
             results.append(_run_entity_with_context({**config, "mode": "full"}, body, conn_id=conn_id))
@@ -232,16 +238,17 @@ def run_full_load_all(
                     "error": str(exc),
                 }
             )
-    return {"results": results, "skipped": skipped}
+    return {"target": target, "results": results, "skipped": skipped}
 
 
 @router.post("/run_incremental_all")
 def run_incremental_all(
     conn_id: str | None = Query(default=None, max_length=128),
+    target: str = Query("all", pattern="^(all|foundation|talent)$"),
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
-    entities, skipped = _extract_all_plan_with_context(body, conn_id)
+    entities, skipped = _extract_all_plan_with_context(body, conn_id, target)
     for config in entities:
         mode = "incremental" if config.get("watermark_field") else "full"
         try:
@@ -254,7 +261,7 @@ def run_incremental_all(
                     "error": str(exc),
                 }
             )
-    return {"results": results, "skipped": skipped}
+    return {"target": target, "results": results, "skipped": skipped}
 
 
 @router.post("/run_historical_load/{entity}")
@@ -290,10 +297,11 @@ def run_historical_load_all(
     from_date: str,
     to_date: str,
     conn_id: str | None = Query(default=None, max_length=128),
+    target: str = Query("all", pattern="^(all|foundation|talent)$"),
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
-    entities, skipped = _extract_all_plan_with_context(body, conn_id)
+    entities, skipped = _extract_all_plan_with_context(body, conn_id, target)
     for config in entities:
         if not config.get("date_field"):
             continue
@@ -315,7 +323,7 @@ def run_historical_load_all(
                     "error": str(exc),
                 }
             )
-    return {"results": results, "skipped": skipped}
+    return {"target": target, "results": results, "skipped": skipped}
 
 
 # ── Status / watermarks ──────────────────────────────────────────────────────

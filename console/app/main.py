@@ -161,6 +161,7 @@ from app.services import (
 from app.services import cartridge_service
 from app.services import agent_service as _agents
 from app.services import agent_runtime as _agent_runtime
+from app.services import agent_scheduler as _agent_scheduler
 from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
@@ -1211,9 +1212,9 @@ def _airflow_log_attempt(
 _COLUMN_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 
 
-async def _table_has_column(table: str, column: str) -> bool:
+async def _table_has_column(table: str, column: str, *, refresh: bool = False) -> bool:
     key = (table, column)
-    if key in _COLUMN_EXISTS_CACHE:
+    if not refresh and key in _COLUMN_EXISTS_CACHE:
         return _COLUMN_EXISTS_CACHE[key]
     try:
         pool = await _get_db_pool()
@@ -1239,7 +1240,7 @@ async def _table_has_column(table: str, column: str) -> bool:
 
 
 async def _pipeline_runs_scope_predicate(
-    user: dict | None, start_index: int = 1
+    user: dict | None, start_index: int = 1, *, refresh_columns: bool = False
 ) -> tuple[str, list]:
     ctx = build_security_context(user)
     clauses: list[str] = []
@@ -1247,11 +1248,15 @@ async def _pipeline_runs_scope_predicate(
     idx = start_index
     workspace_id = ctx.get("workspace_id")
     tenant_id = ctx.get("tenant_id")
-    if workspace_id and await _table_has_column("pipeline_runs", "workspace_id"):
+    if workspace_id and await _table_has_column(
+        "pipeline_runs", "workspace_id", refresh=refresh_columns
+    ):
         clauses.append(f"workspace_id=${idx}::uuid")
         values.append(workspace_id)
         idx += 1
-    if tenant_id and await _table_has_column("pipeline_runs", "tenant_id"):
+    if tenant_id and await _table_has_column(
+        "pipeline_runs", "tenant_id", refresh=refresh_columns
+    ):
         clauses.append(f"tenant_id=${idx}::uuid")
         values.append(tenant_id)
     return (" AND " + " AND ".join(clauses) if clauses else ""), values
@@ -1274,8 +1279,8 @@ async def _record_dag_pipeline_trigger(
 
     pool = await _get_db_pool()
     scope_columns_present = await _table_has_column(
-        "pipeline_runs", "tenant_id"
-    ) and await _table_has_column("pipeline_runs", "workspace_id")
+        "pipeline_runs", "tenant_id", refresh=True
+    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
     if (
         scope_columns_present
         and cartridge != "platform"
@@ -6177,6 +6182,31 @@ def _sync_entity_idempotency_key(
     return f"{base[:100]}:{digest}"
 
 
+def _sync_now_lock_key(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    user: dict | None,
+) -> str:
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "platform").strip() or "platform"
+    workspace_id = str(ctx.get("workspace_id") or "global").strip() or "global"
+    connection_key = str(conn_id or "__default__").strip() or "__default__"
+    return ":".join(
+        (
+            "sync-now",
+            tenant_id,
+            workspace_id,
+            cartridge,
+            mode,
+            target,
+            connection_key,
+        )
+    )
+
+
 def _sync_run_age_seconds(row: dict[str, Any]) -> float | None:
     started_at = row.get("started_at")
     if isinstance(started_at, str):
@@ -6214,7 +6244,9 @@ async def _fetch_active_sync_run(
     user: dict | None,
 ) -> dict[str, Any] | None:
     pool = await _get_db_pool()
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 6)
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
+        user, 6, refresh_columns=True
+    )
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         row = await conn.fetchrow(
             f"""
@@ -6359,8 +6391,8 @@ async def _upsert_sync_run(
     tenant_id = str(ctx.get("tenant_id") or "").strip() or None
     workspace_id = str(ctx.get("workspace_id") or "").strip() or None
     scope_columns_present = await _table_has_column(
-        "pipeline_runs", "tenant_id"
-    ) and await _table_has_column("pipeline_runs", "workspace_id")
+        "pipeline_runs", "tenant_id", refresh=True
+    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
     if (
         scope_columns_present
         and cartridge != "platform"
@@ -6451,7 +6483,9 @@ async def _fetch_sync_run(
     user: dict | None,
 ) -> dict[str, Any] | None:
     pool = await _get_db_pool()
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
+        user, 3, refresh_columns=True
+    )
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         row = await conn.fetchrow(
             f"""
@@ -6501,7 +6535,9 @@ async def _sync_child_runs(
     if not run_ids:
         return []
     pool = await _get_db_pool()
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
+        user, 3, refresh_columns=True
+    )
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         rows = await conn.fetch(
             f"""
@@ -6770,50 +6806,65 @@ async def api_cartridge_sync_now(
     conn_id = _normalize_pipeline_conn_id(
         body.get("conn_id") or body.get("connection_id")
     )
-    active_row = await _fetch_active_sync_run(
+    lock_key = _sync_now_lock_key(
         cartridge=cartridge,
         mode=mode,
         target=target,
         conn_id=conn_id,
         user=user,
     )
-    if active_row:
-        active_status = await _build_sync_run_status(
-            cartridge=cartridge, row=active_row, user=user
-        )
-        if (
-            str(active_status.get("status") or "").lower()
-            not in _SYNC_TERMINAL_STATUSES
-        ):
-            return active_status
+    pool = await _get_db_pool()
+    async with pool.acquire() as sync_lock_conn:
+        await sync_lock_conn.execute("SELECT pg_advisory_lock(hashtext($1))", lock_key)
+        try:
+            active_row = await _fetch_active_sync_run(
+                cartridge=cartridge,
+                mode=mode,
+                target=target,
+                conn_id=conn_id,
+                user=user,
+            )
+            if active_row:
+                active_status = await _build_sync_run_status(
+                    cartridge=cartridge, row=active_row, user=user
+                )
+                if (
+                    str(active_status.get("status") or "").lower()
+                    not in _SYNC_TERMINAL_STATUSES
+                ):
+                    return active_status
 
-    run_id = f"sync_now:{cartridge}:{uuid.uuid4().hex}"
-    steps = _merge_sync_steps(
-        _initial_sync_steps(),
-        {
-            "connection": {
-                "label": "Conexión",
-                "status": "running",
-                "detail": "Validando scope y conexión del cartucho.",
-            }
-        },
-    )
-    await _upsert_sync_run(
-        run_id=run_id,
-        cartridge=cartridge,
-        mode=mode,
-        status="running",
-        user=user,
-        extra={
-            "mode": mode,
-            "target": target,
-            "conn_id": conn_id,
-            "steps": steps,
-            "triggered_entities": [],
-            "errors": [],
-            "control_room_ready": False,
-        },
-    )
+            run_id = f"sync_now:{cartridge}:{uuid.uuid4().hex}"
+            steps = _merge_sync_steps(
+                _initial_sync_steps(),
+                {
+                    "connection": {
+                        "label": "Conexión",
+                        "status": "running",
+                        "detail": "Validando scope y conexión del cartucho.",
+                    }
+                },
+            )
+            await _upsert_sync_run(
+                run_id=run_id,
+                cartridge=cartridge,
+                mode=mode,
+                status="running",
+                user=user,
+                extra={
+                    "mode": mode,
+                    "target": target,
+                    "conn_id": conn_id,
+                    "steps": steps,
+                    "triggered_entities": [],
+                    "errors": [],
+                    "control_room_ready": False,
+                },
+            )
+        finally:
+            await sync_lock_conn.execute(
+                "SELECT pg_advisory_unlock(hashtext($1))", lock_key
+            )
 
     extract_body = {
         "mode": mode,
@@ -7708,7 +7759,21 @@ _AGENT_RUNNER_INTERVAL_MINUTES = int(
 _AGENT_RUNNER_GRACE_MINUTES = int(os.environ.get("AGENT_RUNNER_GRACE_MINUTES", "1"))
 
 
-def _agent_schedule_due(schedule: dict) -> bool:
+def _parse_agent_scheduled_fire_at(value: Any) -> Any:
+    if value in (None, ""):
+        return None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+
+        parsed = _dt.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_tz.utc)
+        return parsed.astimezone(_tz.utc)
+    except Exception as exc:
+        raise HTTPException(400, "scheduled_fire_at is invalid") from exc
+
+
+def _agent_schedule_due(schedule: dict, scheduled_fire_at: Any | None = None) -> bool:
     cron_expr = str(
         schedule.get("cron") or schedule.get("cron_expression") or ""
     ).strip()
@@ -7722,6 +7787,15 @@ def _agent_schedule_due(schedule: dict) -> bool:
         raise HTTPException(503, "cron scheduler dependency unavailable") from exc
     try:
         tz = ZoneInfo(str(schedule.get("tz") or "UTC"))
+        if scheduled_fire_at is not None:
+            fire_utc = scheduled_fire_at.astimezone(_tz.utc)
+            iterator = croniter(cron_expr, fire_utc.astimezone(tz) - _td(seconds=1))
+            next_fire = iterator.get_next(_dt)
+            if next_fire.tzinfo is None:
+                next_fire = next_fire.replace(tzinfo=tz)
+            next_fire_utc = next_fire.astimezone(_tz.utc)
+            return abs((next_fire_utc - fire_utc).total_seconds()) <= 1
+
         now_utc = _dt.now(_tz.utc)
         window_start_utc = now_utc - _td(
             minutes=max(_AGENT_RUNNER_INTERVAL_MINUTES, 1) + _AGENT_RUNNER_GRACE_MINUTES
@@ -7764,10 +7838,75 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         raise HTTPException(403, "agent schedule is not enabled")
     if not (str(schedule.get("cron") or schedule.get("cron_expression") or "").strip()):
         raise HTTPException(403, "agent schedule cron is required")
-    if not _agent_schedule_due(schedule):
+    scheduled_fire_at = _parse_agent_scheduled_fire_at(body.get("scheduled_fire_at"))
+    if not _agent_schedule_due(schedule, scheduled_fire_at=scheduled_fire_at):
         raise HTTPException(403, "agent schedule is not due")
+    if scheduled_fire_at is None:
+        from datetime import datetime as _dt, timezone as _tz
+
+        scheduled_fire_at = _dt.now(_tz.utc).replace(second=0, microsecond=0)
+    schedule_key = str(body.get("schedule_key") or schedule.get("key") or "default").strip() or "default"
+    airflow_dag_run_id = str(body.get("airflow_dag_run_id") or "").strip() or None
+    reservation = await _agent_scheduler.reserve_scheduled_run(
+        agent_id=str(agent.id),
+        tenant_id=str(getattr(agent, "tenant_id", "")),
+        workspace_id=str(getattr(agent, "workspace_id", "")),
+        scheduled_fire_at=scheduled_fire_at,
+        schedule_key=schedule_key,
+        airflow_dag_run_id=airflow_dag_run_id,
+        metadata={
+            "agent_slug": agent.slug,
+            "cartridge_id": agent.cartridge_id,
+            "airflow_dag_run_id": airflow_dag_run_id,
+        },
+    )
+    if reservation.get("duplicate"):
+        return {
+            "reply": "scheduled run already recorded",
+            "viewer_urls": [],
+            "messages": [],
+            "agent_id": agent.id,
+            "run_id": reservation.get("agent_run_id"),
+            "duplicate": True,
+            "schedule_run": reservation,
+        }
     message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
-    result = await _agent_runtime.run(agent, message, history=[], user=None)
+    try:
+        extra_role = str((extra or {}).get("role") or "").strip().lower()
+        if extra_role == "monitor":
+            result = await _agent_runtime.run_scheduled_monitor(
+                agent,
+                message,
+                scheduled_fire_at=scheduled_fire_at.isoformat(),
+            )
+        else:
+            result = await _agent_runtime.run(agent, message, history=[], user=None)
+    except Exception as exc:
+        await _agent_scheduler.finish_scheduled_run(
+            schedule_run_id=reservation.get("id"),
+            agent_run_id=None,
+            status="error",
+            tenant_id=str(getattr(agent, "tenant_id", "")),
+            workspace_id=str(getattr(agent, "workspace_id", "")),
+            error_message=f"{type(exc).__name__}: {exc}",
+            metadata={"airflow_dag_run_id": airflow_dag_run_id},
+        )
+        raise
+    await _agent_scheduler.finish_scheduled_run(
+        schedule_run_id=reservation.get("id"),
+        agent_run_id=result.get("run_id") if isinstance(result, dict) else None,
+        status="ok",
+        tenant_id=str(getattr(agent, "tenant_id", "")),
+        workspace_id=str(getattr(agent, "workspace_id", "")),
+        metadata={
+            "airflow_dag_run_id": airflow_dag_run_id,
+            "deterministic_monitor": bool(
+                isinstance(result, dict) and result.get("deterministic_monitor")
+            ),
+        },
+    )
+    if isinstance(result, dict):
+        result["schedule_run"] = reservation
     return result
 
 
