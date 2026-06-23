@@ -149,8 +149,53 @@ def test_aws_s3_without_static_keys_uses_credential_chain(monkeypatch):
 
     combined = "\n".join(statements)
     assert "PROVIDER credential_chain" in combined
+    assert "s3_url_style='vhost'" in combined
     assert "s3_access_key_id=''" not in combined
     assert "s3_secret_access_key=''" not in combined
+
+
+def test_minio_uses_path_style(monkeypatch):
+    statements: list[str] = []
+
+    class FakeConn:
+        def execute(self, sql):
+            statements.append(sql)
+            return self
+
+    monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "minio")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "secret")
+    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+
+    engine = DuckDBEngine()
+    engine._conn()
+
+    combined = "\n".join(statements)
+    assert "s3_url_style='path'" in combined
+
+
+def test_missing_materialized_dependencies_reports_unready_silver_sources(monkeypatch):
+    engine = DuckDBEngine()
+    monkeypatch.setattr(
+        engine,
+        "_latest_materialized_uri",
+        lambda _layer, _cartridge, name, _ctx: "s3://lakehouse/ok.parquet" if name == "ready" else None,
+    )
+
+    missing = engine.missing_materialized_dependencies(
+        [
+            "raw/sap_successfactors/EmpCompensation",
+            "silver/sap_successfactors/ready",
+            "silver/sap_successfactors/missing",
+            "gold/sap_successfactors/missing_gold",
+        ],
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert missing == [
+        "silver/sap_successfactors/missing",
+        "gold/sap_successfactors/missing_gold",
+    ]
 
 
 def test_aws_s3_upload_uses_boto3_credential_chain(monkeypatch):

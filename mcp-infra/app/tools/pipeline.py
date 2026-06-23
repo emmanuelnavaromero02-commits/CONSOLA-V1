@@ -3,15 +3,102 @@ Pipeline MCP tools — watermark management and DAG source storage.
 
 watermark_get   : returns the last watermark value for a cartridge/entity
 watermark_set   : writes a new watermark value after a successful run
-dag_save_source : persists DAG Python source to cartridge_dags.source_code
-                  so the AI can retrieve and modify it later
+dag_get_source  : reads the DAG Python source Airflow actually sees and mirrors
+                  it into cartridge_dags.source_code for Studio/export
+dag_save_source : writes DAG Python source only when the Airflow-visible file can
+                  be updated too; never creates a DB-only copy
 """
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
+
 from fastapi import HTTPException
 
+from app.config import settings
 from app.tools.postgres import _conn
 from app.registry import tool
+
+
+_DAG_ID_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+_CARTRIDGE_ID_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+
+
+def _validate_dag_id(dag_id: str) -> str:
+    value = (dag_id or "").strip()
+    if not _DAG_ID_RE.fullmatch(value):
+        raise ValueError("invalid dag_id")
+    return value
+
+
+def _validate_cartridge_id(cartridge_id: str) -> str:
+    value = (cartridge_id or "").strip()
+    if not _CARTRIDGE_ID_RE.fullmatch(value):
+        raise ValueError("invalid cartridge_id")
+    return value
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_candidate(root: Path, *parts: str) -> Path | None:
+    candidate = (root / Path(*parts)).resolve()
+    return candidate if _inside(candidate, root) else None
+
+
+def _dag_source_candidates(cartridge_id: str, dag_id: str) -> list[tuple[str, Path]]:
+    """Return source files that represent Airflow's execution view.
+
+    Packaged cartridge DAGs are mounted into Airflow under
+    /opt/airflow/dags/<cartridge>/, while mcp-infra sees the same host files
+    through /registry/cartridges/<cartridge>/dags. Dynamic Studio-created DAGs
+    live directly under AIRFLOW_DAGS_PATH.
+    """
+    dags_root = Path(settings.airflow_dags_path).resolve()
+    registry_root = Path("/registry/cartridges").resolve()
+    candidates: list[tuple[str, Path]] = []
+
+    for label, candidate in (
+        (
+            "registry",
+            _safe_candidate(registry_root, cartridge_id, "dags", f"{dag_id}.py"),
+        ),
+        (
+            "airflow_cartridge",
+            _safe_candidate(dags_root, cartridge_id, f"{dag_id}.py"),
+        ),
+        (
+            "airflow",
+            _safe_candidate(dags_root, f"{dag_id}.py"),
+        ),
+    ):
+        if candidate is not None:
+            candidates.append((label, candidate))
+    return candidates
+
+
+def _db_save_source(cur, cartridge_id: str, dag_id: str, source_code: str, file_name: str | None = None) -> None:
+    cur.execute(
+        """INSERT INTO cartridge_dags (cartridge_id, dag_id, file, source_code, updated_at)
+           VALUES (%s, %s, COALESCE(%s, %s), %s, NOW())
+           ON CONFLICT (cartridge_id, dag_id) DO UPDATE
+           SET file = COALESCE(EXCLUDED.file, cartridge_dags.file),
+               source_code = EXCLUDED.source_code,
+               updated_at = NOW()""",
+        (cartridge_id, dag_id, file_name, f"{dag_id}.py", source_code),
+    )
+
+
+def _dag_source_writes_enabled() -> bool:
+    app_env = os.environ.get("APP_ENV", "production").strip().lower()
+    rce = os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower()
+    return app_env in {"development", "dev", "local", "test"} and rce in {"true", "1", "yes", "on"}
 
 
 # ── Watermark ─────────────────────────────────────────────────────────────────
@@ -178,6 +265,7 @@ def pipeline_run_save(
 ) -> dict:
     import json
     with _conn() as conn, conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         cur.execute(
             """
             SELECT column_name
@@ -194,6 +282,33 @@ def pipeline_run_save(
             and (not str(tenant_id or "").strip() or not str(workspace_id or "").strip())
         ):
             raise HTTPException(403, "pipeline_run_save requires tenant_id and workspace_id")
+        canonical_run_id = str(run_id or "").strip()
+        airflow_run = str(airflow_dag_run_id or "").strip()
+        if canonical_run_id and airflow_run and canonical_run_id != airflow_run:
+            lookup_sql = [
+                "SELECT run_id",
+                "  FROM pipeline_runs",
+                " WHERE cartridge_id = %s",
+                "   AND dag_id = %s",
+                "   AND entity = %s",
+                "   AND airflow_dag_run_id = %s",
+            ]
+            lookup_values: list[object] = [cartridge_id, dag_id, entity, airflow_run]
+            if "tenant_id" in available and tenant_id:
+                lookup_sql.append("   AND tenant_id = %s::uuid")
+                lookup_values.append(tenant_id)
+            if "workspace_id" in available and workspace_id:
+                lookup_sql.append("   AND workspace_id = %s::uuid")
+                lookup_values.append(workspace_id)
+            lookup_sql.append(
+                " ORDER BY CASE WHEN run_id = %s THEN 0 ELSE 1 END, started_at DESC NULLS LAST LIMIT 1"
+            )
+            lookup_values.append(airflow_run)
+            cur.execute("\n".join(lookup_sql), tuple(lookup_values))
+            existing = cur.fetchone()
+            if existing and existing[0]:
+                canonical_run_id = str(existing[0])
+        run_id = canonical_run_id or run_id
         columns = [
             "run_id",
             "dag_id",
@@ -259,9 +374,9 @@ def pipeline_run_save(
 @tool(
     name="dag_save_source",
     description=(
-        "Save or update the Python source code of a DAG in cartridge_dags.source_code. "
-        "Call this every time a DAG is created or modified so the AI can retrieve "
-        "the current source when asked to make changes."
+        "Save or update the Python source code of a DAG. The Airflow-visible "
+        "file is the source of truth; cartridge_dags.source_code is refreshed "
+        "only after the file write succeeds."
     ),
     input_schema={
         "type": "object",
@@ -274,24 +389,66 @@ def pipeline_run_save(
     },
 )
 def dag_save_source(cartridge_id: str, dag_id: str, source_code: str) -> dict:
+    try:
+        cartridge_id = _validate_cartridge_id(cartridge_id)
+        dag_id = _validate_dag_id(dag_id)
+    except ValueError as exc:
+        return {"saved": False, "cartridge_id": cartridge_id, "dag_id": dag_id, "error": str(exc)}
+
+    existing = [(label, path) for label, path in _dag_source_candidates(cartridge_id, dag_id) if path.exists()]
+    target_label: str
+    target_path: Path
+    if existing:
+        target_label, target_path = existing[0]
+    else:
+        dags_root = Path(settings.airflow_dags_path).resolve()
+        candidate = _safe_candidate(dags_root, f"{dag_id}.py")
+        if candidate is None:
+            return {
+                "saved": False,
+                "cartridge_id": cartridge_id,
+                "dag_id": dag_id,
+                "error": "dag_id escapes dags directory",
+            }
+        target_label, target_path = "airflow", candidate
+
+    if not _dag_source_writes_enabled():
+        return {
+            "saved": False,
+            "cartridge_id": cartridge_id,
+            "dag_id": dag_id,
+            "path": str(target_path),
+            "source": target_label,
+            "error": (
+                "dag_save_source refuses DB-only updates. Enable APP_ENV=development "
+                "and ALLOW_RCE_TOOLS=true to write the Airflow DAG file."
+            ),
+        }
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(source_code, encoding="utf-8")
+    except OSError as exc:
+        return {
+            "saved": False,
+            "cartridge_id": cartridge_id,
+            "dag_id": dag_id,
+            "path": str(target_path),
+            "source": target_label,
+            "error": f"failed writing Airflow DAG file: {exc}",
+        }
+
     with _conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO cartridge_dags (cartridge_id, dag_id, source_code, updated_at)
-               VALUES (%s, %s, %s, NOW())
-               ON CONFLICT (cartridge_id, dag_id) DO UPDATE
-               SET source_code = EXCLUDED.source_code,
-                   updated_at  = NOW()""",
-            (cartridge_id, dag_id, source_code),
-        )
+        _db_save_source(cur, cartridge_id, dag_id, source_code, target_path.name)
         conn.commit()
-    return {"saved": True, "cartridge_id": cartridge_id, "dag_id": dag_id,
+    return {"saved": True, "source": target_label, "path": str(target_path),
+            "cartridge_id": cartridge_id, "dag_id": dag_id,
             "bytes": len(source_code.encode())}
 
 
 @tool(
     name="dag_get_source",
     description=(
-        "Retrieve the stored Python source code of a DAG. "
+        "Retrieve the Airflow-visible Python source code of a DAG. "
         "Use this before modifying a DAG so the AI has the current version."
     ),
     input_schema={
@@ -304,17 +461,32 @@ def dag_save_source(cartridge_id: str, dag_id: str, source_code: str) -> dict:
     },
 )
 def dag_get_source(cartridge_id: str, dag_id: str) -> dict:
-    from app.config import settings
-    from pathlib import Path
-    import re as _re
-
-    # Validate dag_id up front — it's about to be used as a filesystem path.
-    # Without this, dag_id="../../../etc/passwd" reaches read_text below.
-    if not _re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", dag_id or ""):
+    try:
+        cartridge_id = _validate_cartridge_id(cartridge_id)
+        dag_id = _validate_dag_id(dag_id)
+    except ValueError as exc:
         return {"found": False, "cartridge_id": cartridge_id, "dag_id": dag_id,
-                "error": "invalid dag_id"}
+                "error": str(exc)}
 
-    # 1. Try DB first
+    # 1. Airflow-visible disk source is canonical. Refresh the DB mirror so
+    # Studio/export cannot keep showing old code after a deploy or hotfix.
+    for label, dag_path in _dag_source_candidates(cartridge_id, dag_id):
+        if not dag_path.exists():
+            continue
+        source_code = dag_path.read_text(encoding="utf-8")
+        with _conn() as conn, conn.cursor() as cur:
+            _db_save_source(cur, cartridge_id, dag_id, source_code, dag_path.name)
+            conn.commit()
+        return {
+            "found":        True,
+            "source":       label,
+            "path":         str(dag_path),
+            "cartridge_id": cartridge_id,
+            "dag_id":       dag_id,
+            "source_code":  source_code,
+        }
+
+    # 2. DB fallback is only a legacy snapshot. It must not win over disk.
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT source_code, updated_at FROM cartridge_dags "
@@ -326,41 +498,11 @@ def dag_get_source(cartridge_id: str, dag_id: str) -> dict:
     if row and row[0]:
         return {
             "found":        True,
-            "source":       "database",
+            "source":       "database_legacy_snapshot",
             "cartridge_id": cartridge_id,
             "dag_id":       dag_id,
             "source_code":  row[0],
             "updated_at":   row[1].isoformat() if row[1] else None,
-        }
-
-    # 2. Fallback: read from Airflow dags directory on disk
-    dags_root = Path(settings.airflow_dags_path).resolve()
-    dag_path = (dags_root / f"{dag_id}.py").resolve()
-    # Defence in depth: even with the regex above, follow-symlinks resolution
-    # guards against a misconfigured dags_path that points at a symlink farm.
-    try:
-        dag_path.relative_to(dags_root)
-    except ValueError:
-        return {"found": False, "cartridge_id": cartridge_id, "dag_id": dag_id,
-                "error": "dag_id escapes dags directory"}
-    if dag_path.exists():
-        source_code = dag_path.read_text(encoding="utf-8")
-        # Auto-save to DB so next call hits the cache
-        with _conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO cartridge_dags (cartridge_id, dag_id, source_code, updated_at)
-                   VALUES (%s, %s, %s, NOW())
-                   ON CONFLICT (cartridge_id, dag_id) DO UPDATE
-                   SET source_code = EXCLUDED.source_code, updated_at = NOW()""",
-                (cartridge_id, dag_id, source_code),
-            )
-            conn.commit()
-        return {
-            "found":        True,
-            "source":       "disk",
-            "cartridge_id": cartridge_id,
-            "dag_id":       dag_id,
-            "source_code":  source_code,
         }
 
     return {"found": False, "cartridge_id": cartridge_id, "dag_id": dag_id}

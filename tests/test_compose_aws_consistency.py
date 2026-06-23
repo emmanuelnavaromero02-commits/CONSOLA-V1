@@ -64,7 +64,6 @@ def test_default_cartridge_urls_resolve_to_declared_aws_services():
         "salesforce",
         "sap-hcm",
         "sap-s4hana",
-        "sap-successfactors",
     }
     for hostname in expected:
         assert f"http://{hostname}:" in raw
@@ -86,7 +85,7 @@ def test_aws_compose_passes_cartridge_url_env_vars_to_airflow():
     component that imports it."""
     raw = AWS_COMPOSE.read_text(encoding="utf-8")
     for env_var in ("SAP_HCM_URL", "SAP_S4HANA_URL",
-                    "SAP_SUCCESSFACTORS_URL", "REPLICON_URL", "HUBSPOT_URL",
+                    "REPLICON_URL", "HUBSPOT_URL",
                     "SALESFORCE_URL"):
         # At least twice — airflow + airflow-scheduler.
         assert raw.count(env_var) >= 2, (

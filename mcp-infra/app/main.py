@@ -1588,6 +1588,12 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
         desc = f"raw bronze entity {name} ({cartridge})"
     else:
         cartridge_for_dataset = _cartridge_of(name, ctx)
+        requested_cartridge = str(body.get("cartridge") or "").strip()
+        if requested_cartridge and cartridge_for_dataset and requested_cartridge != cartridge_for_dataset:
+            raise HTTPException(
+                404,
+                f"dataset '{name}' not found for cartridge '{requested_cartridge}'",
+            )
         if cartridge_for_dataset:
             _require_cartridge_scope(ctx, cartridge_for_dataset)
         content, desc = _build_dataset_doc(name, ctx)
@@ -1605,15 +1611,23 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
     except EmbeddingProviderError as exc:
         raise HTTPException(503, detail="Embedding provider unavailable") from exc
     semantic_result = None
-    if kind == "dataset":
+    rebuild_semantic = str(body.get("rebuild_semantic") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if rebuild_semantic and kind == "dataset":
         cartridge_for_semantic = (
             _safe_rag_segment(body.get("cartridge"), "cartridge")
             if body.get("cartridge")
             else _cartridge_of(name, ctx)
         )
-    else:
+    elif rebuild_semantic:
         cartridge_for_semantic = _safe_rag_segment(body.get("cartridge") or "replicon", "cartridge")
-    if cartridge_for_semantic:
+    else:
+        cartridge_for_semantic = None
+    if rebuild_semantic and cartridge_for_semantic:
         try:
             semantic_result = await _rebuild_semantic_doc(cartridge_for_semantic, ctx)
         except Exception as exc:                              # noqa: BLE001
@@ -1640,13 +1654,9 @@ async def rag_rest_rebuild_semantic(body: dict, internal_service: str = Depends(
 
 
 def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str | None:
-    """Resolve cartridge_id for a dataset. ctx is accepted for forward-compat
-    with scoped callers and reserved for tenant-aware lookups; today the
-    `datasets` table is global per cartridge, so no extra filtering is applied
-    here (callers must enforce `_require_cartridge_scope` after this lookup)."""
+    """Resolve cartridge_id for a dataset inside the caller scope."""
     import psycopg2
     from app.config import settings as s
-    _ = ctx  # reserved for future tenant-aware lookups
     try:
         conn = psycopg2.connect(
             host=s.pg_host,
@@ -1656,7 +1666,17 @@ def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str |
             password=s.pg_password,
         )
         with conn.cursor() as cur:
-            cur.execute("SELECT cartridge FROM datasets WHERE name = %s", (dataset_name,))
+            if ctx and _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+                cur.execute(
+                    "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+                    (str(ctx.get("tenant_id") or ""), str(ctx.get("workspace_id") or "")),
+                )
+            sql = "SELECT cartridge FROM datasets WHERE name = %s"
+            params: list[Any] = [dataset_name]
+            if ctx and _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+                sql += " AND workspace_id = %s::uuid"
+                params.append(ctx.get("workspace_id"))
+            cur.execute(sql, tuple(params))
             row = cur.fetchone()
         conn.close()
         return row[0] if row else None
@@ -1669,11 +1689,43 @@ def _duckdb_s3_settings(con, endpoint: str, region: str) -> None:
 
     url_style = "vhost" if "amazonaws.com" in endpoint else "path"
     secure = (os.environ.get("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"})
-    con.execute("LOAD httpfs;")
+    try:
+        con.execute("LOAD httpfs;")
+    except Exception:  # noqa: BLE001
+        try:
+            con.execute("INSTALL httpfs; LOAD httpfs;")
+        except Exception as install_exc:  # noqa: BLE001
+            raise RuntimeError(
+                "DuckDB httpfs extension unavailable; install httpfs in the mcp-infra image"
+            ) from install_exc
+    access_key = os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("AWS_ACCESS_KEY_ID") or ""
+    secret_key = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY") or ""
+    session_token = os.environ.get("AWS_SESSION_TOKEN") or ""
+    if access_key and secret_key:
+        con.execute(f"""
+            SET s3_access_key_id='{access_key}';
+            SET s3_secret_access_key='{secret_key}';
+        """)
+        if session_token:
+            con.execute(f"SET s3_session_token='{session_token}';")
+    else:
+        try:
+            con.execute("CALL load_aws_credentials();")
+        except Exception as load_exc:  # noqa: BLE001
+            try:
+                con.execute(f"""
+                    CREATE OR REPLACE SECRET omega_s3 (
+                        TYPE S3,
+                        PROVIDER CREDENTIAL_CHAIN,
+                        REGION '{region}'
+                    );
+                """)
+            except Exception as secret_exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "DuckDB S3 credentials unavailable; configure MINIO/AWS credentials or IAM role"
+                ) from (secret_exc or load_exc)
     con.execute(f"""
         SET s3_endpoint='{endpoint}';
-        SET s3_access_key_id='{os.environ.get('MINIO_ACCESS_KEY','')}';
-        SET s3_secret_access_key='{os.environ.get('MINIO_SECRET_KEY','')}';
         SET s3_url_style='{url_style}';
         SET s3_use_ssl={'true' if secure else 'false'};
         SET s3_region='{region}';
@@ -1726,11 +1778,36 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                 str(ctx.get("workspace_id") or ""),
                 str(ctx.get("tenant_id") or ""),
             )
-        cur.execute(
-            "SELECT name, layer FROM datasets WHERE cartridge = %s ORDER BY layer, name",
-            (cartridge,),
-        )
+        dataset_sql = "SELECT name, layer FROM datasets WHERE cartridge = %s"
+        dataset_params: list[Any] = [cartridge]
+        if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+            dataset_sql += " AND workspace_id = %s::uuid"
+            dataset_params.append(str(ctx.get("workspace_id") or ""))
+        dataset_sql += " ORDER BY layer, name"
+        cur.execute(dataset_sql, tuple(dataset_params))
         datasets = cur.fetchall()
+        lineage_sql = """
+            SELECT DISTINCT ON (silver_name) silver_name, storage_uri
+              FROM silver_lineage
+             WHERE cartridge_id = %s
+               AND storage_uri IS NOT NULL
+               AND storage_uri <> ''
+        """
+        lineage_params: list[Any] = [cartridge]
+        if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+            lineage_sql += " AND storage_uri LIKE %s"
+            lineage_params.append(
+                "%/"
+                f"tenant_id={str(ctx.get('tenant_id') or '')}/"
+                f"workspace_id={str(ctx.get('workspace_id') or '')}/%"
+            )
+        lineage_sql += " ORDER BY silver_name, created_at DESC"
+        cur.execute(lineage_sql, tuple(lineage_params))
+        lineage_by_name = {
+            str(row[0]): str(row[1])
+            for row in cur.fetchall()
+            if row[0] and row[1]
+        }
         cur.execute("""
             SELECT dataset, column_name, COALESCE(description,''), COALESCE(tags, '{}')
               FROM data_catalog
@@ -1818,12 +1895,13 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                     if not fields:
                         out.append("_(schema unavailable; Gold schema must be queried through Refinement)_\n")
                 else:
-                    if scoped_raw_read:
+                    parquet = lineage_by_name.get(name)
+                    if not parquet and scoped_raw_read:
                         parquet = (
                             f"s3://{bucket}/silver/{cartridge}/{name}/"
                             f"{scoped_raw_read}data.parquet"
                         )
-                    else:
+                    elif not parquet:
                         parquet = f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
                     fields = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0").fetchall()
             except Exception as exc:                          # noqa: BLE001
@@ -1907,11 +1985,20 @@ def _build_dataset_doc(name: str, ctx: dict[str, Any] | None = None) -> tuple[st
     )
     try:
         with conn.cursor() as cur:
-            cur.execute(
+            if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+                cur.execute(
+                    "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+                    (str(ctx.get("tenant_id") or ""), str(ctx.get("workspace_id") or "")),
+                )
+            sql = (
                 "SELECT layer, cartridge, COALESCE(sql_def,''), COALESCE(description,'') "
-                "FROM datasets WHERE name = %s",
-                (name,),
+                "FROM datasets WHERE name = %s"
             )
+            params: list[Any] = [name]
+            if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+                sql += " AND workspace_id = %s::uuid"
+                params.append(ctx.get("workspace_id"))
+            cur.execute(sql, tuple(params))
             row = cur.fetchone()
     finally:
         conn.close()

@@ -1989,6 +1989,7 @@ def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict
         _pg_set_scope(cur, security_context)
         for e in entries:
             ev = e.get("example_values")
+            cartridge = str(e.get("cartridge") or "").strip()
             cur.execute("""
                 INSERT INTO data_catalog
                     (dataset, layer, cartridge, column_name, data_type, description,
@@ -2000,6 +2001,7 @@ def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict
                   FROM datasets d
                  WHERE d.name = %s
                    AND d.workspace_id = %s::uuid
+                   AND (%s = '' OR d.cartridge = %s)
                 ON CONFLICT (workspace_id, dataset, column_name) WHERE workspace_id IS NOT NULL
                 DO UPDATE
                     SET description    = COALESCE(NULLIF(EXCLUDED.description,''), data_catalog.description),
@@ -2023,6 +2025,8 @@ def _upsert_catalog_entries(entries: list[dict], security_context: dict) -> dict
                 workspace_id,
                 e["dataset"],
                 workspace_id,
+                cartridge,
+                cartridge,
             ))
             updated += max(cur.rowcount, 0)
     conn.commit()
@@ -2585,6 +2589,15 @@ async def refresh_by_source(
         ds = store.get_dataset(meta["name"], **store_scope)
         if not ds or ds.get("layer") == "gold":
             continue  # gold depende de Silver, no de Bronze directamente
+        missing_sources = engine.missing_materialized_dependencies(ds.get("sources") or [], ctx)
+        if missing_sources:
+            results.append({
+                "name": meta["name"],
+                "status": "skipped",
+                "reason": "missing_materialized_dependencies",
+                "missing_sources": missing_sources,
+            })
+            continue
         try:
             result = engine.materialize(ds, ctx)
             store.update_refresh(meta["name"], result["row_count"], **store_scope)

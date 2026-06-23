@@ -110,9 +110,16 @@ def test_public_alb_target_groups_only_use_internal_service_ports():
         r'resource "aws_lb_target_group" "workspace" \{[\s\S]*?port\s*=\s*8001[\s\S]*?path\s*=\s*"/healthz"',
         alb,
     )
-    for port in ("8081", "8082", "8088"):
+    assert re.search(
+        r'resource "aws_lb_target_group" "airflow" \{[\s\S]*?port\s*=\s*8082[\s\S]*?path\s*=\s*"/airflow/health"',
+        alb,
+    )
+    assert 'resource "aws_lb_listener_rule" "airflow_path"' in alb
+    assert 'values = ["/airflow", "/airflow/*"]' in alb
+    for port in ("8081", "8088"):
         assert not re.search(rf'resource "aws_lb_target_group" "[^"]+" \{{[\s\S]*?port\s*=\s*{port}\b', alb)
         assert not re.search(rf'resource "aws_lb_listener" "[^"]+" \{{[\s\S]*?port\s*=\s*"{port}"', alb)
+    assert not re.search(r'resource "aws_lb_listener" "[^"]+" \{[\s\S]*?port\s*=\s*"8082"', alb)
 
 
 def test_waf_baseline_blocks_obvious_bad_traffic_and_observes_common_rules():
@@ -208,8 +215,10 @@ def test_aws_deploy_env_documents_https_public_urls():
     assert "ALLOWED_ORIGINS=https://console.example.com,https://workspace.example.com" in env
     assert "CONSOLE_URL=https://console.example.com" in env
     assert "WORKSPACE_PUBLIC_URL=https://workspace.example.com" in env
+    assert "AIRFLOW_PUBLIC_URL=https://console.example.com/airflow" in env
     assert "CONSOLE_URL=http://10.0.2.X:8000" not in env
     assert "WORKSPACE_PUBLIC_URL=http://10.0.2.X:8001" not in env
+    assert "AIRFLOW_PUBLIC_URL=http://10.0.2.X:8082" not in env
     assert "COOKIE_SECURE:       ${COOKIE_SECURE:-true}" in compose
     assert "COOKIE_SECURE:        ${COOKIE_SECURE:-true}" in compose
     assert "$url_var must use https in production" in entrypoint

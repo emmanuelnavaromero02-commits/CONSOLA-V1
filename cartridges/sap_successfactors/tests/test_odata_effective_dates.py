@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.core.sap_client import SapSfClient
+import pytest
+
+from app.core.sap_client import SAPClientError, SapSfClient
 
 
 class _Response:
@@ -11,6 +13,25 @@ class _Response:
 
     def json(self) -> dict:
         return {"d": {"results": []}}
+
+
+class _ForbiddenResponse:
+    status_code = 403
+    text = '{"error":"Not authorized for Candidate","access_token":"secret-token"}'
+
+
+class _BadRequestResponse:
+    status_code = 400
+    text = (
+        '{"error":{"code":"COE_PROPERTY_NOT_FOUND","message":{"value":'
+        '"Invalid property names: EmpEmploymentTermination/eventReasonExternalCode"}},'
+        '"access_token":"secret-token"}'
+    )
+
+    def raise_for_status(self) -> None:
+        import requests
+
+        raise requests.HTTPError("400 Client Error", response=self)
 
 
 def test_fetch_entity_includes_effective_dated_from_to_params(monkeypatch):
@@ -49,3 +70,66 @@ def test_fetch_entity_includes_effective_dated_from_to_params(monkeypatch):
         "fromDate": "1900-01-01",
         "toDate": "9999-12-31",
     }
+
+
+def test_fetch_entity_403_reports_direct_odata_permission_and_select(monkeypatch):
+    captured: dict = {}
+    client = SapSfClient.__new__(SapSfClient)
+    client.base_url = "https://api68sales.successfactors.com/odata/v2"
+    client._conn_id = "femsa_sf"
+    client._session = type(
+        "Session",
+        (),
+        {
+            "get": lambda _self, url, **kwargs: captured.update({"url": url, **kwargs}) or _ForbiddenResponse(),
+        },
+    )()
+    monkeypatch.setattr(client, "_require_configured", lambda: None)
+    monkeypatch.setattr(client, "_headers", lambda: {"Authorization": "Bearer token"})
+    monkeypatch.setattr(client, "_log_auth", lambda _status_code: None)
+
+    with pytest.raises(SAPClientError) as exc_info:
+        client.fetch_entity(
+            "Candidate",
+            select=["candidateId", "firstName", "lastName", "lastModifiedDateTime"],
+        )
+
+    message = str(exc_info.value)
+    assert "SuccessFactors rechazo acceso OData (HTTP 403)" in message
+    assert "entity=Candidate" in message
+    assert "conn_id=femsa_sf" in message
+    assert "select_fields=candidateId,firstName,lastName,lastModifiedDateTime" in message
+    assert "llamando directo a SuccessFactors" in message
+    assert "secret-token" not in message
+
+
+def test_fetch_entity_400_reports_sap_body_and_select(monkeypatch):
+    captured: dict = {}
+    client = SapSfClient.__new__(SapSfClient)
+    client.base_url = "https://api68sales.successfactors.com/odata/v2"
+    client._conn_id = "femsa_sf"
+    client._session = type(
+        "Session",
+        (),
+        {
+            "get": lambda _self, url, **kwargs: captured.update({"url": url, **kwargs}) or _BadRequestResponse(),
+        },
+    )()
+    monkeypatch.setattr(client, "_require_configured", lambda: None)
+    monkeypatch.setattr(client, "_headers", lambda: {"Authorization": "Bearer token"})
+    monkeypatch.setattr(client, "_log_auth", lambda _status_code: None)
+
+    with pytest.raises(SAPClientError) as exc_info:
+        client.fetch_entity(
+            "EmpEmploymentTermination",
+            select=["userId", "endDate", "eventReasonExternalCode", "lastModifiedDateTime"],
+        )
+
+    message = str(exc_info.value)
+    assert "SuccessFactors rechazo solicitud OData (HTTP 400)" in message
+    assert "entity=EmpEmploymentTermination" in message
+    assert "conn_id=femsa_sf" in message
+    assert "select_fields=userId,endDate,eventReasonExternalCode,lastModifiedDateTime" in message
+    assert "COE_PROPERTY_NOT_FOUND" in message
+    assert "Invalid property names: EmpEmploymentTermination/eventReasonExternalCode" in message
+    assert "secret-token" not in message

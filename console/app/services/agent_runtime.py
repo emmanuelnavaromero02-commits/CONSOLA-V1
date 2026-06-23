@@ -1103,7 +1103,7 @@ async def run_scheduled_monitor(
 
     contract = _monitor_contract(agent)
     if not contract:
-        return await run(agent, message, history=[], user=None)
+        raise RuntimeError("scheduled monitor requires extra.monitor contract")
 
     input_messages = [{"role": "user", "content": message}]
     tools, _server_map = await _discover_agent_tools(agent)

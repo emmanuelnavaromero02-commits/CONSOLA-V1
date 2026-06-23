@@ -275,7 +275,13 @@ def _set_rls_scope(cur, tenant_id: str, workspace_id: str) -> None:
         "properties": {
             "source_type": {
                 "type": "string",
-                "enum": ["signal", "decision_option", "manual_fixture", "backtest_case"],
+                "enum": [
+                    "signal",
+                    "decision_option",
+                    "manual_fixture",
+                    "backtest_case",
+                    "wisdom_bit",
+                ],
             },
             "source_id": {"type": "string"},
             "horizon_days": {"type": "integer", "minimum": 1, "maximum": 365},

@@ -126,24 +126,32 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
 
     for cartridge in SAP_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract.py")
-        assert "skill_body = {" in source
         if cartridge == "sap_successfactors":
             assert "def _security_context_from_conf(" in source
-            assert '"conn_id": conf.get("conn_id") or conf.get("connection_id") or None' in source
+            assert "runtime.run_entity(" in source
+            assert "entity_config.connection_id" in source
+            assert "SAP_SUCCESSFACTORS_URL" not in source
+            assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" not in source
+            assert '"conn_id": conn_id' in source
         else:
+            assert "skill_body = {" in source
             assert 'for key in ("tenant_id", "workspace_id", "security_context")' in source
-        assert "json=skill_body" in source
+            assert "json=skill_body" in source
         extract_all = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract_all.py")
-        assert "skill_body = {" in extract_all
         if cartridge == "sap_successfactors":
             assert "def _security_context_from_conf(" in extract_all
-            assert '"conn_id": conf.get("conn_id") or conf.get("connection_id") or None' in extract_all
+            assert "runtime.run_entity(" in extract_all
+            assert "get_extract_all_plan" in extract_all
+            assert "entity_config.connection_id" in extract_all
+            assert "SAP_SUCCESSFACTORS_URL" not in extract_all
+            assert '"conn_id": conn_id' in extract_all
         else:
+            assert "skill_body = {" in extract_all
             assert (
                 'for key in ("tenant_id", "workspace_id", "security_context")'
                 in extract_all
             )
-        assert "json=skill_body" in extract_all
+            assert "json=skill_body" in extract_all
 
 
 def test_entity_scheduler_forwards_scope_and_connection_id_to_scheduled_dags():
@@ -155,6 +163,14 @@ def test_entity_scheduler_forwards_scope_and_connection_id_to_scheduled_dags():
     assert 'conf["tenant_id"] = it["tenant_id"]' in source
     assert 'conf["workspace_id"] = it["workspace_id"]' in source
     assert 'conf["conn_id"] = it["conn_id"]' in source
+
+
+def test_mcp_cartridge_trigger_does_not_invent_successfactors_vault_conn_id():
+    source = _read("mcp-infra/app/tools/cartridges.py")
+
+    assert "def _default_connection_id(" not in source
+    assert '"SAP_SUCCESSFACTORS_CONN_ID"' not in source
+    assert "or _default_connection_id(cartridge_id)" not in source
 
 
 def test_scoped_allowed_prefixes_are_emitted_for_all_live_cartridges():

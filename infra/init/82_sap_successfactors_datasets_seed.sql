@@ -73,9 +73,9 @@ SELECT
     CAST(NULL AS BIGINT)         AS employee_count
 WHERE FALSE
 $seed$, $seed$Distribución de compensación (cuartiles/mediana) por departamento y job_code. PENDIENTE: paycompValue está encrypted en bronze y no es agregable en SQL.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_compensation_full$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpCompensation", "raw/sap_successfactors/EmpPayCompRecurring", "raw/sap_successfactors/EmpPayCompNonRecurring"]$seed$::jsonb, $seed$
+($seed$sap_successfactors_compensation_full$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpCompensation", "raw/sap_successfactors/EmpPayCompRecurring", "raw/sap_successfactors/EmpPayCompNonRecurring", "silver/sap_successfactors/sap_successfactors_empcompensation_latest", "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest", "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest"]$seed$::jsonb, $seed$
 -- sap_successfactors_compensation_full  (silver)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpCompensation", "raw/sap_successfactors/EmpPayCompRecurring", "raw/sap_successfactors/EmpPayCompNonRecurring"]
+-- sources: ["raw/sap_successfactors/EmpCompensation", "raw/sap_successfactors/EmpPayCompRecurring", "raw/sap_successfactors/EmpPayCompNonRecurring", "silver/sap_successfactors/sap_successfactors_empcompensation_latest", "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest", "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest"]
 -- description: Componentes de compensación por empleado (cabecera + recurrentes + no recurrentes). El importe (paycomp_value) llega encrypted desde bronze: se conserva como caja negra y NO es agregable.
 
 -- Unión por user_id (plano en las tres entidades). paycomp_value es un token
@@ -142,9 +142,16 @@ latest AS (
 )
 SELECT
     userId               AS user_id,            -- plano
-    CAST(startDate AS DATE) AS start_date,
+    CAST(
+        COALESCE(
+            TRY_CAST(startDate AS TIMESTAMP),
+            to_timestamp(
+                TRY_CAST(regexp_extract(CAST(startDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS BIGINT) / 1000
+            )
+        ) AS DATE
+    ) AS start_date,
     payGroup             AS pay_group,
-    frequencyCode        AS frequency_code,
+    CAST(NULL AS VARCHAR) AS frequency_code,
     load_date
 FROM latest
 ORDER BY user_id, start_date
@@ -219,7 +226,7 @@ $seed$, $seed$Última extracción de EmpEmployment (relación laboral). Puente e
 -- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]
 -- description: Última extracción de bajas (EmpEmploymentTermination). userId plano; la entidad está registrada para extracción.
 
--- Dedupe por empleado + fecha + motivo para conservar una baja real por evento
+-- Dedupe por empleado + fecha para conservar una baja real por evento
 -- y descartar snapshots repetidos de Bronze.
 WITH raw AS (
     SELECT *
@@ -227,28 +234,47 @@ WITH raw AS (
                       hive_partitioning = true,
                       union_by_name   = true)
 ),
+normalized AS (
+    SELECT
+        raw.*,
+        COALESCE(
+            TRY_CAST(endDate AS DATE),
+            CAST(
+                to_timestamp(
+                    TRY_CAST(regexp_extract(CAST(endDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+                ) AS DATE
+            )
+        ) AS _termination_date,
+        COALESCE(
+            TRY_CAST(lastModifiedDateTime AS TIMESTAMP),
+            to_timestamp(
+                TRY_CAST(regexp_extract(CAST(lastModifiedDateTime AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+            )
+        ) AS _last_modified_at
+    FROM raw
+),
 latest AS (
     SELECT *
     FROM (
         SELECT
-            raw.*,
+            normalized.*,
             ROW_NUMBER() OVER (
-                PARTITION BY userId, endDate, eventReasonExternalCode
+                PARTITION BY userId, endDate
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    _last_modified_at DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
             ) AS _rn
-        FROM raw
+        FROM normalized
         WHERE userId IS NOT NULL
     )
     WHERE _rn = 1
 )
 SELECT
     userId                     AS user_id,            -- plano
-    CAST(endDate AS DATE)      AS termination_date,
-    eventReasonExternalCode    AS event_reason,
+    _termination_date          AS termination_date,
+    CAST(NULL AS VARCHAR)      AS event_reason,       -- no visible por permisos OData en este tenant
     load_date
 FROM latest
 ORDER BY user_id, termination_date
@@ -417,30 +443,49 @@ WITH raw AS (
                       hive_partitioning = true,
                       union_by_name   = true)
 ),
+normalized AS (
+    SELECT
+        raw.*,
+        COALESCE(
+            TRY_CAST(payDate AS DATE),
+            CAST(
+                to_timestamp(
+                    TRY_CAST(regexp_extract(CAST(payDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+                ) AS DATE
+            )
+        ) AS _pay_date,
+        COALESCE(
+            TRY_CAST(lastModifiedDateTime AS TIMESTAMP),
+            to_timestamp(
+                TRY_CAST(regexp_extract(CAST(lastModifiedDateTime AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+            )
+        ) AS _last_modified_at
+    FROM raw
+),
 latest AS (
     SELECT *
     FROM (
         SELECT
-            raw.*,
+            normalized.*,
             ROW_NUMBER() OVER (
-                PARTITION BY userId, payComponent, payDate
+                PARTITION BY userId, payComponentCode, payDate
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    _last_modified_at DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
             ) AS _rn
-        FROM raw
+        FROM normalized
         WHERE userId IS NOT NULL
     )
     WHERE _rn = 1
 )
 SELECT
     userId               AS user_id,            -- plano
-    payComponent         AS pay_component,
-    paycompValue         AS paycomp_value,      -- encrypted en bronze (no agregable)
-    currency             AS currency,
-    CAST(payDate AS DATE) AS pay_date,
+    payComponentCode     AS pay_component,
+    value                AS paycomp_value,      -- encrypted en bronze (no agregable)
+    currencyCode         AS currency,
+    _pay_date            AS pay_date,
     load_date
 FROM latest
 ORDER BY user_id, pay_date
@@ -456,20 +501,39 @@ WITH raw AS (
                       hive_partitioning = true,
                       union_by_name   = true)
 ),
+normalized AS (
+    SELECT
+        raw.*,
+        COALESCE(
+            TRY_CAST(startDate AS DATE),
+            CAST(
+                to_timestamp(
+                    TRY_CAST(regexp_extract(CAST(startDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+                ) AS DATE
+            )
+        ) AS _start_date,
+        COALESCE(
+            TRY_CAST(lastModifiedDateTime AS TIMESTAMP),
+            to_timestamp(
+                TRY_CAST(regexp_extract(CAST(lastModifiedDateTime AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+            )
+        ) AS _last_modified_at
+    FROM raw
+),
 latest AS (
     SELECT *
     FROM (
         SELECT
-            raw.*,
+            normalized.*,
             ROW_NUMBER() OVER (
                 PARTITION BY userId, payComponent, startDate
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    _last_modified_at DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
             ) AS _rn
-        FROM raw
+        FROM normalized
         WHERE userId IS NOT NULL
     )
     WHERE _rn = 1
@@ -477,10 +541,10 @@ latest AS (
 SELECT
     userId               AS user_id,            -- plano
     payComponent         AS pay_component,
-    paycompValue         AS paycomp_value,      -- encrypted en bronze (no agregable)
+    paycompvalue         AS paycomp_value,      -- encrypted en bronze (no agregable)
     frequency            AS frequency,
-    currency             AS currency,
-    CAST(startDate AS DATE) AS start_date,
+    currencyCode         AS currency,
+    _start_date          AS start_date,
     load_date
 FROM latest
 ORDER BY user_id, pay_component, start_date
@@ -1111,21 +1175,17 @@ FROM pipe
 GROUP BY department
 ORDER BY open_requisitions DESC, department
 $seed$, $seed$Embudo de reclutamiento por departamento: requisiciones totales y abiertas. Las etapas por candidato requieren JobApplication (no extraída).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_recruitment_pipeline$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/JobRequisition", "raw/sap_successfactors/Candidate"]$seed$::jsonb, $seed$
+($seed$sap_successfactors_recruitment_pipeline$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/JobRequisition", "silver/sap_successfactors/sap_successfactors_jobrequisition_latest"]$seed$::jsonb, $seed$
 -- sap_successfactors_recruitment_pipeline  (silver)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/JobRequisition", "raw/sap_successfactors/Candidate"]
--- description: Pipeline de reclutamiento centrado en la requisición. El conteo de candidatos por requisición queda pendiente: la relación req <-> candidato vive en JobApplication (no extraída).
+-- sources: ["raw/sap_successfactors/JobRequisition", "silver/sap_successfactors/sap_successfactors_jobrequisition_latest"]
+-- description: Pipeline de reclutamiento centrado en la requisición. Candidate está bloqueado por permisos en este tenant; el conteo queda en 0 hasta habilitar JobApplication/Candidate.
 
 -- TODO: el enlace requisición -> candidato está en JobApplication (no extraída).
--- Hoy se listan las requisiciones; candidate_count es global (no por req) como
--- referencia, marcado para sustituir cuando exista JobApplication.
+-- Candidate no se consulta aquí porque la entidad requiere permisos OData
+-- adicionales y bloquea la materialización del dataset.
 WITH reqs AS (
     SELECT job_req_id, job_title, status, department, location
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_jobrequisition_latest/**/*.parquet')
-),
-candidate_total AS (
-    SELECT COUNT(*) AS total_candidates
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_candidate_latest/**/*.parquet')
 )
 SELECT
     r.job_req_id         AS job_req_id,
@@ -1133,11 +1193,10 @@ SELECT
     r.status             AS status,
     r.department         AS department,
     r.location           AS location,
-    ct.total_candidates  AS candidate_pool_total   -- TODO: por requisición vía JobApplication
+    CAST(0 AS BIGINT)    AS candidate_pool_total   -- TODO: por requisición vía JobApplication
 FROM reqs r
-CROSS JOIN candidate_total ct
 ORDER BY r.job_req_id
-$seed$, $seed$Pipeline de reclutamiento centrado en la requisición. El conteo de candidatos por requisición queda pendiente: la relación req <-> candidato vive en JobApplication (no extraída).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
+$seed$, $seed$Pipeline de reclutamiento centrado en la requisición. Candidate está bloqueado por permisos en este tenant; el conteo queda en 0 hasta habilitar JobApplication/Candidate.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_turnover_by_period$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmploymentTermination"]$seed$::jsonb, $seed$
 -- sap_successfactors_turnover_by_period  (gold)  cartridge: sap_successfactors
 -- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]

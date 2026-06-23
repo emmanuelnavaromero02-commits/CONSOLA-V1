@@ -806,11 +806,13 @@ services:
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       EMBED_MODEL:      ${EMBED_MODEL:-amazon.titan-embed-text-v2:0}
       EMBED_DIM:        ${EMBED_DIM:-1024}
+      RAG_LOCAL_EMBEDDING_FALLBACK: ${RAG_LOCAL_EMBEDDING_FALLBACK:-true}
       ADMIN_EMAIL:      ${ADMIN_EMAIL:-}
     ports:
       - "8010:8010"
     volumes:
       - ../airflow/dags:/opt/airflow/dags   # write DAGs directly
+      - ../cartridges:/registry/cartridges:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1080,8 +1082,12 @@ services:
       AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # DAG get_secret() prefers these env names over Variable.get; kept
       # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
+      MINIO_ENDPOINT:      "minio:9000"
       MINIO_ACCESS_KEY:     "minio"
       MINIO_SECRET_KEY:     "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      MINIO_BUCKET:         "lakehouse"
+      MINIO_SECURE:         "false"
+      REFINEMENT_URL:       http://refinement:8500
       OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # v1.43.1 (Claude B2): cartridge URLs are env-var driven so the
       # SAP DAGs are portable to Kubernetes / MWAA / Composer without
@@ -1089,7 +1095,6 @@ services:
       # local dev continues working unchanged.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
-      SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml — even
       # though the Replicon DAG posts back through the console today,
       # keep the var here so a future cartridge-direct DAG works
@@ -1181,15 +1186,18 @@ services:
       AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # DAG get_secret() prefers these env names over Variable.get; kept
       # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
+      MINIO_ENDPOINT:      "minio:9000"
       MINIO_ACCESS_KEY:     "minio"
       MINIO_SECRET_KEY:     "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      MINIO_BUCKET:         "lakehouse"
+      MINIO_SECURE:         "false"
+      REFINEMENT_URL:       http://refinement:8500
       OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # v1.43.1 (Claude B2): mirror the webserver's cartridge URL env vars
       # so DAGs parse the same way regardless of which Airflow component
       # imports them.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
-      SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"

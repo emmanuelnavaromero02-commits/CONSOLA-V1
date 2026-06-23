@@ -180,6 +180,75 @@ def _token_rejected_message(auth_label: str, exc: requests.HTTPError) -> str:
     )
 
 
+def _response_error_snippet(response: requests.Response, *, limit: int = 500) -> str:
+    text = (response.text or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", text)
+    for marker in ("access_token", "assertion", "private_key", "Authorization", "authorization"):
+        text = re.sub(
+            rf'("{re.escape(marker)}"\s*:\s*")[^"]+(")',
+            rf"\1***REDACTED***\2",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if len(text) > limit:
+        return text[:limit] + "...[truncated]"
+    return text
+
+
+def _odata_access_rejected_message(
+    *,
+    entity: str,
+    url: str,
+    params: dict[str, Any],
+    conn_id: str | None,
+    response: requests.Response,
+) -> str:
+    status = response.status_code
+    select = str(params.get("$select") or "").strip()
+    selected = f"select_fields={select}" if select else "select_fields=ALL"
+    detail = _response_error_snippet(response)
+    suffix = f" Respuesta SAP: {detail}" if detail else ""
+    conn = conn_id or "default"
+    return (
+        f"SuccessFactors rechazo acceso OData (HTTP {status}) para entity={entity} "
+        f"conn_id={conn} url={url} {selected}. "
+        "Revisa permisos OData en SAP SuccessFactors para el API user/client "
+        "sobre esa entidad y esos campos; el DAG ya esta llamando directo a SuccessFactors."
+        f"{suffix}"
+    )
+
+
+def _odata_request_failed_message(
+    *,
+    entity: str,
+    url: str,
+    params: dict[str, Any],
+    conn_id: str | None,
+    response: requests.Response,
+) -> str:
+    status = response.status_code
+    select = str(params.get("$select") or "").strip()
+    selected = f"select_fields={select}" if select else "select_fields=ALL"
+    filter_expr = str(params.get("$filter") or "").strip()
+    filter_part = f" filter={filter_expr}" if filter_expr else ""
+    detail = _response_error_snippet(response)
+    suffix = f" Respuesta SAP: {detail}" if detail else ""
+    conn = conn_id or "default"
+    hint = (
+        " Revisa nombres de campos, permisos de visibilidad OData y filtros "
+        "en SuccessFactors para esa entidad."
+        if status == 400
+        else ""
+    )
+    return (
+        f"SuccessFactors rechazo solicitud OData (HTTP {status}) para entity={entity} "
+        f"conn_id={conn} url={url} {selected}{filter_part}.{hint}"
+        f"{suffix}"
+    )
+
+
 class CircuitBreakerOpen(SAPClientError):
     pass
 
@@ -994,7 +1063,15 @@ class SapSfClient:
             self._log_auth(resp.status_code)
             if resp.status_code in {401, 403}:
                 CartridgeCircuitBreaker.record_success()
-                resp.raise_for_status()
+                raise SAPClientError(
+                    _odata_access_rejected_message(
+                        entity=entity,
+                        url=url,
+                        params=params,
+                        conn_id=self._conn_id,
+                        response=resp,
+                    )
+                )
             if resp.status_code >= 500 or resp.status_code == 429:
                 CartridgeCircuitBreaker.record_failure()
                 resp.raise_for_status()
@@ -1006,6 +1083,16 @@ class SapSfClient:
         except requests.RequestException as exc:
             if not isinstance(exc, requests.HTTPError):
                 CartridgeCircuitBreaker.record_failure()
+            if isinstance(exc, requests.HTTPError) and exc.response is not None:
+                raise SAPClientError(
+                    _odata_request_failed_message(
+                        entity=entity,
+                        url=url,
+                        params=params,
+                        conn_id=self._conn_id,
+                        response=exc.response,
+                    )
+                ) from exc
             raise SAPClientError(f"GET {url} failed: {exc}") from exc
 
         if isinstance(payload, dict) and "d" in payload:

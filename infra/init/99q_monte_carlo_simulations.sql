@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS monte_carlo_simulations (
     tenant_id                  UUID REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id               UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     source_type                TEXT NOT NULL
-      CHECK (source_type IN ('signal', 'decision_option', 'manual_fixture', 'backtest_case')),
+      CHECK (source_type IN ('signal', 'decision_option', 'manual_fixture', 'backtest_case', 'wisdom_bit')),
     source_id                  TEXT NOT NULL,
     horizon_days               INTEGER NOT NULL DEFAULT 30
       CHECK (horizon_days BETWEEN 1 AND 365),

@@ -174,6 +174,10 @@ class DuckDBEngine:
             and not (self.minio_secret or "").strip()
         )
 
+    def _s3_url_style(self) -> str:
+        endpoint = (self.minio_endpoint or "").lower()
+        return "vhost" if "amazonaws.com" in endpoint else "path"
+
     # ── DuckDB connection ─────────────────────────────────────────────────────
 
     def _conn(self) -> duckdb.DuckDBPyConnection:
@@ -191,7 +195,7 @@ class DuckDBEngine:
             # the credential would be parsed as SQL.
             self._con.execute(
                 f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
-                "SET s3_url_style='path';"
+                f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
                 f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
             )
             if self._uses_aws_s3_credential_chain():
@@ -441,6 +445,25 @@ class DuckDBEngine:
             return str(row[0]) if row and row[0] else None
         except Exception:
             return None
+
+    def missing_materialized_dependencies(
+        self,
+        sources: list[str],
+        user_context: dict | None = None,
+    ) -> list[str]:
+        missing: list[str] = []
+        for source in sources or []:
+            src = str(source or "").strip()
+            if not src.startswith(("silver/", "gold/")):
+                continue
+            parts = src.split("/")
+            if len(parts) < 3:
+                missing.append(src)
+                continue
+            layer, cartridge, name = parts[0], parts[1], parts[2]
+            if not self._latest_materialized_uri(layer, cartridge, name, user_context):
+                missing.append(src)
+        return missing
 
     def _scope_storage_sql(self, sql: str, sources: list[str], user_context: dict | None) -> str:
         """Rewrite known raw/silver/gold S3 references to the tenant/workspace

@@ -60,6 +60,42 @@ def test_console_extract_route_preserves_conn_id_and_scope(monkeypatch):
     assert captured["security_context"] == ctx
 
 
+def test_console_extract_route_uses_entity_connection_id_for_preflight(monkeypatch):
+    captured: dict = {}
+    ctx = _signed_ctx()
+
+    monkeypatch.setattr(
+        routes_console,
+        "_get_entity_or_404",
+        lambda _entity: {"entity": "EmpCompensation", "connection_id": "femsa_sf"},
+    )
+
+    def fake_preflight_for_extract(*, conn_id=None, security_context=None):
+        captured["preflight_conn_id"] = conn_id
+        captured["preflight_security_context"] = security_context
+        return None
+
+    monkeypatch.setattr(routes_console, "preflight_for_extract", fake_preflight_for_extract)
+    monkeypatch.setattr(routes_console, "_mark_external_job", lambda *_args, **_kwargs: None)
+
+    def fake_run_entity(config, **_kwargs):
+        captured.update(config)
+        return {"status": "success", "record_count": 1}
+
+    monkeypatch.setattr(routes_console, "run_entity", fake_run_entity)
+
+    result = routes_console.entity_extract(
+        "EmpCompensation",
+        mode="incremental",
+        body={"security_context": ctx},
+    )
+
+    assert result["status"] == "success"
+    assert captured["preflight_conn_id"] == "femsa_sf"
+    assert captured["preflight_security_context"] == ctx
+    assert captured["conn_id"] == "femsa_sf"
+
+
 def test_extraction_service_passes_conn_id_and_scope_to_sap_client(monkeypatch):
     captured: dict = {}
     ctx = {
@@ -122,6 +158,7 @@ def test_extraction_service_uses_idempotency_key_as_run_id(monkeypatch):
     result = extraction_service.run_entity({
         "entity": "PerPerson",
         "mode": "full",
+        "conn_id": "femsa_sf",
         "idempotency_key": "sync_now:sap_successfactors:test:PerPerson",
         "parent_idempotency_key": "sync_now:sap_successfactors:test",
     })

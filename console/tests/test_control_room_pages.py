@@ -80,12 +80,53 @@ def test_native_control_room_page_hashes_inline_scripts(monkeypatch, tmp_path: P
     assert "frame-ancestors 'none'" in csp
 
 
+def test_native_control_room_talent_page_hashes_inline_scripts(monkeypatch, tmp_path: Path):
+    root = tmp_path / "console-next"
+    control_room_talent = root / "control-room" / "talent"
+    control_room_talent.mkdir(parents=True)
+    script_a = "self.__next_f=self.__next_f||[]"
+    script_b = "self.__next_f.push([1,\"talent\"])"
+    (control_room_talent / "index.html").write_text(
+        f"<html><body><script>{script_a}</script><script src=\"/control-room/talent/app.js\"></script>"
+        f"<script>{script_b}</script></body></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pages, "CONSOLE_NEXT_STATIC", root)
+
+    response = pages._console_next_response(
+        _request("/control-room/talent"), "control-room/talent/index.html"
+    )
+    csp = response.headers["content-security-policy"]
+    script_seg = _script_src_segment(csp)
+
+    assert "script-src 'self'" in script_seg
+    assert "'unsafe-inline'" not in script_seg
+    assert _sha256_csp_hash(script_a) in script_seg
+    assert _sha256_csp_hash(script_b) in script_seg
+    assert "frame-ancestors 'none'" in csp
+
+
 def test_control_room_export_hashes_every_inline_script():
     page = pages.CONSOLE_NEXT_STATIC / "control-room" / "index.html"
     html = page.read_text(encoding="utf-8")
     inline_scripts = [body for body in pages._INLINE_SCRIPT_RE.findall(html) if body.strip()]
 
     assert inline_scripts, "Control Room Next export should expose hashable hydration scripts"
+
+    csp = pages._console_next_csp(str(page))
+    script_seg = _script_src_segment(csp)
+
+    assert "'unsafe-inline'" not in script_seg
+    for body in inline_scripts:
+        assert _sha256_csp_hash(body) in script_seg
+
+
+def test_control_room_talent_export_hashes_every_inline_script():
+    page = pages.CONSOLE_NEXT_STATIC / "control-room" / "talent" / "index.html"
+    html = page.read_text(encoding="utf-8")
+    inline_scripts = [body for body in pages._INLINE_SCRIPT_RE.findall(html) if body.strip()]
+
+    assert inline_scripts, "Control Room Talent Next export should expose hashable hydration scripts"
 
     csp = pages._console_next_csp(str(page))
     script_seg = _script_src_segment(csp)

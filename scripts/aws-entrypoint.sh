@@ -168,7 +168,7 @@ CONSOLE_URL="${CONSOLE_URL:-}"
 WORKSPACE_PUBLIC_URL="${WORKSPACE_PUBLIC_URL:-}"
 APP_BASE_URL="${APP_BASE_URL:-$CONSOLE_URL}"
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-$CONSOLE_URL,$WORKSPACE_PUBLIC_URL}"
-AIRFLOW_PUBLIC_URL="${AIRFLOW_PUBLIC_URL:-$(derive_public_url "$CONSOLE_URL" 8082)}"
+AIRFLOW_PUBLIC_URL="${AIRFLOW_PUBLIC_URL:-${CONSOLE_URL%/}/airflow}"
 # Superset is internal/admin-only by default for multi-tenant beta. Do not
 # derive a public tenant-facing URL unless an explicit, tested admin proxy is
 # configured by the deployment.

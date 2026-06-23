@@ -17,7 +17,11 @@ KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 
 CARTRIDGE_ID = "sap_successfactors"
 logger = logging.getLogger(__name__)
-DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES = {"EmpEmploymentTermination"}
+DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES = {
+    "Candidate",
+    "GoalPlan",
+    "LearningItem",
+}
 VALID_EXTRACT_ALL_TARGETS = {"all", "foundation", "talent"}
 FOUNDATION_EXTRACT_ALL_ENTITIES = {
     "User",
@@ -159,6 +163,12 @@ def _seed_if_empty() -> None:
                     "desc": e.get("description", ""),
                 })
 
+    except Exception:
+        logger.exception("Failed to seed SAP SuccessFactors catalog from YAML")
+        raise
+
+    try:
+        with engine.begin() as conn:
             kb_count = conn.execute(
                 text("SELECT COUNT(*) FROM kb_config WHERE cartridge_id = :cid"),
                 {"cid": CARTRIDGE_ID},
@@ -181,9 +191,8 @@ def _seed_if_empty() -> None:
                         "pg": kb.get("pg_table", kb.get("id")),
                         "out": kb.get("output_path", ""),
                     })
-    except Exception:
-        logger.exception("Failed to seed SAP SuccessFactors catalog from YAML")
-        raise
+    except Exception as exc:  # noqa: BLE001 - KB seed must not poison entity extraction.
+        logger.warning("Skipping SAP SuccessFactors KB seed; kb_config unavailable: %s", exc)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

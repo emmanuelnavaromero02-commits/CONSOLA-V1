@@ -213,11 +213,15 @@ def test_intelligence_employee_owner_filters_are_enforced():
 
 def test_pipeline_run_save_rejects_missing_scope_before_db_insert():
     source = read("mcp-infra/app/tools/pipeline.py")
-    assert "pipeline_run_save requires tenant_id and workspace_id" in source
-    assert "raise HTTPException(403" in source
-    insert_pos = source.index("INSERT INTO pipeline_runs")
-    guard_pos = source.index("pipeline_run_save requires tenant_id and workspace_id")
-    assert guard_pos < insert_pos
+    block = source.split("def pipeline_run_save(", 1)[1].split(
+        "\n\n\n# ── DAG source storage", 1
+    )[0]
+    assert "pipeline_run_save requires tenant_id and workspace_id" in block
+    assert "raise HTTPException(403" in block
+    scope_pos = block.index("_set_db_scope(cur, tenant_id, workspace_id)")
+    guard_pos = block.index("pipeline_run_save requires tenant_id and workspace_id")
+    insert_pos = block.index("INSERT INTO pipeline_runs")
+    assert scope_pos < guard_pos < insert_pos
 
 
 def test_mcp_pipeline_scope_guard_has_no_unscoped_admin_bypass():

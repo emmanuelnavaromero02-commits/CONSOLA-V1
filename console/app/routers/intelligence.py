@@ -172,7 +172,7 @@ class MonteCarloOptionRequest(_StrictModel):
 
 class MonteCarloRunRequest(_StrictModel):
     source_type: Literal[
-        "signal", "decision_option", "manual_fixture", "backtest_case"
+        "signal", "decision_option", "manual_fixture", "backtest_case", "wisdom_bit"
     ]
     source_id: str = Field(min_length=1, max_length=256)
     horizon_days: int = Field(default=30, ge=1, le=365)

@@ -1,0 +1,22 @@
+OMEGA_CHECK	host VERSION file	PASS	path=/opt/modecissions/VERSION version=1.45.120-beta expected=1.45.120-beta
+OMEGA_CHECK	DEPLOY_REF matches expected	PASS	DEPLOY_REF=v1.45.120-beta expected=v1.45.120-beta
+OMEGA_CHECK	IMAGE_TAG matches expected	PASS	IMAGE_TAG=v1.45.120-beta expected=v1.45.120-beta
+OMEGA_CHECK	APP_ENV captured	PASS	APP_ENV=production
+OMEGA_CHECK	remote git ref captured	PASS	head=805dfbed describe=v1.45.120-beta
+OMEGA_CHECK	AWS compose config validates	PASS	docker compose config --quiet returned 0
+OMEGA_CHECK	console container running	PASS	running_services=hubspot,replicon,salesforce,sap-hcm,sap-s4hana,airflow,airflow-scheduler,console,mailhog,mcp-infra,postgres,postgres_gold,redis,refinement,sap-successfactors,superset,vault,workspace
+OMEGA_CHECK	internal /healthz	PASS	status=200 version=1.45.120-beta expected=1.45.120-beta
+OMEGA_CHECK	internal /readyz	PASS	status=200
+OMEGA_CHECK	internal /readyz require_data	PASS	status=200
+OMEGA_CHECK	internal /readyz require_intelligence	PASS	status=200
+OMEGA_CHECK	internal superset health	PASS	status=200
+OMEGA_CHECK	Replicon Gold lineage	PASS	entries=162 rows=6740
+OMEGA_CHECK	Gold table gold_consultor_mensual has rows	PASS	rows=3060
+OMEGA_CHECK	Gold table gold_pnl_mensual has rows	PASS	rows=1680
+OMEGA_CHECK	Gold table gold_forecast_mensual has rows	PASS	rows=158
+OMEGA_CHECK	HubSpot optional golden path	PASS	OMEGA_BETA_REQUIRE_HUBSPOT=0; AWS beta blocks on Replicon Gold
+OMEGA_CHECK	Gold FORCE RLS	PASS	weak_gold_tables=0
+OMEGA_CHECK	Gold read role NOBYPASSRLS	PASS	role=omega_refinement_gold rolbypassrls=false
+OMEGA_CHECK	Replicon Intelligence signals	PASS	rows=39
+OMEGA_CHECK	Replicon Control Room items	PASS	rows=53
+OMEGA_CHECK	external write-back disabled	PASS	CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=<unset>

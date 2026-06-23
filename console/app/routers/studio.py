@@ -2420,9 +2420,17 @@ async def superset_dataset(
     database_id = body.get("database_id")
     table_name = body.get("table_name") or body.get("dataset_name")
     schema = body.get("schema") or "public"
+    cartridge = str(body.get("cartridge") or "").strip()
+    if cartridge:
+        _require_cartridge_visible(user, cartridge)
 
     if not table_name:
-        gold = [ds for ds in await _refinement_datasets(user) if (ds.get("layer") or "").lower() == "gold"]
+        gold = [
+            ds
+            for ds in await _refinement_datasets(user)
+            if (ds.get("layer") or "").lower() == "gold"
+            and (not cartridge or str(ds.get("cartridge") or "") == cartridge)
+        ]
         if not gold:
             return {"created": False, "available": False, "error": "No Gold datasets available for Superset"}
         table_name = _dataset_table_name(gold[0])
@@ -2437,6 +2445,7 @@ async def superset_dataset(
     datasets = [
         ds for ds in await _refinement_datasets(user)
         if (ds.get("layer") or "").lower() == "gold"
+        and (not cartridge or str(ds.get("cartridge") or "") == cartridge)
     ]
     allowed_tables = {_dataset_table_name(ds) for ds in datasets}
     if table_name not in allowed_tables:

@@ -33,7 +33,7 @@ Ejecuta una revision programada, segura y auditable de WB-TALENTO. No escribas e
 3. Usa `engine = "wisdom_bit"`, `analysis_type = "talent_readiness_monitor"`, `source_dataset = "sap_successfactors_talent_signals"` y `cartridge_id = "sap_successfactors"`.
 4. Incluye solo evidencia agregada: counts, status, blockers y recomendacion. No incluyas full_name, user_id, PERNR, salario ni payCompValue.
 5. Usa `mcp-infra__decision__orchestrate` solo si existe una senal concreta que requiera comparar opciones. Mantener `execute_engines = true` solo con inputs internos seguros.
-6. Usa `mcp-infra__simulation__monte_carlo_run` solo cuando haya variables numericas y seed definido. Si faltan datos, reporta blocker; no inventes distribuciones.
+6. Ejecuta `mcp-infra__simulation__monte_carlo_run` con la configuracion agregada del contrato. No incluyas PII; si falla la simulacion, reporta blocker.
 
 ## Regla de seguridad
 Todas las salidas son recommendation_only. No hay write-back externo ni acciones destructivas.$$::text AS instructions,
@@ -78,8 +78,31 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
             "engines": [
               {
                 "name": "monte_carlo",
-                "enabled": false,
-                "blocked_reason": "Requiere distribuciones numericas C/P/A o blue-collar validadas desde Gold; no se inventan parametros."
+                "enabled": true,
+                "source_type": "wisdom_bit",
+                "source_id": "WB-TALENTO",
+                "horizon_days": 30,
+                "iterations": 1000,
+                "seed": 45120,
+                "model_version": "wb-talento.monitor.v1",
+                "output_metric": "delta",
+                "breach_threshold": -5,
+                "breach_direction": "below",
+                "input_variables": {
+                  "baseline_value": {"type": "fixed", "value": 100},
+                  "expected_delta": {"type": "triangular", "low": -12, "mode": -4, "high": 2},
+                  "delay_days": {"type": "triangular", "low": 0, "mode": 5, "high": 14},
+                  "cost_per_day": {"type": "fixed", "value": 1},
+                  "probability_of_delay": {"type": "triangular", "low": 0.2, "mode": 0.5, "high": 0.8}
+                },
+                "assumptions": {
+                  "basis": "Agregado WB-TALENTO: presion operativa por blockers C/P/A y senales de talento.",
+                  "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
+                  "decision_mode": "recommendation_only"
+                },
+                "evidence_refs": [
+                  {"type": "wisdom_bit", "id": "WB-TALENTO"}
+                ]
               },
               {
                 "name": "decision_orchestrator",

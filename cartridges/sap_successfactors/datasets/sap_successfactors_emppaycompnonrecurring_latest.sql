@@ -8,30 +8,49 @@ WITH raw AS (
                       hive_partitioning = true,
                       union_by_name   = true)
 ),
+normalized AS (
+    SELECT
+        raw.*,
+        COALESCE(
+            TRY_CAST(payDate AS DATE),
+            CAST(
+                to_timestamp(
+                    TRY_CAST(regexp_extract(CAST(payDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+                ) AS DATE
+            )
+        ) AS _pay_date,
+        COALESCE(
+            TRY_CAST(lastModifiedDateTime AS TIMESTAMP),
+            to_timestamp(
+                TRY_CAST(regexp_extract(CAST(lastModifiedDateTime AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS DOUBLE) / 1000
+            )
+        ) AS _last_modified_at
+    FROM raw
+),
 latest AS (
     SELECT *
     FROM (
         SELECT
-            raw.*,
+            normalized.*,
             ROW_NUMBER() OVER (
-                PARTITION BY userId, payComponent, payDate
+                PARTITION BY userId, payComponentCode, payDate
                 ORDER BY
-                    TRY_CAST(lastModifiedDateTime AS TIMESTAMP) DESC NULLS LAST,
+                    _last_modified_at DESC NULLS LAST,
                     TRY_CAST(_extracted_at AS TIMESTAMP) DESC NULLS LAST,
                     TRY_CAST(load_date AS DATE) DESC NULLS LAST,
                     CAST(batch_id AS VARCHAR) DESC NULLS LAST
             ) AS _rn
-        FROM raw
+        FROM normalized
         WHERE userId IS NOT NULL
     )
     WHERE _rn = 1
 )
 SELECT
     userId               AS user_id,            -- plano
-    payComponent         AS pay_component,
-    paycompValue         AS paycomp_value,      -- encrypted en bronze (no agregable)
-    currency             AS currency,
-    CAST(payDate AS DATE) AS pay_date,
+    payComponentCode     AS pay_component,
+    value                AS paycomp_value,      -- encrypted en bronze (no agregable)
+    currencyCode         AS currency,
+    _pay_date            AS pay_date,
     load_date
 FROM latest
 ORDER BY user_id, pay_date

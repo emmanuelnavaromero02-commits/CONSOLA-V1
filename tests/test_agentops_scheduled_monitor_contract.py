@@ -39,5 +39,20 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert "monte_carlo requires explicit seed" in section
     assert "_monitor_should_alert(contract, payload_with_engines)" in section
     assert '"deterministic_monitor": True' in section
+    assert "scheduled monitor requires extra.monitor contract" in section
     assert "recommendation_only" in section
     assert 'conversation_id=f"agent_run:' not in source
+
+
+def test_scheduled_agents_fail_closed_without_monitor_contract():
+    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
+    section = source.split("async def api_agents_invoke_scheduled", 1)[1]
+    assert "scheduled agents require monitor role and monitor contract" in section
+    assert "run_scheduled_monitor" in section
+    assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in section
+
+    v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
+    v1_section = v1_source.split("async def api_agents_invoke_scheduled", 1)[1]
+    assert "scheduled agents require monitor role and monitor contract" in v1_section
+    assert "run_scheduled_monitor" in v1_section
+    assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in v1_section

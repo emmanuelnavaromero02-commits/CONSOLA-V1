@@ -74,19 +74,26 @@ def test_extract_all_plan_keeps_only_scoped_connection_and_reports_skips(monkeyp
         security_context=_ctx(),
     )
 
-    assert [row["entity"] for row in entities] == ["PerPerson", "FOCompany"]
+    assert [row["entity"] for row in entities] == ["PerPerson", "FOCompany", "EmpEmploymentTermination"]
     assert {(row["entity"], row["reason"]) for row in skipped} == {
         ("Position", "not_scoped_for_connection"),
         ("Candidate", "not_scoped_for_connection"),
         ("EmpJob", "scope_mismatch"),
-        ("EmpEmploymentTermination", "external_scope_blocked"),
     }
 
 
 def test_extract_all_external_scope_block_can_be_overridden(monkeypatch):
     from app.services import catalog_service
 
-    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: _rows())
+    rows = [
+        {
+            "entity": "Candidate",
+            "connection_id": "femsa_sf",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        }
+    ]
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
     monkeypatch.setenv("SAP_SUCCESSFACTORS_EXTRACT_ALL_EXCLUDE_ENTITIES", "")
 
     entities, skipped = catalog_service.get_extract_all_plan(
@@ -94,13 +101,36 @@ def test_extract_all_external_scope_block_can_be_overridden(monkeypatch):
         security_context=_ctx(),
     )
 
-    assert [row["entity"] for row in entities] == [
-        "PerPerson",
-        "FOCompany",
-        "EmpEmploymentTermination",
-    ]
-    assert ("EmpEmploymentTermination", "external_scope_blocked") not in {
+    assert [row["entity"] for row in entities] == ["Candidate"]
+    assert ("Candidate", "external_scope_blocked") not in {
         (row["entity"], row["reason"]) for row in skipped
+    }
+
+
+def test_extract_all_default_skips_known_unavailable_successfactors_entities(monkeypatch):
+    from app.services import catalog_service
+
+    rows = [
+        {
+            "entity": entity,
+            "connection_id": "femsa_sf",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        }
+        for entity in ("PerPerson", "Candidate", "GoalPlan", "LearningItem")
+    ]
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+
+    entities, skipped = catalog_service.get_extract_all_plan(
+        conn_id="femsa_sf",
+        security_context=_ctx(),
+    )
+
+    assert [row["entity"] for row in entities] == ["PerPerson"]
+    assert {(row["entity"], row["reason"]) for row in skipped} == {
+        ("Candidate", "external_scope_blocked"),
+        ("GoalPlan", "external_scope_blocked"),
+        ("LearningItem", "external_scope_blocked"),
     }
 
 
@@ -260,6 +290,41 @@ def test_console_extract_all_passes_entity_idempotency_key(monkeypatch):
 
     assert captured[0]["idempotency_key"] == "sync_now:sap_successfactors:test:PerPerson"
     assert captured[0]["parent_idempotency_key"] == "sync_now:sap_successfactors:test"
+
+
+def test_console_extract_all_triggers_gold_refresh_once_after_entities(monkeypatch):
+    from app.api import routes_console
+
+    external_calls: list[tuple[str, tuple]] = []
+    monkeypatch.setattr(routes_console, "preflight_for_extract", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        routes_console,
+        "get_extract_all_plan",
+        lambda **_kwargs: ([{"entity": "PerPerson"}, {"entity": "EmpJob"}], []),
+    )
+
+    def fake_mark(func, *args):
+        external_calls.append((func.__name__, args))
+        if func.__name__ == "_trigger_successfactors_gold_refresh":
+            return {"status": "success", "materialized": 19, "total": 19}
+        return None
+
+    def fake_run_entity(config, **_kwargs):
+        return {"entity": config["entity"], "status": "success", "record_count": 7}
+
+    monkeypatch.setattr(routes_console, "_mark_external_job", fake_mark)
+    monkeypatch.setattr(routes_console, "run_entity", fake_run_entity)
+
+    response = routes_console.extract_all(
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        body={"security_context": _ctx()},
+    )
+
+    assert [name for name, _args in external_calls].count("_trigger_silver_refresh") == 2
+    assert [name for name, _args in external_calls].count("_trigger_successfactors_gold_refresh") == 1
+    assert response["gold_refresh"] == {"status": "success", "materialized": 19, "total": 19}
 
 
 def test_console_extract_all_classifies_entity_auth_blocks_without_global_502(monkeypatch):

@@ -19,7 +19,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 
-SAP_DAGS = [
+SAP_HTTP_DAGS = [
     # (path, expected env var name for URL, default-port-hostname)
     (REPO / "cartridges/sap_hcm/dags/sap_hcm_extract.py",
      "SAP_HCM_URL", "http://sap-hcm:8202"),
@@ -29,14 +29,15 @@ SAP_DAGS = [
      "SAP_S4HANA_URL", "http://sap-s4hana:8204"),
     (REPO / "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
      "SAP_S4HANA_URL", "http://sap-s4hana:8204"),
-    (REPO / "cartridges/sap_successfactors/dags/sap_successfactors_extract.py",
-     "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"),
-    (REPO / "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py",
-     "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"),
+]
+
+SUCCESSFACTORS_DIRECT_DAGS = [
+    REPO / "cartridges/sap_successfactors/dags/sap_successfactors_extract.py",
+    REPO / "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py",
 ]
 
 
-@pytest.mark.parametrize("path,env_var,default_url", SAP_DAGS,
+@pytest.mark.parametrize("path,env_var,default_url", SAP_HTTP_DAGS,
                          ids=lambda v: v.name if isinstance(v, Path) else v)
 def test_sap_dag_uses_runtime_airflow_pair_key(path, env_var, default_url):
     """B1: the scheduler must be able to import DAGs even before runtime
@@ -57,7 +58,7 @@ def test_sap_dag_uses_runtime_airflow_pair_key(path, env_var, default_url):
     )
 
 
-@pytest.mark.parametrize("path,env_var,default_url", SAP_DAGS,
+@pytest.mark.parametrize("path,env_var,default_url", SAP_HTTP_DAGS,
                          ids=lambda v: v.name if isinstance(v, Path) else v)
 def test_sap_dag_url_from_env(path, env_var, default_url):
     """B2: CARTRIDGE_URL must come from the documented env var, with the
@@ -78,7 +79,19 @@ def test_sap_dag_url_from_env(path, env_var, default_url):
     )
 
 
-@pytest.mark.parametrize("path,env_var,default_url", SAP_DAGS,
+@pytest.mark.parametrize("path", [*SUCCESSFACTORS_DIRECT_DAGS], ids=lambda p: p.name)
+def test_successfactors_dags_call_odata_directly(path):
+    src = path.read_text(encoding="utf-8")
+    assert "SAP_SUCCESSFACTORS_URL" not in src
+    assert "http://sap-successfactors:8203" not in src
+    assert "CARTRIDGE_URL" not in src
+    assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" not in src
+    assert "run_entity" in src
+    assert "set_security_context" in src
+    assert "entity_config.connection_id" in src
+
+
+@pytest.mark.parametrize("path,env_var,default_url", SAP_HTTP_DAGS,
                          ids=lambda v: v.name if isinstance(v, Path) else v)
 def test_sap_dag_has_default_args_with_retries(path, env_var, default_url):
     """B3: default_args must declare retries with exponential backoff."""
@@ -94,6 +107,17 @@ def test_sap_dag_has_default_args_with_retries(path, env_var, default_url):
     assert "retry_delay" in src
     assert "max_retry_delay" in src
     # And the @dag decorator must consume them.
+    assert "default_args=default_args" in src
+
+
+@pytest.mark.parametrize("path", [*SUCCESSFACTORS_DIRECT_DAGS], ids=lambda p: p.name)
+def test_successfactors_direct_dag_has_default_args_with_retries(path):
+    src = path.read_text(encoding="utf-8")
+    assert "default_args" in src
+    assert re.search(r'"retries"\s*:\s*[1-9]', src)
+    assert '"retry_exponential_backoff": True' in src
+    assert "retry_delay" in src
+    assert "max_retry_delay" in src
     assert "default_args=default_args" in src
 
 
@@ -127,7 +151,6 @@ def test_compose_exposes_cartridge_url_env_vars():
         "SALESFORCE_URL",
         "SAP_HCM_URL",
         "SAP_S4HANA_URL",
-        "SAP_SUCCESSFACTORS_URL",
     ):
         # Each variable appears at least twice (airflow + airflow-scheduler).
         assert compose.count(env) >= 2, (

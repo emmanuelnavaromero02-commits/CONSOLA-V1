@@ -53,7 +53,10 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("syncTargetSupportsTalent");
     expect(pageSource).toContain('<option value="talent">Talento</option>');
     expect(pageSource).toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target })");
+    expect(pageSource).toContain("SYNC_NOW_MAX_POLL_ATTEMPTS = 600");
+    expect(pageSource).toContain("SYNC_NOW_POLL_INTERVAL_MS = 3000");
     expect(pageSource).not.toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target: \"all\" })");
+    expect(pageSource).not.toContain("attempt < 40");
   });
 
   it("surfaces deterministic math provenance and control origins", () => {

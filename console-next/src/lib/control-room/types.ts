@@ -773,6 +773,19 @@ export interface IntelligenceOutcomeDraft {
   learned_rule?: string;
 }
 
+export interface AnalysisEvidence {
+  analysis_type?: string;
+  engine?: string;
+  engine_run_id?: string;
+  confidence?: number | null;
+  p10?: number | string | null;
+  p50?: number | string | null;
+  p90?: number | string | null;
+  metrics?: Record<string, unknown>;
+  blockers?: unknown[];
+  recommended_option?: Record<string, unknown> | null;
+}
+
 export interface ControlItem {
   id: string;
   kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal" | "agent_alert";
@@ -822,6 +835,10 @@ export interface ControlItem {
   action_templates?: ActionTemplate[];
   decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
+  analysis_type?: string | null;
+  engine?: string | null;
+  engine_run_id?: string | null;
+  analysis_evidence?: AnalysisEvidence;
   omega: Omega;
 }
 
@@ -833,6 +850,10 @@ export interface ControlAlert {
   advisory?: boolean;
   agent_id?: string | null;
   agent_run_id?: string | number | null;
+  analysis_type?: string | null;
+  engine?: string | null;
+  engine_run_id?: string | null;
+  analysis_evidence?: AnalysisEvidence;
   deduped?: boolean;
   occurrence_count?: number;
   hypothesis?: string | null;

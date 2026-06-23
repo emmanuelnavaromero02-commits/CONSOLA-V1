@@ -11,7 +11,13 @@ from app.services.intelligence import monte_carlo
 from app.services.intelligence.utils import json_dumps, public_json
 
 
-SOURCE_TYPES = {"signal", "decision_option", "manual_fixture", "backtest_case"}
+SOURCE_TYPES = {
+    "signal",
+    "decision_option",
+    "manual_fixture",
+    "backtest_case",
+    "wisdom_bit",
+}
 FORBIDDEN_SCOPE_KEYS = {"tenant_id", "workspace_id", "security_context"}
 
 
@@ -84,6 +90,8 @@ async def _source_exists(
 ) -> bool:
     if source_type == "manual_fixture":
         return True
+    if source_type == "wisdom_bit":
+        return source_id.strip().upper() == "WB-TALENTO"
     if source_type == "signal":
         value = await conn.fetchval(
             """

@@ -1057,6 +1057,12 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "advisory": bool(item.get("advisory")),
         "agent_id": item.get("agent_id"),
         "agent_run_id": item.get("agent_run_id"),
+        "analysis_type": item.get("analysis_type"),
+        "engine": item.get("engine"),
+        "engine_run_id": item.get("engine_run_id"),
+        "analysis_evidence": item.get("analysis_evidence")
+        if isinstance(item.get("analysis_evidence"), dict)
+        else {},
         "deduped": bool(item.get("deduped")),
         "occurrence_count": int(item.get("occurrence_count") or 1),
         "hypothesis": item.get("hypothesis"),

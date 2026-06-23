@@ -537,6 +537,19 @@ interface IntelligenceOutcomeDraft {
   learned_rule?: string;
 }
 
+interface AnalysisEvidence {
+  analysis_type?: string;
+  engine?: string;
+  engine_run_id?: string;
+  confidence?: number | null;
+  p10?: number | string | null;
+  p50?: number | string | null;
+  p90?: number | string | null;
+  metrics?: Record<string, unknown>;
+  blockers?: unknown[];
+  recommended_option?: Record<string, unknown> | null;
+}
+
 interface ControlItem {
   id: string;
   kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal" | "agent_alert";
@@ -586,6 +599,10 @@ interface ControlItem {
   action_templates?: ActionTemplate[];
   decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
+  analysis_type?: string | null;
+  engine?: string | null;
+  engine_run_id?: string | null;
+  analysis_evidence?: AnalysisEvidence;
   omega: Omega;
 }
 
@@ -597,6 +614,10 @@ interface ControlAlert {
   advisory?: boolean;
   agent_id?: string | null;
   agent_run_id?: string | number | null;
+  analysis_type?: string | null;
+  engine?: string | null;
+  engine_run_id?: string | null;
+  analysis_evidence?: AnalysisEvidence;
   deduped?: boolean;
   occurrence_count?: number;
   hypothesis?: string | null;
@@ -742,6 +763,8 @@ const manualTabs = ["Investigación", "Opciones", "Decisión", "Ejecución", "Co
 const manualStepIds = ["investigation", "options", "decision", "execution", "control", "lessons"] as const;
 const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const DEFAULT_REFRESH_INTERVAL_SECONDS = 30;
+const SYNC_NOW_POLL_INTERVAL_MS = 3000;
+const SYNC_NOW_MAX_POLL_ATTEMPTS = 600;
 
 function parseDate(value?: string): Date | null {
   if (!value) return null;
@@ -1981,8 +2004,8 @@ export default function ControlRoomPage() {
       setControlSyncRun(current);
       toast.success("Sincronización enviada.");
 
-      for (let attempt = 0; attempt < 40 && !isSyncTerminal(current.status); attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 3000));
+      for (let attempt = 0; attempt < SYNC_NOW_MAX_POLL_ATTEMPTS && !isSyncTerminal(current.status); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, SYNC_NOW_POLL_INTERVAL_MS));
         current = await getCartridgeSyncRun(activeCartridge, current.run_id);
         setControlSyncRun(current);
       }
@@ -1995,6 +2018,9 @@ export default function ControlRoomPage() {
         const message = current.error_message || "La sincronización falló.";
         setSyncError(message);
         toast.error(message);
+      } else {
+        setSyncError("La sincronización sigue corriendo en Airflow. Control Room se actualizará al terminar.");
+        toast("Sincronización aún en curso en Airflow.");
       }
       refreshAll();
     } catch (err) {
@@ -2856,6 +2882,11 @@ function AlertQueuePanel({ context, alerts, items, alertSource, onAlertSource, b
         <div className="grid gap-3">
           {topAlerts.map((alert) => {
             const item = itemById.get(alert.item_id);
+            const evidence = alert.analysis_evidence;
+            const engine = alert.engine || evidence?.engine || "";
+            const analysisType = alert.analysis_type || evidence?.analysis_type || "";
+            const engineRunId = alert.engine_run_id || evidence?.engine_run_id || "";
+            const confidence = typeof evidence?.confidence === "number" ? Math.round(evidence.confidence * 100) : null;
             return (
               <article className="rounded-lg border bg-background p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#07111e]" key={alert.id}>
                 <div className="flex items-start justify-between gap-3">
@@ -2874,6 +2905,15 @@ function AlertQueuePanel({ context, alerts, items, alertSource, onAlertSource, b
                     {alert.hypothesis ? `${alert.occurrence_count ? " · " : ""}Hipótesis: ${sanitizeBusinessCopy(alert.hypothesis, "sin hipótesis")}` : ""}
                     {alert.expected_outcome ? " · Resultado esperado registrado" : ""}
                   </p>
+                ) : null}
+                {engine || analysisType || engineRunId || alert.agent_run_id ? (
+                  <div className="mt-2 grid gap-2 rounded-md border bg-card/70 p-2 text-xs text-muted-foreground md:grid-cols-2">
+                    {engine ? <span>Motor: <strong className="text-foreground">{engine}</strong></span> : null}
+                    {analysisType ? <span>Analisis: <strong className="text-foreground">{analysisType}</strong></span> : null}
+                    {engineRunId ? <span className="break-all">Engine run: <strong className="text-foreground">{String(engineRunId)}</strong></span> : null}
+                    {alert.agent_run_id ? <span className="break-all">Agent run: <strong className="text-foreground">{String(alert.agent_run_id)}</strong></span> : null}
+                    {confidence !== null ? <span>Confianza: <strong className="text-foreground">{confidence}%</strong></span> : null}
+                  </div>
                 ) : null}
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <Metric label="Frente" value={businessFrontLabel(alert.module)} />

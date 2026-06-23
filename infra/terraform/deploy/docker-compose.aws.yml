@@ -390,7 +390,7 @@ services:
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
       INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE: ${INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE:?INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE is required}
       CONSOLE_INTERNAL_URL: http://console:8000
-      AIRFLOW_URL:       http://airflow:8080
+      AIRFLOW_URL:       http://airflow:8080/airflow
       AIRFLOW_USER:      ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_PASSWORD:  ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
       AIRFLOW_DAGS_PATH: /opt/airflow/dags
@@ -421,6 +421,7 @@ services:
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       EMBED_MODEL:       ${EMBED_MODEL:-amazon.titan-embed-text-v2:0}
       EMBED_DIM:         ${EMBED_DIM:-1024}
+      RAG_LOCAL_EMBEDDING_FALLBACK: ${RAG_LOCAL_EMBEDDING_FALLBACK:-true}
       ADMIN_EMAIL:       ${ADMIN_EMAIL:-}
     # v1.43.4 (Codex H1): mcp-infra port 8010 is no longer published
     # on the host network in AWS — it's an internal service consumed
@@ -436,6 +437,7 @@ services:
     # impossible regardless of either.
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
+      - /opt/modecissions/cartridges:/registry/cartridges:ro
     networks:
       - modecissions_net
     depends_on:
@@ -692,6 +694,9 @@ services:
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
+      AIRFLOW__WEBSERVER__BASE_URL:         "${AIRFLOW_PUBLIC_URL:-http://airflow:8080}"
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW_HEALTH_PATH:                  "${AIRFLOW_HEALTH_PATH:-/airflow/health}"
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
       # Sprint v1.38: scoped operational role; see local compose comment.
@@ -704,6 +709,12 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY:         ${AWS_SECRET_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE:             "true"
       AIRFLOW_VAR_AWS_REGION:               ${AWS_REGION:?AWS_REGION is required}
+      MINIO_BUCKET:                         ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      MINIO_ENDPOINT:                       "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      MINIO_ACCESS_KEY:                     ${AWS_ACCESS_KEY_ID:-}
+      MINIO_SECRET_KEY:                     ${AWS_SECRET_ACCESS_KEY:-}
+      MINIO_SECURE:                         "true"
+      REFINEMENT_URL:                       http://refinement:8500
       # v1.43.1 (Codex P0-4): cartridges are deployed OUT OF THIS COMPOSE
       # — see DEPLOY-RUNBOOK.md §"Cartridges deployed separately". The
       # DAGs need to know where each cartridge lives; the operator sets
@@ -714,7 +725,6 @@ services:
       # works without further env tweaks.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
-      SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
@@ -744,7 +754,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080$${AIRFLOW_HEALTH_PATH:-/health} || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -784,10 +794,15 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY:         ${AWS_SECRET_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE:             "true"
       AIRFLOW_VAR_AWS_REGION:               ${AWS_REGION:?AWS_REGION is required}
+      MINIO_BUCKET:                         ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      MINIO_ENDPOINT:                       "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      MINIO_ACCESS_KEY:                     ${AWS_ACCESS_KEY_ID:-}
+      MINIO_SECRET_KEY:                     ${AWS_SECRET_ACCESS_KEY:-}
+      MINIO_SECURE:                         "true"
+      REFINEMENT_URL:                       http://refinement:8500
       # v1.43.1 (Codex P0-4): mirror the webserver's cartridge URL vars.
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
-      SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"

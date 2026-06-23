@@ -50,12 +50,11 @@ DEDUP_LATEST_KEYS = {
     "sap_successfactors_candidate_latest.sql": ("candidateId",),
     "sap_successfactors_jobrequisition_latest.sql": ("jobReqId",),
     "sap_successfactors_empcompensation_latest.sql": ("userId", "startDate"),
-    "sap_successfactors_emppaycompnonrecurring_latest.sql": ("userId", "payComponent", "payDate"),
+    "sap_successfactors_emppaycompnonrecurring_latest.sql": ("userId", "payComponentCode", "payDate"),
     "sap_successfactors_emppaycomprecurring_latest.sql": ("userId", "payComponent", "startDate"),
     "sap_successfactors_empemploymenttermination_latest.sql": (
         "userId",
         "endDate",
-        "eventReasonExternalCode",
     ),
 }
 
@@ -207,6 +206,16 @@ def test_declared_sources_are_real_sf_entities():
             packaged = re.match(r"(?:silver|gold)/sap_successfactors/([a-z0-9_]+)$", src)
             assert packaged, f"{path.name}: malformed source {src!r}"
             assert packaged.group(1) in dataset_names, f"{path.name}: source {src!r} not a packaged dataset"
+
+
+def test_compensation_full_declares_raw_triggers_and_silver_dependencies():
+    _, _, sources, _ = _parse_header(DATASETS_DIR / "sap_successfactors_compensation_full.sql")
+    assert "raw/sap_successfactors/EmpCompensation" in sources
+    assert "raw/sap_successfactors/EmpPayCompRecurring" in sources
+    assert "raw/sap_successfactors/EmpPayCompNonRecurring" in sources
+    assert "silver/sap_successfactors/sap_successfactors_empcompensation_latest" in sources
+    assert "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest" in sources
+    assert "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest" in sources
 
 
 def test_golds_do_not_expose_encrypted_columns():

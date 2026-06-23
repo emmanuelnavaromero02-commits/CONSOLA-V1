@@ -245,7 +245,7 @@ GRANT CONNECT ON DATABASE modecissions TO omega_airflow_dag;
 GRANT USAGE ON SCHEMA public TO omega_airflow_dag;
 GRANT SELECT, INSERT, UPDATE ON
     cartridges, cartridge_dags, entity_config,
-    entity_watermarks, pipeline_runs, run_logs,
+    entity_watermarks, extraction_runs, pipeline_runs, run_logs,
     datasets, mcp_servers, mcp_custom_tools,
     agents
     TO omega_airflow_dag;

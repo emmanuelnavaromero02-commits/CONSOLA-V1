@@ -299,6 +299,20 @@ def test_aws_console_mounts_cartridges_read_only():
     )
 
 
+def test_aws_mcp_infra_mounts_cartridges_read_only_for_studio_source_sync():
+    """Studio gets DAG source through mcp-infra. Packaged cartridge DAGs are
+    mounted into Airflow from /opt/modecissions/cartridges, so mcp-infra must
+    see the same read-only tree to keep Studio and Airflow in sync."""
+    src = AWS.read_text(encoding="utf-8")
+    marker = "container_name: mode_mcp_infra"
+    start = src.index(marker)
+    end = src.index("\n  superset-init:", start)
+    section = src[start:end]
+
+    assert "/opt/modecissions/cartridges:/registry/cartridges:ro" in section
+    assert "/opt/modecissions/airflow/dags:/opt/airflow/dags" in section
+
+
 def test_vpn_admin_password_hash_is_required_not_hardcoded():
     """The wg-easy admin password hash must be injected at deploy time so
     every environment can rotate it and the repo never ships a live hash."""

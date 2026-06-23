@@ -33,13 +33,9 @@ def test_gold_dependency_entities_have_odata_select_fields():
     for entity in FOUNDATION_ENTITIES:
         assert f"'sap_successfactors', '{entity}'" in sql
         assert f"('{entity}'," in sql
-    for field in (
-        "externalCode",
-        "name_defaultValue",
-        "eventReasonExternalCode",
-        "lastModifiedDateTime",
-    ):
+    for field in ("externalCode", "name_defaultValue", "lastModifiedDateTime"):
         assert field in sql
+    assert "eventReasonExternalCode" not in sql
 
 
 def test_gold_dependency_schedule_is_scoped_to_femsa_connection():

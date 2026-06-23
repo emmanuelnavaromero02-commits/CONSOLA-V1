@@ -462,6 +462,7 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         "cartridge-sap_successfactors": (
             "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
         ),
+        "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
 }
 
@@ -919,6 +920,21 @@ async def _scoped_read_cache_get_or_set(
         if cached is not None:
             return cached
         return _scoped_read_cache_set(namespace, user, await loader(), *parts)
+
+
+def _scoped_read_cache_invalidate(namespace: str, user: dict | None = None) -> None:
+    if user is None:
+        doomed = [key for key in _SCOPED_READ_CACHE if key and key[0] == namespace]
+    else:
+        identity = _scoped_cache_identity(user)
+        doomed = [
+            key
+            for key in _SCOPED_READ_CACHE
+            if key and key[0] == namespace and len(key) > 1 and key[1] == identity
+        ]
+    for key in doomed:
+        _SCOPED_READ_CACHE.pop(key, None)
+        _SCOPED_READ_CACHE_LOCKS.pop(key, None)
 
 
 def _bronze_bucket_name() -> str:
@@ -5406,10 +5422,21 @@ async def api_pipeline(
 
     def _gold_deps_for_silver(silver_name: str) -> list[dict]:
         deps = []
+        silver_lower = silver_name.lower()
+        cartridge_lower = cartridge.lower()
         for gds in gold_ds:
             sql = gds.get("sql_def") or gds.get("sql") or ""
+            sources = [
+                str(source)
+                for source in (gds.get("sources") or [])
+                if str(source).strip()
+            ]
+            haystack = "\n".join([sql, *sources])
+            normalized = haystack.replace("\\", "/").lower()
             if _re.search(
                 rf"\bsilver_{_re.escape(silver_name)}\b", sql, _re.IGNORECASE
+            ) or (
+                f"silver/{cartridge_lower}/{silver_lower}" in normalized
             ):
                 deps.append(gds)
         return deps
@@ -6207,6 +6234,26 @@ def _sync_now_lock_key(
     )
 
 
+def _normalize_sync_now_request_id(value: object | None) -> str | None:
+    if value is None:
+        return None
+    request_id = str(value).strip()
+    if not request_id:
+        return None
+    if len(request_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_.:-]+", request_id):
+        raise HTTPException(400, "invalid sync request id")
+    return request_id
+
+
+def _sync_now_run_id_from_request_id(
+    *, cartridge: str, request_id: str | None, lock_key: str
+) -> str:
+    if not request_id:
+        return f"sync_now:{cartridge}:{uuid.uuid4().hex}"
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, f"{lock_key}:{request_id}").hex
+    return f"sync_now:{cartridge}:{digest}"
+
+
 def _sync_run_age_seconds(row: dict[str, Any]) -> float | None:
     started_at = row.get("started_at")
     if isinstance(started_at, str):
@@ -6245,7 +6292,7 @@ async def _fetch_active_sync_run(
 ) -> dict[str, Any] | None:
     pool = await _get_db_pool()
     scope_sql, scope_values = await _pipeline_runs_scope_predicate(
-        user, 6, refresh_columns=True
+        user, 5, refresh_columns=True
     )
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         row = await conn.fetchrow(
@@ -6257,10 +6304,6 @@ async def _fetch_active_sync_run(
                AND status <> ALL($2::text[])
                AND mode=$3
                AND COALESCE(extra->>'target', 'all')=$4
-               AND (
-                    ($5::text IS NULL AND NULLIF(extra->>'conn_id', '') IS NULL)
-                    OR extra->>'conn_id'=$5
-               )
                AND started_at > NOW() - INTERVAL '4 hours'
                {scope_sql}
              ORDER BY started_at DESC
@@ -6270,7 +6313,6 @@ async def _fetch_active_sync_run(
             list(_SYNC_TERMINAL_STATUSES),
             mode,
             target,
-            conn_id,
             *scope_values,
         )
     return dict(row) if row else None
@@ -6293,6 +6335,7 @@ async def _trigger_sync_aggregate_extract_all(
         "cartridge_id": cartridge,
         "mode": mode,
         "target": target,
+        "idempotency_key": run_id,
     }
     if conn_id:
         conf["conn_id"] = conn_id
@@ -6374,6 +6417,25 @@ def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str
         else None,
         "error_message": row.get("error_message"),
     }
+
+
+def _sync_run_needs_final_reconcile(row: dict[str, Any], extra: dict[str, Any]) -> bool:
+    """Terminal sync rows may predate the final Control Room/materialization check."""
+    status = str(row.get("status") or "").lower()
+    if status not in _SYNC_TERMINAL_STATUSES:
+        return True
+    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else []
+    if len(steps) < len(_initial_sync_steps()):
+        return True
+    if any(
+        str(step.get("status") or "").lower() in {"queued", "running", ""}
+        for step in steps
+        if isinstance(step, dict)
+    ):
+        return True
+    if str(row.get("cartridge_id") or "") == "sap_successfactors":
+        return not bool(extra.get("control_room_checked_at"))
+    return False
 
 
 async def _upsert_sync_run(
@@ -6565,6 +6627,51 @@ async def _sync_child_runs(
     return refreshed
 
 
+def _sync_child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    materialized = 0
+    total = 0
+    results: list[dict[str, Any]] = []
+    statuses: list[str] = []
+    for row in child_rows:
+        extra = _sync_extra_from_row(row)
+        payload = extra.get("gold_refresh")
+        if not isinstance(payload, dict):
+            continue
+        status = str(payload.get("status") or "").strip().lower()
+        if status:
+            statuses.append(status)
+        payload_results = [
+            item for item in (payload.get("results") or []) if isinstance(item, dict)
+        ]
+        results.extend(payload_results)
+        payload_total = payload.get("total")
+        if isinstance(payload_total, int):
+            total += payload_total
+        elif payload_results:
+            total += len(payload_results)
+        payload_materialized = payload.get("materialized")
+        if isinstance(payload_materialized, int):
+            materialized += payload_materialized
+        elif payload_results:
+            materialized += sum(
+                1 for item in payload_results if item.get("status") == "ok"
+            )
+    if not total and not results:
+        return {}
+    status = "success" if total and materialized >= total else "partial" if materialized else "failed"
+    if "failed" in statuses and not materialized:
+        status = "failed"
+    elif "partial" in statuses and status == "success":
+        status = "partial"
+    return {
+        "status": status,
+        "materialized": materialized,
+        "total": total or len(results),
+        "failed": max((total or len(results)) - materialized, 0),
+        "results": results,
+    }
+
+
 async def _build_sync_run_status(
     *,
     cartridge: str,
@@ -6592,6 +6699,7 @@ async def _build_sync_run_status(
     child_rows = await _sync_child_runs(
         cartridge=cartridge, run_ids=child_run_ids, user=user
     )
+    gold_refresh_summary = _sync_child_gold_refresh_summary(child_rows)
     child_statuses = [str(item.get("status") or "").lower() for item in child_rows]
     running_children = any(
         status in {"queued", "running", "unknown"} for status in child_statuses
@@ -6600,6 +6708,7 @@ async def _build_sync_run_status(
         1 for status in child_statuses if status in {"failed", "error"}
     )
     success_children = sum(1 for status in child_statuses if status == "success")
+    partial_children = sum(1 for status in child_statuses if status == "partial")
     stale_running = (
         str(row.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES
         and running_children
@@ -6656,6 +6765,18 @@ async def _build_sync_run_status(
     gold_ready = sum(
         1 for node in gold_nodes if str(node.get("status") or "") in {"fresh", "stale"}
     )
+    gold_refresh_materialized = int(gold_refresh_summary.get("materialized") or 0)
+    gold_refresh_total = int(gold_refresh_summary.get("total") or 0)
+    if gold_refresh_total:
+        gold_ready = gold_refresh_materialized
+    elif gold_refresh_materialized > gold_ready:
+        gold_ready = gold_refresh_materialized
+    gold_total = max(len(gold_nodes), gold_refresh_total, gold_ready)
+    gold_refresh_status = str(gold_refresh_summary.get("status") or "").lower()
+    gold_partial = bool(
+        (gold_refresh_total and gold_refresh_materialized < gold_refresh_total)
+        or gold_refresh_status == "partial"
+    )
 
     updates: dict[str, dict[str, Any]] = {
         "connection": {
@@ -6674,17 +6795,20 @@ async def _build_sync_run_status(
             "status": "running",
             "detail": f"{len(child_rows)} corridas en curso.",
         }
-    elif failed_children and not success_children:
+    elif failed_children and not success_children and not partial_children:
         updates["bronze"] = {
             "label": "Bronze",
             "status": "failed",
             "detail": "Las extracciones fallaron antes de completar Bronze.",
         }
-    elif failed_children or errors:
+    elif failed_children or partial_children or errors:
         updates["bronze"] = {
             "label": "Bronze",
             "status": "partial",
-            "detail": f"{success_children} entidades OK; {failed_children + len(errors)} con error.",
+            "detail": (
+                f"{success_children} OK; {partial_children} parciales; "
+                f"{failed_children + len(errors)} con error."
+            ),
         }
     elif success_children or bronze_ready:
         updates["bronze"] = {
@@ -6703,10 +6827,17 @@ async def _build_sync_run_status(
             "detail": "Esperando a que Airflow termine extracción.",
         }
     elif gold_ready:
+        gold_detail = (
+            f"{gold_ready}/{gold_total} Gold materializados o disponibles"
+            if gold_total and gold_total != gold_ready
+            else f"{gold_ready} Gold frescos o disponibles"
+        )
         updates["silver_gold"] = {
             "label": "Silver/Gold",
-            "status": "success" if not failed_children else "partial",
-            "detail": f"{silver_ready} Silver · {gold_ready} Gold frescos o disponibles.",
+            "status": "success"
+            if not failed_children and not partial_children and not gold_partial
+            else "partial",
+            "detail": f"{silver_ready} Silver · {gold_detail}.",
         }
     elif silver_ready:
         updates["silver_gold"] = {
@@ -6722,23 +6853,67 @@ async def _build_sync_run_status(
         }
 
     control_room_ready = False
-    if cartridge == "sap_successfactors" and gold_ready:
+    control_room_checked_at: str | None = None
+    control_room_snapshot: dict[str, Any] = {}
+    if cartridge == "sap_successfactors" and (bronze_ready or silver_ready or gold_ready):
         try:
             from app.services import control_room_service
 
-            gold_kpis = await control_room_service.sap_successfactors_gold_kpis(user)
-            talent_kpis = await control_room_service.sap_successfactors_talent_kpis(
-                user
+            dashboard_payload = await control_room_service.dashboard(user, persist=True)
+            gold_kpis = (
+                await control_room_service.sap_successfactors_gold_kpis(user)
+                if gold_ready
+                else {}
             )
-            control_room_ready = bool(gold_kpis) and bool(talent_kpis)
+            talent_kpis = (
+                await control_room_service.sap_successfactors_talent_kpis(user)
+                if gold_ready
+                else {}
+            )
+            from datetime import datetime as _dt, timezone as _tz
+
+            control_room_checked_at = _dt.now(_tz.utc).isoformat()
+            dashboard_meta = (
+                dashboard_payload.get("meta")
+                if isinstance(dashboard_payload, dict)
+                else {}
+            )
+            dashboard_summary = (
+                dashboard_payload.get("summary")
+                if isinstance(dashboard_payload, dict)
+                else {}
+            )
+            control_room_snapshot = {
+                "source_count": int((dashboard_meta or {}).get("source_count") or 0),
+                "item_count": int((dashboard_meta or {}).get("item_count") or 0),
+                "total_items": int((dashboard_summary or {}).get("total_items") or 0),
+                "data_ready_sources": int(
+                    (dashboard_summary or {}).get("data_ready_sources") or 0
+                ),
+            }
+            control_room_ready = bool(gold_ready and gold_kpis and talent_kpis)
             updates["control_room"] = {
                 "label": "Control Room",
                 "status": "success" if control_room_ready else "partial",
-                "detail": "KPIs Gold/Talent disponibles."
+                "detail": (
+                    "KPIs Gold/Talent disponibles; Control Room materializado "
+                    f"({control_room_snapshot['source_count']} fuentes, "
+                    f"{control_room_snapshot['item_count']} items)."
+                )
                 if control_room_ready
-                else "Gold existe, pero Control Room devolvió datos parciales.",
+                else (
+                    "Control Room materializado "
+                    f"({control_room_snapshot['source_count']} fuentes, "
+                    f"{control_room_snapshot['item_count']} items); "
+                    "Gold parcial o incompleto."
+                    if gold_ready
+                    else "Control Room materializado con fuentes Bronze/Silver; esperando Gold."
+                ),
             }
         except Exception as exc:
+            from datetime import datetime as _dt, timezone as _tz
+
+            control_room_checked_at = _dt.now(_tz.utc).isoformat()
             updates["control_room"] = {
                 "label": "Control Room",
                 "status": "partial",
@@ -6746,6 +6921,9 @@ async def _build_sync_run_status(
                 "error": str(exc)[:300],
             }
     elif cartridge == "sap_successfactors":
+        from datetime import datetime as _dt, timezone as _tz
+
+        control_room_checked_at = _dt.now(_tz.utc).isoformat()
         updates["control_room"] = {
             "label": "Control Room",
             "status": "queued" if running_children else "partial",
@@ -6768,6 +6946,12 @@ async def _build_sync_run_status(
         "triggered_entities": triggered,
         "errors": errors,
         "control_room_ready": control_room_ready,
+        "control_room_checked_at": control_room_checked_at
+        or extra.get("control_room_checked_at"),
+        "control_room_snapshot": control_room_snapshot
+        or extra.get("control_room_snapshot")
+        or {},
+        "gold_refresh": gold_refresh_summary or extra.get("gold_refresh") or {},
         "target": extra.get("target") or "all",
         "mode": extra.get("mode") or row.get("mode") or "incremental",
     }
@@ -6785,6 +6969,13 @@ async def _build_sync_run_status(
         )
         or None,
     )
+    if status in _SYNC_TERMINAL_STATUSES:
+        try:
+            from app.routers.control_room import _control_room_cache_invalidate
+
+            _control_room_cache_invalidate(user)
+        except Exception:
+            logger.debug("Could not invalidate Control Room cache after sync", exc_info=True)
     refreshed = await _fetch_sync_run(
         cartridge=cartridge, run_id=str(row["run_id"]), user=user
     )
@@ -6814,6 +7005,9 @@ async def api_cartridge_sync_now(
     conn_id = _normalize_pipeline_conn_id(
         body.get("conn_id") or body.get("connection_id")
     )
+    request_id = _normalize_sync_now_request_id(
+        body.get("request_id") or body.get("idempotency_key")
+    )
     lock_key = _sync_now_lock_key(
         cartridge=cartridge,
         mode=mode,
@@ -6825,6 +7019,29 @@ async def api_cartridge_sync_now(
     async with pool.acquire() as sync_lock_conn:
         await sync_lock_conn.execute("SELECT pg_advisory_lock(hashtext($1))", lock_key)
         try:
+            run_id = _sync_now_run_id_from_request_id(
+                cartridge=cartridge, request_id=request_id, lock_key=lock_key
+            )
+            if request_id:
+                existing_row = await _fetch_sync_run(
+                    cartridge=cartridge, run_id=run_id, user=user
+                )
+                if existing_row:
+                    existing_status = str(existing_row.get("status") or "").lower()
+                    existing_extra = _sync_extra_from_row(existing_row)
+                    if (
+                        existing_status in _SYNC_TERMINAL_STATUSES
+                        and not _sync_run_needs_final_reconcile(
+                            existing_row, existing_extra
+                        )
+                    ):
+                        return _sync_public_payload(
+                            existing_row, existing_extra
+                        )
+                    return await _build_sync_run_status(
+                        cartridge=cartridge, row=existing_row, user=user
+                    )
+
             active_row = await _fetch_active_sync_run(
                 cartridge=cartridge,
                 mode=mode,
@@ -6842,7 +7059,6 @@ async def api_cartridge_sync_now(
                 ):
                     return active_status
 
-            run_id = f"sync_now:{cartridge}:{uuid.uuid4().hex}"
             steps = _merge_sync_steps(
                 _initial_sync_steps(),
                 {
@@ -6863,6 +7079,7 @@ async def api_cartridge_sync_now(
                     "mode": mode,
                     "target": target,
                     "conn_id": conn_id,
+                    "request_id": request_id,
                     "steps": steps,
                     "triggered_entities": [],
                     "errors": [],
@@ -6958,6 +7175,7 @@ async def api_cartridge_sync_now(
             "mode": mode,
             "target": target,
             "conn_id": conn_id,
+            "request_id": request_id,
             "steps": steps,
             "triggered_entities": triggered_entities,
             "errors": errors,
@@ -7012,8 +7230,11 @@ async def api_cartridge_sync_run(
     if not row:
         raise HTTPException(404, "sync run not found")
     status = str(row.get("status") or "")
-    if status in _SYNC_TERMINAL_STATUSES:
-        return _sync_public_payload(row, _sync_extra_from_row(row))
+    extra = _sync_extra_from_row(row)
+    if status in _SYNC_TERMINAL_STATUSES and not _sync_run_needs_final_reconcile(
+        row, extra
+    ):
+        return _sync_public_payload(row, extra)
     return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
 
 
@@ -7871,6 +8092,10 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
 
         scheduled_fire_at = _dt.now(_tz.utc).replace(second=0, microsecond=0)
     schedule_key = str(body.get("schedule_key") or schedule.get("key") or "default").strip() or "default"
+    extra_role = str((extra or {}).get("role") or "").strip().lower()
+    monitor_contract = extra.get("monitor") if isinstance(extra, dict) else None
+    if extra_role != "monitor" or not isinstance(monitor_contract, dict) or not monitor_contract:
+        raise HTTPException(403, "scheduled agents require monitor role and monitor contract")
     airflow_dag_run_id = str(body.get("airflow_dag_run_id") or "").strip() or None
     reservation = await _agent_scheduler.reserve_scheduled_run(
         agent_id=str(agent.id),
@@ -7897,15 +8122,11 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         }
     message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
     try:
-        extra_role = str((extra or {}).get("role") or "").strip().lower()
-        if extra_role == "monitor":
-            result = await _agent_runtime.run_scheduled_monitor(
-                agent,
-                message,
-                scheduled_fire_at=scheduled_fire_at.isoformat(),
-            )
-        else:
-            result = await _agent_runtime.run(agent, message, history=[], user=None)
+        result = await _agent_runtime.run_scheduled_monitor(
+            agent,
+            message,
+            scheduled_fire_at=scheduled_fire_at.isoformat(),
+        )
     except Exception as exc:
         await _agent_scheduler.finish_scheduled_run(
             schedule_run_id=reservation.get("id"),
@@ -8437,6 +8658,28 @@ async def api_rag_search(body: dict, user: dict = Depends(require_authenticated)
     ],
 )
 async def api_rag_reindex(body: dict, user: dict = Depends(require_authenticated)):
+    kind = str((body or {}).get("kind") or "").strip().lower()
+    requested_cartridge = str((body or {}).get("cartridge") or "").strip()
+    if requested_cartridge:
+        _require_cartridge_visible(user, requested_cartridge)
+    if kind == "dataset" and requested_cartridge:
+        dataset_name = str((body or {}).get("name") or "").strip()
+        datasets_payload = await _refinement_invoke("list_datasets", {}, user=user)
+        datasets = datasets_payload.get("datasets") if isinstance(datasets_payload, dict) else []
+        match = next(
+            (
+                ds
+                for ds in (datasets or [])
+                if str(ds.get("name") or "") == dataset_name
+                and str(ds.get("cartridge") or "") == requested_cartridge
+            ),
+            None,
+        )
+        if not match:
+            raise HTTPException(
+                404,
+                f"dataset '{dataset_name}' not found for cartridge '{requested_cartridge}'",
+            )
     body = {**body, "security_context": build_security_context(user)}
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/reindex", json=body)
@@ -8619,7 +8862,10 @@ async def api_catalog_get(
     ],
 )
 async def api_catalog_upsert(body: dict, user: dict = Depends(require_authenticated)):
-    return await _refinement_invoke("upsert_catalog_entries", body, user=user)
+    result = await _refinement_invoke("upsert_catalog_entries", body, user=user)
+    _raise_for_refinement_payload_error(result, "Refinement catalog update failed")
+    _scoped_read_cache_invalidate("catalog", user)
+    return result
 
 
 @app.post(
@@ -8632,7 +8878,10 @@ async def api_catalog_upsert(body: dict, user: dict = Depends(require_authentica
 async def api_catalog_relationship(
     body: dict, user: dict = Depends(require_authenticated)
 ):
-    return await _refinement_invoke("register_relationship", body, user=user)
+    result = await _refinement_invoke("register_relationship", body, user=user)
+    _raise_for_refinement_payload_error(result, "Refinement relationship update failed")
+    _scoped_read_cache_invalidate("catalog", user)
+    return result
 
 
 def _upstream_error_detail(response, fallback: str = "Upstream request failed"):
