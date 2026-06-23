@@ -31,6 +31,7 @@ import type {
   SfTalentActionPreviewPayload,
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
+  SfTalentExtractionTarget,
   SfTalentMetadataReadinessPayload,
   SfTalentNineBoxCell,
   SfTalentNineBoxPayload,
@@ -73,6 +74,11 @@ function cellTone(cell: SfTalentNineBoxCell): string {
     return "border-rose-500/25 bg-rose-500/10 text-rose-800 dark:text-rose-200";
   }
   return "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200";
+}
+
+function extractionTargets(metadata: SfTalentMetadataReadinessPayload | null): SfTalentExtractionTarget[] {
+  const targets = metadata?.live_preflight?.extraction_targets;
+  return Array.isArray(targets) ? targets : [];
 }
 
 export function TalentOverviewPanel({
@@ -479,6 +485,7 @@ export function TalentControlRoom() {
 
   const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box.cells ?? [], [nineBox, overview]);
   const anomalyItems = anomalies?.items ?? overview?.anomalies.items ?? [];
+  const cpaExtractionTargets = useMemo(() => extractionTargets(metadata), [metadata]);
 
   async function handlePreview() {
     if (!selectedAnomaly) return;
@@ -593,6 +600,49 @@ export function TalentControlRoom() {
                   ) : null}
                 </article>
               ))}
+            </div>
+            <div className="mt-4 rounded-lg border bg-background p-3 dark:border-emerald-400/10 dark:bg-[#06111f]">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">
+                    Siguiente extraccion C/P/A
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Targets vivos desde metadata y permisos SuccessFactors.
+                  </p>
+                </div>
+                <ReadinessBadge
+                  status={cpaExtractionTargets.length ? "partial" : "blocked"}
+                  label={cpaExtractionTargets.length ? `${cpaExtractionTargets.length} targets` : "sin targets"}
+                  compact
+                />
+              </div>
+              <div className="mt-3 grid gap-2">
+                {cpaExtractionTargets.slice(0, 6).map((target) => (
+                  <div
+                    key={`${target.component}:${target.entity}:${target.odata_entity || target.entity}`}
+                    className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs dark:border-emerald-400/10"
+                  >
+                    <div className="min-w-0">
+                      <span className="block truncate font-semibold text-foreground dark:text-white">
+                        {target.component_label || target.component}
+                      </span>
+                      <span className="block truncate text-muted-foreground">
+                        {target.entity}
+                        {target.odata_entity && target.odata_entity !== target.entity ? ` -> ${target.odata_entity}` : ""}
+                      </span>
+                    </div>
+                    <span className="shrink-0 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground dark:border-emerald-400/20">
+                      {target.status || target.sample_status || "metadata"}
+                    </span>
+                  </div>
+                ))}
+                {!cpaExtractionTargets.length ? (
+                  <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground dark:border-orange-400/20">
+                    Cuando metadata confirme Performance, Competencias y Aspiracion, aqui apareceran las entidades que Sync Now debe extraer.
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
 

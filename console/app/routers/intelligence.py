@@ -478,6 +478,14 @@ async def intelligence_wisdom_bits_run_internal(
     overview = await control_room_service.sap_successfactors_talent_overview(user)
     metadata = await control_room_service.sap_successfactors_talent_metadata_readiness(user)
     anomalies = await control_room_service.sap_successfactors_talent_anomalies(user)
+    signal_items = (
+        anomalies.get("items")
+        or anomalies.get("anomalies")
+        or anomalies.get("signals")
+        or []
+    )
+    if not isinstance(signal_items, list):
+        signal_items = []
     blockers = list(metadata.get("blockers") or [])
     if not blockers:
         blockers = list(overview.get("blockers") or [])
@@ -494,8 +502,8 @@ async def intelligence_wisdom_bits_run_internal(
         "coverage": metadata.get("coverage") or metadata.get("components") or {},
         "blockers": blockers,
         "signals": {
-            "count": len(anomalies.get("anomalies") or anomalies.get("signals") or []),
-            "items": (anomalies.get("anomalies") or anomalies.get("signals") or [])[:10],
+            "count": len(signal_items),
+            "items": signal_items[:10],
         },
         "evidence": {
             "overview_status": overview.get("status"),

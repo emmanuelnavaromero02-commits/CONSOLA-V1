@@ -55,6 +55,7 @@ import {
   isSyncTerminal,
   startCartridgeSyncNow,
   type SyncRunPayload,
+  type SyncTarget,
 } from "@/lib/sync-now";
 import { cn } from "@/lib/utils";
 
@@ -1144,6 +1145,7 @@ export default function ControlRoomPage() {
   const [syncError, setSyncError] = useState("");
   const [controlSyncRun, setControlSyncRun] = useState<SyncRunPayload | null>(null);
   const [controlSyncing, setControlSyncing] = useState(false);
+  const [controlSyncTarget, setControlSyncTarget] = useState<SyncTarget>("all");
   const [clockTick, setClockTick] = useState(0);
   const [urlHydrated, setUrlHydrated] = useState(false);
 
@@ -1357,6 +1359,17 @@ export default function ControlRoomPage() {
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
   const items = useMemo(() => dashboard?.items ?? [], [dashboard]);
+  const activeSyncCartridge = useMemo(() => (
+    cartridge !== "all"
+      ? cartridges.find((item) => item.id === cartridge)
+      : cartridges.find((item) => item.active && (item.id === "sap_successfactors" || item.connector_id === "sap_successfactors"))
+        || cartridges.find((item) => item.active)
+        || null
+  ), [cartridge, cartridges]);
+  const syncTargetSupportsTalent = Boolean(
+    activeSyncCartridge
+      && (activeSyncCartridge.id === "sap_successfactors" || activeSyncCartridge.connector_id === "sap_successfactors"),
+  );
   const activeModules = cartridges.filter((item) => item.active && !item.operational);
   const activeConnectorCount = dashboard?.summary.active_connectors
     ?? new Set(activeModules.map((item) => item.connector_id || item.id)).size;
@@ -1367,6 +1380,12 @@ export default function ControlRoomPage() {
     ?? activeModules.filter((item) => item.data_readiness === "partial").length;
   const stubModuleCount = dashboard?.summary.stub_modules
     ?? activeModules.filter((item) => item.data_readiness === "stub").length;
+
+  useEffect(() => {
+    if (!syncTargetSupportsTalent && controlSyncTarget === "talent") {
+      setControlSyncTarget("all");
+    }
+  }, [controlSyncTarget, syncTargetSupportsTalent]);
 
   useEffect(() => {
     if (urlHydrated || !dashboard) return;
@@ -1952,16 +1971,13 @@ export default function ControlRoomPage() {
   }
 
   async function syncControlRoomData() {
-    const activeCartridge = cartridge !== "all"
-      ? cartridge
-      : cartridges.find((item) => item.active && (item.id === "sap_successfactors" || item.connector_id === "sap_successfactors"))?.id
-        || cartridges.find((item) => item.active)?.id
-        || "sap_successfactors";
+    const activeCartridge = activeSyncCartridge?.id || "sap_successfactors";
+    const target = syncTargetSupportsTalent ? controlSyncTarget : controlSyncTarget === "foundation" ? "foundation" : "all";
 
     setControlSyncing(true);
     setSyncError("");
     try {
-      let current = await startCartridgeSyncNow(activeCartridge, { mode: "incremental", target: "all" });
+      let current = await startCartridgeSyncNow(activeCartridge, { mode: "incremental", target });
       setControlSyncRun(current);
       toast.success("Sincronización enviada.");
 
@@ -2012,6 +2028,9 @@ export default function ControlRoomPage() {
         writeBackEnabled={dashboard?.meta?.write_back_enabled ?? false}
         syncRun={controlSyncRun}
         syncingData={controlSyncing}
+        syncTarget={controlSyncTarget}
+        syncTargetSupportsTalent={syncTargetSupportsTalent}
+        onSyncTarget={setControlSyncTarget}
         onSyncData={syncControlRoomData}
         onRefresh={refreshAll}
         onAll={navigateAll}
@@ -2156,6 +2175,9 @@ function Header({
   writeBackEnabled,
   syncRun,
   syncingData,
+  syncTarget,
+  syncTargetSupportsTalent,
+  onSyncTarget,
   onSyncData,
   onRefresh,
   onAll,
@@ -2179,6 +2201,9 @@ function Header({
   writeBackEnabled?: boolean;
   syncRun?: SyncRunPayload | null;
   syncingData: boolean;
+  syncTarget: SyncTarget;
+  syncTargetSupportsTalent: boolean;
+  onSyncTarget: (target: SyncTarget) => void;
   onSyncData: () => void;
   onRefresh: () => void;
   onAll: () => void;
@@ -2221,6 +2246,21 @@ function Header({
             <p className="max-w-3xl text-sm text-muted-foreground dark:text-slate-300">{context.subtitle}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex min-h-[44px] shrink-0 items-center gap-2 rounded-md border border-emerald-300/30 bg-background/70 px-3 text-sm text-muted-foreground dark:border-emerald-300/20 dark:bg-[#07111e]">
+              <Filter aria-hidden className="h-4 w-4 text-emerald-600 dark:text-emerald-200" />
+              <span className="sr-only">Alcance de sincronización</span>
+              <select
+                value={syncTarget}
+                onChange={(event) => onSyncTarget(event.target.value as SyncTarget)}
+                disabled={syncingData}
+                className="bg-transparent text-sm font-medium text-foreground focus-visible:outline-none disabled:opacity-60 dark:text-white"
+                aria-label="Alcance de sincronización"
+              >
+                <option value="all">Todo</option>
+                <option value="foundation">Base</option>
+                {syncTargetSupportsTalent ? <option value="talent">Talento</option> : null}
+              </select>
+            </label>
             <button
               type="button"
               onClick={onSyncData}
@@ -2248,7 +2288,7 @@ function Header({
             <div>
               <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-200">Sincronización de datos</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {syncStatusLabel(syncRun.status)} · {syncCompleted}/{syncTotal} pasos · {syncRun.cartridge_id}
+                {syncStatusLabel(syncRun.status)} · {syncCompleted}/{syncTotal} pasos · {syncRun.cartridge_id} · {syncRun.target}
               </p>
               {syncRun.error_message ? <p className="mt-1 text-xs text-red-600 dark:text-red-300">{syncRun.error_message}</p> : null}
             </div>

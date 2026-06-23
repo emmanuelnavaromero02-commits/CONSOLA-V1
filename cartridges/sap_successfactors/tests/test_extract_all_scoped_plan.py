@@ -104,20 +104,106 @@ def test_extract_all_external_scope_block_can_be_overridden(monkeypatch):
     }
 
 
+def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
+    from app.services import catalog_service, preflight
+
+    rows = [
+        *_rows(),
+        {
+            "entity": "PerformanceReview",
+            "connection_id": "femsa_sf",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        },
+        {
+            "entity": "GoalPlan",
+            "connection_id": "femsa_sf",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+        },
+    ]
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    monkeypatch.setattr(
+        preflight,
+        "talent_metadata_readiness",
+        lambda **_kwargs: {
+            "status": "partial",
+            "extraction_targets": [
+                {
+                    "entity": "PerformanceReview",
+                    "status": "ready_to_extract",
+                },
+                {
+                    "entity": "CompetencyEntity",
+                    "status": "metadata_ready",
+                },
+            ],
+            "blockers": [],
+        },
+    )
+
+    entities, skipped = catalog_service.get_extract_all_plan(
+        conn_id="femsa_sf",
+        security_context=_ctx(),
+        target="talent",
+    )
+
+    assert [row["entity"] for row in entities] == ["PerformanceReview"]
+    assert skipped == [
+        {
+            "entity": "CompetencyEntity",
+            "status": "skipped",
+            "reason": "not_configured_for_extraction",
+        }
+    ]
+
+
+def test_extract_all_plan_talent_target_reports_metadata_blocker(monkeypatch):
+    from app.services import catalog_service, preflight
+
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: _rows())
+    monkeypatch.setattr(
+        preflight,
+        "talent_metadata_readiness",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "extraction_targets": [],
+            "blockers": [{"component": "metadata", "reason": "metadata_unavailable"}],
+        },
+    )
+
+    entities, skipped = catalog_service.get_extract_all_plan(
+        conn_id="femsa_sf",
+        security_context=_ctx(),
+        target="talent",
+    )
+
+    assert entities == []
+    assert skipped == [
+        {
+            "entity": "__talent_cpa__",
+            "status": "skipped",
+            "reason": "talent_metadata_not_ready",
+            "blockers": [{"component": "metadata", "reason": "metadata_unavailable"}],
+        }
+    ]
+
+
 def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
     from app.api import routes_console
 
     captured: list[str] = []
+    captured_plan_kwargs: dict = {}
     monkeypatch.setattr(routes_console, "preflight_for_extract", lambda **_kwargs: None)
     monkeypatch.setattr(routes_console, "_mark_external_job", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        routes_console,
-        "get_extract_all_plan",
-        lambda **_kwargs: (
+    def fake_plan(**kwargs):
+        captured_plan_kwargs.update(kwargs)
+        return (
             [{"entity": "PerPerson", "watermark_field": "lastModifiedDateTime"}],
             [{"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}],
-        ),
-    )
+        )
+
+    monkeypatch.setattr(routes_console, "get_extract_all_plan", fake_plan)
 
     def fake_run_entity(config, **_kwargs):
         captured.append(config["entity"])
@@ -127,12 +213,15 @@ def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
 
     response = routes_console.extract_all(
         mode="incremental",
+        target="talent",
         conn_id="femsa_sf",
         body={"security_context": _ctx()},
     )
 
     assert captured == ["PerPerson"]
+    assert captured_plan_kwargs["target"] == "talent"
     assert response["status"] == "success"
+    assert response["target"] == "talent"
     assert response["summary"]["extracted"] == 1
     assert response["skipped"] == [
         {"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}
@@ -214,16 +303,17 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
 
     updates: list[dict] = []
     logs: list[dict] = []
+    captured_plan_kwargs: dict = {}
 
     monkeypatch.delenv("SAP_SUCCESSFACTORS_EXTRACT_ALL_CONCURRENCY", raising=False)
-    monkeypatch.setattr(
-        catalog_service,
-        "get_extract_all_plan",
-        lambda **_kwargs: (
+    def fake_plan(**kwargs):
+        captured_plan_kwargs.update(kwargs)
+        return (
             [{"entity": "PerPerson"}],
             [{"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}],
-        ),
-    )
+        )
+
+    monkeypatch.setattr(catalog_service, "get_extract_all_plan", fake_plan)
     monkeypatch.setattr(
         extraction_service,
         "run_entity",
@@ -255,10 +345,12 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
     monkeypatch.setattr(job_runner, "_log", fake_log)
     monkeypatch.setattr(job_runner, "_trigger_silver_refresh", fake_refresh)
 
-    asyncio.run(job_runner._run_extract_all("job-1", "incremental", _ctx(), "femsa_sf"))
+    asyncio.run(job_runner._run_extract_all("job-1", "incremental", _ctx(), "femsa_sf", "talent"))
 
     final = updates[-1]
+    assert captured_plan_kwargs["target"] == "talent"
     assert final["status"] == "done"
+    assert final["result"]["target"] == "talent"
     assert final["result"]["selected"] == 1
     assert final["result"]["concurrency"] == 1
     assert final["result"]["summary"]["extracted"] == 1

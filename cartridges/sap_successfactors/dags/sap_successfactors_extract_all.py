@@ -145,6 +145,7 @@ def sap_successfactors_extract_all():
             params = {
                 k: v for k, v in {
                     "mode": conf.get("mode") or "incremental",
+                    "target": conf.get("target") or "all",
                     "conn_id": conf.get("conn_id") or conf.get("connection_id") or None,
                 }.items() if v
             }

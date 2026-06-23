@@ -33,18 +33,25 @@ EXPECTED_SILVER = 22
 EXPECTED_GOLD = 23
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 DEDUP_LATEST_KEYS = {
+    "sap_successfactors_user_latest.sql": ("userId",),
     "sap_successfactors_perperson_latest.sql": ("personIdExternal",),
     "sap_successfactors_perpersonal_latest.sql": ("personIdExternal", "startDate"),
     "sap_successfactors_peremail_latest.sql": ("personIdExternal", "emailType", "emailAddress"),
     "sap_successfactors_empemployment_latest.sql": ("personIdExternal", "userId", "startDate"),
     "sap_successfactors_empjob_latest.sql": ("userId", "startDate"),
     "sap_successfactors_paymentinformationdetailv3_latest.sql": ("externalCode",),
+    "sap_successfactors_position_latest.sql": ("code",),
     "sap_successfactors_folocation_latest.sql": ("externalCode",),
     "sap_successfactors_focompany_latest.sql": ("externalCode",),
     "sap_successfactors_fodepartment_latest.sql": ("externalCode",),
     "sap_successfactors_fodivision_latest.sql": ("externalCode",),
     "sap_successfactors_fobusinessunit_latest.sql": ("externalCode",),
     "sap_successfactors_fojobcode_latest.sql": ("externalCode",),
+    "sap_successfactors_candidate_latest.sql": ("candidateId",),
+    "sap_successfactors_jobrequisition_latest.sql": ("jobReqId",),
+    "sap_successfactors_empcompensation_latest.sql": ("userId", "startDate"),
+    "sap_successfactors_emppaycompnonrecurring_latest.sql": ("userId", "payComponent", "payDate"),
+    "sap_successfactors_emppaycomprecurring_latest.sql": ("userId", "payComponent", "startDate"),
     "sap_successfactors_empemploymenttermination_latest.sql": (
         "userId",
         "endDate",
@@ -163,6 +170,27 @@ def test_live_successfactors_latest_deduplicates_by_business_key():
         for key in keys:
             assert key in partition_sql, f"{filename}: missing dedupe key {key}"
         assert "_extracted_at" in sql and "batch_id" in sql, f"{filename}: missing batch recency tie-breakers"
+
+
+def test_base_migration_embeds_latest_dedup_sql():
+    migration_sql = BASE_MIGRATION.read_text(encoding="utf-8")
+    for filename, keys in DEDUP_LATEST_KEYS.items():
+        dataset_name = filename.removesuffix(".sql")
+        row = re.search(
+            rf"\$seed\${dataset_name}\$seed\$.*?\$seed\$\n(.*?)\n\$seed\$, \$seed\$",
+            migration_sql,
+            re.DOTALL,
+        )
+        assert row, f"{dataset_name}: not embedded in base migration"
+        embedded_sql = row.group(1)
+        assert "ROW_NUMBER() OVER" in embedded_sql, f"{dataset_name}: migration missing window dedupe"
+        assert "WHERE _rn = 1" in embedded_sql, f"{dataset_name}: migration missing latest row filter"
+        assert "MAX(load_date)" not in embedded_sql, f"{dataset_name}: migration still dedupes only by load_date"
+        partition = re.search(r"PARTITION BY\s+(.+?)\s+ORDER BY", embedded_sql, re.DOTALL)
+        assert partition, f"{dataset_name}: migration missing partition key"
+        partition_sql = partition.group(1)
+        for key in keys:
+            assert key in partition_sql, f"{dataset_name}: migration missing dedupe key {key}"
 
 
 def test_declared_sources_are_real_sf_entities():

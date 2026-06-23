@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 
 export type SyncRunStatus = "queued" | "running" | "success" | "partial" | "failed" | "skipped";
+export type SyncTarget = "all" | "foundation" | "talent";
 
 export interface SyncRunStep {
   id: string;
@@ -16,7 +17,7 @@ export interface SyncRunPayload {
   cartridge_id: string;
   status: SyncRunStatus;
   mode: "incremental" | "full";
-  target: "all" | "foundation" | "talent";
+  target: SyncTarget;
   steps: SyncRunStep[];
   triggered_entities: Array<Record<string, unknown>>;
   errors: Array<Record<string, unknown>>;
@@ -29,7 +30,7 @@ export interface SyncRunPayload {
 export interface StartSyncNowInput {
   conn_id?: string;
   mode?: "incremental" | "full";
-  target?: "all" | "foundation" | "talent";
+  target?: SyncTarget;
 }
 
 export function isSyncTerminal(status: string | undefined): boolean {

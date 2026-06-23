@@ -116,13 +116,13 @@ def _mcp_headers() -> dict[str, str]:
     }
 
 
-def _cron_fires_in_window(cron_expr: str, tz_name: str,
-                          window_start: datetime, window_end: datetime) -> bool:
-    """True if the cron expression fires at least once in [window_start, window_end)."""
+def _cron_fire_in_window(cron_expr: str, tz_name: str,
+                         window_start: datetime, window_end: datetime) -> datetime | None:
+    """Return the first cron fire in [window_start, window_end), in UTC."""
     try:
         from croniter import croniter
     except Exception:                                              # noqa: BLE001
-        return False
+        return None
 
     # croniter wants a naive or aware base; build aware in tz, compare in UTC
     try:
@@ -135,12 +135,21 @@ def _cron_fires_in_window(cron_expr: str, tz_name: str,
     try:
         itr = croniter(cron_expr, base)
     except Exception:                                              # noqa: BLE001
-        return False
+        return None
 
     next_fire = itr.get_next(datetime)
     if next_fire.tzinfo is None:
         next_fire = next_fire.replace(tzinfo=tz)
-    return window_start <= next_fire.astimezone(timezone.utc) < window_end
+    next_fire_utc = next_fire.astimezone(timezone.utc)
+    if window_start <= next_fire_utc < window_end:
+        return next_fire_utc
+    return None
+
+
+def _cron_fires_in_window(cron_expr: str, tz_name: str,
+                          window_start: datetime, window_end: datetime) -> bool:
+    """True if the cron expression fires at least once in [window_start, window_end)."""
+    return _cron_fire_in_window(cron_expr, tz_name, window_start, window_end) is not None
 
 
 # ── Task 1 · find_due_agents ─────────────────────────────────────────────────
@@ -175,18 +184,21 @@ def find_due_agents(**context):
             continue
         if sched.get("enabled") is False:
             continue
-        if not _cron_fires_in_window(
+        fire_at = _cron_fire_in_window(
             sched["cron"],
             sched.get("tz") or "UTC",
             logical_date, window_end,
-        ):
+        )
+        if fire_at is None:
             continue
         due.append({
-            "id":           str(agent_id),
-            "cartridge_id": cartridge_id,
-            "slug":         slug,
-            "name":         name,
-            "prompt":       sched.get("prompt") or "Ejecuta tu tarea programada.",
+            "id":                str(agent_id),
+            "cartridge_id":      cartridge_id,
+            "slug":              slug,
+            "name":              name,
+            "prompt":            sched.get("prompt") or "Ejecuta tu tarea programada.",
+            "scheduled_fire_at": fire_at.isoformat(),
+            "schedule_key":      str(sched.get("key") or "default"),
         })
 
     print(f"[agent_runner] {len(due)} due: {[d['slug'] for d in due]}")
@@ -211,7 +223,12 @@ def invoke_each(**context):
         try:
             r = requests.post(
                 url,
-                json={"message": agent["prompt"]},
+                json={
+                    "message": agent["prompt"],
+                    "scheduled_fire_at": agent.get("scheduled_fire_at"),
+                    "schedule_key": agent.get("schedule_key") or "default",
+                    "airflow_dag_run_id": context["run_id"],
+                },
                 headers={"X-Agent-Runner-Token": RUNNER_TOKEN,
                          "X-Api-Key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE"),
                          "X-Internal-Service": "airflow",

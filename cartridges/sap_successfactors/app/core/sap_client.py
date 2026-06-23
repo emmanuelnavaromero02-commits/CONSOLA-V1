@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from defusedxml import ElementTree as ET
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -872,6 +873,64 @@ class SapSfClient:
                 "error": str(exc),
                 "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
             }
+
+    def fetch_metadata_xml(self) -> str:
+        """Return the live OData $metadata document.
+
+        This is intentionally a low-level helper: callers decide which
+        entities/fields matter for their domain preflight. It uses the same
+        auth/circuit-breaker path as ``test_connection`` and never logs secrets.
+        """
+        self._require_configured()
+        try:
+            CartridgeCircuitBreaker.before_request()
+            url = f"{self.base_url}/$metadata"
+            logger.warning("SAP SuccessFactors outbound GET %s", url)
+            headers = dict(self._headers())
+            headers["Accept"] = "application/xml, text/xml, */*"
+            resp = self._session.get(url, headers=headers, timeout=30)
+            self._log_auth(resp.status_code)
+            if resp.status_code in {401, 403}:
+                CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            if resp.status_code >= 500 or resp.status_code == 429:
+                CartridgeCircuitBreaker.record_failure()
+                resp.raise_for_status()
+            resp.raise_for_status()
+            CartridgeCircuitBreaker.record_success()
+            return resp.text
+        except CircuitBreakerOpen:
+            raise
+        except requests.RequestException as exc:
+            if not isinstance(exc, requests.HTTPError):
+                CartridgeCircuitBreaker.record_failure()
+            raise SAPClientError(f"GET {self.base_url}/$metadata failed: {exc}") from exc
+
+    @staticmethod
+    def parse_metadata_entities(metadata_xml: str) -> dict[str, set[str]]:
+        """Parse OData CSDL into ``{entity_name: {field_names}}``."""
+        if not metadata_xml or not metadata_xml.strip():
+            raise SAPClientError("SuccessFactors $metadata response is empty")
+        try:
+            root = ET.fromstring(metadata_xml)
+        except ET.ParseError as exc:
+            raise SAPClientError("SuccessFactors $metadata response is not valid XML") from exc
+
+        entities: dict[str, set[str]] = {}
+        for entity_type in root.findall(".//{*}EntityType"):
+            name = str(entity_type.attrib.get("Name") or "").strip()
+            if not name:
+                continue
+            fields = {
+                str(prop.attrib.get("Name") or "").strip()
+                for prop in entity_type.findall("{*}Property")
+                if str(prop.attrib.get("Name") or "").strip()
+            }
+            entities[name] = fields
+        return entities
+
+    def metadata_entities(self) -> dict[str, set[str]]:
+        return self.parse_metadata_entities(self.fetch_metadata_xml())
 
     # ------------------------------------------------------------------
     # Discovery (uses local catalog as the source of truth)

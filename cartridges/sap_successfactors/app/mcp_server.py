@@ -234,7 +234,11 @@ async def extract(
 
 
 @mcp.tool()
-async def extract_all(mode: str = "incremental", conn_id: str | None = None) -> dict[str, Any]:
+async def extract_all(
+    mode: str = "incremental",
+    conn_id: str | None = None,
+    target: str = "all",
+) -> dict[str, Any]:
     """
     [BATCH — async] Extrae las entidades scoped de SAP SuccessFactors para la conexión indicada.
 
@@ -248,8 +252,9 @@ async def extract_all(mode: str = "incremental", conn_id: str | None = None) -> 
     Args:
         mode: "full" | "incremental" (default: incremental)
         conn_id: optional Vault connection id (e.g. "femsa_sf")
+        target: "all" | "foundation" | "talent" (default: all)
     """
-    return await job_runner.create_extract_all_job(mode, conn_id=conn_id)
+    return await job_runner.create_extract_all_job(mode, conn_id=conn_id, target=target)
 
 
 # ── Tool 4c: get_run_logs ─────────────────────────────────────────────────────

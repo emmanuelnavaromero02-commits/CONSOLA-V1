@@ -25,3 +25,9 @@ def test_extract_all_dag_timeout_is_extended_for_bulk_live_runs():
     assert "_DEFAULT_EXTRACT_ALL_TIMEOUT_SECONDS = 3600" in source
     assert "httpx.Timeout(_extract_all_timeout_seconds(), connect=30.0)" in source
     assert "httpx.Client(timeout=300)" not in source
+
+
+def test_extract_all_dag_forwards_sync_target_to_cartridge():
+    source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
+
+    assert '"target": conf.get("target") or "all"' in source

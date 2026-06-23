@@ -18,6 +18,22 @@ KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 CARTRIDGE_ID = "sap_successfactors"
 logger = logging.getLogger(__name__)
 DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES = {"EmpEmploymentTermination"}
+VALID_EXTRACT_ALL_TARGETS = {"all", "foundation", "talent"}
+FOUNDATION_EXTRACT_ALL_ENTITIES = {
+    "User",
+    "PerPerson",
+    "PerPersonal",
+    "EmpEmployment",
+    "EmpJob",
+    "FOCompany",
+    "FODepartment",
+    "FODivision",
+    "FOLocation",
+    "FOBusinessUnit",
+    "FOCostCenter",
+    "FOJobCode",
+    "Position",
+}
 
 # Cartridge header metadata — used to UPSERT the `cartridges` row on startup so
 # Studio's "Fuente de datos" dropdown lists this cartridge alongside Replicon.
@@ -218,10 +234,81 @@ def _matches_security_scope(row: dict[str, Any], tenant_id: str, workspace_id: s
     return True
 
 
+def _normalize_extract_all_target(target: str | None) -> str:
+    normalized = str(target or "all").strip().lower()
+    if normalized not in VALID_EXTRACT_ALL_TARGETS:
+        return "all"
+    return normalized
+
+
+def _talent_extract_target_entities(
+    *,
+    conn_id: str | None,
+    security_context: dict[str, Any] | None,
+) -> tuple[set[str], list[dict[str, Any]]]:
+    try:
+        from app.services.preflight import talent_metadata_readiness
+
+        readiness = talent_metadata_readiness(
+            conn_id=conn_id,
+            security_context=security_context,
+            sample=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - live metadata is a blocker, not a product crash.
+        return set(), [
+            {
+                "entity": "__talent_metadata__",
+                "status": "skipped",
+                "reason": "metadata_preflight_failed",
+                "error": str(exc)[:240],
+            }
+        ]
+
+    targets = readiness.get("extraction_targets")
+    if not isinstance(targets, list):
+        targets = []
+    ready_entities = {
+        str(item.get("entity") or "").strip()
+        for item in targets
+        if isinstance(item, dict)
+        and str(item.get("entity") or "").strip()
+        and str(item.get("status") or "") in {"ready_to_extract", "metadata_ready"}
+    }
+    skipped: list[dict[str, Any]] = []
+    if not ready_entities:
+        blockers = readiness.get("blockers") if isinstance(readiness, dict) else None
+        skipped.append(
+            {
+                "entity": "__talent_cpa__",
+                "status": "skipped",
+                "reason": "talent_metadata_not_ready",
+                "blockers": blockers if isinstance(blockers, list) else [],
+            }
+        )
+    return ready_entities, skipped
+
+
+def _target_entity_filter(
+    *,
+    target: str,
+    conn_id: str | None,
+    security_context: dict[str, Any] | None,
+) -> tuple[set[str] | None, list[dict[str, Any]]]:
+    if target == "all":
+        return None, []
+    if target == "foundation":
+        return set(FOUNDATION_EXTRACT_ALL_ENTITIES), []
+    return _talent_extract_target_entities(
+        conn_id=conn_id,
+        security_context=security_context,
+    )
+
+
 def get_extract_all_plan(
     *,
     conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
+    target: str | None = "all",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return the honest live extraction plan for extract_all.
 
@@ -232,13 +319,24 @@ def get_extract_all_plan(
     """
     selected_conn_id = (conn_id or "").strip()
     tenant_id, workspace_id = _security_scope(security_context)
+    normalized_target = _normalize_extract_all_target(target)
+    target_entities, target_skipped = _target_entity_filter(
+        target=normalized_target,
+        conn_id=selected_conn_id or None,
+        security_context=security_context,
+    )
     excluded = _extract_all_excluded_entities()
     entities: list[dict[str, Any]] = []
-    skipped: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = list(target_skipped)
+    configured_entities: set[str] = set()
 
     for config in get_all_entities():
         entity = str(config.get("entity") or "").strip()
         if not entity:
+            continue
+        configured_entities.add(entity)
+
+        if target_entities is not None and entity not in target_entities:
             continue
 
         if selected_conn_id:
@@ -267,6 +365,16 @@ def get_extract_all_plan(
             continue
 
         entities.append(config)
+
+    if target_entities is not None:
+        for entity in sorted(target_entities - configured_entities):
+            skipped.append(
+                {
+                    "entity": entity,
+                    "status": "skipped",
+                    "reason": "not_configured_for_extraction",
+                }
+            )
 
     return entities, skipped
 
