@@ -50,6 +50,12 @@ import {
   getSuccessFactorsTalentKpis,
 } from "@/lib/control-room/client";
 import type { ControlRoomAgentsOpsPayload, ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
+import {
+  getCartridgeSyncRun,
+  isSyncTerminal,
+  startCartridgeSyncNow,
+  type SyncRunPayload,
+} from "@/lib/sync-now";
 import { cn } from "@/lib/utils";
 
 type Severity = "critical" | "high" | "medium" | "low";
@@ -895,6 +901,33 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function syncStatusLabel(status?: string): string {
+  switch (status) {
+    case "queued":
+      return "En cola";
+    case "running":
+      return "En proceso";
+    case "success":
+      return "Completada";
+    case "partial":
+      return "Parcial";
+    case "failed":
+      return "Fallida";
+    case "skipped":
+      return "Omitida";
+    default:
+      return "Pendiente";
+  }
+}
+
+function syncStepTone(status?: string): string {
+  if (status === "success") return "border-emerald-300/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+  if (status === "partial") return "border-amber-300/60 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  if (status === "failed") return "border-red-300/60 bg-red-500/10 text-red-700 dark:text-red-200";
+  if (status === "running") return "border-cyan-300/60 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200";
+  return "border-border bg-background text-muted-foreground dark:border-sky-400/15 dark:bg-[#07111e]";
+}
+
 function executionTemplate(item: ControlItem): ActionTemplate | undefined {
   return (
     item.action_templates?.find((template) => template.writeback?.supported && template.writeback.external === false) ||
@@ -1109,6 +1142,8 @@ export default function ControlRoomPage() {
   const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
   const [, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState("");
+  const [controlSyncRun, setControlSyncRun] = useState<SyncRunPayload | null>(null);
+  const [controlSyncing, setControlSyncing] = useState(false);
   const [clockTick, setClockTick] = useState(0);
   const [urlHydrated, setUrlHydrated] = useState(false);
 
@@ -1916,6 +1951,45 @@ export default function ControlRoomPage() {
     void Promise.allSettled(tasks);
   }
 
+  async function syncControlRoomData() {
+    const activeCartridge = cartridge !== "all"
+      ? cartridge
+      : cartridges.find((item) => item.active && (item.id === "sap_successfactors" || item.connector_id === "sap_successfactors"))?.id
+        || cartridges.find((item) => item.active)?.id
+        || "sap_successfactors";
+
+    setControlSyncing(true);
+    setSyncError("");
+    try {
+      let current = await startCartridgeSyncNow(activeCartridge, { mode: "incremental", target: "all" });
+      setControlSyncRun(current);
+      toast.success("Sincronización enviada.");
+
+      for (let attempt = 0; attempt < 40 && !isSyncTerminal(current.status); attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 3000));
+        current = await getCartridgeSyncRun(activeCartridge, current.run_id);
+        setControlSyncRun(current);
+      }
+
+      if (current.status === "success") {
+        toast.success("Sincronización completada.");
+      } else if (current.status === "partial") {
+        toast("Sincronización parcial. Revisa Pipeline para ver el paso pendiente.");
+      } else if (current.status === "failed") {
+        const message = current.error_message || "La sincronización falló.";
+        setSyncError(message);
+        toast.error(message);
+      }
+      refreshAll();
+    } catch (err) {
+      const message = errorMessage(err, "No se pudo iniciar la sincronización.");
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setControlSyncing(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950 dark:bg-[#050a12] dark:text-slate-100">
       <div className="mx-auto max-w-[1900px] space-y-4 px-4 py-4 sm:px-5 lg:px-6">
@@ -1936,6 +2010,9 @@ export default function ControlRoomPage() {
         version={dashboard?.meta?.version}
         appEnv={dashboard?.meta?.app_env}
         writeBackEnabled={dashboard?.meta?.write_back_enabled ?? false}
+        syncRun={controlSyncRun}
+        syncingData={controlSyncing}
+        onSyncData={syncControlRoomData}
         onRefresh={refreshAll}
         onAll={navigateAll}
         onDomain={navigateDomain}
@@ -2077,6 +2154,9 @@ function Header({
   version,
   appEnv,
   writeBackEnabled,
+  syncRun,
+  syncingData,
+  onSyncData,
   onRefresh,
   onAll,
   onDomain,
@@ -2097,10 +2177,16 @@ function Header({
   version?: string;
   appEnv?: string;
   writeBackEnabled?: boolean;
+  syncRun?: SyncRunPayload | null;
+  syncingData: boolean;
+  onSyncData: () => void;
   onRefresh: () => void;
   onAll: () => void;
   onDomain: (domain: string) => void;
 }) {
+  const syncCompleted = syncRun?.steps.filter((step) => step.status === "success" || step.status === "skipped").length ?? 0;
+  const syncTotal = syncRun?.steps.length ?? 0;
+
   return (
     <header className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_40px_rgba(14,165,233,0.10)]">
       <div className="border-b bg-gradient-to-r from-slate-100 via-white to-slate-50 p-4 dark:border-sky-400/20 dark:from-[#0a192b] dark:via-[#081423] dark:to-[#07111e]">
@@ -2134,17 +2220,52 @@ function Header({
             </nav>
             <p className="max-w-3xl text-sm text-muted-foreground dark:text-slate-300">{context.subtitle}</p>
           </div>
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-3 text-sm font-medium text-cyan-700 dark:text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.12)] hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50"
-          >
-            {loading ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCcw aria-hidden className="h-4 w-4" />}
-            Refrescar
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onSyncData}
+              disabled={syncingData}
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border border-emerald-300/40 bg-emerald-500/10 px-3 text-sm font-medium text-emerald-700 shadow-[0_0_18px_rgba(16,185,129,0.12)] hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 disabled:opacity-50 dark:text-emerald-100"
+            >
+              {syncingData ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Play aria-hidden className="h-4 w-4" />}
+              Sincronizar datos
+            </button>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-3 text-sm font-medium text-cyan-700 shadow-[0_0_18px_rgba(34,211,238,0.12)] hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50 dark:text-cyan-100"
+            >
+              {loading ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCcw aria-hidden className="h-4 w-4" />}
+              Refrescar
+            </button>
+          </div>
         </div>
       </div>
+      {syncRun ? (
+        <div className="border-b bg-emerald-500/5 p-4 dark:border-sky-400/20">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-200">Sincronización de datos</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {syncStatusLabel(syncRun.status)} · {syncCompleted}/{syncTotal} pasos · {syncRun.cartridge_id}
+              </p>
+              {syncRun.error_message ? <p className="mt-1 text-xs text-red-600 dark:text-red-300">{syncRun.error_message}</p> : null}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-5 lg:min-w-[620px]">
+              {syncRun.steps.map((step) => (
+                <div
+                  key={step.id}
+                  className={cn("rounded-md border px-2 py-2", syncStepTone(step.status))}
+                >
+                  <p className="truncate text-xs font-semibold">{step.label}</p>
+                  <p className="mt-1 truncate text-[11px] opacity-80">{syncStatusLabel(step.status)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
           <p className="text-xs font-semibold uppercase text-muted-foreground">Versión</p>

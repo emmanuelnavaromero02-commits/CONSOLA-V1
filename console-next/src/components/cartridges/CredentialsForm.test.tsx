@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConnectorSchema } from "@/lib/cartridges";
@@ -24,6 +25,15 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
+function renderCredentials(cartridgeId: string, schema: ConnectorSchema): string {
+  const queryClient = new QueryClient();
+  return renderToStaticMarkup(
+    <QueryClientProvider client={queryClient}>
+      <CredentialsForm cartridgeId={cartridgeId} schema={schema} />
+    </QueryClientProvider>,
+  );
+}
+
 describe("CredentialsForm", () => {
   it("routes credential writes to the scoped Vault operations page", () => {
     const schema: ConnectorSchema = {
@@ -35,7 +45,7 @@ describe("CredentialsForm", () => {
       ],
     };
 
-    const markup = renderToStaticMarkup(<CredentialsForm cartridgeId="hubspot" schema={schema} />);
+    const markup = renderCredentials("hubspot", schema);
 
     expect(markup).toContain("Configurar en Vault");
     expect(markup).toContain("/operations/vault");
@@ -46,12 +56,11 @@ describe("CredentialsForm", () => {
     expect(markup).not.toContain("API token");
     expect(markup).not.toContain("Campos esperados");
     expect(markup).toContain("Probar conexión");
+    expect(markup).toContain("Sincronizar ahora");
   });
 
   it("renders an explicit empty state when a cartridge has no connector schema", () => {
-    const markup = renderToStaticMarkup(
-      <CredentialsForm cartridgeId="internal" schema={{ fields: [] }} />,
-    );
+    const markup = renderCredentials("internal", { fields: [] });
 
     expect(markup).toContain("Este cartucho se valida con las conexiones disponibles en Vault.");
     expect(markup).toContain("Configurar en Vault");
@@ -68,9 +77,7 @@ describe("CredentialsForm", () => {
       },
     });
 
-    const markup = renderToStaticMarkup(
-      <CredentialsForm cartridgeId="sap_successfactors" schema={{ fields: [] }} />,
-    );
+    const markup = renderCredentials("sap_successfactors", { fields: [] });
 
     expect(markup).toContain("Conexión a probar");
     expect(markup).toContain('value="femsa_sf"');
