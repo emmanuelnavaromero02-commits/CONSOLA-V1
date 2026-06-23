@@ -168,7 +168,11 @@ def verify_security_context(
     return dict(ctx)
 
 
-def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+def refinement_security_context(
+    ctx: dict[str, Any] | None = None,
+    *,
+    source: str = SERVICE_SOURCE,
+) -> dict[str, Any]:
     ctx = ctx if ctx is not None else get_security_context()
     tenant, workspace = scope_values(ctx)
     if tenant and workspace:
@@ -186,7 +190,7 @@ def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, 
         ]
     base: dict[str, Any] = {
         "trusted": True,
-        "source": SERVICE_SOURCE,
+        "source": source,
         "role": "admin",
         "permissions": ["datasets.read", "datasets.write"],
         "allowed_buckets": ["lakehouse"],

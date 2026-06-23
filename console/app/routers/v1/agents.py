@@ -162,8 +162,12 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         raise HTTPException(403, "agent schedule cron is required")
     if not _agent_schedule_due(schedule):
         raise HTTPException(403, "agent schedule is not due")
+    extra_role = str((extra or {}).get("role") or "").strip().lower()
+    monitor_contract = extra.get("monitor") if isinstance(extra, dict) else None
+    if extra_role != "monitor" or not isinstance(monitor_contract, dict) or not monitor_contract:
+        raise HTTPException(403, "scheduled agents require monitor role and monitor contract")
     message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
-    result = await _agent_runtime.run(agent, message, history=[], user=None)
+    result = await _agent_runtime.run_scheduled_monitor(agent, message)
     return result
 
 # /api/agents/{agent_id}/invoke/stream

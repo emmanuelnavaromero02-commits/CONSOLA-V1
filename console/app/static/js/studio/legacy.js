@@ -1960,21 +1960,21 @@ import { state } from './legacy-state.js';
     export function applyTemplate(type) {
       const entity    = _currentEditorEntity();
       const cartridge = state._currentCartridge?.id || 'replicon';
-      const base      = `s3://{bucket}/raw/${cartridge}/${entity || '{ENTITY}'}`;
+      const base      = `raw/${cartridge}/${entity || '{ENTITY}'}`;
       let sql = '';
       if (type === 'full_latest') {
         sql = `-- Última partición disponible (full extraction)
 SELECT *
-FROM read_parquet('${base}/load_date=*/data.parquet',
+FROM read_parquet('${base}',
   hive_partitioning=true, union_by_name=true)
 WHERE load_date = (
   SELECT MAX(load_date)
-  FROM read_parquet('${base}/load_date=*/data.parquet', hive_partitioning=true)
+  FROM read_parquet('${base}', hive_partitioning=true, union_by_name=true)
 )`;
       } else if (type === 'full_all') {
         sql = `-- Todas las particiones históricas (full extraction)
 SELECT *, load_date
-FROM read_parquet('${base}/load_date=*/data.parquet',
+FROM read_parquet('${base}',
   hive_partitioning=true, union_by_name=true)
 ORDER BY load_date DESC`;
       } else if (type === 'incremental') {
@@ -1983,7 +1983,7 @@ WITH ranked AS (
   SELECT *,
          load_date,
          ROW_NUMBER() OVER (PARTITION BY Id ORDER BY load_date DESC) AS rn
-  FROM read_parquet('${base}/load_date=*/data.parquet',
+  FROM read_parquet('${base}',
     hive_partitioning=true, union_by_name=true)
 )
 SELECT * EXCLUDE (rn, load_date)
@@ -2191,7 +2191,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const msg    = `Estoy diseñando el dataset "${name||'nuevo'}" (${layer.toUpperCase()}) `
         + `del cartucho "${cart}", entidad fuente: "${entity}".\n`
         + (sql ? `SQL actual:\n\`\`\`sql\n${sql}\n\`\`\`\n` : '')
-        + `¿Puedes revisar/mejorar el SQL? Path Bronze: s3://${state.S3_BUCKET}/raw/${cart}/${entity}/load_date=*/data.parquet`;
+        + `¿Puedes revisar/mejorar el SQL? Source Bronze lógico: raw/${cart}/${entity}`;
       document.getElementById('ai-input').value = msg;
       aiSend();
     }
@@ -2284,10 +2284,20 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     }
 
     export function bronzeSelectSource(source) {
-      const pattern = `s3://{bucket}/${source}/load_date=*/data.parquet`;
+      state._bronzeSelectedSource = source;
+      const pattern = source;
       const sql = `SELECT *\nFROM read_parquet('${pattern}',\n  hive_partitioning=true, union_by_name=true)\nLIMIT 100`;
       const ta = document.getElementById('bronze-sql');
       if (ta) { ta.value = sql; state._bronzeQuery = sql; }
+    }
+
+    function bronzeSourcesFromSql(sql) {
+      const found = new Set();
+      if (state._bronzeSelectedSource) found.add(state._bronzeSelectedSource);
+      const re = /read_parquet\s*\(\s*['"](raw\/[A-Za-z0-9_./=-]+)['"]/gi;
+      let match;
+      while ((match = re.exec(sql || ''))) found.add(match[1]);
+      return [...found];
     }
 
     export async function runBronzeQuery() {
@@ -2303,7 +2313,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       try {
         const r = await fetch('/api/bronze/query', {
           method: 'POST', credentials: 'include', headers: jsonHeaders(),
-          body: JSON.stringify({ sql, limit: 500 }),
+          body: JSON.stringify({ sql, limit: 500, sources: bronzeSourcesFromSql(sql) }),
         });
         const d = await r.json().catch(() => ({}));
         const elapsed = ((Date.now()-t0)/1000).toFixed(2);
@@ -2445,7 +2455,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       `;
 
       fetch('/datasets').then(r => r.json()).then(d => {
-        const gold = (d.datasets || []).filter(ds => ds.layer === 'gold');
+        const gold = (d.datasets || []).filter(ds =>
+          ds.layer === 'gold' && (!cartridge || ds.cartridge === cartridge)
+        );
         const el   = document.getElementById('gold-list');
         if (!gold.length) {
           el.innerHTML = '<div class="empty-card">No hay datasets Gold definidos. Ve al Paso 3 (Refinar) para crearlos.</div>';
@@ -2465,7 +2477,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
                       data-rag-name="${esc(ds.name)}"
                       data-cartridge="${esc(cartridge)}"
                       onclick="reindexSource('dataset',${escJsArg(ds.name)},${escJsArg(cartridge)},this)">↻ RAG</button>
-              <button class="btn btn-sm btn-amber" onclick="createSupersetDataset(${escJsArg(ds.name)})">
+              <button class="btn btn-sm btn-amber" onclick="createSupersetDataset(${escJsArg(ds.name)},${escJsArg(cartridge)})">
                 + Crear en Superset
               </button>
               <a class="btn btn-sm" href="/viewer/datasets/${encodeURIComponent(ds.name || '')}" target="_blank">Ver SQL →</a>
@@ -2581,7 +2593,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       aiSend();
     }
 
-    export async function createSupersetDataset(datasetName) {
+    export async function createSupersetDataset(datasetName, cartridge = currentCartridgeId()) {
       const el = document.getElementById('gold-list');
       const tableName = `gold_${String(datasetName || '').replace(/^gold_/, '')}`;
       if (el) {
@@ -2592,7 +2604,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         const r = await fetch('/api/studio/superset/dataset', {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ table_name: tableName, schema: 'public' }),
+          body: JSON.stringify({ table_name: tableName, dataset_name: datasetName, cartridge, schema: 'public' }),
         });
         const d = await r.json();
         const status = document.querySelector('.superset-status');
@@ -2966,7 +2978,11 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
     export async function catReload() {
       const layer = state._catFilter.layer;
-      const qs    = layer ? `?layer=${layer}` : '';
+      const params = new URLSearchParams();
+      if (layer) params.set('layer', layer);
+      const cartridge = currentCartridgeId();
+      if (cartridge) params.set('cartridge', cartridge);
+      const qs = params.toString() ? `?${params.toString()}` : '';
       document.getElementById('cat-status').textContent = 'Cargando…';
       try {
         const r   = await fetch(`/api/catalog${qs}`);
@@ -3142,7 +3158,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       try {
         const r = await fetch('/api/catalog/entries', {
           method:'POST', headers: jsonHeaders(),
-          body: JSON.stringify({ entries:[{ dataset, column_name:col, description:desc }] })
+          body: JSON.stringify({ entries:[{ dataset, cartridge: currentCartridgeId(), column_name:col, description:desc }] })
         });
         await jsonOrThrow(r);
       } catch(e) {
@@ -3162,7 +3178,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       try {
         const r = await fetch('/api/catalog/entries', {
           method:'POST', headers: jsonHeaders(),
-          body: JSON.stringify({ entries:[{ dataset, column_name:col, [flag]:value }] })
+          body: JSON.stringify({ entries:[{ dataset, cartridge: currentCartridgeId(), column_name:col, [flag]:value }] })
         });
         await jsonOrThrow(r);
       } catch(e) {
@@ -3184,7 +3200,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       try {
         const r = await fetch('/api/catalog/entries', {
           method:'POST', headers: jsonHeaders(),
-          body: JSON.stringify({ entries:[{ dataset, column_name:col, tags: c?.tags||[tag.trim()] }] })
+          body: JSON.stringify({ entries:[{ dataset, cartridge: currentCartridgeId(), column_name:col, tags: c?.tags||[tag.trim()] }] })
         });
         await jsonOrThrow(r);
       } catch(e) {

@@ -137,6 +137,29 @@ resource "aws_lb_target_group" "workspace" {
   }
 }
 
+resource "aws_lb_target_group" "airflow" {
+  name        = "modecissions-airflow"
+  port        = 8082
+  protocol    = "HTTP"
+  target_type = "instance"
+  vpc_id      = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    path                = "/airflow/health"
+    protocol            = "HTTP"
+    matcher             = "200"
+    interval            = 15
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+
+  tags = {
+    Name = "modecissions-airflow"
+  }
+}
+
 resource "aws_lb_target_group_attachment" "console" {
   target_group_arn = aws_lb_target_group.console.arn
   target_id        = aws_instance.app.id
@@ -147,6 +170,12 @@ resource "aws_lb_target_group_attachment" "workspace" {
   target_group_arn = aws_lb_target_group.workspace.arn
   target_id        = aws_instance.app.id
   port             = 8001
+}
+
+resource "aws_lb_target_group_attachment" "airflow" {
+  target_group_arn = aws_lb_target_group.airflow.arn
+  target_id        = aws_instance.app.id
+  port             = 8082
 }
 
 resource "aws_lb_listener" "http_redirect" {
@@ -209,6 +238,30 @@ resource "aws_lb_listener_rule" "workspace_host" {
   condition {
     host_header {
       values = [var.public_workspace_domain]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "airflow_path" {
+  count = local.public_https_enabled ? 1 : 0
+
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 110
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.airflow.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.public_console_domain]
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/airflow", "/airflow/*"]
     }
   }
 }

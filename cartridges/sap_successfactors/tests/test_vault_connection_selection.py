@@ -96,6 +96,27 @@ def test_scoped_security_context_is_forwarded_to_vault_reveal(monkeypatch):
     }
 
 
+def test_airflow_key_can_reveal_successfactors_vault_connection(monkeypatch):
+    client = _load_vault_client(monkeypatch)
+    monkeypatch.delenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", raising=False)
+    monkeypatch.setenv("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE", "airflow-key")
+    calls: list[tuple[str, dict]] = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response(200, {"conn_id": "femsa_sf", "base_url": "https://example.invalid"})
+
+    monkeypatch.setattr(client.requests, "get", fake_get)
+
+    payload = client.get_connection_for_worker("sap_successfactors", conn_id="femsa_sf")
+
+    assert payload["conn_id"] == "femsa_sf"
+    assert calls[0][1]["headers"] == {
+        "x-api-key": "airflow-key",
+        "x-internal-service": "airflow",
+    }
+
+
 def test_missing_conn_id_keeps_default_then_analytics_fallback(monkeypatch):
     client = _load_vault_client(monkeypatch)
     calls: list[str] = []

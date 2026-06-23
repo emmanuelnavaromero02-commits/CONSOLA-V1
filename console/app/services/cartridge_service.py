@@ -766,9 +766,9 @@ async def export_cartridge(cartridge_id: str) -> bytes:
     Export cartridge as a ZIP:
       config/seed.sql  — generated from DB (cartridges, connections, dags,
                          entities, semantic_terms, kb_config, mcp_custom_tools)
-      dags/*.py        — DAG source code from cartridge_dags.source_code
-                         (falls back to /registry/cartridges/{id}/dags then to
-                          /opt/airflow/dags for any *.py prefixed with cartridge_id)
+      dags/*.py        — DAG source code from the Airflow/cartridge file on
+                         disk, with cartridge_dags.source_code only as a
+                         legacy fallback
       specs/*          — spec files from MinIO
     Self-contained and re-importable on a fresh installation.
     """
@@ -832,11 +832,25 @@ async def export_cartridge(cartridge_id: str) -> bytes:
         slug = a.get("slug", "agent")
         files[f"agents/{slug}.yaml"] = _agent_to_yaml(a).encode("utf-8")
 
-    # ── DAG sources: prefer cartridge_dags.source_code (DB) ───────────────
+    def _disk_dag_bytes(fname: str) -> bytes | None:
+        import pathlib
+        for candidate in (
+            pathlib.Path(f"/registry/cartridges/{cartridge_id}/dags") / fname,
+            pathlib.Path("/opt/airflow/dags") / cartridge_id / fname,
+            pathlib.Path("/opt/airflow/dags") / fname,
+        ):
+            try:
+                if candidate.is_file():
+                    return candidate.read_bytes()
+            except OSError:
+                continue
+        return None
+
+    # ── DAG sources: disk is canonical; DB is only a mirror ────────────────
     seen_dag_files: set[str] = set()
     for r in dag_rows:
         fname = r["file"] or f"{r['dag_id']}.py"
-        files[f"dags/{fname}"] = r["source_code"].encode("utf-8")
+        files[f"dags/{fname}"] = _disk_dag_bytes(fname) or r["source_code"].encode("utf-8")
         seen_dag_files.add(fname)
 
     # ── Fallback: filesystem (any DAG not already captured from DB) ───────

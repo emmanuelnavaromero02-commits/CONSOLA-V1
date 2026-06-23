@@ -20,8 +20,6 @@ SAP_DAGS = (
     "cartridges/sap_hcm/dags/sap_hcm_extract_all.py",
     "cartridges/sap_s4hana/dags/sap_s4hana_extract.py",
     "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
-    "cartridges/sap_successfactors/dags/sap_successfactors_extract.py",
-    "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py",
 )
 
 
@@ -64,3 +62,15 @@ def test_successfactors_child_dag_records_pipeline_run_telemetry():
         "airflow_dag_run_id",
     ):
         assert needle in src
+
+
+def test_successfactors_airflow_dags_are_direct_not_airflow_to_cartridge_http():
+    for rel in (
+        "cartridges/sap_successfactors/dags/sap_successfactors_extract.py",
+        "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py",
+    ):
+        src = _read(rel)
+        assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" not in src, rel
+        assert "SAP_SUCCESSFACTORS_URL" not in src, rel
+        assert "http://sap-successfactors:8203" not in src, rel
+        assert "run_entity" in src, rel

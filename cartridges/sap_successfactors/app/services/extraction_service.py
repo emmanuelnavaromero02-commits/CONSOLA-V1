@@ -245,6 +245,11 @@ def run_entity(
     )
     idempotency_key = str(config.get("idempotency_key") or "").strip() or None
     parent_idempotency_key = str(config.get("parent_idempotency_key") or "").strip() or None
+    if not conn_id:
+        raise ValueError(
+            f"SAP SuccessFactors entity {entity} requires entity_config.connection_id "
+            "or an explicit conn_id; no environment/default credential fallback is allowed."
+        )
     expected_columns = list(dict.fromkeys([
         *(select_fields or []),
         *([watermark_field] if watermark_field else []),

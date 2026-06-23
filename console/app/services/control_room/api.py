@@ -2473,6 +2473,11 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                 **intelligence,
                 "decision_intelligence": decision_intelligence,
             }
+        analysis_evidence = (
+            metadata.get("analysis_evidence")
+            if isinstance(metadata.get("analysis_evidence"), dict)
+            else {}
+        )
         items.append(
             {
                 "id": item_id,
@@ -2577,6 +2582,14 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                 "advisory": bool(metadata.get("advisory")) or is_agent_alert,
                 "agent_id": metadata.get("agent_id"),
                 "agent_run_id": metadata.get("agent_run_id"),
+                "analysis_type": metadata.get("analysis_type")
+                or analysis_evidence.get("analysis_type"),
+                "engine": metadata.get("origin")
+                or analysis_evidence.get("engine")
+                or metadata.get("engine"),
+                "engine_run_id": metadata.get("engine_run_id")
+                or analysis_evidence.get("engine_run_id"),
+                "analysis_evidence": analysis_evidence,
                 "deduped": occurrence_count > 1,
                 "occurrence_count": occurrence_count,
                 "hypothesis": metadata.get("hypothesis"),

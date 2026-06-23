@@ -117,6 +117,19 @@ def test_migration_36_grants_operational_to_sap_cartridges():
         assert tbl in src, f"migration must grant SAP cartridges on {tbl!r}"
 
 
+def test_migration_36_grants_airflow_dag_runtime_observability_tables():
+    src = MIGRATION_36.read_text(encoding="utf-8")
+    grant = re.search(
+        r"GRANT SELECT, INSERT, UPDATE ON(?P<body>[^;]*?)TO omega_airflow_dag;",
+        src,
+        re.DOTALL,
+    )
+    assert grant, "migration must grant operational tables to omega_airflow_dag"
+    body = grant.group("body")
+    for tbl in ("entity_config", "entity_watermarks", "extraction_runs", "pipeline_runs"):
+        assert tbl in body, f"omega_airflow_dag needs {tbl!r} for direct DAG runtime"
+
+
 # ── docker-compose.yml ──────────────────────────────────────────────────────
 
 def test_local_compose_no_postgres_superuser_in_runtime_services():

@@ -45,7 +45,7 @@ VALUES
     ('sap_successfactors', 'EmpEmployment', 'EmpEmployment', 'Empleo', 'Datos de empleo (EmpEmployment)', 'incremental', 'lastModifiedDateTime', 200, 'userId', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'EmpJob', 'EmpJob', 'Puesto (Job)', 'Datos de puesto (EmpJob)', 'incremental', 'lastModifiedDateTime', 200, 'userId', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'EmpCompensation', 'EmpCompensation', 'Compensación', 'Datos de compensación (EmpCompensation)', 'incremental', 'lastModifiedDateTime', 200, 'userId', 'sap_successfactors_extract', TRUE, 'manual'),
-    ('sap_successfactors', 'Position', 'Position', 'Posición', 'Datos de posición (Position)', 'incremental', 'lastModifiedDateTime', 500, 'positionCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'Position', 'Position', 'Posición', 'Datos de posición (Position)', 'incremental', 'lastModifiedDateTime', 500, 'code', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'FODepartment', 'FODepartment', 'Departamento', 'Objeto de fundación: departamentos', 'full', NULL, 1000, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'FODivision', 'FODivision', 'División', 'Objeto de fundación: divisiones', 'full', NULL, 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'FOLocation', 'FOLocation', 'Ubicación', 'Objeto de fundación: ubicaciones', 'full', NULL, 1000, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),

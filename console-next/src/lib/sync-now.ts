@@ -30,6 +30,7 @@ export interface SyncRunPayload {
 export interface StartSyncNowInput {
   conn_id?: string;
   mode?: "incremental" | "full";
+  request_id?: string;
   target?: SyncTarget;
 }
 
@@ -37,13 +38,36 @@ export function isSyncTerminal(status: string | undefined): boolean {
   return status === "success" || status === "partial" || status === "failed";
 }
 
+function safeRequestSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 48) || "unknown";
+}
+
+export function createSyncNowRequestId(
+  cartridgeId: string,
+  input: Pick<StartSyncNowInput, "mode" | "target"> = {},
+): string {
+  const random =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return [
+    "sync-now",
+    safeRequestSegment(cartridgeId),
+    safeRequestSegment(input.mode ?? "incremental"),
+    safeRequestSegment(input.target ?? "all"),
+    safeRequestSegment(random),
+  ]
+    .join(":")
+    .slice(0, 128);
+}
+
 export async function startCartridgeSyncNow(
   cartridgeId: string,
   input: StartSyncNowInput = {},
 ): Promise<SyncRunPayload> {
+  const request_id = input.request_id ?? createSyncNowRequestId(cartridgeId, input);
   const { data } = await api.post<SyncRunPayload>(
     `/api/cartridges/${encodeURIComponent(cartridgeId)}/sync-now`,
-    input,
+    { ...input, request_id },
   );
   return data;
 }

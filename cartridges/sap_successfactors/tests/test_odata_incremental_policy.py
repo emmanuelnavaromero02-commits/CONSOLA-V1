@@ -132,6 +132,7 @@ def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -
                 "entity": "EmpJob",
                 "mode": "incremental",
                 "watermark_field": "lastModifiedDateTime",
+                "conn_id": "femsa_sf",
                 "select_fields": ["userId", "lastModifiedDateTime"],
             }
         )
@@ -161,6 +162,7 @@ def test_saved_watermark_normalizes_sap_payload_date(monkeypatch) -> None:
             "entity": "PerEmail",
             "mode": "incremental",
             "watermark_field": "lastModifiedDateTime",
+            "conn_id": "femsa_sf",
         }
     )
 

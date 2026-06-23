@@ -259,6 +259,21 @@ async def control_room_page_slash(request: Request):
     return _console_next_response(request, "control-room/index.html")
 
 
+@router.get(
+    "/control-room/talent", dependencies=[Depends(require_permission("workspace.access"))]
+)
+async def control_room_talent_page(request: Request):
+    return _console_next_response(request, "control-room/talent/index.html")
+
+
+@router.get(
+    "/control-room/talent/",
+    dependencies=[Depends(require_permission("workspace.access"))],
+)
+async def control_room_talent_page_slash(request: Request):
+    return _console_next_response(request, "control-room/talent/index.html")
+
+
 # Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of
 # their own identity, role, workspace, effective permissions and cartridge
 # entitlements. Available to any authenticated user. No admin powers

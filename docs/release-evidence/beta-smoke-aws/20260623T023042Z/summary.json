@@ -1,0 +1,205 @@
+{
+  "blocked": 0,
+  "checks": [
+    {
+      "evidence": "status=200 version=1.45.116-beta expected=1.45.116-beta",
+      "layer": "public-alb",
+      "name": "public /healthz",
+      "status": "PASS",
+      "unblock": "Check ALB/listener/target group routing and public security groups."
+    },
+    {
+      "evidence": "status=200 body={\"ok\":true,\"service\":\"console\"}",
+      "layer": "public-alb",
+      "name": "public /readyz",
+      "status": "PASS",
+      "unblock": "Check ALB/listener/target group routing and public security groups."
+    },
+    {
+      "evidence": "status=200 body={\"ok\":true,\"service\":\"console\"}",
+      "layer": "public-alb",
+      "name": "public /readyz?require_data=1",
+      "status": "PASS",
+      "unblock": "Check ALB/listener/target group routing and public security groups."
+    },
+    {
+      "evidence": "command_id=468d85fc-48fe-4099-b06f-b0f3a9119658 response_code=0",
+      "layer": "internal-ec2",
+      "name": "SSM command completed",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "path=/opt/modecissions/VERSION version=1.45.116-beta expected=1.45.116-beta",
+      "layer": "internal-ec2",
+      "name": "host VERSION file",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "DEPLOY_REF=v1.45.116-beta expected=v1.45.116-beta",
+      "layer": "internal-ec2",
+      "name": "DEPLOY_REF matches expected",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "IMAGE_TAG=v1.45.116-beta expected=v1.45.116-beta",
+      "layer": "internal-ec2",
+      "name": "IMAGE_TAG matches expected",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "APP_ENV=production",
+      "layer": "internal-ec2",
+      "name": "APP_ENV captured",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "head=7306817e describe=v1.45.116-beta",
+      "layer": "internal-ec2",
+      "name": "remote git ref captured",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "docker compose config --quiet returned 0",
+      "layer": "internal-ec2",
+      "name": "AWS compose config validates",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "running_services=hubspot,replicon,salesforce,sap-hcm,sap-s4hana,airflow,airflow-scheduler,console,mailhog,mcp-infra,postgres,postgres_gold,redis,refinement,sap-successfactors,superset,vault,workspace",
+      "layer": "internal-ec2",
+      "name": "console container running",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "status=200 version=1.45.116-beta expected=1.45.116-beta",
+      "layer": "internal-ec2",
+      "name": "internal /healthz",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "status=200",
+      "layer": "internal-ec2",
+      "name": "internal /readyz",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "status=200",
+      "layer": "internal-ec2",
+      "name": "internal /readyz require_data",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "status=200",
+      "layer": "internal-ec2",
+      "name": "internal /readyz require_intelligence",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "status=200",
+      "layer": "internal-ec2",
+      "name": "internal superset health",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "entries=162 rows=6740",
+      "layer": "internal-ec2",
+      "name": "Replicon Gold lineage",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "rows=3060",
+      "layer": "internal-ec2",
+      "name": "Gold table gold_consultor_mensual has rows",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "rows=1680",
+      "layer": "internal-ec2",
+      "name": "Gold table gold_pnl_mensual has rows",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "rows=158",
+      "layer": "internal-ec2",
+      "name": "Gold table gold_forecast_mensual has rows",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "OMEGA_BETA_REQUIRE_HUBSPOT=0; AWS beta blocks on Replicon Gold",
+      "layer": "internal-ec2",
+      "name": "HubSpot optional golden path",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "weak_gold_tables=0",
+      "layer": "internal-ec2",
+      "name": "Gold FORCE RLS",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "role=omega_refinement_gold rolbypassrls=false",
+      "layer": "internal-ec2",
+      "name": "Gold read role NOBYPASSRLS",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "rows=39",
+      "layer": "internal-ec2",
+      "name": "Replicon Intelligence signals",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "rows=53",
+      "layer": "internal-ec2",
+      "name": "Replicon Control Room items",
+      "status": "PASS",
+      "unblock": ""
+    },
+    {
+      "evidence": "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=<unset>",
+      "layer": "internal-ec2",
+      "name": "external write-back disabled",
+      "status": "PASS",
+      "unblock": ""
+    }
+  ],
+  "fail": 0,
+  "metadata": {
+    "deploy_ref": "v1.45.116-beta",
+    "expected_version": "1.45.116-beta",
+    "generated_at_utc": "2026-06-23T02:30:42.595386+00:00",
+    "golden_path": "replicon",
+    "hubspot_required": false,
+    "image_tag": "v1.45.116-beta",
+    "instance_id": "i-07a82861245b34481",
+    "public_url": "https://console.7businesssolutions.com",
+    "region": "us-east-1",
+    "rollback_command": "",
+    "ssm_command_id": "468d85fc-48fe-4099-b06f-b0f3a9119658",
+    "ssm_response_code": 0,
+    "ssm_status": "Success"
+  },
+  "pass": 26,
+  "status": "PASS"
+}

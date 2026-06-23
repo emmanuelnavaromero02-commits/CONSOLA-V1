@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import sys
 import types
 from datetime import datetime, timedelta, timezone
@@ -55,6 +56,36 @@ def _scoped_sf_pipeline_user() -> dict:
     user = dict(_scoped_pipeline_user())
     user["allowed_cartridges"] = ["sap_successfactors"]
     return user
+
+
+def test_pipeline_gold_dependency_matcher_accepts_successfactors_s3_paths(console_main):
+    source = inspect.getsource(console_main.api_pipeline)
+
+    assert "gds.get(\"sources\")" in source
+    assert "silver/{cartridge_lower}/{silver_lower}" in source
+
+
+def test_sync_child_gold_refresh_summary_counts_partial_aggregate(console_main):
+    summary = console_main._sync_child_gold_refresh_summary([
+        {
+            "extra": {
+                "gold_refresh": {
+                    "status": "partial",
+                    "materialized": 14,
+                    "total": 19,
+                    "results": [
+                        {"name": "ok_dataset", "status": "ok"},
+                        {"name": "failed_dataset", "status": "error"},
+                    ],
+                }
+            }
+        }
+    ])
+
+    assert summary["status"] == "partial"
+    assert summary["materialized"] == 14
+    assert summary["total"] == 19
+    assert summary["failed"] == 5
 
 
 class _FakeResponse:
@@ -429,6 +460,7 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
     assert trigger_calls[0]["dag_run_id"].startswith(
         "console__sap_successfactors_extract_all__"
     )
+    assert trigger_calls[0]["conf"]["idempotency_key"] == stored["run_id"]
     assert trigger_calls[0]["conf"]["tenant_id"] == user["active_tenant_id"]
     assert trigger_calls[0]["conf"]["workspace_id"] == user["active_workspace_id"]
     assert records[0]["entity"] == console_main._SYNC_AGGREGATE_ENTITY
@@ -437,6 +469,147 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
         stored["extra"]["triggered_entities"][0]["entity"]
         == console_main._SYNC_AGGREGATE_ENTITY
     )
+
+
+@pytest.mark.anyio
+async def test_sync_now_request_id_reuses_existing_terminal_run(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    request_id = "sync-now-ui-retry-1"
+    lock_key = console_main._sync_now_lock_key(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        user=user,
+    )
+    run_id = console_main._sync_now_run_id_from_request_id(
+        cartridge="sap_successfactors",
+        request_id=request_id,
+        lock_key=lock_key,
+    )
+    existing = {
+        "run_id": run_id,
+        "dag_id": console_main._SYNC_NOW_DAG_ID,
+        "cartridge_id": "sap_successfactors",
+        "entity": console_main._SYNC_NOW_ENTITY,
+        "mode": "incremental",
+        "status": "success",
+        "started_at": datetime.now(timezone.utc) - timedelta(minutes=5),
+        "finished_at": datetime.now(timezone.utc),
+        "error_message": None,
+        "extra": {
+            "mode": "incremental",
+            "target": "all",
+            "request_id": request_id,
+            "triggered_entities": [{"entity": console_main._SYNC_AGGREGATE_ENTITY}],
+            "errors": [],
+            "steps": [
+                {**step, "status": "success"}
+                for step in console_main._initial_sync_steps()
+            ],
+            "control_room_ready": True,
+            "control_room_checked_at": "2026-06-23T21:25:17+00:00",
+        },
+    }
+
+    async def resolve(user_arg, cartridge_id, fallback=None):
+        return "sap_successfactors", True
+
+    async def fetch(*, cartridge, run_id: str, user=None):
+        assert cartridge == "sap_successfactors"
+        assert run_id == existing["run_id"]
+        return dict(existing)
+
+    async def active_should_not_run(**_kwargs):
+        raise AssertionError("same request_id should be resolved before active lookup")
+
+    async def upsert_should_not_run(**_kwargs):
+        raise AssertionError("same request_id should not create a new sync run")
+
+    async def trigger_should_not_run(*_args, **_kwargs):
+        raise AssertionError("same request_id should not trigger Airflow again")
+
+    monkeypatch.setattr(console_main, "_resolve_scoped_operation_cartridge", resolve)
+    monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
+    monkeypatch.setattr(console_main, "_fetch_active_sync_run", active_should_not_run)
+    monkeypatch.setattr(console_main, "_upsert_sync_run", upsert_should_not_run)
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
+
+    result = await console_main.api_cartridge_sync_now(
+        "sap_successfactors",
+        {"mode": "incremental", "target": "all", "request_id": request_id},
+        user=user,
+    )
+
+    assert result["run_id"] == existing["run_id"]
+    assert result["status"] == "success"
+    assert result["control_room_ready"] is True
+
+
+@pytest.mark.anyio
+async def test_sync_run_get_reconciles_terminal_without_control_room_check(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    row = {
+        "run_id": "sync_now:sap_successfactors:terminal-needs-final",
+        "dag_id": console_main._SYNC_NOW_DAG_ID,
+        "cartridge_id": "sap_successfactors",
+        "entity": console_main._SYNC_NOW_ENTITY,
+        "mode": "incremental",
+        "status": "success",
+        "started_at": datetime.now(timezone.utc) - timedelta(minutes=20),
+        "finished_at": datetime.now(timezone.utc),
+        "error_message": None,
+        "extra": {
+            "target": "all",
+            "mode": "incremental",
+            "triggered_entities": [{"entity": console_main._SYNC_AGGREGATE_ENTITY}],
+            "errors": [],
+            "steps": [
+                {**step, "status": "success"}
+                for step in console_main._initial_sync_steps()
+            ],
+            "control_room_ready": False,
+        },
+    }
+    reconciled: list[str] = []
+
+    async def resolve(user_arg, cartridge_id, fallback=None):
+        return "sap_successfactors", True
+
+    async def fetch(*, cartridge, run_id, user=None):
+        assert cartridge == "sap_successfactors"
+        assert run_id == row["run_id"]
+        return dict(row)
+
+    async def build_status(*, cartridge, row, user=None):
+        reconciled.append(row["run_id"])
+        payload = console_main._sync_public_payload(
+            row,
+            {
+                **row["extra"],
+                "control_room_ready": True,
+                "control_room_checked_at": "2026-06-23T21:30:00+00:00",
+            },
+        )
+        payload["control_room_ready"] = True
+        return payload
+
+    monkeypatch.setattr(console_main, "_resolve_scoped_operation_cartridge", resolve)
+    monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
+    monkeypatch.setattr(console_main, "_build_sync_run_status", build_status)
+
+    result = await console_main.api_cartridge_sync_run(
+        "sap_successfactors",
+        row["run_id"],
+        user=user,
+    )
+
+    assert reconciled == [row["run_id"]]
+    assert result["control_room_ready"] is True
 
 
 @pytest.mark.anyio

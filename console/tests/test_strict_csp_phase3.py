@@ -190,3 +190,11 @@ def test_control_room_fallback_csp_is_strict_for_scripts():
     assert "script-src 'self'" in script_seg, csp
     assert "'unsafe-inline'" not in script_seg, csp
     assert "frame-ancestors 'none'" in csp, csp
+
+
+def test_control_room_talent_fallback_csp_is_strict_for_scripts():
+    csp = _csp_for("/control-room/talent")
+    script_seg = csp.split("style-src", 1)[0]
+    assert "script-src 'self'" in script_seg, csp
+    assert "'unsafe-inline'" not in script_seg, csp
+    assert "frame-ancestors 'none'" in csp, csp

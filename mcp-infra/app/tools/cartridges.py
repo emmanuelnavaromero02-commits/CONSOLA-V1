@@ -33,7 +33,6 @@ from app.tools.postgres import _conn
 
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
-
 # ── DuckDB helper (S3 pre-configured) ─────────────────────────────────────────
 
 
@@ -935,7 +934,11 @@ async def cartridge_extract(
     if not row or not row[0]:
         return {"error": f"No dag_id configured for {cartridge_id}.{resolved}"}
     dag_id = row[0]
-    selected_conn_id = (conn_id or row[1] or "").strip()
+    selected_conn_id = (
+        conn_id
+        or row[1]
+        or ""
+    ).strip()
     entity = resolved
     run_id = uuid.uuid4().hex[:8]
 
@@ -1014,7 +1017,11 @@ async def cartridge_extract_all(
     ) as client:
         for entity, dag_id, configured_conn_id in rows:
             run_id = uuid.uuid4().hex[:8]
-            selected_conn_id = (conn_id or configured_conn_id or "").strip()
+            selected_conn_id = (
+                conn_id
+                or configured_conn_id
+                or ""
+            ).strip()
             conf = _attach_security_scope(
                 {
                     "job_id": run_id,

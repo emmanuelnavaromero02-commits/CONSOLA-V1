@@ -163,6 +163,18 @@ def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypa
     assert clean["source_type"] == "manual_fixture"
 
 
+def test_wisdom_bit_source_is_allowlisted_without_synthetic_flag(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("MONTE_CARLO_ALLOW_SYNTHETIC", raising=False)
+
+    clean = monte_carlo_service._validate_payload(
+        {**_payload(), "source_type": "wisdom_bit", "source_id": "WB-TALENTO"}
+    )
+
+    assert clean["source_type"] == "wisdom_bit"
+    assert clean["source_id"] == "WB-TALENTO"
+
+
 @pytest.mark.asyncio
 async def test_run_simulation_sets_db_scope_validates_source_and_persists(monkeypatch):
     fake = _FakePool()
@@ -177,6 +189,27 @@ async def test_run_simulation_sets_db_scope_validates_source_and_persists(monkey
     assert fake.conn.calls[0][0] == "execute"
     assert "set_config('app.tenant_id'" in fake.conn.calls[0][1]
     assert any(
+        call[0] == "fetchval" and "intelligence_signals" in call[1]
+        for call in fake.conn.calls
+    )
+    assert any(
+        call[0] == "fetchrow" and "INSERT INTO monte_carlo_simulations" in call[1]
+        for call in fake.conn.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_accepts_wisdom_bit_source_without_signal_lookup(monkeypatch):
+    fake = _FakePool()
+    monkeypatch.setattr(monte_carlo_service.auth, "pool", AsyncMock(return_value=fake))
+
+    result = await monte_carlo_service.run_simulation(
+        {"id": 42, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
+        {**_payload(), "source_type": "wisdom_bit", "source_id": "WB-TALENTO"},
+    )
+
+    assert result["simulation"]["source_type"] == "wisdom_bit"
+    assert not any(
         call[0] == "fetchval" and "intelligence_signals" in call[1]
         for call in fake.conn.calls
     )
@@ -208,6 +241,19 @@ def test_monte_carlo_migration_is_scoped_and_does_not_relax_rls():
     assert "FORCE ROW LEVEL SECURITY" in sql
     assert "ALTER ROLE omega_console NOBYPASSRLS" in sql
     assert "current_setting('app.workspace_id', true)" in sql
+    assert "'wisdom_bit'" in sql
     assert "USING (true)" not in sql
     assert "WITH CHECK (true)" not in sql
     assert "GRANT SELECT, INSERT, UPDATE ON monte_carlo_simulations TO omega_console" in sql
+
+
+def test_monte_carlo_wisdom_bit_source_migration_preserves_rls():
+    sql = (
+        REPO / "infra/init/99z_monte_carlo_wisdom_bit_source.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "monte_carlo_simulations_source_type_check" in sql
+    assert "'wisdom_bit'" in sql
+    assert "ALTER TABLE monte_carlo_simulations" in sql
+    assert "ENABLE ROW LEVEL SECURITY" not in sql
+    assert "DISABLE ROW LEVEL SECURITY" not in sql

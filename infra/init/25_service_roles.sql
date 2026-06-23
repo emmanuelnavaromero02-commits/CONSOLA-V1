@@ -194,7 +194,7 @@ GRANT SELECT ON
     semantic_terms, mcp_servers, mcp_custom_tools,
     rag_sources, rag_chunks, entity_config, entity_watermarks,
     pipeline_runs, run_logs, datasets, system_settings,
-    analytic_apps, data_catalog, kb_config, agents
+    analytic_apps, data_catalog, kb_config, agents, silver_lineage
     TO omega_mcp_infra;
 -- Write surface: solo tablas que las tools de mcp-infra escriben hoy.
 -- (cartridge_dags y mcp_* via airflow.* tools; rag_* via rag.store.

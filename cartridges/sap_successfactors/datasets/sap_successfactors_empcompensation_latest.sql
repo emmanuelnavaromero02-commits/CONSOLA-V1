@@ -29,9 +29,16 @@ latest AS (
 )
 SELECT
     userId               AS user_id,            -- plano
-    CAST(startDate AS DATE) AS start_date,
+    CAST(
+        COALESCE(
+            TRY_CAST(startDate AS TIMESTAMP),
+            to_timestamp(
+                TRY_CAST(regexp_extract(CAST(startDate AS VARCHAR), '^/Date\((-?[0-9]+)', 1) AS BIGINT) / 1000
+            )
+        ) AS DATE
+    ) AS start_date,
     payGroup             AS pay_group,
-    frequencyCode        AS frequency_code,
+    CAST(NULL AS VARCHAR) AS frequency_code,
     load_date
 FROM latest
 ORDER BY user_id, start_date

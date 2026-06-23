@@ -39,9 +39,15 @@ def test_successfactors_talent_monitor_has_agentops_tools_and_contract():
         '"writeback_enabled": false',
         '"engines"',
         '"name": "monte_carlo"',
+        '"enabled": true',
+        '"source_type": "wisdom_bit"',
+        '"source_id": "WB-TALENTO"',
+        '"seed": 45120',
+        '"output_metric": "delta"',
+        '"decision_mode": "recommendation_only"',
         '"name": "decision_orchestrator"',
         '"enabled": false',
-        "no se inventan parametros",
+        "Sin full_name, user_id, PERNR, salario ni payCompValue",
     ):
         assert token in sql
 

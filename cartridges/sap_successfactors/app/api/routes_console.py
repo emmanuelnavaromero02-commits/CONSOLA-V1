@@ -30,6 +30,7 @@ from app.core.extraction_status import (
     summarize_extraction_results,
 )
 from app.core.job_runner import (
+    _trigger_successfactors_gold_refresh,
     _trigger_silver_refresh,
     fail_external_job,
     finish_external_job,
@@ -71,11 +72,11 @@ def _degraded_503(report: dict) -> JSONResponse:
     return JSONResponse(report, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
-def _mark_external_job(func, *args) -> None:
+def _mark_external_job(func, *args) -> Any:
     try:
-        anyio.from_thread.run(func, *args)
+        return anyio.from_thread.run(func, *args)
     except RuntimeError:
-        anyio.run(func, *args)
+        return anyio.run(func, *args)
 
 
 def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -212,15 +213,23 @@ def entity_extract(
             detail=f"Entity {entity_id} has no date_field — cannot run historical",
         )
 
+    request_conn_id = conn_id if isinstance(conn_id, str) else None
+    selected_conn_id = (
+        str(request_conn_id or config.get("conn_id") or config.get("connection_id") or "").strip()
+        or None
+    )
     ctx = _security_context(body)
-    report = preflight_for_extract(conn_id=conn_id, security_context=ctx)
+    report = preflight_for_extract(conn_id=selected_conn_id, security_context=ctx)
     if report is not None:
         return _degraded_503(report)
 
     token = _set_security_context(ctx)
     try:
         result = run_entity(
-            _with_optional_conn(_scoped_config({**config, "mode": mode}, ctx), conn_id),
+            _with_optional_conn(
+                _scoped_config({**config, "mode": mode}, ctx),
+                selected_conn_id,
+            ),
             from_date=from_date,
             to_date=to_date,
         )
@@ -285,6 +294,13 @@ def extract_all(
     finally:
         reset_security_context(token)
     summary = summarize_extraction_results(results)
+    gold_refresh = None
+    if any(isinstance(item, dict) and item.get("status") == "extracted" for item in results):
+        gold_refresh = _mark_external_job(
+            _trigger_successfactors_gold_refresh,
+            target,
+            ctx,
+        )
     status_text = "success" if not any(
         summary[key] for key in ("auth_blocked", "permission_blocked", "failed_open")
     ) else "completed_with_blocks"
@@ -294,6 +310,7 @@ def extract_all(
         "summary": summary,
         "results": results,
         "skipped": skipped,
+        "gold_refresh": gold_refresh,
     }
 
 

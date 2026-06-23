@@ -43,7 +43,7 @@ VALUES
     ('sap_successfactors', 'EmpEmploymentTermination', 'EmpEmploymentTermination', 'Baja de Empleo',
      'Terminaciones de empleo (EmpEmploymentTermination)', 'incremental', 'lastModifiedDateTime',
      200, 'userId', 'sap_successfactors_extract', TRUE, 'manual',
-     '["userId","endDate","eventReasonExternalCode","lastModifiedDateTime"]'::jsonb,
+     '["userId","endDate","lastModifiedDateTime"]'::jsonb,
      FALSE, 'endDate')
 ON CONFLICT (cartridge_id, entity) DO UPDATE
     SET odata_entity     = EXCLUDED.odata_entity,

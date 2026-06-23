@@ -112,6 +112,14 @@ resource "aws_security_group" "alb" {
     cidr_blocks = [aws_vpc.main.cidr_block]
   }
 
+  egress {
+    description = "Airflow target in VPC"
+    from_port   = 8082
+    to_port     = 8082
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
   tags = {
     Name = "modecissions-sg-public-alb"
   }
@@ -145,6 +153,14 @@ resource "aws_security_group" "app" {
     description     = "Workspace from public ALB"
     from_port       = 8001
     to_port         = 8001
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description     = "Airflow from public ALB"
+    from_port       = 8082
+    to_port         = 8082
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }

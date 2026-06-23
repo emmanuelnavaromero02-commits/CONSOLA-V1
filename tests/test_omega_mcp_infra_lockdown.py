@@ -68,6 +68,7 @@ OPERATIONAL_TABLES = (
     "entity_config",
     "pipeline_runs",
     "datasets",
+    "silver_lineage",
     "mcp_servers",
 )
 

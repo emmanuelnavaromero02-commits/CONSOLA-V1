@@ -1,5 +1,5 @@
 -- sap_successfactors_compensation_full  (silver)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpCompensation", "raw/sap_successfactors/EmpPayCompRecurring", "raw/sap_successfactors/EmpPayCompNonRecurring"]
+-- sources: ["raw/sap_successfactors/EmpCompensation", "raw/sap_successfactors/EmpPayCompRecurring", "raw/sap_successfactors/EmpPayCompNonRecurring", "silver/sap_successfactors/sap_successfactors_empcompensation_latest", "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest", "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest"]
 -- description: Componentes de compensación por empleado (cabecera + recurrentes + no recurrentes). El importe (paycomp_value) llega encrypted desde bronze: se conserva como caja negra y NO es agregable.
 
 -- Unión por user_id (plano en las tres entidades). paycomp_value es un token

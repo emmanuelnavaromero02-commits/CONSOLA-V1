@@ -61,6 +61,10 @@ def _auth_options(service_name: str) -> list[tuple[str, str]]:
     if key:
         for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
             options.append((key, header))
+    if service == "sap_successfactors":
+        airflow_key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE", "")
+        if airflow_key:
+            options.append((airflow_key, "airflow"))
     if not options and not _is_production():
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:

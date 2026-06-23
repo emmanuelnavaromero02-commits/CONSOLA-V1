@@ -90,6 +90,12 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
+    select_fields:
+      - personIdExternal
+      - phoneType
+      - phoneNumber
+      - isPrimary
+      - lastModifiedDateTime
     protection:
       phoneNumber: masked
 
@@ -98,6 +104,16 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
+    select_fields:
+      - personIdExternal
+      - addressType
+      - startDate
+      - endDate
+      - address1
+      - city
+      - state
+      - zipCode
+      - lastModifiedDateTime
     protection:
       address1: masked
       zipCode: masked
@@ -106,6 +122,13 @@ entities:
     description: "National identifiers (SSN, RFC, CURP, etc)."
     mode: full
     page_size: 200
+    select_fields:
+      - personIdExternal
+      - country
+      - cardType
+      - nationalId
+      - isPrimary
+      - lastModifiedDateTime
     protection:
       nationalId: encrypted
 
@@ -120,7 +143,7 @@ entities:
       - userId
       - startDate
       - endDate
-      - employeeClass
+      - assignmentClass
       - originalStartDate
       - lastModifiedDateTime
 
@@ -156,6 +179,12 @@ entities:
     page_size: 200
     effective_dated: true
     date_field: startDate
+    select_fields:
+      - userId
+      - startDate
+      - endDate
+      - payGroup
+      - lastModifiedDateTime
 
   - entity: EmpPayCompRecurring
     description: "Recurring pay components (base salary, allowances)."
@@ -164,8 +193,18 @@ entities:
     page_size: 200
     effective_dated: true
     date_field: startDate
+    select_fields:
+      - userId
+      - payComponent
+      - paycompvalue
+      - frequency
+      - currencyCode
+      - startDate
+      - endDate
+      - lastModifiedDateTime
     protection:
       paycompValue: encrypted
+      paycompvalue: encrypted
 
   - entity: EmpPayCompNonRecurring
     description: "Non-recurring pay components (bonus, one-time payments)."
@@ -173,8 +212,16 @@ entities:
     watermark_field: lastModifiedDateTime
     page_size: 200
     date_field: payDate
+    select_fields:
+      - userId
+      - payComponentCode
+      - value
+      - currencyCode
+      - payDate
+      - lastModifiedDateTime
     protection:
       paycompValue: encrypted
+      value: encrypted
 
   - entity: PaymentInformationDetailV3
     description: "Payment information detail V3 (bank/payment-method details)."
@@ -219,7 +266,6 @@ entities:
     select_fields:
       - userId
       - endDate
-      - eventReasonExternalCode
       - lastModifiedDateTime
 
   # ── Org structure (Foundation Objects) ────────────────────────────────────
@@ -289,6 +335,13 @@ entities:
     description: "Foundation Object: cost centers."
     mode: full
     page_size: 1000
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: FOJobCode
     description: "Foundation Object: job codes / job classifications."
@@ -307,6 +360,13 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
+    select_fields:
+      - code
+      - externalName_defaultValue
+      - department
+      - location
+      - costCenter
+      - lastModifiedDateTime
 
   # ── Time off ──────────────────────────────────────────────────────────────
   - entity: EmployeeTime
@@ -315,12 +375,23 @@ entities:
     watermark_field: lastModifiedDateTime
     page_size: 500
     date_field: startDate
+    select_fields:
+      - userId
+      - startDate
+      - endDate
+      - timeType
+      - approvalStatus
+      - lastModifiedDateTime
 
   - entity: TimeAccount
     description: "Time off accruals / balances per employee."
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
+    select_fields:
+      - userId
+      - accountType
+      - lastModifiedDateTime
 
   - entity: WorkSchedule
     description: "Work schedule assignments."
@@ -342,6 +413,11 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    select_fields:
+      - candidateId
+      - firstName
+      - lastName
+      - lastModifiedDateTime
     protection:
       candidateId: shadowed
       firstName: masked
@@ -379,3 +455,10 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    select_fields:
+      - userId
+      - startDate
+      - endDate
+      - relationshipType
+      - relUserId
+      - lastModifiedDateTime
