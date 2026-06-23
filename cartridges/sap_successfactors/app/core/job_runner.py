@@ -80,7 +80,7 @@ def _refinement_auth() -> tuple[str, str]:
     cartridge_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
     if cartridge_key:
         return cartridge_key, "cartridge-sap_successfactors"
-    if not os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+    if os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:
             return legacy, "cartridge-sap_successfactors"
