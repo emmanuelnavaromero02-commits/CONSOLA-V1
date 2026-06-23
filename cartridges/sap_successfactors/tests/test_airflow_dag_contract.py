@@ -31,3 +31,9 @@ def test_extract_all_dag_forwards_sync_target_to_cartridge():
     source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
 
     assert '"target": conf.get("target") or "all"' in source
+
+
+def test_extract_all_dag_forwards_sync_idempotency_key_to_cartridge():
+    source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
+
+    assert '"idempotency_key": conf.get("idempotency_key") or None' in source

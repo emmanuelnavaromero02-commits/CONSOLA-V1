@@ -243,6 +243,8 @@ def run_entity(
         if isinstance(security_context, dict)
         else None
     )
+    idempotency_key = str(config.get("idempotency_key") or "").strip() or None
+    parent_idempotency_key = str(config.get("parent_idempotency_key") or "").strip() or None
     expected_columns = list(dict.fromkeys([
         *(select_fields or []),
         *([watermark_field] if watermark_field else []),
@@ -255,6 +257,7 @@ def run_entity(
         run_type=mode,
         status="running",
         started_at=datetime.now(timezone.utc),
+        requested_run_id=idempotency_key,
     )
 
     try:
@@ -394,6 +397,8 @@ def run_entity(
 
         return {
             "run_id": run_id,
+            "idempotency_key": idempotency_key,
+            "parent_idempotency_key": parent_idempotency_key,
             "entity": entity,
             "mode": mode,
             "record_count": total_records,

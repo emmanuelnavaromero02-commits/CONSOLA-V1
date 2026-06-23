@@ -97,6 +97,41 @@ def test_extraction_service_passes_conn_id_and_scope_to_sap_client(monkeypatch):
     assert json.loads(captured["security_context"]) == ctx
 
 
+def test_extraction_service_uses_idempotency_key_as_run_id(monkeypatch):
+    captured: dict = {}
+
+    class FakeSapSfClient:
+        def __init__(self, conn_id=None, security_context=None):
+            return None
+
+        def fetch_entity(self, **_kwargs):
+            return []
+
+    def fake_create_run(**kwargs):
+        captured.update(kwargs)
+        return kwargs["requested_run_id"]
+
+    monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(extraction_service, "create_run", fake_create_run)
+    monkeypatch.setattr(extraction_service, "finish_run", lambda **_kwargs: None)
+    monkeypatch.setattr(extraction_service, "fail_run", lambda **_kwargs: None)
+    monkeypatch.setattr(extraction_service, "write_parquet_and_upload", lambda **_kwargs: "s3://bronze/path")
+    monkeypatch.setattr(extraction_service, "get_watermark", lambda _entity: None)
+    monkeypatch.setattr(extraction_service, "update_watermark", lambda **_kwargs: None)
+
+    result = extraction_service.run_entity({
+        "entity": "PerPerson",
+        "mode": "full",
+        "idempotency_key": "sync_now:sap_successfactors:test:PerPerson",
+        "parent_idempotency_key": "sync_now:sap_successfactors:test",
+    })
+
+    assert captured["requested_run_id"] == "sync_now:sap_successfactors:test:PerPerson"
+    assert result["run_id"] == "sync_now:sap_successfactors:test:PerPerson"
+    assert result["idempotency_key"] == "sync_now:sap_successfactors:test:PerPerson"
+    assert result["parent_idempotency_key"] == "sync_now:sap_successfactors:test"
+
+
 def test_effective_dated_entity_sends_odata_from_to_date(monkeypatch):
     captured: dict = {}
 
