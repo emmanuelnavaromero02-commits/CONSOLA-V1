@@ -89,7 +89,8 @@ def test_extract_all_dag_records_entity_pipeline_runs_for_studio():
 
     assert "def _pipeline_run_save" in source
     assert '"dag_id": "sap_successfactors_extract_all"' in source
-    assert '"run_id": f"{airflow_run_id}:{entity}"' in source
+    assert '"run_id": run_id_override or f"{airflow_run_id}:{entity}"' in source
+    assert "run_id_override=context.get(\"run_id\")" in source
     assert "runtime.classify_successful_extraction(result)" in source
     assert "runtime.classify_extraction_exception(entity, exc)" in source
     assert "silver_refresh" in source

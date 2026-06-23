@@ -119,6 +119,7 @@ def test_airflow_key_can_reveal_successfactors_vault_connection(monkeypatch):
 
 def test_missing_conn_id_keeps_default_then_analytics_fallback(monkeypatch):
     client = _load_vault_client(monkeypatch)
+    monkeypatch.delenv("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE", raising=False)
     calls: list[str] = []
 
     def fake_get(url, **_kwargs):
