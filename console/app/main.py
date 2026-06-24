@@ -4512,7 +4512,7 @@ def _app_content_headers() -> dict[str, str]:
     return {
         "Content-Security-Policy": (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.plot.ly; "
+            "script-src 'self' https://cdn.jsdelivr.net https://cdn.plot.ly; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' data: https://fonts.gstatic.com; "
             "img-src 'self' data: blob:; "
@@ -4621,7 +4621,7 @@ def _app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> 
       </div>
     </header>
     <div class="frame-wrap">
-      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts allow-same-origin" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
+      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
       <div id="blocked" class="blocked" role="alert"></div>
     </div>
   </div>

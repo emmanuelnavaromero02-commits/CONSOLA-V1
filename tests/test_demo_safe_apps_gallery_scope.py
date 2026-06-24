@@ -5,8 +5,8 @@ import sys
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("INTERNAL_API_KEY", "x" * 64)
+os.environ["APP_ENV"] = "test"
+os.environ["INTERNAL_API_KEY"] = "x" * 64
 sys.path.insert(0, str(REPO / "console"))
 
 from app.main import (  # noqa: E402
@@ -81,6 +81,9 @@ def test_apps_gallery_is_only_a_control_room_entrypoint():
 
 @pytest.mark.asyncio
 async def test_apps_include_unready_can_use_installed_cartridges(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("INTERNAL_API_KEY", "x" * 64)
+
     from app import main as console_main
 
     class FakeConn:
