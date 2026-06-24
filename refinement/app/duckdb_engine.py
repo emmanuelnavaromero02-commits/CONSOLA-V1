@@ -1355,6 +1355,30 @@ class DuckDBEngine:
         finally:
             conn.close()
 
+    def _copy_scoped_gold_table_snapshot(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        table: str,
+        storage_path: str,
+        tenant: str,
+        workspace: str,
+        user_context: dict | None,
+    ) -> str:
+        # Schema evolution happens through psycopg2 in a separate connection.
+        # Refresh DuckDB's postgres attachment before exporting, otherwise the
+        # parquet snapshot can keep an old cached column list even after the
+        # pggold table was altered successfully.
+        self._pg_gold_attach(con, user_context)
+        return self._copy_to_parquet(
+            con,
+            (
+                f"SELECT * FROM pggold.{table} "
+                f"WHERE tenant_id = {_sql_quote(tenant)} "
+                f"AND workspace_id = {_sql_quote(workspace)}"
+            ),
+            storage_path,
+        )
+
     def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
         """
         Materialize a dataset to silver or gold.
@@ -1409,14 +1433,13 @@ class DuckDBEngine:
                 )
                 self._apply_gold_rls(table)
                 gold_parquet_path = self._snapshot_path("gold", cartridge, name, user_context)
-                gold_storage_uri = self._copy_to_parquet(
+                gold_storage_uri = self._copy_scoped_gold_table_snapshot(
                     con,
-                    (
-                        f"SELECT * FROM pggold.{table} "
-                        f"WHERE tenant_id = {_sql_quote(tenant)} "
-                        f"AND workspace_id = {_sql_quote(workspace)}"
-                    ),
+                    table,
                     gold_parquet_path,
+                    tenant,
+                    workspace,
+                    user_context,
                 )
                 storage_uri = f"postgres_gold:{table}"
                 if gold_storage_uri:
