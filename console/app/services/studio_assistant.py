@@ -179,7 +179,6 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "validate_dag_code",
         "dag_save_source", "dag_get_source",
         "cartridge_get_run_logs", "cartridge_get_job_status",
-        "view_job", "view_jobs",
     },
     3: {  # ENTIDADES
         "cartridge_preview", "cartridge_extract", "cartridge_extract_all",
