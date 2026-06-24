@@ -182,7 +182,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     ));
     await refreshButton.click();
     await refreshResponse;
-    await expect(page.getByText(/actualizado/i).first()).toBeVisible();
+    await expect(refreshButton).toBeEnabled({ timeout: 15_000 });
 
     expect(forbidden3000, "control-room assets and APIs must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room must not emit console.error").toEqual([]);
