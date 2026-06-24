@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import psycopg2
 import pytest
 
-from refinement.app.duckdb_engine import DuckDBEngine
+from refinement.app.duckdb_engine import DuckDBEngine, _duckdb_type_to_pg_type
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -181,6 +181,11 @@ def test_scoped_gold_table_creation_applies_native_rls(monkeypatch):
     con = MagicMock()
     applied: list[str] = []
     monkeypatch.setattr(engine, "_gold_table_columns", lambda _con, _table: None)
+    monkeypatch.setattr(
+        engine,
+        "_gold_query_schema",
+        lambda _con, _sql: {"order_count": ("order_count", "INTEGER")},
+    )
     monkeypatch.setattr(engine, "_apply_gold_rls", lambda table: applied.append(table))
 
     engine._ensure_scoped_gold_table(con, "gold_orders", "SELECT 1 AS order_count")
@@ -188,6 +193,50 @@ def test_scoped_gold_table_creation_applies_native_rls(monkeypatch):
     assert applied == ["gold_orders"]
     executed_sql = "\n".join(str(call.args[0]) for call in con.execute.call_args_list if call.args)
     assert "CREATE TABLE pggold.gold_orders" in executed_sql
+
+
+def test_scoped_gold_table_adds_columns_when_dataset_schema_evolves(monkeypatch):
+    engine = DuckDBEngine()
+    con = MagicMock()
+    added: list[tuple[str, list[tuple[str, str]]]] = []
+    applied: list[str] = []
+    monkeypatch.setattr(
+        engine,
+        "_gold_table_columns",
+        lambda _con, _table: {"tenant_id", "workspace_id", "user_id"},
+    )
+    monkeypatch.setattr(
+        engine,
+        "_gold_query_schema",
+        lambda _con, _sql: {
+            "tenant_id": ("tenant_id", "TEXT"),
+            "workspace_id": ("workspace_id", "TEXT"),
+            "user_id": ("user_id", "TEXT"),
+            "box_key": ("box_key", "TEXT"),
+        },
+    )
+    monkeypatch.setattr(
+        engine,
+        "_add_missing_gold_columns",
+        lambda table, columns: added.append((table, columns)),
+    )
+    monkeypatch.setattr(engine, "_apply_gold_rls", lambda table: applied.append(table))
+
+    engine._ensure_scoped_gold_table(con, "gold_sap_successfactors_talent_9box", "SELECT 1")
+
+    assert added == [("gold_sap_successfactors_talent_9box", [("box_key", "TEXT")])]
+    assert applied == ["gold_sap_successfactors_talent_9box"]
+    executed_sql = "\n".join(str(call.args[0]) for call in con.execute.call_args_list if call.args)
+    assert "DROP TABLE" not in executed_sql
+    assert "CREATE TABLE pggold.gold_sap_successfactors_talent_9box" not in executed_sql
+
+
+def test_duckdb_type_mapping_for_gold_schema_evolution():
+    assert _duckdb_type_to_pg_type("VARCHAR") == "TEXT"
+    assert _duckdb_type_to_pg_type("BIGINT") == "BIGINT"
+    assert _duckdb_type_to_pg_type("DOUBLE") == "DOUBLE PRECISION"
+    assert _duckdb_type_to_pg_type("TIMESTAMP WITH TIME ZONE") == "TIMESTAMPTZ"
+    assert _duckdb_type_to_pg_type("DECIMAL(18,2)") == "DECIMAL(18,2)"
 
 
 def test_gold_write_path_avoids_duckdb_postgres_copy_with_rls():

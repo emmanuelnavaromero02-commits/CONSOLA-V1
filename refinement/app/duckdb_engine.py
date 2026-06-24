@@ -91,6 +91,45 @@ def _pg_ident(value: str) -> str:
     return '"' + str(value or "").replace('"', '""') + '"'
 
 
+def _duckdb_type_to_pg_type(raw: str) -> str:
+    """Map DuckDB DESCRIBE types to PostgreSQL column types for Gold drift.
+
+    Gold tables are born from DuckDB queries, then persisted into Postgres.
+    When a dataset SQL evolves by adding columns, we add only the missing
+    nullable columns in Postgres rather than dropping all tenants' rows.
+    """
+    typ = (raw or "").strip().upper()
+    if not typ:
+        raise ValueError("Gold query returned a column with no type")
+    if typ.startswith("DECIMAL("):
+        return typ
+    if typ in {"VARCHAR", "TEXT", "UUID"}:
+        return "TEXT"
+    if typ in {"BOOLEAN", "BOOL"}:
+        return "BOOLEAN"
+    if typ in {"TINYINT", "UTINYINT", "SMALLINT", "USMALLINT"}:
+        return "SMALLINT"
+    if typ in {"INTEGER", "INT", "UINTEGER"}:
+        return "INTEGER"
+    if typ in {"BIGINT", "HUGEINT", "UBIGINT", "UHUGEINT"}:
+        return "BIGINT"
+    if typ in {"REAL", "FLOAT"}:
+        return "REAL"
+    if typ in {"DOUBLE", "FLOAT8"}:
+        return "DOUBLE PRECISION"
+    if typ == "DATE":
+        return "DATE"
+    if typ.startswith("TIMESTAMP"):
+        return "TIMESTAMPTZ" if "WITH TIME ZONE" in typ else "TIMESTAMP"
+    if typ.startswith("TIME"):
+        return "TIME"
+    if typ in {"JSON", "JSONB"}:
+        return "JSONB"
+    if typ.endswith("[]") or typ.startswith(("STRUCT(", "MAP(", "LIST(", "UNION(")):
+        return "JSONB"
+    raise ValueError(f"Unsupported DuckDB type for Gold schema evolution: {raw}")
+
+
 def _strip_sql_comments(sql: str) -> str:
     """Remove SQL comments while preserving quoted string literals.
 
@@ -1189,6 +1228,43 @@ class DuckDBEngine:
         except Exception:
             return None
 
+    def _gold_query_schema(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        sql: str,
+    ) -> dict[str, tuple[str, str]]:
+        rows = con.execute(f"DESCRIBE SELECT * FROM ({sql}) _q LIMIT 0").fetchall()
+        schema: dict[str, tuple[str, str]] = {}
+        for row in rows:
+            name = str(row[0])
+            schema[name.lower()] = (name, _duckdb_type_to_pg_type(str(row[1])))
+        if not schema:
+            raise ValueError("Gold query must return columns")
+        return schema
+
+    def _add_missing_gold_columns(
+        self,
+        table: str,
+        columns: list[tuple[str, str]],
+    ) -> None:
+        if not columns:
+            return
+        validate_safe_identifier(table, "table")
+        conn = self._pg_gold_conn()
+        try:
+            with conn.cursor() as cur:
+                for name, pg_type in columns:
+                    cur.execute(
+                        f"ALTER TABLE public.{_pg_ident(table)} "
+                        f"ADD COLUMN IF NOT EXISTS {_pg_ident(name)} {pg_type}"
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _apply_gold_rls(self, table: str) -> None:
         validate_safe_identifier(table, "table")
         conn = self._pg_gold_conn()
@@ -1206,11 +1282,18 @@ class DuckDBEngine:
         sql: str,
     ) -> None:
         cols = self._gold_table_columns(con, table)
+        query_schema = self._gold_query_schema(con, sql)
         if cols is None:
             con.execute(f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0")
             self._apply_gold_rls(table)
             return
         if "tenant_id" in cols and "workspace_id" in cols:
+            missing = [
+                query_schema[key]
+                for key in query_schema
+                if key not in cols
+            ]
+            self._add_missing_gold_columns(table, missing)
             self._apply_gold_rls(table)
             return
         # Legacy unscoped gold tables cannot safely coexist with SaaS-scoped
