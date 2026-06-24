@@ -248,6 +248,39 @@ def test_gold_write_path_avoids_duckdb_postgres_copy_with_rls():
     assert "INSERT INTO pggold." not in src
 
 
+def test_gold_snapshot_copy_refreshes_attachment_before_export(monkeypatch):
+    engine = DuckDBEngine()
+    con = MagicMock()
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        engine,
+        "_pg_gold_attach",
+        lambda _con, ctx=None: calls.append(("attach", ctx)) or "pggold",
+    )
+    monkeypatch.setattr(
+        engine,
+        "_copy_to_parquet",
+        lambda _con, sql, path: calls.append(("copy", sql)) or path,
+    )
+
+    result = engine._copy_scoped_gold_table_snapshot(
+        con,
+        "gold_sap_successfactors_talent_9box",
+        "s3://lakehouse/gold/sap_successfactors/sap_successfactors_talent_9box/_snapshots/new.parquet",
+        "tenant-a",
+        "workspace-a",
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert result.endswith("/new.parquet")
+    assert calls[0] == ("attach", {"tenant_id": "tenant-a", "workspace_id": "workspace-a"})
+    assert calls[1][0] == "copy"
+    assert "pggold.gold_sap_successfactors_talent_9box" in str(calls[1][1])
+    assert "tenant_id = 'tenant-a'" in str(calls[1][1])
+    assert "workspace_id = 'workspace-a'" in str(calls[1][1])
+
+
 def test_live_gold_rls_role_is_not_allowed_to_bypass_rls(postgres_gold_with_native_rls):
     conn = psycopg2.connect(postgres_gold_with_native_rls)
     try:
