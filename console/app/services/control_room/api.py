@@ -60,6 +60,14 @@ def _source_has_ready_contract(source: ControlRoomSource) -> bool:
 
 
 @_bind_to_core
+def _source_should_fetch_partial_contract(source: ControlRoomSource) -> bool:
+    return (
+        source.cartridge == "sap_successfactors"
+        and source.visible_module_id == "sap_successfactors_talent"
+    )
+
+
+@_bind_to_core
 def _internal_headers(server: str) -> dict[str, str]:
     pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
     if pair:
@@ -2014,6 +2022,140 @@ def _normalize_replicon_skill_gap(
 
 
 @_bind_to_core
+def _sf_talent_signal_details(row: dict[str, Any]) -> dict[str, Any]:
+    safe_keys = (
+        "signal_id",
+        "signal_type",
+        "severity",
+        "affected_count",
+        "status",
+        "generated_at",
+    )
+    return {key: row.get(key) for key in safe_keys if row.get(key) is not None}
+
+
+@_bind_to_core
+def _normalize_successfactors_talent_signal(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    signal_id = str(row.get("signal_id") or "").strip()
+    if not signal_id:
+        return None
+    signal_type = str(row.get("signal_type") or "talent_signal").strip() or "talent_signal"
+    title = str(row.get("title") or "Senal Talento").strip() or "Senal Talento"
+    recommendation = (
+        str(row.get("recommendation") or "").strip()
+        or "Revisar evidencia de Talento antes de crear una decision supervisada."
+    )
+    affected_count = _sf_talent_int(row.get("affected_count"))
+    generated_at = str(row.get("generated_at") or datetime.now(UTC).isoformat())
+    severity = _severity(row.get("severity"))
+    item = _base_item(
+        source,
+        {"severity": severity, "generated_at": generated_at},
+        signal_type,
+        signal_id,
+        title,
+    )
+    priority_score = min(
+        100,
+        SEVERITY_WEIGHT[severity] * 18 + min(24, affected_count // 25) + 20,
+    )
+    item.update(
+        {
+            "title": title,
+            "description": recommendation,
+            "recommendation": recommendation,
+            "root_cause": "Senal Gold de WisdomBit Talento generada desde SuccessFactors.",
+            "impact": f"{affected_count} registros de Talento requieren revision supervisada.",
+            "details": _sf_talent_signal_details(row),
+            "detected_at": generated_at,
+            "status": "open",
+            "data_status": "gold_ready",
+            "source_system": "sap_successfactors",
+            "dataset": source.dataset,
+            "gold_table": source.dataset,
+            "freshness_at": generated_at,
+            "freshness_field": "generated_at",
+            "control_origin": "sap_successfactors_talent_signal",
+            "advisory": True,
+            "priority": {
+                "score": priority_score,
+                "band": "critical"
+                if priority_score >= 90
+                else "high"
+                if priority_score >= 75
+                else "medium"
+                if priority_score >= 55
+                else "low",
+                "drivers": [
+                    {
+                        "label": "Severidad",
+                        "value": severity,
+                        "points": SEVERITY_WEIGHT[severity] * 18,
+                    },
+                    {
+                        "label": "Afectados",
+                        "value": affected_count,
+                        "points": min(24, affected_count // 25),
+                    },
+                    {
+                        "label": "Fuente Gold",
+                        "value": source.dataset,
+                        "points": 20,
+                    },
+                ],
+            },
+            "intelligence": {
+                "signal": {
+                    "signal_id": signal_id,
+                    "signal_type": signal_type,
+                    "source_system": "sap_successfactors",
+                    "source_dataset": source.dataset,
+                    "severity": severity,
+                    "summary": title,
+                    "affected_count": affected_count,
+                    "recommendation": recommendation,
+                    "generated_at": generated_at,
+                },
+                "options": [
+                    {
+                        "option_id": "review_talent_signal",
+                        "label": "Revisar senal de Talento",
+                        "action_kind": "prepare_successfactors_review",
+                        "impact_expected": 0,
+                        "time_cost": 1,
+                        "risk": 1,
+                        "score": priority_score,
+                        "score_explanation": recommendation,
+                        "selected": True,
+                    },
+                    {
+                        "option_id": "monitor_talent_signal",
+                        "label": "Monitorear sin cambio inmediato",
+                        "action_kind": "monitor_only",
+                        "impact_expected": 0,
+                        "time_cost": 0.5,
+                        "risk": 2,
+                        "score": max(0, priority_score - 20),
+                        "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
+                    },
+                ],
+            },
+            "selected_option_id": "review_talent_signal",
+            "execution_status": "not_started",
+        }
+    )
+    escaped_signal_id = signal_id.replace("'", "''")
+    item["sql"] = (
+        "SELECT * FROM sap_successfactors_talent_signals "
+        f"WHERE signal_id = '{escaped_signal_id}'"
+    )
+    return item
+
+
+@_bind_to_core
 def _normalize_s4_revenue(
     source: ControlRoomSource,
     row: dict[str, Any],
@@ -2240,6 +2382,8 @@ def _normalize_row(
         return _normalize_replicon_pnl(source, row, thresholds)
     if source.normalizer == "replicon_skill_gap":
         return _normalize_replicon_skill_gap(source, row)
+    if source.normalizer == "sap_successfactors_talent_signal":
+        return _normalize_successfactors_talent_signal(source, row)
     if source.normalizer == "s4_revenue":
         return _normalize_s4_revenue(source, row, thresholds)
     if source.normalizer == "s4_backlog":
@@ -2737,8 +2881,10 @@ async def _collect_items(
                         items.append(source_item)
             continue
         for source in module.sources:
-            if not _show_known_non_ready_sources() and not _source_has_ready_contract(
-                source
+            if (
+                not _show_known_non_ready_sources()
+                and not _source_has_ready_contract(source)
+                and not _source_should_fetch_partial_contract(source)
             ):
                 source_status = _source_status_payload(
                     source,

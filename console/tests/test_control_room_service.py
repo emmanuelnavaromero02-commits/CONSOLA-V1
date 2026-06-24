@@ -347,6 +347,71 @@ async def test_sap_successfactors_talent_kpis_degrades_when_datasets_missing(mon
 
 
 @pytest.mark.asyncio
+async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch):
+    async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_employee_profile":
+            return [{"employee_key": "tal_1"}]
+        if dataset == "sap_successfactors_talent_signals":
+            return [
+                {
+                    "signal_id": "talent_role_requirements_missing",
+                    "signal_type": "pipeline",
+                    "severity": "medium",
+                    "affected_count": 42,
+                    "title": "Requisitos de rol pendientes",
+                    "recommendation": "Validar Position y entidades de skills.",
+                    "status": "recommendation_only",
+                    "generated_at": "2026-06-24T03:27:32Z",
+                    "user_id": "100",
+                    "full_name": "Ana Gomez",
+                }
+            ]
+        return []
+
+    mock_pool = AsyncMock()
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[])),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {
+                    "cartridge_id": "sap_successfactors",
+                    "installation_status": "ready",
+                    "connection_id": "femsa_sf",
+                    "auth_method": "saml_bearer_assertion",
+                },
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=fetcher, persist=False)
+
+    signal_items = [
+        item
+        for item in result["items"]
+        if item["source_dataset"] == "sap_successfactors_talent_signals"
+        and item["kind"] == "intelligence_signal"
+    ]
+    assert len(signal_items) == 1
+    signal = signal_items[0]
+    assert signal["module_id"] == "sap_successfactors_talent"
+    assert signal["title"] == "Requisitos de rol pendientes"
+    assert signal["control_origin"] == "sap_successfactors_talent_signal"
+    assert signal["priority"]["score"] >= 55
+    signal_text = json.dumps(signal, ensure_ascii=False)
+    assert "Ana Gomez" not in signal_text
+    assert '"100"' not in signal_text
+
+    sources = {source["dataset"]: source for source in result["sources"]}
+    assert sources["sap_successfactors_talent_employee_profile"]["count"] == 1
+    assert sources["sap_successfactors_talent_employee_profile"]["data_readiness"] == "partial"
+    assert sources["sap_successfactors_talent_signals"]["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_sap_successfactors_talent_9box_payload_is_aggregate(monkeypatch):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box_operational":
