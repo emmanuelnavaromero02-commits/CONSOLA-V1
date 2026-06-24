@@ -41,9 +41,15 @@ async def api_auth_login(request: Request, body: dict):
 # /api/apps
 @router.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
-async def api_apps(user: dict = Depends(require_permission("apps.read"))):
+async def api_apps(
+    include_unready: bool = Query(False),
+    cartridge: str | None = Query(None),
+    user: dict = Depends(require_permission("apps.read")),
+):
     """List published analytic apps visible to the active scoped connections."""
-    return await _apps_payload_visible_and_ready(user)
+    return await _apps_payload_visible_and_ready(
+        user, include_unready=include_unready, cartridge=cartridge
+    )
 
 # /api/apps/{name}
 @router.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])

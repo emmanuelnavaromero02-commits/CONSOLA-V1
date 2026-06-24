@@ -217,7 +217,11 @@ def _analysis_evidence(
     return _bounded_payload(evidence, "analysis_evidence")
 
 
-def _trusted_agent_scope(ctx: dict[str, Any] | None) -> dict[str, str]:
+def _trusted_agent_scope(
+    ctx: dict[str, Any] | None,
+    *,
+    permission: str = "control_room.write",
+) -> dict[str, str]:
     if not isinstance(ctx, dict) or not ctx.get("trusted"):
         raise HTTPException(403, "trusted security_context required")
     tenant_id = str(ctx.get("tenant_id") or "").strip()
@@ -228,8 +232,8 @@ def _trusted_agent_scope(ctx: dict[str, Any] | None) -> dict[str, str]:
     if not agent_id:
         raise HTTPException(403, "agent context required")
     permissions = {str(item) for item in (ctx.get("permissions") or [])}
-    if "control_room.write" not in permissions:
-        raise HTTPException(403, "permission required: control_room.write")
+    if permission not in permissions:
+        raise HTTPException(403, f"permission required: {permission}")
     return {
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
@@ -238,6 +242,52 @@ def _trusted_agent_scope(ctx: dict[str, Any] | None) -> dict[str, str]:
         "agent_name": str(ctx.get("agent_name") or ""),
         "agent_run_id": str(ctx.get("agent_run_id") or ""),
         "email": str(ctx.get("email") or "agent-runner@omega.local"),
+    }
+
+
+@tool(
+    name="calibration__bayesian_state",
+    description=(
+        "Read scoped Bayesian calibration state from Console Intelligence. "
+        "This is evidence-only: it does not create observations, recompute "
+        "state, execute actions or write back externally."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "calibration_group": {"type": "string"},
+            "model_version": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 25},
+        },
+        "additionalProperties": False,
+    },
+)
+async def calibration__bayesian_state(
+    calibration_group: str | None = None,
+    model_version: str | None = None,
+    limit: int = 10,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    scope = _trusted_agent_scope(security_context, permission="datasets.read")
+    payload = {
+        "calibration_group": calibration_group,
+        "model_version": model_version,
+        "limit": max(1, min(int(limit or 10), 25)),
+    }
+    result = await _call_console(
+        "/internal/intelligence/calibration/state",
+        {"security_context": security_context, "payload": payload},
+        timeout=45.0,
+    )
+    states = result.get("states") if isinstance(result.get("states"), list) else []
+    return {
+        "ok": True,
+        "engine": "bayesian_calibration",
+        "agent_run_id": scope["agent_run_id"],
+        "result": result,
+        "state_count": len(states),
+        "calibration_group": calibration_group,
+        "model_version": model_version,
     }
 
 
@@ -366,6 +416,7 @@ async def simulation__monte_carlo_run(
                     "intelligence_signal",
                     "monte_carlo_simulation",
                     "calibration_observation",
+                    "wisdom_bit",
                     "manual_fixture",
                 ],
             },

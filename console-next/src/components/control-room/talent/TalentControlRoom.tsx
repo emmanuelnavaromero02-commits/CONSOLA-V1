@@ -458,28 +458,40 @@ export function TalentControlRoom() {
   }, [selectedAnomaly, selectedBox]);
 
   useEffect(() => {
-    void load();
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   useEffect(() => {
-    if (!selectedBox || collar !== "confianza") {
-      setRoster(null);
-      return;
-    }
     let cancelled = false;
-    setRosterLoading(true);
-    getSuccessFactorsTalentBoxRoster(selectedBox)
-      .then((payload) => {
-        if (!cancelled) setRoster(payload);
-      })
-      .catch(() => {
+    if (!selectedBox || collar !== "confianza") {
+      const timer = window.setTimeout(() => {
         if (!cancelled) setRoster(null);
-      })
-      .finally(() => {
-        if (!cancelled) setRosterLoading(false);
-      });
+      }, 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timer);
+      };
+    }
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setRosterLoading(true);
+      getSuccessFactorsTalentBoxRoster(selectedBox)
+        .then((payload) => {
+          if (!cancelled) setRoster(payload);
+        })
+        .catch(() => {
+          if (!cancelled) setRoster(null);
+        })
+        .finally(() => {
+          if (!cancelled) setRosterLoading(false);
+        });
+    }, 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [collar, selectedBox]);
 
@@ -512,7 +524,7 @@ export function TalentControlRoom() {
               <p className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300/80">WB-TALENTO · SuccessFactors</p>
               <h1 className="mt-1 text-2xl font-semibold text-foreground dark:text-white">Control Room Talento</h1>
               <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                9-box operativo, readiness y senales con roster enmascarado. Sin HTML embebido, sin write-back y sin compensacion sensible.
+                9-box operativo, readiness y senales con roster enmascarado para decisiones supervisadas.
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -536,7 +548,7 @@ export function TalentControlRoom() {
         ) : null}
         {loading ? (
           <OperationalNotice tone="info" title="Consultando Talent Gold">
-            Cargando APIs nativas de overview, 9-box, metadata readiness y anomalias.
+            Actualizando overview, 9-box, metadata readiness y anomalias.
           </OperationalNotice>
         ) : null}
 

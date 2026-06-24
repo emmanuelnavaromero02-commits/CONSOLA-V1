@@ -30,7 +30,7 @@ const SERVICE_REGISTRY = [
   { label: 'Workspace', href: '/workspace', category: 'Trabajo diario', permission: 'workspace.access', aliases: 'trabajo apps decisiones aplicaciones publicadas' },
   { label: 'Sala de Control', href: '/control-room', category: 'Trabajo diario', permission: 'workspace.access', aliases: 'omega control room sala control anomalías anomalias decisiones auditoria auditoría aprobaciones sap' },
   { label: 'Copiloto', href: '/copilot', category: 'Trabajo diario', permission: 'copilot.use', aliases: 'chat asistente ia acciones aprobaciones memoria redactar workflows' },
-  { label: 'Apps publicadas', href: '/apps-gallery', category: 'Trabajo diario', permission: 'apps.read', aliases: 'aplicaciones dashboards publicadas workspace gallery' },
+  { label: 'Apps analíticas', href: '/control-room#apps', category: 'Trabajo diario', permission: 'apps.read', aliases: 'aplicaciones dashboards control room workspace analiticas' },
   { label: 'Decisiones', href: '/decisions', category: 'Trabajo diario', permission: 'apps.read', adminOnly: true, aliases: 'decisions aprobaciones historial decisiones' },
 
   { label: 'Marketplace', href: '/marketplace', category: 'Cartuchos y clientes', permission: 'marketplace.read', aliases: 'catalogo comercial cartuchos solicitar comprar activar' },

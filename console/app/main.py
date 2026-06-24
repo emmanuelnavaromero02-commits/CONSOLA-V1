@@ -4437,68 +4437,15 @@ def _workspace_server_url() -> str:
 
 
 async def _proxy_workspace_app(
-    request: Request, name: str, *, content: bool = False
+    request: Request, name: str, *, content: bool = False, user: dict | None = None
 ) -> Response:
-    """Serve published analytic apps through Console while preserving Workspace sandboxing.
-
-    Workspace still owns the app wrapper, content bridge and dataset visibility
-    checks. Console only proxies the HTML so users stay on the same :8000
-    origin as the rest of the console.
-    """
-    app_cartridge = _app_cartridge_id({"name": name})
-    if app_cartridge:
-        active_cartridges = await _active_scoped_connection_cartridges(
-            getattr(request.state, "user", None),
-            {
-                "sap_successfactors",
-                "sap_s4hana",
-                "sap_hcm",
-                "salesforce",
-                "replicon",
-                "hubspot",
-            },
-        )
-        if active_cartridges and app_cartridge not in active_cartridges:
-            if content:
-                raise HTTPException(
-                    404, "app cartridge is not active for this workspace"
-                )
-            return RedirectResponse(url="/apps-gallery", status_code=303)
-
-    workspace_url = _workspace_server_url()
-    if not workspace_url:
-        raise HTTPException(503, "workspace internal URL is not configured")
-    suffix = "/content" if content else ""
-    upstream_headers = {
-        key: value
-        for key, value in {
-            "cookie": request.headers.get("cookie"),
-            "authorization": request.headers.get("authorization"),
-            "x-workspace-id": request.headers.get("x-workspace-id"),
-            "accept": request.headers.get("accept"),
-            "user-agent": request.headers.get("user-agent"),
-        }.items()
-        if value
-    }
-    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
-        r = await c.get(
-            f"{workspace_url}/apps/{quote(name, safe='')}{suffix}",
-            headers=upstream_headers,
-        )
-    response_headers = {
-        key: value
-        for key, value in r.headers.items()
-        if key.lower()
-        in {
-            "content-security-policy",
-            "content-type",
-            "referrer-policy",
-            "x-content-type-options",
-            "x-frame-options",
-        }
-    }
-    return Response(
-        content=r.content, status_code=r.status_code, headers=response_headers
+    """Serve published analytic app HTML from the same catalog used by /api/apps."""
+    html_text, _app = await _refinement_app_html(
+        name, user or getattr(request.state, "user", None) or {}
+    )
+    return HTMLResponse(
+        content=html_text,
+        headers=_app_content_headers(),
     )
 
 
@@ -4519,49 +4466,15 @@ async def _workspace_app_content_for_embed(
     name: str,
     user: dict | None,
 ) -> tuple[str, list[str]]:
-    app_cartridge = _app_cartridge_id({"name": name})
-    if app_cartridge:
-        active_cartridges = await _active_scoped_connection_cartridges(
-            getattr(request.state, "user", None) or user,
-            {
-                "sap_successfactors",
-                "sap_s4hana",
-                "sap_hcm",
-                "salesforce",
-                "replicon",
-                "hubspot",
-            },
-        )
-        if active_cartridges and app_cartridge not in active_cartridges:
-            raise HTTPException(404, "app cartridge is not active for this workspace")
-
-    workspace_url = _workspace_server_url()
-    if not workspace_url:
-        raise HTTPException(503, "workspace internal URL is not configured")
-    upstream_headers = {
-        key: value
-        for key, value in {
-            "cookie": request.headers.get("cookie"),
-            "authorization": request.headers.get("authorization"),
-            "x-workspace-id": request.headers.get("x-workspace-id"),
-            "accept": "text/html",
-            "user-agent": request.headers.get("user-agent"),
-        }.items()
-        if value
-    }
-    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
-        r = await c.get(
-            f"{workspace_url}/apps/{quote(name, safe='')}/content",
-            headers=upstream_headers,
-        )
-    if r.status_code >= 400:
-        raise HTTPException(
-            r.status_code, _upstream_error_detail(r, "App content unavailable")
-        )
-    html_text = r.text
+    html_text, app = await _refinement_app_html(
+        name, getattr(request.state, "user", None) or user or {}
+    )
     datasets = set(_datasets_from_app_html(html_text))
+    datasets.update(_app_declared_datasets(app))
     try:
-        apps_payload = await _apps_payload_visible_and_ready(user or {})
+        apps_payload = await _apps_payload_visible_and_ready(
+            user or {}, include_unready=True
+        )
         for app in _apps_from_payload(apps_payload):
             if str(app.get("name") or "") == name:
                 datasets.update(_app_declared_datasets(app))
@@ -4569,6 +4482,49 @@ async def _workspace_app_content_for_embed(
     except Exception:
         logger.debug("Failed to enrich embed app datasets for %s", name, exc_info=True)
     return html_text, sorted(datasets)
+
+
+async def _refinement_app_html(name: str, user: dict | None) -> tuple[str, dict]:
+    _validate_dataset_name(name)
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json=_mcp_payload("get_app_html", {"name": name}, user or {}),
+        )
+    if r.status_code >= 400:
+        raise HTTPException(
+            r.status_code, _upstream_error_detail(r, "App content unavailable")
+        )
+    payload = r.json()
+    result = payload.get("result", payload) if isinstance(payload, dict) else {}
+    if not isinstance(result, dict) or result.get("error"):
+        raise HTTPException(
+            404,
+            str((result or {}).get("error") or f"App '{name}' not found"),
+        )
+    html_text = str(result.get("html") or "")
+    if not html_text.strip():
+        raise HTTPException(404, f"App '{name}' has no HTML content")
+    return html_text, result
+
+
+def _app_content_headers() -> dict[str, str]:
+    return {
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.plot.ly; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' data: https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'self'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        ),
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "same-origin",
+    }
 
 
 def _app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> str:
@@ -4663,10 +4619,9 @@ def _app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> 
         <h1>{title}</h1>
         <p>{len(datasets_used)} datasets autorizados para esta app</p>
       </div>
-      <a href={json.dumps(f"/apps/{quote(name, safe='')}")} target="_blank" rel="noopener noreferrer">Abrir app completa</a>
     </header>
     <div class="frame-wrap">
-      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
+      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts allow-same-origin" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
       <div id="blocked" class="blocked" role="alert"></div>
     </div>
   </div>
@@ -4786,14 +4741,14 @@ async def serve_app_content_proxy(
     name: str,
     user: dict = Depends(require_permission("apps.read")),
 ):
-    return await _proxy_workspace_app(request, name, content=True)
+    return await _proxy_workspace_app(request, name, content=True, user=user)
 
 
 @app.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
 async def serve_app(
     name: str, request: Request, user: dict = Depends(require_permission("apps.read"))
 ):
-    return await _proxy_workspace_app(request, name)
+    return await _proxy_workspace_app(request, name, user=user)
 
 
 async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]:
@@ -4974,6 +4929,52 @@ async def _active_scoped_connection_cartridges(
     return active
 
 
+async def _installed_scoped_app_cartridges(
+    user: dict | None,
+    candidate_cartridges: set[str] | None = None,
+) -> set[str]:
+    candidates = {
+        str(cartridge).strip()
+        for cartridge in (candidate_cartridges or set())
+        if str(cartridge).strip()
+    }
+    if not candidates:
+        return set()
+    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
+    if not tenant_id or not workspace_id:
+        return set()
+    pool = await _get_db_pool()
+    scoped_user = _user_with_apps_scope(user, tenant_id, workspace_id)
+    async with scoped_db_for_user(pool, scoped_user or {}) as (conn, _, _):
+        rows = await conn.fetch(
+            """
+            SELECT ci.cartridge_id
+              FROM cartridge_installations ci
+              LEFT JOIN tenant_entitlements te
+                ON te.tenant_id = ci.tenant_id
+               AND te.workspace_id = ci.workspace_id
+               AND te.cartridge_id = ci.cartridge_id
+             WHERE ci.tenant_id = $1::uuid
+               AND ci.workspace_id = $2::uuid
+               AND ci.cartridge_id = ANY($3::text[])
+               AND ci.status IN ('ready', 'active', 'installed')
+               AND COALESCE(te.status, 'active') = 'active'
+            """,
+            tenant_id,
+            workspace_id,
+            sorted(candidates),
+        )
+    installed = {
+        str(row["cartridge_id"]).strip()
+        for row in rows
+        if str(row["cartridge_id"] or "").strip()
+    }
+    visible = _context_visible_cartridges(user)
+    if visible is not None:
+        installed &= visible
+    return installed
+
+
 _OPERATIONAL_CARTRIDGES = {
     "hubspot",
     "replicon",
@@ -5115,7 +5116,10 @@ def _app_cartridge_id(app: dict) -> str:
 
 
 def _filter_apps_payload_to_scoped_connections(
-    payload: Any, active_cartridges: set[str]
+    payload: Any,
+    active_cartridges: set[str],
+    *,
+    scope_mode: str = "active_connections",
 ) -> dict[str, Any]:
     if isinstance(payload, list):
         normalized: dict[str, Any] = {"apps": payload}
@@ -5143,10 +5147,12 @@ def _filter_apps_payload_to_scoped_connections(
     normalized["apps"] = visible_apps
     normalized["active_scoped_cartridges"] = sorted(active_cartridges)
     normalized["apps_scope"] = {
-        "mode": "active_connections" if active_cartridges else "no_active_connections",
+        "mode": scope_mode if active_cartridges else "no_active_connections",
         "hidden_unconfigured_count": max(0, len(apps) - len(visible_apps)),
         "message": (
             "Apps filtradas por conexiones activas del workspace."
+            if active_cartridges and scope_mode == "active_connections"
+            else "Apps filtradas por cartuchos instalados; algunas pueden requerir datos materializados."
             if active_cartridges
             else "No hay apps configuradas para conexiones activas del workspace."
         ),
@@ -5258,6 +5264,7 @@ def _filter_apps_payload_to_ready_datasets(
     ready_datasets: set[str] | None,
     *,
     mode: str = "checked",
+    include_unready: bool = False,
 ) -> dict[str, Any]:
     if isinstance(payload, list):
         normalized: dict[str, Any] = {"apps": payload}
@@ -5296,6 +5303,17 @@ def _filter_apps_payload_to_ready_datasets(
             visible_apps.append(
                 {**app, "data_status": "ready", "datasets_used": sorted(required)}
             )
+        elif include_unready:
+            status = "dataset_metadata_missing" if not required else "unready"
+            visible_apps.append(
+                {
+                    **app,
+                    "data_status": status,
+                    "datasets_used": sorted(required),
+                    "unavailable_datasets": sorted(missing or required),
+                }
+            )
+            unavailable.update(missing or required)
         else:
             unavailable.update(missing or required)
 
@@ -5314,7 +5332,12 @@ def _filter_apps_payload_to_ready_datasets(
     return normalized
 
 
-async def _apps_payload_visible_and_ready(user: dict) -> dict[str, Any]:
+async def _apps_payload_visible_and_ready(
+    user: dict,
+    *,
+    include_unready: bool = False,
+    cartridge: str | None = None,
+) -> dict[str, Any]:
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke", json=_mcp_payload("list_apps", {}, user)
@@ -5324,12 +5347,19 @@ async def _apps_payload_visible_and_ready(user: dict) -> dict[str, Any]:
             r.status_code, _upstream_error_detail(r, "Apps service unavailable")
         )
     payload = r.json()
-    active_cartridges = await _active_scoped_connection_cartridges(
-        user,
-        _app_payload_cartridge_candidates(payload),
-    )
+    requested_cartridge = str(cartridge or "").strip()
+    if requested_cartridge:
+        _require_cartridge_visible(user, requested_cartridge)
+    payload_candidates = _app_payload_cartridge_candidates(payload)
+    candidates = {requested_cartridge} if requested_cartridge else payload_candidates
+    active_cartridges = await _active_scoped_connection_cartridges(user, candidates)
+    scope_mode = "active_connections"
+    if include_unready and not active_cartridges:
+        active_cartridges = await _installed_scoped_app_cartridges(user, candidates)
+        if active_cartridges:
+            scope_mode = "installed_cartridges"
     scoped_payload = _filter_apps_payload_to_scoped_connections(
-        payload, active_cartridges
+        payload, active_cartridges, scope_mode=scope_mode
     )
     ready_datasets, readiness_mode = await _gold_ready_datasets_for_apps(
         user, scoped_payload
@@ -5338,13 +5368,20 @@ async def _apps_payload_visible_and_ready(user: dict) -> dict[str, Any]:
         scoped_payload,
         ready_datasets,
         mode=readiness_mode,
+        include_unready=include_unready,
     )
 
 
 @app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
-async def api_apps(user: dict = Depends(require_permission("apps.read"))):
+async def api_apps(
+    include_unready: bool = Query(False),
+    cartridge: str | None = Query(None),
+    user: dict = Depends(require_permission("apps.read")),
+):
     """List published analytic apps visible to the active scoped connections."""
-    return await _apps_payload_visible_and_ready(user)
+    return await _apps_payload_visible_and_ready(
+        user, include_unready=include_unready, cartridge=cartridge
+    )
 
 
 @app.delete(
@@ -6435,6 +6472,11 @@ _SYNC_AGENTOPS_TOOLS = {
     "mcp-infra__wisdom_bits__run",
     "mcp-infra__control_room__raise_alert",
     "mcp-infra__control_room__raise_analysis_alert",
+    "infra__simulation__monte_carlo_run",
+    "infra__decision__orchestrate",
+    "infra__wisdom_bits__run",
+    "infra__control_room__raise_alert",
+    "infra__control_room__raise_analysis_alert",
 }
 
 
@@ -7205,9 +7247,14 @@ async def _sync_child_runs(
             f"""
             SELECT *
               FROM pipeline_runs
-             WHERE run_id = ANY($1::text[])
+             WHERE (
+                    run_id = ANY($1::text[])
+                 OR airflow_dag_run_id = ANY($1::text[])
+               )
                AND cartridge_id=$2
+               AND entity <> '{_SYNC_NOW_ENTITY}'
                {scope_sql}
+             ORDER BY started_at ASC
             """,
             run_ids,
             cartridge,
@@ -7292,7 +7339,13 @@ async def _build_sync_run_status(
         cartridge=cartridge, run_ids=child_run_ids, user=user
     )
     gold_refresh_summary = _sync_child_gold_refresh_summary(child_rows)
-    child_statuses = [str(item.get("status") or "").lower() for item in child_rows]
+    entity_child_rows = [
+        item
+        for item in child_rows
+        if str(item.get("entity") or "") not in {_SYNC_AGGREGATE_ENTITY, _SYNC_NOW_ENTITY}
+    ]
+    progress_rows = entity_child_rows or child_rows
+    child_statuses = [str(item.get("status") or "").lower() for item in progress_rows]
     running_children = any(
         status in {"queued", "running", "unknown"} for status in child_statuses
     )
@@ -7384,7 +7437,13 @@ async def _build_sync_run_status(
             "percent": 100 if triggered or child_rows or bronze_ready else 20,
         }
     }
-    child_total = max(len(child_run_ids), len(triggered), len(child_rows), 1)
+    child_total = max(
+        len(entity_child_rows),
+        len(progress_rows),
+        len(child_run_ids),
+        len(triggered),
+        1,
+    )
     child_done = sum(
         1
         for status in child_statuses
@@ -7394,7 +7453,7 @@ async def _build_sync_run_status(
         updates["bronze"] = {
             "label": "Bronze",
             "status": "running",
-            "detail": f"{len(child_rows)} corridas en curso.",
+            "detail": f"{len(progress_rows)} corridas del sync actual en curso.",
             "completed": child_done,
             "total": child_total,
         }

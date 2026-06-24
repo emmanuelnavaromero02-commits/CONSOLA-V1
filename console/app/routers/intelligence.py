@@ -240,6 +240,12 @@ class CalibrationRecomputeRequest(_StrictModel):
     limit: int = Field(default=5000, ge=1, le=10_000)
 
 
+class CalibrationStateRequest(_StrictModel):
+    calibration_group: str | None = Field(default=None, max_length=80)
+    model_version: str | None = Field(default=None, max_length=120)
+    limit: int = Field(default=10, ge=1, le=25)
+
+
 class OrchestrationRequest(_StrictModel):
     source_type: Literal[
         "control_room_item",
@@ -247,6 +253,7 @@ class OrchestrationRequest(_StrictModel):
         "intelligence_signal",
         "monte_carlo_simulation",
         "calibration_observation",
+        "wisdom_bit",
         "manual_fixture",
     ]
     source_id: str = Field(min_length=1, max_length=256)
@@ -568,6 +575,16 @@ async def intelligence_wisdom_bits_run_internal(
     }
 
 
+@internal_router.post("/calibration/state")
+async def intelligence_calibration_state_internal(
+    body: InternalMcpRequest,
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    user = _internal_mcp_user(body, internal_service, permission="datasets.read")
+    request = CalibrationStateRequest.model_validate(body.payload)
+    return await calibration_service.get_state(user, **_payload(request))
+
+
 @router.post(
     "/orchestrate",
     dependencies=[
@@ -603,6 +620,7 @@ async def intelligence_orchestration_list(
         "intelligence_signal",
         "monte_carlo_simulation",
         "calibration_observation",
+        "wisdom_bit",
         "manual_fixture",
     ]
     | None = Query(default=None),
@@ -969,7 +987,13 @@ async def intelligence_monte_carlo_detail(
     "/monte-carlo", dependencies=[Depends(require_permission("datasets.read"))]
 )
 async def intelligence_monte_carlo_list(
-    source_type: Literal["signal", "decision_option", "manual_fixture", "backtest_case"]
+    source_type: Literal[
+        "signal",
+        "decision_option",
+        "manual_fixture",
+        "backtest_case",
+        "wisdom_bit",
+    ]
     | None = Query(default=None),
     source_id: str | None = Query(default=None, max_length=256),
     limit: int = Query(default=50, ge=1, le=250),

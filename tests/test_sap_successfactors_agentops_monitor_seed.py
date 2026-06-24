@@ -31,6 +31,7 @@ def test_successfactors_talent_monitor_has_agentops_tools_and_contract():
         "mcp-infra__control_room__raise_analysis_alert",
         "mcp-infra__decision__orchestrate",
         "mcp-infra__simulation__monte_carlo_run",
+        "mcp-infra__calibration__bayesian_state",
     ):
         assert tool in sql
     for token in (
@@ -48,11 +49,14 @@ def test_successfactors_talent_monitor_has_agentops_tools_and_contract():
         '"seed": 45120',
         '"output_metric": "delta"',
         '"decision_mode": "recommendation_only"',
+        '"name": "bayesian_calibration"',
         '"name": "decision_orchestrator"',
         '"enabled": true',
         '"execute_engines": true',
         '"bayesian_calibration"',
         '"calibration_group": "sap_successfactors:talent_readiness"',
+        '"model_version": "bayesian_calibration.v1"',
+        '"limit": 10',
         '"source_type": "wisdom_bit"',
         '"source_id": "WB-TALENTO"',
         "Sin full_name, user_id, PERNR, salario ni payCompValue",

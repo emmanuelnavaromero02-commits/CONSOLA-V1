@@ -3,10 +3,12 @@
 import {
   AlertTriangle,
   Bot,
+  BrainCircuit,
   ChevronDown,
   ChevronRight,
   Clock3,
   Cpu,
+  Gauge,
   ShieldCheck,
   Wrench,
 } from "lucide-react";
@@ -40,6 +42,22 @@ function statusTone(status?: string | null): string {
   return "border-slate-300 bg-slate-100 text-slate-600 dark:border-sky-400/20 dark:bg-slate-900/60 dark:text-slate-300";
 }
 
+function engineLabel(engine: string): string {
+  const labels: Record<string, string> = {
+    wisdom_bit: "WisdomBit",
+    monte_carlo: "Monte Carlo",
+    bayesian_calibration: "Bayes",
+    decision_orchestrator: "Decision",
+  };
+  return labels[engine] || engine.replaceAll("_", " ");
+}
+
+function engineStatusTone(status?: string): string {
+  if (status === "ready") return "border-emerald-400/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+  if (status === "configured") return "border-amber-400/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  return "border-slate-300 bg-slate-100 text-slate-600 dark:border-sky-400/20 dark:bg-slate-900/60 dark:text-slate-300";
+}
+
 export function AgentsOpsPanel({
   payload,
   loading,
@@ -56,6 +74,10 @@ export function AgentsOpsPanel({
   const summary = payload?.summary;
   const topOrigin = payload?.origins[0];
   const originMax = Math.max(1, ...(payload?.origins.map((item) => item.count) ?? [1]));
+  const agents = payload?.agents ?? [];
+  const monitorAgents = agents.filter((agent) => agent.monitor);
+  const operationalMonitors = monitorAgents.filter((agent) => agent.operationally_ready);
+  const engines = payload?.engines ?? [];
 
   return (
     <section className="border-y bg-transparent dark:border-sky-400/20" aria-label="Agentes y simulaciones">
@@ -69,7 +91,7 @@ export function AgentsOpsPanel({
           <span className="mt-1 block text-lg font-semibold text-foreground dark:text-white">Agentes, WisdomBits y simulaciones</span>
         </span>
         <span className="flex items-center gap-2 text-sm text-muted-foreground">
-          {summary ? `${summary.monitor_agents} monitores · ${summary.open_agent_alerts} alertas` : loading ? "cargando" : "sin datos"}
+          {summary ? `${operationalMonitors.length}/${summary.monitor_agents} monitores operativos · ${summary.open_agent_alerts} alertas` : loading ? "cargando" : "sin datos"}
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </span>
       </button>
@@ -79,14 +101,30 @@ export function AgentsOpsPanel({
           {error ? <OperationalNotice tone="error" title="Agentes no disponibles">{error}</OperationalNotice> : null}
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <CommandMetric icon={Bot} label="Agentes activos" value={loading ? "..." : summary?.active_agents ?? 0} detail={`${summary?.agents_total ?? 0} registrados`} />
-            <CommandMetric icon={ShieldCheck} label="Monitores" value={loading ? "..." : summary?.monitor_agents ?? 0} detail="con contrato operativo" />
+            <CommandMetric icon={ShieldCheck} label="Monitores operativos" value={loading ? "..." : operationalMonitors.length} detail={`${summary?.monitor_agents ?? 0} con contrato`} />
             <CommandMetric icon={Cpu} label="Runs recientes" value={loading ? "..." : summary?.recent_runs ?? 0} detail={`${summary?.failed_recent_runs ?? 0} con error`} />
             <CommandMetric icon={AlertTriangle} label="Alertas agente" value={loading ? "..." : summary?.open_agent_alerts ?? 0} detail={`${summary?.agent_alerts_total ?? 0} históricas`} />
           </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <CommandMetric icon={BrainCircuit} label="Motores configurados" value={loading ? "..." : summary?.configured_engines ?? 0} detail={`${engines.filter((engine) => engine.status === "ready").length} con evidencia`} />
+            <CommandMetric icon={Gauge} label="Monte Carlo" value={loading ? "..." : summary?.monte_carlo_simulations ?? 0} detail="simulaciones persistidas" />
+            <CommandMetric icon={BrainCircuit} label="Bayes" value={loading ? "..." : summary?.bayesian_calibration_samples ?? 0} detail={`${summary?.bayesian_calibration_states ?? 0} estados calibrados`} />
+            <CommandMetric icon={Cpu} label="Decision" value={loading ? "..." : summary?.decision_orchestrations ?? 0} detail="orquestaciones guardadas" />
+          </div>
+          {!loading && summary?.monitor_agents === 0 ? (
+            <OperationalNotice tone="warning" title="Sin monitor operativo">
+              No hay agentes de monitor workspace-scoped para ejecutar WisdomBits, Monte Carlo o Decision desde Control Room.
+            </OperationalNotice>
+          ) : null}
+          {!loading && summary && summary.monitor_agents > 0 && operationalMonitors.length === 0 ? (
+            <OperationalNotice tone="warning" title="Monitores sin tools operativas">
+              Hay monitores registrados, pero no tienen tools AgentOps disponibles en el catálogo vivo.
+            </OperationalNotice>
+          ) : null}
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.6fr)]">
             <div className="space-y-3">
-              {(payload?.agents ?? []).slice(0, 8).map((agent) => (
+              {agents.slice(0, 8).map((agent) => (
                 <article key={agent.id} className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -94,6 +132,16 @@ export function AgentsOpsPanel({
                         <h3 className="truncate text-sm font-semibold text-foreground dark:text-white">{agent.name}</h3>
                         <span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", statusTone(agent.last_run?.status))}>
                           {agent.last_run?.status || "sin run"}
+                        </span>
+                        <span className={cn(
+                          "rounded-full border px-2 py-0.5 text-xs font-medium",
+                          agent.operationally_ready
+                            ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                            : agent.monitor
+                              ? "border-amber-400/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+                              : "border-slate-300 bg-slate-100 text-slate-600 dark:border-sky-400/20 dark:bg-slate-900/60 dark:text-slate-300",
+                        )}>
+                          {agent.operationally_ready ? "monitor operativo" : agent.monitor ? "monitor incompleto" : "agente"}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -108,16 +156,54 @@ export function AgentsOpsPanel({
                   <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
                     <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" /> {agent.last_run?.started_at ? new Date(agent.last_run.started_at).toLocaleString("es-MX") : "sin ejecución"}</span>
                     <span className="truncate">Dataset: {monitorDataset(agent)}</span>
-                    <span className="inline-flex items-center gap-1 truncate"><Wrench className="h-3.5 w-3.5" /> {agent.allowed_tools.length || 0} tools AgentOps</span>
+                    <span className="inline-flex items-center gap-1 truncate"><Wrench className="h-3.5 w-3.5" /> {agent.operational_tools_count ?? agent.allowed_tools.length ?? 0} tools AgentOps</span>
                   </div>
+                  {(agent.configured_engines ?? []).length ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(agent.configured_engines ?? []).slice(0, 5).map((engine) => (
+                        <span key={`${agent.id}:${engine.engine}:${engine.mode ?? "direct"}`} className={cn(
+                          "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                          engine.enabled
+                            ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200"
+                            : "border-slate-300 bg-slate-100 text-slate-500 dark:border-sky-400/15 dark:bg-slate-900/50",
+                        )}>
+                          {engineLabel(engine.engine)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </article>
               ))}
-              {!loading && (payload?.agents ?? []).length === 0 ? (
-                <OperationalNotice tone="warning" title="Sin monitores visibles">No hay agentes workspace-scoped o globales para este contexto.</OperationalNotice>
+              {!loading && agents.length === 0 ? (
+                <OperationalNotice tone="warning" title="Sin agentes visibles">No hay agentes workspace-scoped o globales para este contexto.</OperationalNotice>
               ) : null}
             </div>
 
             <div className="space-y-3">
+              <div className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-foreground dark:text-white">Motores</h3>
+                  <span className="text-xs text-muted-foreground">{engines.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {engines.map((engine) => (
+                    <div key={engine.engine} className="rounded-md border bg-muted/20 p-2 text-xs dark:border-sky-400/10 dark:bg-slate-950/30">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-foreground dark:text-white">{engineLabel(engine.engine)}</span>
+                        <span className={cn("rounded-full border px-2 py-0.5 font-medium", engineStatusTone(engine.status))}>{engine.status}</span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-2 text-muted-foreground">
+                        <span>{engine.configured} configs</span>
+                        <span>{engine.sample_count ?? engine.evidence_count} evidencia</span>
+                      </div>
+                    </div>
+                  ))}
+                  {!loading && engines.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Sin motores registrados.</p>
+                  ) : null}
+                </div>
+              </div>
+
               <div className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-foreground dark:text-white">Origen de señales</h3>

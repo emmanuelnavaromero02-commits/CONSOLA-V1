@@ -52,6 +52,9 @@ READ_ONLY_TOOLS = {
     # agent catalog read-only
     "agent_list", "agent_get",
 
+    # AgentOps analytical reads
+    "calibration__bayesian_state",
+
     # pipeline metadata read-only
     "watermark_get",
 

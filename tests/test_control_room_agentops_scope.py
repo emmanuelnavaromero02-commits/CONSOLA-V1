@@ -20,3 +20,18 @@ def test_control_room_agentops_filters_by_allowed_cartridges():
     assert "cartridge_id = ANY($3::text[])" in section
     assert "cartridge_id = ANY($2::text[])" in section
     assert "cartridge_id = 'platform'" in section
+    assert "_agentops_tool_is_operational(tool)" in section
+    assert "_agentops_tool_label(tool)" in section
+    assert "_agentops_monitor_engines(monitor)" in section
+    assert '"configured_engines": configured_engines' in section
+    assert '"monte_carlo_simulations"' in section
+    assert '"bayesian_calibration_states"' in section
+    assert '"bayesian_calibration_samples"' in section
+    assert '"decision_orchestrations"' in section
+    assert '"engines": engines_payload' in section
+
+
+def test_control_room_agentops_accepts_legacy_infra_alias():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert 'name.startswith("infra__")' in source
+    assert 'return f"mcp-infra__{name.split' in source

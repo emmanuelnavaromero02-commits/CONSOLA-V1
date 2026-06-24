@@ -92,6 +92,44 @@ def test_control_room_alert_tool_caps_evidence_refs(monkeypatch):
     assert refs.value.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_bayesian_state_tool_reads_scoped_console_state(monkeypatch):
+    mod = _load_control_room_tool(monkeypatch)
+    captured: dict = {}
+
+    async def fake_call_console(path, payload, timeout=0):
+        captured["path"] = path
+        captured["payload"] = payload
+        captured["timeout"] = timeout
+        return {
+            "states": [
+                {
+                    "state_id": "cal-state-1",
+                    "calibration_group": "sap_successfactors:talent_readiness",
+                    "model_version": "bayesian_calibration.v1",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(mod, "_call_console", fake_call_console)
+
+    result = await mod.calibration__bayesian_state(
+        calibration_group="sap_successfactors:talent_readiness",
+        model_version="bayesian_calibration.v1",
+        limit=10,
+        security_context=_ctx(),
+    )
+
+    assert result["ok"] is True
+    assert result["engine"] == "bayesian_calibration"
+    assert result["state_count"] == 1
+    assert result["agent_run_id"] == "42"
+    assert captured["path"] == "/internal/intelligence/calibration/state"
+    assert captured["payload"]["payload"]["calibration_group"] == "sap_successfactors:talent_readiness"
+    assert captured["payload"]["payload"]["model_version"] == "bayesian_calibration.v1"
+    assert captured["payload"]["security_context"]["workspace_id"] == _ctx()["workspace_id"]
+
+
 def test_control_room_alert_tool_deduplicates_agent_alerts(monkeypatch):
     mod = _load_control_room_tool(monkeypatch)
     store: dict[str, dict] = {"items": {}, "events": []}
@@ -195,7 +233,11 @@ def test_mcp_main_enforces_control_room_alert_scope():
     source = (REPO / "mcp-infra/app/main.py").read_text(encoding="utf-8")
     assert '"control_room__raise_alert"' in source
     assert '"control_room__raise_analysis_alert"' in source
+    assert '"calibration__bayesian_state"' in source
     assert "_CONTROL_ROOM_ANALYSIS_TOOLS" in source
+    assert "_CONTROL_ROOM_READ_TOOLS" in source
     assert '_require_context_permission(req, "control_room.write", internal_service)' in source
+    assert '_require_context_permission(req, "datasets.read", internal_service)' in source
     assert "control room alerts require tenant/workspace scope" in source
+    assert "control room analysis requires tenant/workspace scope" in source
     assert "backend-owned arg is not allowed" in source

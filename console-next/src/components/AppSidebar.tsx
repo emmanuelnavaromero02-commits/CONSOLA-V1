@@ -98,7 +98,7 @@ const NAV_SECTIONS: NavSection[] = [
         active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses", "/cartridges", "/cartridges/viewer"],
         keywords: "marketplace cartuchos licencias instalaciones monitor tecnico conectores integraciones",
       },
-      { href: "/apps-gallery", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones galeria workspace analiticas" },
+      { href: "/control-room#apps", label: "Apps analíticas", icon: Sparkles, section: "Integraciones", capability: "can_view_apps", keywords: "aplicaciones control room dashboards workspace analiticas" },
     ],
   },
   {

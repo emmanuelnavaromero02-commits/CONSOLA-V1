@@ -1,6 +1,9 @@
 1:"$Sreact.fragment"
-2:I[70574,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js","/static/console-next/_next/static/chunks/15tle7n36jpm3.js","/static/console-next/_next/static/chunks/0s7w9ak5wf11h.js","/static/console-next/_next/static/chunks/07fv4hqiup1s-.js","/static/console-next/_next/static/chunks/0_2pe01bbc7.s.js"],"AppsGallery"]
-3:I[97367,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js"],"OutletBoundary"]
-4:"$Sreact.suspense"
-0:{"rsc":["$","$1","c",{"children":[["$","main",null,{"className":"mx-auto max-w-7xl space-y-6 px-6 py-8","children":[["$","header",null,{"className":"space-y-2","children":[["$","h1",null,{"className":"text-3xl font-semibold tracking-tight","children":"Apps Analíticas"}],["$","p",null,{"className":"text-sm text-muted-foreground","children":"Aplicaciones publicadas por los flujos analíticos de OMEGA."}]]}],["$","$L2",null,{}]]}],[["$","script","script-0",{"src":"/static/console-next/_next/static/chunks/0_2pe01bbc7.s.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"console-next-static"}
-5:null
+2:I[47257,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js"],"ClientPageRoot"]
+3:I[61520,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js","/static/console-next/_next/static/chunks/15tle7n36jpm3.js","/static/console-next/_next/static/chunks/0s7w9ak5wf11h.js","/static/console-next/_next/static/chunks/15jki8ya~ezhf.js","/static/console-next/_next/static/chunks/0~wuqaudfs024.js"],"default"]
+6:I[97367,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js"],"OutletBoundary"]
+7:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"Component":"$3","serverProvidedParams":{"searchParams":{},"params":{},"promises":["$@4","$@5"]}}],[["$","script","script-0",{"src":"/static/console-next/_next/static/chunks/0~wuqaudfs024.js","async":true}]],["$","$L6",null,{"children":["$","$7",null,{"name":"Next.MetadataOutlet","children":"$@8"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"console-next-static"}
+4:{}
+5:"$0:rsc:props:children:0:props:serverProvidedParams:params"
+8:null

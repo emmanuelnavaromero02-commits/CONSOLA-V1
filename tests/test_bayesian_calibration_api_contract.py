@@ -120,9 +120,12 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
     assert '"/calibration/observe"' in router
     assert '"/calibration/recompute"' in router
     assert '"/calibration/state"' in router
+    assert '@internal_router.post("/calibration/state")' in router
     assert '"/calibration/observations"' in router
     assert "CalibrationObservationRequest(_StrictModel)" in router
     assert "CalibrationRecomputeRequest(_StrictModel)" in router
+    assert "CalibrationStateRequest(_StrictModel)" in router
+    assert '_internal_mcp_user(body, internal_service, permission="datasets.read")' in router
     assert "parent_calibration_group" in router
     assert "await intelligence_history.calibration_report" in router
     assert "await calibration_service.observe" in router

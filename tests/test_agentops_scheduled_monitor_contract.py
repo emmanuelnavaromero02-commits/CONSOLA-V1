@@ -33,11 +33,17 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert '"mcp-infra__wisdom_bits__run"' in section
     assert '"mcp-infra__control_room__raise_analysis_alert"' in section
     assert '"mcp-infra__simulation__monte_carlo_run"' in section
+    assert '"mcp-infra__calibration__bayesian_state"' in section
     assert '"mcp-infra__decision__orchestrate"' in section
     assert "_monitor_engine_specs(contract)" in section
     assert "monte_carlo requires explicit input_variables" in section
     assert "monte_carlo requires explicit seed" in section
+    assert "bayesian_calibration requires explicit calibration_group" in section
+    assert "missing_calibration_state" in section
     assert "_monitor_should_alert(contract, payload_with_engines)" in section
+    assert "engine_error_count" in source
+    assert "upstream_monte_carlo_simulation_id" in section
+    assert '"source_type": source_type' in section
     assert '"deterministic_monitor": True' in section
     assert "scheduled monitor requires extra.monitor contract" in section
     assert "recommendation_only" in section
