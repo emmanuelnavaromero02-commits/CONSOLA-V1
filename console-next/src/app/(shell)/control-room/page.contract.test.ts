@@ -60,20 +60,29 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).not.toContain("attempt < 40");
   });
 
-  it("embeds analytic apps through the safe Control Room wrapper", () => {
+  it("renders analytic modules natively inside Control Room", () => {
     expect(pageSource).toContain("AnalyticAppsPanel");
     expect(pageSource).toContain("listApps");
+    expect(pageSource).toContain("includeUnready: true");
+    expect(pageSource).toContain('cartridge: cartridge === "all" ? undefined : cartridge');
     expect(pageSource).toContain("loadAnalyticsApps");
-    expect(analyticAppsPanelSource).toContain("/embed");
-    expect(analyticAppsPanelSource).toContain("iframe");
-    expect(analyticAppsPanelSource).toContain("Apps analíticas");
-    expect(analyticAppsPanelSource).toContain("Gráficas publicadas con datos Gold listos");
-    expect(analyticAppsPanelSource).not.toContain('src={`/apps/${encodeURIComponent(activeApp.name)}`}');
+    expect(analyticAppsPanelSource).toContain("NativeAnalyticModule");
+    expect(analyticAppsPanelSource).toContain("Modulos de decision");
+    expect(analyticAppsPanelSource).toContain("SuccessFactorsNativeModule");
+    expect(analyticAppsPanelSource).toContain("TalentNativeModule");
+    expect(analyticAppsPanelSource).toContain("AgentOpsNativeModule");
+    expect(analyticAppsPanelSource).not.toContain("/api/data/");
+    expect(analyticAppsPanelSource).not.toContain("Abrir completa");
+    expect(analyticAppsPanelSource).not.toContain("Apps no disponibles");
+    expect(analyticAppsPanelSource).not.toContain("/embed");
+    expect(analyticAppsPanelSource).not.toContain("iframe");
   });
 
   it("keeps heavy Control Room sections in a single-open accordion", () => {
     expect(pageSource).toContain("type ControlRoomSectionId");
-    expect(pageSource).toContain('useState<ControlRoomSectionId>("operations")');
+    expect(pageSource).toContain('controlRoomSectionFromHash() || "operations"');
+    expect(pageSource).toContain("window.addEventListener(\"hashchange\", syncSectionFromHash)");
+    expect(pageSource).toContain("activateControlRoomSection");
     expect(pageSource).toContain("ControlRoomAccordionSection");
     expect(pageSource).toContain('id="operations"');
     expect(pageSource).toContain('id="apps"');
@@ -99,7 +108,6 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).not.toContain("sourceCatalogHref");
     expect(pageSource).not.toContain("sourceDataHref");
     expect(pageSource).not.toContain("sourceSchemaHref");
-    expect(pageSource).not.toContain("/api/data/");
     expect(pageSource).not.toContain("/viewer?type=schema");
     expect(pageSource).not.toContain("/data/catalog");
     expect(pageSource).not.toContain("sap.html");

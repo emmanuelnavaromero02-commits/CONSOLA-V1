@@ -229,17 +229,26 @@ def test_decision_orchestrator_migration_and_router_contracts():
     router = (REPO / "console" / "app" / "routers" / "intelligence.py").read_text(
         encoding="utf-8"
     )
+    mcp_tools = (REPO / "mcp-infra" / "app" / "tools" / "control_room.py").read_text(
+        encoding="utf-8"
+    )
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
 
     assert "decision_orchestration_runs" in sql
     assert "ENABLE ROW LEVEL SECURITY" in sql
     assert "FORCE ROW LEVEL SECURITY" in sql
     assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in sql
+    assert "'wisdom_bit'" in sql
+    assert "99zb_decision_orchestrator_wisdom_bit_source.sql" in (
+        REPO / "infra" / "init" / "99zb_decision_orchestrator_wisdom_bit_source.sql"
+    ).read_text(encoding="utf-8")
     assert "USING (true)" not in sql
     assert "WITH CHECK (true)" not in sql
     assert "BYPASSRLS" not in sql
 
     assert '"/orchestrate"' in router
+    assert '"wisdom_bit"' in router
+    assert '"wisdom_bit"' in mcp_tools
     assert '"/api/v1/intelligence"' in router
     assert "require_csrf" in router
     assert 'require_permission("control_room.write")' in router
@@ -368,6 +377,31 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             {"source_type": "control_room_item", "source_id": "missing"},
         )
     assert missing.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_accepts_wisdombit_monitor_source(orchestrator, monkeypatch):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(12)
+
+    result = await orchestrator.orchestrate(
+        user,
+        {
+            "source_type": "wisdom_bit",
+            "source_id": "WB-TALENTO",
+            "title": "Decision operativa WB-TALENTO",
+            "description": "Aggregated talent readiness monitor with blockers and simulation evidence.",
+            "metrics": {"risk_metric": "talent_readiness_delta"},
+            "constraints": {"recommendation_only": True},
+            "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
+        },
+    )
+
+    run = result["orchestration"]
+    assert run["source_type"] == "wisdom_bit"
+    assert run["source_id"] == "WB-TALENTO"
+    assert run["problem_type"] in {"risk_forecast", "data_quality"}
 
 
 @pytest.mark.asyncio

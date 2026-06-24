@@ -221,6 +221,163 @@ async def test_scheduled_monitor_can_raise_advisory_control_room_alert(agent_run
 
 
 @pytest.mark.asyncio
+async def test_scheduled_monitor_can_read_bayesian_calibration_state(agent_runtime, monkeypatch):
+    full = "mcp-infra__calibration__bayesian_state"
+    agent = _monitor_agent(agent_runtime, [full])
+    captured: dict = {}
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTERNAL_API_KEY", "transport-key-" + "x" * 40)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "signing-key-" + "y" * 40)
+
+    class Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"result": {"ok": True, "engine": "bayesian_calibration", "state_count": 1}}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            captured["headers"] = kwargs.get("headers")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["payload"] = json
+            return Response()
+
+    monkeypatch.setattr(agent_runtime.httpx, "AsyncClient", Client)
+    invoke = agent_runtime._make_invoke(
+        agent,
+        user=None,
+        tools=[{
+            "name": full,
+            "_server": "mcp-infra",
+            "_bare_name": "calibration__bayesian_state",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "calibration_group": {"type": "string"},
+                    "model_version": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+            },
+        }],
+        run_id=106,
+    )
+
+    result = await invoke("mcp-infra", "calibration__bayesian_state", {
+        "calibration_group": "sap_successfactors:talent_readiness",
+        "model_version": "bayesian_calibration.v1",
+        "limit": 10,
+    })
+
+    assert result["ok"] is True
+    payload = captured["payload"]
+    ctx = payload["security_context"]
+    assert payload["tool"] == "calibration__bayesian_state"
+    assert ctx["tenant_id"] == agent.tenant_id
+    assert ctx["workspace_id"] == agent.workspace_id
+    assert ctx["agent_id"] == agent.id
+    assert "datasets.read" in ctx["permissions"]
+    assert "_signature" in ctx
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_accepts_legacy_infra_alias_for_mcp_infra(agent_runtime, monkeypatch):
+    allowed = "infra__control_room__raise_alert"
+    canonical = "mcp-infra__control_room__raise_alert"
+    agent = _monitor_agent(agent_runtime, [allowed])
+    captured: dict = {}
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INTERNAL_API_KEY", "transport-key-" + "x" * 40)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "signing-key-" + "y" * 40)
+
+    class Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"result": {"ok": True, "item_id": "agent_alert:legacy"}}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            captured["headers"] = kwargs.get("headers")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["payload"] = json
+            return Response()
+
+    monkeypatch.setattr(agent_runtime.httpx, "AsyncClient", Client)
+    invoke = agent_runtime._make_invoke(
+        agent,
+        user=None,
+        tools=[{
+            "name": allowed,
+            "_server": "infra",
+            "_bare_name": "control_room__raise_alert",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "alert_type": {"type": "string"},
+                    "cartridge_id": {"type": "string"},
+                    "domain": {"type": "string"},
+                    "source_dataset": {"type": "string"},
+                    "entity_key": {"type": "string"},
+                    "title": {"type": "string"},
+                    "message": {"type": "string"},
+                    "severity": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
+                "required": [
+                    "alert_type",
+                    "cartridge_id",
+                    "domain",
+                    "source_dataset",
+                    "entity_key",
+                    "title",
+                    "message",
+                    "severity",
+                    "confidence",
+                ],
+            },
+        }],
+        run_id=105,
+    )
+
+    assert canonical in agent_runtime._tool_lookup([{"name": allowed}])
+    result = await invoke("mcp-infra", "control_room__raise_alert", {
+        "alert_type": "talent_watch",
+        "cartridge_id": "sap_successfactors",
+        "domain": "Recursos Humanos",
+        "source_dataset": "sap_successfactors_talent_signals",
+        "entity_key": "WB-TALENTO",
+        "title": "Monitor activo",
+        "message": "El monitor detecto señales agregadas.",
+        "severity": "medium",
+        "confidence": 0.8,
+    })
+
+    assert result["ok"] is True
+    assert captured["payload"]["tool"] == "control_room__raise_alert"
+    assert captured["payload"]["security_context"]["agent_id"] == agent.id
+
+
+@pytest.mark.asyncio
 async def test_agent_tool_args_cannot_override_backend_context(agent_runtime):
     full = "mcp-infra__airflow_trigger_dag"
     agent = _agent(agent_runtime, [full])

@@ -37,7 +37,7 @@ async def serve_app_content_proxy(
     name: str,
     user: dict = Depends(require_permission("apps.read")),
 ):
-    return await _proxy_workspace_app(request, name, content=True)
+    return await _proxy_workspace_app(request, name, content=True, user=user)
 
 # /apps/{name}/embed
 @router.get("/apps/{name}/embed", dependencies=[Depends(require_permission("apps.read"))])
@@ -64,7 +64,7 @@ async def serve_app_embed(
 @router.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def serve_app(name: str, request: Request, user: dict = Depends(require_permission("apps.read"))):
-    return await _proxy_workspace_app(request, name)
+    return await _proxy_workspace_app(request, name, user=user)
 
 # /studio
 @router.get("/studio", dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)])

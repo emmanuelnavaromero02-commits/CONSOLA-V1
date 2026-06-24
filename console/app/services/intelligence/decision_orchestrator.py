@@ -19,6 +19,7 @@ SOURCE_TYPES = {
     "intelligence_signal",
     "monte_carlo_simulation",
     "calibration_observation",
+    "wisdom_bit",
     "manual_fixture",
 }
 PROBLEM_TYPES = {
@@ -347,6 +348,9 @@ def _score_text(normalized: dict[str, Any]) -> tuple[str, dict[str, int]]:
     source_type = str(normalized.get("source_type") or "")
     if source_type in {"monte_carlo_simulation", "calibration_observation"}:
         scores["risk_forecast"] = scores.get("risk_forecast", 0) + 2
+    if source_type == "wisdom_bit":
+        scores["data_quality"] = scores.get("data_quality", 0) + 1
+        scores["risk_forecast"] = scores.get("risk_forecast", 0) + 1
     if source_type == "agent_alert":
         scores["data_quality"] = scores.get("data_quality", 0) + 1
     if normalized.get("time_horizon"):
@@ -644,6 +648,26 @@ async def _load_source(
             "evidence_refs": _json_list(data.get("evidence_refs")),
         }
         return data
+    if source_type == "wisdom_bit":
+        metadata = {
+            "metrics": payload.get("metrics") or {},
+            "entities": payload.get("entities") or [],
+            "constraints": payload.get("constraints") or {},
+            "evidence_refs": payload.get("evidence_refs") or [],
+            "time_horizon": payload.get("time_horizon"),
+            "source": "agentops_monitor",
+        }
+        return {
+            "source_id": source_id,
+            "source_type": "wisdom_bit",
+            "title": payload.get("title") or f"WisdomBit {source_id}",
+            "description": payload.get("description")
+            or "Aggregated WisdomBit monitor evidence for advisory orchestration.",
+            "metric": (payload.get("metrics") or {}).get("risk_metric"),
+            "status": "advisory",
+            "metadata": metadata,
+            "summary": payload.get("description") or payload.get("title") or source_id,
+        }
     raise DecisionOrchestratorError(422, "unsupported source_type")
 
 

@@ -35,11 +35,20 @@ MCP_INFRA_URL  = os.environ.get("MCP_INFRA_URL",  "http://mcp-infra:8010")
 SERVER_URLS = {
     "refinement": REFINEMENT_URL,
     "mcp-infra":  MCP_INFRA_URL,
+    # Historical surfaces and DB rows may still store MCP Infra as "infra".
+    # Keep the alias executable while treating "mcp-infra" as canonical.
+    "infra":      MCP_INFRA_URL,
 }
 
 _SERVER_ENV_KEYS = {
     "refinement": "REFINEMENT",
     "mcp-infra":  "MCP_INFRA",
+    "infra":      "MCP_INFRA",
+}
+
+_SERVER_CANONICAL_IDS = {
+    "infra": "mcp-infra",
+    "mcp_infra": "mcp-infra",
 }
 
 _DEFAULT_MAX_TOOL_CALLS = 8
@@ -47,14 +56,41 @@ _DEFAULT_SCHEDULED_MAX_TOOL_CALLS = 5
 _CONTROL_ROOM_ADVISORY_TOOLS = {
     "mcp-infra__control_room__raise_alert",
     "mcp-infra__control_room__raise_analysis_alert",
+    "infra__control_room__raise_alert",
+    "infra__control_room__raise_analysis_alert",
 }
 _AGENTOPS_COMPUTE_TOOLS = {
+    "mcp-infra__calibration__bayesian_state",
     "mcp-infra__simulation__monte_carlo_run",
     "mcp-infra__decision__orchestrate",
     "mcp-infra__wisdom_bits__run",
+    "infra__calibration__bayesian_state",
+    "infra__simulation__monte_carlo_run",
+    "infra__decision__orchestrate",
+    "infra__wisdom_bits__run",
 }
 _SCHEDULED_MONITOR_WRITE_TOOLS = _CONTROL_ROOM_ADVISORY_TOOLS | _AGENTOPS_COMPUTE_TOOLS
 _SIGNED_CONTEXT_FIELDS = {"_signature", "_signed_at", "_signature_version"}
+
+
+def _canonical_server_id(server_id: str) -> str:
+    return _SERVER_CANONICAL_IDS.get(str(server_id or "").strip(), str(server_id or "").strip())
+
+
+def _server_aliases(server_id: str) -> set[str]:
+    canonical = _canonical_server_id(server_id)
+    aliases = {canonical}
+    aliases.update(alias for alias, target in _SERVER_CANONICAL_IDS.items() if target == canonical)
+    if server_id:
+        aliases.add(str(server_id).strip())
+    return {item for item in aliases if item}
+
+
+def _full_tool_aliases(full_name: str) -> set[str]:
+    if "__" not in full_name:
+        return {full_name}
+    server_id, tool = full_name.split("__", 1)
+    return {f"{alias}__{tool}" for alias in _server_aliases(server_id)}
 
 
 def _headers_for(server_id: str) -> dict[str, str]:
@@ -473,23 +509,52 @@ def _monitor_clean_args(args: dict[str, Any]) -> dict[str, Any]:
 
 def _monitor_engine_ref(result: dict[str, Any]) -> dict[str, Any]:
     payload = _monitor_result_payload(result)
+    nested = _monitor_result_payload(payload)
+    if nested and nested is not payload:
+        payload = nested
     simulation = payload.get("simulation") if isinstance(payload.get("simulation"), dict) else {}
     orchestration = (
         payload.get("orchestration")
         if isinstance(payload.get("orchestration"), dict)
         else {}
     )
+    states = payload.get("states") if isinstance(payload.get("states"), list) else []
+    calibration_state = states[0] if states and isinstance(states[0], dict) else {}
+    calibration_run_id = (
+        calibration_state.get("state_id")
+        or (
+            f"{calibration_state.get('calibration_group')}:{calibration_state.get('model_version')}"
+            if calibration_state.get("calibration_group") and calibration_state.get("model_version")
+            else None
+        )
+    )
     return {
         "kind": str(result.get("engine") or payload.get("engine") or "monitor_engine"),
         "engine_run_id": (
             simulation.get("simulation_id")
             or orchestration.get("orchestration_id")
+            or calibration_run_id
             or payload.get("simulation_id")
             or payload.get("orchestration_id")
+            or payload.get("state_id")
             or payload.get("run_id")
         ),
         "status": "completed" if not result.get("error") else "error",
     }
+
+
+def _monitor_completed_engine_run_id(
+    engine_results: list[dict[str, Any]],
+    engine: str,
+) -> str | None:
+    for item in reversed(engine_results):
+        if item.get("engine") != engine or item.get("status") != "completed":
+            continue
+        ref = _monitor_engine_ref(item)
+        run_id = str(ref.get("engine_run_id") or "").strip()
+        if run_id:
+            return run_id
+    return None
 
 
 def _monitor_with_engine_results(
@@ -500,12 +565,12 @@ def _monitor_with_engine_results(
         return payload
     blockers = list(_monitor_blockers(payload))
     for item in engine_results:
-        if item.get("status") == "blocked":
+        if item.get("status") in {"blocked", "error"}:
             blockers.append(
                 {
                     "code": "monitor_engine_blocked",
                     "engine": item.get("engine"),
-                    "reason": item.get("reason"),
+                    "reason": item.get("reason") or item.get("error"),
                 }
             )
     evidence = dict(payload.get("evidence") or {})
@@ -561,6 +626,9 @@ def _monitor_alert_args(
         "engine_blocked_count": sum(
             1 for item in (engine_results or []) if item.get("status") == "blocked"
         ),
+        "engine_error_count": sum(
+            1 for item in (engine_results or []) if item.get("status") == "error"
+        ),
     }
     evidence_refs = [
         {
@@ -571,7 +639,7 @@ def _monitor_alert_args(
         }
     ]
     for item in engine_results or []:
-        if item.get("status") == "completed":
+        if item.get("status") in {"completed", "error", "blocked"}:
             evidence_refs.append(_monitor_engine_ref(item))
     return {
         "analysis_type": str(contract.get("analysis_type") or f"{wisdom_bit_id.lower()}_monitor"),
@@ -600,7 +668,15 @@ def _monitor_alert_args(
 
 
 def _tool_lookup(tools: list[dict]) -> dict[str, dict]:
-    return {str(t.get("name")): t for t in tools if t.get("name")}
+    catalog: dict[str, dict] = {}
+    for tool in tools:
+        full_name = str(tool.get("name") or "")
+        if not full_name:
+            continue
+        catalog[full_name] = tool
+        for alias in _full_tool_aliases(full_name):
+            catalog.setdefault(alias, tool)
+    return catalog
 
 
 async def _audit_agent_tool(
@@ -649,7 +725,11 @@ def _make_invoke(
     run_id: int | None = None,
 ):
     rf = agent.rag_filter or {}
-    allowed_full = {str(item) for item in (agent.allowed_tools or [])}
+    allowed_full = {
+        alias
+        for item in (agent.allowed_tools or [])
+        for alias in _full_tool_aliases(str(item))
+    }
     catalog = _tool_lookup(tools or [])
     tool_call_count = 0
     scheduled = user is None
@@ -1181,9 +1261,24 @@ async def run_scheduled_monitor(
             },
         )
         if isinstance(wisdom_result, dict) and wisdom_result.get("error"):
-            raise RuntimeError(str(wisdom_result.get("message") or wisdom_result.get("error")))
-
-        payload = _monitor_result_payload(wisdom_result)
+            payload = {
+                "wisdom_bit_id": wisdom_bit_id,
+                "status": "error",
+                "signals": {"count": 0, "items": []},
+                "blockers": [
+                    {
+                        "code": "wisdom_bit_failed",
+                        "reason": str(
+                            wisdom_result.get("message")
+                            or wisdom_result.get("error")
+                            or "wisdom_bit failed"
+                        )[:500],
+                    }
+                ],
+                "evidence": {"wisdom_result": wisdom_result},
+            }
+        else:
+            payload = _monitor_result_payload(wisdom_result)
         engine_results: list[dict[str, Any]] = []
         for spec in _monitor_engine_specs(contract):
             engine = _monitor_engine_name(spec)
@@ -1251,14 +1346,79 @@ async def run_scheduled_monitor(
                         "engine": "monte_carlo",
                         "status": "error" if isinstance(result, dict) and result.get("error") else "completed",
                         "result": result,
+                        **(
+                            {
+                                "error": str(
+                                    result.get("message") or result.get("error")
+                                )[:500]
+                            }
+                            if isinstance(result, dict) and result.get("error")
+                            else {}
+                        ),
                     }
                 )
-                if isinstance(result, dict) and result.get("error"):
-                    raise RuntimeError(str(result.get("message") or result.get("error")))
+                continue
+            if engine in {"bayesian_calibration", "calibration__bayesian_state", "bayes"}:
+                calibration_group = str(spec.get("calibration_group") or "").strip()
+                if not calibration_group:
+                    engine_results.append(
+                        {
+                            "engine": "bayesian_calibration",
+                            "status": "blocked",
+                            "reason": "bayesian_calibration requires explicit calibration_group",
+                        }
+                    )
+                    continue
+                result = await _call(
+                    "mcp-infra__calibration__bayesian_state",
+                    _monitor_clean_args({
+                        "calibration_group": calibration_group,
+                        "model_version": spec.get("model_version"),
+                        "limit": int(spec.get("limit") or 10),
+                    }),
+                )
+                state_count = 0
+                if isinstance(result, dict):
+                    try:
+                        state_count = int(result.get("state_count") or 0)
+                    except Exception:
+                        state_count = 0
+                    nested = _monitor_result_payload(result)
+                    if not state_count and isinstance(nested.get("states"), list):
+                        state_count = len(nested["states"])
+                is_error = isinstance(result, dict) and bool(result.get("error"))
+                status = "error" if is_error else "completed" if state_count else "blocked"
+                engine_results.append(
+                    {
+                        "engine": "bayesian_calibration",
+                        "status": status,
+                        "result": result,
+                        **(
+                            {"reason": "missing_calibration_state"}
+                            if status == "blocked"
+                            else {}
+                        ),
+                        **(
+                            {
+                                "error": str(
+                                    result.get("message") or result.get("error")
+                                )[:500]
+                            }
+                            if is_error
+                            else {}
+                        ),
+                    }
+                )
                 continue
             if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:
                 source_type = str(spec.get("source_type") or "").strip()
                 source_id = str(spec.get("source_id") or "").strip()
+                monte_carlo_run_id = _monitor_completed_engine_run_id(
+                    engine_results, "monte_carlo"
+                )
+                if monte_carlo_run_id and source_type in {"", "wisdom_bit"}:
+                    source_type = "monte_carlo_simulation"
+                    source_id = monte_carlo_run_id
                 if not source_type or not source_id:
                     engine_results.append(
                         {
@@ -1275,7 +1435,21 @@ async def run_scheduled_monitor(
                         "source_id": source_id,
                         "title": spec.get("title"),
                         "description": spec.get("description"),
-                        "metrics": spec.get("metrics") if isinstance(spec.get("metrics"), dict) else {},
+                        "metrics": {
+                            **(
+                                spec.get("metrics")
+                                if isinstance(spec.get("metrics"), dict)
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "upstream_wisdom_bit_id": wisdom_bit_id,
+                                    "upstream_monte_carlo_simulation_id": monte_carlo_run_id,
+                                }
+                                if monte_carlo_run_id
+                                else {"upstream_wisdom_bit_id": wisdom_bit_id}
+                            ),
+                        },
                         "entities": spec.get("entities") if isinstance(spec.get("entities"), list) else [],
                         "time_horizon": spec.get("time_horizon"),
                         "constraints": spec.get("constraints") if isinstance(spec.get("constraints"), dict) else {},
@@ -1289,10 +1463,17 @@ async def run_scheduled_monitor(
                         "engine": "decision_orchestrator",
                         "status": "error" if isinstance(result, dict) and result.get("error") else "completed",
                         "result": result,
+                        **(
+                            {
+                                "error": str(
+                                    result.get("message") or result.get("error")
+                                )[:500]
+                            }
+                            if isinstance(result, dict) and result.get("error")
+                            else {}
+                        ),
                     }
                 )
-                if isinstance(result, dict) and result.get("error"):
-                    raise RuntimeError(str(result.get("message") or result.get("error")))
                 continue
             engine_results.append(
                 {

@@ -325,6 +325,9 @@ _CONTROL_ROOM_ANALYSIS_TOOLS = {
     "decision__orchestrate",
     "wisdom_bits__run",
 }
+_CONTROL_ROOM_READ_TOOLS = {
+    "calibration__bayesian_state",
+}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
@@ -1164,6 +1167,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
     elif tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS:
         ctx = _require_context_permission(req, "control_room.write", internal_service)
+    elif tool in _CONTROL_ROOM_READ_TOOLS:
+        ctx = _require_context_permission(req, "datasets.read", internal_service)
     elif tool.startswith("cartridge_"):
         raise HTTPException(403, detail="cartridge tool lacks tenancy metadata")
     else:
@@ -1229,9 +1234,14 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             _require_cartridge_scope(ctx, vault_scope)
         args["security_context"] = ctx
 
-    if tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS:
+    if tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS | _CONTROL_ROOM_READ_TOOLS:
         if not _has_tenant_workspace_scope(ctx):
-            raise HTTPException(403, detail="control room alerts require tenant/workspace scope")
+            detail = (
+                "control room analysis requires tenant/workspace scope"
+                if tool in _CONTROL_ROOM_READ_TOOLS
+                else "control room alerts require tenant/workspace scope"
+            )
+            raise HTTPException(403, detail=detail)
         forbidden_scope_args = {"tenant_id", "workspace_id", "user_id", "security_context"}
         supplied = sorted(key for key in forbidden_scope_args if key in args)
         if supplied:

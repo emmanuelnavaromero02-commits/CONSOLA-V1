@@ -31,9 +31,13 @@ export interface AnalyticsApp {
   name: string;
   title?: string | null;
   description?: string | null;
+  cartridge_id?: string | null;
+  cartridge?: string | null;
+  connector_id?: string | null;
   updated_at?: string | null;
   data_status?: string | null;
   datasets_used?: string[];
+  unavailable_datasets?: string[];
 }
 
 export interface AppsResponse {
@@ -269,8 +273,13 @@ export async function rotateSetting(key: string): Promise<SystemSetting> {
   return data;
 }
 
-export async function listApps(): Promise<AppsResponse> {
-  const { data } = await api.get<AppsResponse>("/api/apps");
+export async function listApps(options: { includeUnready?: boolean; cartridge?: string } = {}): Promise<AppsResponse> {
+  const params = new URLSearchParams();
+  if (options.includeUnready) params.set("include_unready", "1");
+  if (options.cartridge) params.set("cartridge", options.cartridge);
+  const query = params.toString();
+  const path = query ? `/api/apps?${query}` : "/api/apps";
+  const { data } = await api.get<AppsResponse>(path);
   return { ...data, apps: data.apps ?? [] };
 }
 

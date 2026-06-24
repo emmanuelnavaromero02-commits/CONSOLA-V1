@@ -996,6 +996,25 @@ function pushControlRoomUrl(nextDomain: string, nextModule: string): void {
   window.history.pushState(null, "", controlRoomUrl(nextDomain, nextModule));
 }
 
+type ControlRoomSectionId = "operations" | "apps" | "signals" | "rules" | "lessons";
+
+const controlRoomSectionIds = new Set<ControlRoomSectionId>([
+  "operations",
+  "apps",
+  "signals",
+  "rules",
+  "lessons",
+]);
+
+function controlRoomSectionFromHash(): ControlRoomSectionId | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash.replace(/^#/, "").trim();
+  if (!hash) return null;
+  return controlRoomSectionIds.has(hash as ControlRoomSectionId)
+    ? (hash as ControlRoomSectionId)
+    : null;
+}
+
 function activityDescription(entry: ActivityEntry): string {
   if (entry.error) return sanitizeBusinessCopy(entry.error, "No se pudo completar la actualización.");
   if (entry.result && typeof entry.result.message === "string") return sanitizeBusinessCopy(entry.result.message, "Actualización registrada.");
@@ -1183,6 +1202,7 @@ export default function ControlRoomPage() {
   const [controlSyncRun, setControlSyncRun] = useState<SyncRunPayload | null>(null);
   const [controlSyncing, setControlSyncing] = useState(false);
   const [controlSyncTarget, setControlSyncTarget] = useState<SyncTarget>("all");
+  const [activeControlRoomSection, setActiveControlRoomSection] = useState<ControlRoomSectionId>(() => controlRoomSectionFromHash() || "operations");
   const [clockTick, setClockTick] = useState(0);
   const [urlHydrated, setUrlHydrated] = useState(false);
 
@@ -1289,7 +1309,10 @@ export default function ControlRoomPage() {
     setAnalyticsAppsLoading(true);
     setAnalyticsAppsError("");
     try {
-      const payload = await listApps();
+      const payload = await listApps({
+        includeUnready: true,
+        cartridge: cartridge === "all" ? undefined : cartridge,
+      });
       setAnalyticsApps(payload);
       setSelectedAnalyticsApp((current) => (
         current && payload.apps.some((app) => app.name === current)
@@ -1301,7 +1324,7 @@ export default function ControlRoomPage() {
     } finally {
       setAnalyticsAppsLoading(false);
     }
-  }, []);
+  }, [cartridge]);
 
   const loadSfGoldKpis = useCallback(async () => {
     setSfGoldLoading(true);
@@ -1374,34 +1397,25 @@ export default function ControlRoomPage() {
   }, []);
 
   useEffect(() => {
-    if (state !== "ready") return undefined;
-    const refreshSeconds = dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void loadDashboard(selectedId, true);
-        void loadLessons();
-        void loadThresholds();
-        void loadAgentsOps();
-        void loadAnalyticsApps();
-        if (successFactorsAvailable) {
-          void loadSfGoldKpis();
-          void loadSfTalentKpis();
-          void loadSfDecisionModel();
-        } else {
-          clearSuccessFactorsState();
-        }
-      }
-    }, Math.max(10, refreshSeconds) * 1000);
-    return () => window.clearInterval(timer);
-  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadAgentsOps, loadAnalyticsApps, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
+    const syncSectionFromHash = () => {
+      const nextSection = controlRoomSectionFromHash();
+      if (nextSection) setActiveControlRoomSection(nextSection);
+    };
+    syncSectionFromHash();
+    window.addEventListener("hashchange", syncSectionFromHash);
+    return () => window.removeEventListener("hashchange", syncSectionFromHash);
+  }, []);
 
-  useEffect(() => {
-    if (state !== "ready") return;
-    const timer = window.setTimeout(() => {
-      void loadLessons();
-      void loadThresholds();
+  const activateControlRoomSection = useCallback((section: ControlRoomSectionId) => {
+    setActiveControlRoomSection(section);
+    if (typeof window === "undefined") return;
+    const nextUrl = `${window.location.pathname}${window.location.search}#${section}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, []);
+
+  const loadActiveControlRoomSection = useCallback((section: ControlRoomSectionId) => {
+    if (section === "operations") {
       void loadAgentsOps();
-      void loadAnalyticsApps();
       if (successFactorsAvailable) {
         void loadSfGoldKpis();
         void loadSfTalentKpis();
@@ -1409,9 +1423,58 @@ export default function ControlRoomPage() {
       } else {
         clearSuccessFactorsState();
       }
+      return;
+    }
+    if (section === "apps") {
+      void loadAnalyticsApps();
+      return;
+    }
+    if (section === "rules") {
+      void loadThresholds();
+      return;
+    }
+    if (section === "lessons") {
+      void loadLessons();
+    }
+  }, [
+    clearSuccessFactorsState,
+    loadAgentsOps,
+    loadAnalyticsApps,
+    loadLessons,
+    loadSfDecisionModel,
+    loadSfGoldKpis,
+    loadSfTalentKpis,
+    loadThresholds,
+    successFactorsAvailable,
+  ]);
+
+  useEffect(() => {
+    if (state !== "ready") return undefined;
+    const refreshSeconds = dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadDashboard(selectedId, true);
+        loadActiveControlRoomSection(activeControlRoomSection);
+      }
+    }, Math.max(10, refreshSeconds) * 1000);
+    return () => window.clearInterval(timer);
+  }, [activeControlRoomSection, dashboard?.meta?.refresh_interval_seconds, loadActiveControlRoomSection, loadDashboard, selectedId, state]);
+
+  useEffect(() => {
+    if (state !== "ready") return;
+    const timer = window.setTimeout(() => {
+      loadActiveControlRoomSection(activeControlRoomSection);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, clearSuccessFactorsState, domain, loadAgentsOps, loadAnalyticsApps, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, state, successFactorsAvailable]);
+  }, [activeControlRoomSection, cartridge, domain, loadActiveControlRoomSection, state]);
+
+  useEffect(() => {
+    if (state !== "ready" || analyticsApps || analyticsAppsLoading || analyticsAppsError) return undefined;
+    const timer = window.setTimeout(() => {
+      void loadAnalyticsApps();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [analyticsApps, analyticsAppsError, analyticsAppsLoading, loadAnalyticsApps, state]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -1440,8 +1503,10 @@ export default function ControlRoomPage() {
 
   useEffect(() => {
     if (!syncTargetSupportsTalent && controlSyncTarget === "talent") {
-      setControlSyncTarget("all");
+      const timer = window.setTimeout(() => setControlSyncTarget("all"), 0);
+      return () => window.clearTimeout(timer);
     }
+    return undefined;
   }, [controlSyncTarget, syncTargetSupportsTalent]);
 
   useEffect(() => {
@@ -2015,16 +2080,8 @@ export default function ControlRoomPage() {
   function refreshAll() {
     const tasks: Promise<unknown>[] = [
       loadDashboard(selectedId, false),
-      loadLessons(),
-      loadThresholds(),
-      loadAgentsOps(),
-      loadAnalyticsApps(),
     ];
-    if (successFactorsAvailable) {
-      tasks.push(loadSfGoldKpis(), loadSfTalentKpis(), loadSfDecisionModel());
-    } else {
-      clearSuccessFactorsState();
-    }
+    loadActiveControlRoomSection(activeControlRoomSection);
     void Promise.allSettled(tasks);
   }
 
@@ -2185,6 +2242,8 @@ export default function ControlRoomPage() {
             selectedAnalyticsApp={selectedAnalyticsApp}
             onSelectedAnalyticsApp={setSelectedAnalyticsApp}
             onRefreshAnalyticsApps={loadAnalyticsApps}
+            activeSection={activeControlRoomSection}
+            onActiveSection={activateControlRoomSection}
             alertActionError={alertActionError}
             alertActionMessage={alertActionMessage}
             busyAction={busyAction}
@@ -2532,6 +2591,8 @@ function DashboardView({
   selectedAnalyticsApp,
   onSelectedAnalyticsApp,
   onRefreshAnalyticsApps,
+  activeSection,
+  onActiveSection,
   alertActionError,
   alertActionMessage,
   busyAction,
@@ -2593,6 +2654,8 @@ function DashboardView({
   selectedAnalyticsApp: string;
   onSelectedAnalyticsApp: (name: string) => void;
   onRefreshAnalyticsApps: () => void;
+  activeSection: ControlRoomSectionId;
+  onActiveSection: (section: ControlRoomSectionId) => void;
   alertActionError: string;
   alertActionMessage: string;
   busyAction: string;
@@ -2626,7 +2689,6 @@ function DashboardView({
 }) {
   const contextIsPortfolio = context.level === "portfolio" && severity === "all";
   const contextItems = groupedItems.flatMap((group) => group.items);
-  const [activeSection, setActiveSection] = useState<ControlRoomSectionId>("operations");
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 shadow-sm dark:border-sky-400/20 dark:bg-[#081423]" role="group" aria-label="Filtro por dominio">
@@ -2661,7 +2723,7 @@ function DashboardView({
       <ControlRoomAccordionSection
         id="operations"
         activeId={activeSection}
-        onActive={setActiveSection}
+        onActive={onActiveSection}
         eyebrow="Centro de mando"
         title="Operación y agentes"
         summary={`${contextSources.length} fuentes · ${contextModules.length} frentes · ${contextAlerts.length} alertas`}
@@ -2727,10 +2789,10 @@ function DashboardView({
       <ControlRoomAccordionSection
         id="apps"
         activeId={activeSection}
-        onActive={setActiveSection}
-        eyebrow="Apps analíticas"
-        title="Análisis embebido"
-        summary={`${analyticsApps?.apps?.length ?? 0} apps listas`}
+        onActive={onActiveSection}
+        eyebrow="Analitica operativa"
+        title="Modulos de decision"
+        summary={`${analyticsApps?.apps?.length ?? 0} modulos`}
       >
         <AnalyticAppsPanel
           payload={analyticsApps}
@@ -2739,13 +2801,22 @@ function DashboardView({
           selectedApp={selectedAnalyticsApp}
           onSelectedApp={onSelectedAnalyticsApp}
           onRefresh={onRefreshAnalyticsApps}
+          cartridge={cartridge}
+          sources={contextSources}
+          agentsOps={agentsOps}
+          sfGoldKpis={sfGoldKpis}
+          sfGoldLoading={sfGoldLoading}
+          sfGoldError={sfGoldError}
+          sfTalentKpis={sfTalentKpis}
+          sfTalentLoading={sfTalentLoading}
+          sfTalentError={sfTalentError}
         />
       </ControlRoomAccordionSection>
 
       <ControlRoomAccordionSection
         id="signals"
         activeId={activeSection}
-        onActive={setActiveSection}
+        onActive={onActiveSection}
         eyebrow="Riesgos y decisiones"
         title="Señales priorizadas"
         summary={`${filteredCount} señales · ${openCount} abiertas`}
@@ -2779,7 +2850,7 @@ function DashboardView({
       <ControlRoomAccordionSection
         id="rules"
         activeId={activeSection}
-        onActive={setActiveSection}
+        onActive={onActiveSection}
         eyebrow="Reglas"
         title="Umbrales de decisión"
         summary={`${contextThresholds.length} reglas · ${thresholdCandidates.length} candidatos`}
@@ -2790,7 +2861,7 @@ function DashboardView({
       <ControlRoomAccordionSection
         id="lessons"
         activeId={activeSection}
-        onActive={setActiveSection}
+        onActive={onActiveSection}
         eyebrow="Aprendizaje"
         title="Lecciones del contexto"
         summary={`${contextLessons.length} lecciones`}
@@ -2800,8 +2871,6 @@ function DashboardView({
     </div>
   );
 }
-
-type ControlRoomSectionId = "operations" | "apps" | "signals" | "rules" | "lessons";
 
 function ControlRoomAccordionSection({
   id,

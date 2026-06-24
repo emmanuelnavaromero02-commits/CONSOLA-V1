@@ -51,8 +51,9 @@ Ejecuta una revision programada, segura y auditable de WB-TALENTO. No escribas e
 2. Si el WisdomBit devuelve blockers, senales o estado distinto de ready, publica una alerta con `mcp-infra__control_room__raise_analysis_alert`.
 3. Usa `engine = "wisdom_bit"`, `analysis_type = "talent_readiness_monitor"`, `source_dataset = "sap_successfactors_talent_signals"` y `cartridge_id = "sap_successfactors"`.
 4. Incluye solo evidencia agregada: counts, status, blockers y recomendacion. No incluyas full_name, user_id, PERNR, salario ni payCompValue.
-5. Usa `mcp-infra__decision__orchestrate` solo si existe una senal concreta que requiera comparar opciones. Mantener `execute_engines = true` solo con inputs internos seguros.
+5. Consulta `mcp-infra__calibration__bayesian_state` con `calibration_group = "sap_successfactors:talent_readiness"` para traer calibracion Bayes workspace-scoped.
 6. Ejecuta `mcp-infra__simulation__monte_carlo_run` con la configuracion agregada del contrato. No incluyas PII; si falla la simulacion, reporta blocker.
+7. Usa `mcp-infra__decision__orchestrate` solo si existe una senal concreta que requiera comparar opciones. Mantener `execute_engines = true` solo con inputs internos seguros.
 
 ## Regla de seguridad
 Todas las salidas son recommendation_only. No hay write-back externo ni acciones destructivas.$$::text AS instructions,
@@ -62,6 +63,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
           "mcp-infra__control_room__raise_analysis_alert",
           "mcp-infra__decision__orchestrate",
           "mcp-infra__simulation__monte_carlo_run",
+          "mcp-infra__calibration__bayesian_state",
           "refinement__query_dataset",
           "refinement__get_schema"
         ]'::jsonb AS allowed_tools,
@@ -74,12 +76,12 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
           "category": "control_room",
           "scope": "workspace",
           "variables": {},
-          "schedule": {
-            "enabled": true,
-            "cron": "*/15 * * * *",
-            "tz": "UTC",
-            "prompt": "Ejecuta el monitor WB-TALENTO: corre wisdom_bits__run, evalua blockers/senales y publica control_room__raise_analysis_alert solo con evidencia agregada y recommendation_only."
-          },
+            "schedule": {
+              "enabled": true,
+              "cron": "*/15 * * * *",
+              "tz": "UTC",
+              "prompt": "Ejecuta el monitor WB-TALENTO: corre wisdom_bits__run, consulta calibracion Bayes, simula Monte Carlo, evalua blockers/senales y publica control_room__raise_analysis_alert solo con evidencia agregada y recommendation_only."
+            },
           "monitor": {
             "engine": "wisdom_bit",
             "wisdom_bit_id": "WB-TALENTO",
@@ -121,6 +123,21 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                 },
                 "evidence_refs": [
                   {"type": "wisdom_bit", "id": "WB-TALENTO"}
+                ]
+              },
+              {
+                "name": "bayesian_calibration",
+                "enabled": true,
+                "calibration_group": "sap_successfactors:talent_readiness",
+                "model_version": "bayesian_calibration.v1",
+                "limit": 10,
+                "assumptions": {
+                  "basis": "Estado Bayes agregado de readiness de talento.",
+                  "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
+                  "decision_mode": "recommendation_only"
+                },
+                "evidence_refs": [
+                  {"type": "calibration_group", "id": "sap_successfactors:talent_readiness"}
                 ]
               },
               {
@@ -173,7 +190,9 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                     ]
                   },
                   "bayesian_calibration": {
-                    "calibration_group": "sap_successfactors:talent_readiness"
+                    "calibration_group": "sap_successfactors:talent_readiness",
+                    "model_version": "bayesian_calibration.v1",
+                    "limit": 10
                   }
                 }
               }

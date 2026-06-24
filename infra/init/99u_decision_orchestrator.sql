@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS decision_orchestration_runs (
             'intelligence_signal',
             'monte_carlo_simulation',
             'calibration_observation',
+            'wisdom_bit',
             'manual_fixture'
         )
     ),

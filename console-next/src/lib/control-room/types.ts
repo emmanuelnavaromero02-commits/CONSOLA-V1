@@ -164,6 +164,30 @@ export interface ControlRoomAgentsOpsRun {
   error?: string | null;
 }
 
+export interface ControlRoomAgentsOpsConfiguredEngine {
+  engine: string;
+  enabled: boolean;
+  source_type?: string | null;
+  source_id?: string | null;
+  calibration_group?: string | null;
+  mode?: string | null;
+}
+
+export interface ControlRoomAgentsOpsEngine {
+  engine: string;
+  configured: number;
+  evidence_count: number;
+  sample_count?: number;
+  latest_at?: string | null;
+  status: "ready" | "configured" | "missing" | string;
+  executions?: {
+    engine: string;
+    total: number;
+    by_status: Record<string, number>;
+    latest_at?: string | null;
+  };
+}
+
 export interface ControlRoomAgentsOpsAgent {
   id: string;
   cartridge_id: string;
@@ -172,9 +196,12 @@ export interface ControlRoomAgentsOpsAgent {
   active: boolean;
   role: string;
   monitor: boolean;
+  operationally_ready?: boolean;
   schedule?: Record<string, unknown>;
   monitor_contract?: Record<string, unknown>;
+  configured_engines?: ControlRoomAgentsOpsConfiguredEngine[];
   allowed_tools: string[];
+  operational_tools_count?: number;
   last_run?: ControlRoomAgentsOpsRun | null;
   alerts: {
     total: number;
@@ -195,9 +222,15 @@ export interface ControlRoomAgentsOpsPayload {
     failed_recent_runs: number;
     open_agent_alerts: number;
     agent_alerts_total: number;
+    configured_engines?: number;
+    monte_carlo_simulations?: number;
+    bayesian_calibration_states?: number;
+    bayesian_calibration_samples?: number;
+    decision_orchestrations?: number;
   };
   agents: ControlRoomAgentsOpsAgent[];
   recent_runs: ControlRoomAgentsOpsRun[];
+  engines?: ControlRoomAgentsOpsEngine[];
   tools_used: Array<{ tool: string; count: number }>;
   origins: Array<{ origin: string; count: number }>;
 }
