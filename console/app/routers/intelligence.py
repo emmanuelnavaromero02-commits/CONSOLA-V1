@@ -22,9 +22,7 @@ from app.services.security_context import verify_signed_security_context
 
 router = APIRouter(prefix="/api/intelligence", tags=["Intelligence"])
 v1_router = APIRouter(prefix="/api/v1/intelligence", tags=["Intelligence"])
-internal_router = APIRouter(
-    prefix="/internal/intelligence", tags=["Intelligence (internal)"]
-)
+internal_router = APIRouter(prefix="/internal/intelligence", tags=["Intelligence (internal)"])
 DATASETS_READ_DEPENDENCY = [Depends(require_permission("datasets.read"))]
 
 
