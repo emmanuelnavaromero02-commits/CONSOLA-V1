@@ -52,6 +52,19 @@ def _refinement_servers():
     }]
 
 
+def _monitoring_servers():
+    return [{
+        "id": "monitoring",
+        "name": "Monitoring & Deeplinks",
+        "healthy": True,
+        "tools": [
+            {"name": "view_job", "description": "Job link", "input_schema": {"type": "object"}},
+            {"name": "view_pipeline", "description": "Pipeline link", "input_schema": {"type": "object"}},
+            {"name": "view_semantic", "description": "Semantic link", "input_schema": {"type": "object"}},
+        ],
+    }]
+
+
 @pytest.mark.asyncio
 async def test_studio_assistant_uses_scoped_system_prompt(studio_assistant_module, monkeypatch):
     captured = {}
@@ -97,6 +110,34 @@ async def test_studio_assistant_only_exposes_whitelisted_tools(studio_assistant_
     exposed = {tool["name"] for tool in captured["tools"]}
     assert "infra__list_cartridges" in exposed
     assert "infra__evil_delete_everything" not in exposed
+
+
+@pytest.mark.asyncio
+async def test_studio_assistant_exposes_monitoring_deeplinks_in_entities_step(studio_assistant_module, monkeypatch):
+    captured = {}
+
+    async def fake_list_servers():
+        return _monitoring_servers()
+
+    async def fake_chat(**kwargs):
+        captured.update(kwargs)
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "list_servers", fake_list_servers)
+    monkeypatch.setattr(studio_assistant_module.llm_client, "chat", fake_chat)
+
+    await studio_assistant_module.chat(
+        "sincroniza y muéstrame avance",
+        [],
+        step=3,
+        manifest={"id": "sap_successfactors", "name": "SAP SuccessFactors"},
+        actor_role="admin",
+    )
+
+    exposed = {tool["name"] for tool in captured["tools"]}
+    assert "monitoring__view_job" in exposed
+    assert "monitoring__view_pipeline" in exposed
+    assert "monitoring__view_semantic" in exposed
 
 
 @pytest.mark.asyncio

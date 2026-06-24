@@ -56,6 +56,13 @@ STUDIO_TOOLS_WHITELIST = {
     "cartridge_extract_all",
     "cartridge_get_run_logs",
     "cartridge_get_job_status",
+    "view_job",
+    "view_jobs",
+    "view_schema",
+    "view_dataset",
+    "view_datasets",
+    "view_semantic",
+    "view_pipeline",
     "list_entities",
     "rename_entity",
     "update_entity",
@@ -172,12 +179,14 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "validate_dag_code",
         "dag_save_source", "dag_get_source",
         "cartridge_get_run_logs", "cartridge_get_job_status",
+        "view_job", "view_jobs",
     },
     3: {  # ENTIDADES
         "cartridge_preview", "cartridge_extract", "cartridge_extract_all",
         "autopilot_build_cartridge",
         "introspect_source",
         "cartridge_get_run_logs", "cartridge_get_job_status", "cartridge_list_jobs",
+        "view_job", "view_jobs", "view_pipeline", "view_semantic",
         "minio_*",
         "list_entities", "rename_entity", "update_entity", "get_entity_logs",
         "watermark_get",
@@ -188,6 +197,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "save_dataset", "materialize", "list_datasets",
         "get_schema", "query_dataset", "describe_source", "describe_silver",
         "list_datasets_with_schemas", "delete_dataset", "get_lineage",
+        "view_schema", "view_dataset", "view_datasets", "view_pipeline",
         "cartridge_run_kb", "cartridge_query_kb", "cartridge_list_kbs",
         "postgres_*",
     },
@@ -200,6 +210,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
     6: {  # IA SEMÁNTICA (vocabulary)
         "get_data_catalog", "upsert_catalog_entries", "register_relationship",
         "list_datasets_with_schemas", "describe_silver",
+        "view_dataset", "view_datasets", "view_semantic",
         "postgres_execute_query", "postgres_execute_ddl",
         "cartridge_sync_semantic_to_rag",  # re-embed glossary after edits
     },
@@ -213,9 +224,9 @@ ANALYST_READ_ONLY_EXACT = {
     "airflow_get_task_logs",
     "airflow_list_dag_runs",
     "airflow_list_dags",
-    "airflow_list_task_instances",
-    "autopilot_build_cartridge",
-    "cartridge_get_job_status",
+        "airflow_list_task_instances",
+        "autopilot_build_cartridge",
+        "cartridge_get_job_status",
     "cartridge_get_manifest",
     "cartridge_get_run_logs",
     "cartridge_get_schema",
@@ -240,8 +251,15 @@ ANALYST_READ_ONLY_EXACT = {
     "get_schema",
     "get_source_partitions",
     "introspect_source",
-    "validate_dag_code",
-    "list_apps",
+        "validate_dag_code",
+        "view_dataset",
+        "view_datasets",
+        "view_job",
+        "view_jobs",
+        "view_pipeline",
+        "view_schema",
+        "view_semantic",
+        "list_apps",
     "list_cartridges",
     "list_datasets",
     "list_datasets_with_schemas",
@@ -448,6 +466,8 @@ Step DAGS — gestión de DAGs de Airflow del cartucho.
   Airflow directamente. Puedes consultar el modo via /api/system/info.
 - Disparar: airflow_trigger_dag(dag_id).
 - Estado y logs: airflow_get_run_status, airflow_list_dag_runs, airflow_get_task_logs.
+- Si el usuario quiere ver el avance en UI, llama `monitoring__view_job` para
+  un run específico o `monitoring__view_jobs` para la lista. No pegues JSON crudo.
 - Si la introspección viva/fallback no trae campos suficientes y el usuario subió
   un spec (OpenAPI/OData), léelo con minio_read_spec y genera DAG.
 """,
@@ -474,9 +494,15 @@ EXTRAER:
 - cartridge_extract(cartridge_id, entity, mode) — una entidad.
 - cartridge_extract_all(cartridge_id, mode) — todas en paralelo.
 - cartridge_get_job_status(run_id), cartridge_get_run_logs(run_id) para seguir.
+- Para el botón/sentido de "sincronizar todo", la ejecución debe ser real:
+  dispara extracción con `cartridge_extract_all`, sigue el estado con
+  `cartridge_get_job_status` y genera deeplink con `monitoring__view_pipeline`
+  o `monitoring__view_job` cuando haya run_id. No simules progreso.
 
 DIAGNÓSTICO:
 - get_entity_logs(cartridge_id, entity): error de pipeline_runs + logs Airflow en una sola llamada.
+- Para ver estado Bronze/Silver/Gold y freshness del cartucho usa
+  `monitoring__view_pipeline(cartridge_id)`.
 
 ESTRATEGIA: full = todo siempre. incremental = sólo nuevos desde último watermark.
 Para incremental, prioriza campos timestamp/date descubiertos por introspección como watermark.
@@ -496,6 +522,9 @@ FLUJO:
      · gold   → tabla en postgres_gold: gold_{name} (alias DuckDB: pggold; visible en Superset)
    - materialize(name) ejecuta y escribe.
 5. VERIFICAR: get_schema(name), query_dataset(name), get_lineage(name).
+6. Si el usuario quiere inspección visual o scroll de datasets, usa
+   `monitoring__view_dataset` / `monitoring__view_datasets` en vez de pegar
+   tablas grandes en el chat.
 
 CONTRATO EN ESTE PASO:
 - Si generate_transform falla, NO inventes SQL manual ni sigas a guardar; corrige
@@ -538,6 +567,9 @@ APPS HTML — flujo obligatorio:
 2b. NO EXISTE: confirma con el usuario nombre + datasets en 1 línea → al confirmar,
     `list_datasets_with_schemas` (si lo necesitas) → `publish_app(name, title, html, cartridge_id)`.
 3. Confirma con la URL `/apps/<name>`. NO pegues HTML en la respuesta.
+4. Las apps que quedan publicadas también se pueden analizar desde Control Room;
+   mantenlas autocontenidas, con fetch a `/api/data/{dataset}` y datasets del
+   cartucho activo para que el panel embebido pueda autorizarlas.
 
 Tools:
 - list_apps, get_app_details(name), get_app_html(name), publish_app, delete_app.

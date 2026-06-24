@@ -190,11 +190,22 @@ async def get_agent_by_slug(
     user_context: dict | None = None,
 ) -> dict | None:
     async with _scoped_pg(user_context) as conn:
+        params: list[Any] = [cartridge_id, slug]
+        where = ["cartridge_id=$1", "slug=$2"]
+        order = "workspace_id IS NULL, updated_at DESC NULLS LAST"
+        if user_context and not _is_platform_admin(user_context) and await _has_scope_columns(conn):
+            _, workspace_id = _tenant_workspace(user_context)
+            if not workspace_id:
+                return None
+            params.append(workspace_id)
+            where.append(f"(workspace_id = ${len(params)}::uuid OR workspace_id IS NULL)")
+            order = f"(workspace_id = ${len(params)}::uuid) DESC, workspace_id IS NULL, updated_at DESC NULLS LAST"
         row = await conn.fetchrow(
-            "SELECT * FROM agents WHERE cartridge_id=$1 AND slug=$2",
-            cartridge_id, slug,
+            f"SELECT * FROM agents WHERE {' AND '.join(where)} ORDER BY {order} LIMIT 1",
+            *params,
         )
-    return _row_to_dict(row)
+    agent = _row_to_dict(row)
+    return agent if _can_view(agent, user_context) else None
 
 
 async def create_agent(payload: dict, owner_user_id: int | None = None, user_context: dict | None = None) -> dict:

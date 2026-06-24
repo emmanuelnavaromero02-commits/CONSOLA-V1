@@ -16,8 +16,11 @@ def test_successfactors_talent_monitor_is_workspace_scoped():
     sql = _sql()
     assert "sap_successfactors_talent_monitor" in sql
     assert "tenant_id, workspace_id" in sql
-    assert "Default Tenant" in sql
-    assert "Main Workspace" in sql
+    assert "FROM cartridge_installations ci" in sql
+    assert "ci.cartridge_id = 'sap_successfactors'" in sql
+    assert "ci.status = 'ready'" in sql
+    assert "COALESCE(te.status, 'active') = 'active'" in sql
+    assert "NOT EXISTS (SELECT 1 FROM active_scope)" in sql
     assert "workspace_id = p.workspace_id" in sql
 
 
@@ -46,7 +49,12 @@ def test_successfactors_talent_monitor_has_agentops_tools_and_contract():
         '"output_metric": "delta"',
         '"decision_mode": "recommendation_only"',
         '"name": "decision_orchestrator"',
-        '"enabled": false',
+        '"enabled": true',
+        '"execute_engines": true',
+        '"bayesian_calibration"',
+        '"calibration_group": "sap_successfactors:talent_readiness"',
+        '"source_type": "wisdom_bit"',
+        '"source_id": "WB-TALENTO"',
         "Sin full_name, user_id, PERNR, salario ni payCompValue",
     ):
         assert token in sql

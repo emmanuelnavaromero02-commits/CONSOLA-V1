@@ -3539,6 +3539,8 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
     limit = max(1, min(int(limit or 12), 50))
+    allowed_cartridges = _allowed_from_user(user)
+    allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
 
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
         agents = await conn.fetch(
@@ -3548,11 +3550,13 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
               FROM agents
              WHERE (workspace_id = $1::uuid OR workspace_id IS NULL)
                AND ($2::uuid IS NULL OR tenant_id = $2::uuid OR tenant_id IS NULL)
+               AND ($3::text[] IS NULL OR cartridge_id = ANY($3::text[]) OR cartridge_id = 'platform')
              ORDER BY is_active DESC, updated_at DESC, cartridge_id, slug
              LIMIT 100
             """,
             workspace_id,
             tenant_id,
+            allowed_param,
         )
         runs = await conn.fetch(
             """
@@ -3562,11 +3566,13 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
               FROM agent_runs r
               JOIN agents a ON a.id = r.agent_id
              WHERE (r.workspace_id = $1::uuid OR (r.workspace_id IS NULL AND a.workspace_id = $1::uuid))
+               AND ($3::text[] IS NULL OR a.cartridge_id = ANY($3::text[]) OR a.cartridge_id = 'platform')
              ORDER BY r.started_at DESC
              LIMIT $2
             """,
             workspace_id,
             limit,
+            allowed_param,
         )
         alert_rows = await conn.fetch(
             """
@@ -3577,9 +3583,11 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
               FROM control_room_items
              WHERE workspace_id = $1::uuid
                AND item_kind = 'agent_alert'
+               AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
              GROUP BY metadata->>'agent_id'
             """,
             workspace_id,
+            allowed_param,
         )
         origin_rows = await conn.fetch(
             """
@@ -3588,10 +3596,12 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
               FROM control_room_items
              WHERE workspace_id = $1::uuid
                AND item_kind = 'agent_alert'
+               AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
              GROUP BY 1
              ORDER BY 2 DESC, 1
             """,
             workspace_id,
+            allowed_param,
         )
         return {
             "agents": agents,

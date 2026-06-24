@@ -24,9 +24,10 @@ import {
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { AnalyticAppsPanel } from "@/components/control-room/AnalyticAppsPanel";
 import { AgentsOpsPanel } from "@/components/control-room/AgentsOpsPanel";
 import { SuccessFactorsGoldPanel } from "@/components/control-room/SuccessFactorsGoldPanel";
 import {
@@ -50,6 +51,7 @@ import {
   getSuccessFactorsTalentKpis,
 } from "@/lib/control-room/client";
 import type { ControlRoomAgentsOpsPayload, ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
+import { listApps, type AppsResponse } from "@/lib/admin-surfaces";
 import {
   getCartridgeSyncRun,
   isSyncTerminal,
@@ -944,6 +946,14 @@ function syncStatusLabel(status?: string): string {
   }
 }
 
+function syncAverageProgress(steps: SyncRunPayload["steps"]): number {
+  if (!steps.length) return 0;
+  const total = steps.reduce((sum, step) => (
+    sum + Math.max(0, Math.min(Number(step.percent ?? 0), 100))
+  ), 0);
+  return Math.round(total / steps.length);
+}
+
 function syncStepTone(status?: string): string {
   if (status === "success") return "border-emerald-300/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
   if (status === "partial") return "border-amber-300/60 bg-amber-500/10 text-amber-700 dark:text-amber-200";
@@ -1152,6 +1162,10 @@ export default function ControlRoomPage() {
   const [agentsOps, setAgentsOps] = useState<ControlRoomAgentsOpsPayload | null>(null);
   const [agentsOpsLoading, setAgentsOpsLoading] = useState(false);
   const [agentsOpsError, setAgentsOpsError] = useState("");
+  const [analyticsApps, setAnalyticsApps] = useState<AppsResponse | null>(null);
+  const [analyticsAppsLoading, setAnalyticsAppsLoading] = useState(false);
+  const [analyticsAppsError, setAnalyticsAppsError] = useState("");
+  const [selectedAnalyticsApp, setSelectedAnalyticsApp] = useState("");
   const [sfGoldKpis, setSfGoldKpis] = useState<SfGoldKpisPayload | null>(null);
   const [sfGoldLoading, setSfGoldLoading] = useState(false);
   const [sfGoldError, setSfGoldError] = useState("");
@@ -1271,6 +1285,24 @@ export default function ControlRoomPage() {
     }
   }, []);
 
+  const loadAnalyticsApps = useCallback(async () => {
+    setAnalyticsAppsLoading(true);
+    setAnalyticsAppsError("");
+    try {
+      const payload = await listApps();
+      setAnalyticsApps(payload);
+      setSelectedAnalyticsApp((current) => (
+        current && payload.apps.some((app) => app.name === current)
+          ? current
+          : payload.apps[0]?.name || ""
+      ));
+    } catch (err) {
+      setAnalyticsAppsError(errorMessage(err, "No se pudieron cargar apps analíticas"));
+    } finally {
+      setAnalyticsAppsLoading(false);
+    }
+  }, []);
+
   const loadSfGoldKpis = useCallback(async () => {
     setSfGoldLoading(true);
     setSfGoldError("");
@@ -1350,6 +1382,7 @@ export default function ControlRoomPage() {
         void loadLessons();
         void loadThresholds();
         void loadAgentsOps();
+        void loadAnalyticsApps();
         if (successFactorsAvailable) {
           void loadSfGoldKpis();
           void loadSfTalentKpis();
@@ -1360,7 +1393,7 @@ export default function ControlRoomPage() {
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadAgentsOps, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
+  }, [clearSuccessFactorsState, dashboard?.meta?.refresh_interval_seconds, loadAgentsOps, loadAnalyticsApps, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, selectedId, state, successFactorsAvailable]);
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -1368,6 +1401,7 @@ export default function ControlRoomPage() {
       void loadLessons();
       void loadThresholds();
       void loadAgentsOps();
+      void loadAnalyticsApps();
       if (successFactorsAvailable) {
         void loadSfGoldKpis();
         void loadSfTalentKpis();
@@ -1377,7 +1411,7 @@ export default function ControlRoomPage() {
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, clearSuccessFactorsState, domain, loadAgentsOps, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, state, successFactorsAvailable]);
+  }, [cartridge, clearSuccessFactorsState, domain, loadAgentsOps, loadAnalyticsApps, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadSfTalentKpis, loadThresholds, state, successFactorsAvailable]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -1984,6 +2018,7 @@ export default function ControlRoomPage() {
       loadLessons(),
       loadThresholds(),
       loadAgentsOps(),
+      loadAnalyticsApps(),
     ];
     if (successFactorsAvailable) {
       tasks.push(loadSfGoldKpis(), loadSfTalentKpis(), loadSfDecisionModel());
@@ -2144,6 +2179,12 @@ export default function ControlRoomPage() {
             agentsOps={agentsOps}
             agentsOpsLoading={agentsOpsLoading}
             agentsOpsError={agentsOpsError}
+            analyticsApps={analyticsApps}
+            analyticsAppsLoading={analyticsAppsLoading}
+            analyticsAppsError={analyticsAppsError}
+            selectedAnalyticsApp={selectedAnalyticsApp}
+            onSelectedAnalyticsApp={setSelectedAnalyticsApp}
+            onRefreshAnalyticsApps={loadAnalyticsApps}
             alertActionError={alertActionError}
             alertActionMessage={alertActionMessage}
             busyAction={busyAction}
@@ -2237,6 +2278,9 @@ function Header({
 }) {
   const syncCompleted = syncRun?.steps.filter((step) => step.status === "success" || step.status === "skipped").length ?? 0;
   const syncTotal = syncRun?.steps.length ?? 0;
+  const syncPercent = syncRun
+    ? Math.max(0, Math.min(Number(syncRun.progress_percent ?? syncAverageProgress(syncRun.steps)), 100))
+    : 0;
 
   return (
     <header className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_40px_rgba(14,165,233,0.10)]">
@@ -2310,22 +2354,38 @@ function Header({
       </div>
       {syncRun ? (
         <div className="border-b bg-emerald-500/5 p-4 dark:border-sky-400/20">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
               <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-200">Sincronización de datos</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {syncStatusLabel(syncRun.status)} · {syncCompleted}/{syncTotal} pasos · {syncRun.cartridge_id} · {syncRun.target}
+                {syncStatusLabel(syncRun.status)} · {syncPercent}% · {syncCompleted}/{syncTotal} etapas · {syncRun.cartridge_id} · {syncRun.target}
               </p>
               {syncRun.error_message ? <p className="mt-1 text-xs text-red-600 dark:text-red-300">{syncRun.error_message}</p> : null}
+              </div>
+              <div className="min-w-[160px] text-left text-sm lg:text-right">
+                <p className="font-semibold text-foreground dark:text-white">{syncPercent}%</p>
+                <p className="text-xs text-muted-foreground">progreso real reportado</p>
+              </div>
             </div>
-            <div className="grid gap-2 sm:grid-cols-5 lg:min-w-[620px]">
+            <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800" aria-label={`Progreso de sincronización ${syncPercent}%`}>
+              <span
+                className={cn("block h-full rounded-full transition-[width] duration-500", syncRun.status === "failed" ? "bg-red-500" : syncRun.status === "partial" ? "bg-amber-500" : "bg-emerald-500")}
+                style={{ width: `${syncPercent}%` }}
+              />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
               {syncRun.steps.map((step) => (
                 <div
                   key={step.id}
                   className={cn("rounded-md border px-2 py-2", syncStepTone(step.status))}
                 >
-                  <p className="truncate text-xs font-semibold">{step.label}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-xs font-semibold">{step.label}</p>
+                    <span className="shrink-0 text-[11px] font-semibold">{Math.max(0, Math.min(Number(step.percent ?? 0), 100))}%</span>
+                  </div>
                   <p className="mt-1 truncate text-[11px] opacity-80">{syncStatusLabel(step.status)}</p>
+                  {step.detail ? <p className="mt-1 line-clamp-2 text-[11px] opacity-75">{step.detail}</p> : null}
                 </div>
               ))}
             </div>
@@ -2466,6 +2526,12 @@ function DashboardView({
   agentsOps,
   agentsOpsLoading,
   agentsOpsError,
+  analyticsApps,
+  analyticsAppsLoading,
+  analyticsAppsError,
+  selectedAnalyticsApp,
+  onSelectedAnalyticsApp,
+  onRefreshAnalyticsApps,
   alertActionError,
   alertActionMessage,
   busyAction,
@@ -2521,6 +2587,12 @@ function DashboardView({
   agentsOps: ControlRoomAgentsOpsPayload | null;
   agentsOpsLoading: boolean;
   agentsOpsError: string;
+  analyticsApps: AppsResponse | null;
+  analyticsAppsLoading: boolean;
+  analyticsAppsError: string;
+  selectedAnalyticsApp: string;
+  onSelectedAnalyticsApp: (name: string) => void;
+  onRefreshAnalyticsApps: () => void;
   alertActionError: string;
   alertActionMessage: string;
   busyAction: string;
@@ -2554,6 +2626,7 @@ function DashboardView({
 }) {
   const contextIsPortfolio = context.level === "portfolio" && severity === "all";
   const contextItems = groupedItems.flatMap((group) => group.items);
+  const [activeSection, setActiveSection] = useState<ControlRoomSectionId>("operations");
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 shadow-sm dark:border-sky-400/20 dark:bg-[#081423]" role="group" aria-label="Filtro por dominio">
@@ -2585,7 +2658,15 @@ function DashboardView({
         sfGoldKpis={sfGoldKpis}
       />
 
-      <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_390px]" aria-label="Centro de mando visual">
+      <ControlRoomAccordionSection
+        id="operations"
+        activeId={activeSection}
+        onActive={setActiveSection}
+        eyebrow="Centro de mando"
+        title="Operación y agentes"
+        summary={`${contextSources.length} fuentes · ${contextModules.length} frentes · ${contextAlerts.length} alertas`}
+      >
+        <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_390px]" aria-label="Centro de mando visual">
         <div className="space-y-4">
           <ContextPanel context={context} sourceCount={contextSources.length} moduleCount={contextModules.length} itemCount={filteredCount} openCount={openCount} severity={severity} />
           <ContextOperations context={context} modules={contextModules} sources={contextSources} items={contextItems} lessons={contextLessons} alerts={contextAlerts} onOpenItem={onOpenItem} onCartridge={onCartridge} />
@@ -2641,8 +2722,35 @@ function DashboardView({
           <MiniPanel title="Aprendizaje" value={lessonsLoading ? "..." : contextLessons.length} detail="reglas visibles" />
         </aside>
       </section>
+      </ControlRoomAccordionSection>
 
-      <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Anomalías detectadas">
+      <ControlRoomAccordionSection
+        id="apps"
+        activeId={activeSection}
+        onActive={setActiveSection}
+        eyebrow="Apps analíticas"
+        title="Análisis embebido"
+        summary={`${analyticsApps?.apps?.length ?? 0} apps listas`}
+      >
+        <AnalyticAppsPanel
+          payload={analyticsApps}
+          loading={analyticsAppsLoading}
+          error={analyticsAppsError}
+          selectedApp={selectedAnalyticsApp}
+          onSelectedApp={onSelectedAnalyticsApp}
+          onRefresh={onRefreshAnalyticsApps}
+        />
+      </ControlRoomAccordionSection>
+
+      <ControlRoomAccordionSection
+        id="signals"
+        activeId={activeSection}
+        onActive={setActiveSection}
+        eyebrow="Riesgos y decisiones"
+        title="Señales priorizadas"
+        summary={`${filteredCount} señales · ${openCount} abiertas`}
+      >
+        <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Anomalías detectadas">
         <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Riesgos y decisiones</p>
@@ -2666,10 +2774,77 @@ function DashboardView({
           ))}
         </div>
       </section>
+      </ControlRoomAccordionSection>
 
-      <ThresholdRulesBoard context={context} thresholds={contextThresholds} candidates={thresholdCandidates} loading={thresholdsLoading} error={thresholdsError} saving={thresholdSaving} saveError={thresholdSaveError} saveMessage={thresholdSaveMessage} onSave={onSaveThreshold} />
-      <LessonsBoard context={context} lessons={contextLessons} loading={lessonsLoading} error={lessonsError} />
+      <ControlRoomAccordionSection
+        id="rules"
+        activeId={activeSection}
+        onActive={setActiveSection}
+        eyebrow="Reglas"
+        title="Umbrales de decisión"
+        summary={`${contextThresholds.length} reglas · ${thresholdCandidates.length} candidatos`}
+      >
+        <ThresholdRulesBoard context={context} thresholds={contextThresholds} candidates={thresholdCandidates} loading={thresholdsLoading} error={thresholdsError} saving={thresholdSaving} saveError={thresholdSaveError} saveMessage={thresholdSaveMessage} onSave={onSaveThreshold} />
+      </ControlRoomAccordionSection>
+
+      <ControlRoomAccordionSection
+        id="lessons"
+        activeId={activeSection}
+        onActive={setActiveSection}
+        eyebrow="Aprendizaje"
+        title="Lecciones del contexto"
+        summary={`${contextLessons.length} lecciones`}
+      >
+        <LessonsBoard context={context} lessons={contextLessons} loading={lessonsLoading} error={lessonsError} />
+      </ControlRoomAccordionSection>
     </div>
+  );
+}
+
+type ControlRoomSectionId = "operations" | "apps" | "signals" | "rules" | "lessons";
+
+function ControlRoomAccordionSection({
+  id,
+  activeId,
+  onActive,
+  eyebrow,
+  title,
+  summary,
+  children,
+}: {
+  id: ControlRoomSectionId;
+  activeId: ControlRoomSectionId;
+  onActive: (id: ControlRoomSectionId) => void;
+  eyebrow: string;
+  title: string;
+  summary: string;
+  children: ReactNode;
+}) {
+  const open = activeId === id;
+  return (
+    <section className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-labelledby={`control-room-section-${id}`}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`control-room-section-panel-${id}`}
+        onClick={() => onActive(id)}
+        className="flex min-h-[64px] w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-cyan-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+      >
+        <span className="min-w-0">
+          <span className="block text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">{eyebrow}</span>
+          <span id={`control-room-section-${id}`} className="mt-1 block truncate text-lg font-semibold text-foreground dark:text-white">{title}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
+          <span className="hidden sm:inline">{summary}</span>
+          <ChevronDown aria-hidden className={cn("h-4 w-4 transition-transform", open ? "rotate-180" : "")} />
+        </span>
+      </button>
+      {open ? (
+        <div id={`control-room-section-panel-${id}`} className="border-t p-4 dark:border-sky-400/15">
+          {children}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

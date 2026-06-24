@@ -158,6 +158,20 @@ def test_viewer_path_still_keeps_frame_ancestors_self():
     assert "frame-ancestors 'self'" in csp, csp
 
 
+def test_app_embed_path_is_frameable_but_script_strict():
+    main_module = _main()
+    resp = JSONResponse({})
+    main_module._apply_security_headers(resp, "/apps/sap_successfactors_talent_health/embed")
+    csp = resp.headers.get("content-security-policy", "")
+    script_seg = csp.split("style-src", 1)[0]
+
+    assert "frame-ancestors 'self'" in csp, csp
+    assert "frame-src 'self'" in csp, csp
+    assert resp.headers.get("x-frame-options") == "SAMEORIGIN"
+    assert "script-src 'self'" in script_seg, csp
+    assert "'unsafe-inline'" not in script_seg, csp
+
+
 # ── Per-page sanity for the 6 refactored ones ─────────────────────────
 
 def test_decisions_csp_is_strict():
