@@ -196,8 +196,32 @@ async def load_agent_by_slug(
     tenant_id, workspace_id = _scope_parts(user_context)
 
     async def _load(conn):
+        if workspace_id:
+            return await conn.fetchrow(
+                """
+                SELECT *
+                  FROM agents
+                 WHERE cartridge_id=$1
+                   AND slug=$2
+                   AND (workspace_id=$3::uuid OR workspace_id IS NULL)
+                 ORDER BY (workspace_id=$3::uuid) DESC,
+                          workspace_id IS NULL,
+                          updated_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                cartridge_id,
+                slug,
+                workspace_id,
+            )
         return await conn.fetchrow(
-            "SELECT * FROM agents WHERE cartridge_id=$1 AND slug=$2",
+            """
+            SELECT *
+              FROM agents
+             WHERE cartridge_id=$1
+               AND slug=$2
+             ORDER BY workspace_id IS NULL, updated_at DESC NULLS LAST
+             LIMIT 1
+            """,
             cartridge_id,
             slug,
         )

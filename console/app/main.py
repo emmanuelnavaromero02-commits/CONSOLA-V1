@@ -1504,6 +1504,21 @@ VIEWER_SECURITY_HEADERS = {
         "form-action 'self'"
     ),
 }
+APP_EMBED_SECURITY_HEADERS = {
+    **VIEWER_SECURITY_HEADERS,
+    "X-Frame-Options": "SAMEORIGIN",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-src 'self'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+}
 # Sprint v1.11 — strict CSP for the auth-form pages. Their HTML no longer
 # has inline <script> blocks or inline event handlers, so we can drop
 # 'unsafe-inline' from script-src on these paths. style-src keeps
@@ -1736,6 +1751,10 @@ def _is_viewer_path(path: str) -> bool:
     return path == "/viewer" or path.startswith("/viewer/")
 
 
+def _is_app_embed_path(path: str) -> bool:
+    return path.startswith("/apps/") and path.endswith("/embed")
+
+
 def _is_control_room_path(path: str) -> bool:
     return path == "/control-room" or path.startswith("/control-room/")
 
@@ -1747,7 +1766,9 @@ def _apply_security_headers(response: Response, path: str = "") -> Response:
     # auth POST endpoints (/auth/login etc.) live under /auth/ and fall
     # through to the default set, which is fine because their responses
     # are JSON, not HTML.
-    if _is_control_room_path(path):
+    if _is_app_embed_path(path):
+        headers = APP_EMBED_SECURITY_HEADERS
+    elif _is_control_room_path(path):
         headers = CONTROL_ROOM_SECURITY_HEADERS
     elif path in _STRICT_CSP_PATHS:
         headers = STRICT_AUTH_SECURITY_HEADERS
@@ -4481,6 +4502,282 @@ async def _proxy_workspace_app(
     )
 
 
+def _datasets_from_app_html(html_text: str) -> list[str]:
+    return sorted(
+        {
+            dataset
+            for dataset in re.findall(
+                r"/api/data/([a-zA-Z_][a-zA-Z0-9_]*)", html_text or ""
+            )
+            if DATASET_NAME_RE.fullmatch(dataset)
+        }
+    )
+
+
+async def _workspace_app_content_for_embed(
+    request: Request,
+    name: str,
+    user: dict | None,
+) -> tuple[str, list[str]]:
+    app_cartridge = _app_cartridge_id({"name": name})
+    if app_cartridge:
+        active_cartridges = await _active_scoped_connection_cartridges(
+            getattr(request.state, "user", None) or user,
+            {
+                "sap_successfactors",
+                "sap_s4hana",
+                "sap_hcm",
+                "salesforce",
+                "replicon",
+                "hubspot",
+            },
+        )
+        if active_cartridges and app_cartridge not in active_cartridges:
+            raise HTTPException(404, "app cartridge is not active for this workspace")
+
+    workspace_url = _workspace_server_url()
+    if not workspace_url:
+        raise HTTPException(503, "workspace internal URL is not configured")
+    upstream_headers = {
+        key: value
+        for key, value in {
+            "cookie": request.headers.get("cookie"),
+            "authorization": request.headers.get("authorization"),
+            "x-workspace-id": request.headers.get("x-workspace-id"),
+            "accept": "text/html",
+            "user-agent": request.headers.get("user-agent"),
+        }.items()
+        if value
+    }
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
+        r = await c.get(
+            f"{workspace_url}/apps/{quote(name, safe='')}/content",
+            headers=upstream_headers,
+        )
+    if r.status_code >= 400:
+        raise HTTPException(
+            r.status_code, _upstream_error_detail(r, "App content unavailable")
+        )
+    html_text = r.text
+    datasets = set(_datasets_from_app_html(html_text))
+    try:
+        apps_payload = await _apps_payload_visible_and_ready(user or {})
+        for app in _apps_from_payload(apps_payload):
+            if str(app.get("name") or "") == name:
+                datasets.update(_app_declared_datasets(app))
+                break
+    except Exception:
+        logger.debug("Failed to enrich embed app datasets for %s", name, exc_info=True)
+    return html_text, sorted(datasets)
+
+
+def _app_embed_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> str:
+    title = html.escape(name.replace("_", " ").strip() or "Analytic app")
+    content_src = f"/apps/{quote(name, safe='')}/content"
+    content_src_json = json.dumps(content_src)
+    allowed_datasets_json = json.dumps(
+        sorted(
+            {
+                str(dataset)
+                for dataset in datasets_used
+                if DATASET_NAME_RE.fullmatch(str(dataset))
+            }
+        )
+    )
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title} - OMEGA</title>
+  <style>
+    :root {{ color-scheme: dark light; }}
+    html, body {{
+      margin: 0;
+      min-height: 100%;
+      background: #07111e;
+      color: #e2e8f0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .shell {{
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background:
+        linear-gradient(180deg, rgba(14, 165, 233, 0.12), transparent 240px),
+        #07111e;
+    }}
+    header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(125, 211, 252, 0.18);
+      background: rgba(8, 20, 35, 0.92);
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 14px;
+      letter-spacing: 0;
+      font-weight: 700;
+    }}
+    p {{
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: #94a3b8;
+    }}
+    a {{
+      color: #7dd3fc;
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+    }}
+    .frame-wrap {{
+      min-width: 0;
+      min-height: 0;
+      padding: 0;
+    }}
+    iframe {{
+      display: block;
+      width: 100%;
+      min-height: 640px;
+      height: calc(100vh - 58px);
+      border: 0;
+      background: #ffffff;
+    }}
+    .blocked {{
+      display: none;
+      padding: 18px;
+      color: #fecaca;
+      font-size: 13px;
+      border-top: 1px solid rgba(248, 113, 113, 0.24);
+      background: rgba(127, 29, 29, 0.22);
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>{title}</h1>
+        <p>{len(datasets_used)} datasets autorizados para esta app</p>
+      </div>
+      <a href={json.dumps(f"/apps/{quote(name, safe='')}")} target="_blank" rel="noopener noreferrer">Abrir app completa</a>
+    </header>
+    <div class="frame-wrap">
+      <iframe id="omega-app-frame" title={json.dumps(title)} sandbox="allow-scripts" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
+      <div id="blocked" class="blocked" role="alert"></div>
+    </div>
+  </div>
+  <script nonce={json.dumps(nonce)}>
+    (() => {{
+      const frame = document.getElementById("omega-app-frame");
+      const blocked = document.getElementById("blocked");
+      const allowedSrc = {content_src_json};
+      const allowedDatasets = new Set({allowed_datasets_json});
+      const csrfToken = () => {{
+        const match = document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : "";
+      }};
+      const showError = (message) => {{
+        if (!blocked) return;
+        blocked.style.display = "block";
+        blocked.textContent = message;
+      }};
+      window.addEventListener("message", async (event) => {{
+        if (!frame || event.source !== frame.contentWindow) return;
+        const msg = event.data || {{}};
+        if (msg.type !== "omega-app-fetch" || !msg.id) return;
+        let status = 500;
+        let ok = false;
+        let body = "{{}}";
+        let contentType = "application/json";
+        try {{
+          if (!String(frame.getAttribute("src") || "").endsWith(allowedSrc)) {{
+            throw new Error("app source mismatch");
+          }}
+          const url = new URL(String(msg.url || ""), window.location.origin);
+          const method = String(msg.method || "GET").toUpperCase();
+          if (!url.pathname.startsWith("/api/data/")) throw new Error("blocked app data URL");
+          if (!["GET", "POST"].includes(method)) throw new Error("blocked app data method");
+          const parts = url.pathname.split("/").filter(Boolean);
+          const dataset = parts.length >= 3 && parts[0] === "api" && parts[1] === "data" ? parts[2] : "";
+          if (!allowedDatasets.has(dataset)) throw new Error(`dataset ${{dataset || "(empty)"}} not declared by app`);
+          const headers = {{}};
+          let requestBody;
+          if (method === "POST") {{
+            headers["Content-Type"] = "application/json";
+            const csrf = csrfToken();
+            if (csrf) headers["X-CSRF-Token"] = csrf;
+            requestBody = typeof msg.body === "string" ? msg.body : null;
+          }}
+          const response = await fetch(url.pathname + url.search, {{
+            method,
+            headers,
+            body: requestBody,
+            credentials: "same-origin"
+          }});
+          status = response.status;
+          ok = response.ok;
+          contentType = response.headers.get("content-type") || "application/json";
+          body = await response.text();
+        }} catch (err) {{
+          const message = err instanceof Error ? err.message : "blocked app data request";
+          status = 403;
+          ok = false;
+          body = JSON.stringify({{ detail: message }});
+          showError(message);
+        }}
+        frame.contentWindow.postMessage({{
+          type: "omega-app-fetch-result",
+          id: msg.id,
+          ok,
+          status,
+          contentType,
+          body
+        }}, "*");
+      }});
+    }})();
+  </script>
+</body>
+</html>"""
+
+
+def _app_embed_csp(nonce: str) -> str:
+    return (
+        "default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-src 'self'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+
+@app.get("/apps/{name}/embed", dependencies=[Depends(require_permission("apps.read"))])
+async def serve_app_embed(
+    request: Request,
+    name: str,
+    user: dict = Depends(require_permission("apps.read")),
+):
+    _validate_dataset_name(name)
+    _html_text, datasets_used = await _workspace_app_content_for_embed(
+        request, name, user
+    )
+    nonce = secrets.token_urlsafe(16)
+    return HTMLResponse(
+        content=_app_embed_wrapper_html(name, datasets_used, nonce),
+        headers={
+            "Content-Security-Policy": _app_embed_csp(nonce),
+            "X-Frame-Options": "SAMEORIGIN",
+        },
+    )
+
+
 @app.get(
     "/apps/{name}/content", dependencies=[Depends(require_permission("apps.read"))]
 )
@@ -6132,6 +6429,13 @@ _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 
 _SYNC_EXTRACT_ALL_DAGS = {
     "sap_successfactors": "sap_successfactors_extract_all",
 }
+_SYNC_AGENTOPS_TOOLS = {
+    "mcp-infra__simulation__monte_carlo_run",
+    "mcp-infra__decision__orchestrate",
+    "mcp-infra__wisdom_bits__run",
+    "mcp-infra__control_room__raise_alert",
+    "mcp-infra__control_room__raise_analysis_alert",
+}
 
 
 def _sync_step(
@@ -6142,15 +6446,64 @@ def _sync_step(
     *,
     attempts: int = 0,
     error: str | None = None,
+    completed: int | None = None,
+    total: int | None = None,
+    percent: int | None = None,
+    metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_total = max(int(total or 0), 0)
+    normalized_completed = max(int(completed or 0), 0)
+    if normalized_total:
+        normalized_completed = min(normalized_completed, normalized_total)
+    normalized_percent = (
+        int(percent)
+        if percent is not None
+        else round((normalized_completed / normalized_total) * 100)
+        if normalized_total
+        else 100
+        if status in {"success", "skipped"}
+        else 0
+    )
     return {
         "id": step_id,
         "label": label,
         "status": status,
         "detail": detail,
         "attempts": attempts,
+        "completed": normalized_completed,
+        "total": normalized_total,
+        "percent": max(0, min(normalized_percent, 100)),
         **({"error": error} if error else {}),
+        **({"metrics": metrics} if metrics else {}),
     }
+
+
+def _normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(step)
+    status = str(normalized.get("status") or "queued")
+    total = max(int(normalized.get("total") or 0), 0)
+    completed = max(int(normalized.get("completed") or 0), 0)
+    if status in {"success", "skipped"} and not total:
+        total = 1
+        completed = 1
+    if status == "failed" and not total:
+        total = 1
+    if total:
+        completed = min(completed, total)
+    if "percent" in normalized and normalized.get("percent") is not None:
+        percent = int(normalized.get("percent") or 0)
+    elif total:
+        percent = round((completed / total) * 100)
+    elif status in {"success", "skipped"}:
+        percent = 100
+    elif status == "running":
+        percent = 50
+    else:
+        percent = 0
+    normalized["completed"] = completed
+    normalized["total"] = total
+    normalized["percent"] = max(0, min(percent, 100))
+    return normalized
 
 
 def _initial_sync_steps() -> list[dict[str, Any]]:
@@ -6163,6 +6516,12 @@ def _initial_sync_steps() -> list[dict[str, Any]]:
             "silver_gold", "Silver/Gold", "queued", "Materialización pendiente."
         ),
         _sync_step("control_room", "Control Room", "queued", "Refresh pendiente."),
+        _sync_step(
+            "agents_intelligence",
+            "Agentes/IA",
+            "queued",
+            "Monitores y simulaciones pendientes.",
+        ),
     ]
 
 
@@ -6177,9 +6536,15 @@ def _merge_sync_steps(
     }
     for step_id, update in updates.items():
         merged = {**base.get(step_id, {}), **update, "id": step_id}
-        base[step_id] = merged
-    order = ["connection", "bronze", "silver_gold", "control_room"]
-    return [base[item] for item in order if item in base]
+        base[step_id] = _normalize_sync_step_payload(merged)
+    order = [
+        "connection",
+        "bronze",
+        "silver_gold",
+        "control_room",
+        "agents_intelligence",
+    ]
+    return [_normalize_sync_step_payload(base[item]) for item in order if item in base]
 
 
 def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
@@ -6398,17 +6763,38 @@ def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str
         if isinstance(extra.get("steps"), list)
         else _initial_sync_steps()
     )
+    steps = [
+        _normalize_sync_step_payload(step)
+        for step in steps
+        if isinstance(step, dict)
+    ]
     status = str(row.get("status") or extra.get("status") or "running")
+    step_count = len(steps)
+    progress = (
+        round(
+            sum(
+                max(0, min(int(step.get("percent") or 0), 100))
+                for step in steps
+                if isinstance(step, dict)
+            )
+            / max(step_count, 1)
+        )
+        if step_count
+        else 0
+    )
     return {
         "run_id": row.get("run_id"),
         "cartridge_id": row.get("cartridge_id"),
         "status": status,
         "mode": row.get("mode") or extra.get("mode") or "incremental",
         "target": extra.get("target") or "all",
+        "progress_percent": max(0, min(progress, 100)),
         "steps": steps,
         "triggered_entities": extra.get("triggered_entities") or [],
         "errors": extra.get("errors") or [],
         "control_room_ready": bool(extra.get("control_room_ready")),
+        "control_room_snapshot": extra.get("control_room_snapshot") or {},
+        "agentops_refresh": extra.get("agentops_refresh") or {},
         "started_at": row.get("started_at").isoformat()
         if row.get("started_at")
         else None,
@@ -6416,6 +6802,212 @@ def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str
         if row.get("finished_at")
         else None,
         "error_message": row.get("error_message"),
+    }
+
+
+def _sync_agentops_is_terminal(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("status") or "").lower() in {
+        "success",
+        "partial",
+        "failed",
+        "skipped",
+    }
+
+
+def _sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for agent in agents:
+        if not agent.get("is_active", True):
+            continue
+        extra = agent.get("extra") if isinstance(agent.get("extra"), dict) else {}
+        role = str((extra or {}).get("role") or "").strip().lower()
+        monitor = (extra or {}).get("monitor")
+        allowed_tools = agent.get("allowed_tools") or []
+        allowed_set = {
+            str(tool)
+            for tool in allowed_tools
+            if isinstance(tool, str) and tool.strip()
+        }
+        if (
+            role == "monitor"
+            and isinstance(monitor, dict)
+            and monitor
+            and (allowed_set & _SYNC_AGENTOPS_TOOLS)
+        ):
+            candidates.append(agent)
+    return candidates
+
+
+async def _run_sync_agentops_monitors(
+    *,
+    cartridge: str,
+    sync_run_id: str,
+    user: dict | None,
+) -> dict[str, Any]:
+    from datetime import datetime as _dt, timezone as _tz
+
+    checked_at_dt = _dt.now(_tz.utc)
+    checked_at = checked_at_dt.isoformat()
+    sync_fire_at = _dt(1970, 1, 1, tzinfo=_tz.utc)
+    schedule_key = f"sync-now:{uuid.uuid5(uuid.NAMESPACE_URL, sync_run_id)}"
+    agents = await _agents.list_agents(
+        cartridge_id=cartridge,
+        include_inactive=False,
+        user_context=user,
+    )
+    candidates = _sync_agentops_monitor_candidates(agents)
+    if not candidates:
+        return {
+            "status": "partial",
+            "checked_at": checked_at,
+            "total": 0,
+            "completed": 0,
+            "failed": 0,
+            "results": [],
+            "reason": "No hay monitores activos con contrato AgentOps para este cartucho/workspace.",
+        }
+
+    results: list[dict[str, Any]] = []
+    completed = 0
+    failed = 0
+    for agent_row in candidates[:12]:
+        agent_id = str(agent_row.get("id") or "").strip()
+        agent_slug = str(agent_row.get("slug") or agent_id)
+        if not agent_id:
+            failed += 1
+            results.append(
+                {
+                    "agent_id": "",
+                    "agent_slug": agent_slug,
+                    "status": "failed",
+                    "error": "agent id missing",
+                }
+            )
+            continue
+        try:
+            agent = await _agent_runtime.load_agent(agent_id, user_context=user)
+            if not agent:
+                raise RuntimeError("agent not found in scoped runtime")
+            if not (str(agent.tenant_id or "").strip() and str(agent.workspace_id or "").strip()):
+                raise RuntimeError("monitor agent requires tenant/workspace scope")
+            reservation = await _agent_scheduler.reserve_scheduled_run(
+                agent_id=str(agent.id),
+                tenant_id=str(agent.tenant_id),
+                workspace_id=str(agent.workspace_id),
+                scheduled_fire_at=sync_fire_at,
+                schedule_key=schedule_key,
+                airflow_dag_run_id=sync_run_id,
+                metadata={
+                    "agent_slug": agent.slug,
+                    "cartridge_id": agent.cartridge_id,
+                    "sync_run_id": sync_run_id,
+                    "checked_at": checked_at,
+                    "source": "sync-now",
+                },
+            )
+            if reservation.get("duplicate"):
+                status = str(reservation.get("status") or "unknown")
+                if status in {"ok", "skipped"}:
+                    completed += 1
+                elif status in {"error", "cancelled"}:
+                    failed += 1
+                results.append(
+                    {
+                        "agent_id": agent_id,
+                        "agent_slug": agent_slug,
+                        "status": "duplicate",
+                        "schedule_status": status,
+                        "run_id": reservation.get("agent_run_id"),
+                        "schedule_run": reservation,
+                    }
+                )
+                continue
+            message = (
+                "Ejecuta el monitor operativo posterior a sincronizacion para "
+                f"{cartridge}. Usa datos reales recien extraidos; no simules."
+            )
+            try:
+                result = await _agent_runtime.run_scheduled_monitor(
+                    agent,
+                    message,
+                    scheduled_fire_at=checked_at,
+                )
+            except Exception as exc:
+                await _agent_scheduler.finish_scheduled_run(
+                    schedule_run_id=reservation.get("id"),
+                    agent_run_id=None,
+                    status="error",
+                    tenant_id=str(agent.tenant_id),
+                    workspace_id=str(agent.workspace_id),
+                    error_message=f"{type(exc).__name__}: {exc}",
+                    metadata={"sync_run_id": sync_run_id, "checked_at": checked_at},
+                )
+                raise
+            await _agent_scheduler.finish_scheduled_run(
+                schedule_run_id=reservation.get("id"),
+                agent_run_id=result.get("run_id") if isinstance(result, dict) else None,
+                status="ok",
+                tenant_id=str(agent.tenant_id),
+                workspace_id=str(agent.workspace_id),
+                metadata={
+                    "sync_run_id": sync_run_id,
+                    "checked_at": checked_at,
+                    "deterministic_monitor": bool(
+                        isinstance(result, dict) and result.get("deterministic_monitor")
+                    ),
+                },
+            )
+            completed += 1
+            results.append(
+                {
+                    "agent_id": agent_id,
+                    "agent_slug": agent_slug,
+                    "status": "success",
+                    "run_id": result.get("run_id") if isinstance(result, dict) else None,
+                    "schedule_run": reservation,
+                    "reply": str((result or {}).get("reply") or "")[:500]
+                    if isinstance(result, dict)
+                    else "",
+                    "deterministic_monitor": bool(
+                        isinstance(result, dict) and result.get("deterministic_monitor")
+                    ),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            logger.warning(
+                "sync AgentOps monitor failed cartridge=%s agent=%s: %s",
+                cartridge,
+                agent_slug,
+                exc,
+            )
+            results.append(
+                {
+                    "agent_id": agent_id,
+                    "agent_slug": agent_slug,
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}"[:500],
+                }
+            )
+
+    total = len(candidates[:12])
+    status = (
+        "success"
+        if completed == total
+        else "partial"
+        if completed or results
+        else "failed"
+    )
+    return {
+        "status": status,
+        "checked_at": checked_at,
+        "sync_run_id": sync_run_id,
+        "total": total,
+        "completed": completed,
+        "failed": failed,
+        "results": results,
     }
 
 
@@ -6787,19 +7379,32 @@ async def _build_sync_run_status(
             "detail": "Scope y conexión aceptados por el pipeline."
             if triggered or child_rows or bronze_ready
             else "Validando al iniciar extracción.",
+            "completed": 1 if triggered or child_rows or bronze_ready else 0,
+            "total": 1,
+            "percent": 100 if triggered or child_rows or bronze_ready else 20,
         }
     }
+    child_total = max(len(child_run_ids), len(triggered), len(child_rows), 1)
+    child_done = sum(
+        1
+        for status in child_statuses
+        if status not in {"queued", "running", "unknown", ""}
+    )
     if running_children:
         updates["bronze"] = {
             "label": "Bronze",
             "status": "running",
             "detail": f"{len(child_rows)} corridas en curso.",
+            "completed": child_done,
+            "total": child_total,
         }
     elif failed_children and not success_children and not partial_children:
         updates["bronze"] = {
             "label": "Bronze",
             "status": "failed",
             "detail": "Las extracciones fallaron antes de completar Bronze.",
+            "completed": child_done or failed_children,
+            "total": child_total,
         }
     elif failed_children or partial_children or errors:
         updates["bronze"] = {
@@ -6809,12 +7414,17 @@ async def _build_sync_run_status(
                 f"{success_children} OK; {partial_children} parciales; "
                 f"{failed_children + len(errors)} con error."
             ),
+            "completed": max(success_children + partial_children, child_done),
+            "total": child_total,
         }
     elif success_children or bronze_ready:
         updates["bronze"] = {
             "label": "Bronze",
             "status": "success",
             "detail": f"{bronze_ready or success_children} entidades con datos raw.",
+            "completed": bronze_ready or success_children,
+            "total": max(bronze_ready or success_children, 1),
+            "percent": 100,
         }
 
     if (
@@ -6825,6 +7435,8 @@ async def _build_sync_run_status(
             "label": "Silver/Gold",
             "status": "queued",
             "detail": "Esperando a que Airflow termine extracción.",
+            "completed": 0,
+            "total": max(gold_total, silver_ready, 1),
         }
     elif gold_ready:
         gold_detail = (
@@ -6838,18 +7450,24 @@ async def _build_sync_run_status(
             if not failed_children and not partial_children and not gold_partial
             else "partial",
             "detail": f"{silver_ready} Silver · {gold_detail}.",
+            "completed": gold_ready,
+            "total": max(gold_total, gold_ready, 1),
         }
     elif silver_ready:
         updates["silver_gold"] = {
             "label": "Silver/Gold",
             "status": "partial",
             "detail": f"{silver_ready} Silver disponibles; Gold todavía incompleto.",
+            "completed": silver_ready,
+            "total": max(silver_ready + 1, gold_total, 1),
         }
     elif failed_children or errors:
         updates["silver_gold"] = {
             "label": "Silver/Gold",
             "status": "failed",
             "detail": "No se pudo confirmar materialización downstream.",
+            "completed": 0,
+            "total": max(gold_total, 1),
         }
 
     control_room_ready = False
@@ -6909,6 +7527,34 @@ async def _build_sync_run_status(
                     if gold_ready
                     else "Control Room materializado con fuentes Bronze/Silver; esperando Gold."
                 ),
+                "completed": control_room_snapshot["data_ready_sources"]
+                if control_room_snapshot["data_ready_sources"]
+                else control_room_snapshot["item_count"],
+                "total": max(
+                    control_room_snapshot["source_count"],
+                    control_room_snapshot["item_count"],
+                    1,
+                ),
+                "percent": 100
+                if control_room_ready
+                else min(
+                    95,
+                    round(
+                        (
+                            (
+                                control_room_snapshot["data_ready_sources"]
+                                or control_room_snapshot["item_count"]
+                            )
+                            / max(
+                                control_room_snapshot["source_count"],
+                                control_room_snapshot["item_count"],
+                                1,
+                            )
+                        )
+                        * 100
+                    ),
+                ),
+                "metrics": control_room_snapshot,
             }
         except Exception as exc:
             from datetime import datetime as _dt, timezone as _tz
@@ -6919,6 +7565,8 @@ async def _build_sync_run_status(
                 "status": "partial",
                 "detail": "Gold existe, pero Control Room aún no respondió completo.",
                 "error": str(exc)[:300],
+                "completed": 0,
+                "total": 1,
             }
     elif cartridge == "sap_successfactors":
         from datetime import datetime as _dt, timezone as _tz
@@ -6928,6 +7576,8 @@ async def _build_sync_run_status(
             "label": "Control Room",
             "status": "queued" if running_children else "partial",
             "detail": "Esperando Gold de SuccessFactors.",
+            "completed": 0,
+            "total": 1,
         }
     else:
         control_room_ready = bool(gold_ready)
@@ -6937,6 +7587,103 @@ async def _build_sync_run_status(
             "detail": "Control Room específico no aplica para este cartucho."
             if not gold_ready
             else "Gold disponible para consumo.",
+            "completed": 1 if gold_ready else 0,
+            "total": 1,
+            "percent": 100 if gold_ready else 0,
+        }
+
+    agentops_refresh = (
+        dict(extra.get("agentops_refresh"))
+        if isinstance(extra.get("agentops_refresh"), dict)
+        else {}
+    )
+    if cartridge == "sap_successfactors":
+        can_run_agentops = (
+            not running_children
+            and str(updates.get("control_room", {}).get("status") or "")
+            in {"success", "partial"}
+            and bool(bronze_ready or silver_ready or gold_ready)
+        )
+        if can_run_agentops and not _sync_agentops_is_terminal(agentops_refresh):
+            try:
+                agentops_refresh = await _run_sync_agentops_monitors(
+                    cartridge=cartridge,
+                    sync_run_id=str(row["run_id"]),
+                    user=user,
+                )
+            except Exception as exc:  # noqa: BLE001
+                from datetime import datetime as _dt, timezone as _tz
+
+                logger.warning(
+                    "sync AgentOps refresh failed cartridge=%s run_id=%s: %s",
+                    cartridge,
+                    row.get("run_id"),
+                    exc,
+                )
+                agentops_refresh = {
+                    "status": "failed",
+                    "checked_at": _dt.now(_tz.utc).isoformat(),
+                    "total": 1,
+                    "completed": 0,
+                    "failed": 1,
+                    "results": [],
+                    "reason": f"{type(exc).__name__}: {exc}"[:500],
+                }
+        agent_status = str(agentops_refresh.get("status") or "").lower()
+        agent_total = int(agentops_refresh.get("total") or 0)
+        agent_completed = int(agentops_refresh.get("completed") or 0)
+        agent_failed = int(agentops_refresh.get("failed") or 0)
+        if not can_run_agentops:
+            updates["agents_intelligence"] = {
+                "label": "Agentes/IA",
+                "status": "queued" if running_children else "partial",
+                "detail": "Esperando datos materializados para ejecutar monitores reales.",
+                "completed": 0,
+                "total": 1,
+            }
+        elif agent_status == "success":
+            updates["agents_intelligence"] = {
+                "label": "Agentes/IA",
+                "status": "success",
+                "detail": f"{agent_completed}/{max(agent_total, 1)} monitores ejecutados con AgentOps.",
+                "completed": agent_completed,
+                "total": max(agent_total, agent_completed, 1),
+                "percent": 100,
+                "metrics": agentops_refresh,
+            }
+        elif agent_status == "failed":
+            updates["agents_intelligence"] = {
+                "label": "Agentes/IA",
+                "status": "failed",
+                "detail": str(
+                    agentops_refresh.get("reason")
+                    or f"{agent_failed} monitores fallaron."
+                ),
+                "completed": agent_completed,
+                "total": max(agent_total, agent_failed, 1),
+                "metrics": agentops_refresh,
+            }
+        else:
+            reason = str(
+                agentops_refresh.get("reason")
+                or f"{agent_completed}/{max(agent_total, 1)} monitores ejecutados; {agent_failed} con error."
+            )
+            updates["agents_intelligence"] = {
+                "label": "Agentes/IA",
+                "status": "partial",
+                "detail": reason,
+                "completed": agent_completed,
+                "total": max(agent_total, agent_completed + agent_failed, 1),
+                "metrics": agentops_refresh,
+            }
+    else:
+        updates["agents_intelligence"] = {
+            "label": "Agentes/IA",
+            "status": "skipped",
+            "detail": "Monitores específicos no aplican para este cartucho.",
+            "completed": 1,
+            "total": 1,
+            "percent": 100,
         }
 
     steps = _merge_sync_steps(steps, updates)
@@ -6951,6 +7698,7 @@ async def _build_sync_run_status(
         "control_room_snapshot": control_room_snapshot
         or extra.get("control_room_snapshot")
         or {},
+        "agentops_refresh": agentops_refresh or extra.get("agentops_refresh") or {},
         "gold_refresh": gold_refresh_summary or extra.get("gold_refresh") or {},
         "target": extra.get("target") or "all",
         "mode": extra.get("mode") or row.get("mode") or "incremental",
@@ -7161,6 +7909,17 @@ async def api_cartridge_sync_now(
                 "detail": "Esperando Gold para refrescar señales."
                 if triggered_entities
                 else "No hay Gold nuevo disponible.",
+                "completed": 0,
+                "total": 1,
+            },
+            "agents_intelligence": {
+                "label": "Agentes/IA",
+                "status": "queued" if triggered_entities else "failed",
+                "detail": "Se ejecutarán monitores reales al terminar Control Room."
+                if triggered_entities
+                else "No hay datos base para ejecutar monitores.",
+                "completed": 0,
+                "total": 1,
             },
         },
     )

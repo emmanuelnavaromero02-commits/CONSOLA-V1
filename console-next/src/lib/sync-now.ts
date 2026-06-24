@@ -10,6 +10,10 @@ export interface SyncRunStep {
   detail?: string;
   attempts?: number;
   error?: string;
+  completed?: number;
+  total?: number;
+  percent?: number;
+  metrics?: Record<string, unknown>;
 }
 
 export interface SyncRunPayload {
@@ -18,10 +22,13 @@ export interface SyncRunPayload {
   status: SyncRunStatus;
   mode: "incremental" | "full";
   target: SyncTarget;
+  progress_percent?: number;
   steps: SyncRunStep[];
   triggered_entities: Array<Record<string, unknown>>;
   errors: Array<Record<string, unknown>>;
   control_room_ready: boolean;
+  control_room_snapshot?: Record<string, unknown>;
+  agentops_refresh?: Record<string, unknown>;
   started_at?: string | null;
   finished_at?: string | null;
   error_message?: string | null;

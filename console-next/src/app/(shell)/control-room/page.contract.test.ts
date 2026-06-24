@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const pageSource = readFileSync(join(process.cwd(), "src/app/(shell)/control-room/page.tsx"), "utf8");
+const analyticAppsPanelSource = readFileSync(join(process.cwd(), "src/components/control-room/AnalyticAppsPanel.tsx"), "utf8");
 
 describe("Control Room page functional contract", () => {
   it("keeps existing read surfaces wired after the visual redesign", () => {
@@ -57,6 +58,29 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("SYNC_NOW_POLL_INTERVAL_MS = 3000");
     expect(pageSource).not.toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target: \"all\" })");
     expect(pageSource).not.toContain("attempt < 40");
+  });
+
+  it("embeds analytic apps through the safe Control Room wrapper", () => {
+    expect(pageSource).toContain("AnalyticAppsPanel");
+    expect(pageSource).toContain("listApps");
+    expect(pageSource).toContain("loadAnalyticsApps");
+    expect(analyticAppsPanelSource).toContain("/embed");
+    expect(analyticAppsPanelSource).toContain("iframe");
+    expect(analyticAppsPanelSource).toContain("Apps analíticas");
+    expect(analyticAppsPanelSource).toContain("Gráficas publicadas con datos Gold listos");
+    expect(analyticAppsPanelSource).not.toContain('src={`/apps/${encodeURIComponent(activeApp.name)}`}');
+  });
+
+  it("keeps heavy Control Room sections in a single-open accordion", () => {
+    expect(pageSource).toContain("type ControlRoomSectionId");
+    expect(pageSource).toContain('useState<ControlRoomSectionId>("operations")');
+    expect(pageSource).toContain("ControlRoomAccordionSection");
+    expect(pageSource).toContain('id="operations"');
+    expect(pageSource).toContain('id="apps"');
+    expect(pageSource).toContain('id="signals"');
+    expect(pageSource).toContain('id="rules"');
+    expect(pageSource).toContain('id="lessons"');
+    expect(pageSource).toContain("aria-expanded={open}");
   });
 
   it("surfaces deterministic math provenance and control origins", () => {

@@ -753,6 +753,117 @@ async def test_build_sync_run_status_marks_stale_queued_children_failed(
 
 
 @pytest.mark.anyio
+async def test_build_sync_run_status_runs_agentops_after_successfactors_materializes(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    row = {
+        "run_id": "sync_now:sap_successfactors:agentops",
+        "dag_id": console_main._SYNC_NOW_DAG_ID,
+        "cartridge_id": "sap_successfactors",
+        "entity": console_main._SYNC_NOW_ENTITY,
+        "mode": "incremental",
+        "status": "running",
+        "started_at": datetime.now(timezone.utc),
+        "finished_at": None,
+        "error_message": None,
+        "extra": {
+            "target": "talent",
+            "mode": "incremental",
+            "triggered_entities": [
+                {"entity": "__extract_all__", "dag_run_id": "child-run"}
+            ],
+            "errors": [],
+            "steps": console_main._initial_sync_steps(),
+        },
+    }
+    upserts: list[dict] = []
+    agentops_calls: list[dict] = []
+
+    async def child_runs(**_kwargs):
+        return [{"run_id": "child-run", "status": "success"}]
+
+    async def pipeline(cartridge, user=None):
+        return {
+            "pipeline": [
+                {
+                    "entity": "EmpCompensation",
+                    "bronze": {"status": "fresh"},
+                    "silver": [{"name": "sf_empcomp_latest", "status": "fresh"}],
+                    "gold": [{"name": "sap_successfactors_talent_signals", "status": "fresh"}],
+                }
+            ]
+        }
+
+    async def dashboard(user=None, persist=False):
+        return {
+            "meta": {"source_count": 3, "item_count": 7},
+            "summary": {"total_items": 7, "data_ready_sources": 3},
+        }
+
+    async def sf_kpis(user=None):
+        return {"row_count": 7}
+
+    control_room_stub = _module(
+        dashboard=dashboard,
+        sap_successfactors_gold_kpis=sf_kpis,
+        sap_successfactors_talent_kpis=sf_kpis,
+    )
+
+    async def run_agentops(**kwargs):
+        agentops_calls.append(kwargs)
+        return {
+            "status": "success",
+            "total": 1,
+            "completed": 1,
+            "failed": 0,
+            "results": [
+                {"agent_slug": "sap_successfactors_talent_monitor", "status": "success"}
+            ],
+        }
+
+    async def upsert(**kwargs):
+        upserts.append(kwargs)
+
+    async def fetch(**_kwargs):
+        updated = dict(row)
+        updated["status"] = upserts[-1]["status"]
+        updated["extra"] = upserts[-1]["extra"]
+        updated["error_message"] = upserts[-1].get("error_message")
+        return updated
+
+    monkeypatch.setattr(console_main, "_sync_child_runs", child_runs)
+    monkeypatch.setattr(console_main, "api_pipeline", pipeline)
+    monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
+    monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
+    monkeypatch.setattr(console_main, "_run_sync_agentops_monitors", run_agentops)
+    monkeypatch.setitem(sys.modules, "app.services.control_room_service", control_room_stub)
+    import app.services as _svc_pkg
+
+    monkeypatch.setattr(_svc_pkg, "control_room_service", control_room_stub, raising=False)
+
+    result = await console_main._build_sync_run_status(
+        cartridge="sap_successfactors",
+        row=row,
+        user=user,
+    )
+
+    assert agentops_calls == [
+        {
+            "cartridge": "sap_successfactors",
+            "sync_run_id": "sync_now:sap_successfactors:agentops",
+            "user": user,
+        }
+    ]
+    assert upserts[-1]["extra"]["agentops_refresh"]["status"] == "success"
+    assert any(
+        step["id"] == "agents_intelligence" and step["status"] == "success"
+        for step in result["steps"]
+    )
+    assert result["progress_percent"] >= 80
+
+
+@pytest.mark.anyio
 async def test_dag_based_incremental_conf_preserves_dates(console_main, monkeypatch):
     async def metadata(cartridge, entity):
         return {

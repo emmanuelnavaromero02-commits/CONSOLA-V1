@@ -39,6 +39,27 @@ async def serve_app_content_proxy(
 ):
     return await _proxy_workspace_app(request, name, content=True)
 
+# /apps/{name}/embed
+@router.get("/apps/{name}/embed", dependencies=[Depends(require_permission("apps.read"))])
+@_bind_to_main
+async def serve_app_embed(
+    request: Request,
+    name: str,
+    user: dict = Depends(require_permission("apps.read")),
+):
+    _validate_dataset_name(name)
+    _html_text, datasets_used = await _workspace_app_content_for_embed(
+        request, name, user
+    )
+    nonce = secrets.token_urlsafe(16)
+    return HTMLResponse(
+        content=_app_embed_wrapper_html(name, datasets_used, nonce),
+        headers={
+            "Content-Security-Policy": _app_embed_csp(nonce),
+            "X-Frame-Options": "SAMEORIGIN",
+        },
+    )
+
 # /apps/{name}
 @router.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main

@@ -5,14 +5,33 @@
 -- monitor agents must be workspace-scoped so agent_runner can mint a signed
 -- tenant/workspace security_context before invoking MCP.
 
-WITH scope AS (
+WITH active_scope AS (
+    SELECT DISTINCT
+           ci.tenant_id,
+           ci.workspace_id
+      FROM cartridge_installations ci
+      LEFT JOIN tenant_entitlements te
+        ON te.tenant_id = ci.tenant_id
+       AND te.workspace_id = ci.workspace_id
+       AND te.cartridge_id = ci.cartridge_id
+     WHERE ci.cartridge_id = 'sap_successfactors'
+       AND ci.status = 'ready'
+       AND COALESCE(te.status, 'active') = 'active'
+),
+fallback_scope AS (
     SELECT t.id AS tenant_id, w.id AS workspace_id
       FROM tenants t
       JOIN workspaces w ON w.tenant_id = t.id
      WHERE t.name = 'Default Tenant'
        AND w.name = 'Main Workspace'
+       AND NOT EXISTS (SELECT 1 FROM active_scope)
      ORDER BY w.created_at NULLS LAST, w.id
      LIMIT 1
+),
+scope AS (
+    SELECT tenant_id, workspace_id FROM active_scope
+    UNION ALL
+    SELECT tenant_id, workspace_id FROM fallback_scope
 ),
 payload AS (
     SELECT
@@ -106,8 +125,57 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
               },
               {
                 "name": "decision_orchestrator",
-                "enabled": false,
-                "blocked_reason": "Requiere una senal concreta source_type/source_id antes de comparar opciones."
+                "enabled": true,
+                "source_type": "wisdom_bit",
+                "source_id": "WB-TALENTO",
+                "title": "Decision operativa WB-TALENTO",
+                "description": "Evaluar si las senales agregadas de talento requieren abrir investigacion, simular impacto y mantener seguimiento supervisado.",
+                "time_horizon": "30d",
+                "metrics": {
+                  "risk_metric": "talent_readiness_delta",
+                  "target": "recommendation_only",
+                  "privacy": "aggregated"
+                },
+                "constraints": {
+                  "recommendation_only": true,
+                  "no_external_writeback": true,
+                  "no_pii": true
+                },
+                "evidence_refs": [
+                  {"type": "wisdom_bit", "id": "WB-TALENTO"}
+                ],
+                "execute_engines": true,
+                "engine_inputs": {
+                  "monte_carlo": {
+                    "source_type": "wisdom_bit",
+                    "source_id": "WB-TALENTO",
+                    "horizon_days": 30,
+                    "iterations": 1000,
+                    "seed": 45120,
+                    "model_version": "wb-talento.monitor.v1",
+                    "input_variables": {
+                      "baseline_value": {"type": "fixed", "value": 100},
+                      "expected_delta": {"type": "triangular", "low": -12, "mode": -4, "high": 2},
+                      "delay_days": {"type": "triangular", "low": 0, "mode": 5, "high": 14},
+                      "cost_per_day": {"type": "fixed", "value": 1},
+                      "probability_of_delay": {"type": "triangular", "low": 0.2, "mode": 0.5, "high": 0.8}
+                    },
+                    "output_metric": "delta",
+                    "breach_threshold": -5,
+                    "breach_direction": "below",
+                    "assumptions": {
+                      "basis": "Agregado WB-TALENTO: blockers C/P/A y senales de talento.",
+                      "privacy": "Sin PII.",
+                      "decision_mode": "recommendation_only"
+                    },
+                    "evidence_refs": [
+                      {"type": "wisdom_bit", "id": "WB-TALENTO"}
+                    ]
+                  },
+                  "bayesian_calibration": {
+                    "calibration_group": "sap_successfactors:talent_readiness"
+                  }
+                }
               }
             ]
           }
