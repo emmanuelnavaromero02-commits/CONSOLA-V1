@@ -36,6 +36,16 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
     calls: list[dict] = []
     invalidated: list[dict] = []
 
+    async def fake_resolve_scope(
+        body: intelligence_router.GoldRefreshIntelligenceRequest,
+    ) -> dict:
+        return {
+            "tenant_id": body.tenant_id,
+            "workspace_id": body.workspace_id,
+            "tenant_mismatch": False,
+            "requested_tenant_id": body.tenant_id,
+        }
+
     async def fake_run_intelligence(user: dict, payload: dict, *, persist: bool):
         calls.append({"user": user, "payload": payload, "persist": persist})
         idempotent = len(calls) > 1
@@ -43,10 +53,10 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
             "run_ref": payload["run_ref"],
             "intelligence_run_id": 77,
             "signals": [] if idempotent else [{"signal_id": "intel:test"}],
-            "skipped": [] if idempotent else [{"status": "missing_simulation_template"}],
-            "skipped_counts": {}
+            "skipped": []
             if idempotent
-            else {"missing_simulation_template": 1},
+            else [{"status": "missing_simulation_template"}],
+            "skipped_counts": {} if idempotent else {"missing_simulation_template": 1},
             "dataset_unavailable_count": 0,
             "insufficient_history_count": 0,
             "idempotent": idempotent,
@@ -59,6 +69,11 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
         intelligence_router.intelligence_engine,
         "run_intelligence",
         fake_run_intelligence,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "_resolve_gold_refresh_scope",
+        fake_resolve_scope,
     )
     monkeypatch.setattr(
         intelligence_router,
@@ -84,10 +99,7 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
     assert retry_response["skipped"] == 0
     assert retry_response["idempotent"] is True
     assert response["run_ref"] == (
-        "gold-refresh:"
-        "workspace-1:"
-        "hubspot:"
-        "scheduled__2026-06-19T00:00:00+00:00"
+        "gold-refresh:" "workspace-1:" "hubspot:" "scheduled__2026-06-19T00:00:00+00:00"
     )
     assert invalidated[0]["active_workspace_id"] == "workspace-1"
     assert invalidated[1]["active_workspace_id"] == "workspace-1"
@@ -105,3 +117,65 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
         "forecast_mensual",
         "unused_dataset",
     ]
+    assert call["payload"]["metadata"]["requested_tenant_id"] == "tenant-1"
+    assert call["payload"]["metadata"]["canonical_tenant_id"] == "tenant-1"
+    assert call["payload"]["metadata"]["tenant_mismatch"] is False
+
+
+@pytest.mark.asyncio
+async def test_gold_refresh_internal_uses_workspace_tenant_when_gold_scope_is_stale(
+    monkeypatch,
+):
+    calls: list[dict] = []
+
+    async def fake_resolve_scope(
+        body: intelligence_router.GoldRefreshIntelligenceRequest,
+    ) -> dict:
+        return {
+            "tenant_id": "tenant-canonical",
+            "workspace_id": body.workspace_id,
+            "tenant_mismatch": True,
+            "requested_tenant_id": body.tenant_id,
+        }
+
+    async def fake_run_intelligence(user: dict, payload: dict, *, persist: bool):
+        calls.append({"user": user, "payload": payload, "persist": persist})
+        return {
+            "run_ref": payload["run_ref"],
+            "intelligence_run_id": 88,
+            "signals": [{"signal_id": "intel:test"}],
+            "skipped": [],
+            "skipped_counts": {},
+            "dataset_unavailable_count": 0,
+            "insufficient_history_count": 0,
+            "idempotent": False,
+        }
+
+    monkeypatch.setattr(
+        intelligence_router,
+        "_resolve_gold_refresh_scope",
+        fake_resolve_scope,
+    )
+    monkeypatch.setattr(
+        intelligence_router.intelligence_engine,
+        "run_intelligence",
+        fake_run_intelligence,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "_invalidate_control_room_cache",
+        lambda user: None,
+    )
+
+    response = await intelligence_router.intelligence_gold_refresh_internal(
+        _request(),
+        internal_service="airflow",
+    )
+
+    assert response["ok"] is True
+    assert calls[0]["user"]["tenant_id"] == "tenant-canonical"
+    assert calls[0]["user"]["active_tenant_id"] == "tenant-canonical"
+    assert calls[0]["user"]["workspace_id"] == "workspace-1"
+    assert calls[0]["payload"]["metadata"]["requested_tenant_id"] == "tenant-1"
+    assert calls[0]["payload"]["metadata"]["canonical_tenant_id"] == "tenant-canonical"
+    assert calls[0]["payload"]["metadata"]["tenant_mismatch"] is True
