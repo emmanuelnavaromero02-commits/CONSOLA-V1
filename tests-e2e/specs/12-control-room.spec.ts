@@ -137,7 +137,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       timeout: 15_000,
     });
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
+    await page.getByRole("button", { name: /señales priorizadas/i }).click();
     await expect(page.getByLabel(/anomal[ií]as detectadas/i)).toBeVisible();
+    await page.getByRole("button", { name: /umbrales de decisi[oó]n/i }).click();
     await expect(page.getByLabel(/reglas de decisi[oó]n del contexto/i)).toBeVisible();
     await expect(page.getByLabel(/reglas de decisi[oó]n visibles/i)).toContainText(/margen bajo/i);
     await expect(page.getByText(/conectores .* frentes/i).first()).toBeVisible();
@@ -220,10 +222,14 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("navigation", { name: /ruta de navegaci[oó]n/i })).toContainText(/recursos humanos/i);
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de [aá]rea/i);
     await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/vista exclusiva/i);
+    await page.getByRole("button", { name: /lecciones del contexto/i }).click();
     await expect(page.getByLabel(/lecciones aprendidas del contexto/i)).toContainText(/reglas visibles/i);
+    await page.getByRole("button", { name: /operaci[oó]n y agentes/i }).click();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/alertas activas/i);
     await expect(page.getByText(/actualizado/i).first()).toBeVisible();
+    await page.getByRole("button", { name: /señales priorizadas/i }).click();
     await expect(page.getByLabel(/anomal[ií]as detectadas/i)).toContainText(/recursos humanos/i);
+    await page.getByRole("button", { name: /operaci[oó]n y agentes/i }).click();
     await expect(page.getByLabel(/indicadores ejecutivos de personal/i)).toContainText(/successfactors/i);
 
     const successFactorsModule = dashboard.cartridges.find((item: { id?: string; connector_id?: string; active?: boolean }) => (
