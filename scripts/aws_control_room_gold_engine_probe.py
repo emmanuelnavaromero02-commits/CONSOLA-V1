@@ -79,18 +79,36 @@ case "$writeback" in
     ;;
 esac
 
+operational_scope_values="$(psql_main "
+SELECT string_agg(format('(%L,%L)', tenant_id::text, id::text), ',')
+  FROM workspaces
+ WHERE tenant_id IS NOT NULL;
+" || true)"
+operational_scope_values="$(echo "$operational_scope_values" | sed '/^$/d' | head -n 1)"
+if [ -z "$operational_scope_values" ]; then
+  emit "Operational workspace scope" "FAIL" "<empty>" "Seed at least one tenant-scoped workspace before running the probe."
+  exit 0
+fi
+emit "Operational workspace scope" "PASS" "tenant/workspace pairs available"
+
 scope="$(psql_gold "
-SELECT tenant_id::text || '|' || workspace_id::text
-  FROM public.gold_consultor_mensual
- WHERE tenant_id IS NOT NULL
-   AND workspace_id IS NOT NULL
- GROUP BY tenant_id, workspace_id
+WITH operational_scope(tenant_id, workspace_id) AS (
+  VALUES ${operational_scope_values}
+)
+SELECT gold.tenant_id::text || '|' || gold.workspace_id::text
+  FROM public.gold_consultor_mensual AS gold
+  JOIN operational_scope AS scope
+    ON scope.tenant_id = gold.tenant_id::text
+   AND scope.workspace_id = gold.workspace_id::text
+ WHERE gold.tenant_id IS NOT NULL
+   AND gold.workspace_id IS NOT NULL
+ GROUP BY gold.tenant_id, gold.workspace_id
  ORDER BY COUNT(*) DESC
  LIMIT 1;
 " || true)"
 scope="$(echo "$scope" | sed '/^$/d' | head -n 1)"
 if [ -z "$scope" ] || ! echo "$scope" | grep -q "|"; then
-  emit "Replicon Gold scope" "FAIL" "${scope:-<empty>}" "Seed Replicon Gold rows before running the probe."
+  emit "Replicon Gold scope" "FAIL" "${scope:-<empty>}" "Seed Replicon Gold rows for an operational tenant/workspace before running the probe."
   exit 0
 fi
 tenant_id="${scope%%|*}"
