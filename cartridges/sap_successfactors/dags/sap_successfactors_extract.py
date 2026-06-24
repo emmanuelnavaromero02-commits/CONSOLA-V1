@@ -217,6 +217,44 @@ def _try_silver_refresh(runtime: SimpleNamespace, entity: str, security_context:
         return {"status": "failed", "error": message}
 
 
+def _downstream_status(payload: dict[str, Any], key: str) -> str:
+    item = payload.get(key)
+    if isinstance(item, dict):
+        return str(item.get("status") or "").strip().lower()
+    return ""
+
+
+def _pipeline_status_for_success_payload(payload: dict[str, Any]) -> str:
+    silver_status = _downstream_status(payload, "silver_refresh")
+    if silver_status and silver_status not in {"success", "ok"}:
+        return "partial"
+    return "success"
+
+
+def _pipeline_extra_from_payload(
+    payload: dict[str, Any],
+    *,
+    conn_id: str | None,
+    job_id: str | None,
+) -> dict[str, Any]:
+    record_count = _first_int(payload, "record_count", "rows_written", "records_written", "rows", "count")
+    extra: dict[str, Any] = {
+        "conn_id": conn_id,
+        "job_id": job_id,
+        "result_status": payload.get("status"),
+        "empty_result": record_count == 0,
+    }
+    for key in (
+        "silver_refresh",
+        "incremental_filter_strategy",
+        "incremental_fallback_reason",
+        "retried_as_full_snapshot",
+    ):
+        if key in payload:
+            extra[key] = payload.get(key)
+    return extra
+
+
 def _first_int(payload: dict, *keys: str) -> int | None:
     for key in keys:
         value = payload.get(key)
@@ -263,6 +301,7 @@ def _pipeline_run_save(
     record_count: int | None = None,
     storage_uri: str | None = None,
     error_message: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     tenant_id, workspace_id = _scope_from_conf(conf)
     if not tenant_id or not workspace_id:
@@ -285,6 +324,7 @@ def _pipeline_run_save(
         "extra": {
             "conn_id": conf.get("conn_id") or conf.get("connection_id") or None,
             "job_id": conf.get("job_id") or None,
+            **(extra or {}),
         },
     }
     if record_count is not None:
@@ -356,10 +396,15 @@ def sap_successfactors_extract():
                 context=context,
                 conf=conf,
                 entity=str(entity),
-                status="success",
+                status=_pipeline_status_for_success_payload(payload),
                 started_at=started_at,
                 record_count=_first_int(payload, "record_count", "rows_written", "records_written", "rows", "count"),
                 storage_uri=_first_str(payload, "storage_uri", "path", "uri"),
+                extra=_pipeline_extra_from_payload(
+                    payload,
+                    conn_id=conn_id,
+                    job_id=str(conf.get("job_id") or "").strip() or None,
+                ),
             )
             return payload
         except Exception as exc:

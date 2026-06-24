@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from starlette.requests import Request
 
 from app import dependencies as console_dependencies
 from app.services.mcp_registry import _require_cartridge_scope
@@ -98,6 +99,34 @@ def _load_workspace_session_module():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def _request_with_workspace_context(
+    *, header: str | None = None, cookie: str | None = None
+) -> Request:
+    headers: list[tuple[bytes, bytes]] = []
+    if header is not None:
+        headers.append((b"x-workspace-id", header.encode("utf-8")))
+    if cookie is not None:
+        headers.append(
+            (b"cookie", f"omega_active_workspace_id={cookie}".encode("utf-8"))
+        )
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/studio/cartridges",
+            "headers": headers,
+        }
+    )
+
+
+def test_legacy_console_reads_active_workspace_cookie_and_header_wins():
+    cookie_request = _request_with_workspace_context(cookie="workspace-b")
+    assert console_dependencies.requested_workspace_id_from_request(cookie_request) == "workspace-b"
+
+    header_request = _request_with_workspace_context(header="workspace-a", cookie="workspace-b")
+    assert console_dependencies.requested_workspace_id_from_request(header_request) == "workspace-a"
 
 
 @pytest.mark.asyncio

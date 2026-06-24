@@ -235,6 +235,100 @@ async def test_api_pipeline_airflow_refresh_timeout_does_not_block_or_mark_never
     assert row["metadata"]["pending"] == ["airflow_status_refresh"]
 
 
+@pytest.mark.asyncio
+async def test_api_pipeline_marks_zero_row_success_as_empty(console_main, monkeypatch):
+    main = console_main
+    _patch_pipeline_common(
+        monkeypatch,
+        main,
+        fetch_rows=[
+            {
+                "run_id": "run-zero",
+                "dag_id": "sap_successfactors_extract",
+                "entity": "EmpJob",
+                "airflow_dag_run_id": "manual__zero",
+                "status": "success",
+                "mode": "full",
+                "started_at": "2026-06-11T01:00:00Z",
+                "finished_at": "2026-06-11T01:01:00Z",
+                "record_count": 0,
+                "bytes_written": 128,
+                "storage_uri": "s3://lakehouse/raw/sap_successfactors/EmpJob/data.parquet",
+                "duration_seconds": 60,
+                "watermark_updated_to": None,
+                "error_message": None,
+                "extra": {"empty_result": True, "result_status": "success"},
+            },
+        ],
+    )
+
+    async def refresh(row, _user=None):
+        return row
+
+    async def no_snapshot(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(main, "_refresh_dag_run_status", refresh)
+    monkeypatch.setattr(main, "_bronze_physical_snapshot", no_snapshot)
+
+    payload = await main.api_pipeline("sap_successfactors", user=_user())
+    row = payload["pipeline"][0]
+
+    assert row["bronze"]["status"] == "empty"
+    assert row["bronze"]["empty"] is True
+    assert row["last_run"]["empty_result"] is True
+    assert row["last_run"]["result_status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_api_pipeline_surfaces_partial_downstream_refresh(console_main, monkeypatch):
+    main = console_main
+    _patch_pipeline_common(
+        monkeypatch,
+        main,
+        fetch_rows=[
+            {
+                "run_id": "run-partial",
+                "dag_id": "sap_successfactors_extract",
+                "entity": "EmpJob",
+                "airflow_dag_run_id": "manual__partial",
+                "status": "partial",
+                "mode": "full",
+                "started_at": "2026-06-11T01:00:00Z",
+                "finished_at": "2026-06-11T01:01:00Z",
+                "record_count": 10,
+                "bytes_written": 256,
+                "storage_uri": "s3://lakehouse/raw/sap_successfactors/EmpJob/data.parquet",
+                "duration_seconds": 60,
+                "watermark_updated_to": None,
+                "error_message": None,
+                "extra": {
+                    "result_status": "success",
+                    "silver_refresh": {"status": "failed", "error": "Dataset no materializado"},
+                },
+            },
+        ],
+    )
+
+    async def refresh(row, _user=None):
+        return row
+
+    async def no_snapshot(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(main, "_refresh_dag_run_status", refresh)
+    monkeypatch.setattr(main, "_bronze_physical_snapshot", no_snapshot)
+
+    payload = await main.api_pipeline("sap_successfactors", user=_user())
+    row = payload["pipeline"][0]
+
+    assert row["bronze"]["status"] == "partial"
+    assert row["bronze"]["empty"] is False
+    assert row["last_run"]["status"] == "partial"
+    assert row["last_run"]["silver_refresh_status"] == "failed"
+    assert row["last_run"]["extra"]["silver_refresh"]["error"] == "Dataset no materializado"
+
+
 def test_airflow_log_task_resolution_prefers_real_sap_tasks(console_main):
     main = console_main
 

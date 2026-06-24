@@ -14,6 +14,7 @@ ROLE_WORKSPACE_ADMIN = "workspace_admin"
 ROLE_ANALYST = "analyst"
 ROLE_VIEWER = "viewer"
 _GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+ACTIVE_WORKSPACE_COOKIE = "omega_active_workspace_id"
 
 
 def _is_production_env() -> bool:
@@ -29,6 +30,15 @@ def _bearer_token(request: Request) -> str | None:
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="invalid authorization header")
     return token
+
+
+def requested_workspace_id_from_request(request: Request) -> str | None:
+    """Resolve the active workspace chosen by Next or legacy Console pages."""
+    return (
+        request.headers.get("x-workspace-id")
+        or request.cookies.get(ACTIVE_WORKSPACE_COOKIE)
+        or ""
+    ).strip() or None
 
 
 async def _user_from_jwt(token: str) -> dict:
@@ -196,7 +206,7 @@ async def _with_workspace_context(user: dict, requested_workspace_id: str | None
 
 
 async def get_current_user(request: Request) -> dict:
-    requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None
+    requested_workspace_id = requested_workspace_id_from_request(request)
     token = _bearer_token(request)
     if token:
         user = await _user_from_jwt(token)

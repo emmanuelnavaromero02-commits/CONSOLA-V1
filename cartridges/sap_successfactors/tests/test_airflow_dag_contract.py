@@ -66,6 +66,10 @@ def test_successfactors_dags_do_not_fail_bronze_when_silver_refresh_fails():
         assert "def _try_silver_refresh" in source
         assert "silver_refresh = _try_silver_refresh" in source
         assert "Bronze extraction must remain" in source or "successful Bronze extract" in source
+        assert "def _pipeline_status_for_success_payload" in source
+        assert 'return "partial"' in source
+        assert '"silver_refresh"' in source
+        assert '"empty_result"' in source
 
 
 def test_successfactors_dags_refresh_signed_scope_at_task_runtime():

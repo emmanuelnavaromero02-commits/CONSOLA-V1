@@ -7,6 +7,8 @@ describe("StatusPill", () => {
   it.each([
     ["success", "text-success"],
     ["running", "text-warning"],
+    ["partial", "text-warning"],
+    ["empty", "text-warning"],
     ["failed", "text-destructive"],
     ["custom", "text-muted-foreground"],
   ])("maps %s to the expected tone", (status, tone) => {

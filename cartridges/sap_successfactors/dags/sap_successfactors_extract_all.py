@@ -229,6 +229,45 @@ def _try_silver_refresh(runtime: SimpleNamespace, entity: str, security_context:
         return {"status": "failed", "error": message}
 
 
+def _downstream_status(payload: dict[str, Any], key: str) -> str:
+    item = payload.get(key)
+    if isinstance(item, dict):
+        return str(item.get("status") or "").strip().lower()
+    return ""
+
+
+def _pipeline_status_for_success_payload(payload: dict[str, Any]) -> str:
+    silver_status = _downstream_status(payload, "silver_refresh")
+    if silver_status and silver_status not in {"success", "ok"}:
+        return "partial"
+    return "success"
+
+
+def _pipeline_extra_from_result(
+    result: dict[str, Any],
+    *,
+    classified: dict[str, Any],
+    entity_idempotency_key: str | None,
+) -> dict[str, Any]:
+    record_count = _first_int(
+        result,
+        "record_count",
+        "rows_written",
+        "records_written",
+        "rows",
+        "count",
+    )
+    return {
+        "result_status": classified.get("status"),
+        "empty_result": record_count == 0,
+        "silver_refresh": result.get("silver_refresh"),
+        "entity_idempotency_key": entity_idempotency_key,
+        "incremental_filter_strategy": result.get("incremental_filter_strategy"),
+        "incremental_fallback_reason": result.get("incremental_fallback_reason"),
+        "retried_as_full_snapshot": result.get("retried_as_full_snapshot"),
+    }
+
+
 def _first_int(payload: dict, *keys: str) -> int | None:
     for key in keys:
         value = payload.get(key)
@@ -357,6 +396,7 @@ def sap_successfactors_extract_all():
             )
             results: list[dict[str, Any]] = []
             total_records = 0
+            downstream_partial = False
             base_idempotency_key = str(conf.get("idempotency_key") or "").strip() or None
 
             for config in entities:
@@ -381,11 +421,13 @@ def sap_successfactors_extract_all():
                     total_records += int(result.get("record_count") or 0)
                     classified = runtime.classify_successful_extraction(result)
                     results.append(classified)
+                    entity_pipeline_status = _pipeline_status_for_success_payload(result)
+                    downstream_partial = downstream_partial or entity_pipeline_status == "partial"
                     _pipeline_run_save(
                         context=context,
                         conf=conf,
                         entity=entity,
-                        status="success",
+                        status=entity_pipeline_status,
                         started_at=started_at,
                         record_count=_first_int(
                             result,
@@ -396,11 +438,11 @@ def sap_successfactors_extract_all():
                             "count",
                         ),
                         storage_uri=_first_str(result, "storage_uri", "path", "uri"),
-                        extra={
-                            "result_status": classified.get("status"),
-                            "silver_refresh": silver_refresh,
-                            "entity_idempotency_key": entity_idempotency_key,
-                        },
+                        extra=_pipeline_extra_from_result(
+                            result,
+                            classified=classified,
+                            entity_idempotency_key=entity_idempotency_key,
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001
                     classified = runtime.classify_extraction_exception(entity, exc)
@@ -424,13 +466,15 @@ def sap_successfactors_extract_all():
                 gold_refresh = _run_async(
                     runtime.trigger_successfactors_gold_refresh(target, security_context)
                 )
+                gold_status = str((gold_refresh or {}).get("status") or "").strip().lower()
+                downstream_partial = downstream_partial or gold_status not in {"success", "ok"}
             blocked_or_failed = any(
                 summary[key] for key in ("auth_blocked", "permission_blocked", "failed_open")
             )
             has_valid_result = bool(summary["extracted"] or summary["empty_valid"])
             aggregate_status = (
                 "success"
-                if not blocked_or_failed
+                if not blocked_or_failed and not downstream_partial
                 else "partial"
                 if has_valid_result
                 else "failed"
