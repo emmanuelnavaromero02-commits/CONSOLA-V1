@@ -34,6 +34,10 @@ export interface PipelineLastRun {
   dag_id?: string | null;
   dag_run_id?: string | null;
   status?: string | null;
+  result_status?: string | null;
+  silver_refresh_status?: string | null;
+  empty_result?: boolean | null;
+  extra?: Record<string, unknown> | null;
   mode?: string | null;
   triggered_at?: string | null;
   started_at?: string | null;
@@ -55,6 +59,7 @@ export interface PipelineEntity {
     latest_date?: string | null;
     record_count?: number | null;
     status: string;
+    empty?: boolean | null;
   };
   silver: PipelineNode[];
   gold: PipelineNode[];

@@ -74,6 +74,13 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         except Exception:
             return "unknown"
 
+    def _dataset_status(ds: dict, *, failed: bool, threshold_h: int = 24) -> str:
+        if failed:
+            return "stale"
+        if _pipeline_is_zero_count(ds.get("row_count")):
+            return "empty"
+        return _freshness(ds.get("last_refresh"), threshold_h=threshold_h)
+
     # 1. Entities
     from app.services import cartridge_service as _cs
     entity_list: list[dict] = []
@@ -173,6 +180,7 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         bronze_date  = None
         bronze_count = None
         last_run_info = None
+        dag_status = None
 
         if dag_run:
             # Airflow DAG run is authoritative
@@ -181,12 +189,20 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
             bronze_count = dag_run.get("record_count")
             dag_status   = _normalize_airflow_state(dag_run.get("status"))
             dag_run_id   = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
+            dag_extra = _pipeline_run_extra(dag_run)
+            silver_refresh_status = _pipeline_downstream_status(
+                dag_extra, "silver_refresh"
+            )
             last_run_info = {
                 "source":       "airflow",
                 "dag_id":       dag_run.get("dag_id"),
                 "dag_run_id":   dag_run_id,
                 "run_id":       dag_run_id,
                 "status":       dag_status,
+                "result_status": dag_extra.get("result_status"),
+                "silver_refresh_status": silver_refresh_status,
+                "empty_result": bool(dag_extra.get("empty_result")),
+                "extra": dag_extra,
                 "mode":         dag_run.get("mode"),
                 "triggered_at": str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
                 "started_at":   str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
@@ -222,6 +238,12 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         # Bronze freshness
         if dag_run and dag_run["status"] == "failed" and not bronze_date:
             bronze_status = "error"
+        elif dag_status in {"queued", "running"} and not bronze_date:
+            bronze_status = "running"
+        elif dag_status == "partial":
+            bronze_status = "partial"
+        elif bronze_date and _pipeline_is_zero_count(bronze_count):
+            bronze_status = "empty"
         elif bronze_date:
             bronze_status = _freshness(bronze_date + "T00:00:00+00:00")
         else:
@@ -232,7 +254,7 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         silver_nodes = []
         gold_nodes   = []
         for ds in silver_by_source.get(source, []):
-            s_status = "stale" if is_failed else _freshness(ds.get("last_refresh"), threshold_h=24)
+            s_status = _dataset_status(ds, failed=is_failed, threshold_h=24)
             silver_nodes.append({
                 "name":         ds["name"],
                 "layer":        ds.get("layer", "silver"),
@@ -247,7 +269,7 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
                         "layer":        "gold",
                         "row_count":    gds.get("row_count"),
                         "last_refresh": gds.get("last_refresh"),
-                        "status":       _freshness(gds.get("last_refresh"), threshold_h=24),
+                        "status":       _dataset_status(gds, failed=is_failed, threshold_h=24),
                     })
 
         rows.append({
@@ -274,12 +296,13 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
                 "latest_date":  bronze_date,
                 "record_count": bronze_count,
                 "status":       bronze_status,
+                "empty":        _pipeline_is_zero_count(bronze_count),
             },
             "silver": silver_nodes,
             "gold":   gold_nodes,
         })
 
-    _order = {"running": 0, "error": 1, "stale": 2, "fresh": 3, "never": 4, "unknown": 5}
+    _order = {"running": 0, "error": 1, "partial": 2, "empty": 3, "stale": 4, "fresh": 5, "never": 6, "unknown": 7}
     rows.sort(key=lambda r: _order.get(r["bronze"]["status"], 5))
     return {"pipeline": rows}
 

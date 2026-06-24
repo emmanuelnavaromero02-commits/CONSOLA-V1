@@ -188,6 +188,7 @@ from app.dependencies import (
     _workspace_memberships,
     get_current_global_user,
     get_current_user as get_current_user_dependency,
+    requested_workspace_id_from_request,
     require_any_role,
     require_authenticated,
     require_global_any_role,
@@ -1168,9 +1169,45 @@ def _duration_seconds(started_at, finished_at) -> float | None:
 
 def _normalize_airflow_state(state: str | None) -> str:
     normalized = (state or "unknown").lower()
-    if normalized in {"queued", "running", "success", "failed"}:
+    if normalized in {"queued", "running", "success", "failed", "partial"}:
         return normalized
     return "unknown"
+
+
+def _pipeline_run_extra(row: dict | None) -> dict:
+    if not isinstance(row, dict):
+        return {}
+    extra = row.get("extra")
+    if isinstance(extra, dict):
+        return extra
+    if isinstance(extra, str) and extra.strip():
+        try:
+            parsed = json.loads(extra)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _pipeline_downstream_status(extra: dict, key: str) -> str | None:
+    value = extra.get(key)
+    if isinstance(value, dict):
+        status = str(value.get("status") or "").strip().lower()
+        return status or None
+    return None
+
+
+def _pipeline_is_zero_count(value: Any) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return int(value) == 0
+    if isinstance(value, str):
+        try:
+            return int(value.strip()) == 0
+        except ValueError:
+            return False
+    return False
 
 
 _AIRFLOW_LOG_TASKS_BY_DAG = {
@@ -1965,9 +2002,7 @@ async def auth_middleware(request: Request, call_next):
         path.startswith(p) for p in _AUTH_PUBLIC_PREFIX
     )
 
-    requested_workspace_id = (
-        request.headers.get("x-workspace-id") or ""
-    ).strip() or None
+    requested_workspace_id = requested_workspace_id_from_request(request)
     token = request.cookies.get(_auth.COOKIE_NAME)
     user = await _auth.get_session_user(token) if token else None
     if user and (requested_workspace_id or not user.get("active_workspace_id")):
@@ -5655,6 +5690,13 @@ async def api_pipeline(
         except Exception:
             return "unknown"
 
+    def _dataset_status(ds: dict, *, failed: bool, threshold_h: int = 24) -> str:
+        if failed:
+            return "stale"
+        if _pipeline_is_zero_count(ds.get("row_count")):
+            return "empty"
+        return _freshness(ds.get("last_refresh"), threshold_h=threshold_h)
+
     # 1. Entities
     from app.services import cartridge_service as _cs
 
@@ -5843,12 +5885,20 @@ async def api_pipeline(
             bronze_count = dag_run.get("record_count")
             dag_status = _normalize_airflow_state(dag_run.get("status"))
             dag_run_id = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
+            dag_extra = _pipeline_run_extra(dag_run)
+            silver_refresh_status = _pipeline_downstream_status(
+                dag_extra, "silver_refresh"
+            )
             last_run_info = {
                 "source": "airflow",
                 "dag_id": dag_run.get("dag_id"),
                 "dag_run_id": dag_run_id,
                 "run_id": dag_run_id,
                 "status": dag_status,
+                "result_status": dag_extra.get("result_status"),
+                "silver_refresh_status": silver_refresh_status,
+                "empty_result": bool(dag_extra.get("empty_result")),
+                "extra": dag_extra,
                 "mode": dag_run.get("mode"),
                 "triggered_at": str(dag_run.get("started_at", ""))
                 if dag_run.get("started_at")
@@ -5890,6 +5940,10 @@ async def api_pipeline(
             bronze_status = "error"
         elif dag_status in {"queued", "running"} and not bronze_date:
             bronze_status = "running"
+        elif dag_status == "partial":
+            bronze_status = "partial"
+        elif bronze_date and _pipeline_is_zero_count(bronze_count):
+            bronze_status = "empty"
         elif bronze_date:
             bronze_status = _freshness(bronze_date + "T00:00:00+00:00")
         elif entity in partial_reasons:
@@ -5904,11 +5958,7 @@ async def api_pipeline(
         silver_nodes = []
         gold_nodes = []
         for ds in silver_by_source.get(source, []):
-            s_status = (
-                "stale"
-                if is_failed
-                else _freshness(ds.get("last_refresh"), threshold_h=24)
-            )
+            s_status = _dataset_status(ds, failed=is_failed, threshold_h=24)
             silver_nodes.append(
                 {
                     "name": ds["name"],
@@ -5926,8 +5976,8 @@ async def api_pipeline(
                             "layer": "gold",
                             "row_count": gds.get("row_count"),
                             "last_refresh": gds.get("last_refresh"),
-                            "status": _freshness(
-                                gds.get("last_refresh"), threshold_h=24
+                            "status": _dataset_status(
+                                gds, failed=is_failed, threshold_h=24
                             ),
                         }
                     )
@@ -5971,6 +6021,7 @@ async def api_pipeline(
                     "latest_date": bronze_date,
                     "record_count": bronze_count,
                     "status": bronze_status,
+                    "empty": _pipeline_is_zero_count(bronze_count),
                 },
                 "silver": silver_nodes,
                 "gold": gold_nodes,
@@ -5985,10 +6036,12 @@ async def api_pipeline(
     _order = {
         "running": 0,
         "error": 1,
-        "stale": 2,
-        "fresh": 3,
-        "never": 4,
-        "unknown": 5,
+        "partial": 2,
+        "empty": 3,
+        "stale": 4,
+        "fresh": 5,
+        "never": 6,
+        "unknown": 7,
     }
     rows.sort(key=lambda r: _order.get(r["bronze"]["status"], 5))
     pending_entities = sorted(partial_reasons)

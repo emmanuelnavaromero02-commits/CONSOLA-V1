@@ -13,6 +13,18 @@ function countNodes(row: PipelineEntity): string {
   return `${row.silver.length} silver · ${row.gold.length} gold`;
 }
 
+function bronzeSummary(row: PipelineEntity): string {
+  const date = row.bronze.latest_date || "sin fecha";
+  if (row.bronze.empty) return `Sin filas extraídas · ${date}`;
+  return `${row.bronze.record_count ?? 0} filas · ${date}`;
+}
+
+function downstreamSummary(row: PipelineEntity): string | null {
+  const status = row.last_run?.silver_refresh_status?.trim();
+  if (!status || ["success", "ok"].includes(status.toLowerCase())) return null;
+  return `Silver: ${status}`;
+}
+
 export function PipelineTable({
   rows,
   cartridge,
@@ -133,6 +145,7 @@ export function PipelineTable({
             {rows.map((row) => {
               const key = `${row.cartridge}:${row.entity}`;
               const isRowLoading = pendingEntity === key;
+              const downstream = downstreamSummary(row);
               return (
                 <tr key={key} className="border-t">
                   <td className="px-3 py-2 align-top font-medium">{row.entity}</td>
@@ -140,7 +153,7 @@ export function PipelineTable({
                     <div className="space-y-1">
                       <StatusPill status={row.bronze.status} />
                       <div className="text-xs text-muted-foreground">
-                        {row.bronze.record_count ?? 0} filas · {row.bronze.latest_date || "sin fecha"}
+                        {bronzeSummary(row)}
                       </div>
                     </div>
                   </td>
@@ -153,6 +166,9 @@ export function PipelineTable({
                       <div className="text-xs text-muted-foreground">
                         {row.last_run?.finished_at || row.last_job?.finished_at || row.last_run?.started_at || "-"}
                       </div>
+                      {downstream ? (
+                        <div className="text-xs font-medium text-warning">{downstream}</div>
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-3 py-2 align-top text-xs text-muted-foreground">{countNodes(row)}</td>

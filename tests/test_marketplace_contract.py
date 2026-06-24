@@ -219,10 +219,10 @@ def test_marketplace_permissions_follow_selected_workspace_header():
     main = console_route_source()
     deps = read("console/app/dependencies.py")
     workspace_session = read("workspace/app/services/session.py")
-    assert re.search(
-        r"requested_workspace_id\s*=\s*\(\s*request\.headers\.get\(\"x-workspace-id\"\)\s*or\s*\"\"\s*\)\.strip\(\)\s*or\s*None",
-        main,
-    )
+    assert "requested_workspace_id_from_request(request)" in main
+    assert "ACTIVE_WORKSPACE_COOKIE = \"omega_active_workspace_id\"" in deps
+    assert 'request.headers.get("x-workspace-id")' in deps
+    assert "request.cookies.get(ACTIVE_WORKSPACE_COOKIE)" in deps
     assert '"workspace access forbidden"' in main
     assert re.search(
         r'"allowed_cartridges":\s*await\s+_workspace_cartridges\(\s*active_workspace\["workspace_id"\],\s*user_id=user\["id"\],?\s*\)',

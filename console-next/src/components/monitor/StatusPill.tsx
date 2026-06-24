@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 const OK = new Set(["done", "success", "fresh", "operational", "completed"]);
-const WARN = new Set(["queued", "running", "stale", "degraded", "unknown"]);
+const WARN = new Set(["queued", "running", "partial", "empty", "stale", "degraded", "never", "unknown"]);
 const BAD = new Set(["failed", "error", "very_stale", "offline"]);
 
 export function StatusPill({ status }: { status?: string | null }) {
