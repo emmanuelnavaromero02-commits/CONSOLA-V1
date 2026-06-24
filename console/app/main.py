@@ -4440,9 +4440,14 @@ async def _proxy_workspace_app(
     request: Request, name: str, *, content: bool = False, user: dict | None = None
 ) -> Response:
     """Serve published analytic app HTML from the same catalog used by /api/apps."""
-    html_text, _app = await _refinement_app_html(
-        name, user or getattr(request.state, "user", None) or {}
-    )
+    runtime_user = user or getattr(request.state, "user", None) or {}
+    cartridge = _app_cartridge_id({"name": name})
+    if cartridge:
+        _require_cartridge_visible(runtime_user, cartridge)
+        active = await _active_scoped_connection_cartridges(runtime_user, {cartridge})
+        if cartridge not in active:
+            return RedirectResponse(url="/apps-gallery", status_code=303)
+    html_text, _app = await _refinement_app_html(name, runtime_user)
     return HTMLResponse(
         content=html_text,
         headers=_app_content_headers(),
@@ -5374,9 +5379,9 @@ async def _apps_payload_visible_and_ready(
 
 @app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
 async def api_apps(
-    include_unready: bool = Query(False),
-    cartridge: str | None = Query(None),
     user: dict = Depends(require_permission("apps.read")),
+    include_unready: bool = False,
+    cartridge: str | None = None,
 ):
     """List published analytic apps visible to the active scoped connections."""
     return await _apps_payload_visible_and_ready(
