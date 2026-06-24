@@ -175,6 +175,10 @@ def test_control_room_gold_engine_aws_probe_validates_refresh_loop() -> None:
         "metadata ? 'bayesian_calibration'",
         "metadata ? 'evidence_pack'",
         "external writeback disabled",
+        "Operational workspace scope",
+        "FROM workspaces",
+        "JOIN operational_scope",
+        "Seed Replicon Gold rows for an operational tenant/workspace",
         "remote_stdout_redacted.txt",
     ):
         assert needle in source
