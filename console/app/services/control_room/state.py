@@ -949,6 +949,31 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
         "thresholds_applied": item.get("thresholds_applied") or [],
         "threshold_state": item.get("threshold_state") or "default",
     }
+    for key in (
+        "source_system",
+        "dataset",
+        "gold_table",
+        "freshness_at",
+        "freshness_field",
+        "data_status",
+        "control_origin",
+        "advisory",
+        "hypothesis",
+        "expected_outcome",
+    ):
+        if item.get(key) is not None:
+            metadata[key] = item.get(key)
+    for key in (
+        "capabilities",
+        "priority",
+        "math_provenance",
+        "monte_carlo",
+        "bayesian_calibration",
+        "analysis_evidence",
+    ):
+        value = item.get(key)
+        if isinstance(value, dict):
+            metadata[key] = value
     alert_state = (
         item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
     )
