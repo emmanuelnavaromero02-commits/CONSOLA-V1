@@ -65,6 +65,13 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 def _ensure_postgres_image() -> None:
     """Pull the RLS image with retries so CI does not fail on one registry blip."""
 
+    docker_info = _docker("info", check=False)
+    if docker_info.returncode != 0:
+        pytest.skip(
+            "Docker is required for live cross-tenant RLS isolation test: "
+            f"{docker_info.stderr.strip() or docker_info.stdout.strip()}"
+        )
+
     inspect = _docker("image", "inspect", POSTGRES_IMAGE, check=False)
     if inspect.returncode == 0:
         return
