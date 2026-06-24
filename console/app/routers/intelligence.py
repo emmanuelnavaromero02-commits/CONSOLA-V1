@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.dependencies import require_authenticated
-from app.services import intelligence_engine
+from app.services import auth, intelligence_engine
 from app.services.auth import verify_internal_api_key
 from app.services.intelligence import backtesting as intelligence_backtesting
 from app.services.intelligence import calibration_service
@@ -22,7 +22,9 @@ from app.services.security_context import verify_signed_security_context
 
 router = APIRouter(prefix="/api/intelligence", tags=["Intelligence"])
 v1_router = APIRouter(prefix="/api/v1/intelligence", tags=["Intelligence"])
-internal_router = APIRouter(prefix="/internal/intelligence", tags=["Intelligence (internal)"])
+internal_router = APIRouter(
+    prefix="/internal/intelligence", tags=["Intelligence (internal)"]
+)
 DATASETS_READ_DEPENDENCY = [Depends(require_permission("datasets.read"))]
 
 
@@ -226,13 +228,16 @@ class CalibrationRecomputeRequest(_StrictModel):
     calibration_group: str = Field(min_length=1, max_length=80)
     model_version: str | None = Field(default=None, max_length=120)
     parent_calibration_group: str | None = Field(default=None, max_length=80)
-    source_type: Literal[
-        "monte_carlo_simulation",
-        "decision_option",
-        "prediction_outcome",
-        "backtest_case",
-        "manual_fixture",
-    ] | None = None
+    source_type: (
+        Literal[
+            "monte_carlo_simulation",
+            "decision_option",
+            "prediction_outcome",
+            "backtest_case",
+            "manual_fixture",
+        ]
+        | None
+    ) = None
     source_id: str | None = Field(default=None, max_length=256)
     limit: int = Field(default=5000, ge=1, le=10_000)
 
@@ -321,17 +326,49 @@ def _gold_refresh_run_ref(body: GoldRefreshIntelligenceRequest) -> str:
     )
 
 
-def _gold_refresh_user(body: GoldRefreshIntelligenceRequest) -> dict[str, Any]:
+async def _resolve_gold_refresh_scope(
+    body: GoldRefreshIntelligenceRequest,
+) -> dict[str, str | bool]:
+    pool = await auth.pool()
+    row = await pool.fetchrow(
+        """
+        SELECT t.id::text AS tenant_id, w.id::text AS workspace_id
+          FROM workspaces w
+          JOIN tenants t ON t.id = w.tenant_id
+         WHERE w.id::text = $1
+        """,
+        body.workspace_id,
+    )
+    if not row:
+        raise HTTPException(
+            status_code=400,
+            detail=f"workspace not found for gold refresh: {body.workspace_id}",
+        )
+    tenant_id = str(row["tenant_id"])
+    return {
+        "tenant_id": tenant_id,
+        "workspace_id": str(row["workspace_id"]),
+        "tenant_mismatch": tenant_id != str(body.tenant_id),
+        "requested_tenant_id": str(body.tenant_id),
+    }
+
+
+async def _gold_refresh_user(body: GoldRefreshIntelligenceRequest) -> dict[str, Any]:
+    scope = await _resolve_gold_refresh_scope(body)
+    tenant_id = str(scope["tenant_id"])
+    workspace_id = str(scope["workspace_id"])
     return {
         "id": 0,
         "email": "airflow@internal",
         "role": "admin",
         "workspace_role": "workspace_admin",
-        "tenant_id": body.tenant_id,
-        "workspace_id": body.workspace_id,
-        "active_tenant_id": body.tenant_id,
-        "active_workspace_id": body.workspace_id,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "active_tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
         "allowed_cartridges": [body.cartridge_id],
+        "gold_refresh_requested_tenant_id": scope["requested_tenant_id"],
+        "gold_refresh_tenant_mismatch": bool(scope["tenant_mismatch"]),
     }
 
 
@@ -342,16 +379,22 @@ def _internal_mcp_user(
     permission: str = "control_room.write",
 ) -> dict[str, Any]:
     if internal_service != "mcp-infra":
-        raise HTTPException(status_code=403, detail="only mcp-infra can use this internal route")
+        raise HTTPException(
+            status_code=403, detail="only mcp-infra can use this internal route"
+        )
     try:
         ctx = verify_signed_security_context(body.security_context)
     except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"invalid security_context: {exc}") from exc
+        raise HTTPException(
+            status_code=403, detail=f"invalid security_context: {exc}"
+        ) from exc
     if not ctx.get("trusted"):
         raise HTTPException(status_code=403, detail="trusted security_context required")
     permissions = {str(item) for item in (ctx.get("permissions") or [])}
     if permission not in permissions:
-        raise HTTPException(status_code=403, detail=f"permission required: {permission}")
+        raise HTTPException(
+            status_code=403, detail=f"permission required: {permission}"
+        )
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
     if not tenant_id or not workspace_id:
@@ -378,8 +421,10 @@ async def intelligence_gold_refresh_internal(
     internal_service: str = Depends(verify_internal_api_key),
 ):
     if internal_service != "airflow":
-        raise HTTPException(status_code=403, detail="only airflow can trigger Gold refresh intelligence")
-    user = _gold_refresh_user(body)
+        raise HTTPException(
+            status_code=403, detail="only airflow can trigger Gold refresh intelligence"
+        )
+    user = await _gold_refresh_user(body)
     run_ref = _gold_refresh_run_ref(body)
     payload = {
         "cartridge_id": body.cartridge_id,
@@ -396,6 +441,9 @@ async def intelligence_gold_refresh_internal(
             "materialization_status": body.materialization_status,
             "datasets_received": body.datasets,
             "finished_at": body.finished_at,
+            "requested_tenant_id": body.tenant_id,
+            "canonical_tenant_id": user["tenant_id"],
+            "tenant_mismatch": user.get("gold_refresh_tenant_mismatch", False),
         },
     }
     try:
@@ -411,7 +459,8 @@ async def intelligence_gold_refresh_internal(
         "ok": True,
         "run_ref": result.get("run_ref") or run_ref,
         "intelligence_run_id": result.get("intelligence_run_id"),
-        "status": result.get("status") or ("completed" if result.get("signals") else "not_ready"),
+        "status": result.get("status")
+        or ("completed" if result.get("signals") else "not_ready"),
         "idempotent": bool(result.get("idempotent")),
         "signals": len(result.get("signals") or []),
         "skipped": len(result.get("skipped") or []),
@@ -442,7 +491,11 @@ async def intelligence_orchestrate_internal(
         orchestration = await decision_orchestrator.orchestrate(user, _payload(request))
         if not body.execute_engines:
             return orchestration
-        orchestration_row = orchestration.get("orchestration") if isinstance(orchestration, dict) else {}
+        orchestration_row = (
+            orchestration.get("orchestration")
+            if isinstance(orchestration, dict)
+            else {}
+        )
         orchestration_id = str((orchestration_row or {}).get("orchestration_id") or "")
         if not orchestration_id:
             raise HTTPException(status_code=500, detail="orchestration_id missing")
@@ -471,12 +524,16 @@ async def intelligence_wisdom_bits_run_internal(
     if wisdom_bit_id != "WB-TALENTO":
         raise HTTPException(status_code=404, detail="wisdom_bit_id is not available")
     if body.cartridge_id not in {"sap_successfactors", "sap-successfactors"}:
-        raise HTTPException(status_code=400, detail="WB-TALENTO belongs to sap_successfactors")
+        raise HTTPException(
+            status_code=400, detail="WB-TALENTO belongs to sap_successfactors"
+        )
 
     from app.services import control_room_service
 
     overview = await control_room_service.sap_successfactors_talent_overview(user)
-    metadata = await control_room_service.sap_successfactors_talent_metadata_readiness(user)
+    metadata = await control_room_service.sap_successfactors_talent_metadata_readiness(
+        user
+    )
     anomalies = await control_room_service.sap_successfactors_talent_anomalies(user)
     signal_items = (
         anomalies.get("items")
@@ -538,7 +595,9 @@ async def intelligence_orchestrate(
 
 
 @router.get("/orchestrate", dependencies=[Depends(require_permission("datasets.read"))])
-@v1_router.get("/orchestrate", dependencies=[Depends(require_permission("datasets.read"))])
+@v1_router.get(
+    "/orchestrate", dependencies=[Depends(require_permission("datasets.read"))]
+)
 async def intelligence_orchestration_list(
     source_type: Literal[
         "control_room_item",
@@ -912,9 +971,7 @@ async def intelligence_monte_carlo_detail(
     "/monte-carlo", dependencies=[Depends(require_permission("datasets.read"))]
 )
 async def intelligence_monte_carlo_list(
-    source_type: Literal[
-        "signal", "decision_option", "manual_fixture", "backtest_case"
-    ]
+    source_type: Literal["signal", "decision_option", "manual_fixture", "backtest_case"]
     | None = Query(default=None),
     source_id: str | None = Query(default=None, max_length=256),
     limit: int = Query(default=50, ge=1, le=250),
