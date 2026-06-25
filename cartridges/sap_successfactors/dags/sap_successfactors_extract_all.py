@@ -401,20 +401,20 @@ def sap_successfactors_extract_all():
 
             for config in entities:
                 entity = str(config.get("entity") or "").strip()
-                conn_id = _required_config_conn_id(conf, config)
-                effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
-                run_config: dict[str, Any] = {
-                    **config,
-                    "mode": effective_mode,
-                    "conn_id": conn_id,
-                }
                 entity_idempotency_key = _entity_idempotency_key(base_idempotency_key, entity)
-                if entity_idempotency_key:
-                    run_config["idempotency_key"] = entity_idempotency_key
-                    run_config["parent_idempotency_key"] = base_idempotency_key
-                if security_context:
-                    run_config["security_context"] = security_context
                 try:
+                    conn_id = _required_config_conn_id(conf, config)
+                    effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
+                    run_config: dict[str, Any] = {
+                        **config,
+                        "mode": effective_mode,
+                        "conn_id": conn_id,
+                    }
+                    if entity_idempotency_key:
+                        run_config["idempotency_key"] = entity_idempotency_key
+                        run_config["parent_idempotency_key"] = base_idempotency_key
+                    if security_context:
+                        run_config["security_context"] = security_context
                     result = runtime.run_entity(run_config)
                     silver_refresh = _try_silver_refresh(runtime, entity, security_context)
                     result = {**result, "silver_refresh": silver_refresh}

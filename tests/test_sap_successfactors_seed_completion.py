@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_89 = REPO_ROOT / "infra" / "init" / "89_sap_successfactors_seed_completion.sql"
 MIGRATION_99J = REPO_ROOT / "infra" / "init" / "99j_sap_successfactors_effective_entities.sql"
 MIGRATION_99ZB = REPO_ROOT / "infra" / "init" / "99zb_sap_successfactors_talent_entities.sql"
+MIGRATION_99ZC = REPO_ROOT / "infra" / "init" / "99zc_sap_successfactors_talent_connection_guard.sql"
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 CARTRIDGE_SEED = REPO_ROOT / "cartridges" / "sap_successfactors" / "config" / "seed.sql"
 CATALOG_SERVICE = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "services" / "catalog_service.py"
@@ -130,6 +131,33 @@ def test_migration_99zb_adds_talent_entities_and_select_fields():
     assert "select_fields" in sql
     assert "protection" in sql
     assert "99zb_sap_successfactors_talent_entities.sql" in sql
+    assert "ON CONFLICT (filename) DO NOTHING" in sql
+    assert "DELETE" not in sql.upper()
+
+
+def test_migration_99zc_assigns_vault_connection_to_talent_entities():
+    sql = MIGRATION_99ZC.read_text(encoding="utf-8")
+    expected = {
+        "FOEventReason",
+        "JobApplication",
+        "PerformanceReview",
+        "GoalPlan",
+        "CompetencyEntity",
+        "UserSkill",
+        "SkillProfile",
+        "CareerWorksheet",
+        "CareerInterest",
+        "SuccessionNomination",
+        "LearningItem",
+        "LearningAssignment",
+        "LearningHistory",
+    }
+    for entity in expected:
+        assert f"('{entity}')" in sql
+    assert MIGRATION_99ZB.name < MIGRATION_99ZC.name
+    assert "connection_id = 'femsa_sf'" in sql
+    assert "COALESCE(NULLIF(ec.connection_id, ''), '') = ''" in sql
+    assert "99zc_sap_successfactors_talent_connection_guard.sql" in sql
     assert "ON CONFLICT (filename) DO NOTHING" in sql
     assert "DELETE" not in sql.upper()
 

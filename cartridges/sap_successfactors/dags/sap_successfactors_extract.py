@@ -200,9 +200,26 @@ def _run_async(coro):
 
 def _is_non_retryable_successfactors_error(exc: Exception) -> bool:
     text = str(exc).lower()
+    if "requires entity_config.connection_id" in text or "no default connection fallback" in text:
+        return True
     if not ("successfactors" in text or "/odata/v2/" in text or "oauth/token" in text):
         return False
-    return any(marker in text for marker in ("http 401", "http 403", "401 client error", "403 client error"))
+    if any(marker in text for marker in ("http 401", "http 403", "401 client error", "403 client error")):
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "http 400",
+            "http 404",
+            "400 client error",
+            "404 client error",
+            "bad request",
+            "notfoundexception",
+            " is not found",
+            "invalid property",
+            "invalid query option",
+        )
+    )
 
 
 def _try_silver_refresh(runtime: SimpleNamespace, entity: str, security_context: dict | None) -> dict[str, Any]:
@@ -369,7 +386,24 @@ def sap_successfactors_extract():
         if not config:
             raise ValueError(f"Entity not found: {entity}")
 
-        conn_id = _required_conn_id(conf, config)
+        try:
+            conn_id = _required_conn_id(conf, config)
+        except Exception as exc:
+            _pipeline_run_save(
+                context=context,
+                conf=conf,
+                entity=str(entity),
+                status="failed",
+                started_at=started_at,
+                error_message=str(exc),
+                extra={
+                    "classification": {
+                        "status": "auth-blocked",
+                        "code": "CONFIG_INCOMPLETE",
+                    },
+                },
+            )
+            raise AirflowFailException(str(exc)) from exc
         conf = {**conf, "conn_id": conn_id}
         security_context = _security_context_from_conf(conf)
         run_config: dict[str, Any] = {
