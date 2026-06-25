@@ -191,7 +191,7 @@ ROLE_PERMISSIONS = {
         "security.audit.read",
         "vault.connections.read", "vault.connections.write",
         "vault.secrets.read_masked",
-        "datasets.read", "pipelines.read", "monitor.read", "operations.read",
+        "datasets.read", "pipelines.read", "pipelines.run", "monitor.read", "operations.read",
         "workspace.access", "control_room.write", "control_room.execute",
         "apps.read", "cartridges.read", "cartridges.write", "cartridges.execute",
         "marketplace.read", "marketplace.request",
