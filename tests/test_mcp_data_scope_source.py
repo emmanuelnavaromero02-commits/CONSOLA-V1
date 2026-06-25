@@ -67,7 +67,8 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "existing = store.get_dataset(args[\"name\"], **store_scope)" in source
     assert "_require_dataset_scope(body, existing, \"datasets.write\")" in source
     assert "SQL storage bucket not allowed" in source
-    assert 'return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}' in source
+    assert 'ctx = _trusted_user_context(body, args)' in source
+    assert "engine.list_sources(ctx, sec.get(\"allowed_prefixes\") or [])" in source
     assert "_require_sql_storage_scope(" in source
     assert "allow_registered_dataset_paths=True" in source
     assert "_storage_path_matches_declared_source" in source
