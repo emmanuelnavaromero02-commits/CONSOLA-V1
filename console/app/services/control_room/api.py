@@ -811,14 +811,22 @@ def _sf_talent_status(value: Any, fallback: str = "unavailable") -> str:
 
 @_bind_to_core
 def _sf_talent_json_list(value: Any) -> list[str]:
+    if value is None:
+        return []
     parsed: Any = value
-    if isinstance(value, str) and value.strip():
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
         try:
-            parsed = json.loads(value)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
-            parsed = [value]
+            parsed = [text]
     if isinstance(parsed, list):
         return [str(item).strip() for item in parsed if str(item).strip()]
+    if isinstance(parsed, dict):
+        text = str(parsed.get("reason") or parsed.get("title") or parsed).strip()
+        return [text] if text else []
     if isinstance(parsed, str) and parsed.strip():
         return [parsed.strip()]
     return []
@@ -958,6 +966,14 @@ def _sf_talent_metadata_entities() -> list[dict[str, Any]]:
             "required_for": "pipeline_signal",
             "status": "partial",
             "blockers": ["JobApplication scope pending"],
+        },
+        {
+            "id": "learning",
+            "kb": "KB-APRENDIZAJE",
+            "entity": "LearningItem/LearningAssignment/LearningHistory",
+            "required_for": "learning_certification_signal",
+            "status": "partial",
+            "blockers": ["Learning entities and certification expiry scope pending"],
         },
         {
             "id": "succession",
@@ -2102,8 +2118,145 @@ def _sf_talent_signal_details(row: dict[str, Any]) -> dict[str, Any]:
         "affected_count",
         "status",
         "generated_at",
+        "readiness_status",
+        "source_row_count",
+        "materialized_at",
     )
     return {key: row.get(key) for key in safe_keys if row.get(key) is not None}
+
+
+@_bind_to_core
+def _sf_talent_signal_readiness(row: dict[str, Any]) -> str:
+    explicit = str(row.get("readiness_status") or row.get("data_status") or "").strip().lower()
+    if explicit:
+        return explicit
+    if _sf_talent_int(row.get("source_row_count")) > 0:
+        return "gold_ready"
+    if _sf_talent_int(row.get("affected_count")) > 0:
+        return "gold_ready"
+    return "insufficient_data"
+
+
+@_bind_to_core
+def _sf_talent_signal_confidence(
+    *,
+    readiness_status: str,
+    source_row_count: int,
+    affected_count: int,
+) -> float:
+    if readiness_status in {"ready", "gold_ready", "materialized"}:
+        base = 0.62
+    elif readiness_status in {"partial", "metadata_ready"}:
+        base = 0.46
+    else:
+        base = 0.28
+    row_boost = 0.0
+    if source_row_count >= 100:
+        row_boost = 0.18
+    elif source_row_count >= 25:
+        row_boost = 0.12
+    elif source_row_count > 0:
+        row_boost = 0.06
+    affected_boost = 0.04 if affected_count > 0 else 0.0
+    return round(min(0.88, base + row_boost + affected_boost), 3)
+
+
+@_bind_to_core
+def _sf_talent_signal_evidence_pack(
+    *,
+    source: ControlRoomSource,
+    signal_id: str,
+    title: str,
+    affected_count: int,
+    source_row_count: int,
+    readiness_status: str,
+    generated_at: str,
+    materialized_at: str,
+    blockers: list[str],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = [
+        {
+            "source_type": "gold",
+            "source_ref": source.dataset,
+            "supports_hypothesis": (
+                f"{affected_count} registro(s) afectados en la senal {signal_id}."
+            ),
+            "strength": 0.78 if source_row_count else 0.48,
+            "metadata": {
+                "source_row_count": source_row_count,
+                "materialized_at": materialized_at,
+                "generated_at": generated_at,
+            },
+        },
+        {
+            "source_type": "readiness",
+            "source_ref": "WB-TALENTO readiness",
+            "supports_hypothesis": f"Estado de datos: {readiness_status}.",
+            "strength": 0.7 if readiness_status in {"ready", "gold_ready", "materialized"} else 0.42,
+        },
+    ]
+    for blocker in blockers[:4]:
+        items.append(
+            {
+                "source_type": "blocker",
+                "source_ref": "talent_metadata_readiness",
+                "supports_hypothesis": blocker,
+                "strength": 0.55,
+            }
+        )
+    return {
+        "summary": (
+            f"Gold interno {source.dataset}: {source_row_count} fila(s) fuente, "
+            f"{affected_count} afectado(s), estado {readiness_status}."
+        ),
+        "items": items,
+        "materialized_at": materialized_at,
+        "source_dataset": source.dataset,
+        "source_row_count": source_row_count,
+        "readiness_status": readiness_status,
+        "title": title,
+    }
+
+
+@_bind_to_core
+def _sf_talent_math_provenance(
+    *,
+    signal_id: str,
+    affected_count: int,
+    source_row_count: int,
+    readiness_status: str,
+    confidence: float,
+) -> dict[str, Any]:
+    has_simulation_inputs = affected_count > 0 and source_row_count > 0
+    monte_carlo = {
+        "status": "not_applicable" if has_simulation_inputs else "blocked",
+        "mode": "talent_aggregate_template",
+        "reason": (
+            "Pendiente de ejecucion AgentOps para persistir simulacion."
+            if has_simulation_inputs
+            else "Sin variables suficientes para simular."
+        ),
+        "source_type": "wisdom_bit",
+        "source_id": "WB-TALENTO",
+    }
+    bayes = {
+        "status": "not_calibrated",
+        "reason": "Bayes no calibrado: muestra insuficiente o sin outcomes registrados.",
+        "group": "sap_successfactors:talent_readiness",
+        "sample_count": 0,
+        "raw_probability": confidence,
+        "calibrated_probability": None,
+    }
+    return {
+        "ruleset_version": "sap_successfactors.wb_talento.v1",
+        "control_origin": "sap_successfactors_talent_signal",
+        "formula": "recommendation_only: severity + affected_count + gold_readiness",
+        "input_hash": hashlib.sha256(
+            f"{signal_id}:{affected_count}:{source_row_count}:{readiness_status}".encode("utf-8")
+        ).hexdigest(),
+        "monte_carlo": monte_carlo,
+        "bayesian_calibration": bayes,
+    }
 
 
 @_bind_to_core
@@ -2122,6 +2275,30 @@ def _normalize_successfactors_talent_signal(
     )
     affected_count = _sf_talent_int(row.get("affected_count"))
     generated_at = str(row.get("generated_at") or datetime.now(UTC).isoformat())
+    materialized_at = str(row.get("materialized_at") or generated_at)
+    source_row_count = _sf_talent_int(
+        row.get("source_row_count")
+        or row.get("row_count")
+        or row.get("sample_count")
+        or affected_count
+    )
+    readiness_status = _sf_talent_signal_readiness(row)
+    blockers = _sf_talent_json_list(row.get("blockers"))
+    if readiness_status in {"blocked", "insufficient_data"} and not blockers:
+        blockers = ["C/P/A, role requirements o materializacion Gold insuficiente."]
+    confidence = _sf_talent_signal_confidence(
+        readiness_status=readiness_status,
+        source_row_count=source_row_count,
+        affected_count=affected_count,
+    )
+    math_provenance = _sf_talent_math_provenance(
+        signal_id=signal_id,
+        affected_count=affected_count,
+        source_row_count=source_row_count,
+        readiness_status=readiness_status,
+        confidence=confidence,
+    )
+    deviation_pct = 1.0 if affected_count > 0 else 0.0
     severity = _severity(row.get("severity"))
     item = _base_item(
         source,
@@ -2139,9 +2316,25 @@ def _normalize_successfactors_talent_signal(
             "title": title,
             "description": recommendation,
             "recommendation": recommendation,
-            "root_cause": "Senal Gold de WisdomBit Talento generada desde SuccessFactors.",
-            "impact": f"{affected_count} registros de Talento requieren revision supervisada.",
-            "details": _sf_talent_signal_details(row),
+            "root_cause": (
+                "Senal Gold de WisdomBit Talento generada desde SuccessFactors."
+                if readiness_status in {"ready", "gold_ready", "materialized", "partial"}
+                else "Datos Talent insuficientes para explicar la senal con evidencia completa."
+            ),
+            "impact": (
+                f"{affected_count} registros de Talento requieren revision supervisada."
+                if affected_count
+                else "Talento requiere validacion de metadata/materializacion antes de decidir."
+            ),
+            "details": {
+                **_sf_talent_signal_details(row),
+                "source_dataset": source.dataset,
+                "source_row_count": source_row_count,
+                "materialized_at": materialized_at,
+                "readiness_status": readiness_status,
+                "blockers": blockers,
+                "recommendation_only": True,
+            },
             "detected_at": generated_at,
             "status": "open",
             "data_status": "gold_ready",
@@ -2152,6 +2345,7 @@ def _normalize_successfactors_talent_signal(
             "freshness_field": "generated_at",
             "control_origin": "sap_successfactors_talent_signal",
             "advisory": True,
+            "recommendation_only": True,
             "priority": {
                 "score": priority_score,
                 "band": "critical"
@@ -2180,9 +2374,19 @@ def _normalize_successfactors_talent_signal(
                 ],
             },
             "intelligence": {
+                "baseline": {
+                    "method": "gold_readiness_count_v1",
+                    "actual_value": affected_count,
+                    "expected_value": 0,
+                    "sample_count": source_row_count,
+                    "confidence": confidence,
+                    "readiness_status": readiness_status,
+                },
                 "signal": {
                     "signal_id": signal_id,
+                    "metric_name": signal_id,
                     "signal_type": signal_type,
+                    "signal_subtype": "recommendation_only",
                     "source_system": "sap_successfactors",
                     "source_dataset": source.dataset,
                     "severity": severity,
@@ -2190,18 +2394,57 @@ def _normalize_successfactors_talent_signal(
                     "affected_count": affected_count,
                     "recommendation": recommendation,
                     "generated_at": generated_at,
+                    "deviation_pct": deviation_pct,
+                    "confidence": confidence,
+                    "sample_count": source_row_count,
+                    "readiness_status": readiness_status,
+                    "recommendation_only": True,
                 },
+                "evidence_pack": _sf_talent_signal_evidence_pack(
+                    source=source,
+                    signal_id=signal_id,
+                    title=title,
+                    affected_count=affected_count,
+                    source_row_count=source_row_count,
+                    readiness_status=readiness_status,
+                    generated_at=generated_at,
+                    materialized_at=materialized_at,
+                    blockers=blockers,
+                ),
+                "hypotheses": [
+                    {
+                        "title": (
+                            "Datos Talent listos para revision supervisada"
+                            if readiness_status in {"ready", "gold_ready", "materialized", "partial"}
+                            else "Evidencia Talent insuficiente"
+                        ),
+                        "rationale": (
+                            f"La senal se basa en {source_row_count} fila(s) Gold internas; "
+                            "no incluye PII, compensacion ni write-back."
+                        ),
+                        "confidence": confidence,
+                    }
+                ],
                 "options": [
                     {
                         "option_id": "review_talent_signal",
-                        "label": "Revisar senal de Talento",
+                        "label": (
+                            "Revisar senal de Talento"
+                            if readiness_status not in {"blocked", "insufficient_data"}
+                            else "Remediar datos Talent"
+                        ),
                         "action_kind": "prepare_successfactors_review",
-                        "impact_expected": 0,
+                        "impact_expected": affected_count,
                         "time_cost": 1,
                         "risk": 1,
                         "score": priority_score,
-                        "score_explanation": recommendation,
+                        "score_explanation": (
+                            recommendation
+                            if readiness_status not in {"blocked", "insufficient_data"}
+                            else "; ".join(blockers) or "Completar metadata y materializacion Talent."
+                        ),
                         "selected": True,
+                        "recommendation_only": True,
                     },
                     {
                         "option_id": "monitor_talent_signal",
@@ -2212,9 +2455,13 @@ def _normalize_successfactors_talent_signal(
                         "risk": 2,
                         "score": max(0, priority_score - 20),
                         "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
+                        "recommendation_only": True,
                     },
                 ],
             },
+            "monte_carlo": math_provenance["monte_carlo"],
+            "bayesian_calibration": math_provenance["bayesian_calibration"],
+            "math_provenance": math_provenance,
             "selected_option_id": "review_talent_signal",
             "execution_status": "not_started",
         }
@@ -3910,7 +4157,11 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
             "evidence_count": calibration_total,
             "sample_count": calibration_samples,
             "latest_at": calibration_latest.isoformat() if calibration_latest else None,
-            "status": "ready" if calibration_samples else "configured" if configured_engine_counts.get("bayesian_calibration") else "missing",
+            "status": "ready"
+            if calibration_samples >= 10
+            else "configured"
+            if configured_engine_counts.get("bayesian_calibration") or calibration_total
+            else "missing",
         },
         {
             "engine": "decision_orchestrator",

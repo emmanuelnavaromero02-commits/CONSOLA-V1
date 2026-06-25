@@ -90,10 +90,17 @@ def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
     performance = next(item for item in payload["components"] if item["id"] == "performance")
     assert performance["status"] == "ready"
     assert performance["selected_entity"] == "FormHeader"
+    assert performance["entity"] == "PerformanceReview"
+    assert performance["odata_entity"] == "FormHeader"
+    assert performance["ready_to_extract"] is True
+    assert "formDataId" in performance["fields_found"]
     targets = {(item["component"], item["entity"], item["odata_entity"]) for item in payload["extraction_targets"]}
     assert ("performance", "PerformanceReview", "FormHeader") in targets
     assert ("competency", "CompetencyEntity", "CompetencyEntity") in targets
     assert ("competency", "SkillProfile", "SkillProfile") in targets
+    assert all("fields_found" in item for item in payload["extraction_targets"])
+    assert all("fields_missing" in item for item in payload["extraction_targets"])
+    assert all("ready_to_extract" in item for item in payload["extraction_targets"])
     assert all("redacted" not in item for item in payload["extraction_targets"])
 
 

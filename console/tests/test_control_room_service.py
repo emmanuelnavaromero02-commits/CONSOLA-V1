@@ -401,6 +401,16 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
     assert signal["title"] == "Requisitos de rol pendientes"
     assert signal["control_origin"] == "sap_successfactors_talent_signal"
     assert signal["priority"]["score"] >= 55
+    assert signal["recommendation_only"] is True
+    assert signal["intelligence"]["baseline"]["actual_value"] == 42
+    assert signal["intelligence"]["baseline"]["expected_value"] == 0
+    assert signal["intelligence"]["signal"]["confidence"] > 0
+    assert signal["intelligence"]["evidence_pack"]["source_dataset"] == "sap_successfactors_talent_signals"
+    assert signal["intelligence"]["evidence_pack"]["items"]
+    assert signal["bayesian_calibration"]["status"] == "not_calibrated"
+    assert signal["bayesian_calibration"]["group"] == "sap_successfactors:talent_readiness"
+    assert signal["monte_carlo"]["source_id"] == "WB-TALENTO"
+    assert signal["math_provenance"]["monte_carlo"]["status"] in {"blocked", "not_applicable"}
     signal_text = json.dumps(signal, ensure_ascii=False)
     assert "Ana Gomez" not in signal_text
     assert '"100"' not in signal_text

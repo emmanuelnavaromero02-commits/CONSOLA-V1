@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 import { CommandMetric, MiniBar, OperationalNotice } from "./StatusBadge";
-import type { ControlRoomAgentsOpsPayload } from "@/lib/control-room/types";
+import type { ControlRoomAgentsOpsEngine, ControlRoomAgentsOpsPayload } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 function labelForOrigin(origin: string): string {
@@ -58,6 +58,13 @@ function engineStatusTone(status?: string): string {
   return "border-slate-300 bg-slate-100 text-slate-600 dark:border-sky-400/20 dark:bg-slate-900/60 dark:text-slate-300";
 }
 
+function engineDetail(engine: ControlRoomAgentsOpsEngine | undefined, ready: string, configured: string, missing: string): string {
+  if (!engine) return missing;
+  if (engine.status === "ready") return ready;
+  if (engine.status === "configured") return configured;
+  return missing;
+}
+
 export function AgentsOpsPanel({
   payload,
   loading,
@@ -78,6 +85,8 @@ export function AgentsOpsPanel({
   const monitorAgents = agents.filter((agent) => agent.monitor);
   const operationalMonitors = monitorAgents.filter((agent) => agent.operationally_ready);
   const engines = payload?.engines ?? [];
+  const monteCarloEngine = engines.find((engine) => engine.engine === "monte_carlo");
+  const bayesEngine = engines.find((engine) => engine.engine === "bayesian_calibration");
 
   return (
     <section className="border-y bg-transparent dark:border-sky-400/20" aria-label="Agentes y simulaciones">
@@ -107,10 +116,20 @@ export function AgentsOpsPanel({
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <CommandMetric icon={BrainCircuit} label="Motores configurados" value={loading ? "..." : summary?.configured_engines ?? 0} detail={`${engines.filter((engine) => engine.status === "ready").length} con evidencia`} />
-            <CommandMetric icon={Gauge} label="Monte Carlo" value={loading ? "..." : summary?.monte_carlo_simulations ?? 0} detail="simulaciones persistidas" />
-            <CommandMetric icon={BrainCircuit} label="Bayes" value={loading ? "..." : summary?.bayesian_calibration_samples ?? 0} detail={`${summary?.bayesian_calibration_states ?? 0} estados calibrados`} />
+            <CommandMetric icon={Gauge} label="Monte Carlo" value={loading ? "..." : summary?.monte_carlo_simulations ?? 0} detail={engineDetail(monteCarloEngine, "simulaciones persistidas", "configurado sin simulaciones", "sin motor configurado")} />
+            <CommandMetric icon={BrainCircuit} label="Bayes" value={loading ? "..." : summary?.bayesian_calibration_samples ?? 0} detail={engineDetail(bayesEngine, `${summary?.bayesian_calibration_states ?? 0} estados calibrados`, "configurado sin muestras", "sin calibración configurada")} />
             <CommandMetric icon={Cpu} label="Decision" value={loading ? "..." : summary?.decision_orchestrations ?? 0} detail="orquestaciones guardadas" />
           </div>
+          {!loading && monteCarloEngine?.status === "configured" ? (
+            <OperationalNotice tone="warning" title="Monte Carlo configurado sin evidencia">
+              El motor existe, pero todavía no hay simulaciones persistidas para este workspace.
+            </OperationalNotice>
+          ) : null}
+          {!loading && bayesEngine?.status === "configured" ? (
+            <OperationalNotice tone="warning" title="Bayes configurado sin muestras suficientes">
+              El motor existe, pero falta registrar outcomes/observaciones para calibrar probabilidades.
+            </OperationalNotice>
+          ) : null}
           {!loading && summary?.monitor_agents === 0 ? (
             <OperationalNotice tone="warning" title="Sin monitor operativo">
               No hay agentes de monitor workspace-scoped para ejecutar WisdomBits, Monte Carlo o Decision desde Control Room.

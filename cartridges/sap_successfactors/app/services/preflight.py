@@ -437,6 +437,16 @@ def talent_metadata_readiness(
             "required": required,
             "status": status,
             "selected_entity": ready.get("entity") if ready else None,
+            "entity": str(ready.get("extract_entity") or ready.get("entity") or "") if ready else None,
+            "odata_entity": str(ready.get("entity") or "") if ready else None,
+            "fields_found": ready.get("fields_present") if ready else [],
+            "fields_missing": [
+                field
+                for candidate in candidates
+                for field in (candidate.get("fields_missing") or [])
+                if field
+            ],
+            "ready_to_extract": bool(ready),
             "ready_groups": sorted(ready_group_ids),
             "required_groups": sorted(required_groups),
             "candidates": candidates,
@@ -478,8 +488,11 @@ def talent_metadata_readiness(
                     "status": "ready_to_extract"
                     if candidate["status"] == "ready"
                     else "metadata_ready",
+                    "ready_to_extract": candidate["status"] == "ready",
                     "sample_status": candidate.get("sample_status"),
                     "fields_present": candidate.get("fields_present") or [],
+                    "fields_found": candidate.get("fields_present") or [],
+                    "fields_missing": candidate.get("fields_missing") or [],
                 }
             )
     return {
