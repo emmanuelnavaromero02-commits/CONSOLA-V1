@@ -60,10 +60,11 @@ def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
 
         def metadata_entities(self):
             return {
-                "FormHeader": {"formDataId", "formSubjectId", "status"},
-                "CompetencyEntity": {"externalCode", "name"},
-                "Position": {"code", "jobCode"},
-                "FOJobCode": {"externalCode", "name"},
+                "FormHeader": {"formDataId", "formSubjectId", "overallRating", "lastModifiedDateTime", "status"},
+                "CompetencyEntity": {"externalCode", "name", "lastModifiedDateTime"},
+                "SkillProfile": {"userId", "skill", "proficiency", "lastModifiedDateTime"},
+                "Position": {"code", "jobCode", "department", "lastModifiedDateTime"},
+                "FOJobCode": {"externalCode", "name", "lastModifiedDateTime"},
             }
 
         def fetch_entity(self, entity, select=None, page_size=200, **_kwargs):
@@ -82,6 +83,7 @@ def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
     assert payload["status"] == "partial"
     assert payload["summary"]["required_ready"] == 2
     assert payload["summary"]["required_total"] == 3
+    assert payload["summary"]["optional_total"] == 4
     assert payload["privacy"] == {"pii_exposed": False, "sample_values_returned": False}
     blocked = {item["component"] for item in payload["blockers"]}
     assert "aspiration" in blocked
@@ -91,6 +93,7 @@ def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
     targets = {(item["component"], item["entity"], item["odata_entity"]) for item in payload["extraction_targets"]}
     assert ("performance", "PerformanceReview", "FormHeader") in targets
     assert ("competency", "CompetencyEntity", "CompetencyEntity") in targets
+    assert ("competency", "SkillProfile", "SkillProfile") in targets
     assert all("redacted" not in item for item in payload["extraction_targets"])
 
 

@@ -114,8 +114,9 @@ arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
 
 > Notas: los datasets gold de SF llevan el prefijo `sap_successfactors_` en el nombre,
 > por lo que la ruta parquet lo repite (`gold/sap_successfactors/sap_successfactors_<x>/`).
-> Parciales por bronze pendiente: `recruitment_funnel` es a nivel de requisición
-> (JobApplication no extraída). `turnover_by_period` se basa en EmpEmploymentTermination
+> Parciales por bronze pendiente: `recruitment_funnel` usa `JobApplication` cuando
+> el tenant lo expone; si no está listo por metadata queda a nivel de requisición.
+> `turnover_by_period` se basa en EmpEmploymentTermination
 > y queda vacío solo si no hay bajas extraídas. `workforce_distribution` lee el silver `empemployment_latest`
 > porque ningún gold expone `employee_class`.
 

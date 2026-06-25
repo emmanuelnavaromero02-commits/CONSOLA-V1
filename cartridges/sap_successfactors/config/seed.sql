@@ -55,7 +55,7 @@ VALUES
     ('sap_successfactors', 'Candidate', 'Candidate', 'Candidatos', 'Candidatos en pipeline (Recruiting)', 'incremental', 'lastModifiedDateTime', 200, 'candidateId', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'LearningItem', 'Item', 'Items de Aprendizaje', 'Items de aprendizaje (LMS, entityset Item)', 'incremental', 'lastModifiedDateTime', 200, 'learningItemId', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'PerformanceReview', 'FormHeader', 'Evaluación de Desempeño', 'Encabezados de formularios de evaluación (PMGM, entityset FormHeader)', 'incremental', 'lastModifiedDateTime', 200, 'formDataId', 'sap_successfactors_extract', TRUE, 'manual'),
-    ('sap_successfactors', 'GoalPlan', 'Goal', 'Plan de Objetivos', 'Objetivos de desempeño (entityset Goal)', 'incremental', 'lastModifiedDateTime', 200, 'planId', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'GoalPlan', 'Goal', 'Plan de Objetivos', 'Objetivos de desempeño (entityset Goal)', 'incremental', 'lastModifiedDateTime', 200, 'id', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'PerPerson', 'PerPerson', 'Persona', 'Informacion personal (PerPerson)', 'incremental', 'lastModifiedDateTime', 200, 'personIdExternal', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'PerPersonal', 'PerPersonal', 'Datos Personales', 'Datos personales efectivo-fechados (PerPersonal)', 'incremental', 'lastModifiedDateTime', 200, 'personIdExternal', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'PerEmail', 'PerEmail', 'Correos', 'Correos de la persona (PerEmail)', 'incremental', 'lastModifiedDateTime', 500, 'personIdExternal', 'sap_successfactors_extract', TRUE, 'manual'),
@@ -71,7 +71,17 @@ VALUES
     ('sap_successfactors', 'FOJobCode', 'FOJobCode', 'Codigo de Puesto', 'Objeto de fundacion: codigos de puesto', 'full', NULL, 1000, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'EmployeeTime', 'EmployeeTime', 'Tiempo del Empleado', 'Registros de tiempo del empleado (EmployeeTime)', 'incremental', 'lastModifiedDateTime', 500, 'userId', 'sap_successfactors_extract', TRUE, 'manual'),
     ('sap_successfactors', 'TimeAccount', 'TimeAccount', 'Cuenta de Tiempo', 'Cuentas de tiempo (TimeAccount)', 'incremental', 'lastModifiedDateTime', 500, 'userId', 'sap_successfactors_extract', TRUE, 'manual'),
-    ('sap_successfactors', 'WorkSchedule', 'WorkSchedule', 'Horario de Trabajo', 'Horarios de trabajo (WorkSchedule)', 'incremental', 'lastModifiedDateTime', 500, 'userId', 'sap_successfactors_extract', TRUE, 'manual')
+    ('sap_successfactors', 'WorkSchedule', 'WorkSchedule', 'Horario de Trabajo', 'Horarios de trabajo (WorkSchedule)', 'incremental', 'lastModifiedDateTime', 500, 'userId', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'FOEventReason', 'FOEventReason', 'Razon de Evento', 'Foundation Object: razones de evento para movimientos y bajas', 'full', NULL, 1000, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'JobApplication', 'JobApplication', 'Aplicacion Recruiting', 'Aplicaciones que unen candidato, requisicion y etapa', 'incremental', 'lastModifiedDateTime', 200, 'applicationId', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'CompetencyEntity', 'CompetencyEntity', 'Competencia', 'Catalogo tenant de competencias', 'incremental', 'lastModifiedDateTime', 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'UserSkill', 'UserSkill', 'Skill de Usuario', 'Skills/proficiencies por empleado', 'incremental', 'lastModifiedDateTime', 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'SkillProfile', 'SkillProfile', 'Perfil de Skill', 'Entidad alternativa de skills/proficiencies por empleado', 'incremental', 'lastModifiedDateTime', 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'CareerWorksheet', 'CareerWorksheet', 'Career Worksheet', 'Roles objetivo y readiness declarada', 'incremental', 'lastModifiedDateTime', 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'CareerInterest', 'CareerInterest', 'Interes de Carrera', 'Intereses de carrera y preferencias de movilidad', 'incremental', 'lastModifiedDateTime', 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'SuccessionNomination', 'SuccessionNomination', 'Nominacion Sucesion', 'Nominaciones de sucesion y readiness', 'incremental', 'lastModifiedDateTime', 500, 'externalCode', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'LearningAssignment', 'LearningAssignment', 'Asignacion Learning', 'Asignaciones LMS por empleado y item', 'incremental', 'lastModifiedDateTime', 500, 'assignmentId', 'sap_successfactors_extract', TRUE, 'manual'),
+    ('sap_successfactors', 'LearningHistory', 'LearningHistory', 'Historial Learning', 'Historial LMS completado y certificaciones', 'incremental', 'lastModifiedDateTime', 500, 'historyId', 'sap_successfactors_extract', TRUE, 'manual')
 ON CONFLICT (cartridge_id, entity) DO UPDATE
     SET odata_entity    = EXCLUDED.odata_entity,
         display_name    = EXCLUDED.display_name,

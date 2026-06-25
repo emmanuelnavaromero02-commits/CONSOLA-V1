@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 KBS_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "knowledge_bits.yaml"
 MIGRATION_82 = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
 MIGRATION_99P = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
+DATASETS_DIR = REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
 HCM_KBS = REPO_ROOT / "cartridges" / "sap_hcm" / "app" / "config" / "knowledge_bits.yaml"
 S4_KBS = REPO_ROOT / "cartridges" / "sap_s4hana" / "app" / "config" / "knowledge_bits.yaml"
 
@@ -50,7 +51,7 @@ NEW_KB_IDS = {
     "kb_sap_successfactors_talent_role_fit_assignments",
     "kb_sap_successfactors_talent_action_candidates",
 }
-EXPECTED_GOLD_DATASETS = 23
+EXPECTED_GOLD_DATASETS = 30
 
 
 def _kbs(path: Path = KBS_YAML) -> list[dict]:
@@ -59,11 +60,13 @@ def _kbs(path: Path = KBS_YAML) -> list[dict]:
 
 
 def _dataset_names(layer: str | None = None) -> set[str]:
-    pat = r"\$seed\$([A-Za-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$"
     names: set[str] = set()
-    for migration in (MIGRATION_82, MIGRATION_99P):
-        sql = migration.read_text(encoding="utf-8")
-        names.update(n for n, lay in re.findall(pat, sql) if layer is None or lay == layer)
+    header = re.compile(r"^--\s+([a-z0-9_]+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors")
+    for path in DATASETS_DIR.glob("*.sql"):
+        first = path.read_text(encoding="utf-8").splitlines()[0]
+        match = header.match(first)
+        if match and (layer is None or match.group(2) == layer):
+            names.add(match.group(1))
     return names
 
 
@@ -114,7 +117,7 @@ def test_new_kbs_read_existing_datasets():
         refs = re.findall(r"/(?:gold|silver)/sap_successfactors/([a-z0-9_]+)/", kb["sql"])
         assert refs, f"{kb['id']}: reads no sap_successfactors dataset parquet"
         for name in refs:
-            assert name in all_datasets, f"{kb['id']}: dataset {name!r} not seeded in SuccessFactors migrations"
+            assert name in all_datasets, f"{kb['id']}: dataset {name!r} not packaged for SuccessFactors"
 
 
 def test_new_kb_sql_uses_parquet_not_pggold():

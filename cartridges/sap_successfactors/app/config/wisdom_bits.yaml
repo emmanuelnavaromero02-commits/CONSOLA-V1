@@ -60,6 +60,13 @@ wisdom_bits:
       - sap_successfactors_talent_calibration_sensitivity
       - sap_successfactors_talent_role_fit_assignments
       - sap_successfactors_talent_action_candidates
+      - sap_successfactors_talent_performance_goals
+      - sap_successfactors_talent_competency_skill_gap
+      - sap_successfactors_talent_aspiration_signals
+      - sap_successfactors_talent_role_coverage
+      - sap_successfactors_talent_learning_certification_status
+      - sap_successfactors_recruitment_application_funnel
+      - sap_successfactors_movement_events_by_period
     action_policy:
       mode: recommendation_only
       write_back_enabled: false
@@ -91,10 +98,28 @@ wisdom_bits:
         odata_entity: Goal
         reason: Validate goal plans and scoring fields.
       - entity: CompetencySkill
-        reason: Tenant-specific skills/competencies entity is not stable across SuccessFactors tenants.
+        reason: Legacy umbrella blocker; concrete tenant candidates are CompetencyEntity, UserSkill and SkillProfile.
+      - entity: CompetencyEntity
+        reason: Validate competency catalog before calculating role/skill gaps.
+      - entity: UserSkill
+        reason: Validate employee skill/proficiency observations for Competency score.
+      - entity: SkillProfile
+        reason: Alternative employee skill/proficiency entity for Competency score.
+      - entity: CareerWorksheet
+        reason: Validate declared target roles/readiness for Aspiration score.
+      - entity: CareerInterest
+        reason: Validate declared career interests and mobility preferences for Aspiration score.
+      - entity: SuccessionNomination
+        reason: Validate succession nominations/readiness as Aspiration enrichment.
       - entity: LearningItem
         odata_entity: Item
         reason: Enrichment only, not required for Fit Score v1.
+      - entity: LearningAssignment
+        reason: Validate learning assignments for compliance and overdue learning signals.
+      - entity: LearningHistory
+        reason: Validate completed learning history and certification signals.
+      - entity: FOEventReason
+        reason: Validate event reasons to classify promotions, transfers and movement events.
       - entity: Position
         reason: Use when available to enrich role profiles.
       - entity: FOCostCenter

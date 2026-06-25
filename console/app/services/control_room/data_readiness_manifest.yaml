@@ -84,18 +84,18 @@ datasets:
   - cartridge: sap_successfactors
     dataset: sap_successfactors_recruitment_funnel
     readiness: partial
-    reason: "The current funnel is requisition-level; candidate stages require JobApplication."
+    reason: "Candidate stages use JobApplication when the tenant exposes it; otherwise the dataset remains requisition-level partial."
     blockers:
-      - "Extract JobApplication before promising applied/interview/offer stage detail."
+      - "Run target=talent metadata readiness and extract JobApplication before promising applied/interview/offer stage detail."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_recruitment_funnel.sql
       - infra/init/82_sap_successfactors_datasets_seed.sql
   - cartridge: sap_successfactors
     dataset: sap_successfactors_recruitment_pipeline
     readiness: partial
-    reason: "candidate_pool_total is global because requisition-candidate links require JobApplication."
+    reason: "candidate_pool_total is requisition-linked when JobApplication is metadata-ready; otherwise it stays partial."
     blockers:
-      - "Extract JobApplication to count candidates by requisition."
+      - "Run target=talent metadata readiness and extract JobApplication to count candidates by requisition."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_recruitment_pipeline.sql
       - infra/init/82_sap_successfactors_datasets_seed.sql

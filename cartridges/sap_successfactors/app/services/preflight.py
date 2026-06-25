@@ -22,21 +22,27 @@ _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
         "label": "Desempeño",
         "component": "P",
         "required": True,
+        "required_groups": ("performance",),
         "candidates": (
             {
                 "entity": "FormHeader",
                 "extract_entity": "PerformanceReview",
-                "fields_any": ("formDataId", "formSubjectId", "formTemplateId", "status", "lastModifiedDateTime"),
+                "group": "performance",
+                "fields_required": ("formDataId", "formSubjectId", "overallRating", "lastModifiedDateTime"),
+                "fields_optional": ("formTemplateId", "status", "potentialRating", "formStartDate", "formEndDate"),
             },
             {
                 "entity": "PerformanceReview",
                 "extract_entity": "PerformanceReview",
-                "fields_any": ("userId", "formDataId", "rating", "lastModifiedDateTime"),
+                "group": "performance",
+                "fields_required": ("userId", "formDataId", "rating", "lastModifiedDateTime"),
             },
             {
                 "entity": "GoalPlan",
                 "extract_entity": "GoalPlan",
-                "fields_any": ("id", "userId", "state", "lastModifiedDateTime"),
+                "group": "goals",
+                "fields_required": ("id", "userId", "state", "lastModifiedDateTime"),
+                "fields_optional": ("name", "percentComplete", "startDate", "dueDate"),
             },
         ),
     },
@@ -45,21 +51,28 @@ _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
         "label": "Competencias",
         "component": "C",
         "required": True,
+        "required_groups": ("employee_skill",),
         "candidates": (
             {
                 "entity": "CompetencyEntity",
                 "extract_entity": "CompetencyEntity",
-                "fields_any": ("externalCode", "name", "lastModifiedDateTime"),
+                "group": "skill_catalog",
+                "fields_required": ("externalCode", "name", "lastModifiedDateTime"),
+                "fields_optional": ("description", "status"),
             },
             {
                 "entity": "SkillProfile",
                 "extract_entity": "SkillProfile",
-                "fields_any": ("userId", "skill", "rating", "lastModifiedDateTime"),
+                "group": "employee_skill",
+                "fields_required": ("userId", "skill", "proficiency", "lastModifiedDateTime"),
+                "fields_optional": ("externalCode", "skillName", "rating"),
             },
             {
                 "entity": "UserSkill",
                 "extract_entity": "UserSkill",
-                "fields_any": ("userId", "skill", "proficiency", "lastModifiedDateTime"),
+                "group": "employee_skill",
+                "fields_required": ("userId", "skill", "proficiency", "lastModifiedDateTime"),
+                "fields_optional": ("externalCode", "skillName", "rating"),
             },
         ),
     },
@@ -68,21 +81,28 @@ _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
         "label": "Aspiración",
         "component": "A",
         "required": True,
+        "required_groups": ("aspiration",),
         "candidates": (
             {
                 "entity": "CareerWorksheet",
                 "extract_entity": "CareerWorksheet",
-                "fields_any": ("userId", "role", "readiness", "lastModifiedDateTime"),
+                "group": "aspiration",
+                "fields_required": ("userId", "role", "readiness", "lastModifiedDateTime"),
+                "fields_optional": ("externalCode", "jobRole"),
             },
             {
                 "entity": "CareerInterest",
                 "extract_entity": "CareerInterest",
-                "fields_any": ("userId", "jobRole", "interest", "lastModifiedDateTime"),
+                "group": "aspiration",
+                "fields_required": ("userId", "jobRole", "interest", "lastModifiedDateTime"),
+                "fields_optional": ("externalCode", "mobilityPreference"),
             },
             {
                 "entity": "SuccessionNomination",
                 "extract_entity": "SuccessionNomination",
-                "fields_any": ("userId", "position", "readiness", "lastModifiedDateTime"),
+                "group": "aspiration",
+                "fields_required": ("userId", "position", "readiness", "lastModifiedDateTime"),
+                "fields_optional": ("externalCode", "nominationStatus"),
             },
         ),
     },
@@ -91,16 +111,97 @@ _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
         "label": "Requisitos de rol",
         "component": "role",
         "required": False,
+        "required_groups": ("role",),
         "candidates": (
             {
                 "entity": "Position",
                 "extract_entity": "Position",
-                "fields_any": ("code", "positionCode", "jobCode", "department", "lastModifiedDateTime"),
+                "group": "role",
+                "fields_required": ("code", "department", "lastModifiedDateTime"),
+                "fields_optional": ("positionCode", "jobCode", "externalName_defaultValue", "location", "costCenter"),
             },
             {
                 "entity": "FOJobCode",
                 "extract_entity": "FOJobCode",
-                "fields_any": ("externalCode", "name", "lastModifiedDateTime"),
+                "group": "role",
+                "fields_required": ("externalCode", "lastModifiedDateTime"),
+                "fields_optional": ("name", "name_defaultValue", "status"),
+            },
+        ),
+    },
+    {
+        "id": "learning",
+        "label": "Aprendizaje",
+        "component": "learning",
+        "required": False,
+        "required_groups": ("learning",),
+        "candidates": (
+            {
+                "entity": "Item",
+                "extract_entity": "LearningItem",
+                "group": "learning_catalog",
+                "fields_required": ("learningItemId", "title", "lastModifiedDateTime"),
+                "fields_optional": ("itemId", "status", "creditHours", "duration", "expirationDate"),
+            },
+            {
+                "entity": "LearningAssignment",
+                "extract_entity": "LearningAssignment",
+                "group": "learning",
+                "fields_required": ("assignmentId", "userId", "itemId", "status", "lastModifiedDateTime"),
+                "fields_optional": ("dueDate", "completionDate"),
+            },
+            {
+                "entity": "LearningHistory",
+                "extract_entity": "LearningHistory",
+                "group": "learning",
+                "fields_required": ("historyId", "userId", "itemId", "completionDate", "lastModifiedDateTime"),
+                "fields_optional": ("creditHours", "status"),
+            },
+        ),
+    },
+    {
+        "id": "recruiting",
+        "label": "Reclutamiento",
+        "component": "recruiting",
+        "required": False,
+        "required_groups": ("application",),
+        "candidates": (
+            {
+                "entity": "JobApplication",
+                "extract_entity": "JobApplication",
+                "group": "application",
+                "fields_required": ("applicationId", "jobReqId", "candidateId", "applicationStatus", "lastModifiedDateTime"),
+                "fields_optional": ("source",),
+            },
+            {
+                "entity": "JobRequisition",
+                "extract_entity": "JobRequisition",
+                "group": "requisition",
+                "fields_required": ("jobReqId", "status", "lastModifiedDateTime"),
+                "fields_optional": ("jobTitle", "department", "location"),
+            },
+            {
+                "entity": "Candidate",
+                "extract_entity": "Candidate",
+                "group": "candidate",
+                "fields_required": ("candidateId", "lastModifiedDateTime"),
+                "fields_optional": ("firstName", "lastName"),
+            },
+        ),
+    },
+    {
+        "id": "movement_events",
+        "label": "Eventos de movimiento",
+        "component": "movement",
+        "required": False,
+        "required_groups": ("event_reason",),
+        "candidates": (
+            {
+                "entity": "FOEventReason",
+                "extract_entity": "FOEventReason",
+                "group": "event_reason",
+                "fields_required": ("externalCode", "name_defaultValue", "lastModifiedDateTime"),
+                "fields_optional": ("event", "eventReasonCategory", "status"),
             },
         ),
     },
@@ -186,34 +287,48 @@ def _candidate_status(
 ) -> dict[str, Any]:
     entity = str(candidate.get("entity") or "")
     extract_entity = str(candidate.get("extract_entity") or entity)
-    expected = tuple(str(field) for field in (candidate.get("fields_any") or ()) if field)
+    required = tuple(str(field) for field in (candidate.get("fields_required") or ()) if field)
+    if not required:
+        required = tuple(str(field) for field in (candidate.get("fields_any") or ()) if field)
+    optional = tuple(str(field) for field in (candidate.get("fields_optional") or ()) if field)
     fields = metadata_entities.get(entity)
     if fields is None:
         return {
             "entity": entity,
             "extract_entity": extract_entity,
+            "group": str(candidate.get("group") or ""),
             "status": "missing",
             "available": False,
             "fields_present": [],
-            "fields_missing": list(expected),
+            "fields_missing": list(required),
+            "fields_optional_present": [],
+            "fields_optional_missing": list(optional),
             "sample_status": "not_checked",
         }
 
-    present = [field for field in expected if field in fields]
+    present_required = [field for field in required if field in fields]
+    missing_required = [field for field in required if field not in fields]
+    present_optional = [field for field in optional if field in fields]
+    available = not missing_required
     item: dict[str, Any] = {
         "entity": entity,
         "extract_entity": extract_entity,
-        "status": "metadata_ready" if present else "field_blocked",
-        "available": bool(present),
-        "fields_present": present,
-        "fields_missing": [field for field in expected if field not in fields],
+        "group": str(candidate.get("group") or ""),
+        "status": "metadata_ready" if available else "field_blocked",
+        "available": available,
+        "fields_present": [*present_required, *present_optional],
+        "fields_missing": missing_required,
+        "fields_required_present": present_required,
+        "fields_required_missing": missing_required,
+        "fields_optional_present": present_optional,
+        "fields_optional_missing": [field for field in optional if field not in fields],
         "sample_status": "not_checked",
     }
-    if not present or not sample:
+    if not available or not sample:
         return item
 
     try:
-        rows = client.fetch_entity(entity, select=present[: min(3, len(present))], page_size=1)
+        rows = client.fetch_entity(entity, select=item["fields_present"][: min(3, len(item["fields_present"]))], page_size=1)
         item["sample_status"] = "ready" if rows else "empty"
         item["sample_rows"] = min(len(rows), 1)
         if rows:
@@ -224,6 +339,17 @@ def _candidate_status(
         item["sample_status"] = "blocked"
         item["error"] = str(exc)[:240]
     return item
+
+
+def _empty_talent_summary() -> dict[str, int]:
+    required_total = sum(1 for item in _TALENT_CPA_REQUIREMENTS if item.get("required"))
+    optional_total = sum(1 for item in _TALENT_CPA_REQUIREMENTS if not item.get("required"))
+    return {
+        "required_ready": 0,
+        "required_total": required_total,
+        "optional_ready": 0,
+        "optional_total": optional_total,
+    }
 
 
 def talent_metadata_readiness(
@@ -245,12 +371,7 @@ def talent_metadata_readiness(
             "configured": False,
             "connection_id": conn_id,
             "components": [],
-            "summary": {
-                "required_ready": 0,
-                "required_total": 3,
-                "optional_ready": 0,
-                "optional_total": 1,
-            },
+            "summary": _empty_talent_summary(),
             "blockers": [
                 {
                     "component": "sap",
@@ -272,12 +393,7 @@ def talent_metadata_readiness(
             "configured": True,
             "connection_id": conn_id,
             "components": [],
-            "summary": {
-                "required_ready": 0,
-                "required_total": 3,
-                "optional_ready": 0,
-                "optional_total": 1,
-            },
+            "summary": _empty_talent_summary(),
             "blockers": [
                 {
                     "component": "metadata",
@@ -299,9 +415,21 @@ def talent_metadata_readiness(
             )
             for candidate in requirement["candidates"]
         ]
-        ready = next((item for item in candidates if item["status"] in {"ready", "metadata_ready"}), None)
+        ready_candidates = [item for item in candidates if item["status"] in {"ready", "metadata_ready"}]
+        ready_group_ids = {str(item.get("group") or "") for item in ready_candidates if item.get("group")}
+        required_groups = set(str(group) for group in requirement.get("required_groups", ()) if group)
+        ready = next(iter(ready_candidates), None)
         required = bool(requirement.get("required"))
-        status = "ready" if ready else "blocked" if required else "partial"
+        has_required_groups = not required_groups or required_groups <= ready_group_ids
+        status = (
+            "ready"
+            if has_required_groups
+            else "partial"
+            if ready_candidates and not required
+            else "blocked"
+            if required
+            else "partial"
+        )
         component = {
             "id": requirement["id"],
             "label": requirement["label"],
@@ -309,14 +437,17 @@ def talent_metadata_readiness(
             "required": required,
             "status": status,
             "selected_entity": ready.get("entity") if ready else None,
+            "ready_groups": sorted(ready_group_ids),
+            "required_groups": sorted(required_groups),
             "candidates": candidates,
         }
         components.append(component)
-        if required and not ready:
+        if required and not has_required_groups:
             blockers.append(
                 {
                     "component": requirement["id"],
                     "reason": "metadata_or_permission_missing",
+                    "missing_groups": sorted(required_groups - ready_group_ids),
                     "entities_checked": [item["entity"] for item in candidates],
                 }
             )

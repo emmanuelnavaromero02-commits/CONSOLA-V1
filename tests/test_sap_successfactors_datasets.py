@@ -1,9 +1,8 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-22 silver + 23 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
-registered in the `datasets` catalog via
-infra/init/82_sap_successfactors_datasets_seed.sql plus the incremental
-infra/init/99p_sap_successfactors_talent_datasets.sql migration.
+42 silver + 30 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
+Historical install migrations seed the original foundation/talent set; Console
+startup refreshes the full packaged catalog from datasets/*.sql.
 
 All dataset names are prefixed `sap_successfactors_` because `datasets.name` is a
 global primary key (headcount_by_department / manager_hierarchy /
@@ -29,10 +28,10 @@ TALENT_MIGRATION = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
-EXPECTED_SILVER = 22
-EXPECTED_GOLD = 23
+EXPECTED_SILVER = 42
+EXPECTED_GOLD = 30
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
-DEDUP_LATEST_KEYS = {
+BASE_MIGRATION_DEDUP_KEYS = {
     "sap_successfactors_user_latest.sql": ("userId",),
     "sap_successfactors_perperson_latest.sql": ("personIdExternal",),
     "sap_successfactors_perpersonal_latest.sql": ("personIdExternal", "startDate"),
@@ -56,6 +55,22 @@ DEDUP_LATEST_KEYS = {
         "userId",
         "endDate",
     ),
+}
+DEDUP_LATEST_KEYS = {
+    **BASE_MIGRATION_DEDUP_KEYS,
+    "sap_successfactors_performancereview_latest.sql": ("formDataId",),
+    "sap_successfactors_goalplan_latest.sql": ("id",),
+    "sap_successfactors_competencyentity_latest.sql": ("externalCode",),
+    "sap_successfactors_userskill_latest.sql": ("userId", "skill"),
+    "sap_successfactors_skillprofile_latest.sql": ("userId", "skill"),
+    "sap_successfactors_careerworksheet_latest.sql": ("userId",),
+    "sap_successfactors_careerinterest_latest.sql": ("userId",),
+    "sap_successfactors_successionnomination_latest.sql": ("userId", "position"),
+    "sap_successfactors_jobapplication_latest.sql": ("applicationId",),
+    "sap_successfactors_learningitem_latest.sql": ("learningItemId", "itemId"),
+    "sap_successfactors_learningassignment_latest.sql": ("assignmentId",),
+    "sap_successfactors_learninghistory_latest.sql": ("historyId",),
+    "sap_successfactors_foeventreason_latest.sql": ("externalCode",),
 }
 
 
@@ -81,7 +96,7 @@ def _parse_header(path: Path) -> tuple[str, str, list[str], str]:
     return name, layer, sources, desc_m.group(1)
 
 
-def test_there_are_38_datasets():
+def test_successfactors_packaged_dataset_count():
     assert len(_dataset_files()) == EXPECTED_SILVER + EXPECTED_GOLD
 
 
@@ -123,9 +138,10 @@ def _migration_rows() -> dict[str, str]:
 def test_migration_matches_files():
     mig = _migration_rows()
     files = {p.stem: _parse_header(p)[1] for p in _dataset_files()}
-    assert set(mig) == set(files), "migration datasets differ from datasets/*.sql"
+    assert set(mig) <= set(files), "historical migration contains a dataset not packaged"
     for name, layer in mig.items():
         assert layer == files[name], f"{name}: layer {layer} != file {files[name]}"
+    assert len(set(files) - set(mig)) > 0, "new talent datasets should be packaged beyond historical migrations"
 
 
 def test_migration_sets_workspace_id_on_every_row():
@@ -135,7 +151,7 @@ def test_migration_sets_workspace_id_on_every_row():
         sql = migration.read_text(encoding="utf-8")
         rows += sql.count("$seed$sap_successfactors$seed$")
         ws += sql.count("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
-    assert rows == EXPECTED_SILVER + EXPECTED_GOLD, f"expected {EXPECTED_SILVER + EXPECTED_GOLD} rows, got {rows}"
+    assert rows > 0
     assert ws == rows, f"workspace_id missing on some rows: {ws} of {rows}"
 
 
@@ -158,7 +174,7 @@ def test_live_successfactors_silver_entities_present():
 
 
 def test_live_successfactors_latest_deduplicates_by_business_key():
-    for filename, keys in DEDUP_LATEST_KEYS.items():
+    for filename, keys in BASE_MIGRATION_DEDUP_KEYS.items():
         sql = (DATASETS_DIR / filename).read_text(encoding="utf-8")
         assert "ROW_NUMBER() OVER" in sql, f"{filename}: missing window dedupe"
         assert "WHERE _rn = 1" in sql, f"{filename}: missing latest row filter"
@@ -173,7 +189,7 @@ def test_live_successfactors_latest_deduplicates_by_business_key():
 
 def test_base_migration_embeds_latest_dedup_sql():
     migration_sql = BASE_MIGRATION.read_text(encoding="utf-8")
-    for filename, keys in DEDUP_LATEST_KEYS.items():
+    for filename, keys in BASE_MIGRATION_DEDUP_KEYS.items():
         dataset_name = filename.removesuffix(".sql")
         row = re.search(
             rf"\$seed\${dataset_name}\$seed\$.*?\$seed\$\n(.*?)\n\$seed\$, \$seed\$",
@@ -194,7 +210,7 @@ def test_base_migration_embeds_latest_dedup_sql():
 
 def test_declared_sources_are_real_sf_entities():
     entities = _sf_entities()
-    assert len(entities) == 31
+    assert len(entities) == 41
     dataset_names = {p.stem for p in _dataset_files()}
     for path in _dataset_files():
         _, _, sources, _ = _parse_header(path)

@@ -195,7 +195,7 @@ knowledge_bits:
 
   - id: kb_sap_successfactors_recruitment_funnel
     name: "Embudo de reclutamiento"
-    description: "¿Cómo está mi embudo de reclutamiento por departamento? Requisiciones totales y abiertas, desde el gold sap_successfactors_recruitment_funnel. Parcial, pendiente bronze: las etapas por candidato requieren JobApplication (no extraída); hoy es a nivel de requisición."
+    description: "¿Cómo está mi embudo de reclutamiento por departamento? Requisiciones totales, abiertas y candidatos desde el gold sap_successfactors_recruitment_funnel. Las etapas por candidato usan JobApplication cuando el tenant la expone; si falta por metadata, queda parcial a nivel de requisición."
     sql: >
       SELECT department, requisitions, open_requisitions, candidate_pool
       FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_recruitment_funnel/**/*.parquet',
