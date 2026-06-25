@@ -22,6 +22,7 @@ CARTRIDGE_SEED = REPO_ROOT / "cartridges" / "sap_successfactors" / "config" / "s
 KBS_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "knowledge_bits.yaml"
 MIGRATION_82 = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
 MIGRATION_99P = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
+DATASETS_DIR = REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
 APPS_DIR = REPO_ROOT / "cartridges" / "sap_successfactors" / "apps"
 
 MAX_HINTS_CHARS = 8000
@@ -52,11 +53,13 @@ def _kb_ids() -> set[str]:
 
 
 def _dataset_names() -> set[str]:
-    pat = r"\$seed\$([a-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$"
+    header = re.compile(r"^--\s+([a-z0-9_]+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors")
     names: set[str] = set()
-    for migration in (MIGRATION_82, MIGRATION_99P):
-        sql = migration.read_text(encoding="utf-8")
-        names.update(n for n, _ in re.findall(pat, sql))
+    for path in DATASETS_DIR.glob("*.sql"):
+        first = path.read_text(encoding="utf-8").splitlines()[0]
+        match = header.match(first)
+        if match:
+            names.add(match.group(1))
     return names
 
 
@@ -172,7 +175,7 @@ def test_sf_inventory_blocks_a_to_e():
     assert len(kb_ids) == 27, f"expected 27 KBs, got {len(kb_ids)}"
     assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 21
     n_datasets = len(_dataset_names())
-    assert n_datasets == 45, f"expected 45 datasets, got {n_datasets}"
+    assert n_datasets == 72, f"expected 72 datasets, got {n_datasets}"
     apps = sorted(p.stem for p in APPS_DIR.glob("*.html"))
     assert apps == ["sap_successfactors_talent_health", "sap_successfactors_workforce_overview"]
     assert HINTS.is_file()

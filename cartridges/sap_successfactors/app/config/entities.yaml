@@ -335,9 +335,25 @@ entities:
     description: "Foundation Object: cost centers."
     mode: full
     page_size: 1000
+    primary_key: externalCode
     select_fields:
       - externalCode
       - name_defaultValue
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
+
+  - entity: FOEventReason
+    description: "Foundation Object: event reasons for movements, promotions and terminations."
+    mode: full
+    page_size: 1000
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - event
+      - eventReasonCategory
       - status
       - startDate
       - endDate
@@ -347,6 +363,7 @@ entities:
     description: "Foundation Object: job codes / job classifications."
     mode: full
     page_size: 1000
+    primary_key: externalCode
     select_fields:
       - externalCode
       - name_defaultValue
@@ -407,21 +424,47 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    primary_key: jobReqId
+    select_fields:
+      - jobReqId
+      - jobTitle
+      - status
+      - department
+      - location
+      - lastModifiedDateTime
 
   - entity: Candidate
     description: "Recruiting: candidates in the pipeline."
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    primary_key: candidateId
     select_fields:
       - candidateId
       - firstName
       - lastName
+      - status
       - lastModifiedDateTime
     protection:
       candidateId: shadowed
       firstName: masked
       lastName: masked
+
+  - entity: JobApplication
+    description: "Recruiting: applications linking candidates to requisitions and stages."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: applicationId
+    select_fields:
+      - applicationId
+      - jobReqId
+      - candidateId
+      - applicationStatus
+      - source
+      - lastModifiedDateTime
+    protection:
+      candidateId: shadowed
 
   # ── Performance & Goals ───────────────────────────────────────────────────
   # Business names differ from the OData entityset, so odata_entity carries the
@@ -432,6 +475,18 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    primary_key: id
+    select_fields:
+      - id
+      - userId
+      - name
+      - state
+      - percentComplete
+      - startDate
+      - dueDate
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
 
   - entity: PerformanceReview
     odata_entity: FormHeader
@@ -439,6 +494,116 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    primary_key: formDataId
+    select_fields:
+      - formDataId
+      - formSubjectId
+      - formTemplateId
+      - status
+      - overallRating
+      - potentialRating
+      - formStartDate
+      - formEndDate
+      - lastModifiedDateTime
+    protection:
+      formSubjectId: shadowed
+
+  # ── Competencies and skills ───────────────────────────────────────────────
+  - entity: CompetencyEntity
+    description: "Tenant competency catalog used to map role requirements and employee skills."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - name
+      - description
+      - status
+      - lastModifiedDateTime
+
+  - entity: UserSkill
+    description: "Employee skill/proficiency observations when exposed by the tenant."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - skill
+      - skillName
+      - proficiency
+      - rating
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: SkillProfile
+    description: "Alternative tenant skill profile entity for employee skill/proficiency observations."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - skill
+      - skillName
+      - proficiency
+      - rating
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  # ── Career aspiration and succession ──────────────────────────────────────
+  - entity: CareerWorksheet
+    description: "Career worksheet target roles and readiness preferences."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - role
+      - jobRole
+      - readiness
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: CareerInterest
+    description: "Declared career interests and mobility preferences."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - jobRole
+      - interest
+      - mobilityPreference
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: SuccessionNomination
+    description: "Succession nominations and readiness for target positions."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - position
+      - readiness
+      - nominationStatus
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
 
   # ── Learning ──────────────────────────────────────────────────────────────
   - entity: LearningItem
@@ -447,6 +612,50 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 200
+    primary_key: learningItemId
+    select_fields:
+      - learningItemId
+      - itemId
+      - title
+      - status
+      - creditHours
+      - duration
+      - expirationDate
+      - lastModifiedDateTime
+
+  - entity: LearningAssignment
+    description: "Learning assignments per employee and item."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: assignmentId
+    select_fields:
+      - assignmentId
+      - userId
+      - itemId
+      - status
+      - dueDate
+      - completionDate
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: LearningHistory
+    description: "Completed learning history and certification events."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: historyId
+    select_fields:
+      - historyId
+      - userId
+      - itemId
+      - completionDate
+      - creditHours
+      - status
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
 
   # ── Job relationships ─────────────────────────────────────────────────────
   - entity: EmpJob_History

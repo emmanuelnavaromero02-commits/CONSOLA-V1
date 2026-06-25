@@ -22,6 +22,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_89 = REPO_ROOT / "infra" / "init" / "89_sap_successfactors_seed_completion.sql"
 MIGRATION_99J = REPO_ROOT / "infra" / "init" / "99j_sap_successfactors_effective_entities.sql"
+MIGRATION_99ZB = REPO_ROOT / "infra" / "init" / "99zb_sap_successfactors_talent_entities.sql"
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 CARTRIDGE_SEED = REPO_ROOT / "cartridges" / "sap_successfactors" / "config" / "seed.sql"
 CATALOG_SERVICE = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "services" / "catalog_service.py"
@@ -38,16 +39,28 @@ def _entities_in_block(sql: str) -> list[str]:
     return re.findall(r"\('sap_successfactors',\s*'([A-Za-z0-9_]+)'", block.group(0))
 
 
-def test_yaml_declares_31_entities():
-    assert len(_yaml_entities()) == 31, "entities.yaml must declare 31 entities"
+def test_yaml_declares_41_entities():
+    assert len(_yaml_entities()) == 41, "entities.yaml must declare 41 entities"
 
 
 def test_migration_89_seeds_all_30_yaml_entities():
     rows = _entities_in_block(MIGRATION_89.read_text(encoding="utf-8"))
     assert len(rows) == 30, f"migration 89 must seed 30 entities, got {len(rows)}"
     assert len(rows) == len(set(rows)), "migration 89 has duplicate entity rows"
-    assert set(rows) == (_yaml_entities() - {"PaymentInformationDetailV3"}), (
-        "migration 89 should cover the historical 30-entity catalog; 99j adds PaymentInformationDetailV3"
+    new_talent = {
+        "FOEventReason",
+        "JobApplication",
+        "CompetencyEntity",
+        "UserSkill",
+        "SkillProfile",
+        "CareerWorksheet",
+        "CareerInterest",
+        "SuccessionNomination",
+        "LearningAssignment",
+        "LearningHistory",
+    }
+    assert set(rows) == (_yaml_entities() - {"PaymentInformationDetailV3"} - new_talent), (
+        "migration 89 should cover the historical 30-entity catalog; 99j and 99zb add later entities"
     )
 
 
@@ -81,7 +94,7 @@ def test_migration_89_parses_with_sqlglot():
     assert len(stmts) == 2  # entity_config upsert + schema_migrations
 
 
-def test_cartridge_seed_completed_to_31():
+def test_cartridge_seed_completed_to_41():
     rows = _entities_in_block(CARTRIDGE_SEED.read_text(encoding="utf-8"))
     assert set(rows) == _yaml_entities(), "config/seed.sql entity_config != entities.yaml set"
 
@@ -93,6 +106,66 @@ def test_migration_99j_adds_payment_and_effective_dated_metadata():
     assert "99j_sap_successfactors_effective_entities.sql" in sql
     assert "ON CONFLICT (filename) DO NOTHING" in sql
     assert "DELETE" not in sql.upper()
+
+
+def test_migration_99zb_adds_talent_entities_and_select_fields():
+    sql = MIGRATION_99ZB.read_text(encoding="utf-8")
+    rows = set(_entities_in_block(sql))
+    expected = {
+        "FOEventReason",
+        "JobApplication",
+        "PerformanceReview",
+        "GoalPlan",
+        "CompetencyEntity",
+        "UserSkill",
+        "SkillProfile",
+        "CareerWorksheet",
+        "CareerInterest",
+        "SuccessionNomination",
+        "LearningAssignment",
+        "LearningHistory",
+        "LearningItem",
+    }
+    assert rows == expected
+    assert "select_fields" in sql
+    assert "protection" in sql
+    assert "99zb_sap_successfactors_talent_entities.sql" in sql
+    assert "ON CONFLICT (filename) DO NOTHING" in sql
+    assert "DELETE" not in sql.upper()
+
+
+def test_new_talent_yaml_entities_have_extract_contract():
+    data = yaml.safe_load(ENTITIES_YAML.read_text(encoding="utf-8")) or {}
+    entities = {item["entity"]: item for item in data.get("entities", [])}
+    expected = {
+        "FOEventReason",
+        "JobApplication",
+        "CompetencyEntity",
+        "UserSkill",
+        "SkillProfile",
+        "CareerWorksheet",
+        "CareerInterest",
+        "SuccessionNomination",
+        "LearningAssignment",
+        "LearningHistory",
+    }
+    for entity in expected:
+        config = entities[entity]
+        assert config.get("primary_key"), f"{entity}: missing primary_key"
+        assert config.get("select_fields"), f"{entity}: missing select_fields"
+        if entity in {
+            "JobApplication",
+            "PerformanceReview",
+            "GoalPlan",
+            "UserSkill",
+            "SkillProfile",
+            "CareerWorksheet",
+            "CareerInterest",
+            "SuccessionNomination",
+            "LearningAssignment",
+            "LearningHistory",
+        }:
+            assert config.get("protection"), f"{entity}: missing protection"
 
 
 def test_catalog_service_always_tops_up_not_gated_on_empty():

@@ -19,8 +19,18 @@ CARTRIDGE_ID = "sap_successfactors"
 logger = logging.getLogger(__name__)
 DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES = {
     "Candidate",
+    "CareerInterest",
+    "CareerWorksheet",
+    "CompetencyEntity",
     "GoalPlan",
+    "JobApplication",
+    "LearningAssignment",
+    "LearningHistory",
     "LearningItem",
+    "PerformanceReview",
+    "SkillProfile",
+    "SuccessionNomination",
+    "UserSkill",
 }
 VALID_EXTRACT_ALL_TARGETS = {"all", "foundation", "talent"}
 FOUNDATION_EXTRACT_ALL_ENTITIES = {
@@ -86,7 +96,14 @@ def _yaml_entity_map() -> dict[str, dict[str, Any]]:
 def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
     yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
-    for key in ("odata_entity", "service_path", "date_field", "effective_from_date", "effective_to_date"):
+    for key in (
+        "odata_entity",
+        "service_path",
+        "date_field",
+        "effective_from_date",
+        "effective_to_date",
+        "primary_key",
+    ):
         if yaml_entity.get(key) and not data.get(key):
             data[key] = yaml_entity[key]
     if yaml_entity.get("effective_dated") and not data.get("effective_dated"):
@@ -254,7 +271,7 @@ def _talent_extract_target_entities(
     *,
     conn_id: str | None,
     security_context: dict[str, Any] | None,
-) -> tuple[set[str], list[dict[str, Any]]]:
+) -> tuple[set[str], list[dict[str, Any]], dict[str, set[str]]]:
     try:
         from app.services.preflight import talent_metadata_readiness
 
@@ -271,7 +288,7 @@ def _talent_extract_target_entities(
                 "reason": "metadata_preflight_failed",
                 "error": str(exc)[:240],
             }
-        ]
+        ], {}
 
     targets = readiness.get("extraction_targets")
     if not isinstance(targets, list):
@@ -283,6 +300,16 @@ def _talent_extract_target_entities(
         and str(item.get("entity") or "").strip()
         and str(item.get("status") or "") in {"ready_to_extract", "metadata_ready"}
     }
+    fields_by_entity: dict[str, set[str]] = {}
+    for item in targets:
+        if not isinstance(item, dict):
+            continue
+        entity = str(item.get("entity") or "").strip()
+        if not entity or entity not in ready_entities:
+            continue
+        fields = {str(field) for field in (item.get("fields_present") or []) if field}
+        if fields:
+            fields_by_entity.setdefault(entity, set()).update(fields)
     skipped: list[dict[str, Any]] = []
     if not ready_entities:
         blockers = readiness.get("blockers") if isinstance(readiness, dict) else None
@@ -294,7 +321,7 @@ def _talent_extract_target_entities(
                 "blockers": blockers if isinstance(blockers, list) else [],
             }
         )
-    return ready_entities, skipped
+    return ready_entities, skipped, fields_by_entity
 
 
 def _target_entity_filter(
@@ -302,11 +329,11 @@ def _target_entity_filter(
     target: str,
     conn_id: str | None,
     security_context: dict[str, Any] | None,
-) -> tuple[set[str] | None, list[dict[str, Any]]]:
+) -> tuple[set[str] | None, list[dict[str, Any]], dict[str, set[str]]]:
     if target == "all":
-        return None, []
+        return None, [], {}
     if target == "foundation":
-        return set(FOUNDATION_EXTRACT_ALL_ENTITIES), []
+        return set(FOUNDATION_EXTRACT_ALL_ENTITIES), [], {}
     return _talent_extract_target_entities(
         conn_id=conn_id,
         security_context=security_context,
@@ -329,7 +356,7 @@ def get_extract_all_plan(
     selected_conn_id = (conn_id or "").strip()
     tenant_id, workspace_id = _security_scope(security_context)
     normalized_target = _normalize_extract_all_target(target)
-    target_entities, target_skipped = _target_entity_filter(
+    target_entities, target_skipped, target_fields = _target_entity_filter(
         target=normalized_target,
         conn_id=selected_conn_id or None,
         security_context=security_context,
@@ -348,6 +375,22 @@ def get_extract_all_plan(
         if target_entities is not None and entity not in target_entities:
             continue
 
+        if normalized_target == "talent" and entity in target_fields:
+            configured_fields = {
+                str(field)
+                for field in (config.get("select_fields") or [])
+                if str(field).strip()
+            }
+            missing_fields = sorted(configured_fields - target_fields[entity])
+            if missing_fields:
+                skipped.append({
+                    "entity": entity,
+                    "status": "skipped",
+                    "reason": "metadata_fields_missing_for_config",
+                    "fields_missing": missing_fields,
+                })
+                continue
+
         if selected_conn_id:
             config_conn_id = str(config.get("connection_id") or "").strip()
             if config_conn_id != selected_conn_id:
@@ -365,7 +408,7 @@ def get_extract_all_plan(
                 })
                 continue
 
-        if entity in excluded:
+        if normalized_target == "all" and entity in excluded:
             skipped.append({
                 "entity": entity,
                 "status": "skipped",

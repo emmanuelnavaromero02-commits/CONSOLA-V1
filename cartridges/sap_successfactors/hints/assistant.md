@@ -86,8 +86,9 @@ asistente sigue estas reglas además de las globales.
 
 - **`payCompValue` cifrado** → la distribución salarial / compensación no es calculable;
   el gold `compensation_distribution` queda limitado por ese cifrado.
-- **`recruitment_funnel` es parcial**: las etapas por candidato requieren `JobApplication`
-  (no extraída); hoy es a nivel de requisición.
+- **`recruitment_funnel` es metadata-gated**: las etapas por candidato usan
+  `JobApplication` cuando el tenant la expone; si falta, queda parcial a nivel
+  de requisición.
 - **`turnover_by_period`** se basa en `EmpEmploymentTermination`; si no hay bajas
   en la ventana extraída, el resultado será vacío.
 - **Composición por tipo de empleo** se lee del silver (no hay gold dedicado).
