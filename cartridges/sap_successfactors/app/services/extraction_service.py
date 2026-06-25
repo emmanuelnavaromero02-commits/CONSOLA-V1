@@ -250,8 +250,16 @@ def run_entity(
             f"SAP SuccessFactors entity {entity} requires entity_config.connection_id "
             "or an explicit conn_id; no environment/default credential fallback is allowed."
         )
+    raw_expected_select_fields = config.get("expected_select_fields") or select_fields
+    expected_select_fields = (
+        list(raw_expected_select_fields)
+        if isinstance(raw_expected_select_fields, (list, tuple))
+        else [str(raw_expected_select_fields)]
+        if raw_expected_select_fields
+        else []
+    )
     expected_columns = list(dict.fromkeys([
-        *(select_fields or []),
+        *(expected_select_fields or []),
         *([watermark_field] if watermark_field else []),
         *([date_field] if date_field else []),
     ]))
@@ -415,6 +423,10 @@ def run_entity(
             "incremental_filter_strategy": filter_plan.get("filter_strategy"),
             "incremental_fallback_reason": filter_fallback_reason,
             "retried_as_full_snapshot": filter_retried_as_full_snapshot,
+            "metadata_status": config.get("metadata_status"),
+            "metadata_pruned_fields": config.get("metadata_pruned_fields") or [],
+            "metadata_missing_watermark_field": config.get("metadata_missing_watermark_field"),
+            "metadata_missing_date_field": config.get("metadata_missing_date_field"),
         }
 
     except Exception as exc:

@@ -977,7 +977,7 @@ class SapSfClient:
 
     @staticmethod
     def parse_metadata_entities(metadata_xml: str) -> dict[str, set[str]]:
-        """Parse OData CSDL into ``{entity_name: {field_names}}``."""
+        """Parse OData CSDL into ``{entity_or_set_name: {field_names}}``."""
         if not metadata_xml or not metadata_xml.strip():
             raise SAPClientError("SuccessFactors $metadata response is empty")
         try:
@@ -986,6 +986,7 @@ class SapSfClient:
             raise SAPClientError("SuccessFactors $metadata response is not valid XML") from exc
 
         entities: dict[str, set[str]] = {}
+        entity_type_fields: dict[str, set[str]] = {}
         for entity_type in root.findall(".//{*}EntityType"):
             name = str(entity_type.attrib.get("Name") or "").strip()
             if not name:
@@ -996,6 +997,12 @@ class SapSfClient:
                 if str(prop.attrib.get("Name") or "").strip()
             }
             entities[name] = fields
+            entity_type_fields[name] = fields
+        for entity_set in root.findall(".//{*}EntitySet"):
+            name = str(entity_set.attrib.get("Name") or "").strip()
+            entity_type_name = str(entity_set.attrib.get("EntityType") or "").strip().split(".")[-1]
+            if name and entity_type_name in entity_type_fields:
+                entities[name] = entity_type_fields[entity_type_name]
         return entities
 
     def metadata_entities(self) -> dict[str, set[str]]:

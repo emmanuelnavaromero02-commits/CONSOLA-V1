@@ -373,7 +373,7 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
         rows = await pool.fetch(
             f"""
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                   started_at, finished_at, duration_seconds, error_message
+                   started_at, finished_at, duration_seconds, error_message, extra
               FROM pipeline_runs
              WHERE cartridge_id=$1 AND entity=$2
                {scope_sql}
@@ -522,6 +522,12 @@ async def api_pipeline_extract(
         extract_conf = _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body)
         if not extract_conf.get("conn_id") and metadata.get("connection_id"):
             extract_conf["conn_id"] = _normalize_pipeline_conn_id(metadata.get("connection_id"))
+        if cartridge == "sap_successfactors" and not extract_conf.get("conn_id"):
+            raise HTTPException(
+                400,
+                f"SAP SuccessFactors entity '{entity}' requires entity_config.connection_id "
+                "or request conn_id/connection_id before triggering Airflow",
+            )
         conf = _apply_user_scope_to_dag_conf(extract_conf, user)
         requested_dag_run_id = _dag_run_id_from_idempotency_key(
             dag_id,

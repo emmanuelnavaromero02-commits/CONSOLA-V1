@@ -6184,10 +6184,23 @@ async def api_pipeline_runs(
 
 def _format_pipeline_entity_run(row: dict) -> dict:
     dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
-    return {
+    extra = _pipeline_run_extra(row)
+    classification = extra.get("classification") if isinstance(extra.get("classification"), dict) else {}
+    status = _normalize_airflow_state(row.get("status"))
+    if classification.get("code") in {
+        "SUCCESSFACTORS_METADATA_BLOCKED",
+        "SUCCESSFACTORS_PERMISSION",
+    }:
+        status = "partial"
+    error = (
+        row.get("error_message")
+        or classification.get("error")
+        or classification.get("reason")
+    )
+    payload = {
         "dag_id": row.get("dag_id"),
         "dag_run_id": dag_run_id,
-        "status": _normalize_airflow_state(row.get("status")),
+        "status": status,
         "mode": row.get("mode"),
         "triggered_at": str(row.get("started_at")) if row.get("started_at") else None,
         "started_at": str(row.get("started_at")) if row.get("started_at") else None,
@@ -6195,8 +6208,11 @@ def _format_pipeline_entity_run(row: dict) -> dict:
         "duration_sec": float(row.get("duration_seconds"))
         if row.get("duration_seconds") is not None
         else None,
-        "error": row.get("error_message"),
+        "error": error,
     }
+    if classification:
+        payload["classification"] = classification
+    return payload
 
 
 @app.get(
@@ -6226,7 +6242,7 @@ async def api_pipeline_entity_runs(
         rows = await pool.fetch(
             f"""
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                   started_at, finished_at, duration_seconds, error_message
+                   started_at, finished_at, duration_seconds, error_message, extra
               FROM pipeline_runs
              WHERE cartridge_id=$1 AND entity=$2
                {scope_sql}
@@ -6454,6 +6470,12 @@ async def api_pipeline_extract(
         if not extract_conf.get("conn_id") and metadata.get("connection_id"):
             extract_conf["conn_id"] = _normalize_pipeline_conn_id(
                 metadata.get("connection_id")
+            )
+        if cartridge == "sap_successfactors" and not extract_conf.get("conn_id"):
+            raise HTTPException(
+                400,
+                f"SAP SuccessFactors entity '{entity}' requires entity_config.connection_id "
+                "or request conn_id/connection_id before triggering Airflow",
             )
         conf = _apply_user_scope_to_dag_conf(extract_conf, user)
         requested_dag_run_id = _dag_run_id_from_idempotency_key(

@@ -42,6 +42,29 @@ def test_parse_metadata_entities_extracts_fields():
     assert entities["CareerInterest"] == {"userId", "interest"}
 
 
+def test_parse_metadata_entities_maps_entitysets_to_entitytype_fields():
+    SapSfClient, _ = _import_modules()
+    metadata = """<?xml version="1.0" encoding="utf-8"?>
+    <edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+      <edmx:DataServices>
+        <Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm" Namespace="SFOData">
+          <EntityType Name="FormHeaderType">
+            <Property Name="formDataId" Type="Edm.String" />
+            <Property Name="lastModifiedDateTime" Type="Edm.DateTime" />
+          </EntityType>
+          <EntityContainer Name="EntityContainer">
+            <EntitySet Name="FormHeader" EntityType="SFOData.FormHeaderType" />
+          </EntityContainer>
+        </Schema>
+      </edmx:DataServices>
+    </edmx:Edmx>
+    """
+
+    entities = SapSfClient.parse_metadata_entities(metadata)
+
+    assert entities["FormHeader"] == {"formDataId", "lastModifiedDateTime"}
+
+
 def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
     _, preflight = _import_modules()
 
