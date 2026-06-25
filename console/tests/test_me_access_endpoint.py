@@ -153,6 +153,8 @@ def test_tenant_admin_can_manage_workspace_users_without_internal_surfaces():
     assert "studio.read" not in body["permissions"]
     assert "studio.write" not in body["permissions"]
     assert "datasets.write" not in body["permissions"]
+    assert "pipelines.run" in body["permissions"]
+    assert "pipelines.write" not in body["permissions"]
     assert "vault.connections.read" in body["permissions"]
     assert "vault.connections.write" in body["permissions"]
     assert "vault.secrets.read_masked" in body["permissions"]

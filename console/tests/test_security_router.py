@@ -156,5 +156,7 @@ def test_tenant_permissions_payload_is_scoped(mock_pool):
     assert "vault.connections.write" in permission_keys
     assert "vault.secrets.read_masked" in permission_keys
     assert "vault.secrets.reveal" not in permission_keys
+    assert "pipelines.run" in permission_keys
+    assert "pipelines.write" not in permission_keys
     assert "studio.read" not in permission_keys
     assert "settings.read" not in permission_keys

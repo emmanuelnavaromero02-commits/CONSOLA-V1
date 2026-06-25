@@ -178,6 +178,8 @@ def test_marketplace_permissions_distinguish_request_from_admin():
     assert '"tenant_admin": {' in source
     tenant_admin_section = source.split('"tenant_admin": {', 2)[2].split("},", 1)[0]
     assert '"iam.users.write"' in tenant_admin_section
+    assert '"pipelines.run"' in tenant_admin_section
+    assert '"pipelines.write"' not in tenant_admin_section
     assert '"studio.read"' not in tenant_admin_section
     assert '"datasets.write"' not in tenant_admin_section
 
