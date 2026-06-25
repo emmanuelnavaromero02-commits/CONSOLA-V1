@@ -56,6 +56,18 @@ def test_bronze_query_rewrites_logical_raw_paths_to_scoped_s3(monkeypatch):
     ) in rewritten
 
 
+def test_infers_bronze_sources_from_packaged_s3_reader():
+    sql = (
+        "select * from read_parquet("
+        "'s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet', "
+        "hive_partitioning=true, union_by_name=true)"
+    )
+
+    assert console_main._infer_bronze_sources_from_sql(sql) == [
+        "raw/sap_successfactors/Candidate"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
     monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
@@ -98,6 +110,95 @@ async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
     ) in sql
     assert captured["payload"]["args"]["user_context"]["tenant_id"] == USER["active_tenant_id"]
     assert captured["payload"]["args"]["user_context"]["workspace_id"] == USER["active_workspace_id"]
+
+
+@pytest.mark.asyncio
+async def test_bronze_query_endpoint_infers_sources_from_packaged_silver_sql(monkeypatch):
+    captured: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"schema": [], "data": []}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json=None, **_kwargs):
+            captured["payload"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
+    sql = (
+        "select * from read_parquet("
+        "'s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet', "
+        "hive_partitioning=true, union_by_name=true)"
+    )
+
+    await console_main.api_bronze_query({"sql": sql, "limit": 50, "sources": []}, USER)
+
+    assert captured["payload"]["args"]["sources"] == [
+        "raw/sap_successfactors/Candidate"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dataset_save_infers_sources_from_packaged_silver_sql(monkeypatch):
+    captured: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"saved": True}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json=None, **_kwargs):
+            captured["payload"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
+    sql = (
+        "select * from read_parquet("
+        "'s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet', "
+        "hive_partitioning=true, union_by_name=true)"
+    )
+
+    result = await console_main.api_dataset_save(
+        {
+            "name": "sap_successfactors_candidate_latest",
+            "layer": "silver",
+            "sql": sql,
+            "cartridge": "sap_successfactors",
+            "sources": [],
+        },
+        USER,
+    )
+
+    assert result == {"saved": True}
+    assert captured["payload"]["args"]["sources"] == [
+        "raw/sap_successfactors/Candidate"
+    ]
 
 
 @pytest.mark.asyncio

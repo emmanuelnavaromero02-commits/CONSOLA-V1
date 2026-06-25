@@ -807,6 +807,64 @@ _BRONZE_LOGICAL_READ_PARQUET_PATH_RE = re.compile(
     r"(\bread_parquet\s*\(\s*['\"])(raw/[A-Za-z0-9_./=-]+)(['\"])",
     re.IGNORECASE,
 )
+_BRONZE_READ_PARQUET_SOURCE_RE = re.compile(
+    r"\bread_parquet\s*\(\s*(['\"])((?:s3://(?:\{bucket\}|[A-Za-z0-9_.:-]+)/)?raw/[^'\"\\]+)\1",
+    re.IGNORECASE,
+)
+_SAFE_BRONZE_SOURCE_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def _bronze_source_from_reader_path(path: str) -> str | None:
+    value = str(path or "").strip().strip("/")
+    if value.startswith("s3://"):
+        _, _, rest = value[5:].partition("/")
+        value = rest.strip("/")
+    parts = [part for part in value.split("/") if part]
+    if len(parts) < 3 or parts[0] != "raw":
+        return None
+    if any(part in {".", ".."} or part.startswith("..") for part in parts):
+        return None
+    cartridge = parts[1]
+    entity = parts[2]
+    if entity.startswith("tenant_id="):
+        if len(parts) < 5 or not parts[3].startswith("workspace_id="):
+            return None
+        entity = parts[4]
+    if (
+        not _SAFE_BRONZE_SOURCE_SEGMENT_RE.fullmatch(cartridge)
+        or not _SAFE_BRONZE_SOURCE_SEGMENT_RE.fullmatch(entity)
+        or "=" in cartridge
+        or "=" in entity
+        or "*" in entity
+    ):
+        return None
+    return f"raw/{cartridge}/{entity}"
+
+
+def _infer_bronze_sources_from_sql(sql: str) -> list[str]:
+    sources: list[str] = []
+    seen: set[str] = set()
+    for match in _BRONZE_READ_PARQUET_SOURCE_RE.finditer(sql or ""):
+        source = _bronze_source_from_reader_path(match.group(2))
+        if source and source not in seen:
+            seen.add(source)
+            sources.append(source)
+    return sources
+
+
+def _merge_declared_and_inferred_bronze_sources(
+    declared: Any,
+    sql: str,
+) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    items = declared if isinstance(declared, list) else []
+    for source in [*items, *_infer_bronze_sources_from_sql(sql)]:
+        value = str(source or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            merged.append(value)
+    return merged
 
 
 def _workspace_scope_from_user(user: dict | None) -> tuple[str, str]:
@@ -3922,6 +3980,14 @@ async def api_sources(user: dict = Depends(require_authenticated)):
 async def api_dataset_save(
     body: dict, user: dict = Depends(require_permission("datasets.write"))
 ):
+    sql = str(body.get("sql") or body.get("sql_def") or "")
+    body = {
+        **body,
+        "sources": _merge_declared_and_inferred_bronze_sources(
+            body.get("sources"),
+            sql,
+        ),
+    }
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
@@ -4024,9 +4090,9 @@ async def api_bronze_query(
     # which build SQL server-side instead of trusting client input.
     sql = body.get("sql", "").strip()
     limit = min(int(body.get("limit", 200)), 2000)
-    sources = body.get("sources") or []
     if not sql:
         raise HTTPException(400, "sql is required")
+    sources = _merge_declared_and_inferred_bronze_sources(body.get("sources"), sql)
     sql = _rewrite_bronze_logical_paths(sql, user)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(

@@ -134,12 +134,57 @@ def test_portable_raw_reader_is_scoped_before_storage_validation(monkeypatch):
     )
 
 
+def test_infers_bronze_sources_from_packaged_s3_reader():
+    sql = (
+        "select * from read_parquet("
+        "'s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet', "
+        "hive_partitioning=true, union_by_name=true)"
+    )
+
+    assert refinement_main._infer_bronze_sources_from_sql(sql) == [
+        "raw/sap_successfactors/Candidate"
+    ]
+
+
 def _signed_body(tool: str, args: dict) -> dict:
     return {
         "tool": tool,
         "args": args,
         "security_context": refinement_main._sign_security_context(_security_context()),
     }
+
+
+@pytest.mark.asyncio
+async def test_mcp_preview_transform_infers_sources_from_packaged_silver_sql(monkeypatch):
+    captured: dict = {}
+
+    def fake_preview_sql(sql, limit=20, sources=None, user_context=None, params=None):
+        captured["sql"] = sql
+        captured["limit"] = limit
+        captured["sources"] = sources
+        captured["user_context"] = user_context
+        captured["params"] = params
+        return {"schema": [], "data": []}
+
+    monkeypatch.setattr(refinement_main.engine, "preview_sql", fake_preview_sql)
+    sql = (
+        "select * from read_parquet("
+        "'s3://{bucket}/raw/sap_successfactors/Candidate/**/*.parquet', "
+        "hive_partitioning=true, union_by_name=true)"
+    )
+
+    result = await refinement_main.mcp_invoke(
+        _signed_body(
+            "preview_transform",
+            {"sql": sql, "limit": 50, "sources": []},
+        ),
+        internal_service="console",
+    )
+
+    assert result == {"schema": [], "data": []}
+    assert captured["sources"] == ["raw/sap_successfactors/Candidate"]
+    assert captured["user_context"]["tenant_id"] == "tenant-a"
+    assert captured["user_context"]["workspace_id"] == "workspace-a"
 
 
 @pytest.mark.asyncio
