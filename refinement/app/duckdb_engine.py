@@ -777,17 +777,122 @@ class DuckDBEngine:
 
     # ── Bronze discovery ──────────────────────────────────────────────────────
 
-    def list_sources(self) -> list[str]:
+    def _bronze_source_from_object_key(
+        self,
+        key: str,
+        user_context: dict | None = None,
+    ) -> str | None:
+        key = str(key or "").strip("/")
+        if not key.endswith(".parquet"):
+            return None
+        parts = [part for part in key.split("/") if part]
+        if len(parts) < 4 or parts[0] != "raw":
+            return None
+
+        cartridge = parts[1]
+        entity = parts[2]
+        tenant, workspace = self._scope_values(user_context)
+
+        if entity.startswith("tenant_id="):
+            if len(parts) < 6 or not parts[3].startswith("workspace_id="):
+                return None
+            if tenant and workspace and (
+                parts[2] != f"tenant_id={tenant}" or parts[3] != f"workspace_id={workspace}"
+            ):
+                return None
+            entity = parts[4]
+        elif tenant and workspace:
+            if f"tenant_id={tenant}" not in parts or f"workspace_id={workspace}" not in parts:
+                return None
+
+        try:
+            validate_safe_identifier(cartridge, "cartridge")
+            validate_safe_identifier(entity, "entity")
+        except ValueError:
+            return None
+        return f"raw/{cartridge}/{entity}"
+
+    def _bronze_listing_prefixes(self, allowed_prefixes: list[str] | None = None) -> list[str]:
+        prefixes: list[str] = []
+        for raw_prefix in allowed_prefixes or []:
+            prefix = str(raw_prefix or "").strip().lstrip("/").rstrip("/")
+            if not prefix or not prefix.startswith("raw"):
+                continue
+            parts = [part for part in prefix.split("/") if part]
+            if parts == ["raw"]:
+                candidate = "raw/"
+            elif len(parts) >= 2:
+                candidate = f"raw/{parts[1]}/"
+            else:
+                continue
+            if candidate not in prefixes:
+                prefixes.append(candidate)
+        return prefixes or ["raw/"]
+
+    def _list_sources_from_object_store(
+        self,
+        user_context: dict | None = None,
+        allowed_prefixes: list[str] | None = None,
+    ) -> list[str]:
+        prefixes = self._bronze_listing_prefixes(allowed_prefixes)
+        sources: set[str] = set()
+        if self._uses_aws_s3_credential_chain():
+            client = self._boto3_s3_client()
+            paginator = client.get_paginator("list_objects_v2")
+            for prefix in prefixes:
+                for page in paginator.paginate(Bucket=self.minio_bucket, Prefix=prefix):
+                    for obj in page.get("Contents", []):
+                        source = self._bronze_source_from_object_key(obj.get("Key", ""), user_context)
+                        if source:
+                            sources.add(source)
+            return sorted(sources)
+
+        from minio import Minio
+
+        client = Minio(
+            self.minio_endpoint,
+            access_key=self.minio_access,
+            secret_key=self.minio_secret,
+            secure=self.minio_secure,
+        )
+        for prefix in prefixes:
+            for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True):
+                source = self._bronze_source_from_object_key(obj.object_name, user_context)
+                if source:
+                    sources.add(source)
+        return sorted(sources)
+
+    def _list_sources_from_duckdb_glob(self, user_context: dict | None = None) -> list[str]:
         try:
             with self._duckdb_lock:
                 con = self._conn()
                 rows = con.execute(f"""
-                    SELECT DISTINCT regexp_extract(file, 's3://[^/]+/([^/]+/[^/]+/[^/]+)', 1) AS source
+                    SELECT file
                     FROM glob('s3://{self.minio_bucket}/raw/**/*.parquet')
                 """).fetchall()
-            return sorted({r[0] for r in rows if r[0]})
+            return sorted({
+                source
+                for row in rows
+                if (source := self._bronze_source_from_object_key(
+                    self._s3_object_key(str(row[0] or "")) or "",
+                    user_context,
+                ))
+            })
         except Exception:
             return []
+
+    def list_sources(
+        self,
+        user_context: dict | None = None,
+        allowed_prefixes: list[str] | None = None,
+    ) -> list[str]:
+        try:
+            sources = self._list_sources_from_object_store(user_context, allowed_prefixes)
+            if sources:
+                return sources
+        except Exception:
+            pass
+        return self._list_sources_from_duckdb_glob(user_context)
 
     def get_source_schema(self, source: str, user_context: dict | None = None) -> dict:
         try:
@@ -973,6 +1078,22 @@ class DuckDBEngine:
                 ("no files found" in lower and ("read_parquet" in lower or "s3://" in lower))
                 or ("404" in lower and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower))
             )
+            s3_listing_error = (
+                "http get error" in lower
+                and "list-type=2" in lower
+                and "http 400" in lower
+                and ("read_parquet" in lower or "s3://" in lower)
+            )
+            if s3_listing_error:
+                return {
+                    "code": "s3_storage_list_failed",
+                    "error": (
+                        "No se pudo listar Parquet en S3 para la fuente seleccionada. "
+                        "Verifica que la extracción haya escrito archivos para este workspace "
+                        "y que bucket, región y permisos del lakehouse estén disponibles."
+                    ),
+                    "raw_error": msg,
+                }
             if missing_parquet:
                 return {
                     "code": "source_files_missing",

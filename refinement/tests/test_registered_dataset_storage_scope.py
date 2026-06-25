@@ -188,6 +188,31 @@ async def test_mcp_preview_transform_infers_sources_from_packaged_silver_sql(mon
 
 
 @pytest.mark.asyncio
+async def test_mcp_list_sources_passes_scope_to_engine(monkeypatch):
+    captured: dict = {}
+
+    def fake_list_sources(user_context=None, allowed_prefixes=None):
+        captured["user_context"] = user_context
+        captured["allowed_prefixes"] = allowed_prefixes
+        return [
+            "raw/sap_successfactors/Candidate",
+            "raw/hubspot/deals",
+        ]
+
+    monkeypatch.setattr(refinement_main.engine, "list_sources", fake_list_sources)
+
+    result = await refinement_main.mcp_invoke(
+        _signed_body("list_sources", {}),
+        internal_service="console",
+    )
+
+    assert result == {"sources": ["raw/sap_successfactors/Candidate"]}
+    assert captured["user_context"]["tenant_id"] == "tenant-a"
+    assert captured["user_context"]["workspace_id"] == "workspace-a"
+    assert "raw/sap_successfactors/" in captured["allowed_prefixes"]
+
+
+@pytest.mark.asyncio
 async def test_mcp_get_schema_passes_trusted_user_context(monkeypatch):
     captured: dict = {}
 
@@ -265,3 +290,24 @@ def test_get_dataset_schema_missing_materialization_returns_contextual_error(mon
     assert "sap_successfactors_empemployment_latest/**/*.parquet" not in result["error"]
     assert "fields" not in result
     assert "row_count" not in result
+
+
+def test_materialization_error_normalizes_s3_listing_http_400(monkeypatch):
+    monkeypatch.setattr(
+        refinement_main,
+        "_log_internal_error",
+        lambda *_args, **_kwargs: "req-s3-400",
+    )
+
+    status, detail = refinement_main._friendly_duckdb_error(
+        RuntimeError(
+            "HTTP Error: HTTP GET error on "
+            "'/?encoding-type=url&list-type=2&prefix=raw%2Fsap_successfactors%2FCandidate%2F' "
+            "(HTTP 400) while reading s3://bucket/raw/sap_successfactors/Candidate/**/*.parquet"
+        ),
+        "sap_successfactors_candidate_latest",
+    )
+
+    assert status == 409
+    assert detail["code"] == "s3_storage_list_failed"
+    assert "no pudo listar Parquet en S3" in detail["message"]

@@ -729,6 +729,23 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
         ("no files found" in lower and ("read_parquet" in lower or "s3://" in lower))
         or ("404" in lower and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower))
     )
+    s3_listing_error = (
+        "http get error" in lower
+        and "list-type=2" in lower
+        and "http 400" in lower
+        and ("read_parquet" in lower or "s3://" in lower)
+    )
+    if s3_listing_error:
+        return 409, {
+            "code": "s3_storage_list_failed",
+            "message": (
+                f"Dataset '{dataset_name}' no pudo listar Parquet en S3. "
+                "Verifica que la extracción haya escrito archivos para este workspace "
+                "y que bucket, región y permisos del lakehouse estén disponibles."
+            ),
+            "detail": "Error interno",
+            "request_id": request_id,
+        }
     if missing_parquet:
         return 409, {
             "code": "source_files_missing",
@@ -1473,7 +1490,14 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "list_sources":
         sec = _require_security_permission(body, "datasets.read")
-        return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}
+        ctx = _trusted_user_context(body, args)
+        return {
+            "sources": [
+                source
+                for source in engine.list_sources(ctx, sec.get("allowed_prefixes") or [])
+                if _prefix_allowed(sec, source)
+            ]
+        }
 
     if tool == "get_source_partitions":
         _require_source_scope(body, args["source"])
