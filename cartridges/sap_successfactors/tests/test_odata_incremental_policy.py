@@ -109,6 +109,49 @@ def test_run_entity_retries_full_snapshot_when_incremental_filter_is_rejected(mo
     assert updated["last_watermark_value"] == "2025-12-31T23:55:01Z"
 
 
+def test_run_entity_preserves_expected_columns_after_metadata_select_pruning(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeSapSfClient:
+        def __init__(self, conn_id=None, security_context=None):
+            assert conn_id == "femsa_sf"
+
+        def fetch_entity(self, **kwargs):
+            captured["select"] = kwargs["select"]
+            if kwargs["skip"]:
+                return []
+            return [{"jobReqId": "10", "status": "open", "lastModifiedDateTime": "2026-06-25T00:00:00Z"}]
+
+    _stub_run(monkeypatch)
+    monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(extraction_service, "get_watermark", lambda _entity: None)
+    monkeypatch.setattr(extraction_service, "update_watermark", lambda **_kwargs: None)
+
+    def fake_write(**kwargs):
+        captured["expected_columns"] = kwargs["expected_columns"]
+        return "s3://lakehouse/JobRequisition"
+
+    monkeypatch.setattr(extraction_service, "write_parquet_and_upload", fake_write)
+
+    result = extraction_service.run_entity(
+        {
+            "entity": "JobRequisition",
+            "mode": "incremental",
+            "watermark_field": "lastModifiedDateTime",
+            "conn_id": "femsa_sf",
+            "select_fields": ["jobReqId", "status", "lastModifiedDateTime"],
+            "expected_select_fields": ["jobReqId", "jobTitle", "status", "lastModifiedDateTime"],
+            "metadata_status": "select_pruned",
+            "metadata_pruned_fields": ["jobTitle"],
+        }
+    )
+
+    assert captured["select"] == ["jobReqId", "status", "lastModifiedDateTime"]
+    assert "jobTitle" in captured["expected_columns"]
+    assert result["metadata_status"] == "select_pruned"
+    assert result["metadata_pruned_fields"] == ["jobTitle"]
+
+
 def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -> None:
     calls: list[dict] = []
 

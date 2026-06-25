@@ -265,6 +265,10 @@ def _pipeline_extra_from_result(
         "incremental_filter_strategy": result.get("incremental_filter_strategy"),
         "incremental_fallback_reason": result.get("incremental_fallback_reason"),
         "retried_as_full_snapshot": result.get("retried_as_full_snapshot"),
+        "metadata_status": result.get("metadata_status"),
+        "metadata_pruned_fields": result.get("metadata_pruned_fields") or [],
+        "metadata_missing_watermark_field": result.get("metadata_missing_watermark_field"),
+        "metadata_missing_date_field": result.get("metadata_missing_date_field"),
     }
 
 
@@ -302,6 +306,13 @@ def _scope_from_conf(conf: dict) -> tuple[str, str]:
         tenant_id = tenant_id or str(ctx.get("tenant_id") or "").strip()
         workspace_id = workspace_id or str(ctx.get("workspace_id") or "").strip()
     return tenant_id, workspace_id
+
+
+def _is_nonfatal_successfactors_block(classified: dict[str, Any]) -> bool:
+    return classified.get("code") in {
+        "SUCCESSFACTORS_METADATA_BLOCKED",
+        "SUCCESSFACTORS_PERMISSION",
+    }
 
 
 def _pipeline_run_save(
@@ -447,11 +458,16 @@ def sap_successfactors_extract_all():
                 except Exception as exc:  # noqa: BLE001
                     classified = runtime.classify_extraction_exception(entity, exc)
                     results.append(classified)
+                    entity_pipeline_status = (
+                        "partial"
+                        if _is_nonfatal_successfactors_block(classified)
+                        else "failed"
+                    )
                     _pipeline_run_save(
                         context=context,
                         conf=conf,
                         entity=entity,
-                        status="failed",
+                        status=entity_pipeline_status,
                         started_at=started_at,
                         error_message=str(exc),
                         extra={
@@ -468,15 +484,14 @@ def sap_successfactors_extract_all():
                 )
                 gold_status = str((gold_refresh or {}).get("status") or "").strip().lower()
                 downstream_partial = downstream_partial or gold_status not in {"success", "ok"}
-            blocked_or_failed = any(
-                summary[key] for key in ("auth_blocked", "permission_blocked", "failed_open")
-            )
+            hard_failed = any(summary[key] for key in ("auth_blocked", "failed_open"))
+            blocked_or_failed = hard_failed or bool(summary["permission_blocked"])
             has_valid_result = bool(summary["extracted"] or summary["empty_valid"])
             aggregate_status = (
                 "success"
                 if not blocked_or_failed and not downstream_partial
                 else "partial"
-                if has_valid_result
+                if has_valid_result or (summary["permission_blocked"] and not hard_failed)
                 else "failed"
             )
             status_text = "success" if aggregate_status == "success" else "completed_with_blocks"

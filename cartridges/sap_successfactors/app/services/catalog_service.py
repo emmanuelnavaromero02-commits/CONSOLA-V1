@@ -250,6 +250,150 @@ def _security_scope(security_context: dict[str, Any] | None) -> tuple[str, str]:
     )
 
 
+def _serialized_security_context(security_context: dict[str, Any] | str | None) -> str | None:
+    if isinstance(security_context, str):
+        value = security_context.strip()
+        return value or None
+    if isinstance(security_context, dict):
+        return json.dumps(security_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return None
+
+
+def _metadata_entities_for_connection(
+    *,
+    conn_id: str | None,
+    security_context: dict[str, Any] | None,
+) -> tuple[dict[str, set[str]] | None, dict[str, Any] | None]:
+    if not conn_id:
+        return None, None
+    try:
+        from app.core.sap_client import SapSfClient
+
+        return (
+            SapSfClient(
+                conn_id=conn_id,
+                security_context=_serialized_security_context(security_context),
+            ).metadata_entities(),
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001 - metadata preflight should explain, not crash planning.
+        return None, {
+            "entity": "__metadata__",
+            "status": "skipped",
+            "reason": "metadata_unavailable",
+            "error": str(exc)[:240],
+        }
+
+
+def _list_fields(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value.strip()]
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item or "").strip()]
+        return [value.strip()]
+    return []
+
+
+def _metadata_block(
+    config: dict[str, Any],
+    *,
+    reason: str,
+    odata_entity: str,
+    fields_missing: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "entity": config.get("entity"),
+        "odata_entity": odata_entity,
+        "status": "skipped",
+        "reason": reason,
+        "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+        **({"fields_missing": fields_missing} if fields_missing else {}),
+    }
+
+
+def _prepare_config_with_metadata_fields(
+    config: dict[str, Any],
+    metadata_fields: set[str] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    entity = str(config.get("entity") or "").strip()
+    odata_entity = str(config.get("odata_entity") or entity).strip() or entity
+    if metadata_fields is None:
+        return None, _metadata_block(config, reason="metadata_entity_missing", odata_entity=odata_entity)
+
+    select_fields = _list_fields(config.get("select_fields"))
+    present_select_fields = [field for field in select_fields if field in metadata_fields]
+    missing_select_fields = [field for field in select_fields if field not in metadata_fields]
+    if select_fields and not present_select_fields:
+        return None, _metadata_block(
+            config,
+            reason="metadata_select_fields_missing",
+            odata_entity=odata_entity,
+            fields_missing=missing_select_fields,
+        )
+
+    prepared = dict(config)
+    if select_fields:
+        prepared["select_fields"] = present_select_fields
+        prepared["expected_select_fields"] = select_fields
+    if missing_select_fields:
+        prepared["metadata_status"] = "select_pruned"
+        prepared["metadata_pruned_fields"] = missing_select_fields
+    else:
+        prepared["metadata_status"] = "ready"
+        prepared["metadata_pruned_fields"] = []
+
+    watermark_field = str(prepared.get("watermark_field") or "").strip()
+    if watermark_field and watermark_field not in metadata_fields:
+        prepared["metadata_missing_watermark_field"] = watermark_field
+        prepared["watermark_field"] = None
+        if str(prepared.get("mode") or "").strip().lower() == "incremental":
+            prepared["mode"] = "full"
+
+    date_field = str(prepared.get("date_field") or "").strip()
+    if date_field and date_field not in metadata_fields:
+        prepared["metadata_missing_date_field"] = date_field
+        prepared["date_field"] = None
+
+    prepared["metadata_odata_entity"] = odata_entity
+    return prepared, None
+
+
+def prepare_entity_config_for_metadata(
+    config: dict[str, Any],
+    *,
+    conn_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+    metadata_entities: dict[str, set[str]] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Validate/prune one extraction config against live SuccessFactors metadata.
+
+    Missing entitysets become explicit skips. Missing optional select fields are
+    dropped from ``$select`` while ``expected_select_fields`` keeps the Bronze
+    schema stable with null columns for downstream Silver SQL.
+    """
+    entity = str(config.get("entity") or "").strip()
+    odata_entity = str(config.get("odata_entity") or entity).strip() or entity
+    if metadata_entities is None:
+        selected_conn_id = str(conn_id or config.get("conn_id") or config.get("connection_id") or "").strip()
+        metadata_entities, metadata_error = _metadata_entities_for_connection(
+            conn_id=selected_conn_id or None,
+            security_context=security_context,
+        )
+        if metadata_error:
+            prepared = dict(config)
+            prepared["metadata_status"] = "unavailable"
+            prepared["metadata_error"] = metadata_error.get("error")
+            return prepared, None
+    if metadata_entities is None:
+        return dict(config), None
+    return _prepare_config_with_metadata_fields(config, metadata_entities.get(odata_entity))
+
+
 def _matches_security_scope(row: dict[str, Any], tenant_id: str, workspace_id: str) -> bool:
     row_tenant = _scope_value(row, "tenant_id")
     row_workspace = _scope_value(row, "workspace_id")
@@ -361,6 +505,12 @@ def get_extract_all_plan(
         conn_id=selected_conn_id or None,
         security_context=security_context,
     )
+    metadata_entities: dict[str, set[str]] | None = None
+    if selected_conn_id:
+        metadata_entities, _metadata_skip = _metadata_entities_for_connection(
+            conn_id=selected_conn_id,
+            security_context=security_context,
+        )
     excluded = _extract_all_excluded_entities()
     entities: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = list(target_skipped)
@@ -376,20 +526,11 @@ def get_extract_all_plan(
             continue
 
         if normalized_target == "talent" and entity in target_fields:
-            configured_fields = {
-                str(field)
-                for field in (config.get("select_fields") or [])
-                if str(field).strip()
-            }
-            missing_fields = sorted(configured_fields - target_fields[entity])
-            if missing_fields:
-                skipped.append({
-                    "entity": entity,
-                    "status": "skipped",
-                    "reason": "metadata_fields_missing_for_config",
-                    "fields_missing": missing_fields,
-                })
+            prepared, block = _prepare_config_with_metadata_fields(config, target_fields[entity])
+            if block:
+                skipped.append(block)
                 continue
+            config = prepared or config
 
         if selected_conn_id:
             config_conn_id = str(config.get("connection_id") or "").strip()
@@ -415,6 +556,16 @@ def get_extract_all_plan(
                 "reason": "external_scope_blocked",
             })
             continue
+
+        if metadata_entities is not None:
+            prepared, block = prepare_entity_config_for_metadata(
+                config,
+                metadata_entities=metadata_entities,
+            )
+            if block:
+                skipped.append(block)
+                continue
+            config = prepared or config
 
         entities.append(config)
 

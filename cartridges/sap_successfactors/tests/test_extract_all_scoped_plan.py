@@ -134,6 +134,58 @@ def test_extract_all_default_skips_known_unavailable_successfactors_entities(mon
     }
 
 
+def test_prepare_entity_config_prunes_invalid_select_fields_from_metadata():
+    from app.services import catalog_service
+
+    config = {
+        "entity": "JobRequisition",
+        "odata_entity": "JobRequisition",
+        "mode": "incremental",
+        "watermark_field": "lastModifiedDateTime",
+        "select_fields": ["jobReqId", "jobTitle", "status", "lastModifiedDateTime"],
+    }
+
+    prepared, block = catalog_service.prepare_entity_config_for_metadata(
+        config,
+        metadata_entities={
+            "JobRequisition": {"jobReqId", "status", "lastModifiedDateTime"}
+        },
+    )
+
+    assert block is None
+    assert prepared["select_fields"] == ["jobReqId", "status", "lastModifiedDateTime"]
+    assert prepared["expected_select_fields"] == [
+        "jobReqId",
+        "jobTitle",
+        "status",
+        "lastModifiedDateTime",
+    ]
+    assert prepared["metadata_status"] == "select_pruned"
+    assert prepared["metadata_pruned_fields"] == ["jobTitle"]
+
+
+def test_prepare_entity_config_skips_missing_odata_entity():
+    from app.services import catalog_service
+
+    prepared, block = catalog_service.prepare_entity_config_for_metadata(
+        {
+            "entity": "CareerInterest",
+            "mode": "incremental",
+            "select_fields": ["externalCode", "userId"],
+        },
+        metadata_entities={},
+    )
+
+    assert prepared is None
+    assert block == {
+        "entity": "CareerInterest",
+        "odata_entity": "CareerInterest",
+        "status": "skipped",
+        "reason": "metadata_entity_missing",
+        "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+    }
+
+
 def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
     from app.services import catalog_service, preflight
 

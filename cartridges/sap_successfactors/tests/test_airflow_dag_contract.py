@@ -75,6 +75,25 @@ def test_extract_all_dag_classifies_missing_entity_connections_per_entity():
     assert "runtime.classify_extraction_exception(entity, exc)" in source
 
 
+def test_extract_all_dag_records_successfactors_metadata_blocks_as_partial():
+    source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
+
+    assert "def _is_nonfatal_successfactors_block" in source
+    assert "entity_pipeline_status = (" in source
+    assert 'status=entity_pipeline_status' in source
+    assert '\"SUCCESSFACTORS_METADATA_BLOCKED\"' in source
+    assert '\"SUCCESSFACTORS_PERMISSION\"' in source
+
+
+def test_single_entity_dag_preflights_metadata_and_returns_partial_blocks():
+    source = (ROOT / "dags" / "sap_successfactors_extract.py").read_text(encoding="utf-8")
+
+    assert "prepare_entity_config_for_metadata" in source
+    assert "metadata_block" in source
+    assert 'status=\"partial\"' in source
+    assert "runtime.classify_extraction_exception(str(entity), exc)" in source
+
+
 def test_single_entity_dag_treats_successfactors_metadata_errors_as_non_retryable():
     source = (ROOT / "dags" / "sap_successfactors_extract.py").read_text(encoding="utf-8")
 

@@ -169,8 +169,14 @@ def _load_runtime() -> SimpleNamespace:
     refinement_triggers = importlib.import_module("app.core.refinement_triggers")
     _RUNTIME = SimpleNamespace(
         get_entity_config=importlib.import_module("app.services.catalog_service").get_entity_config,
+        prepare_entity_config_for_metadata=importlib.import_module(
+            "app.services.catalog_service"
+        ).prepare_entity_config_for_metadata,
         run_entity=importlib.import_module("app.services.extraction_service").run_entity,
         trigger_silver_refresh=refinement_triggers.trigger_silver_refresh,
+        classify_extraction_exception=importlib.import_module(
+            "app.core.extraction_status"
+        ).classify_extraction_exception,
         set_security_context=importlib.import_module("app.core.request_context").set_security_context,
         reset_security_context=importlib.import_module("app.core.request_context").reset_security_context,
     )
@@ -220,6 +226,13 @@ def _is_non_retryable_successfactors_error(exc: Exception) -> bool:
             "invalid query option",
         )
     )
+
+
+def _is_nonfatal_successfactors_block(classified: dict[str, Any]) -> bool:
+    return classified.get("code") in {
+        "SUCCESSFACTORS_METADATA_BLOCKED",
+        "SUCCESSFACTORS_PERMISSION",
+    }
 
 
 def _try_silver_refresh(runtime: SimpleNamespace, entity: str, security_context: dict | None) -> dict[str, Any]:
@@ -417,6 +430,34 @@ def sap_successfactors_extract():
         if security_context:
             run_config["security_context"] = security_context
 
+        prepared_config, metadata_block = runtime.prepare_entity_config_for_metadata(
+            run_config,
+            conn_id=conn_id,
+            security_context=security_context,
+        )
+        if metadata_block:
+            payload = {
+                **metadata_block,
+                "entity": str(entity),
+                "status": "skipped",
+                "metadata_status": "blocked",
+            }
+            _pipeline_run_save(
+                context=context,
+                conf=conf,
+                entity=str(entity),
+                status="partial",
+                started_at=started_at,
+                error_message=str(metadata_block.get("reason") or metadata_block),
+                extra={
+                    "classification": payload,
+                    "conn_id": conn_id,
+                    "job_id": str(conf.get("job_id") or "").strip() or None,
+                },
+            )
+            return payload
+        run_config = prepared_config or run_config
+
         token = runtime.set_security_context(security_context)
         try:
             payload = runtime.run_entity(
@@ -442,6 +483,22 @@ def sap_successfactors_extract():
             )
             return payload
         except Exception as exc:
+            classified = runtime.classify_extraction_exception(str(entity), exc)
+            if _is_nonfatal_successfactors_block(classified):
+                _pipeline_run_save(
+                    context=context,
+                    conf=conf,
+                    entity=str(entity),
+                    status="partial",
+                    started_at=started_at,
+                    error_message=str(exc),
+                    extra={
+                        "classification": classified,
+                        "conn_id": conn_id,
+                        "job_id": str(conf.get("job_id") or "").strip() or None,
+                    },
+                )
+                return classified
             _pipeline_run_save(
                 context=context,
                 conf=conf,

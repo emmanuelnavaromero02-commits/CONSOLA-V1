@@ -1046,6 +1046,38 @@ async def test_dag_based_disabled_entity_returns_400(console_main, monkeypatch):
     assert exc.value.status_code == 400
 
 
+@pytest.mark.anyio
+async def test_successfactors_dag_entity_without_connection_id_returns_400_before_airflow(
+    console_main, monkeypatch
+):
+    async def metadata(cartridge, entity):
+        return {
+            "pattern": "dag-based",
+            "entity": entity,
+            "dag_id": "sap_successfactors_extract",
+            "mode": "incremental",
+            "enabled": True,
+            "connection_id": None,
+        }
+
+    async def trigger_should_not_run(*_args, **_kwargs):
+        raise AssertionError("Airflow should not be triggered without a SuccessFactors conn_id")
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main.api_pipeline_extract(
+            "sap_successfactors",
+            "JobApplication",
+            {},
+            user=_scoped_sf_pipeline_user(),
+        )
+
+    assert exc.value.status_code == 400
+    assert "connection_id" in str(exc.value.detail)
+
+
 def test_bronze_latest_date_from_real_minio_paths(console_main):
     latest_date = console_main._bronze_latest_date_from_objects(
         "replicon",
@@ -1258,6 +1290,53 @@ async def test_api_pipeline_entity_runs_returns_recent_history(
             "error": None,
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_entity_runs_formats_successfactors_metadata_block_as_partial(
+    console_main, monkeypatch
+):
+    async def metadata(cartridge, entity):
+        return {
+            "pattern": "dag-based",
+            "entity": entity,
+            "dag_id": "sap_successfactors_extract",
+            "mode": "incremental",
+            "enabled": True,
+        }
+
+    console_main._test_asyncpg_stub.fetch_rows = [
+        {
+            "run_id": "manual__blocked",
+            "dag_id": "sap_successfactors_extract",
+            "airflow_dag_run_id": "manual__blocked",
+            "status": "failed",
+            "mode": "incremental",
+            "started_at": "2026-06-25T04:09:57+00:00",
+            "finished_at": "2026-06-25T04:10:00+00:00",
+            "duration_seconds": 3.0,
+            "error_message": "HTTP 404",
+            "extra": {
+                "classification": {
+                    "entity": "CareerInterest",
+                    "status": "permission-blocked",
+                    "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+                    "error": "Entity CareerInterest is not found",
+                }
+            },
+        }
+    ]
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
+
+    result = await console_main.api_pipeline_entity_runs(
+        "sap_successfactors",
+        "CareerInterest",
+        limit=20,
+        user=_scoped_sf_pipeline_user(),
+    )
+
+    assert result["runs"][0]["status"] == "partial"
+    assert result["runs"][0]["classification"]["code"] == "SUCCESSFACTORS_METADATA_BLOCKED"
 
 
 @pytest.mark.anyio
