@@ -59,6 +59,31 @@ def test_successfactors_dags_require_vault_connection_id():
         assert '"conn_id": conn_id' in source
 
 
+def test_single_entity_dag_records_missing_connection_without_retry():
+    source = (ROOT / "dags" / "sap_successfactors_extract.py").read_text(encoding="utf-8")
+
+    assert "conn_id = _required_conn_id(conf, config)" in source
+    assert '"code": "CONFIG_INCOMPLETE"' in source
+    assert "raise AirflowFailException(str(exc)) from exc" in source
+
+
+def test_extract_all_dag_classifies_missing_entity_connections_per_entity():
+    source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
+
+    assert "entity_idempotency_key = _entity_idempotency_key(base_idempotency_key, entity)" in source
+    assert "try:\n                    conn_id = _required_config_conn_id(conf, config)" in source
+    assert "runtime.classify_extraction_exception(entity, exc)" in source
+
+
+def test_single_entity_dag_treats_successfactors_metadata_errors_as_non_retryable():
+    source = (ROOT / "dags" / "sap_successfactors_extract.py").read_text(encoding="utf-8")
+
+    assert "http 400" in source
+    assert "http 404" in source
+    assert "notfoundexception" in source
+    assert "invalid property" in source
+
+
 def test_successfactors_dags_do_not_fail_bronze_when_silver_refresh_fails():
     for filename in ("sap_successfactors_extract.py", "sap_successfactors_extract_all.py"):
         source = (ROOT / "dags" / filename).read_text(encoding="utf-8")

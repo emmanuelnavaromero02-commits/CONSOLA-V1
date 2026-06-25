@@ -17,7 +17,11 @@ def classify_extraction_exception(entity: str | None, exc: Exception) -> dict[st
     code = "FAILED_OPEN"
     status = "failed-open"
 
-    if "config_incomplete" in lowered:
+    if (
+        "config_incomplete" in lowered
+        or "requires entity_config.connection_id" in lowered
+        or "no default connection fallback" in lowered
+    ):
         code = "CONFIG_INCOMPLETE"
         status = "auth-blocked"
     elif "oauth/token" in lowered or "saml bearer token request failed" in lowered or "oauth token request failed" in lowered:
@@ -25,6 +29,25 @@ def classify_extraction_exception(entity: str | None, exc: Exception) -> dict[st
         status = "auth-blocked"
     elif "401" in lowered or "403" in lowered:
         code = "SUCCESSFACTORS_PERMISSION"
+        status = "permission-blocked"
+    elif (
+        ("successfactors" in lowered or "/odata/v2/" in lowered or "odata" in lowered)
+        and any(
+            marker in lowered
+            for marker in (
+                "http 400",
+                "http 404",
+                "400 client error",
+                "404 client error",
+                "bad request",
+                "notfoundexception",
+                " is not found",
+                "invalid property",
+                "invalid query option",
+            )
+        )
+    ):
+        code = "SUCCESSFACTORS_METADATA_BLOCKED"
         status = "permission-blocked"
 
     return {
