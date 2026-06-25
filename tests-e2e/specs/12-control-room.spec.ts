@@ -356,7 +356,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("tab", { name: /opciones/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /ejecuci[oó]n/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /control/i })).toBeVisible();
-    await expect(page.getByRole("tab", { name: /reglas/i })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /lecciones/i })).toBeVisible();
     // Each manual step renders as a titled section ("Paso N de 6").
     await expect(page.getByText(/paso 1 de 6/i)).toBeVisible();
     await expect(page.getByRole("region", { name: /bit[aá]cora operativa/i })).toBeVisible();
