@@ -444,7 +444,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       )),
       "control follow-up must persist status, owner and due date",
     ).toBe(true);
-    await page.getByRole("tab", { name: /reglas/i }).click();
+    await page.getByRole("tab", { name: /lecciones/i }).click();
     const manualLesson = `Leccion E2E ${Date.now()}: validar owner antes de aprobar`;
     await page.getByLabel(/nueva lecci[oó]n persistida/i).fill(manualLesson);
     await page.getByRole("button", { name: /guardar lecci[oó]n/i }).click();
