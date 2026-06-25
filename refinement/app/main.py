@@ -224,6 +224,11 @@ _SCOPED_READER_RE = re.compile(
     r"\b(read_parquet|read_csv)\s*\(\s*(['\"])(.*?)\2",
     re.IGNORECASE | re.DOTALL,
 )
+_BRONZE_READ_PARQUET_SOURCE_RE = re.compile(
+    r"\bread_parquet\s*\(\s*(['\"])((?:s3://(?:\{bucket\}|[A-Za-z0-9_.:-]+)/)?raw/[^'\"\\]+)\1",
+    re.IGNORECASE,
+)
+_SAFE_BRONZE_SOURCE_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 _SQL_STORAGE_LITERAL_RE = re.compile(r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
 _DIRECT_STORAGE_SCAN_RE = re.compile(
     r"\b(?:from|join|table)\s+(['\"])(.*?)\1",
@@ -239,6 +244,59 @@ _PGGOLD_TABLE_RE = re.compile(
     r'\b(?:from|join)\s+(?:(?:"?pggold"?\s*\.\s*)?)"?([A-Za-z_][A-Za-z0-9_]*)"?',
     re.IGNORECASE,
 )
+
+
+def _bronze_source_from_reader_path(path: str) -> str | None:
+    value = str(path or "").strip().strip("/")
+    if value.startswith("s3://"):
+        _, _, rest = value[5:].partition("/")
+        value = rest.strip("/")
+    parts = [part for part in value.split("/") if part]
+    if len(parts) < 3 or parts[0] != "raw":
+        return None
+    if any(part in {".", ".."} or part.startswith("..") for part in parts):
+        return None
+    cartridge = parts[1]
+    entity = parts[2]
+    if entity.startswith("tenant_id="):
+        if len(parts) < 5 or not parts[3].startswith("workspace_id="):
+            return None
+        entity = parts[4]
+    if (
+        not _SAFE_BRONZE_SOURCE_SEGMENT_RE.fullmatch(cartridge)
+        or not _SAFE_BRONZE_SOURCE_SEGMENT_RE.fullmatch(entity)
+        or "=" in cartridge
+        or "=" in entity
+        or "*" in entity
+    ):
+        return None
+    return f"raw/{cartridge}/{entity}"
+
+
+def _infer_bronze_sources_from_sql(sql: str) -> list[str]:
+    sources: list[str] = []
+    seen: set[str] = set()
+    for match in _BRONZE_READ_PARQUET_SOURCE_RE.finditer(sql or ""):
+        source = _bronze_source_from_reader_path(match.group(2))
+        if source and source not in seen:
+            seen.add(source)
+            sources.append(source)
+    return sources
+
+
+def _merge_declared_and_inferred_bronze_sources(
+    declared: object,
+    sql: str,
+) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    items = declared if isinstance(declared, list) else []
+    for source in [*items, *_infer_bronze_sources_from_sql(sql)]:
+        value = str(source or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            merged.append(value)
+    return merged
 
 
 def _trusted_user_context(body: dict, args: dict) -> dict:
@@ -798,6 +856,7 @@ def _require_sql_storage_scope(
     allow_registered_dataset_paths: bool = False,
 ) -> None:
     sec = _require_security_permission(body, "datasets.read")
+    sources = _merge_declared_and_inferred_bronze_sources(sources, sql)
     sql = _strip_sql_comments(sql or "")
     masked = _mask_single_quoted(sql)
     if not _SQL_START_RE.search(masked):
@@ -1435,17 +1494,27 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge"), "layer": layer}
 
     if tool == "preview_transform":
+        sources = _merge_declared_and_inferred_bronze_sources(
+            args.get("sources"),
+            args["sql"],
+        )
         _require_sql_storage_scope(
             body,
             args["sql"],
-            args.get("sources") or [],
+            sources,
             allow_registered_dataset_paths=True,
         )
         # params: externally-supplied positional parameters (? placeholders) from callers
         # that build parameterized SQL (e.g. api_data_query_filtered).  When params is
         # provided, preview_sql skips internal RLS filter injection.
         caller_params = args.get("params")  # None → apply RLS; list → use as-is
-        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"), _trusted_user_context(body, args), caller_params)
+        return engine.preview_sql(
+            args["sql"],
+            args.get("limit", 20),
+            sources,
+            _trusted_user_context(body, args),
+            caller_params,
+        )
 
     if tool == "save_dataset":
         sec = _require_security_permission(body, "datasets.write")
@@ -1456,6 +1525,10 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             "tenant_id": sec.get("tenant_id"),
             "workspace_id": sec.get("workspace_id"),
         }
+        args["sources"] = _merge_declared_and_inferred_bronze_sources(
+            args.get("sources"),
+            args.get("sql") or args.get("sql_def") or "",
+        )
         existing = store.get_dataset(args["name"], **store_scope)
         if existing:
             _require_dataset_scope(body, existing, "datasets.write")
@@ -1556,6 +1629,13 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds, "datasets.write")
+        ds = {
+            **ds,
+            "sources": _merge_declared_and_inferred_bronze_sources(
+                ds.get("sources"),
+                ds.get("sql_def") or ds.get("sql") or "",
+            ),
+        }
         try:
             result = engine.materialize(ds, _trusted_user_context(body, args))
         except (duckdb.Error, ValueError) as exc:
