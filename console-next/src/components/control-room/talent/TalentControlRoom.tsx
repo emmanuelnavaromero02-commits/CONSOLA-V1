@@ -42,6 +42,7 @@ import { isApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge } from "../StatusBadge";
+import type { ControlRoomStatus } from "../StatusBadge";
 
 type Collar = "confianza" | "sindicalizado";
 
@@ -79,6 +80,52 @@ function cellTone(cell: SfTalentNineBoxCell): string {
 function extractionTargets(metadata: SfTalentMetadataReadinessPayload | null): SfTalentExtractionTarget[] {
   const targets = metadata?.live_preflight?.extraction_targets;
   return Array.isArray(targets) ? targets : [];
+}
+
+function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
+  const normalized = String(status || "missing").trim();
+  if (
+    normalized === "ready" ||
+    normalized === "ok" ||
+    normalized === "partial" ||
+    normalized === "stub" ||
+    normalized === "empty" ||
+    normalized === "missing" ||
+    normalized === "unavailable" ||
+    normalized === "invalid_schema" ||
+    normalized === "blocked" ||
+    normalized === "no_permission" ||
+    normalized === "attention" ||
+    normalized === "inactive" ||
+    normalized === "no_sources" ||
+    normalized === "error"
+  ) {
+    return normalized;
+  }
+  if (normalized === "metadata_ready" || normalized === "ready_to_extract") return "partial";
+  return "missing";
+}
+
+const talentComponents = [
+  { id: "performance", label: "Performance" },
+  { id: "competency", label: "Competencias" },
+  { id: "aspiration", label: "Aspiración" },
+  { id: "roles", label: "Roles" },
+  { id: "learning", label: "Learning" },
+  { id: "recruiting", label: "Recruiting" },
+] as const;
+
+function talentComponentReadiness(metadata: SfTalentMetadataReadinessPayload | null) {
+  const entities = new Map((metadata?.entities ?? []).map((entity) => [entity.id, entity]));
+  return talentComponents.map((component) => {
+    const entity = entities.get(component.id);
+    return {
+      ...component,
+      status: normalizeReadinessStatus(entity?.live_status || entity?.status),
+      entity: entity?.entity || "pendiente",
+      blockers: entity?.blockers ?? ["metadata/materialización pendiente"],
+    };
+  });
 }
 
 export function TalentOverviewPanel({
@@ -498,6 +545,7 @@ export function TalentControlRoom() {
   const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box.cells ?? [], [nineBox, overview]);
   const anomalyItems = anomalies?.items ?? overview?.anomalies.items ?? [];
   const cpaExtractionTargets = useMemo(() => extractionTargets(metadata), [metadata]);
+  const componentReadiness = useMemo(() => talentComponentReadiness(metadata), [metadata]);
 
   async function handlePreview() {
     if (!selectedAnomaly) return;
@@ -553,6 +601,21 @@ export function TalentControlRoom() {
         ) : null}
 
         <TalentOverviewPanel overview={overview} nineBox={nineBox} anomalies={anomalies} metadata={metadata} />
+
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6" aria-label="Blockers por componente Talent">
+          {componentReadiness.map((component) => (
+            <article key={component.id} className="rounded-lg border bg-card p-3 text-sm shadow-sm dark:border-sky-400/15 dark:bg-[#081423]">
+              <div className="flex items-start justify-between gap-2">
+                <strong className="text-foreground dark:text-white">{component.label}</strong>
+                <ReadinessBadge status={component.status} compact />
+              </div>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{component.entity}</p>
+              <p className="mt-2 line-clamp-2 text-xs text-orange-700 dark:text-orange-300">
+                {component.blockers.slice(0, 2).join(" · ") || "Sin blockers"}
+              </p>
+            </article>
+          ))}
+        </section>
 
         {collar === "sindicalizado" ? (
           <OperationalNotice tone="warning" title="Segmento sindicalizado pendiente">

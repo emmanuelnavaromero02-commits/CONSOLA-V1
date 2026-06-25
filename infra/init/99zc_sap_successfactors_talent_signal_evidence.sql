@@ -1,3 +1,15 @@
+-- Enrich WB-TALENTO signals with operational evidence fields consumed by Control Room.
+
+UPDATE datasets
+SET sources = $seed$[
+  "gold/sap_successfactors/sap_successfactors_talent_action_candidates",
+  "gold/sap_successfactors/sap_successfactors_talent_role_profile",
+  "gold/sap_successfactors/sap_successfactors_talent_mobility_history",
+  "gold/sap_successfactors/sap_successfactors_talent_competency_skill_gap",
+  "gold/sap_successfactors/sap_successfactors_talent_learning_certification_status",
+  "gold/sap_successfactors/sap_successfactors_recruitment_application_funnel"
+]$seed$::jsonb,
+    sql_def = $sql$
 -- sap_successfactors_talent_signals  (gold)  cartridge: sap_successfactors
 -- sources: ["gold/sap_successfactors/sap_successfactors_talent_action_candidates", "gold/sap_successfactors/sap_successfactors_talent_role_profile", "gold/sap_successfactors/sap_successfactors_talent_mobility_history", "gold/sap_successfactors/sap_successfactors_talent_competency_skill_gap", "gold/sap_successfactors/sap_successfactors_talent_learning_certification_status", "gold/sap_successfactors/sap_successfactors_recruitment_application_funnel"]
 -- description: Senales WisdomBit Talento como recomendaciones. No ejecuta acciones automaticas ni write-back.
@@ -146,3 +158,11 @@ SELECT
     '[]' AS blockers
 FROM metrics
 WHERE recruiting_stage_count > 0
+$sql$,
+    description = 'Senales WisdomBit Talento con evidencia operativa interna, readiness y blockers. No ejecuta acciones automaticas ni write-back.',
+    updated_at = NOW()
+WHERE name = 'sap_successfactors_talent_signals';
+
+INSERT INTO schema_migrations (filename, applied_at)
+VALUES ('99zc_sap_successfactors_talent_signal_evidence.sql', NOW())
+ON CONFLICT (filename) DO NOTHING;

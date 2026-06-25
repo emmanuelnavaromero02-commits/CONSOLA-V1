@@ -425,9 +425,13 @@ export interface SfTalentMetadataEntity {
   id: string;
   kb: string;
   entity: string;
+  odata_entity?: string | null;
   required_for: string;
   status: DataReadiness | SourceState | "ready" | "partial";
   blockers: string[];
+  fields_found?: string[];
+  fields_missing?: string[];
+  ready_to_extract?: boolean;
   live_status?: string | null;
   live_selected_entity?: string | null;
   live_candidates?: Array<Record<string, unknown>>;
@@ -441,8 +445,11 @@ export interface SfTalentExtractionTarget {
   entity: string;
   odata_entity?: string;
   status?: string;
+  ready_to_extract?: boolean;
   sample_status?: string;
   fields_present?: string[];
+  fields_found?: string[];
+  fields_missing?: string[];
 }
 
 export interface SfTalentMetadataReadinessPayload {
@@ -724,6 +731,9 @@ export type ControlOrigin =
 export interface MonteCarloSummary {
   status?: string;
   mode?: string;
+  reason?: string;
+  source_type?: string;
+  source_id?: string;
   seed?: number;
   iterations?: number;
   reproducibility_hash?: string;
@@ -758,6 +768,7 @@ export interface MathProvenance {
   monte_carlo?: {
     status?: string;
     mode?: string;
+    reason?: string;
     seed?: number;
     reproducibility_hash?: string;
   };
@@ -774,6 +785,7 @@ export interface IntelligencePack {
     prediction_method?: string | null;
     sample_count?: number;
     confidence?: number;
+    readiness_status?: string;
   };
   signal?: {
     signal_id?: string;
@@ -786,10 +798,18 @@ export interface IntelligencePack {
     prediction_method?: string | null;
     confidence?: number;
     summary?: string;
+    source_dataset?: string;
+    source_row_count?: number;
+    readiness_status?: string;
+    recommendation_only?: boolean;
     decision_intelligence?: DecisionIntelligence;
   };
   evidence_pack?: {
     summary?: string;
+    source_dataset?: string;
+    source_row_count?: number;
+    readiness_status?: string;
+    materialized_at?: string;
     items?: Array<{ source_type?: string; source_ref?: string; supports_hypothesis?: string; strength?: number }>;
   };
   hypotheses?: Array<{ title?: string; rationale?: string; confidence?: number }>;

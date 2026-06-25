@@ -457,6 +457,9 @@ interface DecisionIntelligence {
 interface MonteCarloSummary {
   status?: string;
   mode?: string;
+  reason?: string;
+  source_type?: string;
+  source_id?: string;
   seed?: number;
   iterations?: number;
   reproducibility_hash?: string;
@@ -491,6 +494,7 @@ interface MathProvenance {
   monte_carlo?: {
     status?: string;
     mode?: string;
+    reason?: string;
     seed?: number;
     reproducibility_hash?: string;
   };
@@ -507,6 +511,7 @@ interface IntelligencePack {
     prediction_method?: string | null;
     sample_count?: number;
     confidence?: number;
+    readiness_status?: string;
   };
   signal?: {
     signal_id?: string;
@@ -519,10 +524,18 @@ interface IntelligencePack {
     prediction_method?: string | null;
     confidence?: number;
     summary?: string;
+    source_dataset?: string;
+    source_row_count?: number;
+    readiness_status?: string;
+    recommendation_only?: boolean;
     decision_intelligence?: DecisionIntelligence;
   };
   evidence_pack?: {
     summary?: string;
+    source_dataset?: string;
+    source_row_count?: number;
+    readiness_status?: string;
+    materialized_at?: string;
     items?: Array<{ source_type?: string; source_ref?: string; supports_hypothesis?: string; strength?: number }>;
   };
   hypotheses?: Array<{ title?: string; rationale?: string; confidence?: number }>;
@@ -761,7 +774,7 @@ const defaultOmegaSteps = [
   { id: "lessons", label: "Lecciones" },
 ];
 
-const manualTabs = ["Investigación", "Opciones", "Decisión", "Ejecución", "Control", "Reglas"] as const;
+const manualTabs = ["Investigación", "Opciones", "Decisión", "Ejecución", "Control", "Lecciones"] as const;
 const manualStepIds = ["investigation", "options", "decision", "execution", "control", "lessons"] as const;
 const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const DEFAULT_REFRESH_INTERVAL_SECONDS = 30;
@@ -1071,7 +1084,9 @@ function bayesianCalibrationStatus(
 }
 
 function bayesianBadgeLabel(calibration?: BayesianCalibrationSummary): string {
-  return calibration?.status === "calibrated" ? "Bayes calibrado" : "Bayes no calibrado";
+  if (calibration?.status === "calibrated") return "Bayes calibrado";
+  if ((calibration?.sample_count ?? 0) < 10) return "Bayes no calibrado: muestra insuficiente";
+  return "Bayes no calibrado";
 }
 
 function businessStatusLabel(status?: string | null): string {
@@ -1089,6 +1104,11 @@ function businessStatusLabel(status?: string | null): string {
     completed: "completada",
     failed: "requiere revisión",
     blocked: "bloqueada",
+    configured: "configurado sin evidencia",
+    not_applicable: "no aplica",
+    not_calibrated: "no calibrado",
+    insufficient_data: "datos insuficientes",
+    recommendation_only: "recomendación supervisada",
   };
   if (!status) return "pendiente";
   return labels[status] || status.replace(/_/g, " ");
@@ -3543,6 +3563,15 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
   const decisionIntelligence = getDecisionIntelligence(item);
   const mc = monteCarloStatus(item);
   const bayesian = bayesianCalibrationStatus(item, decisionIntelligence);
+  const mcLabel = mc?.status === "completed"
+    ? mc.mode === "template_mode"
+      ? "Monte Carlo template"
+      : "Monte Carlo derivado"
+    : mc?.status === "blocked"
+      ? "Monte Carlo bloqueado"
+      : mc?.status
+        ? "Monte Carlo no ejecutado"
+        : "";
   return (
     <article
       className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#081423] dark:shadow-[0_0_20px_rgba(14,165,233,0.05)]"
@@ -3558,7 +3587,7 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
         <OriginBadge origin={itemOrigin(item)} compact />
         {bayesian ? <OriginBadge origin="bayesian_calibration" label={bayesianBadgeLabel(bayesian)} compact className={bayesian.status === "calibrated" ? undefined : "opacity-80"} /> : null}
-        {mc?.status === "completed" ? <OriginBadge origin="monte_carlo" label={mc.mode === "template_mode" ? "Monte Carlo template" : "Monte Carlo derivado"} compact /> : null}
+        {mc?.status ? <OriginBadge origin="monte_carlo" label={mcLabel} compact className={mc.status === "completed" ? undefined : "opacity-80"} /> : null}
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessFrontLabel(item.module)}</span>
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessStatusLabel(item.status)}</span>
         {item.impact_estimate ? <span className="rounded-full border border-emerald-400/30 px-2 py-1 text-emerald-700 dark:text-emerald-200">{fmtMoney(item.impact_estimate, item.impact_currency)}</span> : null}
@@ -3785,6 +3814,7 @@ function ImpactSnapshot({
             {mc.mode ? <span className="text-xs text-muted-foreground">{mc.mode === "template_mode" ? "template" : "derivado"}</span> : null}
             {mc.seed !== undefined ? <span className="text-xs text-muted-foreground">seed {mc.seed}</span> : null}
           </div>
+          {mc.reason ? <p className="mt-2 text-xs text-muted-foreground">{mc.reason}</p> : null}
           {mcSummary ? (
             <div className="mt-3 grid gap-2 md:grid-cols-4">
               <InfoBlock label="P10/P50/P90" value={[mcSummary.p10, mcSummary.p50, mcSummary.p90].filter((value) => typeof value === "number").map((value) => formatIntelligenceNumber(value)).join(" / ") || "N/D"} />
@@ -3935,6 +3965,11 @@ function isDecisionIntelligence(value: unknown): value is DecisionIntelligence {
 function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntelligence: DecisionIntelligence }) {
   const quality = decisionIntelligence.data_quality;
   const calibration = decisionIntelligence.calibration;
+  const calibrationLabel = calibration?.calibration_applied
+    ? "Bayes calibrado"
+    : (calibration?.sample_count ?? 0) < 10
+      ? "Bayes no calibrado: muestra insuficiente"
+      : "Bayes no calibrado";
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Decision intelligence">
       <div className="flex flex-col gap-1">
@@ -3943,7 +3978,7 @@ function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntellige
           {calibration?.calibration_applied ? (
             <OriginBadge origin="bayesian_calibration" compact />
           ) : (
-            <OriginBadge origin="bayesian_calibration" label="Bayes no calibrado" compact className="opacity-80" />
+            <OriginBadge origin="bayesian_calibration" label={calibrationLabel} compact className="opacity-80" />
           )}
         </div>
         <h4 className="text-base font-semibold">{decisionLabel(decisionIntelligence.recommended_decision)}</h4>
@@ -4015,7 +4050,13 @@ function IntelligencePanel({
   const [actionTaken, setActionTaken] = useState(option?.label || "");
   const [actualValue, setActualValue] = useState("");
   const [outcomeSummary, setOutcomeSummary] = useState("");
-  const externalEvidenceCount = (evidence.items || []).filter((evidenceItem) => evidenceItem.source_type === "external").length;
+  const evidenceItems = evidence.items || [];
+  const externalEvidenceCount = evidenceItems.filter((evidenceItem) => evidenceItem.source_type === "external").length;
+  const evidenceContextText = externalEvidenceCount
+    ? `${externalEvidenceCount} referencia(s) externas consideradas.`
+    : evidenceItems.length
+      ? "Esta señal se basa solo en Gold interno; no hay evidencia externa/RAG configurada."
+      : "Sin evidence pack disponible; revisar metadata, extracción o materialización Gold.";
   const topOptions = (intelligence.options || []).slice(0, 3);
   const predictionHorizon = signal.prediction_horizon_days || baseline.prediction_horizon_days;
   const predictedValue = signal.predicted_value ?? baseline.predicted_value;
@@ -4050,14 +4091,14 @@ function IntelligencePanel({
         </div>
       ) : null}
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
-        <InfoBlock label="Evidencia" value={evidence.summary || `${evidence.items?.length || 0} elementos`} />
+        <InfoBlock label="Evidencia" value={evidence.summary || `${evidenceItems.length} elementos`} />
         <InfoBlock label="Hipótesis" value={hypothesis?.title || "Pendiente"} />
         <InfoBlock label="Mejor opción" value={option ? `${option.label || "Opción"} · prioridad ${option.score ?? "N/D"}` : "Pendiente"} />
       </div>
       <div className="mt-3 rounded-md border bg-background p-3">
         <p className="text-xs font-semibold uppercase text-muted-foreground">Evidencia considerada</p>
         <div className="mt-2 grid gap-2 md:grid-cols-2">
-          {(evidence.items || []).slice(0, 4).map((evidenceItem, index) => (
+          {evidenceItems.slice(0, 4).map((evidenceItem, index) => (
             <div key={`${evidenceItem.source_ref || "referencia"}:${index}`} className="rounded-md border p-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">{sanitizeBusinessCopy(evidenceItem.source_ref, "Referencia")}</span>
               <span> · {evidenceItem.supports_hypothesis || "referencia"}</span>
@@ -4065,7 +4106,7 @@ function IntelligencePanel({
             </div>
           ))}
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">{externalEvidenceCount ? `${externalEvidenceCount} referencia(s) externas consideradas.` : "Sin contexto externo configurado para esta señal."}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{evidenceContextText}</p>
       </div>
       {topOptions.length ? (
         <div className="mt-3 grid gap-2 lg:grid-cols-3">
