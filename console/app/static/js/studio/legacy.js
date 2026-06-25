@@ -155,10 +155,39 @@ import { state } from './legacy-state.js';
         || '';
     }
 
+    function normalizeStorageSourceRef(value) {
+      let ref = String(value || '').trim();
+      if (!ref) return '';
+      ref = ref.replace(/^s3:\/\/(?:\{bucket\}|[^/]+)\//, '').replace(/^\/+/, '');
+      const parts = ref.split('/').filter(Boolean);
+      if (parts.length >= 3 && ['raw', 'silver', 'gold'].includes(parts[0])) {
+        return `${parts[0]}/${parts[1]}/${parts[2]}`;
+      }
+      return '';
+    }
+
     function currentEditorSources() {
+      const found = new Set();
+      const detailSources = Array.isArray(state._selectedDSDetail?.sources)
+        ? state._selectedDSDetail.sources
+        : [];
+      detailSources.forEach(s => {
+        const normalized = normalizeStorageSourceRef(s);
+        if (normalized) found.add(normalized);
+      });
+
       const entity = _currentEditorEntity();
       const cart = currentCartridgeId();
-      return entity && cart ? [`raw/${cart}/${entity}`] : [];
+      if (entity && cart) found.add(`raw/${cart}/${entity}`);
+
+      const sql = document.getElementById('ds-ed-sql')?.value || '';
+      const re = /\b(?:read_parquet|read_csv|read_json|parquet_scan|csv_scan)\s*\(\s*['"]([^'"]+)['"]/gi;
+      let match;
+      while ((match = re.exec(sql))) {
+        const normalized = normalizeStorageSourceRef(match[1]);
+        if (normalized) found.add(normalized);
+      }
+      return [...found];
     }
 
     function currentTemplateSource() {
@@ -2086,7 +2115,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
       if (status) status.textContent = '⟳ guardando...';
       try {
-        const sources = entity && cart ? [`raw/${cart}/${entity}`] : [];
+        const sources = currentEditorSources();
         const r = await fetch('/api/datasets/save', {
           method: 'POST', credentials: 'include', headers: jsonHeaders(),
           body: JSON.stringify({ name, layer, sql, description: desc, cartridge: cart, sources }),

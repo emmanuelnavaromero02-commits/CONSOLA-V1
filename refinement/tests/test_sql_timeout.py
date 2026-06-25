@@ -142,6 +142,21 @@ def test_preview_sql_normalizes_timeout_shaped_errors(
         assert "exceeded timeout" not in err, err
 
 
+def test_preview_sql_normalizes_s3_listing_http_400(engine_module):
+    raised = RuntimeError(
+        "HTTP Error: HTTP GET error on "
+        "'/?encoding-type=url&list-type=2&prefix=raw%2Fsap_successfactors%2FCandidate%2F' "
+        "(HTTP 400) while reading s3://bucket/raw/sap_successfactors/Candidate/**/*.parquet"
+    )
+    eng = _wire_minimal_engine(engine_module, _RaisingConn(raised))
+
+    result = eng.preview_sql("SELECT 1", limit=10)
+
+    assert result["code"] == "s3_storage_list_failed"
+    assert "No se pudo listar Parquet en S3" in result["error"]
+    assert "raw_error" in result
+
+
 def test_preview_sql_detects_duckdb_interrupt_exception_class(engine_module):
     """If the real duckdb wheel raises its dedicated InterruptException
     (no 'interrupt' substring guaranteed in str()), we still classify it
