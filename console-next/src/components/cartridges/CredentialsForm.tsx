@@ -13,6 +13,7 @@ import type { VaultConnection } from "@/lib/operations/types";
 import {
   getActiveCartridgeSyncRun,
   getCartridgeSyncRun,
+  hasSyncRunId,
   isSyncTerminal,
   startCartridgeSyncNow,
   type SyncRunPayload,
@@ -89,6 +90,12 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
         ...(connIdForTest ? { conn_id: connIdForTest } : {}),
       }),
     onSuccess: (payload) => {
+      if (!hasSyncRunId(payload)) {
+        forgetCartridgeSyncRun(cartridgeId);
+        setSyncRunId("");
+        toast("No hay sincronización activa para restaurar.");
+        return;
+      }
       rememberCartridgeSyncRun(cartridgeId, payload.run_id);
       setSyncRunId(payload.run_id);
       toast.success("Sincronización enviada.");
@@ -132,7 +139,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
           target: "all",
           ...(connIdForTest ? { conn_id: connIdForTest } : {}),
         });
-        if (cancelled || isSyncTerminal(current.status)) return;
+        if (cancelled || !hasSyncRunId(current) || isSyncTerminal(current.status)) return;
         rememberCartridgeSyncRun(cartridgeId, current.run_id);
         setSyncRunId(current.run_id);
       } catch {

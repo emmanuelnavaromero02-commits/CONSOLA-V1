@@ -55,6 +55,7 @@ import { listApps, type AppsResponse } from "@/lib/admin-surfaces";
 import {
   getActiveCartridgeSyncRun,
   getCartridgeSyncRun,
+  hasSyncRunId,
   isSyncTerminal,
   startCartridgeSyncNow,
   type SyncRunPayload,
@@ -794,7 +795,7 @@ function controlSyncStorageKey(cartridgeId: string): string {
 }
 
 function rememberControlSyncRun(cartridgeId: string, payload: SyncRunPayload): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !hasSyncRunId(payload)) return;
   try {
     const value: RememberedControlSyncRun = {
       run_id: payload.run_id,
@@ -2164,6 +2165,12 @@ export default function ControlRoomPage() {
     initial: SyncRunPayload,
     options: { announce?: boolean } = {},
   ) => {
+    if (!hasSyncRunId(initial) || initial.active === false) {
+      setControlSyncRun(null);
+      setControlSyncing(false);
+      forgetControlSyncRun(activeCartridge);
+      return;
+    }
     const pollKey = `${activeCartridge}:${initial.run_id}`;
     if (controlSyncPollRef.current === pollKey) return;
 
@@ -2173,10 +2180,11 @@ export default function ControlRoomPage() {
     setControlSyncRun(initial);
     rememberControlSyncRun(activeCartridge, initial);
     try {
-      let current = initial;
+      let current: SyncRunPayload = initial;
 
       for (let attempt = 0; attempt < SYNC_NOW_MAX_POLL_ATTEMPTS && !isSyncTerminal(current.status); attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, SYNC_NOW_POLL_INTERVAL_MS));
+        if (!hasSyncRunId(current)) break;
         current = await getCartridgeSyncRun(activeCartridge, current.run_id);
         setControlSyncRun(current);
         if (!isSyncTerminal(current.status)) rememberControlSyncRun(activeCartridge, current);
@@ -2218,6 +2226,12 @@ export default function ControlRoomPage() {
     setSyncError("");
     try {
       const current = await startCartridgeSyncNow(activeCartridge, { mode: "incremental", target });
+      if (!hasSyncRunId(current)) {
+        forgetControlSyncRun(activeCartridge);
+        setControlSyncRun(null);
+        toast("No hay sincronización activa para monitorear.");
+        return;
+      }
       rememberControlSyncRun(activeCartridge, current);
       setControlSyncRun(current);
       toast.success("Sincronización enviada.");
@@ -2245,6 +2259,11 @@ export default function ControlRoomPage() {
           ? await getCartridgeSyncRun(activeCartridge, remembered.run_id)
           : await getActiveCartridgeSyncRun(activeCartridge, { mode: "incremental", target });
         if (cancelled) return;
+        if (!hasSyncRunId(current) || current.active === false) {
+          setControlSyncRun(null);
+          if (remembered) forgetControlSyncRun(activeCartridge);
+          return;
+        }
         setControlSyncRun(current);
         if (isSyncTerminal(current.status)) {
           forgetControlSyncRun(activeCartridge);

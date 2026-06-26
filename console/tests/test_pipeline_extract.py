@@ -677,6 +677,37 @@ async def test_fetch_active_sync_run_returns_none_on_lookup_error(
 
 
 @pytest.mark.anyio
+async def test_active_sync_run_endpoint_returns_inactive_payload_without_404(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+
+    async def resolve(user_arg, cartridge_id, fallback=None):
+        assert cartridge_id == "sap_successfactors"
+        return "sap_successfactors", True
+
+    async def fetch_active(**_kwargs):
+        return None
+
+    monkeypatch.setattr(console_main, "_resolve_scoped_operation_cartridge", resolve)
+    monkeypatch.setattr(console_main, "_fetch_active_sync_run", fetch_active)
+
+    result = await console_main.api_cartridge_active_sync_run(
+        "sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        user=user,
+    )
+
+    assert result["active"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "no_active_sync_run"
+    assert result["run_id"] is None
+    assert result["conn_id"] == "femsa_sf"
+
+
+@pytest.mark.anyio
 async def test_extract_all_scopes_idempotency_key_per_entity(console_main, monkeypatch):
     async def pipeline(cartridge, user=None):
         return {
@@ -755,6 +786,11 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
     async def fanout_should_not_run(*_args, **_kwargs):
         raise AssertionError("sap_successfactors sync-now should use aggregate DAG")
 
+    async def seed_datasets(**kwargs):
+        assert kwargs["cartridge"] == "sap_successfactors"
+        assert kwargs["user"] is user
+        return {"status": "success", "seeded_rows": 59}
+
     monkeypatch.setattr(console_main, "_resolve_scoped_operation_cartridge", resolve)
     monkeypatch.setattr(console_main, "_fetch_active_sync_run", no_active)
     monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
@@ -762,6 +798,7 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
     monkeypatch.setattr(console_main, "_build_sync_run_status", build_status)
     monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger)
     monkeypatch.setattr(console_main, "_record_dag_pipeline_trigger", record)
+    monkeypatch.setattr(console_main, "_ensure_sync_packaged_datasets", seed_datasets)
     monkeypatch.setattr(console_main, "api_pipeline_extract_all", fanout_should_not_run)
 
     result = await console_main.api_cartridge_sync_now(
@@ -780,6 +817,7 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
     assert trigger_calls[0]["conf"]["workspace_id"] == user["active_workspace_id"]
     assert records[0]["entity"] == console_main._SYNC_AGGREGATE_ENTITY
     assert stored["extra"]["trigger_strategy"] == "aggregate_dag"
+    assert stored["extra"]["dataset_seed"] == {"status": "success", "seeded_rows": 59}
     assert (
         stored["extra"]["triggered_entities"][0]["entity"]
         == console_main._SYNC_AGGREGATE_ENTITY

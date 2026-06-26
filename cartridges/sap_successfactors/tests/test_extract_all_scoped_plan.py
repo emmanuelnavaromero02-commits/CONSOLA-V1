@@ -117,6 +117,33 @@ def test_extract_all_target_all_includes_former_external_scope_entities(monkeypa
     assert skipped == []
 
 
+def test_extract_all_plan_treats_cartridge_connection_as_selected_placeholder(monkeypatch):
+    from app.services import catalog_service
+
+    rows = [
+        {
+            "entity": "User",
+            "odata_entity": "User",
+            "connection_id": "sap_successfactors",
+            "primary_key": "userId",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+            "watermark_field": "lastModifiedDateTime",
+        }
+    ]
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+
+    entities, skipped = catalog_service.get_extract_all_plan(
+        conn_id="femsa_sf",
+        security_context=_ctx(),
+    )
+
+    assert [row["entity"] for row in entities] == ["User"]
+    assert skipped == []
+    assert entities[0]["conn_id"] == "femsa_sf"
+    assert entities[0]["connection_id"] == "femsa_sf"
+
+
 def test_extract_all_default_does_not_silently_skip_known_talent_entities(monkeypatch):
     from app.services import catalog_service
 
