@@ -7,8 +7,10 @@
 -- the same packaged dataset name may exist once per workspace.
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    version TEXT PRIMARY KEY,
-    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id BIGSERIAL PRIMARY KEY,
+    filename TEXT NOT NULL UNIQUE,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checksum TEXT
 );
 
 ALTER TABLE datasets
@@ -108,6 +110,6 @@ BEGIN
     END IF;
 END $$;
 
-INSERT INTO schema_migrations(version)
-VALUES ('99zd_datasets_workspace_scoped_catalog')
-ON CONFLICT (version) DO NOTHING;
+INSERT INTO schema_migrations(filename, applied_at)
+VALUES ('99zd_datasets_workspace_scoped_catalog.sql', NOW())
+ON CONFLICT (filename) DO NOTHING;
