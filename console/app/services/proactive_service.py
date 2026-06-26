@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.services import auth
+from app.services.db_scope import scoped_db
 
 
 logger = logging.getLogger(__name__)
@@ -128,19 +129,22 @@ async def analyze_freshness(user_context: dict | None = None) -> list[Highlight]
     tenant_id, workspace_id, visible = _scope_values(user_context)
     if workspace_id:
         cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
-        rows = await pool.fetch(
-            f"""
-            SELECT cartridge_id,
-                   EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
-              FROM pipeline_runs
-             WHERE status = 'success'
-               AND workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               {cart_sql}
-             GROUP BY cartridge_id
-            """,
-            workspace_id, tenant_id or None, *cart_args,
-        )
+        async with scoped_db(pool, tenant_id, workspace_id) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT cartridge_id,
+                       EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
+                  FROM pipeline_runs
+                 WHERE status = 'success'
+                   AND workspace_id = $1::uuid
+                   AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
+                   {cart_sql}
+                 GROUP BY cartridge_id
+                """,
+                workspace_id,
+                tenant_id or None,
+                *cart_args,
+            )
     else:
         rows = await pool.fetch(
             """
@@ -216,39 +220,41 @@ async def analyze_volume_anomaly(user_context: dict | None = None) -> list[Highl
     if workspace_id:
         scope_sql = "AND workspace_id = $1::uuid AND ($2::uuid IS NULL OR tenant_id = $2::uuid)"
         params = [workspace_id, tenant_id or None]
-    rows = await pool.fetch(
-        f"""
-        WITH per_day AS (
-            SELECT cartridge_id,
-                   date_trunc('day', finished_at) AS day,
-                   SUM(COALESCE({volume_column}, 0)) AS records
-              FROM {source_table}
-             WHERE status = 'success'
-               AND finished_at >= NOW() - INTERVAL '8 days'
-               {scope_sql}
-               {cart_sql}
-             GROUP BY cartridge_id, day
-        ),
-        latest AS (
-            SELECT cartridge_id, records AS yesterday
-              FROM per_day
-             WHERE day = date_trunc('day', NOW() - INTERVAL '1 day')
-        ),
-        baseline AS (
-            SELECT cartridge_id,
-                   percentile_cont(0.5) WITHIN GROUP (ORDER BY records) AS median
-              FROM per_day
-             WHERE day BETWEEN date_trunc('day', NOW() - INTERVAL '8 days')
-                           AND date_trunc('day', NOW() - INTERVAL '2 days')
-             GROUP BY cartridge_id
-        )
-        SELECT l.cartridge_id, l.yesterday, b.median
-          FROM latest l
-          JOIN baseline b USING (cartridge_id)
-         WHERE b.median > 0
-        """,
-        *params, *cart_args,
+    query = f"""
+    WITH per_day AS (
+        SELECT cartridge_id,
+               date_trunc('day', finished_at) AS day,
+               SUM(COALESCE({volume_column}, 0)) AS records
+          FROM {source_table}
+         WHERE status = 'success'
+           AND finished_at >= NOW() - INTERVAL '8 days'
+           {scope_sql}
+           {cart_sql}
+         GROUP BY cartridge_id, day
+    ),
+    latest AS (
+        SELECT cartridge_id, records AS yesterday
+          FROM per_day
+         WHERE day = date_trunc('day', NOW() - INTERVAL '1 day')
+    ),
+    baseline AS (
+        SELECT cartridge_id,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY records) AS median
+          FROM per_day
+         WHERE day BETWEEN date_trunc('day', NOW() - INTERVAL '8 days')
+                       AND date_trunc('day', NOW() - INTERVAL '2 days')
+         GROUP BY cartridge_id
     )
+    SELECT l.cartridge_id, l.yesterday, b.median
+      FROM latest l
+      JOIN baseline b USING (cartridge_id)
+     WHERE b.median > 0
+    """
+    if workspace_id:
+        async with scoped_db(pool, tenant_id, workspace_id) as conn:
+            rows = await conn.fetch(query, *params, *cart_args)
+    else:
+        rows = await pool.fetch(query, *params, *cart_args)
     out: list[Highlight] = []
     for row in rows:
         cart = row["cartridge_id"]
@@ -338,19 +344,22 @@ async def analyze_extraction_failures(user_context: dict | None = None) -> list[
     tenant_id, workspace_id, visible = _scope_values(user_context)
     if workspace_id:
         cart_sql, cart_args = _cartridge_filter_sql(visible, 3)
-        rows = await pool.fetch(
-            f"""
-            SELECT cartridge_id, COUNT(*) AS failures
-              FROM pipeline_runs
-             WHERE status = 'failed'
-               AND finished_at >= NOW() - INTERVAL '24 hours'
-               AND workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               {cart_sql}
-             GROUP BY cartridge_id
-            """,
-            workspace_id, tenant_id or None, *cart_args,
-        )
+        async with scoped_db(pool, tenant_id, workspace_id) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT cartridge_id, COUNT(*) AS failures
+                  FROM pipeline_runs
+                 WHERE status = 'failed'
+                   AND finished_at >= NOW() - INTERVAL '24 hours'
+                   AND workspace_id = $1::uuid
+                   AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
+                   {cart_sql}
+                 GROUP BY cartridge_id
+                """,
+                workspace_id,
+                tenant_id or None,
+                *cart_args,
+            )
     else:
         rows = await pool.fetch(
             """
