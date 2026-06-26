@@ -5,9 +5,9 @@
 -- the per-dataset SQL bodies live in cartridges/sap_successfactors/datasets/*.sql
 -- and are inlined here as dollar-quoted literals for refinement to materialize.
 --
--- All names are prefixed sap_successfactors_ : datasets.name is a GLOBAL primary
--- key and headcount_by_department / manager_hierarchy / employees_anomalies
--- already exist for sap_hcm.
+-- All names are prefixed sap_successfactors_ for cross-cartridge clarity and
+-- backwards compatibility with historical rows. headcount_by_department /
+-- manager_hierarchy / employees_anomalies already exist for sap_hcm.
 --
 -- workspace_id (NOT NULL since migration 23) is set to the first workspace on
 -- every row (the lesson from the HCM datasets PR).
@@ -796,8 +796,8 @@ $seed$, $seed$Empleados activos por compañía legal (snapshot del mes en curso)
 -- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FODepartment"]
 -- description: Empleados activos por departamento (snapshot del mes en curso).
 
--- Nombre prefijado con el cartucho: datasets.name es PK global y headcount_by_department
--- ya existe para sap_hcm.
+-- Nombre prefijado con el cartucho por compatibilidad historica:
+-- headcount_by_department ya existe para sap_hcm.
 WITH emp AS (
     SELECT department_id, department_name
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')

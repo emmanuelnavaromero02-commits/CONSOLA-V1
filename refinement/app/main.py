@@ -2689,6 +2689,15 @@ async def refresh_by_source(
     matched  = [d for d in all_ds if source in (d.get("sources") or []) and _dataset_allowed(sec, d)]
     results  = []
 
+    if not matched:
+        return {
+            "source": source,
+            "status": "skipped",
+            "reason": "no_matching_datasets_in_workspace",
+            "refreshed": 0,
+            "results": [],
+        }
+
     for meta in matched:
         ds = store.get_dataset(meta["name"], **store_scope)
         if not ds or ds.get("layer") == "gold":
@@ -2729,4 +2738,18 @@ async def refresh_by_source(
             },
         )
 
-    return {"source": source, "refreshed": len(results), "results": results}
+    skipped = [r for r in results if r.get("status") == "skipped"]
+    status = "partial" if errors or skipped else "success"
+    reason = None
+    if skipped:
+        reason = "missing_materialized_dependencies"
+    if errors:
+        reason = "materialization_error"
+
+    return {
+        "source": source,
+        "status": status,
+        "reason": reason,
+        "refreshed": len([r for r in results if r.get("status") == "ok"]),
+        "results": results,
+    }

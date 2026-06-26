@@ -57,11 +57,14 @@ def test_seed_packaged_datasets_sets_rls_scope_before_writes(seed_module):
     assert "tenant_id = EXCLUDED.tenant_id" in seed_source
 
 
-def test_seed_packaged_datasets_preserves_existing_dataset_scope(seed_module):
+def test_seed_packaged_datasets_seeds_every_workspace(seed_module):
     source = inspect.getsource(seed_module)
+    seed_source = inspect.getsource(seed_module.seed_packaged_datasets)
 
-    assert "def _dataset_scope_for_name" in source
-    assert "A startup seed running under one workspace" in source
-    assert "for workspace in workspaces:" in source
-    assert "WHERE name = $1" in source
-    assert "await _set_seed_scope(conn, tenant_id, workspace_id)" in source
+    assert "def _datasets_workspace_name_conflict_available" in source
+    assert "target_workspaces = workspaces if scoped_conflict else workspaces[:1]" in seed_source
+    assert "for workspace in target_workspaces:" in seed_source
+    assert '"(workspace_id, name)" if scoped_conflict else "(name)"' in seed_source
+    assert "ON CONFLICT {conflict_target} DO UPDATE" in seed_source
+    assert "WHERE cartridge = $1" in seed_source
+    assert "AND workspace_id = $2::uuid" in seed_source
