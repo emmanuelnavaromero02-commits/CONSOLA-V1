@@ -84,6 +84,8 @@ def test_hubspot_refinement_datasets_are_seeded():
     assert "raw/hubspot/deals" in src
     assert "silver/hubspot/hubspot_deals_latest" in src
     assert "gold/hubspot/pipeline_salud" in src
+    assert "ON CONFLICT DO NOTHING" in src
+    assert "ON CONFLICT (name)" not in src
 
 
 def test_hubspot_refresh_by_source_uses_trusted_security_context():

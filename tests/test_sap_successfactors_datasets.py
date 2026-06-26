@@ -159,7 +159,8 @@ def test_migration_idempotent_and_scoped():
     sql = BASE_MIGRATION.read_text(encoding="utf-8")
     talent_sql = TALENT_MIGRATION.read_text(encoding="utf-8")
     assert "ON CONFLICT (name) DO NOTHING" in sql
-    assert "ON CONFLICT (name) DO UPDATE" in talent_sql
+    assert "ON CONFLICT DO NOTHING" in talent_sql
+    assert "ON CONFLICT (name)" not in talent_sql
     assert "'82_sap_successfactors_datasets_seed.sql'" in sql
     assert "'99p_sap_successfactors_talent_datasets.sql'" in talent_sql
     combined = sql + talent_sql

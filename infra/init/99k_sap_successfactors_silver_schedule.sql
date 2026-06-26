@@ -4,8 +4,9 @@
 -- after PerPerson, fixes _latest deduplication to choose the newest snapshot per
 -- business key, and schedules the FEMSA scoped connection for daily extraction.
 --
--- Existing installs already applied migration 82, so this migration uses
--- ON CONFLICT DO UPDATE for the affected Silver datasets.
+-- Existing installs already applied migration 82. Use target-less conflict
+-- handling so this seed works both before and after datasets became workspace
+-- scoped.
 
 ALTER TABLE entity_config
     ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
@@ -405,16 +406,7 @@ LEFT JOIN loc l ON l.location_id = c.location
 LEFT JOIN bu ON bu.business_unit_id = c.business_unit
 ORDER BY company_id, division_id, department_id, location_id
 $seed$, $seed$Estructura organizacional observada: combinaciones distintas de compañía/división/departamento/ubicación según las asignaciones de EmpJob, con nombres de los FO.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO UPDATE SET
-    layer          = EXCLUDED.layer,
-    cartridge      = EXCLUDED.cartridge,
-    sources        = EXCLUDED.sources,
-    sql_def        = EXCLUDED.sql_def,
-    description    = EXCLUDED.description,
-    column_mapping = EXCLUDED.column_mapping,
-    schedule       = EXCLUDED.schedule,
-    workspace_id   = COALESCE(datasets.workspace_id, EXCLUDED.workspace_id),
-    updated_at     = NOW();
+ON CONFLICT DO NOTHING;
 
 UPDATE entity_config
    SET select_fields = '["personIdExternal","userId","startDate","endDate","assignmentClass","originalStartDate","lastModifiedDateTime"]'::jsonb

@@ -29,9 +29,10 @@ def _sql() -> str:
     return MIGRATION.read_text(encoding="utf-8")
 
 
-def test_migration_updates_existing_silver_catalog():
+def test_migration_seeds_live_silver_catalog_schema_agnostically():
     sql = _sql()
-    assert "ON CONFLICT (name) DO UPDATE SET" in sql
+    assert "ON CONFLICT DO NOTHING" in sql
+    assert "ON CONFLICT (name)" not in sql
     for dataset in (
         "sap_successfactors_perperson_latest",
         "sap_successfactors_perpersonal_latest",
