@@ -2857,20 +2857,35 @@ async def readyz(request: Request):
         or require_intelligence_param in {"1", "true", "yes", "on"}
         or (require_data and _is_production_env() and not intelligence_opt_out_allowed)
     )
-    checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
-    try:
-        from app.services.intelligence.readiness import intelligence_readiness
+    if require_data:
+        checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
+    else:
+        checks["control_room_data"] = {
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
+        }
 
-        checks["intelligence_data"] = await intelligence_readiness(
-            getattr(request.state, "user", None),
-            require_data=require_intelligence_data,
-        )
-    except Exception as exc:
-        logger.warning("readiness probe failed for intelligence_data", exc_info=True)
+    if require_intelligence_data:
+        try:
+            from app.services.intelligence.readiness import intelligence_readiness
+
+            checks["intelligence_data"] = await intelligence_readiness(
+                getattr(request.state, "user", None),
+                require_data=require_intelligence_data,
+            )
+        except Exception as exc:
+            logger.warning("readiness probe failed for intelligence_data", exc_info=True)
+            checks["intelligence_data"] = {
+                "status": "degraded",
+                "required": require_intelligence_data,
+                "error": type(exc).__name__,
+            }
+    else:
         checks["intelligence_data"] = {
-            "status": "degraded",
-            "required": require_intelligence_data,
-            "error": type(exc).__name__,
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
         }
 
     dependency_ok = all(
