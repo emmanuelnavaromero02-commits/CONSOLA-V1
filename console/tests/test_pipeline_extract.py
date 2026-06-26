@@ -1124,6 +1124,143 @@ async def test_successfactors_dag_entity_without_connection_id_returns_400_befor
     assert "connection_id" in str(exc.value.detail)
 
 
+@pytest.mark.anyio
+async def test_successfactors_entity_extract_reuses_active_run(console_main):
+    console_main._test_asyncpg_stub.fetch_rows = [
+        {
+            "run_id": "manual__user_active",
+            "dag_id": "sap_successfactors_extract",
+            "entity": "User",
+            "airflow_dag_run_id": "manual__user_active",
+            "status": "running",
+            "mode": "incremental",
+            "started_at": datetime.now(timezone.utc),
+            "extra": {},
+        }
+    ]
+
+    result = await console_main._reserve_successfactors_entity_extract_slot(
+        cartridge="sap_successfactors",
+        entity="User",
+        dag_id="sap_successfactors_extract",
+        conf={
+            "cartridge_id": "sap_successfactors",
+            "entity": "User",
+            "mode": "incremental",
+        },
+        user=_scoped_sf_pipeline_user(),
+    )
+
+    assert result["response"]["reused"] is True
+    assert result["response"]["reason"] == "active_entity_run"
+    assert result["response"]["dag_run_id"] == "manual__user_active"
+    assert not any(
+        "INSERT INTO pipeline_runs" in query
+        for query, _args in console_main._test_asyncpg_stub.executed
+    )
+
+
+@pytest.mark.anyio
+async def test_successfactors_entity_extract_backpressure_limits_active_runs(
+    console_main, monkeypatch
+):
+    monkeypatch.setattr(
+        console_main,
+        "_SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS",
+        2,
+    )
+    console_main._test_asyncpg_stub.fetch_rows = [
+        {
+            "run_id": "manual__user_active",
+            "dag_id": "sap_successfactors_extract",
+            "entity": "User",
+            "airflow_dag_run_id": "manual__user_active",
+            "status": "running",
+            "mode": "incremental",
+            "started_at": datetime.now(timezone.utc),
+            "extra": {},
+        },
+        {
+            "run_id": "manual__phone_active",
+            "dag_id": "sap_successfactors_extract",
+            "entity": "PerPhone",
+            "airflow_dag_run_id": "manual__phone_active",
+            "status": "queued",
+            "mode": "incremental",
+            "started_at": datetime.now(timezone.utc),
+            "extra": {},
+        },
+    ]
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main._reserve_successfactors_entity_extract_slot(
+            cartridge="sap_successfactors",
+            entity="PerEmail",
+            dag_id="sap_successfactors_extract",
+            conf={
+                "cartridge_id": "sap_successfactors",
+                "entity": "PerEmail",
+                "mode": "incremental",
+            },
+            user=_scoped_sf_pipeline_user(),
+        )
+
+    assert exc.value.status_code == 429
+    assert exc.value.detail["reason"] == "too_many_active_entity_extracts"
+
+
+@pytest.mark.anyio
+async def test_successfactors_entity_extract_endpoint_returns_reused_active_run(
+    console_main, monkeypatch
+):
+    async def metadata(cartridge, entity):
+        return {
+            "pattern": "dag-based",
+            "entity": entity,
+            "dag_id": "sap_successfactors_extract",
+            "mode": "incremental",
+            "enabled": True,
+            "connection_id": "femsa_sf",
+        }
+
+    async def reserve(**_kwargs):
+        return {
+            "response": {
+                "triggered": False,
+                "reused": True,
+                "cartridge": "sap_successfactors",
+                "entity": "User",
+                "dag_id": "sap_successfactors_extract",
+                "job_id": "manual__user_active",
+                "run_id": "manual__user_active",
+                "dag_run_id": "manual__user_active",
+                "state": "running",
+                "reason": "active_entity_run",
+                "conf": {},
+            }
+        }
+
+    async def trigger_should_not_run(*_args, **_kwargs):
+        raise AssertionError("Airflow should not be triggered for a reused run")
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
+    monkeypatch.setattr(
+        console_main, "_reserve_successfactors_entity_extract_slot", reserve
+    )
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
+
+    result = await console_main.api_pipeline_extract(
+        "sap_successfactors",
+        "User",
+        {},
+        user=_scoped_sf_pipeline_user(),
+    )
+
+    assert result["triggered"] is False
+    assert result["reused"] is True
+    assert result["dag_run_id"] == "manual__user_active"
+
+
 def test_bronze_latest_date_from_real_minio_paths(console_main):
     latest_date = console_main._bronze_latest_date_from_objects(
         "replicon",

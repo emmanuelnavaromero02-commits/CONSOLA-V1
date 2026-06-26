@@ -380,7 +380,7 @@ def _pipeline_run_save(
         print(f"[sap_successfactors_extract] pipeline_run_save failed: {exc}")
 
 
-@dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=2)
+@dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=1)
 def sap_successfactors_extract():
     @task
     def trigger_extract(**context):
