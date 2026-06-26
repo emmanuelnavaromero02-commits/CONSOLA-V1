@@ -597,7 +597,7 @@ def get_extract_all_plan(
 
         if selected_conn_id:
             config_conn_id = str(config.get("connection_id") or "").strip()
-            if config_conn_id and config_conn_id != selected_conn_id:
+            if config_conn_id and config_conn_id not in {selected_conn_id, CARTRIDGE_ID}:
                 skipped.append(
                     _plan_outcome(
                         entity=entity,
@@ -608,8 +608,12 @@ def get_extract_all_plan(
                     )
                 )
                 continue
-            if not config_conn_id:
-                config = {**config, "conn_id": selected_conn_id}
+            if not config_conn_id or config_conn_id == CARTRIDGE_ID:
+                config = {
+                    **config,
+                    "conn_id": selected_conn_id,
+                    "connection_id": selected_conn_id,
+                }
             if not _matches_security_scope(config, tenant_id, workspace_id):
                 skipped.append(
                     _plan_outcome(

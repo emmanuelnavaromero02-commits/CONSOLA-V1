@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
-import { createSyncNowRequestId, getActiveCartridgeSyncRun, startCartridgeSyncNow } from "./sync-now";
+import {
+  createSyncNowRequestId,
+  getActiveCartridgeSyncRun,
+  hasSyncRunId,
+  startCartridgeSyncNow,
+} from "./sync-now";
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -92,5 +97,37 @@ describe("sync-now client", () => {
     expect(apiMock.get).toHaveBeenCalledWith(
       "/api/cartridges/sap_successfactors/sync-runs/active?mode=incremental&target=talent&conn_id=femsa_sf",
     );
+  });
+
+  it("identifies inactive sync payloads without a run id", () => {
+    expect(hasSyncRunId(null)).toBe(false);
+    expect(
+      hasSyncRunId({
+        run_id: null,
+        cartridge_id: "sap_successfactors",
+        status: "skipped",
+        active: false,
+        mode: "incremental",
+        target: "all",
+        steps: [],
+        triggered_entities: [],
+        errors: [],
+        control_room_ready: false,
+      }),
+    ).toBe(false);
+    expect(
+      hasSyncRunId({
+        run_id: "sync_now:sap_successfactors:active",
+        cartridge_id: "sap_successfactors",
+        status: "running",
+        active: true,
+        mode: "incremental",
+        target: "all",
+        steps: [],
+        triggered_entities: [],
+        errors: [],
+        control_room_ready: false,
+      }),
+    ).toBe(true);
   });
 });

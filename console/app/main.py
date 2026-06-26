@@ -7517,6 +7517,7 @@ def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str
         "run_id": row.get("run_id"),
         "cartridge_id": row.get("cartridge_id"),
         "status": status,
+        "active": status.lower() not in _SYNC_TERMINAL_STATUSES,
         "mode": row.get("mode") or extra.get("mode") or "incremental",
         "target": extra.get("target") or "all",
         "progress_percent": max(0, min(progress, 100)),
@@ -7534,6 +7535,59 @@ def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str
         else None,
         "error_message": row.get("error_message"),
     }
+
+
+def _inactive_sync_run_payload(
+    *, cartridge: str, mode: str, target: str, conn_id: str | None = None
+) -> dict[str, Any]:
+    return {
+        "run_id": None,
+        "cartridge_id": cartridge,
+        "status": "skipped",
+        "active": False,
+        "mode": mode,
+        "target": target,
+        "progress_percent": 0,
+        "steps": [],
+        "triggered_entities": [],
+        "errors": [],
+        "control_room_ready": False,
+        "control_room_snapshot": {},
+        "agentops_refresh": {},
+        "started_at": None,
+        "finished_at": None,
+        "error_message": None,
+        "reason": "no_active_sync_run",
+        "conn_id": conn_id,
+    }
+
+
+async def _ensure_sync_packaged_datasets(
+    *, cartridge: str, user: dict | None
+) -> dict[str, Any]:
+    if cartridge != "sap_successfactors":
+        return {"status": "skipped", "reason": "cartridge_not_packaged"}
+    tenant_id, workspace_id = _workspace_scope_from_user(user)
+    from app.services.seed_packaged_datasets import (
+        seed_packaged_datasets_for_workspace,
+    )
+
+    pool = await _get_db_pool()
+    result = await seed_packaged_datasets_for_workspace(
+        pool,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        cartridge_id=cartridge,
+    )
+    logger.info(
+        "sync packaged dataset seed cartridge=%s tenant=%s workspace=%s status=%s seeded_rows=%s",
+        cartridge,
+        tenant_id,
+        workspace_id,
+        result.get("status"),
+        result.get("seeded_rows"),
+    )
+    return result
 
 
 def _sync_agentops_is_terminal(payload: Any) -> bool:
@@ -8791,6 +8845,91 @@ async def api_cartridge_sync_now(
                 "SELECT pg_advisory_unlock(hashtext($1))", lock_key
             )
 
+    dataset_seed: dict[str, Any] | None = None
+    if cartridge == "sap_successfactors":
+        try:
+            dataset_seed = await _ensure_sync_packaged_datasets(
+                cartridge=cartridge,
+                user=user,
+            )
+        except Exception as exc:  # noqa: BLE001
+            message = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "sync packaged dataset seed failed cartridge=%s run_id=%s: %s",
+                cartridge,
+                run_id,
+                message,
+                exc_info=True,
+            )
+            steps = _merge_sync_steps(
+                steps,
+                {
+                    "connection": {
+                        "label": "Conexión",
+                        "status": "success",
+                        "detail": "Scope y conexión aceptados por el pipeline.",
+                    },
+                    "silver_gold": {
+                        "label": "Silver/Gold",
+                        "status": "failed",
+                        "detail": "No se pudieron preparar los refinamientos del workspace.",
+                        "error": message[:300],
+                        "completed": 0,
+                        "total": 1,
+                    },
+                    "control_room": {
+                        "label": "Control Room",
+                        "status": "failed",
+                        "detail": "Sin Silver/Gold preparados no se puede refrescar Control Room.",
+                        "completed": 0,
+                        "total": 1,
+                    },
+                    "agents_intelligence": {
+                        "label": "Agentes/IA",
+                        "status": "failed",
+                        "detail": "Sin materialización no se ejecutan monitores.",
+                        "completed": 0,
+                        "total": 1,
+                    },
+                },
+            )
+            await _upsert_sync_run(
+                run_id=run_id,
+                cartridge=cartridge,
+                mode=mode,
+                status="failed",
+                user=user,
+                extra={
+                    "mode": mode,
+                    "target": target,
+                    "conn_id": conn_id,
+                    "request_id": request_id,
+                    "steps": steps,
+                    "triggered_entities": [],
+                    "errors": [
+                        {
+                            "entity": "__dataset_seed__",
+                            "error": message,
+                            "reason": "packaged_dataset_seed_failed",
+                        }
+                    ],
+                    "control_room_ready": False,
+                    "dataset_seed": {
+                        "status": "failed",
+                        "reason": "packaged_dataset_seed_failed",
+                        "error": message,
+                    },
+                },
+                error_message=message[:500],
+            )
+            row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+            if row:
+                return _sync_public_payload(row, _sync_extra_from_row(row))
+            raise HTTPException(
+                500,
+                "sync packaged dataset seed failed before Airflow trigger",
+            )
+
     extract_body = {
         "mode": mode,
         "target": target,
@@ -8893,6 +9032,7 @@ async def api_cartridge_sync_now(
             "control_room_ready": False,
             "extract_all_result": result,
             "trigger_strategy": result.get("trigger_strategy") or "fanout",
+            "dataset_seed": dataset_seed,
         },
         error_message="; ".join(
             str(item.get("error") or "")
@@ -8949,7 +9089,12 @@ async def api_cartridge_active_sync_run(
         user=user,
     )
     if not row:
-        raise HTTPException(404, "active sync run not found")
+        return _inactive_sync_run_payload(
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=_normalize_pipeline_conn_id(conn_id),
+        )
     try:
         return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
     except Exception:

@@ -17,9 +17,10 @@ export interface SyncRunStep {
 }
 
 export interface SyncRunPayload {
-  run_id: string;
+  run_id: string | null;
   cartridge_id: string;
   status: SyncRunStatus;
+  active?: boolean;
   mode: "incremental" | "full";
   target: SyncTarget;
   progress_percent?: number;
@@ -43,6 +44,12 @@ export interface StartSyncNowInput {
 
 export function isSyncTerminal(status: string | undefined): boolean {
   return status === "success" || status === "partial" || status === "failed";
+}
+
+export function hasSyncRunId(
+  payload: SyncRunPayload | null | undefined,
+): payload is SyncRunPayload & { run_id: string } {
+  return Boolean(payload?.run_id);
 }
 
 function safeRequestSegment(value: string): string {

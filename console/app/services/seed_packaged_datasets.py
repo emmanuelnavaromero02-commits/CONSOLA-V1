@@ -11,6 +11,7 @@ import json
 import logging
 import pathlib
 import re
+from typing import Any
 
 import asyncpg
 
@@ -115,6 +116,111 @@ async def _datasets_workspace_name_conflict_available(conn: asyncpg.Connection) 
     )
 
 
+async def _seed_packaged_dataset_rows(
+    conn: asyncpg.Connection,
+    *,
+    packaged: dict[str, list[pathlib.Path]],
+    target_workspaces: list[Any],
+    has_tenant_id: bool,
+    scoped_conflict: bool,
+) -> dict[str, int]:
+    seeded_by_cartridge: dict[str, int] = {}
+    for cartridge_id, sql_files in packaged.items():
+        names: list[str] = []
+        datasets: list[dict] = []
+        for sql_path in sql_files:
+            try:
+                datasets.append(_parse_dataset(sql_path))
+            except Exception as exc:
+                logger.warning("[seed_packaged_datasets] skip %s: %s", sql_path, exc)
+                continue
+        if not datasets:
+            seeded_by_cartridge[cartridge_id] = 0
+            continue
+
+        names = [dataset["name"] for dataset in datasets]
+        seeded_rows = 0
+        for workspace in target_workspaces:
+            tenant_id = workspace["tenant_id"]
+            workspace_id = workspace["id"]
+            await _set_seed_scope(conn, tenant_id, workspace_id)
+
+            for dataset in datasets:
+                if has_tenant_id:
+                    conflict_target = "(workspace_id, name)" if scoped_conflict else "(name)"
+                    await conn.execute(
+                        f"""INSERT INTO datasets
+                               (name, layer, cartridge, sources, sql_def, description,
+                                column_mapping, schedule, updated_at, tenant_id, workspace_id)
+                            VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{{}}'::jsonb, NULL,
+                                    NOW(), $7, $8)
+                            ON CONFLICT {conflict_target} DO UPDATE
+                               SET layer = EXCLUDED.layer,
+                                   cartridge = EXCLUDED.cartridge,
+                                   sources = EXCLUDED.sources,
+                                   sql_def = EXCLUDED.sql_def,
+                                   description = EXCLUDED.description,
+                                   updated_at = NOW(),
+                                   tenant_id = EXCLUDED.tenant_id,
+                                   workspace_id = EXCLUDED.workspace_id""",
+                        dataset["name"],
+                        dataset["layer"],
+                        dataset["cartridge"],
+                        json.dumps(dataset["sources"]),
+                        dataset["sql"],
+                        dataset["description"],
+                        tenant_id,
+                        workspace_id,
+                    )
+                else:
+                    conflict_target = "(workspace_id, name)" if scoped_conflict else "(name)"
+                    await conn.execute(
+                        f"""INSERT INTO datasets
+                               (name, layer, cartridge, sources, sql_def, description,
+                                column_mapping, schedule, updated_at, workspace_id)
+                            VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{{}}'::jsonb, NULL,
+                                    NOW(), $7)
+                            ON CONFLICT {conflict_target} DO UPDATE
+                               SET layer = EXCLUDED.layer,
+                                   cartridge = EXCLUDED.cartridge,
+                                   sources = EXCLUDED.sources,
+                                   sql_def = EXCLUDED.sql_def,
+                                   description = EXCLUDED.description,
+                                   updated_at = NOW(),
+                                   workspace_id = EXCLUDED.workspace_id""",
+                        dataset["name"],
+                        dataset["layer"],
+                        dataset["cartridge"],
+                        json.dumps(dataset["sources"]),
+                        dataset["sql"],
+                        dataset["description"],
+                        workspace_id,
+                    )
+                seeded_rows += 1
+
+            if scoped_conflict:
+                await conn.execute(
+                    """
+                    DELETE FROM datasets
+                     WHERE cartridge = $1
+                       AND workspace_id = $2::uuid
+                       AND NOT (name = ANY($3::text[]))
+                    """,
+                    cartridge_id,
+                    workspace_id,
+                    names,
+                )
+
+        logger.info(
+            "[seed_packaged_datasets] %s: seeded %d dataset rows across %d workspaces",
+            cartridge_id,
+            seeded_rows,
+            len(target_workspaces),
+        )
+        seeded_by_cartridge[cartridge_id] = seeded_rows
+    return seeded_by_cartridge
+
+
 async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
     packaged = _dataset_files()
     if not packaged:
@@ -142,98 +248,77 @@ async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
             )
 
         async with conn.transaction():
-            for cartridge_id, sql_files in packaged.items():
-                names: list[str] = []
-                datasets: list[dict] = []
-                for sql_path in sql_files:
-                    try:
-                        datasets.append(_parse_dataset(sql_path))
-                    except Exception as exc:
-                        logger.warning("[seed_packaged_datasets] skip %s: %s", sql_path, exc)
-                        continue
-                if not datasets:
-                    continue
+            await _seed_packaged_dataset_rows(
+                conn,
+                packaged=packaged,
+                target_workspaces=list(target_workspaces),
+                has_tenant_id=has_tenant_id,
+                scoped_conflict=scoped_conflict,
+            )
 
-                names = [dataset["name"] for dataset in datasets]
-                seeded_rows = 0
-                for workspace in target_workspaces:
-                    tenant_id = workspace["tenant_id"]
-                    workspace_id = workspace["id"]
-                    await _set_seed_scope(conn, tenant_id, workspace_id)
 
-                    for dataset in datasets:
-                        if has_tenant_id:
-                            conflict_target = (
-                                "(workspace_id, name)" if scoped_conflict else "(name)"
-                            )
-                            await conn.execute(
-                                f"""INSERT INTO datasets
-                                       (name, layer, cartridge, sources, sql_def, description,
-                                        column_mapping, schedule, updated_at, tenant_id, workspace_id)
-                                    VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{{}}'::jsonb, NULL,
-                                            NOW(), $7, $8)
-                                    ON CONFLICT {conflict_target} DO UPDATE
-                                       SET layer = EXCLUDED.layer,
-                                           cartridge = EXCLUDED.cartridge,
-                                           sources = EXCLUDED.sources,
-                                           sql_def = EXCLUDED.sql_def,
-                                           description = EXCLUDED.description,
-                                           updated_at = NOW(),
-                                           tenant_id = EXCLUDED.tenant_id,
-                                           workspace_id = EXCLUDED.workspace_id""",
-                                dataset["name"],
-                                dataset["layer"],
-                                dataset["cartridge"],
-                                json.dumps(dataset["sources"]),
-                                dataset["sql"],
-                                dataset["description"],
-                                tenant_id,
-                                workspace_id,
-                            )
-                        else:
-                            conflict_target = (
-                                "(workspace_id, name)" if scoped_conflict else "(name)"
-                            )
-                            await conn.execute(
-                                f"""INSERT INTO datasets
-                                       (name, layer, cartridge, sources, sql_def, description,
-                                        column_mapping, schedule, updated_at, workspace_id)
-                                    VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{{}}'::jsonb, NULL,
-                                            NOW(), $7)
-                                    ON CONFLICT {conflict_target} DO UPDATE
-                                       SET layer = EXCLUDED.layer,
-                                           cartridge = EXCLUDED.cartridge,
-                                           sources = EXCLUDED.sources,
-                                           sql_def = EXCLUDED.sql_def,
-                                           description = EXCLUDED.description,
-                                           updated_at = NOW(),
-                                           workspace_id = EXCLUDED.workspace_id""",
-                                dataset["name"],
-                                dataset["layer"],
-                                dataset["cartridge"],
-                                json.dumps(dataset["sources"]),
-                                dataset["sql"],
-                                dataset["description"],
-                                workspace_id,
-                            )
-                        seeded_rows += 1
+async def seed_packaged_datasets_for_workspace(
+    pool: asyncpg.Pool,
+    *,
+    tenant_id: str,
+    workspace_id: str,
+    cartridge_id: str | None = None,
+) -> dict[str, Any]:
+    """Seed packaged dataset definitions for a workspace just before sync.
 
-                    if scoped_conflict:
-                        await conn.execute(
-                            """
-                            DELETE FROM datasets
-                             WHERE cartridge = $1
-                               AND workspace_id = $2::uuid
-                               AND NOT (name = ANY($3::text[]))
-                            """,
-                            cartridge_id,
-                            workspace_id,
-                            names,
-                        )
+    Startup seeding covers workspaces that already exist. A newly-created
+    tenant/workspace can trigger a cartridge sync before the next service
+    restart, so sync-now needs a scoped idempotent seed to make Silver/Gold
+    definitions available before Airflow starts materialization.
+    """
+    tenant_id = str(tenant_id or "").strip()
+    workspace_id = str(workspace_id or "").strip()
+    if not tenant_id or not workspace_id:
+        raise ValueError("tenant_id and workspace_id are required")
 
-                logger.info(
-                    "[seed_packaged_datasets] %s: seeded %d dataset rows across %d workspaces",
-                    cartridge_id,
-                    seeded_rows,
-                    len(target_workspaces),
-                )
+    packaged = _dataset_files()
+    if cartridge_id:
+        cartridge_files = packaged.get(cartridge_id)
+        packaged = {cartridge_id: cartridge_files} if cartridge_files else {}
+    if not packaged:
+        logger.warning(
+            "[seed_packaged_datasets] no packaged datasets found for workspace sync cartridge=%s",
+            cartridge_id or "*",
+        )
+        return {
+            "status": "skipped",
+            "reason": "no_packaged_datasets",
+            "cartridge_id": cartridge_id,
+            "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
+            "seeded_rows": 0,
+            "cartridges": {},
+        }
+
+    async with pool.acquire() as conn:
+        has_tenant_id = await _datasets_has_column(conn, "tenant_id")
+        scoped_conflict = await _datasets_workspace_name_conflict_available(conn)
+        if not scoped_conflict:
+            logger.warning(
+                "[seed_packaged_datasets] datasets_workspace_name_key missing; "
+                "workspace sync seed will upsert by dataset name"
+            )
+
+        async with conn.transaction():
+            seeded_by_cartridge = await _seed_packaged_dataset_rows(
+                conn,
+                packaged=packaged,
+                target_workspaces=[{"id": workspace_id, "tenant_id": tenant_id}],
+                has_tenant_id=has_tenant_id,
+                scoped_conflict=scoped_conflict,
+            )
+
+    seeded_rows = sum(seeded_by_cartridge.values())
+    return {
+        "status": "success",
+        "cartridge_id": cartridge_id,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "seeded_rows": seeded_rows,
+        "cartridges": seeded_by_cartridge,
+    }
