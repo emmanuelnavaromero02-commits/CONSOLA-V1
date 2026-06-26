@@ -17,4 +17,6 @@ def test_datasets_catalog_is_workspace_scoped() -> None:
     assert "ADD COLUMN IF NOT EXISTS tenant_id" in sql
     assert "ADD COLUMN IF NOT EXISTS scope_status" in sql
     assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in sql
-    assert "99zd_datasets_workspace_scoped_catalog" in sql
+    assert "filename TEXT NOT NULL UNIQUE" in sql
+    assert "INSERT INTO schema_migrations(filename, applied_at)" in sql
+    assert "99zd_datasets_workspace_scoped_catalog.sql" in sql
