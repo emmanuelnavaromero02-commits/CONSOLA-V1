@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -20,3 +21,19 @@ def test_datasets_catalog_is_workspace_scoped() -> None:
     assert "filename TEXT NOT NULL UNIQUE" in sql
     assert "INSERT INTO schema_migrations(filename, applied_at)" in sql
     assert "99zd_datasets_workspace_scoped_catalog.sql" in sql
+
+
+def test_replicon_mejoras_seed_uses_workspace_scoped_dataset_conflicts() -> None:
+    sql = (
+        ROOT / "infra" / "init" / "65_replicon_mejoras_seed_refresh.sql"
+    ).read_text(encoding="utf-8")
+    before_apps = sql.split("INSERT INTO analytic_apps", 1)[0]
+
+    dataset_inserts = re.findall(r"INSERT INTO datasets\b", before_apps)
+    workspace_conflicts = re.findall(
+        r"ON CONFLICT \(workspace_id, name\) DO NOTHING", before_apps
+    )
+
+    assert dataset_inserts
+    assert len(workspace_conflicts) == len(dataset_inserts)
+    assert "ON CONFLICT (name) DO NOTHING" not in before_apps
