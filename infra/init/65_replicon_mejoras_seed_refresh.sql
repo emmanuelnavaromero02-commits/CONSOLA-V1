@@ -100,7 +100,7 @@ LEFT JOIN te_agg te
   AND te.projectcode = al.projectcode 
   AND te.mes = al.mes
 ORDER BY al.mes DESC, em.supervisor, al.projectcode, al.username$seed$, $seed$Asignación mensual de consultores por proyecto. Cruza ResourceAllocation (plan) con TimeEntry (ejecución), enriquecida con supervisor, departamento y estado. Visible en Superset como tabla gold_consultor_asignacion.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$consultor_mensual$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$["raw/replicon/TimeEntry"]$seed$::jsonb, $seed$WITH
@@ -330,7 +330,7 @@ LEFT JOIN billing_items bi ON bi.mes = al.mes AND bi.username = al.username AND 
 LEFT JOIN proj_rate pr_rate ON pr_rate.projectcode = al.projectcode
 LEFT JOIN hundido_proj hp ON hp.mes = al.mes AND hp.username = al.username AND hp.projectcode = al.projectcode
 $seed$, $seed$Métricas mensuales por consultor y proyecto. Revenue Manager = supervisor del consultor (empleados_maestro), fallback a revenue_manager del proyecto. Horas ejecutadas, facturables, no facturables. Costos directo, no facturable y hundido prorrateado.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$consultor_timesheet_semanal$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$["silver/replicon/replicon_timeentry_latest", "silver/replicon/empleados_maestro"]$seed$::jsonb, $seed$WITH
@@ -373,7 +373,7 @@ SELECT
 FROM te
 LEFT JOIN empleados em ON em.usuario_key = LOWER(TRIM(te.username))
 $seed$, $seed$Hoja de tiempo semanal por consultor/proyecto desde silver TimeEntry$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$costo_consultor_mensual$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$["raw/replicon/TimeEntry"]$seed$::jsonb, $seed$WITH te AS (
@@ -414,7 +414,7 @@ FROM te
 JOIN u  ON u.userid = te.userid
 JOIN horas_mes hm ON hm.mes = te.mes
 ORDER BY te.mes DESC, u.nombre_completo$seed$, $seed$Costo mensual por consultor: ejecutado (horas×rate) y hundido (horas disponibles - ejecutadas)×rate$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$pnl_detalle_consultor$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$["silver/replicon/replicon_timeentry_latest", "silver/replicon/replicon_resourceallocation_latest", "silver/replicon/replicon_billingitem_latest", "silver/replicon/empleados_maestro", "silver/replicon/replicon_project_detail_curated", "silver/replicon/replicon_project_latest", "silver/replicon/replicon_projectbilling_curated", "silver/replicon/project_progress_history"]$seed$::jsonb, $seed$WITH
@@ -622,7 +622,7 @@ LEFT JOIN billing_items_user biu
 LEFT JOIN hundido_emp he ON he.username = ta.consultor AND he.mes = ta.mes
 ORDER BY ta.mes DESC, revenue_manager, ta.project_code, ta.consultor
 $seed$, $seed$P&L mensual desglosado por consultor: horas, costo directo, hundido prorrateado y revenue atribuido$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$pnl_mensual$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ResourceAllocation"]$seed$::jsonb, $seed$WITH
@@ -860,7 +860,7 @@ SELECT
     ROUND(pct_avance_real, 2)                                              AS pct_avance_real
 FROM pnl_base
 ORDER BY mes DESC, revenue_manager, cliente, proyecto$seed$, $seed$P&L mensual por Revenue Manager/Cliente/Proyecto. Revenue por tipo: FPP=avance*contrato, T&M/AMS On Demand=horas*tarifa, AMS Base Line/BPO=facturado. Costo en directo+hundido. WIP=revenue-facturacion.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_fte_profitability_monthly$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$[]$seed$::jsonb, $seed$WITH
@@ -1019,7 +1019,7 @@ LEFT JOIN proj_rm pr
     ON pr.project_code = ta.projectcode
 LEFT JOIN billing_items bi
     ON bi.username = ta.username AND bi.projectcode = ta.projectcode AND bi.mes = ta.mes$seed$, $seed$Análisis de productividad mes a mes$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$empleados_maestro$seed$, $seed$gold$seed$, $seed$replicon$seed$, $seed$["raw/replicon/User"]$seed$::jsonb, $seed$SELECT 
@@ -1042,7 +1042,7 @@ VALUES ($seed$empleados_maestro$seed$, $seed$gold$seed$, $seed$replicon$seed$, $
 FROM read_parquet('s3://modecissions-lakehouse-0baf85/silver/replicon/replicon_user_latest/**/*.parquet')
 WHERE isenabled = true
 ORDER BY id_empleado$seed$, $seed$Maestro de empleados activos de Replicon con datos de costo, departamento, ubicación, supervisor y fechas de inicio/fin. Derivado de replicon_user_latest (Silver) filtrado a isenabled=true.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$project_progress_history$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ProjectAudit"]$seed$::jsonb, $seed$WITH src AS (
@@ -1076,39 +1076,39 @@ SELECT
 FROM src
 GROUP BY project_code, project_name, project_manager, modified_at, modified_by
 ORDER BY project_code, modified_at$seed$, $seed$Historial de cambios en % Plan Progress y % Real Progress por proyecto. Una fila por evento de cambio con incremento respecto al valor anterior.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_activity_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Activity"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Activity/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Activity - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_billingitem_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/BillingItem"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$BillingItem - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_client_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Client"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Client/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Client - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_costitem_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/CostItem"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/CostItem/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$CostItem - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_department_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Department"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Department/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Department - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_expenseentry_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ExpenseEntry"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/ExpenseEntry/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$ExpenseEntry - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_invoiceitem_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/InvoiceItem"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/InvoiceItem/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$InvoiceItem - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_profititem_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ProfitItem"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/ProfitItem/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$ProfitItem - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_projectbilling_curated$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$[]$seed$::jsonb, $seed$SELECT
@@ -1136,7 +1136,7 @@ FROM read_parquet(
   's3://{bucket}/raw/replicon/ProjectBilling/**/*.parquet',
   hive_partitioning=true, union_by_name=true
 )$seed$, $seed$$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_project_detail_curated$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ProjectDetail"]$seed$::jsonb, $seed$SELECT *
@@ -1144,15 +1144,15 @@ FROM read_parquet(
   's3://{bucket}/raw/replicon/ProjectDetail/**/*.parquet',
   hive_partitioning=true, union_by_name=true
 )$seed$, $seed$Detalle de Proyecto$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_project_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Project"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Project/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Project - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_projectteammember_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ProjectTeamMember"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/ProjectTeamMember/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$ProjectTeamMember - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_resourceallocation_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ResourceAllocation"]$seed$::jsonb, $seed$SELECT date, userid, username, projectid, projectcode, projectname, durationhours,
@@ -1171,31 +1171,31 @@ FROM (
     WHERE load_date = '{latest_date}'
 ) t
 WHERE rn = 1 AND projectcode IS NOT NULL AND userid IS NOT NULL$seed$, $seed$Asignación de recursos$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_resourcerequest_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/ResourceRequest"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/ResourceRequest/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$ResourceRequest - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_role_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Role"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Role/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Role - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_task_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Task"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Task/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Task - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_timeentry_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/TimeEntry"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$TimeEntry - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_timesheet_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/Timesheet"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/Timesheet/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$Timesheet - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES ($seed$replicon_user_latest$seed$, $seed$silver$seed$, $seed$replicon$seed$, $seed$["raw/replicon/User"]$seed$::jsonb, $seed$SELECT * FROM read_parquet('s3://{bucket}/raw/replicon/User/**/*.parquet', hive_partitioning=true, union_by_name=true)$seed$, $seed$User - Ultima extraccion Replicon Bronze$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 -- ── Analytic Apps ───────────────────────────────────────────
 INSERT INTO analytic_apps (name, title, html, description, cartridge_id, visibility, datasets_used, updated_at)
