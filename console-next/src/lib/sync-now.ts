@@ -88,3 +88,18 @@ export async function getCartridgeSyncRun(
   );
   return data;
 }
+
+export async function getActiveCartridgeSyncRun(
+  cartridgeId: string,
+  input: Pick<StartSyncNowInput, "conn_id" | "mode" | "target"> = {},
+): Promise<SyncRunPayload> {
+  const params = new URLSearchParams({
+    mode: input.mode ?? "incremental",
+    target: input.target ?? "all",
+  });
+  if (input.conn_id) params.set("conn_id", input.conn_id);
+  const { data } = await api.get<SyncRunPayload>(
+    `/api/cartridges/${encodeURIComponent(cartridgeId)}/sync-runs/active?${params.toString()}`,
+  );
+  return data;
+}

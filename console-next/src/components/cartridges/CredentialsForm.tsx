@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, DatabaseZap, ExternalLink, Loader2, Plug, ShieldCheck, XCircle } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { useTestConnection } from "@/lib/hooks/useCartridges";
 import { useVaultConnections } from "@/lib/operations/hooks";
 import type { VaultConnection } from "@/lib/operations/types";
 import {
+  getActiveCartridgeSyncRun,
   getCartridgeSyncRun,
   isSyncTerminal,
   startCartridgeSyncNow,
@@ -22,6 +23,39 @@ import { TestConnectionResult } from "./TestConnectionResult";
 interface Props {
   cartridgeId: string;
   schema: ConnectorSchema;
+}
+
+const CARTRIDGE_SYNC_STORAGE_PREFIX = "omega.cartridge.sync_run";
+
+function cartridgeSyncStorageKey(cartridgeId: string): string {
+  return `${CARTRIDGE_SYNC_STORAGE_PREFIX}.${cartridgeId}`;
+}
+
+function rememberCartridgeSyncRun(cartridgeId: string, runId: string): void {
+  if (typeof window === "undefined" || !runId) return;
+  try {
+    window.sessionStorage.setItem(cartridgeSyncStorageKey(cartridgeId), runId);
+  } catch {
+    // Best-effort only; backend state is still queried by run id.
+  }
+}
+
+function readRememberedCartridgeSyncRun(cartridgeId: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.sessionStorage.getItem(cartridgeSyncStorageKey(cartridgeId)) || "";
+  } catch {
+    return "";
+  }
+}
+
+function forgetCartridgeSyncRun(cartridgeId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(cartridgeSyncStorageKey(cartridgeId));
+  } catch {
+    // Nothing to clean up.
+  }
 }
 
 export function CredentialsForm({ cartridgeId, schema }: Props) {
@@ -55,6 +89,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
         ...(connIdForTest ? { conn_id: connIdForTest } : {}),
       }),
     onSuccess: (payload) => {
+      rememberCartridgeSyncRun(cartridgeId, payload.run_id);
       setSyncRunId(payload.run_id);
       toast.success("Sincronización enviada.");
       void queryClient.invalidateQueries({ queryKey: ["dashboard", "kpis"] });
@@ -80,6 +115,41 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
       toast.error(`No se pudo probar: ${message}`);
     }
   };
+
+  useEffect(() => {
+    if (!cartridgeId || syncRunId) return undefined;
+    let cancelled = false;
+
+    const restoreSyncRun = async () => {
+      const rememberedRunId = readRememberedCartridgeSyncRun(cartridgeId);
+      if (rememberedRunId) {
+        setSyncRunId(rememberedRunId);
+        return;
+      }
+      try {
+        const current = await getActiveCartridgeSyncRun(cartridgeId, {
+          mode: "incremental",
+          target: "all",
+          ...(connIdForTest ? { conn_id: connIdForTest } : {}),
+        });
+        if (cancelled || isSyncTerminal(current.status)) return;
+        rememberCartridgeSyncRun(cartridgeId, current.run_id);
+        setSyncRunId(current.run_id);
+      } catch {
+        // No active sync to restore.
+      }
+    };
+
+    void restoreSyncRun();
+    return () => {
+      cancelled = true;
+    };
+  }, [cartridgeId, connIdForTest, syncRunId]);
+
+  useEffect(() => {
+    if (!cartridgeId || !syncRun.data || !isSyncTerminal(syncRun.data.status)) return;
+    forgetCartridgeSyncRun(cartridgeId);
+  }, [cartridgeId, syncRun.data]);
 
   return (
     <div className="space-y-6">

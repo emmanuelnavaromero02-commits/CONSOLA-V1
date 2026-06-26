@@ -3201,16 +3201,14 @@ async def api_me_change_password(
 
 @app.get("/jobs", dependencies=[Depends(require_authenticated)])
 async def list_jobs(limit: int = 20, user: dict = Depends(require_authenticated)):
-    return {
-        "jobs": await _call_with_optional_user(
-            job_service.list_recent, limit, user=user
-        )
-    }
+    jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
+    return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
 async def get_job(job_id: str, user: dict = Depends(require_authenticated)):
-    return await job_service.get_scoped(job_id, user=user)
+    job = await job_service.get_scoped(job_id, user=user)
+    return await _refresh_pipeline_job_payload(job, user)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
@@ -3402,18 +3400,80 @@ async def refresh_dataset(
 # ── Viewer data APIs ──────────────────────────────────────────────────────────
 
 
+def _is_pipeline_job_payload(job: dict | None) -> bool:
+    if not isinstance(job, dict):
+        return False
+    result = job.get("result")
+    return isinstance(result, dict) and result.get("source") == "pipeline_runs"
+
+
+async def _refresh_pipeline_job_payload(job: dict, user: dict | None) -> dict:
+    if not _is_pipeline_job_payload(job):
+        return job
+    status = str(job.get("status") or "").lower()
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    args = job.get("args") if isinstance(job.get("args"), dict) else {}
+    if status not in {"running", "queued"}:
+        return job
+
+    row = {
+        "run_id": job.get("job_id"),
+        "dag_id": args.get("dag_id") or result.get("dag_id"),
+        "airflow_dag_run_id": (
+            args.get("dag_run_id")
+            or result.get("dag_run_id")
+            or result.get("airflow_dag_run_id")
+            or job.get("job_id")
+        ),
+        "status": result.get("pipeline_status") or status,
+        "started_at": job.get("created_at"),
+        "finished_at": job.get("finished_at"),
+        "duration_seconds": None,
+    }
+    refreshed = await _refresh_dag_run_status(row, user)
+    pipeline_status = _normalize_airflow_state(refreshed.get("status"))
+    result["pipeline_status"] = pipeline_status
+    job["result"] = result
+    if pipeline_status in {"queued", "running", "unknown"}:
+        job["status"] = "running"
+        job["finished_at"] = None
+    elif pipeline_status == "failed":
+        job["status"] = "failed"
+        job["finished_at"] = (
+            refreshed.get("finished_at").isoformat()
+            if hasattr(refreshed.get("finished_at"), "isoformat")
+            else refreshed.get("finished_at")
+        )
+    else:
+        job["status"] = "done"
+        job["finished_at"] = (
+            refreshed.get("finished_at").isoformat()
+            if hasattr(refreshed.get("finished_at"), "isoformat")
+            else refreshed.get("finished_at")
+        )
+    job["updated_at"] = job.get("finished_at") or job.get("updated_at")
+    return job
+
+
+async def _refresh_pipeline_job_payloads(
+    jobs: list[dict], user: dict | None
+) -> list[dict]:
+    refreshed: list[dict] = []
+    for job in jobs:
+        refreshed.append(await _refresh_pipeline_job_payload(job, user))
+    return refreshed
+
+
 @app.get("/api/jobs", dependencies=[Depends(require_authenticated)])
 async def api_jobs(limit: int = 50, user: dict = Depends(require_authenticated)):
-    return {
-        "jobs": await _call_with_optional_user(
-            job_service.list_recent, limit, user=user
-        )
-    }
+    jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
+    return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
 async def api_job(job_id: str, user: dict = Depends(require_authenticated)):
-    return await job_service.get_scoped(job_id, user=user)
+    job = await job_service.get_scoped(job_id, user=user)
+    return await _refresh_pipeline_job_payload(job, user)
 
 
 @app.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_authenticated)])
@@ -6204,7 +6264,13 @@ async def api_pipeline_runs(
                 limit,
                 *scope_values,
             )
-        return {"runs": [dict(r) for r in rows]}
+        response_rows = [dict(r) for r in rows]
+        if entity:
+            refreshed_rows = []
+            for row in response_rows:
+                refreshed_rows.append(await _refresh_dag_run_status(row, user))
+            response_rows = refreshed_rows
+        return {"runs": response_rows}
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("pipeline runs query failed error_id=%s", _eid)
@@ -6227,6 +6293,7 @@ def _format_pipeline_entity_run(row: dict) -> dict:
         or classification.get("reason")
     )
     payload = {
+        "run_id": row.get("run_id"),
         "dag_id": row.get("dag_id"),
         "dag_run_id": dag_run_id,
         "status": status,
@@ -6241,6 +6308,14 @@ def _format_pipeline_entity_run(row: dict) -> dict:
     }
     if classification:
         payload["classification"] = classification
+    if row.get("record_count") is not None:
+        payload["record_count"] = row.get("record_count")
+    if row.get("bytes_written") is not None:
+        payload["bytes_written"] = row.get("bytes_written")
+    if row.get("storage_uri"):
+        payload["storage_uri"] = row.get("storage_uri")
+    if row.get("watermark_updated_to"):
+        payload["watermark_updated_to"] = row.get("watermark_updated_to")
     return payload
 
 
@@ -6271,7 +6346,9 @@ async def api_pipeline_entity_runs(
         rows = await pool.fetch(
             f"""
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                   started_at, finished_at, duration_seconds, error_message, extra
+                   started_at, finished_at, duration_seconds,
+                   record_count, bytes_written, storage_uri, watermark_updated_to,
+                   error_message, extra
               FROM pipeline_runs
              WHERE cartridge_id=$1 AND entity=$2
                {scope_sql}
@@ -7627,6 +7704,17 @@ def _sync_run_needs_final_reconcile(row: dict[str, Any], extra: dict[str, Any]) 
     ):
         return True
     if str(row.get("cartridge_id") or "") == "sap_successfactors":
+        triggered = extra.get("triggered_entities")
+        has_aggregate_child = any(
+            isinstance(item, dict)
+            and str(item.get("entity") or "") == _SYNC_AGGREGATE_ENTITY
+            and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+            for item in (triggered if isinstance(triggered, list) else [])
+        )
+        if status != "failed" and has_aggregate_child and not bool(
+            extra.get("extract_all_summary_seen")
+        ):
+            return True
         return not bool(extra.get("control_room_checked_at"))
     return False
 
@@ -7898,12 +7986,43 @@ async def _build_sync_run_status(
         cartridge=cartridge, run_ids=child_run_ids, user=user
     )
     gold_refresh_summary = _sync_child_gold_refresh_summary(child_rows)
+    aggregate_child_rows = [
+        item
+        for item in child_rows
+        if str(item.get("entity") or "") == _SYNC_AGGREGATE_ENTITY
+    ]
+    aggregate_payload_ready = any(
+        any(
+            key in _sync_extra_from_row(item)
+            for key in (
+                "summary",
+                "result_status",
+                "gold_refresh",
+                "selected",
+                "attempted",
+                "outcomes",
+            )
+        )
+        for item in aggregate_child_rows
+    )
     entity_child_rows = [
         item
         for item in child_rows
         if str(item.get("entity") or "") not in {_SYNC_AGGREGATE_ENTITY, _SYNC_NOW_ENTITY}
     ]
-    progress_rows = entity_child_rows or child_rows
+    aggregate_summary_pending = bool(aggregate_child_rows) and not aggregate_payload_ready and not entity_child_rows
+    if aggregate_summary_pending:
+        progress_rows = [
+            {
+                **item,
+                "status": "running"
+                if str(item.get("status") or "").lower() in {"success", "partial"}
+                else item.get("status"),
+            }
+            for item in aggregate_child_rows
+        ]
+    else:
+        progress_rows = entity_child_rows or child_rows
     child_statuses = [str(item.get("status") or "").lower() for item in progress_rows]
     running_children = any(
         status in {"queued", "running", "unknown"} for status in child_statuses
@@ -8012,7 +8131,9 @@ async def _build_sync_run_status(
         updates["bronze"] = {
             "label": "Bronze",
             "status": "running",
-            "detail": f"{len(progress_rows)} corridas del sync actual en curso.",
+            "detail": "Esperando resumen final del DAG agregado."
+            if aggregate_summary_pending
+            else f"{len(progress_rows)} corridas del sync actual en curso.",
             "completed": child_done,
             "total": child_total,
         }
@@ -8318,6 +8439,11 @@ async def _build_sync_run_status(
         or {},
         "agentops_refresh": agentops_refresh or extra.get("agentops_refresh") or {},
         "gold_refresh": gold_refresh_summary or extra.get("gold_refresh") or {},
+        "extract_all_summary_seen": aggregate_payload_ready
+        or bool(extra.get("extract_all_summary_seen")),
+        "aggregate_summary_pending": aggregate_summary_pending,
+        "child_run_count": len(child_rows),
+        "entity_child_run_count": len(entity_child_rows),
         "target": extra.get("target") or "all",
         "mode": extra.get("mode") or row.get("mode") or "incremental",
     }
@@ -8587,6 +8713,35 @@ async def api_cartridge_sync_now(
         }
         logger.error("sync_now_run_missing diagnostics=%s", diagnostics)
         raise HTTPException(500, "sync run was not recorded; scope diagnostics logged")
+    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+
+
+@app.get(
+    "/api/cartridges/{cartridge_id}/sync-runs/active",
+    dependencies=[Depends(require_permission("pipelines.read"))],
+)
+async def api_cartridge_active_sync_run(
+    cartridge_id: str,
+    mode: str = "incremental",
+    target: str = "all",
+    conn_id: str | None = None,
+    user: dict = Depends(require_permission("pipelines.read")),
+):
+    user = _runtime_user(user)
+    cartridge, _active = await _resolve_scoped_operation_cartridge(
+        user, cartridge_id, fallback=cartridge_id
+    )
+    mode = _sync_clean_mode(mode)
+    target = _sync_clean_target(target)
+    row = await _fetch_active_sync_run(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=_normalize_pipeline_conn_id(conn_id),
+        user=user,
+    )
+    if not row:
+        raise HTTPException(404, "active sync run not found")
     return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
 
 

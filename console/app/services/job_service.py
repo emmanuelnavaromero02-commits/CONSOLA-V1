@@ -22,7 +22,7 @@ _JOB_COLUMNS = (
 )
 _PIPELINE_COLUMNS = (
     "run_id, dag_id, cartridge_id, entity, airflow_dag_run_id, mode, status, "
-    "row_count, started_at, finished_at, error_message, extra"
+    "record_count, started_at, finished_at, error_message, extra"
 )
 _PIPELINE_COLUMN_EXISTS_CACHE: dict[str, bool] = {}
 
@@ -277,6 +277,10 @@ def _pipeline_row_to_job(row) -> dict:
         "dag_id": d.get("dag_id"),
         "dag_run_id": dag_run_id,
     }
+    record_count = d.get("record_count")
+    if record_count is None:
+        record_count = d.get("row_count")
+
     result = {
         "source": "pipeline_runs",
         "cartridge_id": d.get("cartridge_id"),
@@ -286,8 +290,8 @@ def _pipeline_row_to_job(row) -> dict:
         "dag_run_id": dag_run_id,
         "airflow_dag_run_id": dag_run_id,
         "pipeline_status": pipeline_status,
-        "record_count": d.get("row_count") or 0,
-        "total_records": d.get("row_count") or 0,
+        "record_count": record_count or 0,
+        "total_records": record_count or 0,
         "extra": extra,
     }
     return {

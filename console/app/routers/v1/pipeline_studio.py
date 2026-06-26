@@ -348,7 +348,13 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
                 f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
                 cartridge, limit, *scope_values,
             )
-        return {"runs": [dict(r) for r in rows]}
+        response_rows = [dict(r) for r in rows]
+        if entity:
+            refreshed_rows = []
+            for row in response_rows:
+                refreshed_rows.append(await _refresh_dag_run_status(row, user))
+            response_rows = refreshed_rows
+        return {"runs": response_rows}
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("pipeline runs query failed error_id=%s", _eid)
@@ -373,7 +379,9 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
         rows = await pool.fetch(
             f"""
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                   started_at, finished_at, duration_seconds, error_message, extra
+                   started_at, finished_at, duration_seconds,
+                   record_count, bytes_written, storage_uri, watermark_updated_to,
+                   error_message, extra
               FROM pipeline_runs
              WHERE cartridge_id=$1 AND entity=$2
                {scope_sql}
