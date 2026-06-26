@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
-import { createSyncNowRequestId, startCartridgeSyncNow } from "./sync-now";
+import { createSyncNowRequestId, getActiveCartridgeSyncRun, startCartridgeSyncNow } from "./sync-now";
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -62,6 +62,35 @@ describe("sync-now client", () => {
         target: "all",
         request_id: "sync-now:sap_successfactors:incremental:all:uuid-fixed",
       },
+    );
+  });
+
+  it("gets the active sync run with explicit mode, target, and connection", async () => {
+    apiMock.get.mockResolvedValue({
+      data: {
+        run_id: "sync_now:sap_successfactors:active",
+        cartridge_id: "sap_successfactors",
+        status: "running",
+        mode: "incremental",
+        target: "talent",
+        steps: [],
+        triggered_entities: [],
+        errors: [],
+        control_room_ready: false,
+      },
+      status: 200,
+      headers: new Headers(),
+      requestId: "r",
+    });
+
+    await getActiveCartridgeSyncRun("sap_successfactors", {
+      mode: "incremental",
+      target: "talent",
+      conn_id: "femsa_sf",
+    });
+
+    expect(apiMock.get).toHaveBeenCalledWith(
+      "/api/cartridges/sap_successfactors/sync-runs/active?mode=incremental&target=talent&conn_id=femsa_sf",
     );
   });
 });

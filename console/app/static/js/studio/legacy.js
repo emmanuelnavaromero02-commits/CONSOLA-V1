@@ -1322,18 +1322,26 @@ import { state } from './legacy-state.js';
         // Status is refreshed through the pipeline run endpoints; this keeps
         // Studio away from the admin-only generic MCP proxy.
 
-        // ── Check pipeline_runs table ────────────────────────────────────────
+        // ── Check the exact pipeline run, refreshing Airflow state server-side ─
         try {
-          const r = await fetch(`/api/pipeline_runs?cartridge=${encodeURIComponent(cartridge)}&entity=${encodeURIComponent(entity)}&limit=1`);
+          const r = await fetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/runs?limit=10`);
           if (!r.ok) continue;
           const d   = await r.json();
-          const run = (d.runs || [])[0];
+          const runs = d.runs || [];
+          const run = runs.find(item =>
+            item?.dag_run_id === runId ||
+            item?.run_id === runId ||
+            item?.airflow_dag_run_id === runId
+          ) || runs[0];
           const status = String(run?.status || '').toLowerCase();
           if (['queued', 'scheduled', 'running'].includes(status)) {
             _updateRunBadge(row, entity, 'extracting');
             continue;
           }
           const isNew = run && (
+            run.dag_run_id === runId ||
+            run.run_id === runId ||
+            run.airflow_dag_run_id === runId ||
             !run.started_at ||
             run.started_at >= since ||
             run.run_id !== (state._runsByEntity[entity]?.run_id)
@@ -1341,7 +1349,7 @@ import { state } from './legacy-state.js';
           if (isNew) {
             state._runsByEntity[entity] = run;
             _resetBtn();
-            _updateRunBadge(row, entity, run.status === 'success' ? 'ok' : 'fail', run);
+            _updateRunBadge(row, entity, ['success', 'partial'].includes(status) ? 'ok' : 'fail', run);
             return;
           }
         } catch(_) {}

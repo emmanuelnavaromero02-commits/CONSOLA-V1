@@ -88,6 +88,78 @@ def test_sync_child_gold_refresh_summary_counts_partial_aggregate(console_main):
     assert summary["failed"] == 5
 
 
+@pytest.mark.anyio
+async def test_sync_now_waits_for_extract_all_summary_before_terminal(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    row = {
+        "run_id": "sync_now:sap_successfactors:race",
+        "dag_id": console_main._SYNC_NOW_DAG_ID,
+        "cartridge_id": "sap_successfactors",
+        "entity": console_main._SYNC_NOW_ENTITY,
+        "mode": "incremental",
+        "status": "running",
+        "started_at": datetime.now(timezone.utc),
+        "finished_at": None,
+        "error_message": None,
+        "extra": {
+            "target": "all",
+            "mode": "incremental",
+            "triggered_entities": [
+                {"entity": "__extract_all__", "dag_run_id": "aggregate-run"}
+            ],
+            "errors": [],
+            "steps": console_main._initial_sync_steps(),
+        },
+    }
+    upserts: list[dict] = []
+
+    async def child_runs(**_kwargs):
+        return [
+            {
+                "run_id": "aggregate-run",
+                "entity": "__extract_all__",
+                "status": "success",
+                "extra": {"raw_conf": {"target": "all"}, "triggered_by": "console"},
+            }
+        ]
+
+    async def pipeline(cartridge, user=None):
+        return {"pipeline": []}
+
+    async def upsert(**kwargs):
+        upserts.append(kwargs)
+
+    async def fetch(**_kwargs):
+        updated = dict(row)
+        updated["status"] = upserts[-1]["status"]
+        updated["extra"] = upserts[-1]["extra"]
+        updated["error_message"] = upserts[-1].get("error_message")
+        return updated
+
+    monkeypatch.setattr(console_main, "_sync_child_runs", child_runs)
+    monkeypatch.setattr(console_main, "api_pipeline", pipeline)
+    monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
+    monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
+
+    result = await console_main._build_sync_run_status(
+        cartridge="sap_successfactors",
+        row=row,
+        user=user,
+    )
+
+    assert result["status"] == "running"
+    assert upserts[-1]["extra"]["aggregate_summary_pending"] is True
+    assert upserts[-1]["extra"]["extract_all_summary_seen"] is False
+    assert any(
+        step["id"] == "bronze"
+        and step["status"] == "running"
+        and "resumen final" in step["detail"]
+        for step in result["steps"]
+    )
+
+
 class _FakeResponse:
     def __init__(self, data, status_code=200):
         self._data = data
@@ -1462,6 +1534,7 @@ async def test_api_pipeline_entity_runs_returns_recent_history(
     assert result["entity"] == "Department"
     assert result["runs"] == [
         {
+            "run_id": "manual__test",
             "dag_id": "replicon_extract",
             "dag_run_id": "manual__test",
             "status": "success",

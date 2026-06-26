@@ -33,13 +33,15 @@ def _bind_to_main(fn):
 @router.get("/jobs", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def list_jobs(limit: int = 20, user: dict = Depends(require_authenticated)):
-    return {"jobs": await _call_with_optional_user(job_service.list_recent, limit, user=user)}
+    jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
+    return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 # /jobs/{job_id}
 @router.get("/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def get_job(job_id: str, user: dict = Depends(require_authenticated)):
-    return await job_service.get_scoped(job_id, user=user)
+    job = await job_service.get_scoped(job_id, user=user)
+    return await _refresh_pipeline_job_payload(job, user)
 
 # /assistant/chat
 @router.post("/assistant/chat", dependencies=[Depends(require_csrf)])
@@ -56,13 +58,15 @@ async def chat(body: dict, user: dict = Depends(require_authenticated)):
 @router.get("/api/jobs", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_jobs(limit: int = 50, user: dict = Depends(require_authenticated)):
-    return {"jobs": await _call_with_optional_user(job_service.list_recent, limit, user=user)}
+    jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
+    return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 # /api/jobs/{job_id}
 @router.get("/api/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_job(job_id: str, user: dict = Depends(require_authenticated)):
-    return await job_service.get_scoped(job_id, user=user)
+    job = await job_service.get_scoped(job_id, user=user)
+    return await _refresh_pipeline_job_payload(job, user)
 
 # /api/jobs/{job_id}/logs
 @router.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_authenticated)])

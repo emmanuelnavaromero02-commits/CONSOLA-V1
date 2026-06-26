@@ -24,7 +24,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { AnalyticAppsPanel } from "@/components/control-room/AnalyticAppsPanel";
@@ -53,6 +53,7 @@ import {
 import type { ControlRoomAgentsOpsPayload, ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
 import { listApps, type AppsResponse } from "@/lib/admin-surfaces";
 import {
+  getActiveCartridgeSyncRun,
   getCartridgeSyncRun,
   isSyncTerminal,
   startCartridgeSyncNow,
@@ -780,6 +781,57 @@ const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const DEFAULT_REFRESH_INTERVAL_SECONDS = 30;
 const SYNC_NOW_POLL_INTERVAL_MS = 3000;
 const SYNC_NOW_MAX_POLL_ATTEMPTS = 600;
+const CONTROL_SYNC_STORAGE_PREFIX = "omega.control_room.sync_run";
+
+interface RememberedControlSyncRun {
+  run_id: string;
+  mode: "incremental" | "full";
+  target: SyncTarget;
+}
+
+function controlSyncStorageKey(cartridgeId: string): string {
+  return `${CONTROL_SYNC_STORAGE_PREFIX}.${cartridgeId}`;
+}
+
+function rememberControlSyncRun(cartridgeId: string, payload: SyncRunPayload): void {
+  if (typeof window === "undefined") return;
+  try {
+    const value: RememberedControlSyncRun = {
+      run_id: payload.run_id,
+      mode: payload.mode,
+      target: payload.target,
+    };
+    window.sessionStorage.setItem(controlSyncStorageKey(cartridgeId), JSON.stringify(value));
+  } catch {
+    // Session storage is best-effort; backend polling remains the source of truth.
+  }
+}
+
+function readRememberedControlSyncRun(cartridgeId: string): RememberedControlSyncRun | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(controlSyncStorageKey(cartridgeId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<RememberedControlSyncRun>;
+    if (!value.run_id) return null;
+    return {
+      run_id: String(value.run_id),
+      mode: value.mode === "full" ? "full" : "incremental",
+      target: value.target === "foundation" || value.target === "talent" ? value.target : "all",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function forgetControlSyncRun(cartridgeId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(controlSyncStorageKey(cartridgeId));
+  } catch {
+    // Nothing to do; stale storage will be ignored on the next failed lookup.
+  }
+}
 
 function parseDate(value?: string): Date | null {
   if (!value) return null;
@@ -1225,6 +1277,8 @@ export default function ControlRoomPage() {
   const [activeControlRoomSection, setActiveControlRoomSection] = useState<ControlRoomSectionId>(() => controlRoomSectionFromHash() || "operations");
   const [clockTick, setClockTick] = useState(0);
   const [urlHydrated, setUrlHydrated] = useState(false);
+  const controlSyncPollRef = useRef<string | null>(null);
+  const controlSyncRestoreRef = useRef<Set<string>>(new Set());
 
   const loadDashboard = useCallback(async (preferredId?: string, background = false) => {
     if (!background) setError("");
@@ -2097,52 +2151,138 @@ export default function ControlRoomPage() {
     ? dashboard?.summary.open_decisions ?? 0
     : filtered.filter((item) => Boolean(item.decision_id)).length;
 
-  function refreshAll() {
+  const refreshAll = useCallback(() => {
     const tasks: Promise<unknown>[] = [
       loadDashboard(selectedId, false),
     ];
     loadActiveControlRoomSection(activeControlRoomSection);
     void Promise.allSettled(tasks);
-  }
+  }, [activeControlRoomSection, loadActiveControlRoomSection, loadDashboard, selectedId]);
 
-  async function syncControlRoomData() {
-    const activeCartridge = activeSyncCartridge?.id || "sap_successfactors";
-    const target = syncTargetSupportsTalent ? controlSyncTarget : controlSyncTarget === "foundation" ? "foundation" : "all";
+  const pollControlSyncRun = useCallback(async (
+    activeCartridge: string,
+    initial: SyncRunPayload,
+    options: { announce?: boolean } = {},
+  ) => {
+    const pollKey = `${activeCartridge}:${initial.run_id}`;
+    if (controlSyncPollRef.current === pollKey) return;
 
+    controlSyncPollRef.current = pollKey;
     setControlSyncing(true);
     setSyncError("");
+    setControlSyncRun(initial);
+    rememberControlSyncRun(activeCartridge, initial);
     try {
-      let current = await startCartridgeSyncNow(activeCartridge, { mode: "incremental", target });
-      setControlSyncRun(current);
-      toast.success("Sincronización enviada.");
+      let current = initial;
 
       for (let attempt = 0; attempt < SYNC_NOW_MAX_POLL_ATTEMPTS && !isSyncTerminal(current.status); attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, SYNC_NOW_POLL_INTERVAL_MS));
         current = await getCartridgeSyncRun(activeCartridge, current.run_id);
         setControlSyncRun(current);
+        if (!isSyncTerminal(current.status)) rememberControlSyncRun(activeCartridge, current);
       }
 
       if (current.status === "success") {
-        toast.success("Sincronización completada.");
+        forgetControlSyncRun(activeCartridge);
+        if (options.announce) toast.success("Sincronización completada.");
       } else if (current.status === "partial") {
-        toast("Sincronización parcial. Revisa Pipeline para ver el paso pendiente.");
+        forgetControlSyncRun(activeCartridge);
+        if (options.announce) toast("Sincronización parcial. Revisa Pipeline para ver el paso pendiente.");
       } else if (current.status === "failed") {
+        forgetControlSyncRun(activeCartridge);
         const message = current.error_message || "La sincronización falló.";
         setSyncError(message);
-        toast.error(message);
+        if (options.announce) toast.error(message);
       } else {
+        rememberControlSyncRun(activeCartridge, current);
         setSyncError("La sincronización sigue corriendo en Airflow. Control Room se actualizará al terminar.");
-        toast("Sincronización aún en curso en Airflow.");
+        if (options.announce) toast("Sincronización aún en curso en Airflow.");
       }
-      refreshAll();
+
+      void loadDashboard(selectedId, false);
+      loadActiveControlRoomSection(activeControlRoomSection);
+    } catch (err) {
+      const message = errorMessage(err, "No se pudo consultar la sincronización.");
+      setSyncError(message);
+      if (options.announce) toast.error(message);
+    } finally {
+      if (controlSyncPollRef.current === pollKey) controlSyncPollRef.current = null;
+      setControlSyncing(false);
+    }
+  }, [activeControlRoomSection, loadActiveControlRoomSection, loadDashboard, selectedId]);
+
+  const syncControlRoomData = useCallback(async () => {
+    const activeCartridge = activeSyncCartridge?.id || "sap_successfactors";
+    const target = syncTargetSupportsTalent ? controlSyncTarget : controlSyncTarget === "foundation" ? "foundation" : "all";
+
+    setSyncError("");
+    try {
+      const current = await startCartridgeSyncNow(activeCartridge, { mode: "incremental", target });
+      rememberControlSyncRun(activeCartridge, current);
+      setControlSyncRun(current);
+      toast.success("Sincronización enviada.");
+      await pollControlSyncRun(activeCartridge, current, { announce: true });
     } catch (err) {
       const message = errorMessage(err, "No se pudo iniciar la sincronización.");
       setSyncError(message);
       toast.error(message);
-    } finally {
-      setControlSyncing(false);
     }
-  }
+  }, [activeSyncCartridge?.id, controlSyncTarget, pollControlSyncRun, syncTargetSupportsTalent]);
+
+  useEffect(() => {
+    if (!activeSyncCartridge?.id || controlSyncing || controlSyncPollRef.current) return undefined;
+    const activeCartridge = activeSyncCartridge.id;
+    const target = syncTargetSupportsTalent ? controlSyncTarget : controlSyncTarget === "foundation" ? "foundation" : "all";
+    const restoreKey = `${activeCartridge}:${target}`;
+    if (controlSyncRestoreRef.current.has(restoreKey)) return undefined;
+    controlSyncRestoreRef.current.add(restoreKey);
+
+    let cancelled = false;
+    const restoreSyncRun = async () => {
+      const remembered = readRememberedControlSyncRun(activeCartridge);
+      try {
+        const current = remembered
+          ? await getCartridgeSyncRun(activeCartridge, remembered.run_id)
+          : await getActiveCartridgeSyncRun(activeCartridge, { mode: "incremental", target });
+        if (cancelled) return;
+        setControlSyncRun(current);
+        if (isSyncTerminal(current.status)) {
+          forgetControlSyncRun(activeCartridge);
+          return;
+        }
+        await pollControlSyncRun(activeCartridge, current, { announce: false });
+      } catch {
+        if (remembered) forgetControlSyncRun(activeCartridge);
+      }
+    };
+
+    void restoreSyncRun();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeSyncCartridge?.id,
+    controlSyncTarget,
+    controlSyncing,
+    pollControlSyncRun,
+    syncTargetSupportsTalent,
+  ]);
+
+  useEffect(() => {
+    const resumeWhenVisible = () => {
+      if (
+        document.visibilityState !== "visible"
+        || !activeSyncCartridge?.id
+        || !controlSyncRun
+        || controlSyncing
+        || isSyncTerminal(controlSyncRun.status)
+      ) return;
+      void pollControlSyncRun(activeSyncCartridge.id, controlSyncRun, { announce: false });
+    };
+
+    document.addEventListener("visibilitychange", resumeWhenVisible);
+    return () => document.removeEventListener("visibilitychange", resumeWhenVisible);
+  }, [activeSyncCartridge?.id, controlSyncRun, controlSyncing, pollControlSyncRun]);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950 dark:bg-[#050a12] dark:text-slate-100">

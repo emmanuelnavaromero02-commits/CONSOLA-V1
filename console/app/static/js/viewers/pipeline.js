@@ -8,6 +8,7 @@
 
 let pipelineData  = [];
 let activeJobs    = {};   // entity → job_id (jobs being polled)
+let activePolls   = new Set();
 let _autoTimer    = null;
 const _initialParams = new URLSearchParams(location.search);
 let _cartridge    = _initialParams.get('cartridge') || '';
@@ -110,6 +111,7 @@ function onCartridgeChange() {
   _cartridge = sel.value || 'sap_successfactors';
   syncPipelineUrl();
   activeJobs = {};
+  activePolls.clear();
   _vaultConnections = [];
   _selectedConnId = '';
   load();
@@ -347,8 +349,7 @@ async function extractEntity(cartridge, entity) {
   });
   const d = await r.json();
   if (d.job_id) {
-    activeJobs[entity] = {job_id: d.job_id, message: 'Iniciando...'};
-    _pollJob(entity, d.job_id);
+    _startJobPolling(entity, d.job_id, 'Iniciando...');
     _rerender();
   }
 }
@@ -371,7 +372,7 @@ async function extractAll() {
   if (d.triggered && d.triggered.length) {
     d.triggered.forEach(t => {
       const jobId = t.job_id || t.dag_run_id || t.run_id;
-      if (jobId) activeJobs[t.entity] = {job_id: jobId, message: 'Batch iniciado...'};
+      if (jobId) _startJobPolling(t.entity, jobId, 'Batch iniciado...');
     });
     _rerender();
     setTimeout(load, 3000);
@@ -398,15 +399,57 @@ function parseJobPct(msg) {
   return m ? Math.round(parseInt(m[1]) / parseInt(m[2]) * 100) : 30;
 }
 
+function _startJobPolling(entity, jobId, message = 'Iniciando...') {
+  if (!entity || !jobId) return;
+  activeJobs[entity] = {job_id: jobId, message};
+  const pollKey = `${entity}:${jobId}`;
+  if (activePolls.has(pollKey)) return;
+  activePolls.add(pollKey);
+  _pollJob(entity, jobId);
+}
+
+async function _fetchPipelineRunJob(entity, jobId) {
+  const r = await fetchWithTimeout(
+    `/api/pipeline/${encodeURIComponent(_cartridge)}/${encodeURIComponent(entity)}/runs?limit=10`,
+    {},
+    15000,
+  );
+  if (!r.ok) return null;
+  const d = await r.json();
+  const runs = d.runs || [];
+  const run = runs.find(item =>
+    item?.dag_run_id === jobId ||
+    item?.run_id === jobId ||
+    item?.airflow_dag_run_id === jobId
+  ) || null;
+  if (!run) return null;
+  const status = String(run.status || '').toLowerCase();
+  const jobStatus = ['queued', 'scheduled', 'running', 'unknown'].includes(status)
+    ? 'running'
+    : status === 'failed'
+      ? 'failed'
+      : 'done';
+  return {
+    status: jobStatus,
+    message: `Airflow ${run.dag_id || 'pipeline'} · ${status || 'unknown'}`,
+    result: run,
+  };
+}
+
 async function _pollJob(entity, jobId) {
   let done = false;
+  const pollKey = `${entity}:${jobId}`;
   while (!done) {
     await _sleep(2000);
     try {
-      const r = await fetchWithTimeout(`/api/jobs/${jobId}`, {}, 15000);
-      const j = await r.json();
+      let j = await _fetchPipelineRunJob(entity, jobId);
+      if (!j) {
+        const r = await fetchWithTimeout(`/api/jobs/${encodeURIComponent(jobId)}`, {}, 15000);
+        j = await r.json();
+      }
       if (j.status === 'done' || j.status === 'failed') {
-        delete activeJobs[entity];
+        if (activeJobs[entity]?.job_id === jobId) delete activeJobs[entity];
+        activePolls.delete(pollKey);
         done = true;
         await load();   // full reload to see Silver updates
       } else {
@@ -415,7 +458,11 @@ async function _pollJob(entity, jobId) {
         }
         _rerender();
       }
-    } catch { done = true; }
+    } catch {
+      if (activeJobs[entity]?.job_id === jobId) delete activeJobs[entity];
+      activePolls.delete(pollKey);
+      done = true;
+    }
   }
 }
 
@@ -434,8 +481,8 @@ async function load() {
     // Merge running jobs detected server-side
     pipelineData.forEach(row => {
       if (row.last_job && row.last_job.status === 'running' && !activeJobs[row.entity]) {
-        activeJobs[row.entity] = {job_id: row.last_job.job_id, message: row.last_job.message || ''};
-        _pollJob(row.entity, row.last_job.job_id);
+        const jobId = row.last_job.job_id || row.last_job.dag_run_id || row.last_job.run_id;
+        _startJobPolling(row.entity, jobId, row.last_job.message || '');
       }
     });
 
