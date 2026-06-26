@@ -533,10 +533,36 @@ async def api_pipeline_extract(
             dag_id,
             body.get("idempotency_key") or body.get("request_id"),
         )
+        slot = await _reserve_successfactors_entity_extract_slot(
+            cartridge=cartridge,
+            entity=entity,
+            dag_id=dag_id,
+            conf=conf,
+            user=user,
+            requested_dag_run_id=requested_dag_run_id,
+        )
+        if slot and slot.get("response"):
+            return slot["response"]
+        if slot and slot.get("dag_run_id"):
+            requested_dag_run_id = slot["dag_run_id"]
         result = await _trigger_airflow_extract_dag(dag_id, conf, user, requested_dag_run_id)
         if result.get("error"):
+            if slot and slot.get("reserved"):
+                await _record_dag_pipeline_trigger(
+                    cartridge=cartridge,
+                    entity=entity,
+                    dag_id=dag_id,
+                    dag_run_id=requested_dag_run_id or "",
+                    mode=conf.get("mode", metadata.get("mode") or "incremental"),
+                    status="failed",
+                    conf={**conf, "trigger_error": result["error"]},
+                    tenant_id=conf.get("tenant_id"),
+                    workspace_id=conf.get("workspace_id"),
+                )
             raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
-        dag_run_id = result.get("dag_run_id") or result.get("run_id")
+        dag_run_id = (
+            result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
+        )
         await _record_dag_pipeline_trigger(
             cartridge=cartridge,
             entity=entity,

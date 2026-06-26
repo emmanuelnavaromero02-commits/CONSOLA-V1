@@ -71,6 +71,13 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 PIPELINE_DAG_STATUS_TIMEOUT_SEC = _env_float("PIPELINE_DAG_STATUS_TIMEOUT_SEC", 1.5)
 PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC = _env_float(
     "PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC", 2.5
@@ -6504,12 +6511,38 @@ async def api_pipeline_extract(
             dag_id,
             body.get("idempotency_key") or body.get("request_id"),
         )
+        slot = await _reserve_successfactors_entity_extract_slot(
+            cartridge=cartridge,
+            entity=entity,
+            dag_id=dag_id,
+            conf=conf,
+            user=user,
+            requested_dag_run_id=requested_dag_run_id,
+        )
+        if slot and slot.get("response"):
+            return slot["response"]
+        if slot and slot.get("dag_run_id"):
+            requested_dag_run_id = slot["dag_run_id"]
         result = await _trigger_airflow_extract_dag(
             dag_id, conf, user, requested_dag_run_id
         )
         if result.get("error"):
+            if slot and slot.get("reserved"):
+                await _record_dag_pipeline_trigger(
+                    cartridge=cartridge,
+                    entity=entity,
+                    dag_id=dag_id,
+                    dag_run_id=requested_dag_run_id or "",
+                    mode=conf.get("mode", metadata.get("mode") or "incremental"),
+                    status="failed",
+                    conf={**conf, "trigger_error": result["error"]},
+                    tenant_id=conf.get("tenant_id"),
+                    workspace_id=conf.get("workspace_id"),
+                )
             raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
-        dag_run_id = result.get("dag_run_id") or result.get("run_id")
+        dag_run_id = (
+            result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
+        )
         await _record_dag_pipeline_trigger(
             cartridge=cartridge,
             entity=entity,
@@ -6660,6 +6693,17 @@ _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 
 _SYNC_EXTRACT_ALL_DAGS = {
     "sap_successfactors": "sap_successfactors_extract_all",
 }
+_SAP_SUCCESSFACTORS_CARTRIDGE = "sap_successfactors"
+_SAP_SUCCESSFACTORS_ENTITY_DAG_ID = "sap_successfactors_extract"
+_SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID = "sap_successfactors_extract_all"
+_SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS = max(
+    300,
+    _env_int("SAP_SUCCESSFACTORS_ACTIVE_EXTRACT_WINDOW_SECONDS", 4 * 60 * 60),
+)
+_SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS = max(
+    1,
+    _env_int("SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS", 2),
+)
 _SYNC_AGENTOPS_TOOLS = {
     "mcp-infra__simulation__monte_carlo_run",
     "mcp-infra__decision__orchestrate",
@@ -6672,6 +6716,236 @@ _SYNC_AGENTOPS_TOOLS = {
     "infra__control_room__raise_alert",
     "infra__control_room__raise_analysis_alert",
 }
+
+
+def _airflow_run_id_fragment(value: str) -> str:
+    fragment = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value or "")).strip("_")
+    return (fragment or "entity")[:80]
+
+
+def _active_extract_run_payload(
+    *,
+    row: dict[str, Any],
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    conf: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
+    state = _normalize_airflow_state(row.get("status"))
+    return {
+        "triggered": False,
+        "reused": True,
+        "cartridge": cartridge,
+        "entity": entity,
+        "dag_id": dag_id,
+        "job_id": dag_run_id,
+        "run_id": dag_run_id,
+        "dag_run_id": dag_run_id,
+        "state": state,
+        "reason": reason,
+        "conf": conf,
+    }
+
+
+async def _reserve_successfactors_entity_extract_slot(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    conf: dict[str, Any],
+    user: dict | None,
+    requested_dag_run_id: str | None = None,
+) -> dict[str, Any] | None:
+    if (
+        cartridge != _SAP_SUCCESSFACTORS_CARTRIDGE
+        or dag_id != _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
+    ):
+        return None
+
+    tenant_id = conf.get("tenant_id") or build_security_context(user).get("tenant_id")
+    workspace_id = conf.get("workspace_id") or build_security_context(user).get(
+        "workspace_id"
+    )
+    scope_columns_present = await _table_has_column(
+        "pipeline_runs", "tenant_id", refresh=True
+    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
+    if scope_columns_present and not (tenant_id and workspace_id):
+        raise HTTPException(403, "pipeline run tenant/workspace scope is required")
+
+    dag_run_id = requested_dag_run_id or (
+        f"console__{dag_id}__{_airflow_run_id_fragment(entity)}__{uuid.uuid4().hex}"
+    )
+    extra = json.dumps(
+        {
+            "raw_conf": conf,
+            "triggered_by": "console",
+            "reserved": True,
+            "reason": "successfactors_entity_extract_backpressure",
+        }
+    )
+    pool = await _get_db_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                if scope_columns_present:
+                    await conn.execute(
+                        "SELECT set_config('app.tenant_id', $1, true), "
+                        "set_config('app.workspace_id', $2, true)",
+                        tenant_id,
+                        workspace_id,
+                    )
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+                    _SAP_SUCCESSFACTORS_CARTRIDGE,
+                    f"{tenant_id or '*'}:{workspace_id or '*'}",
+                )
+                scope_sql = ""
+                args: list[Any] = [
+                    _SAP_SUCCESSFACTORS_CARTRIDGE,
+                    _SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS,
+                ]
+                if scope_columns_present:
+                    scope_sql = "AND tenant_id=$3::uuid AND workspace_id=$4::uuid"
+                    args.extend([tenant_id, workspace_id])
+                rows = [
+                    dict(row)
+                    for row in await conn.fetch(
+                        f"""
+                        SELECT run_id, dag_id, entity, airflow_dag_run_id,
+                               status, mode, started_at, extra
+                          FROM pipeline_runs
+                         WHERE cartridge_id=$1
+                           AND status IN ('queued', 'running')
+                           AND started_at > NOW() - ($2::integer * INTERVAL '1 second')
+                           {scope_sql}
+                         ORDER BY started_at DESC
+                         LIMIT 50
+                        """,
+                        *args,
+                    )
+                ]
+
+                for row in rows:
+                    if (
+                        row.get("dag_id") == _SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID
+                        and row.get("entity") == _SYNC_AGGREGATE_ENTITY
+                    ):
+                        raise HTTPException(
+                            429,
+                            detail={
+                                "reason": "extract_all_already_running",
+                                "message": (
+                                    "SAP SuccessFactors extract_all is already running; "
+                                    "wait for it to finish before triggering individual entities."
+                                ),
+                                "job_id": row.get("airflow_dag_run_id")
+                                or row.get("run_id"),
+                            },
+                        )
+
+                for row in rows:
+                    if (
+                        row.get("dag_id") == _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
+                        and row.get("entity") == entity
+                    ):
+                        return {
+                            "response": _active_extract_run_payload(
+                                row=row,
+                                cartridge=cartridge,
+                                entity=entity,
+                                dag_id=dag_id,
+                                conf=conf,
+                                reason="active_entity_run",
+                            )
+                        }
+
+                active_entity_runs = [
+                    row
+                    for row in rows
+                    if row.get("dag_id") == _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
+                ]
+                if (
+                    len(active_entity_runs)
+                    >= _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS
+                ):
+                    raise HTTPException(
+                        429,
+                        detail={
+                            "reason": "too_many_active_entity_extracts",
+                            "message": (
+                                "SAP SuccessFactors extraction backpressure: "
+                                f"{len(active_entity_runs)} active entity runs; "
+                                "use Extract All/sync or wait."
+                            ),
+                            "active": len(active_entity_runs),
+                            "limit": _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS,
+                        },
+                    )
+
+                if scope_columns_present:
+                    await conn.execute(
+                        """
+                        INSERT INTO pipeline_runs (
+                            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                            mode, status, started_at, extra, tenant_id, workspace_id
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, 'queued', NOW(), $7::jsonb, $8::uuid, $9::uuid)
+                        ON CONFLICT (run_id) DO UPDATE SET
+                            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                            mode = EXCLUDED.mode,
+                            status = EXCLUDED.status,
+                            tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
+                            workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
+                            extra = pipeline_runs.extra || EXCLUDED.extra
+                        """,
+                        dag_run_id,
+                        dag_id,
+                        cartridge,
+                        entity,
+                        dag_run_id,
+                        conf.get("mode") or "incremental",
+                        extra,
+                        tenant_id,
+                        workspace_id,
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        INSERT INTO pipeline_runs (
+                            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                            mode, status, started_at, extra
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, 'queued', NOW(), $7::jsonb)
+                        ON CONFLICT (run_id) DO UPDATE SET
+                            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                            mode = EXCLUDED.mode,
+                            status = EXCLUDED.status,
+                            extra = pipeline_runs.extra || EXCLUDED.extra
+                        """,
+                        dag_run_id,
+                        dag_id,
+                        cartridge,
+                        entity,
+                        dag_run_id,
+                        conf.get("mode") or "incremental",
+                        extra,
+                    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("SuccessFactors extraction backpressure check failed")
+        raise HTTPException(
+            503,
+            detail={
+                "reason": "backpressure_unavailable",
+                "message": "Could not reserve SAP SuccessFactors extraction slot.",
+                "error": str(exc),
+            },
+        ) from exc
+
+    return {"dag_run_id": dag_run_id, "reserved": True}
 
 
 def _pipeline_extract_all_mode_target(body: dict[str, Any]) -> tuple[str, str]:
