@@ -586,6 +586,14 @@ async def api_pipeline_extract_all(
     body = body or {}
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
+    aggregate_result = await _maybe_trigger_aggregate_extract_all(
+        cartridge=cartridge,
+        body=body,
+        user=user,
+    )
+    if aggregate_result is not None:
+        return aggregate_result
+
     pipeline = await _call_with_optional_user(api_pipeline, cartridge, user=user)
     rows = pipeline.get("pipeline") or []
     triggered: list[dict] = []
