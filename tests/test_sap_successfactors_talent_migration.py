@@ -30,7 +30,8 @@ def test_talent_incremental_migration_registers_all_gold_datasets():
 
     assert TALENT_DATASETS <= names
     assert "INSERT INTO datasets" in sql
-    assert "ON CONFLICT (name) DO UPDATE" in sql
+    assert "ON CONFLICT DO NOTHING" in sql
+    assert "ON CONFLICT (name)" not in sql
     assert "'99p_sap_successfactors_talent_datasets.sql'" in sql
 
 

@@ -856,16 +856,7 @@ SELECT
 FROM metrics
 WHERE employees_with_mobility_count > 0
 $seed$, $seed$Senales WisdomBit Talento como recomendaciones. No ejecuta acciones automaticas ni write-back.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO UPDATE
-SET layer = EXCLUDED.layer,
-    cartridge = EXCLUDED.cartridge,
-    sources = EXCLUDED.sources,
-    sql_def = EXCLUDED.sql_def,
-    description = EXCLUDED.description,
-    column_mapping = EXCLUDED.column_mapping,
-    schedule = EXCLUDED.schedule,
-    updated_at = NOW(),
-    workspace_id = COALESCE(datasets.workspace_id, EXCLUDED.workspace_id);
+ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('99p_sap_successfactors_talent_datasets.sql', NOW())

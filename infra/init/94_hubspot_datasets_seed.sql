@@ -380,13 +380,4 @@ $sql$,
     NOW(),
     (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)
 )
-ON CONFLICT (name) DO UPDATE SET
-    layer = EXCLUDED.layer,
-    cartridge = EXCLUDED.cartridge,
-    sources = EXCLUDED.sources,
-    sql_def = EXCLUDED.sql_def,
-    description = EXCLUDED.description,
-    column_mapping = EXCLUDED.column_mapping,
-    schedule = EXCLUDED.schedule,
-    workspace_id = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
-    updated_at = NOW();
+ON CONFLICT DO NOTHING;
