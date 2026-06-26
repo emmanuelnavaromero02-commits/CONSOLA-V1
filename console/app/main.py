@@ -6560,6 +6560,14 @@ async def api_pipeline_extract_all(
     body = body or {}
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
+    aggregate_result = await _maybe_trigger_aggregate_extract_all(
+        cartridge=cartridge,
+        body=body,
+        user=user,
+    )
+    if aggregate_result is not None:
+        return aggregate_result
+
     pipeline = await _call_with_optional_user(api_pipeline, cartridge, user=user)
     rows = pipeline.get("pipeline") or []
     triggered: list[dict] = []
@@ -6664,6 +6672,97 @@ _SYNC_AGENTOPS_TOOLS = {
     "infra__control_room__raise_alert",
     "infra__control_room__raise_analysis_alert",
 }
+
+
+def _pipeline_extract_all_mode_target(body: dict[str, Any]) -> tuple[str, str]:
+    mode = str(body.get("mode") or "incremental").strip().lower()
+    target = str(body.get("target") or "all").strip().lower()
+    if mode not in _SYNC_VALID_MODES:
+        raise HTTPException(400, detail="invalid extract mode")
+    if target not in _SYNC_VALID_TARGETS:
+        raise HTTPException(400, detail="invalid extract target")
+    return mode, target
+
+
+def _pipeline_extract_all_run_id(
+    *, cartridge: str, mode: str, target: str, conn_id: str | None, body: dict[str, Any]
+) -> str:
+    provided = body.get("idempotency_key") or body.get("request_id")
+    if provided is not None:
+        key = str(provided).strip()
+        if not key:
+            raise HTTPException(400, detail="invalid idempotency_key")
+        if len(key) > 160:
+            raise HTTPException(400, detail="idempotency_key is too long")
+        material = f"{cartridge}:{mode}:{target}:{conn_id or '__default__'}:{key}"
+        return f"extract_all:{cartridge}:{uuid.uuid5(uuid.NAMESPACE_URL, material).hex}"
+    return f"extract_all:{cartridge}:{uuid.uuid4().hex}"
+
+
+def _pipeline_extract_all_public_response(result: dict[str, Any]) -> dict[str, Any]:
+    triggered = list(result.get("triggered") or [])
+    errors = list(result.get("errors") or [])
+    partial = list(result.get("partial") or [])
+    skipped_explicit = list(result.get("skipped_explicit") or [])
+    blocked = [
+        item for item in errors
+        if item.get("status_code") in {400, 403, 404}
+    ]
+    failed = [
+        item for item in errors
+        if item.get("status_code") not in {400, 403, 404}
+    ]
+    attempted = len(triggered) + len(errors) + len(partial) + len(skipped_explicit)
+    return {
+        **result,
+        "attempted": attempted,
+        "triggered": triggered,
+        "errors": errors,
+        "blocked": blocked,
+        "failed": failed,
+        "partial": partial,
+        "skipped_explicit": skipped_explicit,
+        "summary": {
+            "attempted": attempted,
+            "triggered": len(triggered),
+            "errors": len(errors),
+            "blocked": len(blocked),
+            "failed": len(failed),
+            "partial": len(partial),
+            "skipped_explicit": len(skipped_explicit),
+        },
+        "count": len(triggered),
+        "error_count": len(errors),
+    }
+
+
+async def _maybe_trigger_aggregate_extract_all(
+    *, cartridge: str, body: dict[str, Any], user: dict | None
+) -> dict[str, Any] | None:
+    if cartridge not in _SYNC_EXTRACT_ALL_DAGS:
+        return None
+    mode, target = _pipeline_extract_all_mode_target(body)
+    conn_id = _normalize_pipeline_conn_id(
+        body.get("conn_id") or body.get("connection_id")
+    )
+    run_id = _pipeline_extract_all_run_id(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        body=body,
+    )
+    result = await _trigger_sync_aggregate_extract_all(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        user=user,
+    )
+    if result is None:
+        return None
+    return _pipeline_extract_all_public_response(result)
 
 
 def _sync_step(

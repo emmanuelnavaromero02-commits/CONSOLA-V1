@@ -472,6 +472,52 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
 
 
 @pytest.mark.anyio
+async def test_api_pipeline_extract_all_successfactors_uses_aggregate_dag(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    trigger_calls: list[dict] = []
+    records: list[dict] = []
+
+    async def trigger(dag_id, conf, user_arg, dag_run_id=None):
+        trigger_calls.append({"dag_id": dag_id, "conf": conf, "dag_run_id": dag_run_id})
+        return {"dag_run_id": dag_run_id, "state": "queued"}
+
+    async def record(**kwargs):
+        records.append(kwargs)
+
+    async def fanout_should_not_run(*_args, **_kwargs):
+        raise AssertionError("sap_successfactors extract_all should use aggregate DAG")
+
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger)
+    monkeypatch.setattr(console_main, "_record_dag_pipeline_trigger", record)
+    monkeypatch.setattr(console_main, "api_pipeline", fanout_should_not_run)
+
+    result = await console_main.api_pipeline_extract_all(
+        "sap_successfactors",
+        {
+            "mode": "incremental",
+            "target": "all",
+            "conn_id": "femsa_sf",
+            "idempotency_key": "studio-extract-all-1",
+        },
+        user=user,
+    )
+
+    assert trigger_calls[0]["dag_id"] == "sap_successfactors_extract_all"
+    assert trigger_calls[0]["conf"]["mode"] == "incremental"
+    assert trigger_calls[0]["conf"]["target"] == "all"
+    assert trigger_calls[0]["conf"]["conn_id"] == "femsa_sf"
+    assert trigger_calls[0]["conf"]["tenant_id"] == user["active_tenant_id"]
+    assert trigger_calls[0]["conf"]["workspace_id"] == user["active_workspace_id"]
+    assert records[0]["entity"] == console_main._SYNC_AGGREGATE_ENTITY
+    assert result["trigger_strategy"] == "aggregate_dag"
+    assert result["attempted"] == 1
+    assert result["summary"]["triggered"] == 1
+    assert result["triggered"][0]["entity"] == console_main._SYNC_AGGREGATE_ENTITY
+
+
+@pytest.mark.anyio
 async def test_sync_now_request_id_reuses_existing_terminal_run(
     console_main, monkeypatch
 ):
