@@ -289,6 +289,19 @@ async def intelligence_readiness(
     require_data: bool = True,
 ) -> dict[str, Any]:
     requirements = required_datasets(user)
+    if not require_data:
+        return {
+            "status": "up",
+            "required": False,
+            "contracts_loaded": len(load_contracts(_contract_filter(user))),
+            "required_datasets": [str(row["dataset"]) for row in requirements],
+            "missing_datasets": [],
+            "datasets": [],
+            "signal_count": 0,
+            "last_signal_at": None,
+            "reason": "data_check_not_required",
+        }
+
     dataset_rows = await _gold_counts(requirements, user)
     missing = [
         row

@@ -13,14 +13,14 @@ os.environ.setdefault("INTERNAL_API_KEY", "test-internal-api-key-for-startup-rea
 import app.main as main
 
 
-def _request(*, authenticated: bool = False) -> Request:
+def _request(*, authenticated: bool = False, query_string: bytes = b"") -> Request:
     request = Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/readyz",
             "headers": [],
-            "query_string": b"",
+            "query_string": query_string,
             "app": main.app,
         }
     )
@@ -67,6 +67,61 @@ async def test_readyz_returns_503_without_public_startup_error_details():
         assert json.loads(response.body.decode()) == {
             "ok": False,
             "service": "console",
+        }
+    finally:
+        main.app.state.startup_ok = original_ok
+        main.app.state.startup_errors = original_errors
+
+
+@pytest.mark.asyncio
+async def test_readyz_without_require_data_skips_expensive_data_checks(monkeypatch):
+    original_ok = getattr(main.app.state, "startup_ok", True)
+    original_errors = list(getattr(main.app.state, "startup_errors", []) or [])
+
+    class _Conn:
+        async def fetchval(self, *_args, **_kwargs):
+            return 1
+
+    class _Acquire:
+        async def __aenter__(self):
+            return _Conn()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _Pool:
+        def acquire(self):
+            return _Acquire()
+
+    async def _pool():
+        return _Pool()
+
+    async def _up(*_args, **_kwargs):
+        return {"status": "up"}
+
+    async def _expensive(*_args, **_kwargs):
+        raise AssertionError("data readiness should not run for plain /readyz")
+
+    try:
+        main.app.state.startup_ok = True
+        main.app.state.startup_errors = []
+        monkeypatch.setattr(main, "_get_db_pool", _pool)
+        monkeypatch.setattr(main, "_dependency_health", _up)
+        monkeypatch.setattr(main, "_control_room_data_check", _expensive)
+
+        response = await main.readyz(_request(authenticated=True))
+
+        body = json.loads(response.body.decode())
+        assert response.status_code == 200
+        assert body["checks"]["control_room_data"] == {
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
+        }
+        assert body["checks"]["intelligence_data"] == {
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
         }
     finally:
         main.app.state.startup_ok = original_ok

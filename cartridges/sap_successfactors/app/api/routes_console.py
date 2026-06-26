@@ -272,6 +272,17 @@ def extract_all(
             security_context=ctx,
             target=target,
         )
+        results.extend(
+            {
+                "entity": item.get("entity"),
+                "status": "skipped_explicit" if item.get("status") == "skipped" else item.get("status", "blocked"),
+                "reason": item.get("reason") or "unknown_error",
+                "code": item.get("code") or "PLAN_OUTCOME",
+                "metadata_status": item.get("metadata_status"),
+                "fields_missing": item.get("fields_missing") or [],
+            }
+            for item in skipped
+        )
         for config in entities:
             effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
             entity_idempotency_key = _entity_idempotency_key(
@@ -295,21 +306,46 @@ def extract_all(
         reset_security_context(token)
     summary = summarize_extraction_results(results)
     gold_refresh = None
-    if any(isinstance(item, dict) and item.get("status") == "extracted" for item in results):
+    if any(isinstance(item, dict) and item.get("status") in {"extracted", "partial"} for item in results):
         gold_refresh = _mark_external_job(
             _trigger_successfactors_gold_refresh,
             target,
             ctx,
         )
     status_text = "success" if not any(
-        summary[key] for key in ("auth_blocked", "permission_blocked", "failed_open")
+        summary[key]
+        for key in (
+            "auth_blocked",
+            "permission_blocked",
+            "failed_open",
+            "blocked",
+            "skipped_explicit",
+            "partial",
+        )
     ) else "completed_with_blocks"
+    attempted = [
+        item for item in results
+        if item.get("entity") and not str(item.get("entity")).startswith("__")
+    ]
     return {
         "status": status_text,
         "target": target,
+        "attempted": len(attempted),
+        "triggered": [
+            item for item in results
+            if item.get("status") in {"extracted", "empty-valid", "partial"}
+        ],
+        "blocked": [item for item in results if item.get("status") == "blocked"],
+        "partial": [item for item in results if item.get("status") == "partial"],
+        "failed": [
+            item for item in results
+            if item.get("status") in {"failed", "failed-open", "auth-blocked", "permission-blocked"}
+        ],
+        "skipped_explicit": [item for item in results if item.get("status") == "skipped_explicit"],
         "summary": summary,
         "results": results,
         "skipped": skipped,
+        "outcomes": skipped,
         "gold_refresh": gold_refresh,
     }
 

@@ -495,19 +495,25 @@ async def _run_extract_all(
     total = len(entities)
     completed = 0
     failed = 0
-    results: list[dict] = []
-    skipped_results = list(skipped)
+    skipped_results = [
+        {
+            **item,
+            "status": "skipped_explicit" if item.get("status") == "skipped" else item.get("status", "blocked"),
+        }
+        for item in skipped
+    ]
+    results: list[dict] = list(skipped_results)
 
     await _update(
         job_id,
         "running",
-        f"Iniciando — {total} entidades scoped en modo {mode}; target={target}; {len(skipped_results)} omitidas",
+        f"Iniciando — {total} entidades listas en modo {mode}; target={target}; {len(skipped_results)} outcomes previos",
     )
     await _log(
         job_id,
         None,
         "INFO",
-        f"Batch iniciado: {total} entidades scoped, {len(skipped_results)} omitidas, modo={mode}, target={target}",
+        f"Batch iniciado: {total} entidades listas, {len(skipped_results)} outcomes previos, modo={mode}, target={target}",
         {"target": target, "skipped": skipped_results},
     )
 
@@ -567,13 +573,19 @@ async def _run_extract_all(
     await asyncio.gather(*[_one(dict(e)) for e in entities])
 
     total_records = sum(
-        r.get("record_count", 0) for r in results if r["status"] == "extracted"
+        r.get("record_count", 0) for r in results if r["status"] in {"extracted", "partial"}
     )
     result_summary = summarize_extraction_results(results)
-    level = "INFO" if failed == 0 else "WARN"
+    blocked_count = (
+        result_summary["blocked"]
+        + result_summary["skipped_explicit"]
+        + result_summary["permission_blocked"]
+        + result_summary["auth_blocked"]
+    )
+    level = "INFO" if failed == 0 and blocked_count == 0 else "WARN"
     summary = (
         f"Completado — {completed}/{total} entidades, "
-        f"{total_records:,} registros totales, {failed} bloqueadas/fallidas"
+        f"{total_records:,} registros totales, {failed + blocked_count} bloqueadas/fallidas"
     )
     final_status = "failed" if result_summary["failed_open"] else "done"
     await _update(
@@ -583,8 +595,15 @@ async def _run_extract_all(
                 "completed": completed, "failed": failed,
                 "summary": result_summary,
                 "skipped": skipped_results,
+                "outcomes": skipped_results,
+                "blocked": [item for item in results if item.get("status") == "blocked"],
+                "skipped_explicit": [item for item in results if item.get("status") == "skipped_explicit"],
                 "target": target,
                 "selected": total,
+                "attempted": len([
+                    item for item in results
+                    if item.get("entity") and not str(item.get("entity")).startswith("__")
+                ]),
                 "concurrency": concurrency},
         error="" if final_status == "done" else f"{failed} entities failed-open",
     )

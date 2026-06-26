@@ -6,8 +6,17 @@ from typing import Any
 def classify_successful_extraction(result: dict[str, Any]) -> dict[str, Any]:
     """Normalize successful entity extraction into the live validation vocabulary."""
     record_count = int(result.get("record_count") or 0)
-    status = "extracted" if record_count > 0 else "empty-valid"
-    return {**result, "status": status}
+    if result.get("metadata_status") == "select_pruned" or result.get("metadata_pruned_fields"):
+        status = "partial"
+        reason = "invalid_select_field"
+    else:
+        status = "extracted" if record_count > 0 else "empty-valid"
+        reason = None
+    return {
+        **result,
+        "status": status,
+        **({"reason": reason} if reason else {}),
+    }
 
 
 def classify_extraction_exception(entity: str | None, exc: Exception) -> dict[str, Any]:
@@ -62,6 +71,9 @@ def summarize_extraction_results(results: list[dict[str, Any]]) -> dict[str, int
     counts = {
         "extracted": 0,
         "empty_valid": 0,
+        "partial": 0,
+        "blocked": 0,
+        "skipped_explicit": 0,
         "auth_blocked": 0,
         "permission_blocked": 0,
         "failed_open": 0,
@@ -72,6 +84,12 @@ def summarize_extraction_results(results: list[dict[str, Any]]) -> dict[str, int
             counts["extracted"] += 1
         elif status == "empty-valid":
             counts["empty_valid"] += 1
+        elif status == "partial":
+            counts["partial"] += 1
+        elif status == "blocked":
+            counts["blocked"] += 1
+        elif status == "skipped_explicit":
+            counts["skipped_explicit"] += 1
         elif status == "auth-blocked":
             counts["auth_blocked"] += 1
         elif status == "permission-blocked":

@@ -237,6 +237,8 @@ def _downstream_status(payload: dict[str, Any], key: str) -> str:
 
 
 def _pipeline_status_for_success_payload(payload: dict[str, Any]) -> str:
+    if payload.get("metadata_status") == "select_pruned" or payload.get("metadata_pruned_fields"):
+        return "partial"
     silver_status = _downstream_status(payload, "silver_refresh")
     if silver_status and silver_status not in {"success", "ok"}:
         return "partial"
@@ -313,6 +315,38 @@ def _is_nonfatal_successfactors_block(classified: dict[str, Any]) -> bool:
         "SUCCESSFACTORS_METADATA_BLOCKED",
         "SUCCESSFACTORS_PERMISSION",
     }
+
+
+def _pipeline_status_for_plan_outcome(outcome: dict[str, Any]) -> str:
+    status = str(outcome.get("status") or "").strip().lower()
+    if status in {"blocked", "skipped_explicit", "partial", "failed"}:
+        return status
+    if status == "skipped":
+        return "skipped_explicit"
+    return "blocked"
+
+
+def _result_from_plan_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
+    status = _pipeline_status_for_plan_outcome(outcome)
+    result_status = "skipped_explicit" if status == "skipped_explicit" else status
+    return {
+        "entity": outcome.get("entity"),
+        "status": result_status,
+        "reason": outcome.get("reason") or "unknown_error",
+        "code": outcome.get("code") or "PLAN_OUTCOME",
+        "odata_entity": outcome.get("odata_entity"),
+        "fields_missing": outcome.get("fields_missing") or [],
+        "metadata_status": outcome.get("metadata_status"),
+        **({"error": outcome.get("error")} if outcome.get("error") else {}),
+    }
+
+
+def _should_count_as_extracted(result: dict[str, Any]) -> bool:
+    return str(result.get("status") or "") in {"extracted", "partial"}
+
+
+def _status_bucket(items: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
+    return [item for item in items if str(item.get("status") or "") == status]
 
 
 def _pipeline_run_save(
@@ -410,6 +444,29 @@ def sap_successfactors_extract_all():
             downstream_partial = False
             base_idempotency_key = str(conf.get("idempotency_key") or "").strip() or None
 
+            for outcome in skipped:
+                outcome_entity = str(outcome.get("entity") or "").strip()
+                result = _result_from_plan_outcome(outcome)
+                results.append(result)
+                if not outcome_entity or outcome_entity.startswith("__"):
+                    continue
+                _pipeline_run_save(
+                    context=context,
+                    conf=conf,
+                    entity=outcome_entity,
+                    status=_pipeline_status_for_plan_outcome(outcome),
+                    started_at=started_at,
+                    error_message=outcome.get("error") or outcome.get("reason"),
+                    extra={
+                        "result_status": result["status"],
+                        "reason": result.get("reason"),
+                        "metadata_status": outcome.get("metadata_status"),
+                        "fields_missing": outcome.get("fields_missing") or [],
+                        "fields_used": outcome.get("fields_used") or [],
+                        "plan_outcome": outcome,
+                    },
+                )
+
             for config in entities:
                 entity = str(config.get("entity") or "").strip()
                 entity_idempotency_key = _entity_idempotency_key(base_idempotency_key, entity)
@@ -478,32 +535,58 @@ def sap_successfactors_extract_all():
 
             summary = runtime.summarize_extraction_results(results)
             gold_refresh = None
-            if any(isinstance(item, dict) and item.get("status") == "extracted" for item in results):
+            if any(isinstance(item, dict) and _should_count_as_extracted(item) for item in results):
                 gold_refresh = _run_async(
                     runtime.trigger_successfactors_gold_refresh(target, security_context)
                 )
                 gold_status = str((gold_refresh or {}).get("status") or "").strip().lower()
                 downstream_partial = downstream_partial or gold_status not in {"success", "ok"}
-            hard_failed = any(summary[key] for key in ("auth_blocked", "failed_open"))
-            blocked_or_failed = hard_failed or bool(summary["permission_blocked"])
-            has_valid_result = bool(summary["extracted"] or summary["empty_valid"])
+            hard_failed = False
+            blocked_or_failed = any(
+                summary[key]
+                for key in (
+                    "auth_blocked",
+                    "permission_blocked",
+                    "failed_open",
+                    "blocked",
+                    "skipped_explicit",
+                    "partial",
+                )
+            )
             aggregate_status = (
                 "success"
                 if not blocked_or_failed and not downstream_partial
                 else "partial"
-                if has_valid_result or (summary["permission_blocked"] and not hard_failed)
+                if not hard_failed
                 else "failed"
             )
             status_text = "success" if aggregate_status == "success" else "completed_with_blocks"
+            attempted = [
+                item for item in results
+                if item.get("entity") and not str(item.get("entity")).startswith("__")
+            ]
             payload = {
                 "status": status_text,
                 "target": target,
                 "mode": mode,
                 "selected": len(entities),
+                "attempted": len(attempted),
+                "triggered": [
+                    item for item in results
+                    if str(item.get("status") or "") in {"extracted", "empty-valid", "partial"}
+                ],
+                "blocked": _status_bucket(results, "blocked"),
+                "partial": _status_bucket(results, "partial"),
+                "failed": [
+                    item for item in results
+                    if str(item.get("status") or "") in {"failed", "failed-open", "auth-blocked", "permission-blocked"}
+                ],
+                "skipped_explicit": _status_bucket(results, "skipped_explicit"),
                 "total_records": total_records,
                 "summary": summary,
                 "results": results,
                 "skipped": skipped,
+                "outcomes": skipped,
                 "gold_refresh": gold_refresh,
             }
             _pipeline_run_save(
@@ -518,7 +601,9 @@ def sap_successfactors_extract_all():
                     "summary": summary,
                     "result_status": status_text,
                     "selected": len(entities),
+                    "attempted": len(attempted),
                     "skipped": skipped,
+                    "outcomes": skipped,
                     "gold_refresh": gold_refresh,
                     "idempotency_key": base_idempotency_key,
                 },

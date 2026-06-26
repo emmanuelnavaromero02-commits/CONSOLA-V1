@@ -553,6 +553,7 @@ async def api_pipeline_extract(
             "cartridge": cartridge,
             "entity": entity,
             "dag_id": dag_id,
+            "job_id": dag_run_id,
             "run_id": dag_run_id,
             "dag_run_id": dag_run_id,
             "state": result.get("state"),
@@ -621,8 +622,25 @@ async def api_pipeline_extract_all(
 
     return {
         "cartridge": cartridge,
+        "attempted": len(triggered) + len(errors),
         "triggered": triggered,
         "errors": errors,
+        "blocked": [
+            item for item in errors
+            if item.get("status_code") in {400, 403, 404}
+        ],
+        "failed": [
+            item for item in errors
+            if item.get("status_code") not in {400, 403, 404}
+        ],
+        "partial": [],
+        "skipped_explicit": [],
+        "summary": {
+            "triggered": len(triggered),
+            "errors": len(errors),
+            "blocked": sum(1 for item in errors if item.get("status_code") in {400, 403, 404}),
+            "failed": sum(1 for item in errors if item.get("status_code") not in {400, 403, 404}),
+        },
         "count": len(triggered),
         "error_count": len(errors),
     }
