@@ -1,22 +1,10 @@
 -- sap_successfactors_talent_role_profile  (gold)  cartridge: sap_successfactors
--- sources: ["gold/sap_successfactors/sap_successfactors_employee_360", "silver/sap_successfactors/sap_successfactors_fojobcode_latest", "silver/sap_successfactors/sap_successfactors_role_requirements"]
--- description: Perfil de rol derivado desde job_code/FOJobCode y requisitos observables.
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
+-- description: Perfil de rol foundation-safe derivado desde empleados. Requirements quedan bloqueados si no existe matriz rol-skill.
 
 WITH emp AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet',
-                      hive_partitioning = true,
-                      union_by_name = true)
-),
-roles AS (
-    SELECT job_code, job_name
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_fojobcode_latest/**/*.parquet',
-                      hive_partitioning = true,
-                      union_by_name = true)
-),
-requirements AS (
-    SELECT role_id, role_name, required_skills_status, blockers
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_role_requirements/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
 ),
@@ -34,20 +22,15 @@ rollup AS (
 )
 SELECT
     rollup.job_code,
-    COALESCE(requirements.role_name, roles.job_name, rollup.job_code) AS role_name,
+    rollup.job_code AS role_name,
     rollup.employee_count,
     rollup.active_employee_count,
     rollup.departments_count,
     rollup.locations_count,
     rollup.companies_count,
-    COALESCE(requirements.required_skills_status, 'blocked') AS required_skills_status,
-    CASE
-        WHEN requirements.required_skills_status IN ('ready', 'partial') THEN 'partial'
-        ELSE 'partial'
-    END AS role_profile_status,
-    COALESCE(requirements.blockers, '["Position requirements pending","Skills/competencies metadata pending"]') AS blockers,
+    'blocked' AS required_skills_status,
+    'partial' AS role_profile_status,
+    '["Position requirements pending","Skills/competencies metadata pending"]' AS blockers,
     CURRENT_TIMESTAMP AS generated_at
 FROM rollup
-LEFT JOIN roles ON roles.job_code = rollup.job_code
-LEFT JOIN requirements ON requirements.role_id = rollup.job_code
 ORDER BY rollup.active_employee_count DESC, rollup.job_code
