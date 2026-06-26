@@ -100,7 +100,7 @@ resource "aws_lb_target_group" "console" {
 
   health_check {
     enabled             = true
-    path                = "/readyz"
+    path                = "/healthz"
     protocol            = "HTTP"
     matcher             = "200"
     interval            = 15

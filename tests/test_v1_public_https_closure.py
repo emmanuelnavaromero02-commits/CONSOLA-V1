@@ -47,7 +47,6 @@ def test_public_https_variables_outputs_and_alb_exist():
     assert 'resource "aws_lb_listener" "http_workspace_technical"' not in alb
     assert 'resource "aws_lb_listener" "https"' in alb
     assert "manual_acm_validation_complete" in alb
-    assert 'path                = "/readyz"' in alb
     assert 'path                = "/healthz"' in alb
     assert 'values = [var.public_workspace_domain]' in alb
 
@@ -103,7 +102,7 @@ def test_public_alb_target_groups_only_use_internal_service_ports():
     alb = _read(TF / "public_https.tf")
 
     assert re.search(
-        r'resource "aws_lb_target_group" "console" \{[\s\S]*?port\s*=\s*8000[\s\S]*?path\s*=\s*"/readyz"',
+        r'resource "aws_lb_target_group" "console" \{[\s\S]*?port\s*=\s*8000[\s\S]*?path\s*=\s*"/healthz"',
         alb,
     )
     assert re.search(

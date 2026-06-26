@@ -2692,6 +2692,13 @@ async def _dependency_health(name: str, url: str, server: str | None = None) -> 
 
 
 async def _control_room_data_check(*, require_data: bool = False) -> dict:
+    if not require_data:
+        return {
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
+        }
+
     operational_items = 0
     gold_tables = 0
     gold_rows = 0
@@ -2843,22 +2850,37 @@ async def readyz(request: Request):
         or require_intelligence_param in {"1", "true", "yes", "on"}
         or (require_data and _is_production_env() and not intelligence_opt_out_allowed)
     )
-    checks["control_room_data"] = await _control_room_data_check(
-        require_data=require_data
-    )
-    try:
-        from app.services.intelligence.readiness import intelligence_readiness
-
-        checks["intelligence_data"] = await intelligence_readiness(
-            getattr(request.state, "user", None),
-            require_data=require_intelligence_data,
+    if require_data:
+        checks["control_room_data"] = await _control_room_data_check(
+            require_data=True
         )
-    except Exception as exc:
-        logger.warning("readiness probe failed for intelligence_data", exc_info=True)
+    else:
+        checks["control_room_data"] = {
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
+        }
+
+    if require_intelligence_data:
+        try:
+            from app.services.intelligence.readiness import intelligence_readiness
+
+            checks["intelligence_data"] = await intelligence_readiness(
+                getattr(request.state, "user", None),
+                require_data=True,
+            )
+        except Exception as exc:
+            logger.warning("readiness probe failed for intelligence_data", exc_info=True)
+            checks["intelligence_data"] = {
+                "status": "degraded",
+                "required": True,
+                "error": type(exc).__name__,
+            }
+    else:
         checks["intelligence_data"] = {
-            "status": "degraded",
-            "required": require_intelligence_data,
-            "error": type(exc).__name__,
+            "status": "up",
+            "required": False,
+            "reason": "data_check_not_required",
         }
 
     dependency_ok = all(
