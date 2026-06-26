@@ -129,7 +129,8 @@ def test_20c_dataset_app_and_lineage_reads_by_name_are_workspace_scoped():
     refinement = _read("refinement/app/main.py")
 
     assert "name = %s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)" in dataset_store
-    assert "dataset name already exists outside the active workspace" in dataset_store
+    assert "datasets_workspace_name_key" in dataset_store
+    assert "ON CONFLICT {conflict_target} DO UPDATE SET" in dataset_store
     assert "workspace_id = %s::uuid OR scope_status = 'platform_template'" in refinement
     assert "DELETE FROM analytic_apps WHERE name=%s AND (%s::uuid IS NULL OR workspace_id = %s::uuid)" in refinement
     lineage_block = refinement.split('if tool == "get_lineage":', 1)[1].split('if tool == "describe_source":', 1)[0]

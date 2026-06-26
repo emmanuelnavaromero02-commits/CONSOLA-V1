@@ -234,6 +234,21 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
                 bronze_date = bronze_date or physical_bronze.get("latest_date")
                 if bronze_count is None:
                     bronze_count = physical_bronze.get("record_count")
+                if last_run_info is None and bronze_date:
+                    last_run_info = {
+                        "source": "bronze",
+                        "status": (
+                            "empty"
+                            if _pipeline_is_zero_count(bronze_count)
+                            else "success"
+                        ),
+                        "mode": e.get("mode"),
+                        "finished_at": f"{bronze_date}T00:00:00+00:00",
+                        "message": (
+                            "Bronze materializado; corrida no registrada en pipeline_runs"
+                        ),
+                        "record_count": bronze_count,
+                    }
 
         # Bronze freshness
         if dag_run and dag_run["status"] == "failed" and not bronze_date:

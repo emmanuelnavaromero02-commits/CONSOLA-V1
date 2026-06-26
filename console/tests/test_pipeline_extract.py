@@ -1551,6 +1551,9 @@ async def test_api_pipeline_uses_physical_bronze_when_run_metadata_missing(
     assert department["bronze"]["latest_date"] == "2026-05-09"
     assert department["bronze"]["record_count"] == 3
     assert department["bronze"]["status"] != "never"
+    assert department["last_run"]["source"] == "bronze"
+    assert department["last_run"]["status"] == "success"
+    assert "corrida no registrada" in department["last_run"]["message"]
     assert department["silver"][0]["name"] == "replicon_department_latest"
     assert department["silver"][0]["row_count"] == 3
 

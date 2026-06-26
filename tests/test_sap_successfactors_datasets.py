@@ -4,12 +4,12 @@
 Historical install migrations seed the original foundation/talent set; Console
 startup refreshes the full packaged catalog from datasets/*.sql.
 
-All dataset names are prefixed `sap_successfactors_` because `datasets.name` is a
-global primary key (headcount_by_department / manager_hierarchy /
-employees_anomalies already exist for sap_hcm).
+All dataset names are prefixed `sap_successfactors_` for cross-cartridge clarity
+and backwards compatibility with historical rows (headcount_by_department /
+manager_hierarchy / employees_anomalies already exist for sap_hcm).
 
 Static checks: every file parses, headers well-formed, migration<->files agree
-(incl. workspace_id on every row), sources are real SF entities, prefix avoids PK
+(incl. workspace_id on every row), sources are real SF entities, prefix avoids
 collisions, and no gold exposes an encrypted column.
 """
 from __future__ import annotations
@@ -118,9 +118,9 @@ def test_headers_well_formed_and_match_filename():
     assert layers.count("gold") == EXPECTED_GOLD
 
 
-def test_all_names_prefixed_to_avoid_pk_collision():
-    # datasets.name is a global PK; SF names must be cartridge-prefixed so they
-    # don't collide with sap_hcm's headcount_by_department / manager_hierarchy / etc.
+def test_all_names_prefixed_to_avoid_cross_cartridge_ambiguity():
+    # SF names stay cartridge-prefixed for compatibility with historical rows
+    # and to avoid ambiguity with sap_hcm's headcount_by_department / etc.
     for path in _dataset_files():
         assert path.stem.startswith("sap_successfactors_"), f"{path.name} not prefixed"
 

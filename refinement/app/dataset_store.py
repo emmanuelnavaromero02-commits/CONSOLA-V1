@@ -37,6 +37,46 @@ def _default_workspace_id(cur):
     return row["id"] if row else None
 
 
+def _table_has_column(cur, table_name: str, column_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = %s
+               AND column_name = %s
+        )
+        """,
+        (table_name, column_name),
+    )
+    row = cur.fetchone()
+    return bool(row and row.get("exists"))
+
+
+def _datasets_workspace_name_conflict_available(cur) -> bool:
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+              FROM pg_constraint
+             WHERE conrelid = 'public.datasets'::regclass
+               AND conname = 'datasets_workspace_name_key'
+        )
+        """
+    )
+    row = cur.fetchone()
+    return bool(row and row.get("exists"))
+
+
+def _tenant_for_workspace(cur, workspace_id):
+    if not workspace_id:
+        return None
+    cur.execute("SELECT tenant_id FROM workspaces WHERE id = %s", (workspace_id,))
+    row = cur.fetchone()
+    return row["tenant_id"] if row else None
+
+
 class DatasetStore:
     def __init__(self, datasets_dir=None):
         # datasets_dir kept for API compatibility but ignored
@@ -106,39 +146,74 @@ class DatasetStore:
         column_mapping = ds.get("column_mapping") or {}
         with _conn() as conn, conn.cursor() as cur:
             workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)
-            _apply_scope(cur, ds.get("tenant_id"), workspace_id)
-            cur.execute("SELECT workspace_id FROM datasets WHERE name = %s", (ds["name"],))
-            existing = cur.fetchone()
-            if existing and workspace_id and str(existing.get("workspace_id") or "") != str(workspace_id):
-                raise ValueError("dataset name already exists outside the active workspace")
-            cur.execute("""
-                INSERT INTO datasets
-                  (name, layer, cartridge, sources, sql_def, description,
-                   column_mapping, schedule, created_by_id, workspace_id, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (name) DO UPDATE SET
-                  layer          = EXCLUDED.layer,
-                  cartridge      = EXCLUDED.cartridge,
-                  sources        = EXCLUDED.sources,
-                  sql_def        = EXCLUDED.sql_def,
-                  description    = EXCLUDED.description,
-                  column_mapping = EXCLUDED.column_mapping,
-                  schedule       = EXCLUDED.schedule,
-                  created_by_id  = COALESCE(EXCLUDED.created_by_id, datasets.created_by_id),
-                  workspace_id   = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
-                  updated_at     = NOW()
-            """, (
-                ds["name"],
-                ds.get("layer", "silver"),
-                ds.get("cartridge", ""),
-                json.dumps(sources),
-                ds.get("sql", ds.get("sql_def", "")),
-                ds.get("description", ""),
-                json.dumps(column_mapping),
-                ds.get("schedule"),
-                ds.get("created_by_id"),
-                workspace_id,
-            ))
+            tenant_id = ds.get("tenant_id") or _tenant_for_workspace(cur, workspace_id)
+            _apply_scope(cur, tenant_id, workspace_id)
+            has_tenant_id = _table_has_column(cur, "datasets", "tenant_id")
+            conflict_target = (
+                "(workspace_id, name)"
+                if _datasets_workspace_name_conflict_available(cur)
+                else "(name)"
+            )
+            if has_tenant_id:
+                cur.execute(f"""
+                    INSERT INTO datasets
+                      (name, layer, cartridge, sources, sql_def, description,
+                       column_mapping, schedule, created_by_id, tenant_id, workspace_id, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT {conflict_target} DO UPDATE SET
+                      layer          = EXCLUDED.layer,
+                      cartridge      = EXCLUDED.cartridge,
+                      sources        = EXCLUDED.sources,
+                      sql_def        = EXCLUDED.sql_def,
+                      description    = EXCLUDED.description,
+                      column_mapping = EXCLUDED.column_mapping,
+                      schedule       = EXCLUDED.schedule,
+                      created_by_id  = COALESCE(EXCLUDED.created_by_id, datasets.created_by_id),
+                      tenant_id      = COALESCE(EXCLUDED.tenant_id, datasets.tenant_id),
+                      workspace_id   = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
+                      updated_at     = NOW()
+                """, (
+                    ds["name"],
+                    ds.get("layer", "silver"),
+                    ds.get("cartridge", ""),
+                    json.dumps(sources),
+                    ds.get("sql", ds.get("sql_def", "")),
+                    ds.get("description", ""),
+                    json.dumps(column_mapping),
+                    ds.get("schedule"),
+                    ds.get("created_by_id"),
+                    tenant_id,
+                    workspace_id,
+                ))
+            else:
+                cur.execute(f"""
+                    INSERT INTO datasets
+                      (name, layer, cartridge, sources, sql_def, description,
+                       column_mapping, schedule, created_by_id, workspace_id, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT {conflict_target} DO UPDATE SET
+                      layer          = EXCLUDED.layer,
+                      cartridge      = EXCLUDED.cartridge,
+                      sources        = EXCLUDED.sources,
+                      sql_def        = EXCLUDED.sql_def,
+                      description    = EXCLUDED.description,
+                      column_mapping = EXCLUDED.column_mapping,
+                      schedule       = EXCLUDED.schedule,
+                      created_by_id  = COALESCE(EXCLUDED.created_by_id, datasets.created_by_id),
+                      workspace_id   = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
+                      updated_at     = NOW()
+                """, (
+                    ds["name"],
+                    ds.get("layer", "silver"),
+                    ds.get("cartridge", ""),
+                    json.dumps(sources),
+                    ds.get("sql", ds.get("sql_def", "")),
+                    ds.get("description", ""),
+                    json.dumps(column_mapping),
+                    ds.get("schedule"),
+                    ds.get("created_by_id"),
+                    workspace_id,
+                ))
             conn.commit()
 
     def delete_dataset(

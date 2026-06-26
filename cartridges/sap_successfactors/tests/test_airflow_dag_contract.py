@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_single_entity_extract_dag_limits_active_runs_for_cart_service_backpressure():
     source = (ROOT / "dags" / "sap_successfactors_extract.py").read_text(encoding="utf-8")
 
-    assert "max_active_runs=2" in source
+    assert "max_active_runs=1" in source
 
 
 def test_extract_all_dag_is_serial_to_avoid_duplicate_bulk_extracts():
@@ -114,6 +114,15 @@ def test_successfactors_dags_do_not_fail_bronze_when_silver_refresh_fails():
         assert 'return "partial"' in source
         assert '"silver_refresh"' in source
         assert '"empty_result"' in source
+
+
+def test_successfactors_silver_refresh_reports_missing_refinements_as_partial():
+    source = (
+        ROOT / "app" / "core" / "refinement_triggers.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'payload.get("status") in {"partial", "skipped"}' in source
+    assert 'int(payload.get("refreshed") or 0) <= 0' in source
 
 
 def test_successfactors_dags_refresh_signed_scope_at_task_runtime():

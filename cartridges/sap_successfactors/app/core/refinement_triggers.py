@@ -82,7 +82,12 @@ async def trigger_silver_refresh(entity: str, security_context: dict | None = No
     response.raise_for_status()
     payload = response.json()
     errors = [r for r in payload.get("results", []) if r.get("status") == "error"]
-    if errors or payload.get("error"):
+    if (
+        errors
+        or payload.get("error")
+        or payload.get("status") in {"partial", "skipped"}
+        or int(payload.get("refreshed") or 0) <= 0
+    ):
         return {"status": "partial", **payload}
     return {"status": "success", **payload}
 
