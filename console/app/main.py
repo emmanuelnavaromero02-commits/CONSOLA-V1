@@ -7958,6 +7958,130 @@ def _sync_child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[s
     }
 
 
+def _sync_gold_refresh_dataset_names(gold_refresh_summary: dict[str, Any]) -> list[str]:
+    names: set[str] = set()
+    for item in gold_refresh_summary.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().lower() != "ok":
+            continue
+        name = str(item.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return sorted(names)
+
+
+def _sync_gold_refresh_airflow_run_id(
+    row: dict[str, Any],
+    child_rows: list[dict[str, Any]],
+) -> str:
+    for item in child_rows:
+        if str(item.get("entity") or "") != _SYNC_AGGREGATE_ENTITY:
+            continue
+        value = str(
+            item.get("airflow_dag_run_id") or item.get("run_id") or ""
+        ).strip()
+        if value:
+            return value
+    return str(row.get("run_id") or "").strip() or "sync-now"
+
+
+def _sync_control_room_gold_refresh_terminal(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    status = str(payload.get("status") or "").strip().lower()
+    return status in {"success", "partial", "failed", "skipped", "not_ready", "completed"}
+
+
+async def _run_sync_control_room_gold_refresh(
+    *,
+    cartridge: str,
+    row: dict[str, Any],
+    child_rows: list[dict[str, Any]],
+    gold_refresh_summary: dict[str, Any],
+    user: dict | None,
+) -> dict[str, Any]:
+    from datetime import datetime as _dt, timezone as _tz
+
+    checked_at = _dt.now(_tz.utc).isoformat()
+    datasets = _sync_gold_refresh_dataset_names(gold_refresh_summary)
+    if not datasets:
+        return {
+            "status": "skipped",
+            "checked_at": checked_at,
+            "reason": "No Gold datasets were materialized successfully.",
+            "datasets": [],
+        }
+    ctx = build_security_context(user)
+    tenant_id = str(
+        ctx.get("tenant_id") or ctx.get("active_tenant_id") or ""
+    ).strip()
+    workspace_id = str(
+        ctx.get("workspace_id") or ctx.get("active_workspace_id") or ""
+    ).strip()
+    if not tenant_id or not workspace_id:
+        return {
+            "status": "failed",
+            "checked_at": checked_at,
+            "reason": "Missing tenant/workspace scope for Control Room Gold refresh.",
+            "datasets": datasets,
+        }
+    airflow_dag_run_id = _sync_gold_refresh_airflow_run_id(row, child_rows)
+    run_ref = f"gold-refresh:{workspace_id}:{cartridge}:{airflow_dag_run_id}"
+    payload = {
+        "cartridge_id": cartridge,
+        "datasets": datasets,
+        "include_external": False,
+        "dry_run": False,
+        "run_mode": "gold_refresh",
+        "run_ref": run_ref,
+        "horizon_days": [7, 21],
+        "metadata": {
+            "trigger": "sync_now_gold_refresh",
+            "pipeline_run_id": row.get("run_id"),
+            "airflow_dag_run_id": airflow_dag_run_id,
+            "materialization_status": gold_refresh_summary.get("status") or "partial",
+            "datasets_received": datasets,
+            "finished_at": row.get("finished_at").isoformat()
+            if hasattr(row.get("finished_at"), "isoformat")
+            else row.get("finished_at"),
+        },
+    }
+    try:
+        from app.services import intelligence_engine
+
+        result = await intelligence_engine.run_intelligence(user, payload, persist=True)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "failed",
+            "checked_at": checked_at,
+            "ok": False,
+            "run_ref": run_ref,
+            "datasets": datasets,
+            "error": f"{type(exc).__name__}: {exc}"[:500],
+        }
+    result_payload = result if isinstance(result, dict) else {}
+    signals = len(result_payload.get("signals") or [])
+    skipped = len(result_payload.get("skipped") or [])
+    engine_status = str(result_payload.get("status") or "").strip().lower()
+    public_status = engine_status or ("completed" if signals else "not_ready")
+    return {
+        "status": "success" if public_status in {"completed", "success"} else "partial",
+        "checked_at": checked_at,
+        "ok": True,
+        "run_ref": result_payload.get("run_ref") or run_ref,
+        "intelligence_run_id": result_payload.get("intelligence_run_id"),
+        "engine_status": public_status,
+        "idempotent": bool(result_payload.get("idempotent")),
+        "signals": signals,
+        "skipped": skipped,
+        "dataset_unavailable_count": result_payload.get("dataset_unavailable_count", 0),
+        "insufficient_history_count": result_payload.get("insufficient_history_count", 0),
+        "skipped_counts": result_payload.get("skipped_counts") or {},
+        "datasets": datasets,
+    }
+
+
 async def _build_sync_run_status(
     *,
     cartridge: str,
@@ -8100,6 +8224,24 @@ async def _build_sync_run_status(
         (gold_refresh_total and gold_refresh_materialized < gold_refresh_total)
         or gold_refresh_status == "partial"
     )
+    control_room_gold_refresh = (
+        dict(extra.get("control_room_gold_refresh"))
+        if isinstance(extra.get("control_room_gold_refresh"), dict)
+        else {}
+    )
+    if (
+        cartridge == "sap_successfactors"
+        and gold_ready
+        and not running_children
+        and not _sync_control_room_gold_refresh_terminal(control_room_gold_refresh)
+    ):
+        control_room_gold_refresh = await _run_sync_control_room_gold_refresh(
+            cartridge=cartridge,
+            row=row,
+            child_rows=child_rows,
+            gold_refresh_summary=gold_refresh_summary,
+            user=user,
+        )
 
     updates: dict[str, dict[str, Any]] = {
         "connection": {
@@ -8247,8 +8389,19 @@ async def _build_sync_run_status(
                 "data_ready_sources": int(
                     (dashboard_summary or {}).get("data_ready_sources") or 0
                 ),
+                "gold_refresh_signals": int(
+                    control_room_gold_refresh.get("signals") or 0
+                ),
+                "gold_refresh_status": str(
+                    control_room_gold_refresh.get("status") or ""
+                ),
             }
-            control_room_ready = bool(gold_ready and gold_kpis and talent_kpis)
+            control_room_publish_failed = (
+                str(control_room_gold_refresh.get("status") or "").lower() == "failed"
+            )
+            control_room_ready = bool(
+                gold_ready and gold_kpis and talent_kpis and not control_room_publish_failed
+            )
             updates["control_room"] = {
                 "label": "Control Room",
                 "status": "success" if control_room_ready else "partial",
@@ -8259,6 +8412,9 @@ async def _build_sync_run_status(
                 )
                 if control_room_ready
                 else (
+                    "Gold materializado, pero la publicación de señales falló."
+                    if control_room_publish_failed
+                    else
                     "Control Room materializado "
                     f"({control_room_snapshot['source_count']} fuentes, "
                     f"{control_room_snapshot['item_count']} items); "
@@ -8439,6 +8595,9 @@ async def _build_sync_run_status(
         or {},
         "agentops_refresh": agentops_refresh or extra.get("agentops_refresh") or {},
         "gold_refresh": gold_refresh_summary or extra.get("gold_refresh") or {},
+        "control_room_gold_refresh": control_room_gold_refresh
+        or extra.get("control_room_gold_refresh")
+        or {},
         "extract_all_summary_seen": aggregate_payload_ready
         or bool(extra.get("extract_all_summary_seen")),
         "aggregate_summary_pending": aggregate_summary_pending,

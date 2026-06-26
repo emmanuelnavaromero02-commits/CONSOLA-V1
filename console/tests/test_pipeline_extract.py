@@ -160,6 +160,157 @@ async def test_sync_now_waits_for_extract_all_summary_before_terminal(
     )
 
 
+@pytest.mark.anyio
+async def test_sync_now_publishes_gold_refresh_to_control_room(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    row = {
+        "run_id": "sync_now:sap_successfactors:gold-refresh",
+        "dag_id": console_main._SYNC_NOW_DAG_ID,
+        "cartridge_id": "sap_successfactors",
+        "entity": console_main._SYNC_NOW_ENTITY,
+        "mode": "incremental",
+        "status": "running",
+        "started_at": datetime.now(timezone.utc),
+        "finished_at": None,
+        "error_message": None,
+        "extra": {
+            "target": "all",
+            "mode": "incremental",
+            "triggered_entities": [
+                {"entity": "__extract_all__", "dag_run_id": "aggregate-run"}
+            ],
+            "errors": [],
+            "steps": console_main._initial_sync_steps(),
+        },
+    }
+    upserts: list[dict] = []
+    intelligence_calls: list[dict] = []
+
+    async def child_runs(**_kwargs):
+        return [
+            {
+                "run_id": "aggregate-run",
+                "airflow_dag_run_id": "aggregate-run",
+                "entity": "__extract_all__",
+                "status": "success",
+                "extra": {
+                    "summary": {"extracted": 1},
+                    "gold_refresh": {
+                        "status": "success",
+                        "materialized": 1,
+                        "total": 1,
+                        "results": [
+                            {
+                                "name": "sap_successfactors_talent_signals",
+                                "status": "ok",
+                            }
+                        ],
+                    },
+                },
+            }
+        ]
+
+    async def pipeline(cartridge, user=None):
+        return {
+            "pipeline": [
+                {
+                    "entity": "Candidate",
+                    "bronze": {"status": "fresh"},
+                    "silver": [{"name": "candidate_latest", "status": "fresh"}],
+                    "gold": [
+                        {
+                            "name": "sap_successfactors_talent_signals",
+                            "status": "fresh",
+                        }
+                    ],
+                }
+            ]
+        }
+
+    async def upsert(**kwargs):
+        upserts.append(kwargs)
+
+    async def fetch(**_kwargs):
+        updated = dict(row)
+        updated["status"] = upserts[-1]["status"]
+        updated["extra"] = upserts[-1]["extra"]
+        updated["error_message"] = upserts[-1].get("error_message")
+        return updated
+
+    async def run_intelligence(user_arg, payload, persist=False):
+        intelligence_calls.append(
+            {"user": user_arg, "payload": payload, "persist": persist}
+        )
+        return {
+            "status": "completed",
+            "run_ref": payload["run_ref"],
+            "intelligence_run_id": "intel-1",
+            "signals": [{"id": "signal-1"}],
+            "skipped": [],
+        }
+
+    async def dashboard(user=None, persist=False):
+        return {
+            "meta": {"source_count": 1, "item_count": 1},
+            "summary": {"total_items": 1, "data_ready_sources": 1},
+        }
+
+    async def gold_kpis(user=None):
+        return {"gold": True}
+
+    async def talent_kpis(user=None):
+        return {"talent": True}
+
+    control_room_stub = _module(
+        dashboard=dashboard,
+        sap_successfactors_gold_kpis=gold_kpis,
+        sap_successfactors_talent_kpis=talent_kpis,
+    )
+    intelligence_stub = _module(run_intelligence=run_intelligence)
+    import app.services as _svc_pkg
+
+    monkeypatch.setitem(sys.modules, "app.services.control_room_service", control_room_stub)
+    monkeypatch.setitem(sys.modules, "app.services.intelligence_engine", intelligence_stub)
+    monkeypatch.setattr(_svc_pkg, "control_room_service", control_room_stub, raising=False)
+    monkeypatch.setattr(_svc_pkg, "intelligence_engine", intelligence_stub, raising=False)
+    monkeypatch.setattr(console_main, "_sync_child_runs", child_runs)
+    monkeypatch.setattr(console_main, "api_pipeline", pipeline)
+    monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
+    monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
+    async def agentops(**_kwargs):
+        return {
+            "status": "success",
+            "total": 0,
+            "completed": 0,
+            "failed": 0,
+            "results": [],
+        }
+
+    monkeypatch.setattr(console_main, "_run_sync_agentops_monitors", agentops)
+
+    result = await console_main._build_sync_run_status(
+        cartridge="sap_successfactors",
+        row=row,
+        user=user,
+    )
+
+    assert result["control_room_ready"] is True
+    assert intelligence_calls
+    call = intelligence_calls[0]
+    assert call["persist"] is True
+    assert call["payload"]["run_mode"] == "gold_refresh"
+    assert call["payload"]["run_ref"] == (
+        "gold-refresh:"
+        "22222222-2222-2222-2222-222222222222:"
+        "sap_successfactors:"
+        "aggregate-run"
+    )
+    assert call["payload"]["datasets"] == ["sap_successfactors_talent_signals"]
+    assert upserts[-1]["extra"]["control_room_gold_refresh"]["signals"] == 1
+
+
 class _FakeResponse:
     def __init__(self, data, status_code=200):
         self._data = data
