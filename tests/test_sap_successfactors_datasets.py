@@ -1,6 +1,6 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-42 silver + 30 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
+50 silver + 30 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
 Historical install migrations seed the original foundation/talent set; Console
 startup refreshes the full packaged catalog from datasets/*.sql.
 
@@ -28,7 +28,7 @@ TALENT_MIGRATION = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
-EXPECTED_SILVER = 42
+EXPECTED_SILVER = 50
 EXPECTED_GOLD = 30
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 BASE_MIGRATION_DEDUP_KEYS = {
@@ -71,6 +71,14 @@ DEDUP_LATEST_KEYS = {
     "sap_successfactors_learningassignment_latest.sql": ("assignmentId",),
     "sap_successfactors_learninghistory_latest.sql": ("historyId",),
     "sap_successfactors_foeventreason_latest.sql": ("externalCode",),
+    "sap_successfactors_perphone_latest.sql": ("personIdExternal", "phoneType", "phoneNumber"),
+    "sap_successfactors_peraddressdeflt_latest.sql": ("personIdExternal", "addressType", "startDate"),
+    "sap_successfactors_pernationalid_latest.sql": ("personIdExternal", "country", "cardType"),
+    "sap_successfactors_focostcenter_latest.sql": ("externalCode",),
+    "sap_successfactors_employeetime_latest.sql": ("userId", "startDate", "endDate", "timeType"),
+    "sap_successfactors_timeaccount_latest.sql": ("userId", "accountType"),
+    "sap_successfactors_workschedule_latest.sql": ("externalCode",),
+    "sap_successfactors_empjob_history_latest.sql": ("userId", "startDate", "relationshipType", "relUserId"),
 }
 
 
@@ -172,6 +180,24 @@ def test_live_successfactors_silver_entities_present():
     files = {p.name for p in _dataset_files()}
     for filename in DEDUP_LATEST_KEYS:
         assert filename in files
+
+
+def test_every_successfactors_entity_has_packaged_silver_source():
+    entities = _sf_entities()
+    silver_raw_entities: set[str] = set()
+    for path in _dataset_files():
+        _, layer, sources, _ = _parse_header(path)
+        if layer != "silver":
+            continue
+        for src in sources:
+            raw = re.match(r"raw/sap_successfactors/(\w+)$", src)
+            if raw:
+                silver_raw_entities.add(raw.group(1))
+
+    assert entities <= silver_raw_entities, (
+        "enabled SuccessFactors entities without a packaged silver dataset: "
+        f"{sorted(entities - silver_raw_entities)}"
+    )
 
 
 def test_live_successfactors_latest_deduplicates_by_business_key():

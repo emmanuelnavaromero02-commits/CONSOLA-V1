@@ -15,7 +15,21 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.detect.outputs.python }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: python3 scripts/ci_changed_areas.py
+
   ruff:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +54,8 @@ jobs:
             console workspace vault refinement mcp-infra cartridges airflow
 
   console-next:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,3 +91,10 @@ jobs:
         run: |
           npm --prefix console-next run export:copy
           git diff --exit-code -- console/app/static/console-next
+
+  no-lint-needed:
+    needs: changes
+    if: needs.changes.outputs.python != 'true' && needs.changes.outputs.frontend != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python or console-next files changed; lint jobs skipped."

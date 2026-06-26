@@ -7,8 +7,38 @@ on:
     branches: [ "main" ]
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      console_tests: ${{ steps.detect.outputs.console_tests }}
+      refinement_tests: ${{ steps.detect.outputs.refinement_tests }}
+      vault_tests: ${{ steps.detect.outputs.vault_tests }}
+      workspace_tests: ${{ steps.detect.outputs.workspace_tests }}
+      root_tests: ${{ steps.detect.outputs.root_tests }}
+      cartridge_tests: ${{ steps.detect.outputs.cartridge_tests }}
+      root_test_targets: ${{ steps.detect.outputs.root_test_targets }}
+      cartridge_test_targets: ${{ steps.detect.outputs.cartridge_test_targets }}
+      cartridge_requirement_paths: ${{ steps.detect.outputs.cartridge_requirement_paths }}
+      compose: ${{ steps.detect.outputs.compose }}
+      infra: ${{ steps.detect.outputs.infra }}
+      build_matrix: ${{ steps.detect.outputs.build_matrix }}
+      has_build_matrix: ${{ steps.detect.outputs.has_build_matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: python3 scripts/ci_changed_areas.py
 
   test:
+    needs: changes
+    if: |
+      needs.changes.outputs.console_tests == 'true' ||
+      needs.changes.outputs.refinement_tests == 'true' ||
+      needs.changes.outputs.vault_tests == 'true' ||
+      needs.changes.outputs.workspace_tests == 'true' ||
+      needs.changes.outputs.root_tests == 'true' ||
+      needs.changes.outputs.cartridge_tests == 'true'
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -28,24 +58,31 @@ jobs:
         run: pip install pytest pytest-asyncio coverage==7.6.1
 
       - name: Install console requirements
+        if: needs.changes.outputs.console_tests == 'true'
         run: pip install -r console/requirements.txt
 
       - name: Run console tests
+        if: needs.changes.outputs.console_tests == 'true'
         run: coverage run --parallel-mode --source=console/app -m pytest console/tests/ -q
 
       - name: Install refinement requirements
+        if: needs.changes.outputs.refinement_tests == 'true'
         run: pip install -r refinement/requirements.txt
 
       - name: Run refinement tests
+        if: needs.changes.outputs.refinement_tests == 'true'
         run: PYTHONPATH=. coverage run --parallel-mode --source=refinement/app -m pytest refinement/tests/ -q
 
       - name: Install vault requirements
+        if: needs.changes.outputs.vault_tests == 'true'
         run: pip install -r vault/requirements.txt
 
       - name: Run vault tests
+        if: needs.changes.outputs.vault_tests == 'true'
         run: PYTHONPATH=vault coverage run --parallel-mode --source=vault/app -m pytest vault/tests/ -q
 
       - name: Check for workspace tests
+        if: needs.changes.outputs.workspace_tests == 'true'
         run: |
           if [ -d workspace/tests ]; then
             pip install -r workspace/requirements.txt
@@ -58,14 +95,17 @@ jobs:
       # were added in #82 / #84 but never wired to CI, so a regression in any
       # cartridge passed CI silently. Install every live cartridge's deps then run.
       - name: Install cartridge requirements for root tests/
+        if: needs.changes.outputs.root_tests == 'true' || needs.changes.outputs.cartridge_tests == 'true'
         run: |
           pip install -r tests/requirements.txt
           pip install -r mcp-infra/requirements.txt
-          for cart in cartridges/*/requirements.txt; do
-            pip install -r "$cart"
+          requirements="${{ needs.changes.outputs.cartridge_requirement_paths }}"
+          for req in $requirements; do
+            pip install -r "$req"
           done
 
       - name: Run root tests/ (cartridge contracts)
+        if: needs.changes.outputs.root_tests == 'true'
         env:
           # v1.43.4 (Claude L1): when the team wires up a live-stack
           # job (start docker-compose, sleep ≈180s, then pytest), set
@@ -78,9 +118,14 @@ jobs:
           E2E_REQUIRE_STACK: ""
           E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
         run: |
+          targets="${{ needs.changes.outputs.root_test_targets }}"
+          if [ -z "$targets" ]; then
+            echo "No root pytest targets resolved for this change."
+            exit 0
+          fi
           coverage run --parallel-mode \
             --source=console/app,refinement/app,vault/app,workspace/app,mcp-infra/app,cartridges \
-            -m pytest tests/ -q
+            -m pytest $targets -q
 
       # Beta-8: gate the per-cartridge suite too. The conftest shim that lets
       # `import app` resolve to the right cartridge (and that fixed
@@ -88,17 +133,27 @@ jobs:
       # so a regression could silently re-break it. Deps are already installed
       # above.
       - name: Run cartridges/ suite
+        if: needs.changes.outputs.cartridge_tests == 'true'
         run: |
-          coverage run --parallel-mode --source=cartridges -m pytest cartridges -q
+          targets="${{ needs.changes.outputs.cartridge_test_targets }}"
+          if [ -z "$targets" ]; then
+            echo "No cartridge pytest targets resolved for this change."
+            exit 0
+          fi
+          coverage run --parallel-mode --source=cartridges -m pytest $targets -q
 
       - name: Publish Python coverage artifacts
         if: always()
         run: |
           mkdir -p coverage
-          coverage combine || true
-          coverage xml -o coverage/python-coverage.xml
-          coverage json -o coverage/python-coverage.json
-          coverage report --skip-covered || true
+          if compgen -G ".coverage*" > /dev/null; then
+            coverage combine || true
+            coverage xml -o coverage/python-coverage.xml
+            coverage json -o coverage/python-coverage.json
+            coverage report --skip-covered || true
+          else
+            echo "No coverage data was produced for this targeted run." > coverage/no-python-coverage.txt
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -107,7 +162,22 @@ jobs:
           path: coverage/
           if-no-files-found: error
 
+  no-python-tests-needed:
+    needs: changes
+    if: |
+      needs.changes.outputs.console_tests != 'true' &&
+      needs.changes.outputs.refinement_tests != 'true' &&
+      needs.changes.outputs.vault_tests != 'true' &&
+      needs.changes.outputs.workspace_tests != 'true' &&
+      needs.changes.outputs.root_tests != 'true' &&
+      needs.changes.outputs.cartridge_tests != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No Python test area changed; test job skipped."
+
   compose-validate:
+    needs: changes
+    if: needs.changes.outputs.compose == 'true' || needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,8 +229,20 @@ jobs:
           INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: dummy_sap_sf_to_console_key_for_ci_only_32chars_xxxxx
         run: docker compose config --quiet
 
+  no-compose-validation-needed:
+    needs: changes
+    if: needs.changes.outputs.compose != 'true' && needs.changes.outputs.infra != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No compose/infra files changed; compose validation skipped."
+
   build:
-    needs: [test, compose-validate]
+    needs: [changes, test, compose-validate]
+    if: |
+      always() &&
+      needs.changes.outputs.has_build_matrix == 'true' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.compose-validate.result == 'success' || needs.compose-validate.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       # Build every service image so a Dockerfile regression in any of them
@@ -168,33 +250,15 @@ jobs:
       # workflow only built `console`, which let workspace/refinement/vault/
       # mcp-infra/SAP cartridge images break silently for entire commits.
       fail-fast: false
-      matrix:
-        include:
-          - service: console
-            context: ./console
-          - service: workspace
-            context: ./workspace
-          - service: refinement
-            context: ./refinement
-          - service: vault
-            context: ./vault
-          - service: mcp-infra
-            context: ./mcp-infra
-          - service: airflow
-            context: ./infra/airflow
-          - service: replicon
-            context: ./cartridges/replicon
-          - service: hubspot
-            context: ./cartridges/hubspot
-          - service: sap_hcm
-            context: ./cartridges/sap_hcm
-          - service: sap_s4hana
-            context: ./cartridges/sap_s4hana
-          - service: sap_successfactors
-            context: ./cartridges/sap_successfactors
-          - service: salesforce
-            context: ./cartridges/salesforce
+      matrix: ${{ fromJson(needs.changes.outputs.build_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Build the ${{ matrix.service }} Docker image
         run: docker build ${{ matrix.context }} --file ${{ matrix.context }}/Dockerfile --tag ${{ matrix.service }}:ci-${{ github.sha }}
+
+  no-build-needed:
+    needs: changes
+    if: needs.changes.outputs.has_build_matrix != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No service image inputs changed; Docker builds skipped."
