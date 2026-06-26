@@ -32,6 +32,13 @@ DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES = {
     "SuccessionNomination",
     "UserSkill",
 }
+TALENT_EXTRACT_ALL_ENTITIES = {
+    *DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES,
+    "FOEventReason",
+    "FOJobCode",
+    "JobRequisition",
+    "Position",
+}
 VALID_EXTRACT_ALL_TARGETS = {"all", "foundation", "talent"}
 FOUNDATION_EXTRACT_ALL_ENTITIES = {
     "User",
@@ -309,11 +316,76 @@ def _metadata_block(
     return {
         "entity": config.get("entity"),
         "odata_entity": odata_entity,
-        "status": "skipped",
-        "reason": reason,
+        "status": "blocked",
+        "reason": _normalize_plan_reason(reason),
         "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+        "metadata_status": reason,
         **({"fields_missing": fields_missing} if fields_missing else {}),
     }
+
+
+def _normalize_plan_reason(reason: str | None) -> str:
+    normalized = str(reason or "").strip().lower()
+    return {
+        "metadata_entity_missing": "entity_not_exposed_in_sap",
+        "metadata_select_fields_missing": "invalid_select_field",
+        "metadata_preflight_failed": "missing_metadata",
+        "metadata_unavailable": "missing_metadata",
+        "talent_metadata_not_ready": "missing_metadata",
+        "not_scoped_for_connection": "scope_mismatch",
+        "missing_primary_key": "missing_metadata",
+        "not_configured_for_extraction": "missing_metadata",
+    }.get(normalized, normalized or "unknown_error")
+
+
+def _plan_outcome(
+    *,
+    entity: str | None,
+    status: str,
+    reason: str,
+    odata_entity: str | None = None,
+    config: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload = {
+        "entity": entity,
+        "status": status,
+        "reason": _normalize_plan_reason(reason),
+    }
+    if odata_entity:
+        payload["odata_entity"] = odata_entity
+    if config:
+        payload.update(
+            {
+                "connection_id": config.get("connection_id"),
+                "primary_key": config.get("primary_key"),
+                "watermark_field": config.get("watermark_field"),
+                "dag_id": config.get("dag_id"),
+            }
+        )
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return payload
+
+
+def _required_config_outcome(config: dict[str, Any]) -> dict[str, Any] | None:
+    entity = str(config.get("entity") or "").strip()
+    odata_entity = str(config.get("odata_entity") or entity).strip()
+    if not odata_entity:
+        return _plan_outcome(
+            entity=entity,
+            status="blocked",
+            reason="missing_metadata",
+            config=config,
+        )
+    if not str(config.get("primary_key") or "").strip():
+        return _plan_outcome(
+            entity=entity,
+            status="blocked",
+            reason="missing_primary_key",
+            odata_entity=odata_entity,
+            config=config,
+        )
+    return None
 
 
 def _prepare_config_with_metadata_fields(
@@ -425,13 +497,13 @@ def _talent_extract_target_entities(
             sample=True,
         )
     except Exception as exc:  # noqa: BLE001 - live metadata is a blocker, not a product crash.
-        return set(), [
-            {
-                "entity": "__talent_metadata__",
-                "status": "skipped",
-                "reason": "metadata_preflight_failed",
-                "error": str(exc)[:240],
-            }
+        return set(TALENT_EXTRACT_ALL_ENTITIES), [
+            _plan_outcome(
+                entity="__talent_metadata__",
+                status="blocked",
+                reason="metadata_preflight_failed",
+                error=str(exc)[:240],
+            )
         ], {}
 
     targets = readiness.get("extraction_targets")
@@ -458,14 +530,14 @@ def _talent_extract_target_entities(
     if not ready_entities:
         blockers = readiness.get("blockers") if isinstance(readiness, dict) else None
         skipped.append(
-            {
-                "entity": "__talent_cpa__",
-                "status": "skipped",
-                "reason": "talent_metadata_not_ready",
-                "blockers": blockers if isinstance(blockers, list) else [],
-            }
+            _plan_outcome(
+                entity="__talent_cpa__",
+                status="blocked",
+                reason="talent_metadata_not_ready",
+                blockers=blockers if isinstance(blockers, list) else [],
+            )
         )
-    return ready_entities, skipped, fields_by_entity
+    return set(TALENT_EXTRACT_ALL_ENTITIES), skipped, fields_by_entity
 
 
 def _target_entity_filter(
@@ -490,12 +562,11 @@ def get_extract_all_plan(
     security_context: dict[str, Any] | None = None,
     target: str | None = "all",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return the honest live extraction plan for extract_all.
+    """Return the Studio-first live extraction plan for extract_all.
 
-    The catalog can contain aspirational entities from the cartridge YAML. A
-    tenant-scoped live run must only extract entities explicitly bound to the
-    selected Vault connection and scope; everything else is reported as skipped
-    so it cannot become a false product failure or a fake PASS.
+    ``entity_config enabled=true`` is the contract. Every enabled Studio entity
+    must either be selected for extraction or returned as an explicit outcome;
+    no internal deny-list may make entities disappear from the batch plan.
     """
     selected_conn_id = (conn_id or "").strip()
     tenant_id, workspace_id = _security_scope(security_context)
@@ -511,7 +582,6 @@ def get_extract_all_plan(
             conn_id=selected_conn_id,
             security_context=security_context,
         )
-    excluded = _extract_all_excluded_entities()
     entities: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = list(target_skipped)
     configured_entities: set[str] = set()
@@ -525,37 +595,55 @@ def get_extract_all_plan(
         if target_entities is not None and entity not in target_entities:
             continue
 
+        if selected_conn_id:
+            config_conn_id = str(config.get("connection_id") or "").strip()
+            if config_conn_id and config_conn_id != selected_conn_id:
+                skipped.append(
+                    _plan_outcome(
+                        entity=entity,
+                        status="skipped_explicit",
+                        reason="not_scoped_for_connection",
+                        odata_entity=str(config.get("odata_entity") or entity),
+                        config=config,
+                    )
+                )
+                continue
+            if not config_conn_id:
+                config = {**config, "conn_id": selected_conn_id}
+            if not _matches_security_scope(config, tenant_id, workspace_id):
+                skipped.append(
+                    _plan_outcome(
+                        entity=entity,
+                        status="skipped_explicit",
+                        reason="scope_mismatch",
+                        odata_entity=str(config.get("odata_entity") or entity),
+                        config=config,
+                    )
+                )
+                continue
+        elif not str(config.get("connection_id") or "").strip():
+            skipped.append(
+                _plan_outcome(
+                    entity=entity,
+                    status="blocked",
+                    reason="missing_connection",
+                    odata_entity=str(config.get("odata_entity") or entity),
+                    config=config,
+                )
+            )
+            continue
+
+        required_block = _required_config_outcome(config)
+        if required_block:
+            skipped.append(required_block)
+            continue
+
         if normalized_target == "talent" and entity in target_fields:
             prepared, block = _prepare_config_with_metadata_fields(config, target_fields[entity])
             if block:
                 skipped.append(block)
                 continue
             config = prepared or config
-
-        if selected_conn_id:
-            config_conn_id = str(config.get("connection_id") or "").strip()
-            if config_conn_id != selected_conn_id:
-                skipped.append({
-                    "entity": entity,
-                    "status": "skipped",
-                    "reason": "not_scoped_for_connection",
-                })
-                continue
-            if not _matches_security_scope(config, tenant_id, workspace_id):
-                skipped.append({
-                    "entity": entity,
-                    "status": "skipped",
-                    "reason": "scope_mismatch",
-                })
-                continue
-
-        if normalized_target == "all" and entity in excluded:
-            skipped.append({
-                "entity": entity,
-                "status": "skipped",
-                "reason": "external_scope_blocked",
-            })
-            continue
 
         if metadata_entities is not None:
             prepared, block = prepare_entity_config_for_metadata(
@@ -572,11 +660,11 @@ def get_extract_all_plan(
     if target_entities is not None:
         for entity in sorted(target_entities - configured_entities):
             skipped.append(
-                {
-                    "entity": entity,
-                    "status": "skipped",
-                    "reason": "not_configured_for_extraction",
-                }
+                _plan_outcome(
+                    entity=entity,
+                    status="blocked",
+                    reason="not_configured_for_extraction",
+                )
             )
 
     return entities, skipped

@@ -20,6 +20,11 @@ _JOB_COLUMNS = (
     "job_id, tool, args, status, message, result, error, "
     "created_at, updated_at, finished_at"
 )
+_PIPELINE_COLUMNS = (
+    "run_id, dag_id, cartridge_id, entity, airflow_dag_run_id, mode, status, "
+    "row_count, started_at, finished_at, error_message, extra"
+)
+_PIPELINE_COLUMN_EXISTS_CACHE: dict[str, bool] = {}
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -43,6 +48,9 @@ async def get(job_id: str) -> dict:
     pool = await _get_pool()
     row = await pool.fetchrow(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE job_id=$1", job_id)
     if not row:
+        pipeline_job = await _get_pipeline_run_as_job(pool, job_id, user=None)
+        if pipeline_job:
+            return pipeline_job
         return {"error": f"Job '{job_id}' not found"}
     return _row_to_dict(row)
 
@@ -63,6 +71,9 @@ async def get_scoped(job_id: str, user: dict | None = None) -> dict:
         *params,
     )
     if not row:
+        pipeline_job = await _get_pipeline_run_as_job(pool, job_id, user=user)
+        if pipeline_job:
+            return pipeline_job
         return {"error": f"Job '{job_id}' not found"}
     return _row_to_dict(row)
 
@@ -82,11 +93,15 @@ async def list_recent(limit: int = 10, user: dict | None = None) -> list[dict]:
             *params,
             min(limit, 50),
         )
-        return [_row_to_dict(r) for r in rows]
+        jobs = [_row_to_dict(r) for r in rows]
+        jobs.extend(await _list_recent_pipeline_jobs(pool, min(limit, 50), user=user))
+        return _sort_jobs(jobs, min(limit, 50))
     rows = await pool.fetch(
         f"SELECT {_JOB_COLUMNS} FROM jobs ORDER BY created_at DESC LIMIT $1", min(limit, 50)
     )
-    return [_row_to_dict(r) for r in rows]
+    jobs = [_row_to_dict(r) for r in rows]
+    jobs.extend(await _list_recent_pipeline_jobs(pool, min(limit, 50), user=None))
+    return _sort_jobs(jobs, min(limit, 50))
 
 
 def _row_to_dict(row) -> dict:
@@ -101,6 +116,192 @@ def _row_to_dict(row) -> dict:
             except Exception:
                 pass
     return d
+
+
+def _sort_jobs(jobs: list[dict], limit: int) -> list[dict]:
+    return sorted(
+        jobs,
+        key=lambda item: str(
+            item.get("created_at")
+            or item.get("updated_at")
+            or item.get("finished_at")
+            or ""
+        ),
+        reverse=True,
+    )[:limit]
+
+
+async def _pipeline_table_has_column(pool: asyncpg.Pool, column: str) -> bool:
+    if column in _PIPELINE_COLUMN_EXISTS_CACHE:
+        return _PIPELINE_COLUMN_EXISTS_CACHE[column]
+    try:
+        exists = await pool.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name='pipeline_runs'
+                   AND column_name=$1
+            )
+            """,
+            column,
+        )
+        _PIPELINE_COLUMN_EXISTS_CACHE[column] = bool(exists)
+        return bool(exists)
+    except Exception:
+        _PIPELINE_COLUMN_EXISTS_CACHE[column] = False
+        return False
+
+
+async def _pipeline_scope_sql(
+    pool: asyncpg.Pool, user: dict | None, *, start_at: int = 1
+) -> tuple[str, list]:
+    if user is None:
+        return "TRUE", []
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    allowed = [
+        str(item).strip()
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    ]
+    if "*" in allowed and not (tenant_id or workspace_id):
+        return "TRUE", []
+    if not tenant_id or not workspace_id:
+        return "FALSE", []
+
+    has_tenant = await _pipeline_table_has_column(pool, "tenant_id")
+    has_workspace = await _pipeline_table_has_column(pool, "workspace_id")
+    if not (has_tenant and has_workspace):
+        return "FALSE", []
+
+    tenant_param = f"${start_at}"
+    workspace_param = f"${start_at + 1}"
+    allowed_param = f"${start_at + 2}"
+    where = (
+        f"tenant_id={tenant_param}::uuid "
+        f"AND workspace_id={workspace_param}::uuid "
+        f"AND ('*' = ANY({allowed_param}::text[]) "
+        f"OR cartridge_id = ANY({allowed_param}::text[]))"
+    )
+    return where, [tenant_id, workspace_id, allowed]
+
+
+async def _get_pipeline_run_as_job(
+    pool: asyncpg.Pool, job_id: str, *, user: dict | None
+) -> dict | None:
+    try:
+        where, params = await _pipeline_scope_sql(pool, user, start_at=2)
+        row = await pool.fetchrow(
+            f"""
+            SELECT {_PIPELINE_COLUMNS}
+              FROM pipeline_runs
+             WHERE (run_id=$1 OR airflow_dag_run_id=$1)
+               AND {where}
+             ORDER BY started_at DESC NULLS LAST
+             LIMIT 1
+            """,
+            job_id,
+            *params,
+        )
+    except Exception:
+        return None
+    return _pipeline_row_to_job(row) if row else None
+
+
+async def _list_recent_pipeline_jobs(
+    pool: asyncpg.Pool, limit: int, *, user: dict | None
+) -> list[dict]:
+    try:
+        where, params = await _pipeline_scope_sql(pool, user, start_at=2)
+        rows = await pool.fetch(
+            f"""
+            SELECT {_PIPELINE_COLUMNS}
+              FROM pipeline_runs
+             WHERE {where}
+             ORDER BY started_at DESC NULLS LAST
+             LIMIT $1
+            """,
+            limit,
+            *params,
+        )
+    except Exception:
+        return []
+    return [_pipeline_row_to_job(row) for row in rows]
+
+
+def _pipeline_job_status(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    if normalized in {"queued", "scheduled", "running", "up_for_retry"}:
+        return "running"
+    if normalized in {"failed", "error", "upstream_failed"}:
+        return "failed"
+    return "done"
+
+
+def _pipeline_row_to_job(row) -> dict:
+    d = dict(row)
+    for k in ("started_at", "finished_at"):
+        if d.get(k):
+            d[k] = d[k].isoformat()
+    extra = d.get("extra") or {}
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra)
+        except Exception:
+            extra = {}
+    if not isinstance(extra, dict):
+        extra = {}
+
+    run_id = str(d.get("run_id") or d.get("airflow_dag_run_id") or "").strip()
+    dag_run_id = str(d.get("airflow_dag_run_id") or d.get("run_id") or "").strip()
+    pipeline_status = str(d.get("status") or "unknown").strip() or "unknown"
+    job_status = _pipeline_job_status(pipeline_status)
+    classification = extra.get("classification")
+    if not isinstance(classification, dict):
+        classification = {}
+    reason = extra.get("reason") or extra.get("metadata_status") or classification.get("reason")
+    message = f"Airflow {d.get('dag_id') or 'pipeline'} · {pipeline_status}"
+    if reason:
+        message = f"{message} · {reason}"
+    if d.get("error_message"):
+        message = f"{message} · {d.get('error_message')}"
+
+    args = {
+        "cartridge_id": d.get("cartridge_id"),
+        "cartridge": d.get("cartridge_id"),
+        "entity": d.get("entity"),
+        "mode": d.get("mode"),
+        "dag_id": d.get("dag_id"),
+        "dag_run_id": dag_run_id,
+    }
+    result = {
+        "source": "pipeline_runs",
+        "cartridge_id": d.get("cartridge_id"),
+        "cartridge": d.get("cartridge_id"),
+        "entity": d.get("entity"),
+        "dag_id": d.get("dag_id"),
+        "dag_run_id": dag_run_id,
+        "airflow_dag_run_id": dag_run_id,
+        "pipeline_status": pipeline_status,
+        "record_count": d.get("row_count") or 0,
+        "total_records": d.get("row_count") or 0,
+        "extra": extra,
+    }
+    return {
+        "job_id": run_id or dag_run_id,
+        "tool": "airflow.pipeline_run",
+        "args": args,
+        "status": job_status,
+        "message": message,
+        "result": result,
+        "error": d.get("error_message") if job_status == "failed" else None,
+        "created_at": d.get("started_at"),
+        "updated_at": d.get("finished_at") or d.get("started_at"),
+        "finished_at": d.get("finished_at") if job_status != "running" else None,
+    }
 
 
 def _job_allowed(job: dict, user: dict | None) -> bool:

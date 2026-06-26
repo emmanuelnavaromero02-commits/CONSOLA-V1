@@ -105,6 +105,36 @@ def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse
     return JSONResponse(status_code=502, content=payload)
 
 
+def _batch_response(
+    *,
+    target: str,
+    entities: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    outcomes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    normalized_outcomes = [
+        {
+            **item,
+            "status": "skipped_explicit" if item.get("status") == "skipped" else item.get("status", "blocked"),
+        }
+        for item in outcomes
+    ]
+    all_results = [*normalized_outcomes, *results]
+    return {
+        "target": target,
+        "selected": len(entities),
+        "attempted": len([
+            item for item in all_results
+            if item.get("entity") and not str(item.get("entity")).startswith("__")
+        ]),
+        "results": all_results,
+        "skipped": outcomes,
+        "outcomes": outcomes,
+        "blocked": [item for item in all_results if item.get("status") == "blocked"],
+        "skipped_explicit": [item for item in all_results if item.get("status") == "skipped_explicit"],
+    }
+
+
 def _humanise_path(path: str) -> str:
     """Backend review P2 fallback — see replicon for rationale."""
     bare = path.split("/skills/", 1)[-1].lstrip("/")
@@ -238,7 +268,7 @@ def run_full_load_all(
                     "error": str(exc),
                 }
             )
-    return {"target": target, "results": results, "skipped": skipped}
+    return _batch_response(target=target, entities=entities, results=results, outcomes=skipped)
 
 
 @router.post("/run_incremental_all")
@@ -261,7 +291,7 @@ def run_incremental_all(
                     "error": str(exc),
                 }
             )
-    return {"target": target, "results": results, "skipped": skipped}
+    return _batch_response(target=target, entities=entities, results=results, outcomes=skipped)
 
 
 @router.post("/run_historical_load/{entity}")
@@ -323,7 +353,7 @@ def run_historical_load_all(
                     "error": str(exc),
                 }
             )
-    return {"target": target, "results": results, "skipped": skipped}
+    return _batch_response(target=target, entities=entities, results=results, outcomes=skipped)
 
 
 # ── Status / watermarks ──────────────────────────────────────────────────────

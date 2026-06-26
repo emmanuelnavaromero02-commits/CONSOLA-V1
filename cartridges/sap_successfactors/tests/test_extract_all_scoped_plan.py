@@ -13,38 +13,50 @@ def _rows() -> list[dict]:
     return [
         {
             "entity": "PerPerson",
+            "odata_entity": "PerPerson",
             "connection_id": "femsa_sf",
+            "primary_key": "personIdExternal",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
             "watermark_field": "lastModifiedDateTime",
         },
         {
             "entity": "FOCompany",
+            "odata_entity": "FOCompany",
             "connection_id": "femsa_sf",
+            "primary_key": "externalCode",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         },
         {
             "entity": "Position",
+            "odata_entity": "Position",
             "connection_id": None,
+            "primary_key": "code",
             "tenant_id": None,
             "workspace_id": None,
         },
         {
             "entity": "Candidate",
+            "odata_entity": "Candidate",
             "connection_id": "other_conn",
+            "primary_key": "candidateId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         },
         {
             "entity": "EmpJob",
+            "odata_entity": "EmpJob",
             "connection_id": "femsa_sf",
+            "primary_key": "userId",
             "tenant_id": "tenant-b",
             "workspace_id": "workspace-a",
         },
         {
             "entity": "EmpEmploymentTermination",
+            "odata_entity": "EmpEmploymentTermination",
             "connection_id": "femsa_sf",
+            "primary_key": "userId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         },
@@ -74,27 +86,27 @@ def test_extract_all_plan_keeps_only_scoped_connection_and_reports_skips(monkeyp
         security_context=_ctx(),
     )
 
-    assert [row["entity"] for row in entities] == ["PerPerson", "FOCompany", "EmpEmploymentTermination"]
+    assert [row["entity"] for row in entities] == ["PerPerson", "FOCompany", "Position", "EmpEmploymentTermination"]
     assert {(row["entity"], row["reason"]) for row in skipped} == {
-        ("Position", "not_scoped_for_connection"),
-        ("Candidate", "not_scoped_for_connection"),
+        ("Candidate", "scope_mismatch"),
         ("EmpJob", "scope_mismatch"),
     }
 
 
-def test_extract_all_external_scope_block_can_be_overridden(monkeypatch):
+def test_extract_all_target_all_includes_former_external_scope_entities(monkeypatch):
     from app.services import catalog_service
 
     rows = [
         {
             "entity": "Candidate",
+            "odata_entity": "Candidate",
             "connection_id": "femsa_sf",
+            "primary_key": "candidateId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         }
     ]
     monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
-    monkeypatch.setenv("SAP_SUCCESSFACTORS_EXTRACT_ALL_EXCLUDE_ENTITIES", "")
 
     entities, skipped = catalog_service.get_extract_all_plan(
         conn_id="femsa_sf",
@@ -102,18 +114,18 @@ def test_extract_all_external_scope_block_can_be_overridden(monkeypatch):
     )
 
     assert [row["entity"] for row in entities] == ["Candidate"]
-    assert ("Candidate", "external_scope_blocked") not in {
-        (row["entity"], row["reason"]) for row in skipped
-    }
+    assert skipped == []
 
 
-def test_extract_all_default_skips_known_unavailable_successfactors_entities(monkeypatch):
+def test_extract_all_default_does_not_silently_skip_known_talent_entities(monkeypatch):
     from app.services import catalog_service
 
     rows = [
         {
             "entity": entity,
+            "odata_entity": entity,
             "connection_id": "femsa_sf",
+            "primary_key": "id",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         }
@@ -126,12 +138,8 @@ def test_extract_all_default_skips_known_unavailable_successfactors_entities(mon
         security_context=_ctx(),
     )
 
-    assert [row["entity"] for row in entities] == ["PerPerson"]
-    assert {(row["entity"], row["reason"]) for row in skipped} == {
-        ("Candidate", "external_scope_blocked"),
-        ("GoalPlan", "external_scope_blocked"),
-        ("LearningItem", "external_scope_blocked"),
-    }
+    assert [row["entity"] for row in entities] == ["PerPerson", "Candidate", "GoalPlan", "LearningItem"]
+    assert skipped == []
 
 
 def test_prepare_entity_config_prunes_invalid_select_fields_from_metadata():
@@ -180,9 +188,10 @@ def test_prepare_entity_config_skips_missing_odata_entity():
     assert block == {
         "entity": "CareerInterest",
         "odata_entity": "CareerInterest",
-        "status": "skipped",
-        "reason": "metadata_entity_missing",
+        "status": "blocked",
+        "reason": "entity_not_exposed_in_sap",
         "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+        "metadata_status": "metadata_entity_missing",
     }
 
 
@@ -193,18 +202,34 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
         *_rows(),
         {
             "entity": "PerformanceReview",
+            "odata_entity": "FormHeader",
             "connection_id": "femsa_sf",
+            "primary_key": "formDataId",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         },
         {
             "entity": "GoalPlan",
+            "odata_entity": "Goal",
             "connection_id": "femsa_sf",
+            "primary_key": "id",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
         },
     ]
     monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    monkeypatch.setattr(
+        catalog_service,
+        "_metadata_entities_for_connection",
+        lambda **_kwargs: (
+            {
+                "FormHeader": {"formDataId", "formSubjectId", "overallRating", "lastModifiedDateTime"},
+                "Goal": {"id", "userId", "state", "lastModifiedDateTime"},
+                "Position": {"code", "lastModifiedDateTime"},
+            },
+            None,
+        ),
+    )
     monkeypatch.setattr(
         preflight,
         "talent_metadata_readiness",
@@ -230,14 +255,10 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
         target="talent",
     )
 
-    assert [row["entity"] for row in entities] == ["PerformanceReview"]
-    assert skipped == [
-        {
-            "entity": "CompetencyEntity",
-            "status": "skipped",
-            "reason": "not_configured_for_extraction",
-        }
-    ]
+    assert "PerformanceReview" in [row["entity"] for row in entities]
+    assert "Position" in [row["entity"] for row in entities]
+    assert any(row["entity"] == "Candidate" and row["status"] == "skipped_explicit" for row in skipped)
+    assert any(row["entity"] == "CompetencyEntity" and row["status"] == "blocked" for row in skipped)
 
 
 def test_extract_all_plan_talent_target_reports_metadata_blocker(monkeypatch):
@@ -260,15 +281,13 @@ def test_extract_all_plan_talent_target_reports_metadata_blocker(monkeypatch):
         target="talent",
     )
 
-    assert entities == []
-    assert skipped == [
-        {
-            "entity": "__talent_cpa__",
-            "status": "skipped",
-            "reason": "talent_metadata_not_ready",
-            "blockers": [{"component": "metadata", "reason": "metadata_unavailable"}],
-        }
-    ]
+    assert [row["entity"] for row in entities] == ["Position"]
+    assert any(
+        row["entity"] == "__talent_cpa__"
+        and row["status"] == "blocked"
+        and row["reason"] == "missing_metadata"
+        for row in skipped
+    )
 
 
 def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
@@ -304,7 +323,7 @@ def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
     assert captured == ["PerPerson"]
     assert captured_plan_kwargs["conn_id"] == "femsa_sf"
     assert captured_plan_kwargs["target"] == "talent"
-    assert response["status"] == "success"
+    assert response["status"] == "completed_with_blocks"
     assert response["target"] == "talent"
     assert response["summary"]["extracted"] == 1
     assert response["skipped"] == [
@@ -506,6 +525,6 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
     assert final["result"]["concurrency"] == 1
     assert final["result"]["summary"]["extracted"] == 1
     assert final["result"]["skipped"] == [
-        {"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}
+        {"entity": "Position", "status": "skipped_explicit", "reason": "not_scoped_for_connection"}
     ]
     assert json.dumps(logs, ensure_ascii=True).find("not_scoped_for_connection") != -1
