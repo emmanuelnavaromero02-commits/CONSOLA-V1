@@ -1380,6 +1380,18 @@ async def _pipeline_runs_scope_predicate(
     return (" AND " + " AND ".join(clauses) if clauses else ""), values
 
 
+@asynccontextmanager
+async def _pipeline_runs_read_conn(pool: Any, user: dict | None):
+    """Yield a connection scoped for pipeline_runs RLS when workspace context exists."""
+
+    ctx = build_security_context(user)
+    if ctx.get("workspace_id"):
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            yield conn
+        return
+    yield pool
+
+
 async def _record_dag_pipeline_trigger(
     *,
     cartridge: str,
@@ -5885,20 +5897,21 @@ async def api_pipeline(
     try:
         _pool = await _get_db_pool()
         scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 2)
-        rows_pg = await _pool.fetch(
-            f"""SELECT DISTINCT ON (entity)
-                   run_id, dag_id, entity, airflow_dag_run_id,
-                   status, mode,
-                   started_at, finished_at,
-                   record_count, bytes_written, storage_uri,
-                   duration_seconds, watermark_updated_to, error_message, extra
-               FROM pipeline_runs
-               WHERE cartridge_id = $1
-                 {scope_sql}
-               ORDER BY entity, started_at DESC""",
-            cartridge,
-            *scope_values,
-        )
+        async with _pipeline_runs_read_conn(_pool, user) as conn:
+            rows_pg = await conn.fetch(
+                f"""SELECT DISTINCT ON (entity)
+                       run_id, dag_id, entity, airflow_dag_run_id,
+                       status, mode,
+                       started_at, finished_at,
+                       record_count, bytes_written, storage_uri,
+                       duration_seconds, watermark_updated_to, error_message, extra
+                   FROM pipeline_runs
+                   WHERE cartridge_id = $1
+                     {scope_sql}
+                   ORDER BY entity, started_at DESC""",
+                cartridge,
+                *scope_values,
+            )
         raw_runs_by_entity = {row["entity"]: dict(row) for row in rows_pg}
         refreshed, pending, failed = await _pipeline_gather_by_entity(
             {
@@ -6261,23 +6274,25 @@ async def api_pipeline_runs(
         pool = await _get_db_pool()
         if entity:
             scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
-            rows = await pool.fetch(
-                "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
-                f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $3",
-                cartridge,
-                entity,
-                limit,
-                *scope_values,
-            )
+            async with _pipeline_runs_read_conn(pool, user) as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
+                    f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $3",
+                    cartridge,
+                    entity,
+                    limit,
+                    *scope_values,
+                )
         else:
             scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
-            rows = await pool.fetch(
-                "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 "
-                f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
-                cartridge,
-                limit,
-                *scope_values,
-            )
+            async with _pipeline_runs_read_conn(pool, user) as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 "
+                    f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
+                    cartridge,
+                    limit,
+                    *scope_values,
+                )
         response_rows = [dict(r) for r in rows]
         if entity:
             refreshed_rows = []
@@ -6357,23 +6372,24 @@ async def api_pipeline_entity_runs(
     try:
         pool = await _get_db_pool()
         scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
-        rows = await pool.fetch(
-            f"""
-            SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                   started_at, finished_at, duration_seconds,
-                   record_count, bytes_written, storage_uri, watermark_updated_to,
-                   error_message, extra
-              FROM pipeline_runs
-             WHERE cartridge_id=$1 AND entity=$2
-               {scope_sql}
-             ORDER BY started_at DESC NULLS LAST
-             LIMIT $3
-            """,
-            cartridge,
-            entity,
-            safe_limit,
-            *scope_values,
-        )
+        async with _pipeline_runs_read_conn(pool, user) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
+                       started_at, finished_at, duration_seconds,
+                       record_count, bytes_written, storage_uri, watermark_updated_to,
+                       error_message, extra
+                  FROM pipeline_runs
+                 WHERE cartridge_id=$1 AND entity=$2
+                   {scope_sql}
+                 ORDER BY started_at DESC NULLS LAST
+                 LIMIT $3
+                """,
+                cartridge,
+                entity,
+                safe_limit,
+                *scope_values,
+            )
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("entity runs query failed error_id=%s", _eid)
@@ -6413,23 +6429,24 @@ async def api_pipeline_run_logs(
     try:
         pool = await _get_db_pool()
         scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
-        row = await pool.fetchrow(
-            f"""
-            SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                   started_at, finished_at, duration_seconds, error_message
-              FROM pipeline_runs
-             WHERE cartridge_id=$1
-               AND entity=$2
-               AND (run_id=$3 OR airflow_dag_run_id=$3)
-               {scope_sql}
-             ORDER BY started_at DESC NULLS LAST
-             LIMIT 1
-            """,
-            cartridge,
-            entity,
-            dag_run_id,
-            *scope_values,
-        )
+        async with _pipeline_runs_read_conn(pool, user) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
+                       started_at, finished_at, duration_seconds, error_message
+                  FROM pipeline_runs
+                 WHERE cartridge_id=$1
+                   AND entity=$2
+                   AND (run_id=$3 OR airflow_dag_run_id=$3)
+                   {scope_sql}
+                 ORDER BY started_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                cartridge,
+                entity,
+                dag_run_id,
+                *scope_values,
+            )
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("run logs query failed error_id=%s", _eid)
@@ -11144,12 +11161,13 @@ async def studio_ops_invoke(
         try:
             _pool = await _get_db_pool()
             scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 2)
-            rows = await _pool.fetch(
-                "SELECT DISTINCT ON (entity) entity, status, started_at, finished_at, record_count, error_message "
-                f"FROM pipeline_runs WHERE cartridge_id=$1 {scope_sql} ORDER BY entity, started_at DESC",
-                cartridge_id,
-                *scope_values,
-            )
+            async with _pipeline_runs_read_conn(_pool, user) as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT ON (entity) entity, status, started_at, finished_at, record_count, error_message "
+                    f"FROM pipeline_runs WHERE cartridge_id=$1 {scope_sql} ORDER BY entity, started_at DESC",
+                    cartridge_id,
+                    *scope_values,
+                )
             for r in rows:
                 runs_map[r["entity"]] = {
                     "status": r["status"],
@@ -11196,15 +11214,16 @@ async def studio_ops_invoke(
         try:
             _pool = await _get_db_pool()
             scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
-            row = await _pool.fetchrow(
-                "SELECT dag_id, airflow_dag_run_id, status, mode, "
-                "       started_at, finished_at, record_count, error_message, extra "
-                "FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
-                f"{scope_sql} ORDER BY started_at DESC LIMIT 1",
-                cartridge_id,
-                entity,
-                *scope_values,
-            )
+            async with _pipeline_runs_read_conn(_pool, user) as conn:
+                row = await conn.fetchrow(
+                    "SELECT dag_id, airflow_dag_run_id, status, mode, "
+                    "       started_at, finished_at, record_count, error_message, extra "
+                    "FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
+                    f"{scope_sql} ORDER BY started_at DESC LIMIT 1",
+                    cartridge_id,
+                    entity,
+                    *scope_values,
+                )
             if row:
                 last_run = dict(row)
         except Exception:

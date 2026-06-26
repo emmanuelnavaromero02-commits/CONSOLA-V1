@@ -11,6 +11,7 @@ import os
 
 import asyncpg
 
+from app.services.db_scope import scoped_db_for_user
 from app.services.security_context import build_security_context
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -194,18 +195,33 @@ async def _get_pipeline_run_as_job(
 ) -> dict | None:
     try:
         where, params = await _pipeline_scope_sql(pool, user, start_at=2)
-        row = await pool.fetchrow(
-            f"""
-            SELECT {_PIPELINE_COLUMNS}
-              FROM pipeline_runs
-             WHERE (run_id=$1 OR airflow_dag_run_id=$1)
-               AND {where}
-             ORDER BY started_at DESC NULLS LAST
-             LIMIT 1
-            """,
-            job_id,
-            *params,
-        )
+        if user is not None and build_security_context(user).get("workspace_id"):
+            async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+                row = await conn.fetchrow(
+                    f"""
+                    SELECT {_PIPELINE_COLUMNS}
+                      FROM pipeline_runs
+                     WHERE (run_id=$1 OR airflow_dag_run_id=$1)
+                       AND {where}
+                     ORDER BY started_at DESC NULLS LAST
+                     LIMIT 1
+                    """,
+                    job_id,
+                    *params,
+                )
+        else:
+            row = await pool.fetchrow(
+                f"""
+                SELECT {_PIPELINE_COLUMNS}
+                  FROM pipeline_runs
+                 WHERE (run_id=$1 OR airflow_dag_run_id=$1)
+                   AND {where}
+                 ORDER BY started_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                job_id,
+                *params,
+            )
     except Exception:
         return None
     return _pipeline_row_to_job(row) if row else None
@@ -216,17 +232,31 @@ async def _list_recent_pipeline_jobs(
 ) -> list[dict]:
     try:
         where, params = await _pipeline_scope_sql(pool, user, start_at=2)
-        rows = await pool.fetch(
-            f"""
-            SELECT {_PIPELINE_COLUMNS}
-              FROM pipeline_runs
-             WHERE {where}
-             ORDER BY started_at DESC NULLS LAST
-             LIMIT $1
-            """,
-            limit,
-            *params,
-        )
+        if user is not None and build_security_context(user).get("workspace_id"):
+            async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+                rows = await conn.fetch(
+                    f"""
+                    SELECT {_PIPELINE_COLUMNS}
+                      FROM pipeline_runs
+                     WHERE {where}
+                     ORDER BY started_at DESC NULLS LAST
+                     LIMIT $1
+                    """,
+                    limit,
+                    *params,
+                )
+        else:
+            rows = await pool.fetch(
+                f"""
+                SELECT {_PIPELINE_COLUMNS}
+                  FROM pipeline_runs
+                 WHERE {where}
+                 ORDER BY started_at DESC NULLS LAST
+                 LIMIT $1
+                """,
+                limit,
+                *params,
+            )
     except Exception:
         return []
     return [_pipeline_row_to_job(row) for row in rows]
