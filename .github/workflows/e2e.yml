@@ -1,6 +1,7 @@
 name: Playwright E2E
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [main]
   push:
@@ -10,7 +11,20 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.detect.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: python3 scripts/ci_changed_areas.py
+
   playwright-e2e:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -95,3 +109,10 @@ jobs:
           docker logs mode_console --tail 120 2>&1 || true
           docker logs mode_airflow --tail 160 2>&1 || true
           docker logs mode_airflow_scheduler --tail 160 2>&1 || true
+
+  no-e2e-needed:
+    needs: changes
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.e2e != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No UI/API/infra/E2E surface changed; Playwright stack skipped."

@@ -10,7 +10,34 @@ permissions:
   packages: write
 
 jobs:
+  detect-release-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      dataset: ${{ steps.detect.outputs.dataset }}
+      root_tests: ${{ steps.detect.outputs.root_tests }}
+      cartridge_tests: ${{ steps.detect.outputs.cartridge_tests }}
+      release_full_stack: ${{ steps.detect.outputs.release_full_stack }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: previous
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [[ -z "$previous" ]]; then
+            previous="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          echo "base=$previous" >> "$GITHUB_OUTPUT"
+
+      - id: detect
+        run: python3 scripts/ci_changed_areas.py --base "${{ steps.previous.outputs.base }}" --head "${{ github.sha }}"
+
   validate-release:
+    needs: detect-release-changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +74,15 @@ jobs:
             tests/test_app_env_safe_default.py \
             tests/test_mcp_data_scope_source.py \
             tests/test_v1_public_https_closure.py
+
+      - name: Changed cartridge dataset contracts
+        if: needs.detect-release-changes.outputs.dataset == 'true' || needs.detect-release-changes.outputs.root_tests == 'true'
+        run: |
+          python -m pytest -q \
+            tests/test_sap_hcm_datasets.py \
+            tests/test_sap_s4hana_datasets.py \
+            tests/test_sap_successfactors_datasets.py \
+            cartridges/sap_successfactors/tests/test_airflow_dag_contract.py
 
       - name: Terraform validation
         run: |
@@ -88,7 +124,8 @@ jobs:
           git diff --exit-code -- console/app/static/console-next
 
   full-stack-release-gate:
-    needs: validate-release
+    needs: [detect-release-changes, validate-release]
+    if: needs.detect-release-changes.outputs.release_full_stack == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -204,7 +241,15 @@ jobs:
           if-no-files-found: ignore
 
   build-and-push:
-    needs: [validate-release, full-stack-release-gate]
+    needs: [detect-release-changes, validate-release, full-stack-release-gate]
+    if: |
+      always() &&
+      needs.validate-release.result == 'success' &&
+      needs.detect-release-changes.result == 'success' &&
+      (
+        needs.detect-release-changes.outputs.release_full_stack != 'true' ||
+        needs.full-stack-release-gate.result == 'success'
+      )
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

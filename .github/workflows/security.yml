@@ -25,7 +25,23 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python_runtime: ${{ steps.detect.outputs.python_runtime }}
+      python_deps: ${{ steps.detect.outputs.python_deps }}
+      node_deps: ${{ steps.detect.outputs.node_deps }}
+      infra: ${{ steps.detect.outputs.infra }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: python3 scripts/ci_changed_areas.py
+
   bandit:
+    needs: changes
+    if: needs.changes.outputs.python_runtime == 'true' || needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +80,8 @@ jobs:
           path: bandit-report.json
 
   pip-audit:
+    needs: changes
+    if: needs.changes.outputs.python_deps == 'true' || needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,6 +157,8 @@ jobs:
           exit $fail
 
   npm-audit:
+    needs: changes
+    if: needs.changes.outputs.node_deps == 'true' || needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -162,3 +182,14 @@ jobs:
         run: |
           npm ci
           npm audit --audit-level=high
+
+  no-security-scan-needed:
+    needs: changes
+    if: |
+      needs.changes.outputs.python_runtime != 'true' &&
+      needs.changes.outputs.python_deps != 'true' &&
+      needs.changes.outputs.node_deps != 'true' &&
+      needs.changes.outputs.infra != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No runtime code, dependency, or workflow files changed; security scans skipped."
