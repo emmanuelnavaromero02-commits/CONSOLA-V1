@@ -585,6 +585,98 @@ async def test_fetch_active_sync_run_sets_rls_scope(console_main, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_fetch_active_sync_run_tolerates_legacy_pipeline_runs_schema(
+    console_main, monkeypatch
+):
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        async def fetchrow(self, query, *args):
+            self.calls.append((query, args))
+            return {
+                "run_id": "sync_now:sap_successfactors:legacy",
+                "dag_id": "sync_now",
+                "cartridge_id": "sap_successfactors",
+                "entity": "__sync_now__",
+                "status": "running",
+                "extra": {},
+            }
+
+    class FakeScope:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn, None, None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def table_has_column(table, column, **_kwargs):
+        return False
+
+    conn = FakeConn()
+    monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
+    monkeypatch.setattr(console_main, "_get_db_pool", _noop_async)
+    monkeypatch.setattr(
+        console_main, "scoped_db_for_user", lambda pool, user: FakeScope(conn)
+    )
+
+    row = await console_main._fetch_active_sync_run(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        user=None,
+    )
+
+    assert row and row["run_id"] == "sync_now:sap_successfactors:legacy"
+    query, args = conn.calls[0]
+    assert "COALESCE(mode" not in query
+    assert "extra->>" not in query
+    assert "started_at >" not in query
+    assert "ORDER BY run_id DESC" in query
+    assert args[0] == "sap_successfactors"
+    assert len(args) == 2
+
+
+@pytest.mark.anyio
+async def test_fetch_active_sync_run_returns_none_on_lookup_error(
+    console_main, monkeypatch
+):
+    class BrokenConn:
+        async def fetchrow(self, *_args, **_kwargs):
+            raise RuntimeError("schema drift")
+
+    class FakeScope:
+        async def __aenter__(self):
+            return BrokenConn(), None, None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def table_has_column(table, column, **_kwargs):
+        return table == "pipeline_runs" and column in {"mode", "extra", "started_at"}
+
+    monkeypatch.setattr(console_main, "_table_has_column", table_has_column)
+    monkeypatch.setattr(console_main, "_get_db_pool", _noop_async)
+    monkeypatch.setattr(
+        console_main, "scoped_db_for_user", lambda pool, user: FakeScope()
+    )
+
+    row = await console_main._fetch_active_sync_run(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        user=None,
+    )
+
+    assert row is None
+
+
+@pytest.mark.anyio
 async def test_extract_all_scopes_idempotency_key_per_entity(console_main, monkeypatch):
     async def pipeline(cartridge, user=None):
         return {
@@ -879,6 +971,56 @@ async def test_sync_run_get_reconciles_terminal_without_control_room_check(
 
     assert reconciled == [row["run_id"]]
     assert result["control_room_ready"] is True
+
+
+@pytest.mark.anyio
+async def test_active_sync_run_endpoint_returns_persisted_payload_when_status_build_fails(
+    console_main, monkeypatch
+):
+    user = _scoped_sf_pipeline_user()
+    row = {
+        "run_id": "sync_now:sap_successfactors:active",
+        "dag_id": console_main._SYNC_NOW_DAG_ID,
+        "cartridge_id": "sap_successfactors",
+        "entity": console_main._SYNC_NOW_ENTITY,
+        "mode": "incremental",
+        "status": "running",
+        "started_at": datetime.now(timezone.utc),
+        "finished_at": None,
+        "error_message": None,
+        "extra": {
+            "target": "all",
+            "mode": "incremental",
+            "steps": console_main._initial_sync_steps(),
+            "triggered_entities": [{"entity": console_main._SYNC_AGGREGATE_ENTITY}],
+        },
+    }
+
+    async def resolve(user_arg, cartridge_id, fallback=None):
+        return "sap_successfactors", True
+
+    async def fetch_active(**_kwargs):
+        return dict(row)
+
+    async def build_status(**_kwargs):
+        raise RuntimeError("pipeline status lookup failed")
+
+    monkeypatch.setattr(console_main, "_resolve_scoped_operation_cartridge", resolve)
+    monkeypatch.setattr(console_main, "_fetch_active_sync_run", fetch_active)
+    monkeypatch.setattr(console_main, "_build_sync_run_status", build_status)
+
+    result = await console_main.api_cartridge_active_sync_run(
+        "sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        user=user,
+    )
+
+    assert result["run_id"] == row["run_id"]
+    assert result["status"] == "running"
+    assert result["target"] == "all"
+    assert result["triggered_entities"] == [{"entity": console_main._SYNC_AGGREGATE_ENTITY}]
 
 
 @pytest.mark.anyio

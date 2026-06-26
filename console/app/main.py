@@ -6811,6 +6811,20 @@ _SYNC_AGENTOPS_TOOLS = {
 }
 
 
+def _sync_clean_mode(value: Any | None) -> str:
+    mode = str(value or "incremental").strip().lower()
+    if mode not in _SYNC_VALID_MODES:
+        raise HTTPException(400, "mode must be incremental or full")
+    return mode
+
+
+def _sync_clean_target(value: Any | None) -> str:
+    target = str(value or "all").strip().lower()
+    if target not in _SYNC_VALID_TARGETS:
+        raise HTTPException(400, "target must be all, foundation or talent")
+    return target
+
+
 def _airflow_run_id_fragment(value: str) -> str:
     fragment = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value or "")).strip("_")
     return (fragment or "entity")[:80]
@@ -7042,13 +7056,11 @@ async def _reserve_successfactors_entity_extract_slot(
 
 
 def _pipeline_extract_all_mode_target(body: dict[str, Any]) -> tuple[str, str]:
-    mode = str(body.get("mode") or "incremental").strip().lower()
-    target = str(body.get("target") or "all").strip().lower()
-    if mode not in _SYNC_VALID_MODES:
-        raise HTTPException(400, detail="invalid extract mode")
-    if target not in _SYNC_VALID_TARGETS:
-        raise HTTPException(400, detail="invalid extract target")
-    return mode, target
+    try:
+        return _sync_clean_mode(body.get("mode")), _sync_clean_target(body.get("target"))
+    except HTTPException as exc:
+        detail = "invalid extract mode" if "mode" in str(exc.detail) else "invalid extract target"
+        raise HTTPException(400, detail=detail) from exc
 
 
 def _pipeline_extract_all_run_id(
@@ -7350,30 +7362,55 @@ async def _fetch_active_sync_run(
     user: dict | None,
 ) -> dict[str, Any] | None:
     pool = await _get_db_pool()
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
-        user, 5, refresh_columns=True
+    has_mode = await _table_has_column("pipeline_runs", "mode", refresh=True)
+    has_extra = await _table_has_column("pipeline_runs", "extra", refresh=True)
+    has_started_at = await _table_has_column(
+        "pipeline_runs", "started_at", refresh=True
     )
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        row = await conn.fetchrow(
-            f"""
-            SELECT *
-              FROM pipeline_runs
-             WHERE cartridge_id=$1
-               AND entity='{_SYNC_NOW_ENTITY}'
-               AND status <> ALL($2::text[])
-               AND mode=$3
-               AND COALESCE(extra->>'target', 'all')=$4
-               AND started_at > NOW() - INTERVAL '4 hours'
-               {scope_sql}
-             ORDER BY started_at DESC
-             LIMIT 1
-            """,
+    clauses = [
+        "cartridge_id=$1",
+        f"entity='{_SYNC_NOW_ENTITY}'",
+        "(status IS NULL OR status <> ALL($2::text[]))",
+    ]
+    args: list[Any] = [cartridge, list(_SYNC_TERMINAL_STATUSES)]
+    if has_mode:
+        args.append(mode)
+        clauses.append(f"COALESCE(mode, ${len(args)})=${len(args)}")
+    if has_extra:
+        args.append(target)
+        clauses.append(f"COALESCE(extra->>'target', 'all')=${len(args)}")
+    if has_started_at:
+        clauses.append(
+            "(started_at IS NULL OR started_at > NOW() - INTERVAL '4 hours')"
+        )
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
+        user, len(args) + 1, refresh_columns=True
+    )
+    order_sql = "started_at DESC NULLS LAST" if has_started_at else "run_id DESC"
+    try:
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            row = await conn.fetchrow(
+                f"""
+                SELECT *
+                  FROM pipeline_runs
+                 WHERE {' AND '.join(clauses)}
+                   {scope_sql}
+                 ORDER BY {order_sql}
+                 LIMIT 1
+                """,
+                *args,
+                *scope_values,
+            )
+    except Exception:
+        logger.warning(
+            "active sync run lookup failed for cartridge=%s mode=%s target=%s conn_id=%s",
             cartridge,
-            list(_SYNC_TERMINAL_STATUSES),
             mode,
             target,
-            *scope_values,
+            conn_id,
+            exc_info=True,
         )
+        return None
     return dict(row) if row else None
 
 
@@ -8663,12 +8700,8 @@ async def api_cartridge_sync_now(
     cartridge, _active = await _resolve_scoped_operation_cartridge(
         user, cartridge_id, fallback=cartridge_id
     )
-    mode = str(body.get("mode") or "incremental").strip().lower()
-    if mode not in _SYNC_VALID_MODES:
-        raise HTTPException(400, "mode must be incremental or full")
-    target = str(body.get("target") or "all").strip().lower()
-    if target not in _SYNC_VALID_TARGETS:
-        raise HTTPException(400, "target must be all, foundation or talent")
+    mode = _sync_clean_mode(body.get("mode"))
+    target = _sync_clean_target(body.get("target"))
     conn_id = _normalize_pipeline_conn_id(
         body.get("conn_id") or body.get("connection_id")
     )
@@ -8917,7 +8950,16 @@ async def api_cartridge_active_sync_run(
     )
     if not row:
         raise HTTPException(404, "active sync run not found")
-    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+    try:
+        return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+    except Exception:
+        logger.warning(
+            "active sync run status build failed for cartridge=%s run_id=%s; returning persisted payload",
+            cartridge,
+            row.get("run_id"),
+            exc_info=True,
+        )
+        return _sync_public_payload(row, _sync_extra_from_row(row))
 
 
 @app.get(
