@@ -135,7 +135,8 @@ def test_startup_seeders_declare_platform_or_workspace_scope():
     dataset_store = _read(REPO / "refinement/app/dataset_store.py")
     save_dataset = dataset_store.split("def save_dataset", 1)[1].split("def delete_dataset", 1)[0]
     assert "workspace_id = ds.get(\"workspace_id\") or _default_workspace_id(cur)" in save_dataset
-    assert "_apply_scope(cur, ds.get(\"tenant_id\"), workspace_id)" in save_dataset
+    assert "tenant_id = ds.get(\"tenant_id\") or _tenant_for_workspace(cur, workspace_id)" in save_dataset
+    assert "_apply_scope(cur, tenant_id, workspace_id)" in save_dataset
 
     refinement = _read(REPO / "refinement/app/main.py")
     seed_relationships = refinement.split("def _seed_relationships", 1)[1].split("# ── REST API", 1)[0]
