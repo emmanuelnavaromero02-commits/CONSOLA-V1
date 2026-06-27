@@ -476,6 +476,11 @@ def _matches_security_scope(row: dict[str, Any], tenant_id: str, workspace_id: s
     return True
 
 
+def _uses_selected_connection(config: dict[str, Any], selected_conn_id: str) -> bool:
+    config_conn_id = str(config.get("connection_id") or "").strip()
+    return bool(selected_conn_id and config_conn_id == selected_conn_id)
+
+
 def _normalize_extract_all_target(target: str | None) -> str:
     normalized = str(target or "all").strip().lower()
     if normalized not in VALID_EXTRACT_ALL_TARGETS:
@@ -614,7 +619,12 @@ def get_extract_all_plan(
                     "conn_id": selected_conn_id,
                     "connection_id": selected_conn_id,
                 }
-            if not _matches_security_scope(config, tenant_id, workspace_id):
+            # A selected Vault connection can reuse old workspace-scoped entity
+            # templates; extracted data is still written with the current scope.
+            if not _matches_security_scope(config, tenant_id, workspace_id) and not _uses_selected_connection(
+                config,
+                selected_conn_id,
+            ):
                 skipped.append(
                     _plan_outcome(
                         entity=entity,

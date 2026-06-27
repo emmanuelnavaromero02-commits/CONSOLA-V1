@@ -76,7 +76,7 @@ def _ctx() -> dict:
     )
 
 
-def test_extract_all_plan_keeps_only_scoped_connection_and_reports_skips(monkeypatch):
+def test_extract_all_plan_reuses_selected_connection_even_with_stale_scope(monkeypatch):
     from app.services import catalog_service
 
     monkeypatch.setattr(catalog_service, "get_all_entities", lambda: _rows())
@@ -86,10 +86,15 @@ def test_extract_all_plan_keeps_only_scoped_connection_and_reports_skips(monkeyp
         security_context=_ctx(),
     )
 
-    assert [row["entity"] for row in entities] == ["PerPerson", "FOCompany", "Position", "EmpEmploymentTermination"]
+    assert [row["entity"] for row in entities] == [
+        "PerPerson",
+        "FOCompany",
+        "Position",
+        "EmpJob",
+        "EmpEmploymentTermination",
+    ]
     assert {(row["entity"], row["reason"]) for row in skipped} == {
         ("Candidate", "scope_mismatch"),
-        ("EmpJob", "scope_mismatch"),
     }
 
 

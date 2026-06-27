@@ -30,8 +30,8 @@ SELECT
     externalCode AS work_schedule_id,
     userId       AS user_id,
     country,
-    TRY_CAST(startDate AS DATE) AS start_date,
-    TRY_CAST(endDate AS DATE)   AS end_date,
+    TRY_CAST(startingDate AS DATE) AS start_date,
+    NULL::DATE AS end_date,
     averageWorkingDaysPerWeek AS average_working_days_per_week,
     averageHoursPerWeek       AS average_hours_per_week,
     load_date

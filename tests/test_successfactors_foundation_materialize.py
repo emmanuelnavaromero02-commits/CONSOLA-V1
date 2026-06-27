@@ -15,6 +15,18 @@ REFINEMENT_DOCKERFILE = REPO / "refinement" / "Dockerfile"
 
 
 def _load_script():
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            sys.modules.pop(name, None)
+    refinement_path = str(SCRIPT.parents[1])
+    sys.path = [
+        path
+        for path in sys.path
+        if "cartridges/sap_successfactors" not in path.replace("\\", "/")
+    ]
+    if refinement_path in sys.path:
+        sys.path.remove(refinement_path)
+    sys.path.insert(0, refinement_path)
     spec = importlib.util.spec_from_file_location("materialize_successfactors_foundation", SCRIPT)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -159,6 +171,27 @@ def test_successfactors_foundation_uses_talent_operational_fallback_for_missing_
     assert "missing_materialized_dependency" == result["datasets"][0]["reason"]
     assert len(engine.calls) == 2
     assert "insufficient_data" in engine.calls[1][2]
+
+
+def test_successfactors_foundation_uses_foundation_fallback_for_missing_source():
+    module = _load_script()
+    store = _FakeStore()
+    engine = _FallbackEngine()
+
+    result = module.materialize_foundation(
+        store=store,
+        engine=engine,
+        tenant_id="tenant-a",
+        workspace_id="workspace-a",
+        datasets=["sap_successfactors_employee_360"],
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["datasets"][0]["status"] == "PARTIAL"
+    assert result["datasets"][0]["fallback"] is True
+    assert result["datasets"][0]["reason"] == "missing_materialized_dependency"
+    assert len(engine.calls) == 2
+    assert "is_active" in engine.calls[1][2]
 
 
 def test_successfactors_foundation_refuses_non_gold_dataset_before_writes():
