@@ -171,11 +171,18 @@ function statusCount(sources: SourceStatus[], status: string): number {
 function agentOpsEngineLabel(engine: string): string {
   const labels: Record<string, string> = {
     wisdom_bit: "WisdomBit",
-    monte_carlo: "Monte Carlo",
-    bayesian_calibration: "Bayes",
-    decision_orchestrator: "Decision",
+    monte_carlo: "Análisis operativo",
+    bayesian_calibration: "Historial operativo",
+    decision_orchestrator: "Decisión",
   };
   return labels[engine] || engine.replaceAll("_", " ");
+}
+
+function agentOpsEngineStatusLabel(status?: string | null): string {
+  if (status === "ready") return "Listo";
+  if (status === "configured") return "En espera de datos";
+  if (status === "missing") return "No configurado";
+  return status ? status.replaceAll("_", " ") : "En espera";
 }
 
 function agentOpsEngineTone(status?: string | null): string {
@@ -540,10 +547,10 @@ function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPaylo
         <MetricCard icon={AlertTriangle} label="Alertas abiertas" value={formatNumber(payload?.summary?.open_agent_alerts)} tone="warning" />
       </div>
       <div className="grid gap-3 md:grid-cols-4">
-        <MetricCard icon={BrainCircuit} label="Motores" value={formatNumber(payload?.summary?.configured_engines)} />
-        <MetricCard icon={Gauge} label="Monte Carlo" value={formatNumber(payload?.summary?.monte_carlo_simulations)} />
-        <MetricCard icon={BrainCircuit} label="Bayes" value={formatNumber(payload?.summary?.bayesian_calibration_samples)} />
-        <MetricCard icon={Cpu} label="Decision" value={formatNumber(payload?.summary?.decision_orchestrations)} />
+        <MetricCard icon={BrainCircuit} label="Capacidades" value={formatNumber(payload?.summary?.configured_engines)} />
+        <MetricCard icon={Gauge} label="Análisis operativo" value={formatNumber(payload?.summary?.monte_carlo_simulations)} />
+        <MetricCard icon={BrainCircuit} label="Historial operativo" value={formatNumber(payload?.summary?.bayesian_calibration_samples)} />
+        <MetricCard icon={Cpu} label="Decisión" value={formatNumber(payload?.summary?.decision_orchestrations)} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
@@ -572,22 +579,22 @@ function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPaylo
         </section>
         <div className="space-y-4">
           <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
-            <h4 className="text-sm font-semibold text-white">Motores de simulacion</h4>
+            <h4 className="text-sm font-semibold text-white">Capacidades de análisis</h4>
             <div className="mt-3 space-y-2">
               {engines.map((engine) => (
                 <div key={engine.engine} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-slate-100">{agentOpsEngineLabel(engine.engine)}</p>
                     <span className={cn("rounded-md border px-2 py-0.5 text-xs font-semibold", agentOpsEngineTone(engine.status))}>
-                      {engine.status}
+                      {agentOpsEngineStatusLabel(engine.status)}
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
-                    {formatNumber(engine.configured)} configs · {formatNumber(engine.sample_count ?? engine.evidence_count)} evidencia
+                    {formatNumber(engine.configured)} configuradas · {formatNumber(engine.sample_count ?? engine.evidence_count)} evidencia
                   </p>
                 </div>
               ))}
-              {!engines.length ? <p className="text-sm text-slate-400">Sin motores declarados por los monitores.</p> : null}
+              {!engines.length ? <p className="text-sm text-slate-400">Sin capacidades declaradas por los monitores.</p> : null}
             </div>
           </section>
           <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">

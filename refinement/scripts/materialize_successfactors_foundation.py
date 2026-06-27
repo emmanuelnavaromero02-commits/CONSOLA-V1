@@ -20,6 +20,10 @@ import psycopg2
 import psycopg2.extras
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.successfactors_fallbacks import fallback_dataset_for_successfactors
+
+
 SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
     "sap_successfactors_employee_360",
     "sap_successfactors_org_structure",
@@ -34,15 +38,24 @@ SUCCESSFACTORS_GOLD_TALENT_ORDER = [
     "sap_successfactors_talent_role_profile",
     "sap_successfactors_talent_mobility_history",
     "sap_successfactors_talent_cpa_scores",
+    "sap_successfactors_talent_benchmark_internal",
     "sap_successfactors_talent_readiness",
     "sap_successfactors_talent_9box",
     "sap_successfactors_talent_9box_operational",
+    "sap_successfactors_talent_performance_goals",
+    "sap_successfactors_talent_competency_skill_gap",
+    "sap_successfactors_talent_aspiration_signals",
+    "sap_successfactors_talent_role_coverage",
+    "sap_successfactors_talent_learning_certification_status",
+    "sap_successfactors_recruitment_application_funnel",
     "sap_successfactors_talent_retention_risk",
     "sap_successfactors_talent_promotion_alignment",
     "sap_successfactors_talent_calibration_sensitivity",
     "sap_successfactors_talent_role_fit_assignments",
     "sap_successfactors_talent_action_candidates",
     "sap_successfactors_talent_signals",
+    "sap_successfactors_talent_operational_features",
+    "sap_successfactors_talent_simulation_inputs",
 ]
 
 SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER = [
@@ -50,18 +63,27 @@ SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER = [
     "sap_successfactors_talent_role_profile",
     "sap_successfactors_talent_mobility_history",
     "sap_successfactors_talent_cpa_scores",
+    "sap_successfactors_talent_benchmark_internal",
     "sap_successfactors_talent_readiness",
     "sap_successfactors_talent_9box",
 ]
 
 SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER = [
     "sap_successfactors_talent_9box_operational",
+    "sap_successfactors_talent_performance_goals",
+    "sap_successfactors_talent_competency_skill_gap",
+    "sap_successfactors_talent_aspiration_signals",
+    "sap_successfactors_talent_role_coverage",
+    "sap_successfactors_talent_learning_certification_status",
+    "sap_successfactors_recruitment_application_funnel",
     "sap_successfactors_talent_retention_risk",
     "sap_successfactors_talent_promotion_alignment",
     "sap_successfactors_talent_calibration_sensitivity",
     "sap_successfactors_talent_role_fit_assignments",
     "sap_successfactors_talent_action_candidates",
     "sap_successfactors_talent_signals",
+    "sap_successfactors_talent_operational_features",
+    "sap_successfactors_talent_simulation_inputs",
 ]
 
 ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) | set(SUCCESSFACTORS_GOLD_TALENT_ORDER)
@@ -200,6 +222,17 @@ def _contract_checked_dataset(store, name: str) -> dict:
     return ds
 
 
+def _materialize_with_operational_fallback(engine, ds: dict, context: dict) -> tuple[dict, bool, str | None]:
+    try:
+        return engine.materialize(ds, context), False, None
+    except Exception as exc:
+        fallback = fallback_dataset_for_successfactors(ds, exc)
+        if not fallback:
+            raise
+        result = engine.materialize(fallback, context)
+        return result, True, str(exc)[:1000]
+
+
 def materialize_foundation(
     *,
     store,
@@ -216,6 +249,7 @@ def materialize_foundation(
     checked = [(name, _contract_checked_dataset(store, name)) for name in names]
     context = _scope_context(tenant_id, workspace_id)
     results: list[dict[str, object]] = []
+    used_fallback = False
 
     for name, ds in checked:
         if dry_run:
@@ -227,20 +261,25 @@ def materialize_foundation(
                 "storage_uri": None,
             }
         else:
-            result = engine.materialize(ds, context)
+            result, fallback, original_error = _materialize_with_operational_fallback(engine, ds, context)
+            used_fallback = used_fallback or fallback
             row_count = int(result.get("row_count") or 0)
             store.update_refresh(name, row_count)
             item = {
                 "name": name,
-                "status": "PASS",
+                "status": "PARTIAL" if fallback else "PASS",
                 "dry_run": False,
                 "row_count": row_count,
                 "storage_uri": result.get("storage_uri"),
             }
+            if fallback:
+                item["fallback"] = True
+                item["reason"] = "missing_materialized_dependency"
+                item["original_error"] = original_error
         results.append(item)
 
     return {
-        "status": "PASS",
+        "status": "PARTIAL" if used_fallback else "PASS",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "datasets": results,

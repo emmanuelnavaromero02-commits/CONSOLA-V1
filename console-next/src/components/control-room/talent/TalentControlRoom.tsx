@@ -388,7 +388,7 @@ export function TalentAnomalyList({
 export function TalentCycleTimeline({ preview }: { preview: SfTalentActionPreviewPayload | null }) {
   const steps = preview?.steps ?? [
     { id: "signal", label: "Detectar senal", status: "waiting" },
-    { id: "calibration", label: "Calibrar roster", status: "waiting" },
+    { id: "calibration", label: "Revisar roster", status: "waiting" },
     { id: "decision", label: "Crear decision", status: "waiting" },
     { id: "control", label: "Dar seguimiento", status: "waiting" },
   ];

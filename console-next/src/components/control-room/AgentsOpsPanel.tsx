@@ -45,11 +45,18 @@ function statusTone(status?: string | null): string {
 function engineLabel(engine: string): string {
   const labels: Record<string, string> = {
     wisdom_bit: "WisdomBit",
-    monte_carlo: "Monte Carlo",
-    bayesian_calibration: "Bayes",
-    decision_orchestrator: "Decision",
+    monte_carlo: "Análisis operativo",
+    bayesian_calibration: "Historial operativo",
+    decision_orchestrator: "Decisión",
   };
   return labels[engine] || engine.replaceAll("_", " ");
+}
+
+function engineStatusLabel(status?: string): string {
+  if (status === "ready") return "Listo";
+  if (status === "configured") return "En espera de datos";
+  if (status === "missing") return "No configurado";
+  return status ? status.replaceAll("_", " ") : "En espera";
 }
 
 function engineStatusTone(status?: string): string {
@@ -89,7 +96,7 @@ export function AgentsOpsPanel({
   const bayesEngine = engines.find((engine) => engine.engine === "bayesian_calibration");
 
   return (
-    <section className="border-y bg-transparent dark:border-sky-400/20" aria-label="Agentes y simulaciones">
+    <section className="border-y bg-transparent dark:border-sky-400/20" aria-label="Agentes e inteligencia">
       <button
         type="button"
         onClick={onToggle}
@@ -97,7 +104,7 @@ export function AgentsOpsPanel({
       >
         <span>
           <span className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">AgentOps</span>
-          <span className="mt-1 block text-lg font-semibold text-foreground dark:text-white">Agentes, WisdomBits y simulaciones</span>
+      <span className="mt-1 block text-lg font-semibold text-foreground dark:text-white">Agentes, WisdomBits y análisis</span>
         </span>
         <span className="flex items-center gap-2 text-sm text-muted-foreground">
           {summary ? `${operationalMonitors.length}/${summary.monitor_agents} monitores operativos · ${summary.open_agent_alerts} alertas` : loading ? "cargando" : "sin datos"}
@@ -115,24 +122,24 @@ export function AgentsOpsPanel({
             <CommandMetric icon={AlertTriangle} label="Alertas agente" value={loading ? "..." : summary?.open_agent_alerts ?? 0} detail={`${summary?.agent_alerts_total ?? 0} históricas`} />
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <CommandMetric icon={BrainCircuit} label="Motores configurados" value={loading ? "..." : summary?.configured_engines ?? 0} detail={`${engines.filter((engine) => engine.status === "ready").length} con evidencia`} />
-            <CommandMetric icon={Gauge} label="Monte Carlo" value={loading ? "..." : summary?.monte_carlo_simulations ?? 0} detail={engineDetail(monteCarloEngine, "simulaciones persistidas", "configurado sin simulaciones", "sin motor configurado")} />
-            <CommandMetric icon={BrainCircuit} label="Bayes" value={loading ? "..." : summary?.bayesian_calibration_samples ?? 0} detail={engineDetail(bayesEngine, `${summary?.bayesian_calibration_states ?? 0} estados calibrados`, "configurado sin muestras", "sin calibración configurada")} />
-            <CommandMetric icon={Cpu} label="Decision" value={loading ? "..." : summary?.decision_orchestrations ?? 0} detail="orquestaciones guardadas" />
+            <CommandMetric icon={BrainCircuit} label="Capacidades configuradas" value={loading ? "..." : summary?.configured_engines ?? 0} detail={`${engines.filter((engine) => engine.status === "ready").length} con evidencia`} />
+            <CommandMetric icon={Gauge} label="Análisis operativo" value={loading ? "..." : summary?.monte_carlo_simulations ?? 0} detail={engineDetail(monteCarloEngine, "resultados persistidos", "en espera de datos", "sin análisis configurado")} />
+            <CommandMetric icon={BrainCircuit} label="Historial operativo" value={loading ? "..." : summary?.bayesian_calibration_samples ?? 0} detail={engineDetail(bayesEngine, `${summary?.bayesian_calibration_states ?? 0} estados con historial`, "requiere historial adicional", "sin historial configurado")} />
+            <CommandMetric icon={Cpu} label="Decisión" value={loading ? "..." : summary?.decision_orchestrations ?? 0} detail="orquestaciones guardadas" />
           </div>
           {!loading && monteCarloEngine?.status === "configured" ? (
-            <OperationalNotice tone="warning" title="Monte Carlo configurado sin evidencia">
-              El motor existe, pero todavía no hay simulaciones persistidas para este workspace.
+            <OperationalNotice tone="warning" title="Análisis configurado sin evidencia">
+              La capacidad existe, pero todavía no hay resultados persistidos para este workspace.
             </OperationalNotice>
           ) : null}
           {!loading && bayesEngine?.status === "configured" ? (
-            <OperationalNotice tone="warning" title="Bayes configurado sin muestras suficientes">
-              El motor existe, pero falta registrar outcomes/observaciones para calibrar probabilidades.
+            <OperationalNotice tone="warning" title="Historial operativo insuficiente">
+              La capacidad existe, pero falta registrar resultados observados para ajustar probabilidades.
             </OperationalNotice>
           ) : null}
           {!loading && summary?.monitor_agents === 0 ? (
             <OperationalNotice tone="warning" title="Sin monitor operativo">
-              No hay agentes de monitor workspace-scoped para ejecutar WisdomBits, Monte Carlo o Decision desde Control Room.
+              No hay agentes de monitor workspace-scoped para ejecutar WisdomBits, análisis o Decision desde Control Room.
             </OperationalNotice>
           ) : null}
           {!loading && summary && summary.monitor_agents > 0 && operationalMonitors.length === 0 ? (
@@ -201,7 +208,7 @@ export function AgentsOpsPanel({
             <div className="space-y-3">
               <div className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-foreground dark:text-white">Motores</h3>
+                  <h3 className="text-sm font-semibold text-foreground dark:text-white">Capacidades</h3>
                   <span className="text-xs text-muted-foreground">{engines.length}</span>
                 </div>
                 <div className="space-y-2">
@@ -209,16 +216,16 @@ export function AgentsOpsPanel({
                     <div key={engine.engine} className="rounded-md border bg-muted/20 p-2 text-xs dark:border-sky-400/10 dark:bg-slate-950/30">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-foreground dark:text-white">{engineLabel(engine.engine)}</span>
-                        <span className={cn("rounded-full border px-2 py-0.5 font-medium", engineStatusTone(engine.status))}>{engine.status}</span>
+                        <span className={cn("rounded-full border px-2 py-0.5 font-medium", engineStatusTone(engine.status))}>{engineStatusLabel(engine.status)}</span>
                       </div>
                       <div className="mt-1 flex items-center justify-between gap-2 text-muted-foreground">
-                        <span>{engine.configured} configs</span>
+                        <span>{engine.configured} configuradas</span>
                         <span>{engine.sample_count ?? engine.evidence_count} evidencia</span>
                       </div>
                     </div>
                   ))}
                   {!loading && engines.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">Sin motores registrados.</p>
+                    <p className="text-xs text-muted-foreground">Sin capacidades registradas.</p>
                   ) : null}
                 </div>
               </div>

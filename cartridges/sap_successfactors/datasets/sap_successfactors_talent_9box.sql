@@ -1,6 +1,6 @@
 -- sap_successfactors_talent_9box  (gold)  cartridge: sap_successfactors
 -- sources: ["gold/sap_successfactors/sap_successfactors_talent_readiness"]
--- description: 9-box Talento WB-TALENTO. Clasifica por desempeno y potencial cuando C/P/A existe; si falta, bloquea la fila.
+-- description: 9-box Talento WB-TALENTO. Clasifica con C/P/A real; si se uso benchmark interno aprobado, marca source_mode=benchmark_internal.
 
 WITH readiness AS (
     SELECT *
@@ -12,15 +12,33 @@ scored AS (
     SELECT
         *,
         CASE
-            WHEN TRY_CAST(performance_score AS DOUBLE) IS NULL THEN NULL
-            WHEN TRY_CAST(performance_score AS DOUBLE) > 5 THEN TRY_CAST(performance_score AS DOUBLE) / 20
-            ELSE TRY_CAST(performance_score AS DOUBLE)
+            WHEN TRY_CAST(performance_score AS DOUBLE) IS NOT NULL AND TRY_CAST(performance_score AS DOUBLE) > 5
+                THEN TRY_CAST(performance_score AS DOUBLE) / 20
+            WHEN TRY_CAST(performance_score AS DOUBLE) IS NOT NULL
+                THEN TRY_CAST(performance_score AS DOUBLE)
+            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
+                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
+            ELSE NULL
         END AS performance_scale,
         CASE
-            WHEN TRY_CAST(competency_score AS DOUBLE) IS NULL OR TRY_CAST(aspiration_score AS DOUBLE) IS NULL THEN NULL
-            ELSE
-                (0.60 * CASE WHEN TRY_CAST(competency_score AS DOUBLE) > 5 THEN TRY_CAST(competency_score AS DOUBLE) / 20 ELSE TRY_CAST(competency_score AS DOUBLE) END)
-                + (0.40 * CASE WHEN TRY_CAST(aspiration_score AS DOUBLE) > 5 THEN TRY_CAST(aspiration_score AS DOUBLE) / 20 ELSE TRY_CAST(aspiration_score AS DOUBLE) END)
+            WHEN TRY_CAST(competency_score AS DOUBLE) IS NOT NULL OR TRY_CAST(aspiration_score AS DOUBLE) IS NOT NULL THEN
+                (
+                    0.60 * CASE
+                        WHEN TRY_CAST(competency_score AS DOUBLE) IS NULL THEN 0
+                        WHEN TRY_CAST(competency_score AS DOUBLE) > 5 THEN TRY_CAST(competency_score AS DOUBLE) / 20
+                        ELSE TRY_CAST(competency_score AS DOUBLE)
+                    END
+                )
+                + (
+                    0.40 * CASE
+                        WHEN TRY_CAST(aspiration_score AS DOUBLE) IS NULL THEN 0
+                        WHEN TRY_CAST(aspiration_score AS DOUBLE) > 5 THEN TRY_CAST(aspiration_score AS DOUBLE) / 20
+                        ELSE TRY_CAST(aspiration_score AS DOUBLE)
+                    END
+                )
+            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
+                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
+            ELSE NULL
         END AS potential_scale
     FROM readiness
 ),
@@ -51,6 +69,9 @@ SELECT
     role_name,
     performance_score,
     ROUND(potential_scale, 2) AS potential_score,
+    ROUND(readiness_score, 2) AS readiness_score,
+    source_mode,
+    benchmark_version,
     performance_band_calc AS performance_band,
     potential_band_calc AS potential_band,
     CASE
@@ -67,7 +88,7 @@ SELECT
         ELSE 'insufficient_data'
     END AS box_key,
     CASE
-        WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'Sin datos C/P/A'
+        WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'Sin datos suficientes'
         WHEN potential_band_calc = 'high' AND performance_band_calc = 'low' THEN 'Enigma'
         WHEN potential_band_calc = 'high' AND performance_band_calc = 'medium' THEN 'Crecimiento'
         WHEN potential_band_calc = 'high' AND performance_band_calc = 'high' THEN 'Estrella'
@@ -77,13 +98,15 @@ SELECT
         WHEN potential_band_calc = 'low' AND performance_band_calc = 'low' THEN 'Riesgo'
         WHEN potential_band_calc = 'low' AND performance_band_calc = 'medium' THEN 'Efectivo'
         WHEN potential_band_calc = 'low' AND performance_band_calc = 'high' THEN 'Experto'
-        ELSE 'Sin datos C/P/A'
+        ELSE 'Sin datos suficientes'
     END AS box_label,
     CASE
         WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'blocked'
+        WHEN source_mode = 'benchmark_internal' THEN 'benchmark_internal'
         ELSE 'ready'
     END AS box_status,
     blockers,
+    'talent_9box.v2' AS contract_version,
     CURRENT_TIMESTAMP AS generated_at
 FROM banded
 ORDER BY user_id

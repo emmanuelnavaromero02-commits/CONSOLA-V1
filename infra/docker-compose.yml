@@ -987,7 +987,8 @@ services:
         python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='modecissions', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute(\\\"SELECT 1 FROM pg_database WHERE datname = 'airflow'\\\"); exists = cur.fetchone(); cur.execute('CREATE DATABASE airflow') if exists is None else None; cur.close(); conn.close()\" &&
         airflow db migrate &&
         python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='airflow', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute('GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON SCHEMA public TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_airflow_meta'); print('omega_airflow_meta: grants applied to airflow DB'); cur.close(); conn.close()\" &&
-        (airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true)
+        (airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true) &&
+        airflow users reset-password --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\"
       "
     environment:
       # Sprint v1.38 (audit B6 P0.5): the init container intentionally
@@ -1005,6 +1006,7 @@ services:
       INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:-}
       INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
       VAULT_URL: http://vault:8300
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -1047,6 +1049,7 @@ services:
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
       CONSOLE_URL: http://console:8000
       AGENT_RUNNER_TOKEN: ${AGENT_RUNNER_TOKEN:-}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): the webserver runtime uses the
@@ -1167,6 +1170,7 @@ services:
       AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
 
       VAULT_URL:                            http://vault:8300
+      FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): see comment on the airflow

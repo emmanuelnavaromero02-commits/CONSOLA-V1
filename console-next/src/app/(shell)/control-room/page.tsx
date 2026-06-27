@@ -1137,9 +1137,9 @@ function bayesianCalibrationStatus(
 }
 
 function bayesianBadgeLabel(calibration?: BayesianCalibrationSummary): string {
-  if (calibration?.status === "calibrated") return "Bayes calibrado";
-  if ((calibration?.sample_count ?? 0) < 10) return "Bayes no calibrado: muestra insuficiente";
-  return "Bayes no calibrado";
+  if (calibration?.status === "calibrated") return "Análisis listo";
+  if ((calibration?.sample_count ?? 0) < 10) return "Requiere historial adicional";
+  return "En espera de datos";
 }
 
 function businessStatusLabel(status?: string | null): string {
@@ -1159,7 +1159,7 @@ function businessStatusLabel(status?: string | null): string {
     blocked: "bloqueada",
     configured: "configurado sin evidencia",
     not_applicable: "no aplica",
-    not_calibrated: "no calibrado",
+    not_calibrated: "historial insuficiente",
     insufficient_data: "datos insuficientes",
     recommendation_only: "recomendación supervisada",
   };
@@ -3723,13 +3723,11 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
   const mc = monteCarloStatus(item);
   const bayesian = bayesianCalibrationStatus(item, decisionIntelligence);
   const mcLabel = mc?.status === "completed"
-    ? mc.mode === "template_mode"
-      ? "Monte Carlo template"
-      : "Monte Carlo derivado"
+    ? "Análisis listo"
     : mc?.status === "blocked"
-      ? "Monte Carlo bloqueado"
+      ? "En espera de datos"
       : mc?.status
-        ? "Monte Carlo no ejecutado"
+        ? "Preparando análisis"
         : "";
   return (
     <article
@@ -3969,9 +3967,8 @@ function ImpactSnapshot({
       {mc?.status ? (
         <div className="mt-3 rounded-md border bg-background p-3">
           <div className="flex flex-wrap items-center gap-2">
-            <OriginBadge origin="monte_carlo" label={mc.status === "completed" ? "Monte Carlo" : "Monte Carlo no aplicado"} compact />
-            {mc.mode ? <span className="text-xs text-muted-foreground">{mc.mode === "template_mode" ? "template" : "derivado"}</span> : null}
-            {mc.seed !== undefined ? <span className="text-xs text-muted-foreground">seed {mc.seed}</span> : null}
+            <OriginBadge origin="monte_carlo" label={mc.status === "completed" ? "Análisis listo" : "En espera de datos"} compact />
+            {mc.mode ? <span className="text-xs text-muted-foreground">modelo operativo</span> : null}
           </div>
           {mc.reason ? <p className="mt-2 text-xs text-muted-foreground">{mc.reason}</p> : null}
           {mcSummary ? (
@@ -4125,10 +4122,10 @@ function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntellige
   const quality = decisionIntelligence.data_quality;
   const calibration = decisionIntelligence.calibration;
   const calibrationLabel = calibration?.calibration_applied
-    ? "Bayes calibrado"
+    ? "Análisis listo"
     : (calibration?.sample_count ?? 0) < 10
-      ? "Bayes no calibrado: muestra insuficiente"
-      : "Bayes no calibrado";
+      ? "Requiere historial adicional"
+      : "En espera de datos";
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Decision intelligence">
       <div className="flex flex-col gap-1">
@@ -4157,10 +4154,10 @@ function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntellige
       </div>
       {calibration ? (
         <div className="mt-3 grid gap-3 md:grid-cols-4">
-          <InfoBlock label="Prob. raw" value={formatDecisionProbability(calibration.raw_probability)} />
-          <InfoBlock label="Prob. calibrada" value={formatDecisionProbability(calibration.calibrated_probability)} />
-          <InfoBlock label="Muestras Bayes" value={calibration.sample_count ?? 0} />
-          <InfoBlock label="Posterior" value={typeof calibration.posterior_mean === "number" ? formatDecisionProbability(calibration.posterior_mean) : calibration.calibration_reason || "No aplicado"} />
+          <InfoBlock label="Prob. base" value={formatDecisionProbability(calibration.raw_probability)} />
+          <InfoBlock label="Prob. ajustada" value={formatDecisionProbability(calibration.calibrated_probability)} />
+          <InfoBlock label="Muestras históricas" value={calibration.sample_count ?? 0} />
+          <InfoBlock label="Estado" value={typeof calibration.posterior_mean === "number" ? formatDecisionProbability(calibration.posterior_mean) : calibration.calibration_reason || "No aplicado"} />
         </div>
       ) : null}
       <div className="mt-3 rounded-md border bg-background p-3">
@@ -4653,8 +4650,8 @@ function methodLabel(method: DecisionMethod) {
     insufficient_history: "Historia insuficiente",
     deterministic_guardrail: "Regla determinística",
     dataset_unavailable: "Dataset no disponible",
-    future_reserved_bayesian: "Bayes reservado",
-    future_reserved_conformal: "Conformal reservado",
+    future_reserved_bayesian: "Historial operativo reservado",
+    future_reserved_conformal: "Validación reservada",
     future_reserved_state_space: "State-space reservado",
   }[method];
 }

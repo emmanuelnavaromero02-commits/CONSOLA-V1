@@ -59,6 +59,8 @@ def test_wb_talento_signals_and_metadata_blockers():
     blockers = {item["entity"] for item in wb["metadata_blockers"]}
     assert {"JobApplication", "PerformanceReview", "GoalPlan", "CompetencySkill"} <= blockers
     assert "sap_successfactors_talent_9box_operational" in set(wb["operational_outputs"])
+    assert "sap_successfactors_talent_operational_features" in set(wb["operational_outputs"])
+    assert "sap_successfactors_talent_simulation_inputs" in set(wb["operational_outputs"])
 
 
 def test_wb_talento_live_metadata_preflight_is_wired():

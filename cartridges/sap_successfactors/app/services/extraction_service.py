@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -162,6 +163,14 @@ def _max_watermark(rows: list[dict[str, Any]], watermark_field: str | None) -> s
     return max(values) if values else None
 
 
+def _page_signature(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return ""
+    sample = [len(rows), rows[0], rows[-1]]
+    payload = json.dumps(sample, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _apply_watermark_filter(
     rows: list[dict[str, Any]],
     watermark_field: str,
@@ -304,6 +313,9 @@ def run_entity(
         storage_uri = ""
         total_records = 0
         max_wm: str | None = None
+        seen_page_signatures: set[str] = set()
+        pagination_status: str | None = None
+        pagination_warning: str | None = None
 
         def _flush_buffer(allow_empty: bool = False) -> None:
             nonlocal buffer, batch_num, storage_uri
@@ -360,8 +372,19 @@ def run_entity(
                     )
                     continue
                 raise
+            server_page_len = len(page)
             if not page:
                 break
+            signature = _page_signature(page)
+            if offset and signature in seen_page_signatures:
+                pagination_status = "repeated_page_truncated"
+                pagination_warning = (
+                    f"server returned a repeated page for entity={entity} "
+                    f"at skip={offset}; stopping extraction to avoid an infinite loop"
+                )
+                logger.warning("sap_successfactors_pagination_repeated_page %s", pagination_warning)
+                break
+            seen_page_signatures.add(signature)
 
             # Belt-and-suspenders client-side filters (the OData server
             # MIGHT have ignored $filter — re-apply locally).
@@ -379,6 +402,8 @@ def run_entity(
 
             if len(buffer) >= BATCH_SIZE:
                 _flush_buffer()
+            if server_page_len < page_size:
+                break
 
         # Drain any remainder. If we never received any rows, write an empty
         # parquet so consumers can still observe a (zero-row) Bronze artifact.
@@ -423,10 +448,12 @@ def run_entity(
             "incremental_filter_strategy": filter_plan.get("filter_strategy"),
             "incremental_fallback_reason": filter_fallback_reason,
             "retried_as_full_snapshot": filter_retried_as_full_snapshot,
-            "metadata_status": config.get("metadata_status"),
+            "metadata_status": config.get("metadata_status") or pagination_status,
             "metadata_pruned_fields": config.get("metadata_pruned_fields") or [],
             "metadata_missing_watermark_field": config.get("metadata_missing_watermark_field"),
             "metadata_missing_date_field": config.get("metadata_missing_date_field"),
+            "pagination_status": pagination_status,
+            "pagination_warning": pagination_warning,
         }
 
     except Exception as exc:

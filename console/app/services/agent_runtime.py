@@ -71,6 +71,7 @@ _AGENTOPS_COMPUTE_TOOLS = {
 }
 _SCHEDULED_MONITOR_WRITE_TOOLS = _CONTROL_ROOM_ADVISORY_TOOLS | _AGENTOPS_COMPUTE_TOOLS
 _SIGNED_CONTEXT_FIELDS = {"_signature", "_signed_at", "_signature_version"}
+_SAFE_GOLD_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
 def _canonical_server_id(server_id: str) -> str:
@@ -505,6 +506,143 @@ def _monitor_engine_scope_blocked(spec: dict[str, Any]) -> str | None:
 
 def _monitor_clean_args(args: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in args.items() if value is not None}
+
+
+def _monitor_json_obj(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return {}
+        return dict(parsed) if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _monitor_json_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return []
+        return list(parsed) if isinstance(parsed, list) else []
+    return []
+
+
+async def _monitor_latest_gold_row(agent: Agent, dataset: str) -> dict[str, Any] | None:
+    dataset = str(dataset or "").strip()
+    if not _SAFE_GOLD_DATASET_RE.fullmatch(dataset):
+        raise ValueError("invalid monitor input dataset")
+    tenant_id, workspace_id = _agent_scope(agent)
+    if not workspace_id:
+        return None
+    table = f"gold_{dataset}"
+    pool = await _get_pool()
+
+    async def _load(conn):
+        exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+        if not exists:
+            return None
+        columns_rows = await conn.fetch(
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = $1
+            """,
+            table,
+        )
+        columns = {str(row["column_name"]) for row in columns_rows}
+        if "workspace_id" not in columns:
+            return None
+        order_col = (
+            "materialized_at"
+            if "materialized_at" in columns
+            else "generated_at"
+            if "generated_at" in columns
+            else "updated_at"
+            if "updated_at" in columns
+            else None
+        )
+        order_sql = f"ORDER BY {_pg_ident(order_col)} DESC NULLS LAST" if order_col else ""
+        tenant_filter = "AND tenant_id::text = $2" if tenant_id and "tenant_id" in columns else ""
+        args: list[Any] = [workspace_id]
+        if tenant_filter:
+            args.append(tenant_id)
+        row = await conn.fetchrow(
+            f"""
+            SELECT *
+              FROM public.{_pg_ident(table)}
+             WHERE workspace_id::text = $1
+               {tenant_filter}
+             {order_sql}
+             LIMIT 1
+            """,
+            *args,
+        )
+        return dict(row) if row else None
+
+    return await _fetch_with_optional_scope(pool, tenant_id, workspace_id, _load)
+
+
+def _pg_ident(value: str | None) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cleaned):
+        raise ValueError("invalid SQL identifier")
+    return '"' + cleaned.replace('"', '""') + '"'
+
+
+async def _monitor_resolve_dataset_inputs(
+    agent: Agent,
+    spec: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
+    dataset = str(spec.get("input_dataset") or "").strip()
+    if not dataset:
+        return spec, None, None
+    try:
+        row = await _monitor_latest_gold_row(agent, dataset)
+    except Exception as exc:
+        return None, f"missing_simulation_inputs: {type(exc).__name__}: {exc}", None
+    if not row:
+        return None, "missing_simulation_inputs", None
+
+    status_field = str(spec.get("status_field") or "input_status")
+    status = str(row.get(status_field) or "").strip().lower()
+    ready_statuses = {
+        str(item).strip().lower()
+        for item in (
+            spec.get("ready_statuses")
+            if isinstance(spec.get("ready_statuses"), list)
+            else ["ready", "partial", "benchmark_internal"]
+        )
+        if str(item or "").strip()
+    }
+    if status not in ready_statuses:
+        reason = str(row.get("blocked_reason") or "missing_simulation_inputs").strip()
+        return None, reason or "missing_simulation_inputs", row
+
+    variables_field = str(spec.get("input_variables_field") or "input_variables_json")
+    input_variables = _monitor_json_obj(row.get(variables_field))
+    if not input_variables:
+        return None, "missing_simulation_inputs", row
+
+    assumptions = {
+        **(spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {}),
+        **_monitor_json_obj(row.get(str(spec.get("assumptions_field") or "assumptions_json"))),
+    }
+    evidence_refs = []
+    if isinstance(spec.get("evidence_refs"), list):
+        evidence_refs.extend(spec["evidence_refs"])
+    evidence_refs.extend(_monitor_json_list(row.get(str(spec.get("evidence_refs_field") or "evidence_refs_json"))))
+
+    resolved = dict(spec)
+    resolved["input_variables"] = input_variables
+    resolved["assumptions"] = assumptions
+    resolved["evidence_refs"] = evidence_refs
+    return resolved, None, row
 
 
 def _monitor_engine_ref(result: dict[str, Any]) -> dict[str, Any]:
@@ -1300,13 +1438,34 @@ async def run_scheduled_monitor(
                 )
                 continue
             if engine in {"monte_carlo", "simulation__monte_carlo_run"}:
+                resolved_spec, blocked_reason, input_row = await _monitor_resolve_dataset_inputs(agent, spec)
+                if blocked_reason:
+                    engine_results.append(
+                        {
+                            "engine": "monte_carlo",
+                            "status": "blocked",
+                            "reason": blocked_reason,
+                            "source_dataset": spec.get("input_dataset"),
+                            **(
+                                {
+                                    "input_status": str(
+                                        input_row.get(str(spec.get("status_field") or "input_status")) or ""
+                                    )
+                                }
+                                if isinstance(input_row, dict)
+                                else {}
+                            ),
+                        }
+                    )
+                    continue
+                spec = resolved_spec or spec
                 input_variables = spec.get("input_variables")
                 if not isinstance(input_variables, dict) or not input_variables:
                     engine_results.append(
                         {
                             "engine": "monte_carlo",
                             "status": "blocked",
-                            "reason": "monte_carlo requires explicit input_variables",
+                            "reason": "missing_simulation_inputs",
                         }
                     )
                     continue

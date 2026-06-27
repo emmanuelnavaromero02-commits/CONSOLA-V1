@@ -109,15 +109,14 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                 "output_metric": "delta",
                 "breach_threshold": -5,
                 "breach_direction": "below",
-                "input_variables": {
-                  "baseline_value": {"type": "fixed", "value": 100},
-                  "expected_delta": {"type": "triangular", "low": -12, "mode": -4, "high": 2},
-                  "delay_days": {"type": "triangular", "low": 0, "mode": 5, "high": 14},
-                  "cost_per_day": {"type": "fixed", "value": 1},
-                  "probability_of_delay": {"type": "triangular", "low": 0.2, "mode": 0.5, "high": 0.8}
-                },
+                "input_dataset": "sap_successfactors_talent_simulation_inputs",
+                "input_variables_field": "input_variables_json",
+                "assumptions_field": "assumptions_json",
+                "evidence_refs_field": "evidence_refs_json",
+                "status_field": "input_status",
+                "ready_statuses": ["ready", "partial", "benchmark_internal"],
                 "assumptions": {
-                  "basis": "Agregado WB-TALENTO: presion operativa por blockers C/P/A y senales de talento.",
+                  "basis": "Agregado WB-TALENTO desde Gold operativo.",
                   "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
                   "decision_mode": "recommendation_only"
                 },
@@ -170,13 +169,12 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                     "iterations": 1000,
                     "seed": 45120,
                     "model_version": "wb-talento.monitor.v1",
-                    "input_variables": {
-                      "baseline_value": {"type": "fixed", "value": 100},
-                      "expected_delta": {"type": "triangular", "low": -12, "mode": -4, "high": 2},
-                      "delay_days": {"type": "triangular", "low": 0, "mode": 5, "high": 14},
-                      "cost_per_day": {"type": "fixed", "value": 1},
-                      "probability_of_delay": {"type": "triangular", "low": 0.2, "mode": 0.5, "high": 0.8}
-                    },
+                    "input_dataset": "sap_successfactors_talent_simulation_inputs",
+                    "input_variables_field": "input_variables_json",
+                    "assumptions_field": "assumptions_json",
+                    "evidence_refs_field": "evidence_refs_json",
+                    "status_field": "input_status",
+                    "ready_statuses": ["ready", "partial", "benchmark_internal"],
                     "output_metric": "delta",
                     "breach_threshold": -5,
                     "breach_direction": "below",

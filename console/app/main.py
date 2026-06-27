@@ -7136,8 +7136,8 @@ async def _maybe_trigger_aggregate_extract_all(
     if cartridge not in _SYNC_EXTRACT_ALL_DAGS:
         return None
     mode, target = _pipeline_extract_all_mode_target(body)
-    conn_id = _normalize_pipeline_conn_id(
-        body.get("conn_id") or body.get("connection_id")
+    conn_id = await _resolve_pipeline_sync_conn_id(
+        cartridge, body.get("conn_id") or body.get("connection_id"), user
     )
     run_id = _pipeline_extract_all_run_id(
         cartridge=cartridge,
@@ -8771,8 +8771,8 @@ async def api_cartridge_sync_now(
     )
     mode = _sync_clean_mode(body.get("mode"))
     target = _sync_clean_target(body.get("target"))
-    conn_id = _normalize_pipeline_conn_id(
-        body.get("conn_id") or body.get("connection_id")
+    conn_id = await _resolve_pipeline_sync_conn_id(
+        cartridge, body.get("conn_id") or body.get("connection_id"), user
     )
     request_id = _normalize_sync_now_request_id(
         body.get("request_id") or body.get("idempotency_key")
@@ -9096,11 +9096,12 @@ async def api_cartridge_active_sync_run(
     )
     mode = _sync_clean_mode(mode)
     target = _sync_clean_target(target)
+    resolved_conn_id = await _resolve_pipeline_sync_conn_id(cartridge, conn_id, user)
     row = await _fetch_active_sync_run(
         cartridge=cartridge,
         mode=mode,
         target=target,
-        conn_id=_normalize_pipeline_conn_id(conn_id),
+        conn_id=resolved_conn_id,
         user=user,
     )
     if not row:
@@ -9108,7 +9109,7 @@ async def api_cartridge_active_sync_run(
             cartridge=cartridge,
             mode=mode,
             target=target,
-            conn_id=_normalize_pipeline_conn_id(conn_id),
+            conn_id=resolved_conn_id,
         )
     try:
         return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
@@ -9240,6 +9241,80 @@ def _normalize_pipeline_conn_id(conn_id: object | None) -> str | None:
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
         raise HTTPException(400, "invalid connection id")
     return value
+
+
+def _connection_id_from_vault_payload(payload: Any) -> str | None:
+    candidates: list[Any] = []
+    if isinstance(payload, dict):
+        raw_connections = payload.get("connections")
+        if isinstance(raw_connections, list):
+            candidates.extend(raw_connections)
+        raw_items = payload.get("items")
+        if isinstance(raw_items, list):
+            candidates.extend(raw_items)
+    elif isinstance(payload, list):
+        candidates.extend(payload)
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("conn_id") or item.get("id") or item.get("key")
+        conn_id = _normalize_pipeline_conn_id(raw)
+        if conn_id:
+            return conn_id
+    return None
+
+
+async def _resolve_pipeline_sync_conn_id(
+    cartridge: str,
+    requested_conn_id: object | None,
+    user: dict | None,
+) -> str | None:
+    conn_id = _normalize_pipeline_conn_id(requested_conn_id)
+    if conn_id:
+        return conn_id
+
+    try:
+        async with httpx.AsyncClient(
+            headers=_vault_headers_for_user(user or {}), timeout=5
+        ) as c:
+            r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
+        if r.status_code not in (404, 204):
+            r.raise_for_status()
+            conn_id = _connection_id_from_vault_payload(r.json())
+            if conn_id:
+                return conn_id
+    except Exception:
+        logger.debug(
+            "Could not resolve pipeline connection from Vault for cartridge=%s",
+            cartridge,
+            exc_info=True,
+        )
+
+    try:
+        pool = await _get_db_pool()
+        row = await pool.fetchrow(
+            """
+            SELECT connection_id
+              FROM entity_config
+             WHERE cartridge_id = $1
+               AND enabled IS TRUE
+               AND NULLIF(BTRIM(COALESCE(connection_id, '')), '') IS NOT NULL
+             GROUP BY connection_id
+             ORDER BY COUNT(*) DESC, connection_id ASC
+             LIMIT 1
+            """,
+            cartridge,
+        )
+        conn_id = _normalize_pipeline_conn_id(row["connection_id"] if row else None)
+        if conn_id:
+            return conn_id
+    except Exception:
+        logger.debug(
+            "Could not resolve pipeline connection from entity_config for cartridge=%s",
+            cartridge,
+            exc_info=True,
+        )
+    return None
 
 
 def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:
