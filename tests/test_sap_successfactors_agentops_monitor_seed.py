@@ -48,6 +48,8 @@ def test_successfactors_talent_monitor_has_agentops_tools_and_contract():
         '"source_id": "WB-TALENTO"',
         '"seed": 45120',
         '"output_metric": "delta"',
+        '"input_dataset": "sap_successfactors_talent_simulation_inputs"',
+        '"ready_statuses": ["ready"]',
         '"decision_mode": "recommendation_only"',
         '"name": "bayesian_calibration"',
         '"name": "decision_orchestrator"',

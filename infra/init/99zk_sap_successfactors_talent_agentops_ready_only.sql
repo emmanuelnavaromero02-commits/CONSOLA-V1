@@ -1,9 +1,9 @@
--- v1.45.114 AgentOps: workspace-scoped SuccessFactors Talent monitor.
+-- 99zk_sap_successfactors_talent_agentops_ready_only.sql
 --
--- This is intentionally separate from 88_sap_successfactors_agents_seed.sql:
--- the original two agents are conversational global templates. Scheduled
--- monitor agents must be workspace-scoped so agent_runner can mint a signed
--- tenant/workspace security_context before invoking MCP.
+-- Repair existing workspaces after the WB-TALENTO feature-pack rollout:
+-- 1) make the simulation engine run only with ready inputs;
+-- 2) create the workspace-scoped monitor where an installation exists but the
+--    monitor seed did not run for that workspace.
 
 WITH active_scope AS (
     SELECT DISTINCT
@@ -16,48 +16,19 @@ WITH active_scope AS (
        AND te.cartridge_id = ci.cartridge_id
      WHERE ci.cartridge_id = 'sap_successfactors'
        AND ci.status = 'ready'
+       AND ci.workspace_id IS NOT NULL
        AND COALESCE(te.status, 'active') = 'active'
-),
-fallback_scope AS (
-    SELECT t.id AS tenant_id, w.id AS workspace_id
-      FROM tenants t
-      JOIN workspaces w ON w.tenant_id = t.id
-     WHERE t.name = 'Default Tenant'
-       AND w.name = 'Main Workspace'
-       AND NOT EXISTS (SELECT 1 FROM active_scope)
-     ORDER BY w.created_at NULLS LAST, w.id
-     LIMIT 1
-),
-scope AS (
-    SELECT tenant_id, workspace_id FROM active_scope
-    UNION ALL
-    SELECT tenant_id, workspace_id FROM fallback_scope
 ),
 payload AS (
     SELECT
-        scope.tenant_id,
-        scope.workspace_id,
+        s.tenant_id,
+        s.workspace_id,
         'sap_successfactors'::text AS cartridge_id,
         'sap_successfactors_talent_monitor'::text AS slug,
         'Talent AgentOps Monitor'::text AS name,
-        'Monitor programado de WB-TALENTO: evalua blockers C/P/A, senales de talento y publica evidencia advisory en Control Room.'::text AS description,
-        $$Eres el monitor operativo de SuccessFactors Talent para Control Room.
-
-## Objetivo
-Ejecuta una revision programada, segura y auditable de WB-TALENTO. No escribas en SuccessFactors, no apruebes acciones y no expongas PII.
-
-## Flujo obligatorio
-1. Ejecuta `mcp-infra__wisdom_bits__run` con `wisdom_bit_id = "WB-TALENTO"` y `cartridge_id = "sap_successfactors"`.
-2. Si el WisdomBit devuelve blockers, senales o estado distinto de ready, publica una alerta con `mcp-infra__control_room__raise_analysis_alert`.
-3. Usa `engine = "wisdom_bit"`, `analysis_type = "talent_readiness_monitor"`, `source_dataset = "sap_successfactors_talent_signals"` y `cartridge_id = "sap_successfactors"`.
-4. Incluye solo evidencia agregada: counts, status, blockers y recomendacion. No incluyas full_name, user_id, PERNR, salario ni payCompValue.
-5. Consulta `mcp-infra__calibration__bayesian_state` con `calibration_group = "sap_successfactors:talent_readiness"` para traer calibracion Bayes workspace-scoped.
-6. Ejecuta `mcp-infra__simulation__monte_carlo_run` con la configuracion agregada del contrato. No incluyas PII; si falla la simulacion, reporta blocker.
-7. Usa `mcp-infra__decision__orchestrate` solo si existe una senal concreta que requiera comparar opciones. Mantener `execute_engines = true` solo con inputs internos seguros.
-
-## Regla de seguridad
-Todas las salidas son recommendation_only. No hay write-back externo ni acciones destructivas.$$::text AS instructions,
-        'Operativo, sobrio y auditable. Explica breve, cita blockers y deja evidencia estructurada. Idioma del usuario.'::text AS personality,
+        'Monitor programado de WB-TALENTO con evidencia agregada y recommendation_only.'::text AS description,
+        $$Eres el monitor operativo de SuccessFactors Talent. Usa solo evidencia agregada, no expongas PII, no escribas en SuccessFactors y mantén todas las salidas en recommendation_only.$$::text AS instructions,
+        'Operativo, sobrio y auditable. Idioma del usuario.'::text AS personality,
         '[
           "mcp-infra__wisdom_bits__run",
           "mcp-infra__control_room__raise_analysis_alert",
@@ -76,16 +47,16 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
           "category": "control_room",
           "scope": "workspace",
           "variables": {},
-            "schedule": {
-              "enabled": true,
-              "cron": "*/15 * * * *",
-              "tz": "UTC",
-              "prompt": "Ejecuta el monitor WB-TALENTO: corre wisdom_bits__run, consulta calibracion Bayes, simula Monte Carlo, evalua blockers/senales y publica control_room__raise_analysis_alert solo con evidencia agregada y recommendation_only."
-            },
+          "schedule": {
+            "enabled": true,
+            "cron": "*/15 * * * *",
+            "tz": "UTC",
+            "prompt": "Ejecuta el monitor WB-TALENTO con evidencia agregada y recommendation_only."
+          },
           "monitor": {
             "engine": "wisdom_bit",
             "wisdom_bit_id": "WB-TALENTO",
-            "dataset": "sap_successfactors_talent_signals",
+            "dataset": "sap_successfactors_talent_operational_features",
             "threshold": {
               "status_not_in": ["ready"],
               "min_signal_count": 1,
@@ -93,7 +64,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
             },
             "severity": "medium",
             "dedup_key": "sap_successfactors:WB-TALENTO:workspace",
-            "recommended_action": "Revisar blockers C/P/A, validar metadata y priorizar acciones supervisadas en Control Room.",
+            "recommended_action": "Revisar blockers C/P/A y priorizar acciones supervisadas en Control Room.",
             "recommendation_only": true,
             "writeback_enabled": false,
             "engines": [
@@ -105,7 +76,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                 "horizon_days": 30,
                 "iterations": 1000,
                 "seed": 45120,
-                "model_version": "wb-talento.monitor.v1",
+                "model_version": "wb-talento.monitor.v2",
                 "output_metric": "delta",
                 "breach_threshold": -5,
                 "breach_direction": "below",
@@ -131,7 +102,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                 "model_version": "bayesian_calibration.v1",
                 "limit": 10,
                 "assumptions": {
-                  "basis": "Estado Bayes agregado de readiness de talento.",
+                  "basis": "Estado historico agregado de readiness de talento.",
                   "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
                   "decision_mode": "recommendation_only"
                 },
@@ -145,7 +116,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                 "source_type": "wisdom_bit",
                 "source_id": "WB-TALENTO",
                 "title": "Decision operativa WB-TALENTO",
-                "description": "Evaluar si las senales agregadas de talento requieren abrir investigacion, simular impacto y mantener seguimiento supervisado.",
+                "description": "Evaluar senales agregadas de talento con seguimiento supervisado.",
                 "time_horizon": "30d",
                 "metrics": {
                   "risk_metric": "talent_readiness_delta",
@@ -168,7 +139,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                     "horizon_days": 30,
                     "iterations": 1000,
                     "seed": 45120,
-                    "model_version": "wb-talento.monitor.v1",
+                    "model_version": "wb-talento.monitor.v2",
                     "input_dataset": "sap_successfactors_talent_simulation_inputs",
                     "input_variables_field": "input_variables_json",
                     "assumptions_field": "assumptions_json",
@@ -179,7 +150,7 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
                     "breach_threshold": -5,
                     "breach_direction": "below",
                     "assumptions": {
-                      "basis": "Agregado WB-TALENTO: blockers C/P/A y senales de talento.",
+                      "basis": "Agregado WB-TALENTO.",
                       "privacy": "Sin PII.",
                       "decision_mode": "recommendation_only"
                     },
@@ -197,27 +168,26 @@ Todas las salidas son recommendation_only. No hay write-back externo ni acciones
             ]
           }
         }'::jsonb AS extra
-    FROM scope
+    FROM active_scope s
 ),
 updated AS (
     UPDATE agents a
-       SET name = p.name,
+       SET extra = p.extra,
+           allowed_tools = p.allowed_tools,
+           rag_filter = p.rag_filter,
            description = p.description,
            instructions = p.instructions,
            personality = p.personality,
-           allowed_tools = p.allowed_tools,
-           rag_filter = p.rag_filter,
            model = p.model,
            max_tokens = p.max_tokens,
            temperature = p.temperature,
-           extra = p.extra,
            is_active = TRUE,
            updated_at = NOW()
       FROM payload p
      WHERE a.workspace_id = p.workspace_id
        AND a.cartridge_id = p.cartridge_id
        AND a.slug = p.slug
-     RETURNING a.id
+     RETURNING a.workspace_id
 )
 INSERT INTO agents (
     tenant_id, workspace_id, cartridge_id, slug, name, description,
@@ -225,12 +195,16 @@ INSERT INTO agents (
     max_tokens, temperature, extra, is_active
 )
 SELECT
-    tenant_id, workspace_id, cartridge_id, slug, name, description,
-    instructions, personality, allowed_tools, rag_filter, model,
-    max_tokens, temperature, extra, TRUE
-FROM payload
-WHERE NOT EXISTS (SELECT 1 FROM updated);
+    p.tenant_id, p.workspace_id, p.cartridge_id, p.slug, p.name, p.description,
+    p.instructions, p.personality, p.allowed_tools, p.rag_filter, p.model,
+    p.max_tokens, p.temperature, p.extra, TRUE
+FROM payload p
+WHERE NOT EXISTS (
+    SELECT 1
+      FROM updated u
+     WHERE u.workspace_id = p.workspace_id
+);
 
 INSERT INTO schema_migrations(filename, applied_at)
-VALUES ('99t_sap_successfactors_talent_agentops_monitor.sql', NOW())
+VALUES ('99zk_sap_successfactors_talent_agentops_ready_only.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

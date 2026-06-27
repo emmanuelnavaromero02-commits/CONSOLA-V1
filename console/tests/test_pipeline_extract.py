@@ -88,6 +88,47 @@ def test_sync_child_gold_refresh_summary_counts_partial_aggregate(console_main):
     assert summary["failed"] == 5
 
 
+def test_sync_step_recomputes_terminal_percent_from_counts(console_main):
+    step = console_main._normalize_sync_step_payload(
+        {
+            "id": "bronze",
+            "label": "Bronze",
+            "status": "partial",
+            "completed": 40,
+            "total": 40,
+            "percent": 0,
+        }
+    )
+
+    assert step["percent"] == 100
+
+
+def test_sync_step_entity_summary_keeps_blocker_reason(console_main):
+    summary = console_main._sync_step_entity_summary(
+        [
+            {
+                "entity": "CareerWorksheet",
+                "status": "blocked",
+                "row_count": 0,
+                "extra": {
+                    "reason": "entity_not_exposed_in_sap",
+                    "fields_missing": ["userId"],
+                },
+            },
+            {"entity": "EmpJob", "status": "success", "row_count": 1288},
+        ]
+    )
+
+    assert summary["counts"] == {
+        "success": 1,
+        "partial": 0,
+        "blocked": 1,
+        "failed": 0,
+    }
+    assert summary["blockers"][0]["entity"] == "CareerWorksheet"
+    assert summary["blockers"][0]["reason"] == "entity_not_exposed_in_sap"
+
+
 @pytest.mark.anyio
 async def test_sync_now_waits_for_extract_all_summary_before_terminal(
     console_main, monkeypatch

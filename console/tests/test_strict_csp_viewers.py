@@ -196,6 +196,16 @@ def test_schema_viewer_preserves_viewer_type_in_history_url():
     assert "`?source=${encodeURIComponent(source)}`" not in src
 
 
+def test_schema_viewer_renders_safe_error_states():
+    src = (JS_DIR / "schema.js").read_text(encoding="utf-8")
+
+    assert "function schemaMessage" in src
+    assert "function normalizeColumns" in src
+    assert "function normalizeRows" in src
+    assert "No se pudo cargar el schema." in src
+    assert "Sin columnas inferidas" in src
+
+
 def test_semantic_and_pipeline_default_to_active_scoped_cartridge():
     semantic = (JS_DIR / "semantic.js").read_text(encoding="utf-8")
     pipeline = (JS_DIR / "pipeline.js").read_text(encoding="utf-8")

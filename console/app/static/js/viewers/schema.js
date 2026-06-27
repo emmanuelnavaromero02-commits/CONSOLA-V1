@@ -30,6 +30,37 @@ function typeColor(t) {
   return 'var(--text2)';
 }
 
+function schemaMessage(message, details) {
+  const extra = Array.isArray(details) && details.length
+    ? `<div style="margin-top:8px;color:var(--text3);font-size:12px">${details.map(esc).join('<br>')}</div>`
+    : '';
+  return `<div class="empty-state" style="padding:18px;color:var(--red)">No se pudo cargar el schema.${message ? `<div style="margin-top:8px;color:var(--text2)">${esc(message)}</div>` : ''}${extra}</div>`;
+}
+
+function normalizeColumns(columns, rows) {
+  if (Array.isArray(columns) && columns.length) {
+    return columns.map((col) => {
+      if (typeof col === 'string') return col;
+      if (col && typeof col === 'object') return col.name || col.column_name || col.column || col.field || '';
+      return '';
+    }).filter(Boolean);
+  }
+  if (Array.isArray(rows) && rows.length && rows[0] && typeof rows[0] === 'object' && !Array.isArray(rows[0])) {
+    return Object.keys(rows[0]);
+  }
+  return [];
+}
+
+function normalizeRows(rows, cols) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    if (Array.isArray(row)) {
+      return Object.fromEntries(cols.map((col, idx) => [col, row[idx]]));
+    }
+    return row && typeof row === 'object' ? row : {};
+  });
+}
+
 async function loadSchema() {
   const source = document.getElementById('source-sel').value;
   if (!source) return;
@@ -44,7 +75,10 @@ async function loadSchema() {
 
   try {
     const r = await fetch(`/api/schema?source=${encodeURIComponent(source)}`);
-    const d = await r.json();
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      throw new Error(d.detail || d.message || `HTTP ${r.status}`);
+    }
 
     document.getElementById('loading').style.display = 'none';
     document.getElementById('schema-area').style.display = 'block';
@@ -54,9 +88,15 @@ async function loadSchema() {
     const partitions = parts.partitions || [];
     const latest = parts.latest || '';
     const sqlLatest = parts.sql_latest || '';
+    const errors = Array.isArray(d.errors) ? d.errors : [];
+    const topMessage = d.message || d.detail || '';
 
     let partHTML = '';
-    if (partitions.length) {
+    if (d.status === 'error' && !partitions.length) {
+      partHTML = schemaMessage(topMessage || 'error leyendo fuente', errors);
+    } else if (parts.status === 'error') {
+      partHTML = schemaMessage(parts.message || topMessage || 'error leyendo particiones', parts.errors || errors);
+    } else if (partitions.length) {
       partHTML = `
         <div>
           <div class="stat-pill">Particiones: <span>${partitions.length}</span></div>
@@ -74,10 +114,13 @@ async function loadSchema() {
 
     // Columns from preview
     const preview = d.preview || {};
-    const rows = preview.rows || preview.result || [];
-    const cols = preview.columns || (rows.length > 0 ? Object.keys(rows[0]) : []);
+    const rawRows = preview.rows || preview.result || [];
+    const cols = normalizeColumns(preview.columns, rawRows);
+    const rows = normalizeRows(rawRows, cols);
 
-    if (cols.length) {
+    if (preview.status === 'error') {
+      document.getElementById('cols-wrap').innerHTML = schemaMessage(preview.message || topMessage || 'error leyendo columnas', preview.errors || errors);
+    } else if (cols.length) {
       document.getElementById('cols-wrap').innerHTML = `
         <table>
           <thead><tr><th>#</th><th>COLUMNA</th><th>TIPO</th><th>EJEMPLO</th></tr></thead>
@@ -95,7 +138,7 @@ async function loadSchema() {
           </tbody>
         </table>`;
     } else {
-      document.getElementById('cols-wrap').innerHTML = '<div class="empty-state">Sin columnas disponibles</div>';
+      document.getElementById('cols-wrap').innerHTML = '<div class="empty-state">Sin columnas inferidas</div>';
     }
 
     // Preview table
@@ -113,13 +156,17 @@ async function loadSchema() {
           </tbody>
         </table>`;
     } else {
-      document.getElementById('preview-wrap').innerHTML = '<div class="empty-state">Sin datos de preview</div>';
+      document.getElementById('preview-wrap').innerHTML = d.status === 'empty'
+        ? '<div class="empty-state">Fuente vacía</div>'
+        : '<div class="empty-state">Sin datos de preview</div>';
     }
 
   } catch (e) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('schema-area').style.display = 'block';
-    document.getElementById('partition-info').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+    document.getElementById('partition-info').innerHTML = schemaMessage(e.message || 'error leyendo fuente', []);
+    document.getElementById('cols-wrap').innerHTML = '<div class="empty-state">Sin columnas inferidas</div>';
+    document.getElementById('preview-wrap').innerHTML = '<div class="empty-state">Sin datos de preview</div>';
   }
 }
 

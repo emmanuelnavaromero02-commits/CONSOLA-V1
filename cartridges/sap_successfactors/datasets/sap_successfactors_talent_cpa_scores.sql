@@ -16,6 +16,8 @@ roles AS (
 ),
 normalized AS (
     SELECT
+        emp.tenant_id,
+        emp.workspace_id,
         emp.user_id,
         emp.full_name,
         emp.company_name,
@@ -50,6 +52,8 @@ normalized AS (
     LEFT JOIN roles ON roles.job_code = emp.job_code
 )
 SELECT
+    tenant_id,
+    workspace_id,
     user_id,
     full_name,
     company_name,
