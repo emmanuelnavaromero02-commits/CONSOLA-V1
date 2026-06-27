@@ -1466,6 +1466,7 @@ async def run_scheduled_monitor(
                             "engine": "monte_carlo",
                             "status": "blocked",
                             "reason": "missing_simulation_inputs",
+                            "technical_reason": "monte_carlo requires explicit input_variables",
                         }
                     )
                     continue

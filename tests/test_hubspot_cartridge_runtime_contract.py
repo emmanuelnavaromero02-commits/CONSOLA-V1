@@ -134,6 +134,8 @@ def test_refinement_accepts_hubspot_internal_origin():
 def test_hubspot_docker_ci_and_release_publish_image():
     docker_ci = (REPO / ".github/workflows/docker-image.yml").read_text(encoding="utf-8")
     release = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for src in (docker_ci, release):
-        assert "service: hubspot" in src
-        assert "context: ./cartridges/hubspot" in src
+    changed_areas = (REPO / "scripts/ci_changed_areas.py").read_text(encoding="utf-8")
+    assert '"hubspot": "./cartridges/hubspot"' in changed_areas
+    assert "service: hubspot" in release
+    assert "context: ./cartridges/hubspot" in release
+    assert "fromJson(needs.changes.outputs.build_matrix)" in docker_ci

@@ -51,7 +51,7 @@ NEW_KB_IDS = {
     "kb_sap_successfactors_talent_role_fit_assignments",
     "kb_sap_successfactors_talent_action_candidates",
 }
-EXPECTED_GOLD_DATASETS = 30
+EXPECTED_GOLD_DATASETS = 33
 
 
 def _kbs(path: Path = KBS_YAML) -> list[dict]:
