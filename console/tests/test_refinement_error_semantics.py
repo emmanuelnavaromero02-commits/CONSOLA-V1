@@ -122,7 +122,7 @@ async def test_bronze_query_maps_refinement_error_payload_to_http(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_schema_maps_partition_error_payload_to_http(monkeypatch):
+async def test_schema_maps_partition_error_payload_to_controlled_status(monkeypatch):
     monkeypatch.setattr(
         console_main.httpx,
         "AsyncClient",
@@ -132,11 +132,15 @@ async def test_schema_maps_partition_error_payload_to_http(monkeypatch):
         ]),
     )
 
-    with pytest.raises(HTTPException) as exc:
-        await console_main.api_schema("raw/sap_successfactors/PerPerson", user=USER)
+    payload = await console_main.api_schema("raw/sap_successfactors/PerPerson", user=USER)
 
-    assert exc.value.status_code == 403
-    assert "AccessDenied" in str(exc.value.detail)
+    assert payload["status"] == "error"
+    assert payload["message"] == "sin permisos para leer la fuente"
+    assert payload["errors"][0]["reason"] == "permission_denied"
+    assert payload["errors"][1]["reason"] == "permission_denied"
+    assert payload["partitions"]["status"] == "error"
+    assert payload["preview"]["status"] == "error"
+    assert payload["preview"]["data"] == []
 
 
 @pytest.mark.asyncio

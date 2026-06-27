@@ -320,11 +320,13 @@ async def test_sap_successfactors_talent_kpis_returns_aggregates_without_pii(mon
     assert result["signals"][0]["status"] == "recommendation_only"
     assert {dataset for dataset, _user, _limit in calls} == {
         "sap_successfactors_talent_employee_profile",
+        "sap_successfactors_talent_operational_features",
         "sap_successfactors_talent_role_profile",
         "sap_successfactors_talent_mobility_history",
         "sap_successfactors_talent_readiness",
         "sap_successfactors_talent_9box",
         "sap_successfactors_talent_signals",
+        "sap_successfactors_talent_simulation_inputs",
     }
     payload_text = json.dumps(result, ensure_ascii=False)
     assert "Ana Gomez" not in payload_text
