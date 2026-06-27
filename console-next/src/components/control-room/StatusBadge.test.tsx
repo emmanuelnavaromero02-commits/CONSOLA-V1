@@ -40,8 +40,8 @@ describe("Control Room readiness states", () => {
     ["rule", "Regla"],
     ["generic_gold_signal", "Gold generico"],
     ["intelligence_signal", "Intelligence"],
-    ["bayesian_calibration", "Bayes"],
-    ["monte_carlo", "Monte Carlo"],
+    ["bayesian_calibration", "Historial operativo"],
+    ["monte_carlo", "Análisis operativo"],
     ["agent_alert", "Agent"],
   ] as const)("renders origin badge %s", (origin, label) => {
     const markup = renderToStaticMarkup(<OriginBadge origin={origin} />);

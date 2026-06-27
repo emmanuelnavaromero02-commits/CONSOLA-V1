@@ -733,15 +733,17 @@ function SemanticTable({ rows }: { rows: SemanticEntity[] }) {
   );
 }
 
-function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefined }) {
-  const partitions = payload?.partitions?.partitions ?? [];
-  const latest = payload?.partitions?.latest;
+export function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefined }) {
+  const partitions = normalizePartitions(payload?.partitions?.partitions);
+  const latest = formatPartitionLabel(payload?.partitions?.latest);
   const sqlLatest = payload?.partitions?.sql_latest;
-  const rows = payload?.preview?.rows ?? payload?.preview?.data ?? payload?.preview?.result ?? [];
-  const schemaColumns = (payload?.preview?.schema ?? [])
-    .map((column) => column.name)
-    .filter((name): name is string => Boolean(name));
-  const columns = payload?.preview?.columns ?? (schemaColumns.length ? schemaColumns : columnsFromRows(rows));
+  const rows = normalizeRows(payload?.preview?.rows ?? payload?.preview?.data ?? payload?.preview?.result);
+  const schemaColumns = normalizeColumnNames(payload?.preview?.schema);
+  const columns = normalizeColumnNames(payload?.preview?.columns).length
+    ? normalizeColumnNames(payload?.preview?.columns)
+    : schemaColumns.length
+      ? schemaColumns
+      : columnsFromRows(rows);
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
@@ -755,15 +757,15 @@ function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefined }) 
           <div className="flex flex-wrap gap-2">
             {partitions.slice(-24).reverse().map((partition) => (
               <span
-                key={partition}
+                key={partition.key}
                 className="rounded-full border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground"
               >
-                {partition}
+                {partition.label}
               </span>
             ))}
           </div>
         ) : (
-          <EmptyPanel icon={Database} title="Sin particiones" detail="El backend no devolvió particiones para esta fuente." />
+          <EmptyPanel icon={Database} title="Sin parquet materializado" detail="No hay particiones disponibles para esta fuente." />
         )}
         {sqlLatest ? <JsonBlock label="SQL última partición" value={{ sql_latest: sqlLatest }} /> : null}
       </section>
@@ -1330,7 +1332,7 @@ function VaultSecretsTable({ rows }: { rows: VaultSecret[] }) {
 
 function ColumnTable({ columns, sample }: { columns: string[]; sample?: DataRow }) {
   if (!columns.length) {
-    return <EmptyPanel icon={Network} title="Sin columnas" detail="El preview no devolvió columnas." />;
+    return <EmptyPanel icon={Network} title="Sin columnas inferidas" detail="La fuente no devolvió columnas o aún no tiene parquet legible." />;
   }
   return (
     <div className="overflow-x-auto rounded-lg border bg-background">
@@ -1410,6 +1412,53 @@ function flattenSemantic(payload: SemanticPayload | undefined): SemanticEntity[]
   if (!payload?.entities) return [];
   if (Array.isArray(payload.entities)) return payload.entities;
   return Object.values(payload.entities).flat();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeRows(value: unknown): DataRow[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((row) => ({ ...row }));
+}
+
+function normalizeColumnName(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (!isRecord(value)) return null;
+  const name = value.name ?? value.column_name ?? value.column ?? value.key ?? value.field;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+function normalizeColumnNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names = value
+    .map(normalizeColumnName)
+    .filter((name): name is string => Boolean(name));
+  return Array.from(new Set(names));
+}
+
+function formatPartitionLabel(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (isRecord(value)) {
+    const loadDate = value.load_date ?? value.date ?? value.partition ?? value.latest;
+    const batchId = value.batch_id ?? value.batch ?? value.run_id;
+    const left = displayValue(loadDate);
+    const right = displayValue(batchId);
+    if (left !== "-" && right !== "-") return `${left} · ${right}`;
+    if (left !== "-") return left;
+    if (right !== "-") return right;
+  }
+  return displayValue(value);
+}
+
+function normalizePartitions(value: unknown): Array<{ key: string; label: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.map((partition, index) => ({
+    key: `${index}:${formatPartitionLabel(partition)}`,
+    label: formatPartitionLabel(partition) || `partición ${index + 1}`,
+  }));
 }
 
 function columnsFromRows(rows: DataRow[]): string[] {

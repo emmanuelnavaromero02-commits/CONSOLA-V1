@@ -237,7 +237,11 @@ def _downstream_status(payload: dict[str, Any], key: str) -> str:
 
 
 def _pipeline_status_for_success_payload(payload: dict[str, Any]) -> str:
-    if payload.get("metadata_status") == "select_pruned" or payload.get("metadata_pruned_fields"):
+    if (
+        payload.get("metadata_status") in {"select_pruned", "repeated_page_truncated"}
+        or payload.get("metadata_pruned_fields")
+        or payload.get("pagination_status") == "repeated_page_truncated"
+    ):
         return "partial"
     silver_status = _downstream_status(payload, "silver_refresh")
     if silver_status and silver_status not in {"success", "ok"}:

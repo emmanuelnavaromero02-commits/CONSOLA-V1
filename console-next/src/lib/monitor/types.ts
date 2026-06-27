@@ -127,13 +127,13 @@ export type DataRow = Record<string, unknown>;
 
 export interface SourceSchemaPayload {
   partitions?: {
-    partitions?: string[];
-    latest?: string | null;
+    partitions?: Array<string | Record<string, unknown>>;
+    latest?: string | Record<string, unknown> | null;
     sql_latest?: string | null;
     [key: string]: unknown;
   };
   preview?: {
-    columns?: string[];
+    columns?: Array<string | Record<string, unknown>>;
     schema?: Array<{ name?: string; type?: string; [key: string]: unknown }>;
     data?: DataRow[];
     rows?: DataRow[];

@@ -35,6 +35,7 @@ from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.security import get_internal_api_key
+from app.successfactors_fallbacks import fallback_dataset_for_successfactors
 
 DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
@@ -47,6 +48,23 @@ _SECURITY_CONTEXT_SIGNATURE_VERSION = "hmac-sha256-v1"
 _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS = 300
 _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
+
+
+def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
+    try:
+        return engine.materialize(ds, user_context)
+    except Exception as exc:
+        fallback = fallback_dataset_for_successfactors(ds, exc)
+        if not fallback:
+            raise
+        result = engine.materialize(fallback, user_context)
+        return {
+            **result,
+            "status": "partial",
+            "fallback": True,
+            "fallback_reason": "missing_materialized_dependency",
+            "original_error": str(exc)[:1000],
+        }
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -1661,7 +1679,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             ),
         }
         try:
-            result = engine.materialize(ds, _trusted_user_context(body, args))
+            result = _materialize_with_operational_fallback(ds, _trusted_user_context(body, args))
         except (duckdb.Error, ValueError) as exc:
             status_code, detail = _friendly_duckdb_error(exc, args["name"])
             raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -2657,7 +2675,7 @@ async def refresh_dataset(
     if not ds:
         raise HTTPException(404)
     _require_dataset_scope(auth_body, ds, "datasets.write")
-    result = engine.materialize(ds, _trusted_user_context(auth_body, {}))
+    result = _materialize_with_operational_fallback(ds, _trusted_user_context(auth_body, {}))
     store.update_refresh(name, result["row_count"], **store_scope)
     _reindex_dataset_best_effort(name, auth_body)
     return result

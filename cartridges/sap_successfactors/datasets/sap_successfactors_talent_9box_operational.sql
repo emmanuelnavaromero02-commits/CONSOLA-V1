@@ -24,8 +24,9 @@ metrics AS (
     SELECT
         box_key,
         COUNT(*) AS employee_count,
-        COUNT(*) FILTER (WHERE box_status = 'ready') AS ready_count,
-        COUNT(*) FILTER (WHERE box_status != 'ready') AS blocked_count
+        COUNT(*) FILTER (WHERE box_status IN ('ready', 'benchmark_internal')) AS ready_count,
+        COUNT(*) FILTER (WHERE box_status = 'benchmark_internal') AS benchmark_count,
+        COUNT(*) FILTER (WHERE box_status NOT IN ('ready', 'benchmark_internal')) AS blocked_count
     FROM rows
     GROUP BY box_key
 )
@@ -37,8 +38,13 @@ SELECT
     boxes.movement_action,
     COALESCE(metrics.employee_count, 0) AS employee_count,
     COALESCE(metrics.ready_count, 0) AS ready_count,
+    COALESCE(metrics.benchmark_count, 0) AS benchmark_count,
     COALESCE(metrics.blocked_count, 0) AS blocked_count,
-    CASE WHEN COALESCE(metrics.ready_count, 0) > 0 THEN 'ready' ELSE 'blocked' END AS box_status,
+    CASE
+        WHEN COALESCE(metrics.ready_count, 0) > 0 AND COALESCE(metrics.benchmark_count, 0) > 0 THEN 'benchmark_internal'
+        WHEN COALESCE(metrics.ready_count, 0) > 0 THEN 'ready'
+        ELSE 'blocked'
+    END AS box_status,
     boxes.display_order,
     CURRENT_TIMESTAMP AS generated_at
 FROM boxes

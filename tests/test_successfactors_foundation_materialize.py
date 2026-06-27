@@ -54,6 +54,19 @@ class _FakeEngine:
         }
 
 
+class _FallbackEngine(_FakeEngine):
+    def materialize(self, ds: dict, user_context: dict) -> dict:
+        self.calls.append((ds["name"], user_context, ds["sql_def"]))
+        if len(self.calls) == 1:
+            raise RuntimeError("No files found that match read_parquet source")
+        return {
+            "name": ds["name"],
+            "layer": ds["layer"],
+            "row_count": 1,
+            "storage_uri": f"postgres_gold:gold_{ds['name']}",
+        }
+
+
 def test_successfactors_foundation_materializes_gold_in_dependency_order():
     module = _load_script()
     store = _FakeStore()
@@ -106,9 +119,46 @@ def test_successfactors_foundation_phase_helpers_keep_talent_layers_ordered():
     assert module._datasets_for_phase("all", None) == (
         module.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER + module.SUCCESSFACTORS_GOLD_TALENT_ORDER
     )
+    assert module.SUCCESSFACTORS_GOLD_TALENT_ORDER[-2:] == [
+        "sap_successfactors_talent_operational_features",
+        "sap_successfactors_talent_simulation_inputs",
+    ]
+    assert module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
+        "sap_successfactors_talent_benchmark_internal"
+    ) < module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index("sap_successfactors_talent_readiness")
+    assert module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
+        "sap_successfactors_talent_learning_certification_status"
+    ) < module.SUCCESSFACTORS_GOLD_TALENT_ORDER.index(
+        "sap_successfactors_talent_operational_features"
+    )
+    assert module.SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER[-2:] == [
+        "sap_successfactors_talent_operational_features",
+        "sap_successfactors_talent_simulation_inputs",
+    ]
     assert module._datasets_for_phase("foundation", "sap_successfactors_talent_readiness") == [
         "sap_successfactors_talent_readiness"
     ]
+
+
+def test_successfactors_foundation_uses_talent_operational_fallback_for_missing_source():
+    module = _load_script()
+    store = _FakeStore()
+    engine = _FallbackEngine()
+
+    result = module.materialize_foundation(
+        store=store,
+        engine=engine,
+        tenant_id="tenant-a",
+        workspace_id="workspace-a",
+        datasets=["sap_successfactors_talent_learning_certification_status"],
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["datasets"][0]["status"] == "PARTIAL"
+    assert result["datasets"][0]["fallback"] is True
+    assert "missing_materialized_dependency" == result["datasets"][0]["reason"]
+    assert len(engine.calls) == 2
+    assert "insufficient_data" in engine.calls[1][2]
 
 
 def test_successfactors_foundation_refuses_non_gold_dataset_before_writes():

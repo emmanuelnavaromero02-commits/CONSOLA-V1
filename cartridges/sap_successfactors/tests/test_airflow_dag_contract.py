@@ -161,4 +161,8 @@ def test_successfactors_gold_refresh_order_respects_target():
 
     assert foundation == job_runner.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
     assert talent[: len(foundation)] == foundation
-    assert "sap_successfactors_talent_signals" == talent[-1]
+    assert talent[-3:] == [
+        "sap_successfactors_talent_signals",
+        "sap_successfactors_talent_operational_features",
+        "sap_successfactors_talent_simulation_inputs",
+    ]
