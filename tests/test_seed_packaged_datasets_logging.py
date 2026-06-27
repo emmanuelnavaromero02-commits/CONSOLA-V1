@@ -55,7 +55,7 @@ def test_seed_packaged_datasets_sets_rls_scope_before_writes(seed_module):
     assert "conn.transaction()" in seed_source
     assert "set_config('app.tenant_id'" in module_source
     assert "set_config('app.workspace_id'" in module_source
-    assert "tenant_id = EXCLUDED.tenant_id" in writer_source
+    assert "tenant_id = $7" in module_source
 
 
 def test_seed_packaged_datasets_seeds_every_workspace(seed_module):
@@ -66,8 +66,9 @@ def test_seed_packaged_datasets_seeds_every_workspace(seed_module):
     assert "def _datasets_workspace_name_conflict_available" in source
     assert "target_workspaces = workspaces if scoped_conflict else workspaces[:1]" in seed_source
     assert "for workspace in target_workspaces:" in writer_source
-    assert '"(workspace_id, name)" if scoped_conflict else "(name)"' in writer_source
-    assert "ON CONFLICT {conflict_target} DO UPDATE" in writer_source
+    assert "def _upsert_dataset_row" in source
+    assert "asyncpg.UniqueViolationError" in source
+    assert "ON CONFLICT" not in writer_source
     assert "WHERE cartridge = $1" in writer_source
     assert "AND workspace_id = $2::uuid" in writer_source
 
