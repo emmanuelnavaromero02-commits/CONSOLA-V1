@@ -4030,22 +4030,131 @@ async def _gold_schema_payload(source: str, user: dict | None) -> dict:
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
     _require_technical_source_access(user, source)
 
+    def _empty_partitions(status: str | None = None, message: str | None = None) -> dict:
+        payload: dict[str, Any] = {
+            "source": source,
+            "partitions": [],
+            "latest": None,
+            "sql_latest": None,
+        }
+        if status:
+            payload["status"] = status
+        if message:
+            payload["message"] = message
+        return payload
+
+    def _empty_preview(status: str | None = None, message: str | None = None) -> dict:
+        payload: dict[str, Any] = {
+            "source": source,
+            "schema": [],
+            "columns": [],
+            "rows": [],
+            "data": [],
+        }
+        if status:
+            payload["status"] = status
+        if message:
+            payload["message"] = message
+        return payload
+
+    def _schema_error(stage: str, exc: Exception) -> dict:
+        if isinstance(exc, HTTPException):
+            status_code = exc.status_code
+            detail = str(exc.detail or "error leyendo fuente")
+        else:
+            status_code = 502
+            detail = str(exc) or type(exc).__name__
+        lower = detail.lower()
+        if status_code == 404 or any(
+            token in lower
+            for token in (
+                "source_files_missing",
+                "no files found",
+                "not found",
+                "no such key",
+                "does not exist",
+            )
+        ):
+            message = "sin parquet materializado"
+            reason = "source_files_missing"
+        elif status_code == 403 or any(
+            token in lower
+            for token in ("permission", "forbidden", "access denied", "not authorized")
+        ):
+            message = "sin permisos para leer la fuente"
+            reason = "permission_denied"
+        else:
+            message = "error leyendo fuente"
+            reason = "read_error"
+        return {
+            "stage": stage,
+            "status_code": status_code,
+            "reason": reason,
+            "message": message,
+            "detail": detail,
+        }
+
     async def load_schema() -> dict:
         if _gold_dataset_from_source(source):
-            return await _gold_schema_payload(source, user)
-        partitions = await _refinement_invoke(
-            "get_source_partitions",
-            {"source": source},
-            timeout=30,
-            user=user,
+            try:
+                return await _gold_schema_payload(source, user)
+            except Exception as exc:
+                error = _schema_error("gold", exc)
+                return {
+                    "source": source,
+                    "source_kind": "gold",
+                    "status": "error",
+                    "message": error["message"],
+                    "errors": [error],
+                    "partitions": _empty_partitions("error", error["message"]),
+                    "preview": _empty_preview("error", error["message"]),
+                }
+
+        errors: list[dict] = []
+        try:
+            partitions = await _refinement_invoke(
+                "get_source_partitions",
+                {"source": source},
+                timeout=30,
+                user=user,
+            )
+        except Exception as exc:
+            error = _schema_error("partitions", exc)
+            errors.append(error)
+            partitions = _empty_partitions("error", error["message"])
+
+        try:
+            preview = await _refinement_invoke(
+                "preview_source",
+                {"source": source, "limit": 5},
+                timeout=30,
+                user=user,
+            )
+        except Exception as exc:
+            error = _schema_error("preview", exc)
+            errors.append(error)
+            preview = _empty_preview("error", error["message"])
+
+        status = "error" if len(errors) == 2 else "partial" if errors else "ready"
+        message = (
+            errors[0]["message"]
+            if len(errors) == 2 and errors[0]["message"] == errors[1]["message"]
+            else "datos parciales"
+            if errors
+            else None
         )
-        preview = await _refinement_invoke(
-            "preview_source",
-            {"source": source, "limit": 5},
-            timeout=30,
-            user=user,
-        )
-        return {"partitions": partitions, "preview": preview}
+        payload = {
+            "source": source,
+            "source_kind": "bronze",
+            "status": status,
+            "partitions": partitions,
+            "preview": preview,
+        }
+        if message:
+            payload["message"] = message
+        if errors:
+            payload["errors"] = errors
+        return payload
 
     return await _scoped_read_cache_get_or_set("schema", user, (source,), load_schema)
 

@@ -661,6 +661,34 @@ async def test_api_dataset_detail_marks_partial_schema_failure_without_losing_de
 
 
 @pytest.mark.asyncio
+async def test_api_schema_returns_empty_payload_when_bronze_source_is_missing(console_main, monkeypatch):
+    main = console_main
+    monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "0")
+
+    async def fake_refinement(tool, _args, **_kwargs):
+        if tool in {"get_source_partitions", "preview_source"}:
+            raise HTTPException(404, "source_files_missing: no files found")
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(main, "_refinement_invoke", fake_refinement)
+
+    payload = await main.api_schema(
+        "raw/sap_successfactors/EmpEmploymentTermination",
+        user=_user(),
+    )
+
+    assert payload["status"] == "error"
+    assert payload["message"] == "sin parquet materializado"
+    assert payload["partitions"]["partitions"] == []
+    assert payload["preview"]["columns"] == []
+    assert payload["preview"]["rows"] == []
+    assert {error["stage"] for error in payload["errors"]} == {
+        "partitions",
+        "preview",
+    }
+
+
+@pytest.mark.asyncio
 async def test_dataset_data_propagates_refinement_http_error(console_main, monkeypatch):
     main = console_main
 

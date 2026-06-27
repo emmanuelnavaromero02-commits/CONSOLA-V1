@@ -144,7 +144,7 @@ SELECT
     END AS blockers,
     CURRENT_TIMESTAMP AS generated_at
 FROM scored
-$sql$, $seed$Feature pack agregado para WB-TALENTO y Control Room. No expone PII ni nombres de motores.$seed$, $seed${}$seed$::jsonb, NULL, NOW(), NULL),
+$sql$, $seed$Feature pack agregado para WB-TALENTO y Control Room. No expone PII ni nombres de motores.$seed$, $seed${}$seed$::jsonb, NULL, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_talent_simulation_inputs$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$[
   "gold/sap_successfactors/sap_successfactors_talent_operational_features"
 ]$seed$::jsonb, $sql$
@@ -208,7 +208,7 @@ SELECT
     'talent_operational_features.v1' AS analysis_contract_version,
     CURRENT_TIMESTAMP AS generated_at
 FROM features
-$sql$, $seed$Variables agregadas internas para analisis supervisado WB-TALENTO.$seed$, $seed${}$seed$::jsonb, NULL, NOW(), NULL)
+$sql$, $seed$Variables agregadas internas para analisis supervisado WB-TALENTO.$seed$, $seed${}$seed$::jsonb, NULL, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
 ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations (filename, applied_at)

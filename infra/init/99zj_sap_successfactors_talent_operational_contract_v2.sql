@@ -4,18 +4,92 @@
 -- All datasets are Gold, aggregate-only and workspace scoped at materialization
 -- time by DuckDBEngine.
 
-INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
-VALUES
-('sap_successfactors_talent_benchmark_internal', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Benchmark interno Talent disabled por defecto.', '{}'::jsonb, NULL, NOW(), NULL),
-('sap_successfactors_talent_operational_features', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Feature pack agregado WB-TALENTO.', '{}'::jsonb, NULL, NOW(), NULL),
-('sap_successfactors_talent_simulation_inputs', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Inputs agregados WB-TALENTO.', '{}'::jsonb, NULL, NOW(), NULL)
-ON CONFLICT DO NOTHING;
+WITH target_workspace AS (
+    SELECT id, tenant_id
+      FROM workspaces
+     ORDER BY created_at ASC
+     LIMIT 1
+),
+ranked_unscoped AS (
+    SELECT d.ctid,
+           d.name,
+           ROW_NUMBER() OVER (PARTITION BY d.name ORDER BY d.updated_at DESC NULLS LAST, d.ctid) AS rn
+      FROM datasets d
+     WHERE d.cartridge = 'sap_successfactors'
+       AND d.workspace_id IS NULL
+       AND d.name IN (
+            'sap_successfactors_talent_benchmark_internal',
+            'sap_successfactors_talent_operational_features',
+            'sap_successfactors_talent_simulation_inputs'
+       )
+),
+promoted AS (
+    UPDATE datasets d
+       SET workspace_id = tw.id,
+           tenant_id = COALESCE(d.tenant_id, tw.tenant_id),
+           scope_status = 'scoped',
+           updated_at = NOW()
+      FROM ranked_unscoped ru
+      JOIN target_workspace tw ON TRUE
+     WHERE d.ctid = ru.ctid
+       AND ru.rn = 1
+       AND NOT EXISTS (
+            SELECT 1
+              FROM datasets existing
+             WHERE existing.workspace_id = tw.id
+               AND existing.name = d.name
+       )
+     RETURNING d.name
+)
+DELETE FROM datasets d
+ USING target_workspace tw
+ WHERE d.cartridge = 'sap_successfactors'
+   AND d.workspace_id IS NULL
+   AND d.name IN (
+        'sap_successfactors_talent_benchmark_internal',
+        'sap_successfactors_talent_operational_features',
+        'sap_successfactors_talent_simulation_inputs'
+   );
+
+WITH target_workspace AS (
+    SELECT id, tenant_id
+      FROM workspaces
+     ORDER BY created_at ASC
+     LIMIT 1
+)
+INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id, tenant_id, scope_status)
+SELECT seed.name,
+       seed.layer,
+       seed.cartridge,
+       seed.sources,
+       seed.sql_def,
+       seed.description,
+       seed.column_mapping,
+       seed.schedule,
+       NOW(),
+       tw.id,
+       tw.tenant_id,
+       'scoped'
+  FROM target_workspace tw
+ CROSS JOIN (
+    VALUES
+    ('sap_successfactors_talent_benchmark_internal', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Benchmark interno Talent disabled por defecto.', '{}'::jsonb, NULL),
+    ('sap_successfactors_talent_operational_features', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Feature pack agregado WB-TALENTO.', '{}'::jsonb, NULL),
+    ('sap_successfactors_talent_simulation_inputs', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Inputs agregados WB-TALENTO.', '{}'::jsonb, NULL)
+ ) AS seed(name, layer, cartridge, sources, sql_def, description, column_mapping, schedule)
+ WHERE NOT EXISTS (
+    SELECT 1
+      FROM datasets existing
+     WHERE existing.workspace_id = tw.id
+       AND existing.name = seed.name
+ )
+ON CONFLICT (workspace_id, name) DO NOTHING;
 
 UPDATE datasets
-   SET sources = '[]'::jsonb,
+   SET sources = '["config/sap_successfactors/talent_benchmark_internal"]'::jsonb,
        sql_def = $sql$
 -- sap_successfactors_talent_benchmark_internal  (gold)  cartridge: sap_successfactors
--- sources: []
+-- sources: ["config/sap_successfactors/talent_benchmark_internal"]
 -- description: Contrato interno versionado para clasificacion Talent. Disabled por defecto; no clasifica sin aprobacion explicita.
 
 SELECT
