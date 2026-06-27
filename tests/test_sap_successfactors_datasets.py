@@ -1,6 +1,6 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-50 silver + 30 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
+50 silver + 33 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
 Historical install migrations seed the original foundation/talent set; Console
 startup refreshes the full packaged catalog from datasets/*.sql.
 
@@ -9,8 +9,9 @@ and backwards compatibility with historical rows (headcount_by_department /
 manager_hierarchy / employees_anomalies already exist for sap_hcm).
 
 Static checks: every file parses, headers well-formed, migration<->files agree
-(incl. workspace_id on every row), sources are real SF entities, prefix avoids
-collisions, and no gold exposes an encrypted column.
+(incl. workspace_id on every row), sources are real SF entities or internal
+cartridge config contracts, prefix avoids collisions, and no gold exposes an
+encrypted column.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "confi
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
 EXPECTED_SILVER = 50
-EXPECTED_GOLD = 30
+EXPECTED_GOLD = 33
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 BASE_MIGRATION_DEDUP_KEYS = {
     "sap_successfactors_user_latest.sql": ("userId",),
@@ -245,6 +246,10 @@ def test_declared_sources_are_real_sf_entities():
             raw = re.match(r"raw/sap_successfactors/(\w+)$", src)
             if raw:
                 assert raw.group(1) in entities, f"{path.name}: source {src!r} not a SF entity"
+                continue
+            config = re.match(r"config/sap_successfactors/([a-z0-9_]+)$", src)
+            if config:
+                assert path.stem.endswith(config.group(1)), f"{path.name}: config source {src!r} mismatches dataset"
                 continue
             packaged = re.match(r"(?:silver|gold)/sap_successfactors/([a-z0-9_]+)$", src)
             assert packaged, f"{path.name}: malformed source {src!r}"

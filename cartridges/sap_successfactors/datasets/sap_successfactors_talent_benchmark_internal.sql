@@ -1,5 +1,5 @@
 -- sap_successfactors_talent_benchmark_internal  (gold)  cartridge: sap_successfactors
--- sources: []
+-- sources: ["config/sap_successfactors/talent_benchmark_internal"]
 -- description: Contrato interno versionado para clasificacion Talent. Disabled por defecto; no clasifica sin aprobacion explicita.
 
 SELECT
