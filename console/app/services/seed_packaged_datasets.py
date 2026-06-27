@@ -116,6 +116,195 @@ async def _datasets_workspace_name_conflict_available(conn: asyncpg.Connection) 
     )
 
 
+async def _update_dataset_row(
+    conn: asyncpg.Connection,
+    *,
+    dataset: dict,
+    tenant_id: object,
+    workspace_id: object,
+    has_tenant_id: bool,
+    scoped_conflict: bool,
+) -> bool:
+    """Update an existing dataset row without relying on a specific constraint.
+
+    Some long-lived AWS beta databases passed through both the legacy
+    ``datasets.name`` primary-key contract and the workspace-scoped contract.
+    During that transition the named constraint may be absent or unusable for
+    ``ON CONFLICT``. A deterministic update-first upsert keeps startup seeding
+    compatible with both shapes.
+    """
+    if has_tenant_id:
+        if scoped_conflict:
+            status = await conn.execute(
+                """
+                UPDATE datasets
+                   SET layer = $2,
+                       cartridge = $3,
+                       sources = $4::jsonb,
+                       sql_def = $5,
+                       description = $6,
+                       updated_at = NOW(),
+                       tenant_id = $7,
+                       workspace_id = $8
+                 WHERE name = $1
+                   AND workspace_id = $8::uuid
+                """,
+                dataset["name"],
+                dataset["layer"],
+                dataset["cartridge"],
+                json.dumps(dataset["sources"]),
+                dataset["sql"],
+                dataset["description"],
+                tenant_id,
+                workspace_id,
+            )
+        else:
+            status = await conn.execute(
+                """
+                UPDATE datasets
+                   SET layer = $2,
+                       cartridge = $3,
+                       sources = $4::jsonb,
+                       sql_def = $5,
+                       description = $6,
+                       updated_at = NOW(),
+                       tenant_id = $7,
+                       workspace_id = $8
+                 WHERE name = $1
+                """,
+                dataset["name"],
+                dataset["layer"],
+                dataset["cartridge"],
+                json.dumps(dataset["sources"]),
+                dataset["sql"],
+                dataset["description"],
+                tenant_id,
+                workspace_id,
+            )
+    elif scoped_conflict:
+        status = await conn.execute(
+            """
+            UPDATE datasets
+               SET layer = $2,
+                   cartridge = $3,
+                   sources = $4::jsonb,
+                   sql_def = $5,
+                   description = $6,
+                   updated_at = NOW(),
+                   workspace_id = $7
+             WHERE name = $1
+               AND workspace_id = $7::uuid
+            """,
+            dataset["name"],
+            dataset["layer"],
+            dataset["cartridge"],
+            json.dumps(dataset["sources"]),
+            dataset["sql"],
+            dataset["description"],
+            workspace_id,
+        )
+    else:
+        status = await conn.execute(
+            """
+            UPDATE datasets
+               SET layer = $2,
+                   cartridge = $3,
+                   sources = $4::jsonb,
+                   sql_def = $5,
+                   description = $6,
+                   updated_at = NOW(),
+                   workspace_id = $7
+             WHERE name = $1
+            """,
+            dataset["name"],
+            dataset["layer"],
+            dataset["cartridge"],
+            json.dumps(dataset["sources"]),
+            dataset["sql"],
+            dataset["description"],
+            workspace_id,
+        )
+    return status.split()[-1] != "0"
+
+
+async def _insert_dataset_row(
+    conn: asyncpg.Connection,
+    *,
+    dataset: dict,
+    tenant_id: object,
+    workspace_id: object,
+    has_tenant_id: bool,
+) -> None:
+    if has_tenant_id:
+        await conn.execute(
+            """INSERT INTO datasets
+                   (name, layer, cartridge, sources, sql_def, description,
+                    column_mapping, schedule, updated_at, tenant_id, workspace_id)
+                VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
+                        NOW(), $7, $8)""",
+            dataset["name"],
+            dataset["layer"],
+            dataset["cartridge"],
+            json.dumps(dataset["sources"]),
+            dataset["sql"],
+            dataset["description"],
+            tenant_id,
+            workspace_id,
+        )
+    else:
+        await conn.execute(
+            """INSERT INTO datasets
+                   (name, layer, cartridge, sources, sql_def, description,
+                    column_mapping, schedule, updated_at, workspace_id)
+                VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
+                        NOW(), $7)""",
+            dataset["name"],
+            dataset["layer"],
+            dataset["cartridge"],
+            json.dumps(dataset["sources"]),
+            dataset["sql"],
+            dataset["description"],
+            workspace_id,
+        )
+
+
+async def _upsert_dataset_row(
+    conn: asyncpg.Connection,
+    *,
+    dataset: dict,
+    tenant_id: object,
+    workspace_id: object,
+    has_tenant_id: bool,
+    scoped_conflict: bool,
+) -> None:
+    if await _update_dataset_row(
+        conn,
+        dataset=dataset,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        has_tenant_id=has_tenant_id,
+        scoped_conflict=scoped_conflict,
+    ):
+        return
+    try:
+        await _insert_dataset_row(
+            conn,
+            dataset=dataset,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            has_tenant_id=has_tenant_id,
+        )
+    except asyncpg.UniqueViolationError:
+        await _update_dataset_row(
+            conn,
+            dataset=dataset,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            has_tenant_id=has_tenant_id,
+            scoped_conflict=False,
+        )
+
+
 async def _seed_packaged_dataset_rows(
     conn: asyncpg.Connection,
     *,
@@ -146,56 +335,14 @@ async def _seed_packaged_dataset_rows(
             await _set_seed_scope(conn, tenant_id, workspace_id)
 
             for dataset in datasets:
-                if has_tenant_id:
-                    conflict_target = "(workspace_id, name)" if scoped_conflict else "(name)"
-                    await conn.execute(
-                        f"""INSERT INTO datasets
-                               (name, layer, cartridge, sources, sql_def, description,
-                                column_mapping, schedule, updated_at, tenant_id, workspace_id)
-                            VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{{}}'::jsonb, NULL,
-                                    NOW(), $7, $8)
-                            ON CONFLICT {conflict_target} DO UPDATE
-                               SET layer = EXCLUDED.layer,
-                                   cartridge = EXCLUDED.cartridge,
-                                   sources = EXCLUDED.sources,
-                                   sql_def = EXCLUDED.sql_def,
-                                   description = EXCLUDED.description,
-                                   updated_at = NOW(),
-                                   tenant_id = EXCLUDED.tenant_id,
-                                   workspace_id = EXCLUDED.workspace_id""",
-                        dataset["name"],
-                        dataset["layer"],
-                        dataset["cartridge"],
-                        json.dumps(dataset["sources"]),
-                        dataset["sql"],
-                        dataset["description"],
-                        tenant_id,
-                        workspace_id,
-                    )
-                else:
-                    conflict_target = "(workspace_id, name)" if scoped_conflict else "(name)"
-                    await conn.execute(
-                        f"""INSERT INTO datasets
-                               (name, layer, cartridge, sources, sql_def, description,
-                                column_mapping, schedule, updated_at, workspace_id)
-                            VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{{}}'::jsonb, NULL,
-                                    NOW(), $7)
-                            ON CONFLICT {conflict_target} DO UPDATE
-                               SET layer = EXCLUDED.layer,
-                                   cartridge = EXCLUDED.cartridge,
-                                   sources = EXCLUDED.sources,
-                                   sql_def = EXCLUDED.sql_def,
-                                   description = EXCLUDED.description,
-                                   updated_at = NOW(),
-                                   workspace_id = EXCLUDED.workspace_id""",
-                        dataset["name"],
-                        dataset["layer"],
-                        dataset["cartridge"],
-                        json.dumps(dataset["sources"]),
-                        dataset["sql"],
-                        dataset["description"],
-                        workspace_id,
-                    )
+                await _upsert_dataset_row(
+                    conn,
+                    dataset=dataset,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    has_tenant_id=has_tenant_id,
+                    scoped_conflict=scoped_conflict,
+                )
                 seeded_rows += 1
 
             if scoped_conflict:
