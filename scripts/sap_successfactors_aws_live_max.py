@@ -24,7 +24,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_INSTANCE_ID = "i-07a82861245b34481"
 DEFAULT_REGION = "us-east-1"
-DEFAULT_CONSOLE_URL = "http://modecissions-public-255609366.us-east-1.elb.amazonaws.com"
+DEFAULT_CONSOLE_URL = "https://console.7businesssolutions.com"
 DEFAULT_TENANT_ID = "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78"
 DEFAULT_WORKSPACE_ID = "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4"
 DEFAULT_CONN_ID = "femsa_sf"
@@ -43,6 +43,24 @@ REQUESTED_GOLD = (
     "sap_successfactors_turnover_by_period",
     "sap_successfactors_manager_hierarchy",
     "sap_successfactors_employees_anomalies",
+)
+
+REQUIRED_GOLD_DATASETS = (
+    "sap_successfactors_employee_360",
+    "sap_successfactors_org_structure",
+    "sap_successfactors_headcount_by_department",
+    "sap_successfactors_headcount_by_location",
+    "sap_successfactors_headcount_by_company",
+    "sap_successfactors_manager_hierarchy",
+    "sap_successfactors_talent_employee_profile",
+    "sap_successfactors_talent_cpa_scores",
+    "sap_successfactors_talent_readiness",
+    "sap_successfactors_talent_9box",
+    "sap_successfactors_talent_9box_operational",
+    "sap_successfactors_talent_role_profile",
+    "sap_successfactors_talent_role_fit_assignments",
+    "sap_successfactors_talent_operational_features",
+    "sap_successfactors_talent_simulation_inputs",
 )
 
 GOLD_MISSING_REASONS = {
@@ -309,6 +327,7 @@ def _http(ctx: Context, path: str, *, timeout: int = 20) -> tuple[int, str, str]
         [
             "curl",
             "-sS",
+            "-L",
             "--max-time",
             str(timeout),
             "-H",
@@ -371,13 +390,24 @@ def _airflow_run_state_from_list_runs(output: str, run_id: str) -> str:
     return "unknown"
 
 
+def _has_required_live_gold(ctx: Context) -> bool:
+    for dataset in REQUIRED_GOLD_DATASETS:
+        key = dataset.removeprefix("sap_successfactors_")
+        cov = ctx.coverage.get(key)
+        if not cov or not isinstance(cov.rows_extracted, int) or cov.rows_extracted <= 0:
+            return False
+    return True
+
+
 def _final_status(ctx: Context) -> str:
     statuses = {step.status for step in ctx.steps}
     if "FAIL" in statuses:
         return "RED"
     if "NOT_EXECUTED" in statuses and not any(step.name.startswith("SuccessFactors extract-all") and step.status == "PASS" for step in ctx.steps):
         return "NOT_EXECUTED"
-    if "BLOCKED" in statuses or "WARN" in statuses:
+    if "BLOCKED" in statuses:
+        return "YELLOW"
+    if "WARN" in statuses and not _has_required_live_gold(ctx):
         return "YELLOW"
     return "GREEN"
 
@@ -541,7 +571,7 @@ import asyncio, json, os
 
 import asyncpg
 
-out = {{"extraction_runs": [], "watermarks": {{}}, "datasets": [], "apps": {{}}, "agents": {{}}, "errors": []}}
+out = {{"extraction_runs": [], "pipeline_runs": [], "watermarks": {{}}, "datasets": [], "apps": {{}}, "agents": {{}}, "errors": []}}
 
 
 def _dsn(raw):
@@ -577,6 +607,40 @@ async def main():
                 WHERE cartridge_id='sap_successfactors'
                 ORDER BY entity_name, started_at DESC
             \"\"\")]
+                try:
+                    out["pipeline_runs"] = [dict(r) for r in await con.fetch(\"\"\"
+                    SELECT DISTINCT ON (entity)
+                           entity AS entity_name,
+                           status,
+                           record_count AS records_extracted,
+                           COALESCE(storage_uri, '') AS storage_uri,
+                           CASE
+                             WHEN status IN ('success', 'partial') THEN ''
+                             WHEN coalesce(error_message, '') ILIKE '%403%' THEN 'SUCCESSFACTORS_PERMISSION'
+                             WHEN coalesce(error_message, '') ILIKE '%401%' THEN 'AUTH_BLOCKED'
+                             WHEN coalesce(error_message, '') ILIKE '%400%' THEN 'ODATA_FILTER_OR_SCOPE'
+                             WHEN coalesce(error_message, '') ILIKE '%404%' THEN 'SUCCESSFACTORS_NOT_AVAILABLE'
+                             WHEN coalesce(error_message, '') ILIKE '%timeout%' THEN 'UPSTREAM_TIMEOUT'
+                             ELSE left(coalesce(error_message, ''), 80)
+                           END AS error_message,
+                           run_id,
+                           airflow_dag_run_id,
+                           started_at::text AS started_at,
+                           finished_at::text AS finished_at
+                    FROM pipeline_runs
+                    WHERE cartridge_id='sap_successfactors'
+                      AND (
+                        workspace_id = {ctx.workspace_id!r}::uuid
+                        OR workspace_id IS NULL
+                      )
+                      AND (
+                        tenant_id = {ctx.tenant_id!r}::uuid
+                        OR tenant_id IS NULL
+                      )
+                    ORDER BY entity, started_at DESC NULLS LAST, finished_at DESC NULLS LAST
+                \"\"\")]
+                except Exception as exc:
+                    out["errors"].append("pipeline_runs:" + type(exc).__name__ + ":" + str(exc))
                 out["watermarks"] = dict(await con.fetchrow(\"\"\"
                 SELECT count(*)::int AS count, max(updated_at)::text AS latest_updated_at
                 FROM entity_watermarks
@@ -652,19 +716,30 @@ PY
         _record(ctx, "Postgres/RDS real", "WARN", "CONFIG_GAP", evidence, error=json.dumps(payload.get("errors", [])))
     else:
         _record(ctx, "Postgres/RDS real", "PASS", "NONE", evidence)
-    for row in payload.get("extraction_runs") or []:
+    def _apply_run_row(row: dict[str, Any]) -> None:
         entity = str(row.get("entity_name") or "")
         if entity in ctx.coverage:
             cov = ctx.coverage[entity]
             cov.extraction_real = "yes"
             cov.rows_extracted = row.get("records_extracted")
-            cov.status = "extracted" if row.get("status") == "success" else "failed-open"
+            run_status = str(row.get("status") or "").lower()
+            if isinstance(cov.rows_extracted, int) and cov.rows_extracted > 0:
+                cov.status = "extracted"
+            elif run_status in {"success", "partial"}:
+                cov.status = "empty-valid" if cov.rows_extracted == 0 else run_status
+            else:
+                cov.status = "failed-open"
             cov.final_state = cov.status
             cov.run_id = str(row.get("run_id") or "")
-            cov.batch_id = cov.run_id
+            cov.batch_id = str(row.get("airflow_dag_run_id") or cov.run_id)
             cov.bronze_path = str(row.get("storage_uri") or "")
             cov.postgres_registry = "yes"
             cov.errors = str(row.get("error_message") or "")
+
+    for row in payload.get("extraction_runs") or []:
+        _apply_run_row(row)
+    for row in payload.get("pipeline_runs") or []:
+        _apply_run_row(row)
     for ds in payload.get("datasets") or []:
         name = str(ds.get("name") or "")
         if name.startswith("sap_successfactors_"):
@@ -729,6 +804,22 @@ def validate_s3(ctx: Context) -> None:
             summary[prefix] = {"status": "PASS", "sample_count": count, "evidence": evidence}
             _record(ctx, f"S3 lakehouse {prefix}", "PASS" if count else "WARN", "DATASET_BUG" if not count else "NONE", evidence, note=f"sample_count={count}")
     _json(ctx.evidence_dir / "s3_lakehouse_summary.json", summary)
+
+
+def _apply_catalog_dataset_coverage(ctx: Context, dataset: str, row_count: Any) -> None:
+    if not dataset.startswith("sap_successfactors_"):
+        return
+    key = dataset.removeprefix("sap_successfactors_")
+    cov = ctx.coverage.setdefault(key, EntityCoverage(entity=key))
+    cov.gold_dataset = dataset
+    cov.postgres_registry = "yes"
+    cov.app_visible = "yes"
+    if isinstance(row_count, bool):
+        return
+    if isinstance(row_count, int):
+        cov.rows_extracted = row_count
+        cov.status = "gold-ready" if row_count > 0 else "empty-valid"
+        cov.final_state = cov.status
 
 
 def validate_console_surfaces(ctx: Context) -> None:
@@ -857,10 +948,18 @@ PY
     for cov in ctx.coverage.values():
         if cov.entity in text or (cov.gold_dataset and cov.gold_dataset in text):
             cov.control_room_visible = "yes"
+    for cartridge in dashboard.get("cartridges") or []:
+        for item in cartridge.get("datasets") or []:
+            if isinstance(item, dict):
+                _apply_catalog_dataset_coverage(ctx, str(item.get("dataset") or ""), item.get("count"))
     for dataset in REQUESTED_GOLD:
         if dataset in text:
             continue
-    catalog_text = json.dumps(payload.get("catalog") or {}, default=str)
+    catalog = payload.get("catalog") or {}
+    for dataset, item in (catalog.get("datasets") or {}).items():
+        if isinstance(item, dict):
+            _apply_catalog_dataset_coverage(ctx, str(dataset), item.get("row_count"))
+    catalog_text = json.dumps(catalog, default=str)
     semantic_text = json.dumps(payload.get("semantic") or {}, default=str)
     for cov in ctx.coverage.values():
         if cov.gold_dataset and cov.gold_dataset in catalog_text:

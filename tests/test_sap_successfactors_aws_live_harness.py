@@ -6,6 +6,23 @@ import json
 from scripts import sap_successfactors_aws_live_max as runner
 
 
+def _ctx() -> runner.Context:
+    return runner.Context(
+        run_id="test-run",
+        timestamp="20260627T000000Z",
+        evidence_dir=runner.REPO / "tmp" / "test-run",
+        instance_id="i-test",
+        region="us-east-1",
+        console_url="https://console.example.test",
+        tenant_id="00000000-0000-0000-0000-000000000001",
+        workspace_id="00000000-0000-0000-0000-000000000002",
+        conn_id="sf",
+        bucket="bucket",
+        trigger_extract=False,
+        max_wait_seconds=1,
+    )
+
+
 def test_airflow_run_state_reads_dag_run_id() -> None:
     output = json.dumps(
         [
@@ -62,3 +79,42 @@ def test_copilot_live_runner_executes_real_turns() -> None:
 def test_gold_missing_reasons_are_explicit() -> None:
     assert runner.GOLD_MISSING_REASONS["sap_successfactors_compensation_full"][0] == "SUCCESSFACTORS_PERMISSION"
     assert runner.GOLD_MISSING_REASONS["sap_successfactors_turnover_by_period"][0] == "AUTH_SCOPE_BLOCKED"
+
+
+def test_public_http_follows_https_redirects() -> None:
+    source = inspect.getsource(runner._http)
+
+    assert '"curl"' in source
+    assert '"-L"' in source
+
+
+def test_catalog_dataset_coverage_counts_talent_gold() -> None:
+    ctx = _ctx()
+
+    runner._apply_catalog_dataset_coverage(
+        ctx,
+        "sap_successfactors_talent_operational_features",
+        1,
+    )
+
+    cov = ctx.coverage["talent_operational_features"]
+    assert cov.gold_dataset == "sap_successfactors_talent_operational_features"
+    assert cov.rows_extracted == 1
+    assert cov.status == "gold-ready"
+    assert cov.app_visible == "yes"
+
+
+def test_final_status_allows_expected_optional_warnings_when_required_gold_exists() -> None:
+    ctx = _ctx()
+    for dataset in runner.REQUIRED_GOLD_DATASETS:
+        runner._apply_catalog_dataset_coverage(ctx, dataset, 1)
+    runner._record(ctx, "Gold dataset sap_successfactors_turnover_by_period", "WARN", "AUTH_SCOPE_BLOCKED", "evidence")
+
+    assert runner._final_status(ctx) == "GREEN"
+
+
+def test_final_status_warns_when_required_gold_is_missing() -> None:
+    ctx = _ctx()
+    runner._record(ctx, "Gold dataset sap_successfactors_turnover_by_period", "WARN", "AUTH_SCOPE_BLOCKED", "evidence")
+
+    assert runner._final_status(ctx) == "YELLOW"
