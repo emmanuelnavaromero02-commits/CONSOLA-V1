@@ -6903,7 +6903,24 @@ async def api_pipeline_extract_all(
 _SYNC_NOW_ENTITY = "__sync_now__"
 _SYNC_AGGREGATE_ENTITY = "__extract_all__"
 _SYNC_NOW_DAG_ID = "sync_now"
-_SYNC_TERMINAL_STATUSES = {"success", "partial", "failed"}
+_SYNC_TERMINAL_STATUSES = {
+    "success",
+    "partial",
+    "failed",
+    "blocked",
+    "skipped",
+    "skipped_explicit",
+}
+_SYNC_STEP_RECOMPUTE_PERCENT_STATUSES = {
+    "success",
+    "partial",
+    "blocked",
+    "failed",
+    "skipped",
+    "skipped_explicit",
+}
+_SYNC_CHILD_TERMINAL_STATUSES = _SYNC_TERMINAL_STATUSES | {"error"}
+_SYNC_CHILD_BLOCKED_STATUSES = {"blocked", "skipped", "skipped_explicit"}
 _SYNC_VALID_MODES = {"incremental", "full"}
 _SYNC_VALID_TARGETS = {"all", "foundation", "talent"}
 _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 60)
@@ -7313,18 +7330,20 @@ def _normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
     status = str(normalized.get("status") or "queued")
     total = max(int(normalized.get("total") or 0), 0)
     completed = max(int(normalized.get("completed") or 0), 0)
-    if status in {"success", "skipped"} and not total:
+    if status in {"success", "skipped", "skipped_explicit"} and not total:
         total = 1
         completed = 1
-    if status == "failed" and not total:
+    if status in {"failed", "blocked"} and not total:
         total = 1
     if total:
         completed = min(completed, total)
-    if "percent" in normalized and normalized.get("percent") is not None:
+    if total and status in _SYNC_STEP_RECOMPUTE_PERCENT_STATUSES:
+        percent = round((completed / total) * 100)
+    elif "percent" in normalized and normalized.get("percent") is not None:
         percent = int(normalized.get("percent") or 0)
     elif total:
         percent = round((completed / total) * 100)
-    elif status in {"success", "skipped"}:
+    elif status in {"success", "skipped", "skipped_explicit"}:
         percent = 100
     elif status == "running":
         percent = 50
@@ -7383,7 +7402,7 @@ def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
         return "failed"
     if "running" in statuses or "queued" in statuses:
         return "running"
-    if "partial" in statuses:
+    if statuses & {"partial", "blocked", "skipped_explicit"}:
         return "partial"
     return "success"
 
@@ -7475,6 +7494,76 @@ def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _sync_child_reason(row: dict[str, Any]) -> str | None:
+    extra = _sync_extra_from_row(row)
+    for key in (
+        "reason",
+        "blocked_reason",
+        "metadata_status",
+        "status_reason",
+        "error_code",
+    ):
+        value = extra.get(key)
+        if value:
+            return str(value)[:240]
+    error_message = row.get("error_message")
+    if error_message:
+        return str(error_message)[:240]
+    raw_conf = extra.get("raw_conf") if isinstance(extra.get("raw_conf"), dict) else {}
+    reason = raw_conf.get("reason") or raw_conf.get("metadata_status")
+    return str(reason)[:240] if reason else None
+
+
+def _sync_step_entity_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    entities: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    for row in rows:
+        entity = str(row.get("entity") or "").strip()
+        if not entity or entity in {_SYNC_AGGREGATE_ENTITY, _SYNC_NOW_ENTITY}:
+            continue
+        status = str(row.get("status") or "unknown").strip().lower() or "unknown"
+        extra = _sync_extra_from_row(row)
+        reason = _sync_child_reason(row)
+        item = {
+            "entity": entity,
+            "status": status,
+            "row_count": int(row.get("row_count") or 0),
+            **({"reason": reason} if reason else {}),
+            **(
+                {"metadata_status": str(extra.get("metadata_status"))[:120]}
+                if extra.get("metadata_status")
+                else {}
+            ),
+            **(
+                {"fields_missing": extra.get("fields_missing")}
+                if isinstance(extra.get("fields_missing"), list)
+                else {}
+            ),
+            **(
+                {"fields_used": extra.get("fields_used")}
+                if isinstance(extra.get("fields_used"), list)
+                else {}
+            ),
+        }
+        entities.append(item)
+        if status in _SYNC_CHILD_BLOCKED_STATUSES or status in {"failed", "error"}:
+            blockers.append(item)
+    return {
+        "entities": entities,
+        "blockers": blockers,
+        "counts": {
+            "success": sum(1 for item in entities if item["status"] == "success"),
+            "partial": sum(1 for item in entities if item["status"] == "partial"),
+            "blocked": sum(
+                1 for item in entities if item["status"] in _SYNC_CHILD_BLOCKED_STATUSES
+            ),
+            "failed": sum(
+                1 for item in entities if item["status"] in {"failed", "error"}
+            ),
+        },
+    }
 
 
 async def _fetch_active_sync_run(
@@ -8387,6 +8476,13 @@ async def _build_sync_run_status(
     )
     success_children = sum(1 for status in child_statuses if status == "success")
     partial_children = sum(1 for status in child_statuses if status == "partial")
+    blocked_children = sum(
+        1 for status in child_statuses if status in _SYNC_CHILD_BLOCKED_STATUSES
+    )
+    terminal_children = sum(
+        1 for status in child_statuses if status in _SYNC_CHILD_TERMINAL_STATUSES
+    )
+    entity_summary = _sync_step_entity_summary(progress_rows)
     stale_running = (
         str(row.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES
         and running_children
@@ -8495,11 +8591,7 @@ async def _build_sync_run_status(
         len(triggered),
         1,
     )
-    child_done = sum(
-        1
-        for status in child_statuses
-        if status not in {"queued", "running", "unknown", ""}
-    )
+    child_done = terminal_children
     if running_children:
         updates["bronze"] = {
             "label": "Bronze",
@@ -8509,6 +8601,8 @@ async def _build_sync_run_status(
             else f"{len(progress_rows)} corridas del sync actual en curso.",
             "completed": child_done,
             "total": child_total,
+            "entities": entity_summary["entities"],
+            "blockers": entity_summary["blockers"],
         }
     elif failed_children and not success_children and not partial_children:
         updates["bronze"] = {
@@ -8517,17 +8611,25 @@ async def _build_sync_run_status(
             "detail": "Las extracciones fallaron antes de completar Bronze.",
             "completed": child_done or failed_children,
             "total": child_total,
+            "entities": entity_summary["entities"],
+            "blockers": entity_summary["blockers"],
         }
-    elif failed_children or partial_children or errors:
+    elif failed_children or partial_children or blocked_children or errors:
         updates["bronze"] = {
             "label": "Bronze",
             "status": "partial",
             "detail": (
                 f"{success_children} OK; {partial_children} parciales; "
+                f"{blocked_children} bloqueadas; "
                 f"{failed_children + len(errors)} con error."
             ),
-            "completed": max(success_children + partial_children, child_done),
+            "completed": max(
+                success_children + partial_children + blocked_children,
+                child_done,
+            ),
             "total": child_total,
+            "entities": entity_summary["entities"],
+            "blockers": entity_summary["blockers"],
         }
     elif success_children or bronze_ready:
         updates["bronze"] = {
@@ -8537,6 +8639,8 @@ async def _build_sync_run_status(
             "completed": bronze_ready or success_children,
             "total": max(bronze_ready or success_children, 1),
             "percent": 100,
+            "entities": entity_summary["entities"],
+            "blockers": entity_summary["blockers"],
         }
 
     if (
@@ -8559,7 +8663,12 @@ async def _build_sync_run_status(
         updates["silver_gold"] = {
             "label": "Silver/Gold",
             "status": "success"
-            if not failed_children and not partial_children and not gold_partial
+            if (
+                not failed_children
+                and not partial_children
+                and not blocked_children
+                and not gold_partial
+            )
             else "partial",
             "detail": f"{silver_ready} Silver · {gold_detail}.",
             "completed": gold_ready,
@@ -8834,6 +8943,8 @@ async def _build_sync_run_status(
         "aggregate_summary_pending": aggregate_summary_pending,
         "child_run_count": len(child_rows),
         "entity_child_run_count": len(entity_child_rows),
+        "entity_outcomes": entity_summary["entities"],
+        "blockers": entity_summary["blockers"],
         "target": extra.get("target") or "all",
         "mode": extra.get("mode") or row.get("mode") or "incremental",
     }

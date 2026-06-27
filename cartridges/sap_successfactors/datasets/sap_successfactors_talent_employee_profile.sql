@@ -16,6 +16,8 @@ hier AS (
                       union_by_name = true)
 )
 SELECT
+    emp.tenant_id,
+    emp.workspace_id,
     emp.user_id,
     emp.full_name,
     emp.company_id,

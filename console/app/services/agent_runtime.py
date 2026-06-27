@@ -620,6 +620,8 @@ async def _monitor_resolve_dataset_inputs(
         )
         if str(item or "").strip()
     }
+    if dataset == "sap_successfactors_talent_simulation_inputs":
+        ready_statuses = {"ready"}
     if status not in ready_statuses:
         reason = str(row.get("blocked_reason") or "missing_simulation_inputs").strip()
         return None, reason or "missing_simulation_inputs", row

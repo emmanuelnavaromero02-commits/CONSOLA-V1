@@ -8,6 +8,8 @@ MIGRATION = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datase
 OPERATIONAL_MIGRATION = REPO_ROOT / "infra" / "init" / "99zf_sap_successfactors_talent_operational_features.sql"
 OPERATIONAL_CONTRACT_V2 = REPO_ROOT / "infra" / "init" / "99zj_sap_successfactors_talent_operational_contract_v2.sql"
 AGENTOPS_CONTRACT_V2 = REPO_ROOT / "infra" / "init" / "99zi_sap_successfactors_talent_agentops_feature_pack.sql"
+AGENTOPS_READY_REPAIR = REPO_ROOT / "infra" / "init" / "99zk_sap_successfactors_talent_agentops_ready_only.sql"
+DATASET_CONTRACT_REPAIR = REPO_ROOT / "infra" / "init" / "99zl_sap_successfactors_talent_dataset_contract_patch.sql"
 
 TALENT_DATASETS = {
     "sap_successfactors_talent_employee_profile",
@@ -83,9 +85,14 @@ def test_talent_agentops_monitor_uses_feature_pack_inputs():
     sql = (
         AGENTOPS_CONTRACT_V2.read_text(encoding="utf-8")
         + OPERATIONAL_CONTRACT_V2.read_text(encoding="utf-8")
+        + AGENTOPS_READY_REPAIR.read_text(encoding="utf-8")
+        + DATASET_CONTRACT_REPAIR.read_text(encoding="utf-8")
     )
 
     assert "sap_successfactors_talent_simulation_inputs" in sql
     assert "input_variables_json" in sql
     assert "missing_simulation_inputs" in sql
+    assert '"ready_statuses": ["ready"]' in sql
+    assert "WHEN readiness_status IN ('ready', 'benchmark_internal') THEN 3" in sql
+    assert "WHEN readiness_status = 'partial' THEN 'missing_simulation_inputs'" in sql
     assert '"baseline_value": {"type": "fixed", "value": 100}' not in sql

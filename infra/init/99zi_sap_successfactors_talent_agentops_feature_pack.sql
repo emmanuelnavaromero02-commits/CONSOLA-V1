@@ -31,7 +31,7 @@ UPDATE agents
            "assumptions_field": "assumptions_json",
            "evidence_refs_field": "evidence_refs_json",
            "status_field": "input_status",
-           "ready_statuses": ["ready", "partial", "benchmark_internal"],
+           "ready_statuses": ["ready"],
            "assumptions": {
              "basis": "Agregado WB-TALENTO desde Gold operativo.",
              "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",

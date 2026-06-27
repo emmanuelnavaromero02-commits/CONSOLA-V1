@@ -45,6 +45,8 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert "upstream_monte_carlo_simulation_id" in section
     assert '"source_type": source_type' in section
     assert '"deterministic_monitor": True' in section
+    assert 'dataset == "sap_successfactors_talent_simulation_inputs"' in source
+    assert 'ready_statuses = {"ready"}' in source
     assert "scheduled monitor requires extra.monitor contract" in section
     assert "recommendation_only" in section
     assert 'conversation_id=f"agent_run:' not in source

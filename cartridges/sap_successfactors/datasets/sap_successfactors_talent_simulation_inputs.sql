@@ -25,7 +25,7 @@ scored AS (
         LEAST(1.0, GREATEST(0.0, 1.0 - COALESCE(confidence, 0.0))) AS incertidumbre,
         CASE
             WHEN employee_count = 0 THEN 0
-            WHEN readiness_status IN ('ready', 'partial', 'benchmark_internal') THEN 3
+            WHEN readiness_status IN ('ready', 'benchmark_internal') THEN 3
             ELSE 0
         END AS scenario_count_calc
     FROM features
@@ -37,9 +37,8 @@ SELECT
     CASE
         WHEN employee_count = 0 THEN 'blocked'
         WHEN scenario_count_calc = 0 THEN 'blocked'
-        WHEN readiness_status = 'benchmark_internal' THEN 'benchmark_internal'
+        WHEN readiness_status IN ('ready', 'benchmark_internal') THEN 'ready'
         WHEN readiness_status = 'partial' THEN 'partial'
-        WHEN readiness_status = 'ready' THEN 'ready'
         ELSE 'blocked'
     END AS input_status,
     CASE
@@ -124,6 +123,7 @@ SELECT
     blockers,
     CASE
         WHEN scenario_count_calc = 0 THEN 'missing_simulation_inputs'
+        WHEN readiness_status = 'partial' THEN 'missing_simulation_inputs'
         WHEN readiness_status = 'insufficient_data' THEN 'missing_simulation_inputs'
         ELSE NULL
     END AS blocked_reason,
