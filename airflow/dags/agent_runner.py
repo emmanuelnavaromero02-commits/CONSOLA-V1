@@ -165,7 +165,7 @@ def find_due_agents(**context):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, cartridge_id, slug, name, extra "
+                "SELECT id, cartridge_id, slug, name, extra, tenant_id, workspace_id "
                 "FROM agents WHERE is_active = TRUE AND extra ? 'schedule'"
             )
             rows = cur.fetchall()
@@ -173,7 +173,7 @@ def find_due_agents(**context):
         conn.close()
 
     due = []
-    for agent_id, cartridge_id, slug, name, extra in rows:
+    for agent_id, cartridge_id, slug, name, extra, tenant_id, workspace_id in rows:
         if not isinstance(extra, dict):
             try:
                 extra = json.loads(extra)
@@ -196,6 +196,8 @@ def find_due_agents(**context):
             "cartridge_id":      cartridge_id,
             "slug":              slug,
             "name":              name,
+            "tenant_id":         str(tenant_id) if tenant_id else None,
+            "workspace_id":      str(workspace_id) if workspace_id else None,
             "prompt":            sched.get("prompt") or "Ejecuta tu tarea programada.",
             "scheduled_fire_at": fire_at.isoformat(),
             "schedule_key":      str(sched.get("key") or "default"),
@@ -225,6 +227,8 @@ def invoke_each(**context):
                 url,
                 json={
                     "message": agent["prompt"],
+                    "tenant_id": agent.get("tenant_id"),
+                    "workspace_id": agent.get("workspace_id"),
                     "scheduled_fire_at": agent.get("scheduled_fire_at"),
                     "schedule_key": agent.get("schedule_key") or "default",
                     "airflow_dag_run_id": context["run_id"],
