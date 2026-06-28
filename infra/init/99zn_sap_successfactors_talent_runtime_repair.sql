@@ -16,7 +16,7 @@ SELECT
     'talent_benchmark_internal.v1.approved' AS benchmark_version,
     TRUE AS enabled,
     TRUE AS approved,
-    'system:tenant_admin_request' AS approved_by,
+    NULL AS approved_by,
     NULL AS approved_at,
     'wb_talento_operational_activation' AS approval_source,
     0.80 AS minimum_profile_coverage,
