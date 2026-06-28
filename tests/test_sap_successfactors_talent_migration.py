@@ -11,6 +11,8 @@ AGENTOPS_CONTRACT_V2 = REPO_ROOT / "infra" / "init" / "99zi_sap_successfactors_t
 AGENTOPS_READY_REPAIR = REPO_ROOT / "infra" / "init" / "99zk_sap_successfactors_talent_agentops_ready_only.sql"
 DATASET_CONTRACT_REPAIR = REPO_ROOT / "infra" / "init" / "99zl_sap_successfactors_talent_dataset_contract_patch.sql"
 OPERATIONAL_ACTIVATION = REPO_ROOT / "infra" / "init" / "99zm_sap_successfactors_talent_operational_activation.sql"
+RUNTIME_REPAIR = REPO_ROOT / "infra" / "init" / "99zn_sap_successfactors_talent_runtime_repair.sql"
+GOLD_BENCHMARK_REPAIR = REPO_ROOT / "infra" / "init_gold" / "36_sap_successfactors_talent_benchmark_repair.sql"
 BENCHMARK_DATASET = REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets" / "sap_successfactors_talent_benchmark_internal.sql"
 
 TALENT_DATASETS = {
@@ -90,12 +92,15 @@ def test_talent_agentops_monitor_uses_feature_pack_inputs():
         + AGENTOPS_READY_REPAIR.read_text(encoding="utf-8")
         + DATASET_CONTRACT_REPAIR.read_text(encoding="utf-8")
         + OPERATIONAL_ACTIVATION.read_text(encoding="utf-8")
+        + RUNTIME_REPAIR.read_text(encoding="utf-8")
     )
 
     assert "sap_successfactors_talent_simulation_inputs" in sql
     assert "input_variables_json" in sql
     assert "missing_simulation_inputs" in sql
     assert '"ready_statuses": ["ready"]' in sql
+    assert '"name": "bayesian_calibration"' in sql
+    assert '"calibration_group": "sap_successfactors:talent_readiness"' in sql
     assert "WHEN readiness_status IN ('ready', 'benchmark_internal') THEN 3" in sql
     assert "WHEN readiness_status = 'partial' THEN 'missing_simulation_inputs'" in sql
     assert '"baseline_value": {"type": "fixed", "value": 100}' not in sql
@@ -105,6 +110,8 @@ def test_talent_benchmark_internal_is_approved_operational_fallback():
     sql = (
         OPERATIONAL_CONTRACT_V2.read_text(encoding="utf-8")
         + OPERATIONAL_ACTIVATION.read_text(encoding="utf-8")
+        + RUNTIME_REPAIR.read_text(encoding="utf-8")
+        + GOLD_BENCHMARK_REPAIR.read_text(encoding="utf-8")
         + BENCHMARK_DATASET.read_text(encoding="utf-8")
     )
 
@@ -115,3 +122,14 @@ def test_talent_benchmark_internal_is_approved_operational_fallback():
     assert "wb_talento_operational_activation" in sql
     assert "talent_benchmark_internal.v1.disabled" not in sql
     assert "disabled_by_default" not in sql
+
+
+def test_talent_gold_benchmark_repair_updates_existing_materialized_rows():
+    sql = GOLD_BENCHMARK_REPAIR.read_text(encoding="utf-8")
+
+    assert "gold_sap_successfactors_talent_benchmark_internal" in sql
+    assert "enabled = TRUE" in sql
+    assert "approved = TRUE" in sql
+    assert "talent_benchmark_internal.v1.approved" in sql
+    assert "wb_talento_operational_activation" in sql
+    assert "schema_migrations" in sql

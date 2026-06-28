@@ -140,6 +140,21 @@ payload AS (
                 ]
               },
               {
+                "name": "bayesian_calibration",
+                "enabled": true,
+                "calibration_group": "sap_successfactors:talent_readiness",
+                "model_version": "bayesian_calibration.v1",
+                "limit": 10,
+                "assumptions": {
+                  "basis": "Estado historico agregado de readiness de talento.",
+                  "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
+                  "decision_mode": "recommendation_only"
+                },
+                "evidence_refs": [
+                  {"type": "calibration_group", "id": "sap_successfactors:talent_readiness"}
+                ]
+              },
+              {
                 "name": "decision_orchestrator",
                 "enabled": true,
                 "source_type": "wisdom_bit",
@@ -186,6 +201,11 @@ payload AS (
                     "evidence_refs": [
                       {"type": "wisdom_bit", "id": "WB-TALENTO"}
                     ]
+                  },
+                  "bayesian_calibration": {
+                    "calibration_group": "sap_successfactors:talent_readiness",
+                    "model_version": "bayesian_calibration.v1",
+                    "limit": 10
                   }
                 }
               }

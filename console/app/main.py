@@ -7901,6 +7901,24 @@ def _successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any]
                     "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
                 },
                 {
+                    "name": "bayesian_calibration",
+                    "enabled": True,
+                    "calibration_group": "sap_successfactors:talent_readiness",
+                    "model_version": "bayesian_calibration.v1",
+                    "limit": 10,
+                    "assumptions": {
+                        "basis": "Estado historico agregado de readiness de talento.",
+                        "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
+                        "decision_mode": "recommendation_only",
+                    },
+                    "evidence_refs": [
+                        {
+                            "type": "calibration_group",
+                            "id": "sap_successfactors:talent_readiness",
+                        }
+                    ],
+                },
+                {
                     "name": "decision_orchestrator",
                     "enabled": True,
                     "source_type": "wisdom_bit",
@@ -7943,7 +7961,12 @@ def _successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any]
                                 "decision_mode": "recommendation_only",
                             },
                             "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-                        }
+                        },
+                        "bayesian_calibration": {
+                            "calibration_group": "sap_successfactors:talent_readiness",
+                            "model_version": "bayesian_calibration.v1",
+                            "limit": 10,
+                        },
                     },
                 },
             ],

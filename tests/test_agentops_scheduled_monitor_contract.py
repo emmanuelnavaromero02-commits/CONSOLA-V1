@@ -52,6 +52,19 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert 'conversation_id=f"agent_run:' not in source
 
 
+def test_successfactors_runtime_monitor_contract_keeps_bayes_engine():
+    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
+    section = source.split("def _successfactors_talent_monitor_contract", 1)[1].split(
+        "async def _ensure_successfactors_talent_monitor", 1
+    )[0]
+
+    assert '"name": "monte_carlo"' in section
+    assert '"name": "bayesian_calibration"' in section
+    assert '"calibration_group": "sap_successfactors:talent_readiness"' in section
+    assert '"name": "decision_orchestrator"' in section
+    assert '"bayesian_calibration": {' in section
+
+
 def test_scheduled_agents_fail_closed_without_monitor_contract():
     source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
     section = source.split("async def api_agents_invoke_scheduled", 1)[1]
