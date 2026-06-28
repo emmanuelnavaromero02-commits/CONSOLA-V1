@@ -128,6 +128,8 @@ def test_talent_gold_benchmark_repair_updates_existing_materialized_rows():
     sql = GOLD_BENCHMARK_REPAIR.read_text(encoding="utf-8")
 
     assert "gold_sap_successfactors_talent_benchmark_internal" in sql
+    assert "CREATE TABLE IF NOT EXISTS schema_migrations" in sql
+    assert "set_clauses" in sql
     assert "enabled = TRUE" in sql
     assert "approved = TRUE" in sql
     assert "talent_benchmark_internal.v1.approved" in sql
