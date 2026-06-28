@@ -51,6 +51,16 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert '"deterministic_monitor": True' in section
     assert 'dataset == "sap_successfactors_talent_simulation_inputs"' in source
     assert 'ready_statuses = {"ready"}' in source
+    assert "async def _get_gold_pool()" in source
+    assert "os.environ.get(\"GOLD_DATABASE_URL\")" in source
+    load_agent_section = source.split("async def load_agent(", 1)[1].split(
+        "async def load_agent_by_slug", 1
+    )[0]
+    gold_lookup_section = source.split("async def _monitor_latest_gold_row", 1)[1].split(
+        "async def _monitor_resolve_dataset_inputs", 1
+    )[0]
+    assert "pool = await _get_pool()" in load_agent_section
+    assert "pool = await _get_gold_pool()" in gold_lookup_section
     assert "scheduled monitor requires extra.monitor contract" in section
     assert "recommendation_only" in section
     assert 'conversation_id=f"agent_run:' not in source
