@@ -7,44 +7,108 @@
 
 DO $$
 DECLARE
-    has_required_columns BOOLEAN;
+    set_clauses TEXT[] := ARRAY[]::TEXT[];
+    update_sql TEXT;
 BEGIN
     IF to_regclass('public.gold_sap_successfactors_talent_benchmark_internal') IS NULL THEN
         RETURN;
     END IF;
 
-    SELECT COUNT(*) = 8
-      INTO has_required_columns
-      FROM information_schema.columns
-     WHERE table_schema = 'public'
-       AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
-       AND column_name IN (
-           'benchmark_version',
-           'enabled',
-           'approved',
-           'approved_by',
-           'approval_source',
-           'blockers',
-           'contract_version',
-           'materialized_at'
-       );
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'benchmark_version'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'benchmark_version = ''talent_benchmark_internal.v1.approved''');
+    END IF;
 
-    IF NOT has_required_columns THEN
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'enabled'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'enabled = TRUE');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'approved'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'approved = TRUE');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'approved_by'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'approved_by = ''system:tenant_admin_request''');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'approval_source'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'approval_source = ''wb_talento_operational_activation''');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'blockers'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'blockers = ''[]''');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'contract_version'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'contract_version = ''talent_benchmark_internal.v1''');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
+           AND column_name = 'materialized_at'
+    ) THEN
+        set_clauses := array_append(set_clauses, 'materialized_at = NOW()');
+    END IF;
+
+    IF array_length(set_clauses, 1) IS NULL THEN
         RETURN;
     END IF;
 
-    EXECUTE $sql$
-        UPDATE public.gold_sap_successfactors_talent_benchmark_internal
-           SET benchmark_version = 'talent_benchmark_internal.v1.approved',
-               enabled = TRUE,
-               approved = TRUE,
-               approved_by = 'system:tenant_admin_request',
-               approval_source = 'wb_talento_operational_activation',
-               blockers = '[]',
-               contract_version = 'talent_benchmark_internal.v1',
-               materialized_at = NOW()
-    $sql$;
+    update_sql := format(
+        'UPDATE public.gold_sap_successfactors_talent_benchmark_internal SET %s',
+        array_to_string(set_clauses, ', ')
+    );
+    EXECUTE update_sql;
 END $$;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 INSERT INTO schema_migrations(filename, applied_at)
 VALUES ('gold/36_sap_successfactors_talent_benchmark_repair.sql', NOW())
