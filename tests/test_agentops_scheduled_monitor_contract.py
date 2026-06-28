@@ -23,6 +23,10 @@ def test_airflow_agent_runner_sends_exact_schedule_fire_to_console():
     assert "def _cron_fire_in_window(" in source
     assert '"scheduled_fire_at": fire_at.isoformat()' in source
     assert '"schedule_key":      str(sched.get("key") or "default")' in source
+    assert '"tenant_id":         str(tenant_id) if tenant_id else None' in source
+    assert '"workspace_id":      str(workspace_id) if workspace_id else None' in source
+    assert '"tenant_id": agent.get("tenant_id")' in source
+    assert '"workspace_id": agent.get("workspace_id")' in source
     assert '"scheduled_fire_at": agent.get("scheduled_fire_at")' in source
     assert '"airflow_dag_run_id": context["run_id"]' in source
 
@@ -68,12 +72,16 @@ def test_successfactors_runtime_monitor_contract_keeps_bayes_engine():
 def test_scheduled_agents_fail_closed_without_monitor_contract():
     source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
     section = source.split("async def api_agents_invoke_scheduled", 1)[1]
+    assert "scheduled_user_context = scheduled_scope if scheduled_scope.get(\"workspace_id\") else None" in section
+    assert "load_agent(agent_id, user_context=scheduled_user_context)" in section
     assert "scheduled agents require monitor role and monitor contract" in section
     assert "run_scheduled_monitor" in section
     assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in section
 
     v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
     v1_section = v1_source.split("async def api_agents_invoke_scheduled", 1)[1]
+    assert "scheduled_user_context = scheduled_scope if scheduled_scope.get(\"workspace_id\") else None" in v1_section
+    assert "load_agent(agent_id, user_context=scheduled_user_context)" in v1_section
     assert "scheduled agents require monitor role and monitor contract" in v1_section
     assert "run_scheduled_monitor" in v1_section
     assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in v1_section
