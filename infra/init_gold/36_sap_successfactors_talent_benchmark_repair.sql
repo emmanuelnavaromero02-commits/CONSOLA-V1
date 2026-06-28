@@ -20,6 +20,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'benchmark_version'
+           AND udt_name IN ('text', 'varchar', 'bpchar')
     ) THEN
         set_clauses := array_append(set_clauses, 'benchmark_version = ''talent_benchmark_internal.v1.approved''');
     END IF;
@@ -30,6 +31,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'enabled'
+           AND udt_name = 'bool'
     ) THEN
         set_clauses := array_append(set_clauses, 'enabled = TRUE');
     END IF;
@@ -40,6 +42,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'approved'
+           AND udt_name = 'bool'
     ) THEN
         set_clauses := array_append(set_clauses, 'approved = TRUE');
     END IF;
@@ -50,6 +53,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'approved_by'
+           AND udt_name IN ('text', 'varchar', 'bpchar')
     ) THEN
         set_clauses := array_append(set_clauses, 'approved_by = ''system:tenant_admin_request''');
     END IF;
@@ -60,6 +64,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'approval_source'
+           AND udt_name IN ('text', 'varchar', 'bpchar')
     ) THEN
         set_clauses := array_append(set_clauses, 'approval_source = ''wb_talento_operational_activation''');
     END IF;
@@ -70,6 +75,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'blockers'
+           AND udt_name IN ('jsonb', 'json', 'text', 'varchar', 'bpchar')
     ) THEN
         set_clauses := array_append(set_clauses, 'blockers = ''[]''');
     END IF;
@@ -80,6 +86,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'contract_version'
+           AND udt_name IN ('text', 'varchar', 'bpchar')
     ) THEN
         set_clauses := array_append(set_clauses, 'contract_version = ''talent_benchmark_internal.v1''');
     END IF;
@@ -90,6 +97,7 @@ BEGIN
          WHERE table_schema = 'public'
            AND table_name = 'gold_sap_successfactors_talent_benchmark_internal'
            AND column_name = 'materialized_at'
+           AND udt_name IN ('timestamp', 'timestamptz', 'date')
     ) THEN
         set_clauses := array_append(set_clauses, 'materialized_at = NOW()');
     END IF;
