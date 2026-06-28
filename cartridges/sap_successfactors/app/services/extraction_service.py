@@ -10,7 +10,7 @@ from typing import Any
 from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
-from app.services.watermark_service import get_watermark, update_watermark
+from app.services.watermark_service import get_watermark, touch_watermark_attempt, update_watermark
 
 # Flush a parquet file every BATCH_SIZE rows. Buffer is drained after every
 # OData page is appended, so memory stays bounded regardless of total volume —
@@ -281,6 +281,19 @@ def run_entity(
         started_at=datetime.now(timezone.utc),
         requested_run_id=idempotency_key,
     )
+    try:
+        touch_watermark_attempt(
+            entity_name=entity,
+            watermark_field=watermark_field,
+            last_run_id=run_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "sap_successfactors_watermark_attempt_touch_failed entity=%s run_id=%s",
+            entity,
+            run_id,
+            exc_info=True,
+        )
 
     try:
         client = SapSfClient(conn_id=conn_id, security_context=serialized_security_context)

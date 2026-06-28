@@ -7838,6 +7838,198 @@ def _sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict
     return candidates
 
 
+def _successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    allowed_tools = [
+        "mcp-infra__wisdom_bits__run",
+        "mcp-infra__control_room__raise_analysis_alert",
+        "mcp-infra__decision__orchestrate",
+        "mcp-infra__simulation__monte_carlo_run",
+        "mcp-infra__calibration__bayesian_state",
+        "refinement__query_dataset",
+        "refinement__get_schema",
+    ]
+    rag_filter = {"cartridges": ["sap_successfactors"], "kinds": ["document", "schema"]}
+    extra = {
+        "role": "monitor",
+        "category": "control_room",
+        "scope": "workspace",
+        "variables": {},
+        "schedule": {
+            "enabled": True,
+            "cron": "*/15 * * * *",
+            "tz": "UTC",
+            "prompt": "Ejecuta el monitor WB-TALENTO con evidencia agregada y recommendation_only.",
+        },
+        "monitor": {
+            "engine": "wisdom_bit",
+            "wisdom_bit_id": "WB-TALENTO",
+            "dataset": "sap_successfactors_talent_operational_features",
+            "threshold": {
+                "status_not_in": ["ready"],
+                "min_signal_count": 1,
+                "blockers_present": True,
+            },
+            "severity": "medium",
+            "dedup_key": "sap_successfactors:WB-TALENTO:workspace",
+            "recommended_action": "Revisar blockers C/P/A y priorizar acciones supervisadas en Control Room.",
+            "recommendation_only": True,
+            "writeback_enabled": False,
+            "engines": [
+                {
+                    "name": "monte_carlo",
+                    "enabled": True,
+                    "source_type": "wisdom_bit",
+                    "source_id": "WB-TALENTO",
+                    "horizon_days": 30,
+                    "iterations": 1000,
+                    "seed": 45120,
+                    "model_version": "wb-talento.monitor.v2",
+                    "output_metric": "delta",
+                    "breach_threshold": -5,
+                    "breach_direction": "below",
+                    "input_dataset": "sap_successfactors_talent_simulation_inputs",
+                    "input_variables_field": "input_variables_json",
+                    "assumptions_field": "assumptions_json",
+                    "evidence_refs_field": "evidence_refs_json",
+                    "status_field": "input_status",
+                    "ready_statuses": ["ready"],
+                    "assumptions": {
+                        "basis": "Agregado WB-TALENTO desde Gold operativo.",
+                        "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
+                        "decision_mode": "recommendation_only",
+                    },
+                    "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
+                },
+                {
+                    "name": "decision_orchestrator",
+                    "enabled": True,
+                    "source_type": "wisdom_bit",
+                    "source_id": "WB-TALENTO",
+                    "title": "Decision operativa WB-TALENTO",
+                    "description": "Evaluar senales agregadas de talento con seguimiento supervisado.",
+                    "time_horizon": "30d",
+                    "metrics": {
+                        "risk_metric": "talent_readiness_delta",
+                        "target": "recommendation_only",
+                        "privacy": "aggregated",
+                    },
+                    "constraints": {
+                        "recommendation_only": True,
+                        "no_external_writeback": True,
+                        "no_pii": True,
+                    },
+                    "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
+                    "execute_engines": True,
+                    "engine_inputs": {
+                        "monte_carlo": {
+                            "source_type": "wisdom_bit",
+                            "source_id": "WB-TALENTO",
+                            "horizon_days": 30,
+                            "iterations": 1000,
+                            "seed": 45120,
+                            "model_version": "wb-talento.monitor.v2",
+                            "input_dataset": "sap_successfactors_talent_simulation_inputs",
+                            "input_variables_field": "input_variables_json",
+                            "assumptions_field": "assumptions_json",
+                            "evidence_refs_field": "evidence_refs_json",
+                            "status_field": "input_status",
+                            "ready_statuses": ["ready"],
+                            "output_metric": "delta",
+                            "breach_threshold": -5,
+                            "breach_direction": "below",
+                            "assumptions": {
+                                "basis": "Agregado WB-TALENTO.",
+                                "privacy": "Sin PII.",
+                                "decision_mode": "recommendation_only",
+                            },
+                            "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
+                        }
+                    },
+                },
+            ],
+        },
+    }
+    return allowed_tools, rag_filter, extra
+
+
+async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        return
+    allowed_tools, rag_filter, extra = _successfactors_talent_monitor_contract()
+    pool = await _get_db_pool()
+    try:
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            updated = await conn.execute(
+                """
+                UPDATE agents
+                   SET description = $4,
+                       instructions = $5,
+                       personality = $6,
+                       allowed_tools = $7::jsonb,
+                       rag_filter = $8::jsonb,
+                       model = 'claude-sonnet-4-6',
+                       max_tokens = 2400,
+                       temperature = 0.2,
+                       extra = $9::jsonb,
+                       is_active = TRUE,
+                       updated_at = NOW()
+                 WHERE tenant_id = $1::uuid
+                   AND workspace_id = $2::uuid
+                   AND cartridge_id = 'sap_successfactors'
+                   AND slug = $3
+                """,
+                tenant_id,
+                workspace_id,
+                "sap_successfactors_talent_monitor",
+                "Monitor programado de WB-TALENTO con evidencia agregada y recommendation_only.",
+                "Eres el monitor operativo de SuccessFactors Talent. Usa solo evidencia agregada, no expongas PII, no escribas en SuccessFactors y mantén todas las salidas en recommendation_only.",
+                "Operativo, sobrio y auditable. Idioma del usuario.",
+                json.dumps(allowed_tools, ensure_ascii=False),
+                json.dumps(rag_filter, ensure_ascii=False),
+                json.dumps(extra, ensure_ascii=False, sort_keys=True),
+            )
+            if str(updated).endswith(" 0"):
+                await conn.execute(
+                    """
+                    INSERT INTO agents (
+                        tenant_id, workspace_id, cartridge_id, slug, name, description,
+                        instructions, personality, allowed_tools, rag_filter, model,
+                        max_tokens, temperature, extra, is_active
+                    )
+                    SELECT
+                        $1::uuid, $2::uuid, 'sap_successfactors',
+                        'sap_successfactors_talent_monitor',
+                        'Talent AgentOps Monitor',
+                        $3, $4, $5, $6::jsonb, $7::jsonb,
+                        'claude-sonnet-4-6', 2400, 0.2, $8::jsonb, TRUE
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                          FROM agents
+                         WHERE workspace_id = $2::uuid
+                           AND cartridge_id = 'sap_successfactors'
+                           AND slug = 'sap_successfactors_talent_monitor'
+                    )
+                    """,
+                    tenant_id,
+                    workspace_id,
+                    "Monitor programado de WB-TALENTO con evidencia agregada y recommendation_only.",
+                    "Eres el monitor operativo de SuccessFactors Talent. Usa solo evidencia agregada, no expongas PII, no escribas en SuccessFactors y mantén todas las salidas en recommendation_only.",
+                    "Operativo, sobrio y auditable. Idioma del usuario.",
+                    json.dumps(allowed_tools, ensure_ascii=False),
+                    json.dumps(rag_filter, ensure_ascii=False),
+                    json.dumps(extra, ensure_ascii=False, sort_keys=True),
+                )
+    except Exception:
+        logger.warning(
+            "Could not ensure SuccessFactors Talent AgentOps monitor for workspace=%s",
+            workspace_id,
+            exc_info=True,
+        )
+
+
 async def _run_sync_agentops_monitors(
     *,
     cartridge: str,
@@ -7850,6 +8042,8 @@ async def _run_sync_agentops_monitors(
     checked_at = checked_at_dt.isoformat()
     sync_fire_at = _dt(1970, 1, 1, tzinfo=_tz.utc)
     schedule_key = f"sync-now:{uuid.uuid5(uuid.NAMESPACE_URL, sync_run_id)}"
+    if cartridge == "sap_successfactors":
+        await _ensure_successfactors_talent_monitor(user)
     agents = await _agents.list_agents(
         cartridge_id=cartridge,
         include_inactive=False,

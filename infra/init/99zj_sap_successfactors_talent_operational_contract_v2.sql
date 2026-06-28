@@ -73,7 +73,7 @@ SELECT seed.name,
   FROM target_workspace tw
  CROSS JOIN (
     VALUES
-    ('sap_successfactors_talent_benchmark_internal', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Benchmark interno Talent disabled por defecto.', '{}'::jsonb, NULL),
+    ('sap_successfactors_talent_benchmark_internal', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Benchmark interno Talent aprobado para fallback operativo.', '{}'::jsonb, NULL),
     ('sap_successfactors_talent_operational_features', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Feature pack agregado WB-TALENTO.', '{}'::jsonb, NULL),
     ('sap_successfactors_talent_simulation_inputs', 'gold', 'sap_successfactors', '[]'::jsonb, 'SELECT 1 AS placeholder', 'Inputs agregados WB-TALENTO.', '{}'::jsonb, NULL)
  ) AS seed(name, layer, cartridge, sources, sql_def, description, column_mapping, schedule)
@@ -90,16 +90,16 @@ UPDATE datasets
        sql_def = $sql$
 -- sap_successfactors_talent_benchmark_internal  (gold)  cartridge: sap_successfactors
 -- sources: ["config/sap_successfactors/talent_benchmark_internal"]
--- description: Contrato interno versionado para clasificacion Talent. Disabled por defecto; no clasifica sin aprobacion explicita.
+-- description: Contrato interno versionado para clasificacion Talent. Fallback operativo aprobado y auditable cuando C/P/A real no esta expuesto por el tenant.
 
 SELECT
     'WB-TALENTO' AS source_id,
-    'talent_benchmark_internal.v1.disabled' AS benchmark_version,
-    FALSE AS enabled,
-    FALSE AS approved,
-    NULL AS approved_by,
+    'talent_benchmark_internal.v1.approved' AS benchmark_version,
+    TRUE AS enabled,
+    TRUE AS approved,
+    'system:tenant_admin_request' AS approved_by,
     NULL AS approved_at,
-    'disabled_by_default' AS approval_source,
+    'wb_talento_operational_activation' AS approval_source,
     0.80 AS minimum_profile_coverage,
     80.0 AS readiness_high_threshold,
     60.0 AS readiness_medium_threshold,
@@ -110,11 +110,11 @@ SELECT
     0.60 AS competency_weight,
     0.25 AS role_coverage_weight,
     0.15 AS tenure_weight,
-    '["benchmark_internal_not_configured"]' AS blockers,
+    '[]' AS blockers,
     'talent_benchmark_internal.v1' AS contract_version,
     CURRENT_TIMESTAMP AS materialized_at
 $sql$,
-       description = 'Benchmark interno versionado para WB-TALENTO; disabled por defecto.',
+       description = 'Benchmark interno versionado aprobado para WB-TALENTO.',
        updated_at = NOW()
  WHERE name = 'sap_successfactors_talent_benchmark_internal'
    AND cartridge = 'sap_successfactors';
