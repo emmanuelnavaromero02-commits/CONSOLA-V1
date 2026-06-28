@@ -530,6 +530,17 @@ def _monitor_clean_args(args: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in args.items() if value is not None}
 
 
+def _safe_error_text(error: Any) -> str:
+    if error is None:
+        return ""
+    if isinstance(error, str):
+        return error
+    try:
+        return json.dumps(error, ensure_ascii=True, sort_keys=True, default=str)
+    except Exception:
+        return str(error)
+
+
 def _monitor_json_obj(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
@@ -667,6 +678,91 @@ async def _monitor_resolve_dataset_inputs(
     resolved["assumptions"] = assumptions
     resolved["evidence_refs"] = evidence_refs
     return resolved, None, row
+
+
+def _monitor_monte_carlo_tool_args(
+    spec: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    wisdom_bit_id: str,
+) -> dict[str, Any] | None:
+    input_variables = spec.get("input_variables")
+    if not isinstance(input_variables, dict) or not input_variables:
+        return None
+    seed = spec.get("seed")
+    return _monitor_clean_args({
+        "source_type": str(spec.get("source_type") or "signal"),
+        "source_id": str(spec.get("source_id") or payload.get("wisdom_bit_id") or wisdom_bit_id),
+        "horizon_days": int(spec.get("horizon_days") or 30),
+        "iterations": int(spec.get("iterations") or 1000),
+        "seed": int(seed) if seed is not None else None,
+        "model_version": spec.get("model_version"),
+        "input_variables": input_variables,
+        "assumptions": (
+            spec.get("assumptions") if isinstance(spec.get("assumptions"), dict) else {}
+        ),
+        "output_metric": str(spec.get("output_metric") or "net_value"),
+        "breach_threshold": spec.get("breach_threshold"),
+        "breach_direction": spec.get("breach_direction"),
+        "evidence_refs": (
+            spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else []
+        ),
+        "options": spec.get("options") if isinstance(spec.get("options"), list) else None,
+    })
+
+
+async def _monitor_resolve_decision_engine_inputs(
+    agent: Agent,
+    raw_engine_inputs: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    wisdom_bit_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    resolved_inputs: dict[str, Any] = {}
+    blockers: list[dict[str, Any]] = []
+
+    raw_monte_carlo = raw_engine_inputs.get("monte_carlo")
+    if isinstance(raw_monte_carlo, dict):
+        resolved_spec, blocked_reason, input_row = await _monitor_resolve_dataset_inputs(
+            agent,
+            raw_monte_carlo,
+        )
+        if blocked_reason:
+            blocker = {
+                "engine": "monte_carlo",
+                "reason": blocked_reason,
+                "source_dataset": raw_monte_carlo.get("input_dataset"),
+            }
+            if isinstance(input_row, dict):
+                status_field = str(raw_monte_carlo.get("status_field") or "input_status")
+                blocker["input_status"] = str(input_row.get(status_field) or "")
+            blockers.append(blocker)
+        else:
+            monte_carlo_args = _monitor_monte_carlo_tool_args(
+                resolved_spec or raw_monte_carlo,
+                payload=payload,
+                wisdom_bit_id=wisdom_bit_id,
+            )
+            if monte_carlo_args:
+                resolved_inputs["monte_carlo"] = monte_carlo_args
+            else:
+                blockers.append(
+                    {
+                        "engine": "monte_carlo",
+                        "reason": "missing_simulation_inputs",
+                        "source_dataset": raw_monte_carlo.get("input_dataset"),
+                    }
+                )
+
+    raw_bayes = raw_engine_inputs.get("bayesian_calibration")
+    if isinstance(raw_bayes, dict):
+        resolved_inputs["bayesian_calibration"] = _monitor_clean_args({
+            "calibration_group": raw_bayes.get("calibration_group"),
+            "model_version": raw_bayes.get("model_version"),
+            "limit": raw_bayes.get("limit"),
+        })
+
+    return resolved_inputs, blockers
 
 
 def _monitor_engine_ref(result: dict[str, Any]) -> dict[str, Any]:
@@ -851,7 +947,7 @@ async def _audit_agent_tool(
     args: dict,
     risk_level: str,
     status: str,
-    error: str | None = None,
+    error: Any | None = None,
 ) -> None:
     metadata: dict[str, Any] = {
         "agent_id": agent.id,
@@ -860,8 +956,9 @@ async def _audit_agent_tool(
         "server": server_id,
         "run_id": run_id,
     }
-    if error:
-        metadata["error"] = error[:500]
+    error_text = _safe_error_text(error)
+    if error_text:
+        metadata["error"] = error_text[:500]
     await audit_service.record_event(
         user_id=user.get("id") if user else None,
         email=user.get("email") if user else "agent-runner@omega.local",
@@ -906,15 +1003,16 @@ def _make_invoke(
         risk = meta["risk_level"]
         scrubbed = tool_policy.clip_args(tool_policy.scrub_args(raw_args))
 
-        async def deny(status: str, message: str, *, required_permission: str | None = None) -> dict:
+        async def deny(status: str, message: Any, *, required_permission: str | None = None) -> dict:
+            message_text = _safe_error_text(message) or status
             await _audit_agent_tool(
                 agent=agent, run_id=run_id, user=user, server_id=server_id,
                 tool=tool, args=raw_args, risk_level=risk, status=status,
-                error=message,
+                error=message_text,
             )
             out = {
                 "error": status,
-                "message": message,
+                "message": message_text,
                 "tool": tool,
                 "server": server_id,
                 "risk_level": risk,
@@ -1612,6 +1710,34 @@ async def run_scheduled_monitor(
                         }
                     )
                     continue
+                raw_engine_inputs = (
+                    spec.get("engine_inputs")
+                    if isinstance(spec.get("engine_inputs"), dict)
+                    else {}
+                )
+                decision_engine_inputs, decision_input_blockers = await _monitor_resolve_decision_engine_inputs(
+                    agent,
+                    raw_engine_inputs,
+                    payload=payload,
+                    wisdom_bit_id=wisdom_bit_id,
+                )
+                decision_metrics = {
+                    **(
+                        spec.get("metrics")
+                        if isinstance(spec.get("metrics"), dict)
+                        else {}
+                    ),
+                    **(
+                        {
+                            "upstream_wisdom_bit_id": wisdom_bit_id,
+                            "upstream_monte_carlo_simulation_id": monte_carlo_run_id,
+                        }
+                        if monte_carlo_run_id
+                        else {"upstream_wisdom_bit_id": wisdom_bit_id}
+                    ),
+                }
+                if decision_input_blockers:
+                    decision_metrics["engine_input_blockers"] = decision_input_blockers
                 result = await _call(
                     "mcp-infra__decision__orchestrate",
                     _monitor_clean_args({
@@ -1619,27 +1745,13 @@ async def run_scheduled_monitor(
                         "source_id": source_id,
                         "title": spec.get("title"),
                         "description": spec.get("description"),
-                        "metrics": {
-                            **(
-                                spec.get("metrics")
-                                if isinstance(spec.get("metrics"), dict)
-                                else {}
-                            ),
-                            **(
-                                {
-                                    "upstream_wisdom_bit_id": wisdom_bit_id,
-                                    "upstream_monte_carlo_simulation_id": monte_carlo_run_id,
-                                }
-                                if monte_carlo_run_id
-                                else {"upstream_wisdom_bit_id": wisdom_bit_id}
-                            ),
-                        },
+                        "metrics": decision_metrics,
                         "entities": spec.get("entities") if isinstance(spec.get("entities"), list) else [],
                         "time_horizon": spec.get("time_horizon"),
                         "constraints": spec.get("constraints") if isinstance(spec.get("constraints"), dict) else {},
                         "evidence_refs": spec.get("evidence_refs") if isinstance(spec.get("evidence_refs"), list) else [],
                         "execute_engines": bool(spec.get("execute_engines", True)),
-                        "engine_inputs": spec.get("engine_inputs") if isinstance(spec.get("engine_inputs"), dict) else {},
+                        "engine_inputs": decision_engine_inputs,
                     }),
                 )
                 engine_results.append(

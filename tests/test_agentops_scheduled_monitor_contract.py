@@ -53,6 +53,8 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert 'ready_statuses = {"ready"}' in source
     assert "async def _get_gold_pool()" in source
     assert "os.environ.get(\"GOLD_DATABASE_URL\")" in source
+    assert "async def _monitor_resolve_decision_engine_inputs" in source
+    assert '"engine_inputs": decision_engine_inputs' in section
     load_agent_section = source.split("async def load_agent(", 1)[1].split(
         "async def load_agent_by_slug", 1
     )[0]
@@ -64,6 +66,24 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert "scheduled monitor requires extra.monitor contract" in section
     assert "recommendation_only" in section
     assert 'conversation_id=f"agent_run:' not in source
+
+
+def test_agent_runtime_audit_normalizes_structured_tool_errors():
+    source = (ROOT / "console/app/services/agent_runtime.py").read_text(encoding="utf-8")
+    audit_section = source.split("async def _audit_agent_tool", 1)[1].split(
+        "def _make_invoke", 1
+    )[0]
+    deny_section = source.split("async def deny", 1)[1].split(
+        "if full_name not in allowed_full", 1
+    )[0]
+
+    assert "def _safe_error_text(error: Any) -> str:" in source
+    assert "error: Any | None = None" in audit_section
+    assert "error_text = _safe_error_text(error)" in audit_section
+    assert 'metadata["error"] = error_text[:500]' in audit_section
+    assert "error[:500]" not in audit_section
+    assert "message_text = _safe_error_text(message) or status" in deny_section
+    assert '"message": message_text' in deny_section
 
 
 def test_successfactors_runtime_monitor_contract_keeps_bayes_engine():
