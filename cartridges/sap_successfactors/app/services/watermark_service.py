@@ -83,6 +83,37 @@ def update_watermark(
         conn.close()
 
 
+def touch_watermark_attempt(
+    entity_name: str,
+    watermark_field: str | None,
+    last_run_id: str,
+) -> None:
+    """Record that an entity was attempted without advancing its watermark value."""
+    scope, tenant_id, workspace_id = _watermark_scope()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            _set_db_scope(cur, tenant_id, workspace_id)
+            cur.execute(
+                """
+                INSERT INTO entity_watermarks
+                    (cartridge_id, entity_name, watermark_field, last_watermark_value, last_run_id,
+                     tenant_id, workspace_id, watermark_scope)
+                VALUES (%s, %s, %s, NULL, %s, %s::uuid, %s::uuid, %s)
+                ON CONFLICT (watermark_scope, cartridge_id, entity_name) DO UPDATE SET
+                    watermark_field = COALESCE(EXCLUDED.watermark_field, entity_watermarks.watermark_field),
+                    last_run_id = EXCLUDED.last_run_id,
+                    tenant_id = EXCLUDED.tenant_id,
+                    workspace_id = EXCLUDED.workspace_id,
+                    updated_at = NOW()
+                """,
+                (_CARTRIDGE_ID, entity_name, watermark_field, last_run_id, tenant_id, workspace_id, scope),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def list_watermarks() -> list[dict]:
     scope, tenant_id, workspace_id = _watermark_scope()
     conn = get_connection()
