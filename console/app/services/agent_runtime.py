@@ -173,7 +173,9 @@ class Agent:
 import asyncio as _asyncio
 
 _pool: asyncpg.Pool | None = None
+_gold_pool: asyncpg.Pool | None = None
 _pool_lock = _asyncio.Lock()
+_gold_pool_lock = _asyncio.Lock()
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -191,12 +193,32 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def _get_gold_pool() -> asyncpg.Pool:
+    global _gold_pool
+    if _gold_pool is not None:
+        return _gold_pool
+    async with _gold_pool_lock:
+        if _gold_pool is None:
+            dsn = (
+                os.environ.get("GOLD_DATABASE_URL")
+                or os.environ.get("DATABASE_URL", "")
+            ).replace("postgresql+psycopg2://", "postgresql://")
+            _gold_pool = await asyncpg.create_pool(
+                dsn, min_size=1, max_size=4, command_timeout=30,
+            )
+    return _gold_pool
+
+
 async def close_pool() -> None:
-    global _pool
+    global _pool, _gold_pool
     async with _pool_lock:
         if _pool is not None:
             await _pool.close()
             _pool = None
+    async with _gold_pool_lock:
+        if _gold_pool is not None:
+            await _gold_pool.close()
+            _gold_pool = None
 
 
 # ── Loaders ──────────────────────────────────────────────────────────────────
@@ -540,7 +562,7 @@ async def _monitor_latest_gold_row(agent: Agent, dataset: str) -> dict[str, Any]
     if not workspace_id:
         return None
     table = f"gold_{dataset}"
-    pool = await _get_pool()
+    pool = await _get_gold_pool()
 
     async def _load(conn):
         exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
