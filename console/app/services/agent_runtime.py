@@ -1698,9 +1698,9 @@ async def run_scheduled_monitor(
                 monte_carlo_run_id = _monitor_completed_engine_run_id(
                     engine_results, "monte_carlo"
                 )
-                if monte_carlo_run_id and source_type in {"", "wisdom_bit"}:
-                    source_type = "monte_carlo_simulation"
-                    source_id = monte_carlo_run_id
+                if monte_carlo_run_id and not source_type:
+                    source_type = "wisdom_bit"
+                    source_id = wisdom_bit_id
                 if not source_type or not source_id:
                     engine_results.append(
                         {
