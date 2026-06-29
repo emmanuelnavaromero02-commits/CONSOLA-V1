@@ -7819,6 +7819,11 @@ def _sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict
     for agent in agents:
         if not agent.get("is_active", True):
             continue
+        if not (
+            str(agent.get("tenant_id") or "").strip()
+            and str(agent.get("workspace_id") or "").strip()
+        ):
+            continue
         extra = agent.get("extra") if isinstance(agent.get("extra"), dict) else {}
         role = str((extra or {}).get("role") or "").strip().lower()
         monitor = (extra or {}).get("monitor")
@@ -7984,60 +7989,36 @@ async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
     allowed_tools, rag_filter, extra = _successfactors_talent_monitor_contract()
     pool = await _get_db_pool()
     try:
-        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-            updated = await conn.execute(
-                """
-                UPDATE agents
-                   SET description = $4,
-                       instructions = $5,
-                       personality = $6,
-                       allowed_tools = $7::jsonb,
-                       rag_filter = $8::jsonb,
-                       model = 'claude-sonnet-4-6',
-                       max_tokens = 2400,
-                       temperature = 0.2,
-                       extra = $9::jsonb,
-                       is_active = TRUE,
-                       updated_at = NOW()
-                 WHERE tenant_id = $1::uuid
-                   AND workspace_id = $2::uuid
-                   AND cartridge_id = 'sap_successfactors'
-                   AND slug = $3
-                """,
-                tenant_id,
-                workspace_id,
-                "sap_successfactors_talent_monitor",
-                "Monitor programado de WB-TALENTO con evidencia agregada y recommendation_only.",
-                "Eres el monitor operativo de SuccessFactors Talent. Usa solo evidencia agregada, no expongas PII, no escribas en SuccessFactors y mantén todas las salidas en recommendation_only.",
-                "Operativo, sobrio y auditable. Idioma del usuario.",
-                json.dumps(allowed_tools, ensure_ascii=False),
-                json.dumps(rag_filter, ensure_ascii=False),
-                json.dumps(extra, ensure_ascii=False, sort_keys=True),
-            )
-            if str(updated).endswith(" 0"):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
                 await conn.execute(
+                    "SELECT set_config('app.tenant_id', $1, true), "
+                    "set_config('app.workspace_id', $2, true)",
+                    tenant_id,
+                    workspace_id,
+                )
+                updated = await conn.execute(
                     """
-                    INSERT INTO agents (
-                        tenant_id, workspace_id, cartridge_id, slug, name, description,
-                        instructions, personality, allowed_tools, rag_filter, model,
-                        max_tokens, temperature, extra, is_active
-                    )
-                    SELECT
-                        $1::uuid, $2::uuid, 'sap_successfactors',
-                        'sap_successfactors_talent_monitor',
-                        'Talent AgentOps Monitor',
-                        $3, $4, $5, $6::jsonb, $7::jsonb,
-                        'claude-sonnet-4-6', 2400, 0.2, $8::jsonb, TRUE
-                    WHERE NOT EXISTS (
-                        SELECT 1
-                          FROM agents
-                         WHERE workspace_id = $2::uuid
-                           AND cartridge_id = 'sap_successfactors'
-                           AND slug = 'sap_successfactors_talent_monitor'
-                    )
+                    UPDATE agents
+                       SET description = $4,
+                           instructions = $5,
+                           personality = $6,
+                           allowed_tools = $7::jsonb,
+                           rag_filter = $8::jsonb,
+                           model = 'claude-sonnet-4-6',
+                           max_tokens = 2400,
+                           temperature = 0.2,
+                           extra = $9::jsonb,
+                           is_active = TRUE,
+                           updated_at = NOW()
+                     WHERE tenant_id = $1::uuid
+                       AND workspace_id = $2::uuid
+                       AND cartridge_id = 'sap_successfactors'
+                       AND slug = $3
                     """,
                     tenant_id,
                     workspace_id,
+                    "sap_successfactors_talent_monitor",
                     "Monitor programado de WB-TALENTO con evidencia agregada y recommendation_only.",
                     "Eres el monitor operativo de SuccessFactors Talent. Usa solo evidencia agregada, no expongas PII, no escribas en SuccessFactors y mantén todas las salidas en recommendation_only.",
                     "Operativo, sobrio y auditable. Idioma del usuario.",
@@ -8045,6 +8026,37 @@ async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
                     json.dumps(rag_filter, ensure_ascii=False),
                     json.dumps(extra, ensure_ascii=False, sort_keys=True),
                 )
+                if str(updated).endswith(" 0"):
+                    await conn.execute(
+                        """
+                        INSERT INTO agents (
+                            tenant_id, workspace_id, cartridge_id, slug, name, description,
+                            instructions, personality, allowed_tools, rag_filter, model,
+                            max_tokens, temperature, extra, is_active
+                        )
+                        SELECT
+                            $1::uuid, $2::uuid, 'sap_successfactors',
+                            'sap_successfactors_talent_monitor',
+                            'Talent AgentOps Monitor',
+                            $3, $4, $5, $6::jsonb, $7::jsonb,
+                            'claude-sonnet-4-6', 2400, 0.2, $8::jsonb, TRUE
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                              FROM agents
+                             WHERE workspace_id = $2::uuid
+                               AND cartridge_id = 'sap_successfactors'
+                               AND slug = 'sap_successfactors_talent_monitor'
+                        )
+                        """,
+                        tenant_id,
+                        workspace_id,
+                        "Monitor programado de WB-TALENTO con evidencia agregada y recommendation_only.",
+                        "Eres el monitor operativo de SuccessFactors Talent. Usa solo evidencia agregada, no expongas PII, no escribas en SuccessFactors y mantén todas las salidas en recommendation_only.",
+                        "Operativo, sobrio y auditable. Idioma del usuario.",
+                        json.dumps(allowed_tools, ensure_ascii=False),
+                        json.dumps(rag_filter, ensure_ascii=False),
+                        json.dumps(extra, ensure_ascii=False, sort_keys=True),
+                    )
     except Exception:
         logger.warning(
             "Could not ensure SuccessFactors Talent AgentOps monitor for workspace=%s",
