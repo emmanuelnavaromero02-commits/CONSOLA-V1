@@ -68,3 +68,23 @@ def test_control_room_raise_alert_is_advisory_write_not_readonly():
     destructive_block = source.split("DESTRUCTIVE_TOOLS = {", 1)[1].split("}", 1)[0]
     assert '"control_room__raise_alert"' not in read_only_block
     assert '"control_room__raise_alert"' not in destructive_block
+
+
+def test_control_room_read_tools_are_readonly_without_approval():
+    manifest = _load_tool_manifest()
+    for name in (
+        "control_room__summary_read",
+        "control_room__dashboard_read",
+        "control_room__ops_summary_read",
+        "control_room__alerts_read",
+        "control_room__agents_ops_read",
+        "control_room__sap_successfactors_gold_kpis_read",
+        "control_room__talent_kpis_read",
+        "control_room__talent_overview_read",
+        "control_room__talent_9box_read",
+        "control_room__talent_metadata_readiness_read",
+        "control_room__decision_intelligence_runs_read",
+    ):
+        meta = manifest.classify_tool(name)
+        assert meta["risk_level"] == "read", name
+        assert meta["requires_approval"] is False, name

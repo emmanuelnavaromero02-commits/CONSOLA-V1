@@ -6,14 +6,15 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.dependencies import require_authenticated
+from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.permissions import require_permission
-from app.services.security_context import build_security_context
+from app.services.security_context import build_security_context, verify_signed_security_context
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
@@ -102,6 +103,134 @@ async def _invalidate_after_write(user: dict, operation: Any) -> Any:
 
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+def _control_room_internal_user(
+    security_context: dict[str, Any],
+    internal_service: str,
+) -> dict[str, Any]:
+    if internal_service != "mcp-infra":
+        raise HTTPException(
+            status_code=403,
+            detail="only mcp-infra can use this internal route",
+        )
+    try:
+        ctx = verify_signed_security_context(security_context)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=403,
+            detail=f"invalid security_context: {exc}",
+        ) from exc
+    if not ctx.get("trusted"):
+        raise HTTPException(status_code=403, detail="trusted security_context required")
+    permissions = {str(item) for item in (ctx.get("permissions") or [])}
+    if "datasets.read" not in permissions:
+        raise HTTPException(status_code=403, detail="permission required: datasets.read")
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        raise HTTPException(status_code=403, detail="tenant/workspace scope required")
+    return {
+        "id": ctx.get("user_id") or 0,
+        "email": ctx.get("email") or "mcp-infra@omega.local",
+        "role": ctx.get("role") or "agent",
+        "workspace_role": ctx.get("workspace_role"),
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "active_tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
+        "allowed_cartridges": list(ctx.get("allowed_cartridges") or []),
+        "agent_id": ctx.get("agent_id"),
+        "agent_slug": ctx.get("agent_slug"),
+        "agent_run_id": ctx.get("agent_run_id"),
+    }
+
+
+def _bounded_int(value: Any, default: int, *, lower: int, upper: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(lower, min(number, upper))
+
+
+async def _control_room_internal_view(
+    view: str,
+    user: dict[str, Any],
+    params: dict[str, Any],
+) -> Any:
+    view = str(view or "").strip()
+    if view == "summary":
+        return await _control_room_cache_get_or_set(
+            "summary",
+            user,
+            lambda: control_room_service.summary(user),
+        )
+    if view == "dashboard":
+        return await _control_room_cache_get_or_set(
+            "dashboard",
+            user,
+            lambda: control_room_service.dashboard(user),
+        )
+    if view == "ops_summary":
+        return await control_room_service.ops_summary(user)
+    if view == "agents_ops":
+        limit = _bounded_int(params.get("limit"), 12, lower=1, upper=50)
+        return await _control_room_cache_get_or_set(
+            f"agents-ops-{limit}",
+            user,
+            lambda: control_room_service.agents_ops(user, limit=limit),
+        )
+    if view == "alerts":
+        return await control_room_service.list_alerts(user)
+    if view == "sap_successfactors_gold_kpis":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-gold-kpis",
+            user,
+            lambda: control_room_service.sap_successfactors_gold_kpis(user),
+        )
+    if view == "sap_successfactors_talent_kpis":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-talent-kpis",
+            user,
+            lambda: control_room_service.sap_successfactors_talent_kpis(user),
+        )
+    if view == "sap_successfactors_talent_overview":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-talent-overview",
+            user,
+            lambda: control_room_service.sap_successfactors_talent_overview(user),
+        )
+    if view == "sap_successfactors_talent_9box":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-talent-9box",
+            user,
+            lambda: control_room_service.sap_successfactors_talent_9box(user),
+        )
+    if view == "sap_successfactors_talent_metadata_readiness":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-talent-metadata-readiness",
+            user,
+            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+        )
+    if view == "decision_intelligence_runs":
+        limit = _bounded_int(params.get("limit"), 50, lower=1, upper=250)
+        return await intelligence_history.list_runs(user, limit=limit)
+    if view == "decision_intelligence_history":
+        limit = _bounded_int(params.get("limit"), 100, lower=1, upper=500)
+        return await intelligence_history.list_history(user, limit=limit)
+    if view == "decision_intelligence_calibration":
+        min_outcomes_required = _bounded_int(
+            params.get("min_outcomes_required"),
+            10,
+            lower=1,
+            upper=1000,
+        )
+        return await intelligence_history.calibration_report(
+            user,
+            min_outcomes_required=min_outcomes_required,
+        )
+    raise HTTPException(status_code=400, detail=f"unsupported control room view: {view}")
 
 
 @router.get("/summary", dependencies=[Depends(require_permission("datasets.read"))])
@@ -250,6 +379,34 @@ async def control_room_decision_intelligence_calibration(
 @router.get("/alerts", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_alerts(user: dict = Depends(require_authenticated)):
     return await control_room_service.list_alerts(user)
+
+
+@router.post("/internal/read")
+async def control_room_internal_read(
+    body: dict = Body(default_factory=dict),
+    internal_service: str = Depends(verify_internal_api_key),
+):
+    """Scoped Control Room read bridge for MCP tools.
+
+    This route intentionally exposes only read views and rebuilds the user
+    scope from the signed security context. It does not accept tenant,
+    workspace or user overrides in the payload.
+    """
+    payload = body if isinstance(body, dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    user = _control_room_internal_user(
+        payload.get("security_context") if isinstance(payload.get("security_context"), dict) else {},
+        internal_service,
+    )
+    view = str(payload.get("view") or "").strip()
+    data = await _control_room_internal_view(view, user, params)
+    return {
+        "ok": True,
+        "view": view,
+        "tenant_id": user["tenant_id"],
+        "workspace_id": user["workspace_id"],
+        "data": data,
+    }
 
 
 @router.post(

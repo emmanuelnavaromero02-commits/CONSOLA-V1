@@ -362,14 +362,33 @@ async def lifespan(app: FastAPI):
     await _run_startup_seed(app, "seed_packaged_hints", _seed_packaged_hints)
     await _run_startup_seed(app, "seed_packaged_apps", _seed_packaged_apps)
     task = asyncio.create_task(_periodic_health_check())
+    copilot_context_task: asyncio.Task | None = None
+    if os.environ.get("COPILOT_CONTEXT_SCHEDULER_ENABLED", "true").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        from app.services import copilot_context_service
+
+        copilot_context_task = asyncio.create_task(
+            copilot_context_service.hourly_scheduler()
+        )
     try:
         yield
     finally:
         task.cancel()
+        if copilot_context_task is not None:
+            copilot_context_task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
+        if copilot_context_task is not None:
+            try:
+                await copilot_context_task
+            except asyncio.CancelledError:
+                pass
         await _auth.close_pool()
         await _tokens.close_pool()
         await job_service.close_pool()

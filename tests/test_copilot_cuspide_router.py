@@ -449,6 +449,84 @@ def test_ask_with_context_passes_context_to_llm(advanced_router_mod, monkeypatch
     assert "ventas_region" in seen["system"]
 
 
+def test_ask_with_context_enriches_control_room_live_context(advanced_router_mod, monkeypatch):
+    api = _make_app(advanced_router_mod)
+    seen: dict = {}
+
+    async def fake_llm(system, messages, **_kw):
+        seen["system"] = system
+        seen["messages"] = messages
+        return "Control Room conectado"
+
+    async def fake_memory(uid, base, **_kw):
+        return base
+
+    async def fake_lessons(*, user_id, workspace_id, base_prompt, intent_hint=None):
+        return base_prompt
+
+    async def fake_ops_summary(user):
+        return {"items": {"total": 3}, "open_items_by_severity": {"high": 1}}
+
+    async def fake_talent_kpis(user):
+        return {"status": "partial", "readiness_status": "benchmark_internal"}
+
+    async def fake_metadata(user):
+        return {"status": "partial", "summary": {"live_required_ready": 2}}
+
+    async def fake_overview(user):
+        return {"status": "partial", "metadata_readiness": {"status": "partial"}}
+
+    async def fake_agents(user, *, limit=12):
+        return {"summary": {"active_agents": 1}, "limit": limit}
+
+    monkeypatch.setattr(advanced_router_mod, "_llm_text_call", fake_llm)
+    monkeypatch.setattr(
+        advanced_router_mod.memory_service,
+        "build_system_prompt_with_memory",
+        fake_memory,
+    )
+    monkeypatch.setattr(
+        advanced_router_mod.lessons_service,
+        "build_system_prompt_with_lessons",
+        fake_lessons,
+    )
+    monkeypatch.setattr(advanced_router_mod.control_room_service, "ops_summary", fake_ops_summary)
+    monkeypatch.setattr(
+        advanced_router_mod.control_room_service,
+        "sap_successfactors_talent_kpis",
+        fake_talent_kpis,
+    )
+    monkeypatch.setattr(
+        advanced_router_mod.control_room_service,
+        "sap_successfactors_talent_metadata_readiness",
+        fake_metadata,
+    )
+    monkeypatch.setattr(
+        advanced_router_mod.control_room_service,
+        "sap_successfactors_talent_overview",
+        fake_overview,
+    )
+    monkeypatch.setattr(advanced_router_mod.control_room_service, "agents_ops", fake_agents)
+
+    r = TestClient(api).post(
+        "/api/copilot/ask-with-context",
+        json={
+            "question": "¿Por qué Talento sigue parcial?",
+            "page_context": {
+                "route": "/control-room",
+                "title": "Dashboard Operativo",
+            },
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["answer"] == "Control Room conectado"
+    assert "live_control_room_snapshot" in seen["system"]
+    assert "sap_successfactors_talent_metadata_readiness" in seen["system"]
+    assert "benchmark_internal" in seen["system"]
+    assert "live_control_room_snapshot" not in r.json()["context_used"]
+
+
 def test_sanitise_page_context_redacts_connection_strings(advanced_router_mod):
     out = advanced_router_mod._sanitise_page_context({
         "route": "/dashboard/ventas",

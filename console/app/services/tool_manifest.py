@@ -54,6 +54,17 @@ READ_ONLY_TOOLS = {
 
     # AgentOps analytical reads
     "calibration__bayesian_state",
+    "control_room__summary_read",
+    "control_room__dashboard_read",
+    "control_room__ops_summary_read",
+    "control_room__alerts_read",
+    "control_room__agents_ops_read",
+    "control_room__sap_successfactors_gold_kpis_read",
+    "control_room__talent_kpis_read",
+    "control_room__talent_overview_read",
+    "control_room__talent_9box_read",
+    "control_room__talent_metadata_readiness_read",
+    "control_room__decision_intelligence_runs_read",
 
     # pipeline metadata read-only
     "watermark_get",

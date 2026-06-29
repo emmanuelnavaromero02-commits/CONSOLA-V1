@@ -34,6 +34,7 @@ mutating, CSRF on POST/PUT/DELETE).
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -42,6 +43,8 @@ from app.dependencies import require_authenticated
 from app.services import (
     audit_service,
     briefing_v2,
+    control_room_service,
+    copilot_context_service,
     copilot_service,
     goal_solver,
     lessons_service,
@@ -50,6 +53,7 @@ from app.services import (
     watchdog_registry,
 )
 from app.services.csrf import require_csrf
+from app.services import permissions
 from app.services.permissions import require_permission
 
 
@@ -607,16 +611,50 @@ async def briefing_v2_endpoint(
     limit: int = Query(6, ge=1, le=20),
     user: dict = Depends(require_authenticated),
 ):
-    return await briefing_v2.briefing_v2_for_user(
+    highlights = await briefing_v2.briefing_v2_for_user(
         _user_id(user), limit=limit, user_context=user,
     )
+    try:
+        live = await copilot_context_service.list_recommendations(user, limit=limit)
+        live_items = []
+        severity_score = {"critical": 95, "warning": 75, "info": 45, "success": 15}
+        for item in live.get("recommendations", []):
+            if not isinstance(item, dict) or item.get("status") == "dismissed":
+                continue
+            live_items.append({
+                "id": item.get("fingerprint") or item.get("id"),
+                "severity": item.get("severity") or "info",
+                "title": item.get("title") or "Recomendación",
+                "body": item.get("body") or "",
+                "category": item.get("category") or "console",
+                "action_label": item.get("action_label"),
+                "action_href": item.get("action_href"),
+                "priority_score": severity_score.get(str(item.get("severity") or "info"), 45),
+                "next_action": item.get("action_label") or "Revisar",
+                "watchdogs": [],
+                "source": "copilot_live_context",
+            })
+        seen: set[str] = set()
+        merged: list[dict[str, Any]] = []
+        for item in [*live_items, *highlights]:
+            key = str(item.get("id") or item.get("title") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+        merged.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
+        return merged[:limit]
+    except Exception:
+        logger.debug("briefing v2 live context merge failed", exc_info=True)
+        return highlights
 
 
 # ── Context-aware ask ────────────────────────────────────────────────
 
 
-_PAGE_CONTEXT_MAX_LEN = 4000
+_PAGE_CONTEXT_MAX_LEN = 14000
 _QUESTION_MAX_LEN     = 2000
+_LIVE_CONTROL_ROOM_CONTEXT_MAX_LEN = 9000
 
 
 import re as _re
@@ -717,6 +755,91 @@ def _render_page_context(ctx: dict[str, Any]) -> str:
     return rendered[:_PAGE_CONTEXT_MAX_LEN]
 
 
+def _looks_like_control_room_page(ctx: dict[str, Any]) -> bool:
+    haystack = " ".join(
+        str(ctx.get(key) or "")
+        for key in ("route", "path", "pathname", "href", "title", "surface", "page")
+    ).lower()
+    return "control-room" in haystack or "control room" in haystack
+
+
+def _json_prompt_snapshot(payload: dict[str, Any]) -> str:
+    try:
+        rendered = json.dumps(
+            payload,
+            ensure_ascii=False,
+            default=str,
+            separators=(",", ":"),
+        )
+    except Exception:
+        rendered = str(payload)
+    if len(rendered) <= _LIVE_CONTROL_ROOM_CONTEXT_MAX_LEN:
+        return rendered
+    return (
+        rendered[: _LIVE_CONTROL_ROOM_CONTEXT_MAX_LEN - 80]
+        + "...<control-room-live-context-truncated>"
+    )
+
+
+async def _control_room_live_context_for_prompt(
+    page_context: dict[str, Any],
+    user: dict[str, Any],
+) -> str | None:
+    """Best-effort read-only Control Room snapshot for the inline copilot.
+
+    The main chat can use MCP tools. This endpoint is intentionally single-shot,
+    so for Control Room pages we inject a compact live snapshot instead of
+    giving the LLM only the DOM-level page_context.
+    """
+    if not _looks_like_control_room_page(page_context):
+        return None
+    if not permissions.has_permission(user, "datasets.read"):
+        return _json_prompt_snapshot(
+            {
+                "available": False,
+                "reason": "permission_required:datasets.read",
+            }
+        )
+
+    snapshot: dict[str, Any] = {"available": True}
+
+    async def _safe(name: str, loader) -> None:
+        try:
+            snapshot[name] = await loader()
+        except HTTPException as exc:
+            snapshot[name] = {
+                "available": False,
+                "status_code": exc.status_code,
+                "error": str(exc.detail)[:400],
+            }
+        except Exception as exc:
+            logger.debug("control room live context %s failed", name, exc_info=True)
+            snapshot[name] = {
+                "available": False,
+                "error": str(exc)[:400] or exc.__class__.__name__,
+            }
+
+    await _safe("ops_summary", lambda: control_room_service.ops_summary(user))
+    await _safe(
+        "sap_successfactors_talent_kpis",
+        lambda: control_room_service.sap_successfactors_talent_kpis(user),
+    )
+    await _safe(
+        "sap_successfactors_talent_metadata_readiness",
+        lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+    )
+    await _safe(
+        "sap_successfactors_talent_overview",
+        lambda: control_room_service.sap_successfactors_talent_overview(user),
+    )
+    await _safe(
+        "agents_ops",
+        lambda: control_room_service.agents_ops(user, limit=8),
+    )
+
+    return _json_prompt_snapshot(snapshot)
+
+
 @router.post(
     "/ask-with-context",
     dependencies=[Depends(require_csrf)],
@@ -739,7 +862,14 @@ async def ask_with_context_endpoint(
 
     uid = _user_id(user)
     ws  = _workspace_id(user)
-    base_prompt = copilot_service.SYSTEM_PROMPT + _render_page_context(page_context)
+    prompt_context = dict(page_context)
+    live_context = await _control_room_live_context_for_prompt(page_context, user)
+    if live_context:
+        prompt_context["live_control_room_snapshot"] = live_context
+    console_context = await copilot_context_service.prompt_context_for_user(user)
+    if console_context:
+        prompt_context["live_console_snapshot"] = console_context
+    base_prompt = copilot_service.SYSTEM_PROMPT + _render_page_context(prompt_context)
 
     intent_hint = page_context.get("route") or page_context.get("title") or ""
     if intent_hint:

@@ -245,6 +245,240 @@ def _trusted_agent_scope(
     }
 
 
+def _trusted_read_scope(
+    ctx: dict[str, Any] | None,
+    *,
+    permission: str = "datasets.read",
+) -> dict[str, str]:
+    if not isinstance(ctx, dict) or not ctx.get("trusted"):
+        raise HTTPException(403, "trusted security_context required")
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        raise HTTPException(403, "tenant/workspace scope required")
+    permissions = {str(item) for item in (ctx.get("permissions") or [])}
+    if permission not in permissions:
+        raise HTTPException(403, f"permission required: {permission}")
+    return {
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "email": str(ctx.get("email") or "mcp-infra@omega.local"),
+        "role": str(ctx.get("role") or ""),
+    }
+
+
+async def _read_control_room_view(
+    view: str,
+    security_context: dict[str, Any] | None,
+    *,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    scope = _trusted_read_scope(security_context)
+    result = await _call_console(
+        "/api/control-room/internal/read",
+        {
+            "security_context": security_context,
+            "view": view,
+            "params": params or {},
+        },
+        timeout=45.0,
+    )
+    return {
+        "ok": True,
+        "view": view,
+        "tenant_id": scope["tenant_id"],
+        "workspace_id": scope["workspace_id"],
+        "data": result.get("data"),
+    }
+
+
+@tool(
+    name="control_room__summary_read",
+    description=(
+        "Read the scoped Control Room summary for the active tenant/workspace. "
+        "This is read-only and does not create decisions, alerts or external actions."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__summary_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view("summary", security_context)
+
+
+@tool(
+    name="control_room__dashboard_read",
+    description=(
+        "Read the scoped Control Room dashboard payload, including cards and "
+        "visible operational signals. This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__dashboard_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view("dashboard", security_context)
+
+
+@tool(
+    name="control_room__ops_summary_read",
+    description=(
+        "Read the scoped Control Room operational sync summary and latest "
+        "pipeline stage state. This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__ops_summary_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view("ops_summary", security_context)
+
+
+@tool(
+    name="control_room__alerts_read",
+    description=(
+        "Read scoped Control Room alerts/items visible to the active "
+        "tenant/workspace. This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__alerts_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view("alerts", security_context)
+
+
+@tool(
+    name="control_room__agents_ops_read",
+    description=(
+        "Read scoped AgentOps monitor status used by Control Room. "
+        "This is read-only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+        "additionalProperties": False,
+    },
+)
+async def control_room__agents_ops_read(
+    limit: int = 12,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "agents_ops",
+        security_context,
+        params={"limit": max(1, min(int(limit or 12), 50))},
+    )
+
+
+@tool(
+    name="control_room__sap_successfactors_gold_kpis_read",
+    description=(
+        "Read scoped SuccessFactors Gold KPI payload for Control Room. "
+        "This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__sap_successfactors_gold_kpis_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "sap_successfactors_gold_kpis",
+        security_context,
+    )
+
+
+@tool(
+    name="control_room__talent_kpis_read",
+    description=(
+        "Read scoped SuccessFactors Talent KPIs, feature-pack state and "
+        "blockers for Control Room. This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__talent_kpis_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "sap_successfactors_talent_kpis",
+        security_context,
+    )
+
+
+@tool(
+    name="control_room__talent_overview_read",
+    description=(
+        "Read scoped SuccessFactors Talent overview with safe aggregate "
+        "coverage and blockers. This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__talent_overview_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "sap_successfactors_talent_overview",
+        security_context,
+    )
+
+
+@tool(
+    name="control_room__talent_9box_read",
+    description=(
+        "Read scoped SuccessFactors Talent 9-box aggregate state and blockers. "
+        "This is read-only and does not expose employee PII."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__talent_9box_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "sap_successfactors_talent_9box",
+        security_context,
+    )
+
+
+@tool(
+    name="control_room__talent_metadata_readiness_read",
+    description=(
+        "Read scoped SuccessFactors Talent metadata readiness for C/P/A, "
+        "learning, recruiting and role blockers. This is read-only."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+async def control_room__talent_metadata_readiness_read(
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "sap_successfactors_talent_metadata_readiness",
+        security_context,
+    )
+
+
+@tool(
+    name="control_room__decision_intelligence_runs_read",
+    description=(
+        "Read scoped decision-intelligence run history for the active "
+        "tenant/workspace. This is read-only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 250}},
+        "additionalProperties": False,
+    },
+)
+async def control_room__decision_intelligence_runs_read(
+    limit: int = 50,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await _read_control_room_view(
+        "decision_intelligence_runs",
+        security_context,
+        params={"limit": max(1, min(int(limit or 50), 250))},
+    )
+
+
 @tool(
     name="calibration__bayesian_state",
     description=(
