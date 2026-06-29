@@ -316,7 +316,11 @@ async def diagnose_goal_endpoint(
         if msg == "llm_call_timeout":
             raise HTTPException(504, "llm call timed out")
         raise HTTPException(502, "llm call failed")
-    watchdog_pairs = await goal_solver.pick_watchdogs_for_diagnosis(diagnosis)
+    try:
+        watchdog_pairs = await goal_solver.pick_watchdogs_for_diagnosis(diagnosis)
+    except Exception:
+        logger.warning("watchdog matching failed for diagnosed goal %s", goal_id, exc_info=True)
+        watchdog_pairs = []
     return {"diagnosis": diagnosis, "watchdogs": watchdog_pairs}
 
 

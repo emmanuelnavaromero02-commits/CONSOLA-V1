@@ -134,7 +134,7 @@ describe("api", () => {
     });
   });
 
-  it("falls back to localized messages for plain 401/5xx responses", async () => {
+  it("falls back to localized messages for plain 401 responses", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
 
     try {
@@ -144,5 +144,19 @@ describe("api", () => {
       expect(isApiError(error)).toBe(true);
       expect((error as Error).message).toBe("Sesión expirada o no autenticada.");
     }
+  });
+
+  it("adds request id context to plain backend failures", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => "client-req" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", {
+      status: 500,
+      headers: { "x-request-id": "backend-oops" },
+    })));
+
+    await expect(api.get("/api/copilot/actions")).rejects.toMatchObject({
+      message: "El backend no pudo completar la solicitud. Ref: backend-oops",
+      status: 500,
+      requestId: "backend-oops",
+    });
   });
 });

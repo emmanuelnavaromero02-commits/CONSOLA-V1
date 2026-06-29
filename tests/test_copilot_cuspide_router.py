@@ -221,6 +221,34 @@ def test_diagnose_goal_invokes_solver_and_picker(advanced_router_mod, monkeypatc
     assert payload["diagnosis"]["plan_summary"] == "p"
 
 
+def test_diagnose_goal_keeps_plan_when_watchdog_matching_fails(advanced_router_mod, monkeypatch):
+    api = _make_app(advanced_router_mod, with_write=True)
+    diag = {
+        "classification": "diagnosis",
+        "plan_summary": "p",
+        "intent_keywords": ["x"],
+        "subgoals": [{"description": "x", "expected_cartridges": ["replicon"]}],
+        "impact_estimate": {"currency": "MXN", "amount": 0, "direction": "unknown"},
+    }
+
+    async def fail_matching(_diagnosis):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(
+        advanced_router_mod.goal_solver,
+        "diagnose_goal",
+        AsyncMock(return_value=diag),
+    )
+    monkeypatch.setattr(
+        advanced_router_mod.goal_solver,
+        "pick_watchdogs_for_diagnosis",
+        fail_matching,
+    )
+    r = TestClient(api).post(f"/api/copilot/goals/{_GOAL_ID}/diagnose")
+    assert r.status_code == 200, r.text
+    assert r.json()["watchdogs"] == []
+
+
 # ── lessons ──────────────────────────────────────────────────────────
 
 

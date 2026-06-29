@@ -7999,6 +7999,34 @@ def _successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any]
     return allowed_tools, rag_filter, extra
 
 
+_SUCCESSFACTORS_TALENT_MONITOR_SLUG = "sap_successfactors_talent_monitor"
+
+
+def _is_successfactors_talent_monitor_row(agent: Any) -> bool:
+    if not isinstance(agent, dict):
+        return False
+    return (
+        str(agent.get("cartridge_id") or "").strip() == "sap_successfactors"
+        and str(agent.get("slug") or "").strip() == _SUCCESSFACTORS_TALENT_MONITOR_SLUG
+    )
+
+
+def _has_operational_monitor_contract(agent: Any) -> bool:
+    extra = agent.get("extra") if isinstance(agent, dict) else None
+    monitor = extra.get("monitor") if isinstance(extra, dict) else None
+    return isinstance(monitor, dict) and bool(monitor)
+
+
+def _successfactors_talent_monitor_needs_runtime_repair(agent: Any) -> bool:
+    if not _is_successfactors_talent_monitor_row(agent):
+        return False
+    extra = agent.get("extra") if isinstance(agent, dict) else None
+    if not isinstance(extra, dict):
+        return True
+    role = str(extra.get("role") or "").strip().lower()
+    return role != "monitor" or not _has_operational_monitor_contract(agent)
+
+
 async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
     ctx = build_security_context(user)
     tenant_id = str(ctx.get("tenant_id") or "").strip()
@@ -8082,6 +8110,57 @@ async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
             workspace_id,
             exc_info=True,
         )
+
+
+async def _repair_successfactors_talent_monitor_row_if_needed(
+    agent: dict | None,
+    user: dict | None,
+) -> dict | None:
+    if not agent or not _successfactors_talent_monitor_needs_runtime_repair(agent):
+        return agent
+    await _ensure_successfactors_talent_monitor(user)
+    agent_id = str(agent.get("id") or "").strip()
+    if not agent_id:
+        return agent
+    repaired = await _agents.get_agent(agent_id, user_context=user)
+    return repaired or agent
+
+
+async def _repair_successfactors_talent_monitor_list_if_needed(
+    agents: list[dict],
+    user: dict | None,
+    *,
+    cartridge_id: str | None = None,
+    include_inactive: bool = False,
+) -> list[dict]:
+    if not any(_successfactors_talent_monitor_needs_runtime_repair(agent) for agent in agents):
+        return agents
+    await _ensure_successfactors_talent_monitor(user)
+    refreshed = await _agents.list_agents(
+        cartridge_id,
+        include_inactive,
+        user_context=user,
+    )
+    return refreshed or agents
+
+
+async def _repair_loaded_successfactors_talent_monitor_if_needed(
+    agent: Any,
+    user_context: dict | None,
+) -> Any:
+    row = {
+        "id": str(getattr(agent, "id", "") or ""),
+        "cartridge_id": str(getattr(agent, "cartridge_id", "") or ""),
+        "slug": str(getattr(agent, "slug", "") or ""),
+        "extra": getattr(agent, "extra", None) or {},
+    }
+    if not _successfactors_talent_monitor_needs_runtime_repair(row):
+        return agent
+    if not row["id"]:
+        return agent
+    await _ensure_successfactors_talent_monitor(user_context)
+    repaired = await _agent_runtime.load_agent(row["id"], user_context=user_context)
+    return repaired or agent
 
 
 async def _run_sync_agentops_monitors(
@@ -10320,10 +10399,18 @@ async def api_agents_list(
     include_inactive: bool = False,
     user: dict = Depends(require_permission("agents.read")),
 ):
-    return {
-        "agents": await _agents.list_agents(
-            cartridge_id, include_inactive, user_context=user
+    agents = await _agents.list_agents(
+        cartridge_id, include_inactive, user_context=user
+    )
+    if not include_inactive:
+        agents = await _repair_successfactors_talent_monitor_list_if_needed(
+            agents,
+            user,
+            cartridge_id=cartridge_id,
+            include_inactive=include_inactive,
         )
+    return {
+        "agents": agents
     }
 
 
@@ -10363,6 +10450,7 @@ async def api_agents_get(
     user: dict = Depends(require_permission("agents.read")),
 ):
     a = await _agents.get_agent(agent_id, user_context=user)
+    a = await _repair_successfactors_talent_monitor_row_if_needed(a, user)
     if not a:
         raise HTTPException(404, "agent not found")
     return a
@@ -10530,6 +10618,10 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     agent = await _agent_runtime.load_agent(agent_id, user_context=scheduled_user_context)
     if not agent:
         raise HTTPException(404, "agent not found")
+    agent = await _repair_loaded_successfactors_talent_monitor_if_needed(
+        agent,
+        scheduled_user_context,
+    )
     if not (
         str(getattr(agent, "tenant_id", None) or "").strip()
         and str(getattr(agent, "workspace_id", None) or "").strip()
