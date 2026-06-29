@@ -99,6 +99,16 @@ def test_successfactors_runtime_monitor_contract_keeps_bayes_engine():
     assert '"bayesian_calibration": {' in section
 
 
+def test_sync_agentops_candidates_require_workspace_scope():
+    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
+    section = source.split("def _sync_agentops_monitor_candidates", 1)[1].split(
+        "def _successfactors_talent_monitor_contract", 1
+    )[0]
+
+    assert 'str(agent.get("tenant_id") or "").strip()' in section
+    assert 'str(agent.get("workspace_id") or "").strip()' in section
+
+
 def test_scheduled_agents_fail_closed_without_monitor_contract():
     source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
     section = source.split("async def api_agents_invoke_scheduled", 1)[1]

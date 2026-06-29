@@ -6,6 +6,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "infra/init/99t_sap_successfactors_talent_agentops_monitor.sql"
+WORKSPACE_BOOTSTRAP = (
+    ROOT / "infra/init/99zf_sap_successfactors_wb_talento_workspace_monitors.sql"
+)
 
 
 def _sql() -> str:
@@ -73,3 +76,18 @@ def test_successfactors_talent_monitor_blocks_pii_and_writeback():
     assert "no escribas en successfactors" in sql
     assert "no hay write-back externo" in sql
     assert not re.search(r"\bdelete\s+from\s+agents\b|\btruncate\b|\bdrop\b", sql)
+
+
+def test_successfactors_talent_monitor_bootstraps_entity_config_workspaces():
+    sql = WORKSPACE_BOOTSTRAP.read_text(encoding="utf-8")
+    assert "FROM entity_config" in sql
+    assert "cartridge_id = 'sap_successfactors'" in sql
+    assert "COALESCE(enabled, TRUE) = TRUE" in sql
+    assert "tenant_id IS NOT NULL" in sql
+    assert "workspace_id IS NOT NULL" in sql
+    assert "sap_successfactors_talent_monitor" in sql
+    assert "ON CONFLICT (workspace_id, cartridge_id, slug) WHERE workspace_id IS NOT NULL" in sql
+    assert "'mcp-infra__simulation__monte_carlo_run'" in sql
+    assert "'mcp-infra__calibration__bayesian_state'" in sql
+    assert "'sap_successfactors_talent_simulation_inputs'" in sql
+    assert "'WB-TALENTO'" in sql
