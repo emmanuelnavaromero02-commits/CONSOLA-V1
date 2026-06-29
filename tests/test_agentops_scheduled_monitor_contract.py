@@ -68,6 +68,19 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert 'conversation_id=f"agent_run:' not in source
 
 
+def test_agent_runtime_keeps_wisdombit_as_decision_source_after_simulation():
+    source = (ROOT / "console/app/services/agent_runtime.py").read_text(encoding="utf-8")
+    section = source.split(
+        'if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:',
+        1,
+    )[1].split('if engine in {"control_room_alert"', 1)[0]
+
+    assert 'source_type = "monte_carlo_simulation"' not in section
+    assert "source_type = \"wisdom_bit\"" in section
+    assert "source_id = wisdom_bit_id" in section
+    assert "upstream_monte_carlo_simulation_id" in section
+
+
 def test_agent_runtime_audit_normalizes_structured_tool_errors():
     source = (ROOT / "console/app/services/agent_runtime.py").read_text(encoding="utf-8")
     audit_section = source.split("async def _audit_agent_tool", 1)[1].split(
