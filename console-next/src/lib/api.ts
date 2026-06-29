@@ -118,7 +118,7 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
   }
 }
 
-function errorMessage(status: number, payload: unknown): string {
+function errorMessage(status: number, payload: unknown, requestId?: string): string {
   if (payload && typeof payload === "object" && "detail" in payload) {
     const detail = (payload as { detail?: unknown }).detail;
     if (typeof detail === "string" && detail.trim()) return detail;
@@ -127,7 +127,11 @@ function errorMessage(status: number, payload: unknown): string {
   if (status === 401) return "Sesión expirada o no autenticada.";
   if (status === 403) return "No tienes permisos para esta acción.";
   if (status === 404) return "Recurso no encontrado.";
-  if (status >= 500) return "El backend no pudo completar la solicitud.";
+  if (status >= 500) {
+    return requestId
+      ? `El backend no pudo completar la solicitud. Ref: ${requestId}`
+      : "El backend no pudo completar la solicitud.";
+  }
   return `HTTP ${status}`;
 }
 
@@ -153,7 +157,7 @@ async function request<T>(
   const responseRequestId = response.headers.get("x-request-id") || requestId;
   const parsed = await parsePayload(response);
   if (!response.ok) {
-    throw toApiError(errorMessage(response.status, parsed), response.status, parsed, responseRequestId);
+    throw toApiError(errorMessage(response.status, parsed, responseRequestId), response.status, parsed, responseRequestId);
   }
 
   return {

@@ -46,7 +46,15 @@ async def api_agents_list(
     include_inactive: bool = False,
     user: dict = Depends(require_permission("agents.read")),
 ):
-    return {"agents": await _agents.list_agents(cartridge_id, include_inactive, user_context=user)}
+    agents = await _agents.list_agents(cartridge_id, include_inactive, user_context=user)
+    if not include_inactive:
+        agents = await _repair_successfactors_talent_monitor_list_if_needed(
+            agents,
+            user,
+            cartridge_id=cartridge_id,
+            include_inactive=include_inactive,
+        )
+    return {"agents": agents}
 
 # /api/agents/_tool-catalog
 @router.get("/api/agents/_tool-catalog", dependencies=[Depends(require_permission("agents.read"))])
@@ -78,6 +86,7 @@ async def api_agents_tool_catalog(request: Request):
 @_bind_to_main
 async def api_agents_get(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.read"))):
     a = await _agents.get_agent(agent_id, user_context=user)
+    a = await _repair_successfactors_talent_monitor_row_if_needed(a, user)
     if not a:
         raise HTTPException(404, "agent not found")
     return a
@@ -154,6 +163,10 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     agent = await _agent_runtime.load_agent(agent_id, user_context=scheduled_user_context)
     if not agent:
         raise HTTPException(404, "agent not found")
+    agent = await _repair_loaded_successfactors_talent_monitor_if_needed(
+        agent,
+        scheduled_user_context,
+    )
     if not (
         str(getattr(agent, "tenant_id", None) or "").strip()
         and str(getattr(agent, "workspace_id", None) or "").strip()

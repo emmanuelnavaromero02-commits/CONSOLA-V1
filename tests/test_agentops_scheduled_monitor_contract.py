@@ -127,6 +127,7 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
     section = source.split("async def api_agents_invoke_scheduled", 1)[1]
     assert "scheduled_user_context = scheduled_scope if scheduled_scope.get(\"workspace_id\") else None" in section
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in section
+    assert "_repair_loaded_successfactors_talent_monitor_if_needed" in section
     assert "scheduled agents require monitor role and monitor contract" in section
     assert "run_scheduled_monitor" in section
     assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in section
@@ -135,6 +136,36 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
     v1_section = v1_source.split("async def api_agents_invoke_scheduled", 1)[1]
     assert "scheduled_user_context = scheduled_scope if scheduled_scope.get(\"workspace_id\") else None" in v1_section
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in v1_section
+    assert "_repair_loaded_successfactors_talent_monitor_if_needed" in v1_section
     assert "scheduled agents require monitor role and monitor contract" in v1_section
     assert "run_scheduled_monitor" in v1_section
     assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in v1_section
+
+
+def test_successfactors_monitor_runtime_repair_before_agent_reads():
+    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
+    assert "def _successfactors_talent_monitor_needs_runtime_repair" in source
+    assert '"sap_successfactors_talent_monitor"' in source
+    assert "role != \"monitor\" or not _has_operational_monitor_contract(agent)" in source
+    list_section = source.split("async def api_agents_list", 1)[1].split(
+        "async def api_agents_tool_catalog",
+        1,
+    )[0]
+    get_section = source.split("async def api_agents_get", 1)[1].split(
+        "@app.post(",
+        1,
+    )[0]
+    assert "_repair_successfactors_talent_monitor_list_if_needed" in list_section
+    assert "_repair_successfactors_talent_monitor_row_if_needed" in get_section
+
+    v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
+    v1_list_section = v1_source.split("async def api_agents_list", 1)[1].split(
+        "# /api/agents/_tool-catalog",
+        1,
+    )[0]
+    v1_get_section = v1_source.split("async def api_agents_get", 1)[1].split(
+        "# /api/agents",
+        1,
+    )[0]
+    assert "_repair_successfactors_talent_monitor_list_if_needed" in v1_list_section
+    assert "_repair_successfactors_talent_monitor_row_if_needed" in v1_get_section
