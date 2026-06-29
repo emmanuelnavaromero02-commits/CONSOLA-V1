@@ -130,6 +130,40 @@ async def test_bayesian_state_tool_reads_scoped_console_state(monkeypatch):
     assert captured["payload"]["security_context"]["workspace_id"] == _ctx()["workspace_id"]
 
 
+@pytest.mark.asyncio
+async def test_control_room_dashboard_read_uses_scoped_internal_route(monkeypatch):
+    mod = _load_control_room_tool(monkeypatch)
+    captured: dict = {}
+    ctx = {
+        **_ctx(),
+        "agent_id": "",
+        "agent_run_id": "",
+        "permissions": ["datasets.read"],
+    }
+
+    async def fake_call_console(path, payload, timeout=0):
+        captured["path"] = path
+        captured["payload"] = payload
+        captured["timeout"] = timeout
+        return {
+            "ok": True,
+            "data": {"cards": [{"id": "signals"}], "summary": {"active": 1}},
+        }
+
+    monkeypatch.setattr(mod, "_call_console", fake_call_console)
+
+    result = await mod.control_room__dashboard_read(security_context=ctx)
+
+    assert result["ok"] is True
+    assert result["view"] == "dashboard"
+    assert result["tenant_id"] == ctx["tenant_id"]
+    assert result["workspace_id"] == ctx["workspace_id"]
+    assert result["data"]["summary"]["active"] == 1
+    assert captured["path"] == "/api/control-room/internal/read"
+    assert captured["payload"]["view"] == "dashboard"
+    assert captured["payload"]["security_context"]["workspace_id"] == ctx["workspace_id"]
+
+
 def test_control_room_alert_tool_deduplicates_agent_alerts(monkeypatch):
     mod = _load_control_room_tool(monkeypatch)
     store: dict[str, dict] = {"items": {}, "events": []}
@@ -234,6 +268,8 @@ def test_mcp_main_enforces_control_room_alert_scope():
     assert '"control_room__raise_alert"' in source
     assert '"control_room__raise_analysis_alert"' in source
     assert '"calibration__bayesian_state"' in source
+    assert '"control_room__dashboard_read"' in source
+    assert '"control_room__talent_metadata_readiness_read"' in source
     assert "_CONTROL_ROOM_ANALYSIS_TOOLS" in source
     assert "_CONTROL_ROOM_READ_TOOLS" in source
     assert '_require_context_permission(req, "control_room.write", internal_service)' in source

@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, MessageSquareText, Plus, RefreshCw, Save, Trash2, Wrench } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Clock, MessageSquareText, Play, Plus, RefreshCw, Save, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -41,6 +41,7 @@ interface AgentDraft {
   role: string;
   category: string;
   scope: string;
+  extra_passthrough: Record<string, unknown>;
   variables: Array<{ key: string; value: string }>;
   schedule: {
     cron: string;
@@ -82,6 +83,7 @@ function emptyDraft(cartridge = "replicon"): AgentDraft {
     role: "",
     category: "cartridge",
     scope: "workspace",
+    extra_passthrough: {},
     variables: [],
     schedule: { cron: "", tz: "UTC", prompt: "", enabled: true },
     is_active: true,
@@ -129,6 +131,7 @@ function draftFromAgent(agent: AgentRecord): AgentDraft {
     role: asString(extra.role),
     category: asString(extra.category) || "cartridge",
     scope: asString(extra.scope) || "workspace",
+    extra_passthrough: extra,
     variables: Object.entries(variables).map(([key, value]) => ({ key, value: String(value ?? "") })),
     schedule: {
       cron: asString(schedule.cron || schedule.cron_expression),
@@ -146,18 +149,29 @@ function payloadFromDraft(draft: AgentDraft): AgentPayload {
     const key = row.key.trim();
     if (key) variables[key] = row.value;
   });
-  const extra: Record<string, unknown> = {};
+  const extra: Record<string, unknown> = { ...draft.extra_passthrough };
   if (draft.role.trim()) extra.role = draft.role.trim();
+  else delete extra.role;
   if (draft.category.trim()) extra.category = draft.category.trim();
+  else delete extra.category;
   if (draft.scope.trim()) extra.scope = draft.scope.trim();
+  else delete extra.scope;
   if (Object.keys(variables).length) extra.variables = variables;
-  if (draft.schedule.cron.trim() || draft.schedule.prompt.trim() || draft.schedule.tz.trim() || !draft.schedule.enabled) {
+  else delete extra.variables;
+  const cron = draft.schedule.cron.trim();
+  const prompt = draft.schedule.prompt.trim();
+  const hasScheduleIntent = Boolean(cron || prompt || !draft.schedule.enabled);
+  if (hasScheduleIntent) {
+    const existingSchedule = asRecord(draft.extra_passthrough.schedule);
     extra.schedule = {
-      cron: draft.schedule.cron.trim(),
+      ...existingSchedule,
+      cron,
       tz: draft.schedule.tz.trim() || "UTC",
-      prompt: draft.schedule.prompt.trim(),
+      prompt,
       enabled: draft.schedule.enabled,
     };
+  } else {
+    delete extra.schedule;
   }
   return {
     cartridge_id: draft.cartridge_id,
@@ -174,6 +188,38 @@ function payloadFromDraft(draft: AgentDraft): AgentPayload {
     extra,
     is_active: draft.is_active,
   };
+}
+
+function resultText(result: Record<string, unknown>): string {
+  const direct = result.output_text || result.text || result.reply;
+  if (typeof direct === "string" && direct.trim()) return direct;
+  return JSON.stringify(result, null, 2);
+}
+
+function operationalMessage(draft: AgentDraft): string {
+  const scheduledPrompt = draft.schedule.prompt.trim();
+  if (scheduledPrompt) return scheduledPrompt;
+  if (draft.role === "monitor") {
+    return "Ejecuta una revision operativa ahora usando tu contrato de monitor. Registra evidencia agregada, respeta recommendation_only y no hagas write-back externo.";
+  }
+  return "Ejecuta una revision operativa ahora con las herramientas permitidas y devuelve hallazgos, evidencia y siguientes acciones.";
+}
+
+function hasMonitorContract(draft: AgentDraft): boolean {
+  return Object.keys(asRecord(draft.extra_passthrough.monitor)).length > 0;
+}
+
+function agentWarnings(draft: AgentDraft): string[] {
+  const warnings: string[] = [];
+  const hasCron = Boolean(draft.schedule.cron.trim());
+  const hasPrompt = Boolean(draft.schedule.prompt.trim());
+  if (!draft.id) warnings.push("Guarda el agente antes de ejecutarlo o usa Guardar y ejecutar.");
+  if (!draft.is_active) warnings.push("El agente esta inactivo; no ejecutara tareas automaticas.");
+  if (draft.allowed_tools.length === 0) warnings.push("No tiene tools permitidas; podra responder, pero no consultar la consola ni levantar evidencia.");
+  if (draft.role === "monitor" && !hasMonitorContract(draft)) warnings.push("Tiene rol Monitor, pero no conserva contrato monitor; agent_runner no lo ejecutara como monitor operativo.");
+  if ((hasPrompt || draft.schedule.enabled === false) && !hasCron) warnings.push("Hay configuracion de tarea sin cron; agent_runner no la encontrara.");
+  if (hasCron && draft.role !== "monitor") warnings.push("Tiene cron, pero no rol Monitor; puede guardarse, aunque la ejecucion programada operativa requiere rol Monitor.");
+  return warnings;
 }
 
 export function AgentsConsole() {
@@ -222,12 +268,35 @@ export function AgentsConsole() {
       return nextDraft.id ? updateAgent(nextDraft.id, payload) : createAgent(payload);
     },
     onSuccess: (saved) => {
-      toast.success("Agente guardado.");
+      toast.success("Agente guardado. Aun no se ejecuto.");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       setSelectedId(saved.id);
       setDraft(draftFromAgent(saved));
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar el agente."),
+  });
+
+  const saveAndRun = useMutation({
+    mutationFn: async (nextDraft: AgentDraft) => {
+      const payload = payloadFromDraft(nextDraft);
+      if (!payload.slug || !payload.name || !payload.instructions) {
+        throw new Error("Slug, nombre e instrucciones son obligatorios.");
+      }
+      const saved = nextDraft.id ? await updateAgent(nextDraft.id, payload) : await createAgent(payload);
+      const savedDraft = draftFromAgent(saved);
+      const result = await invokeAgent(saved.id, operationalMessage(savedDraft));
+      return { saved, result };
+    },
+    onSuccess: ({ saved, result }) => {
+      toast.success("Agente guardado y ejecutado.");
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      queryClient.invalidateQueries({ queryKey: ["agents", saved.id, "runs"] });
+      setSelectedId(saved.id);
+      setDraft(draftFromAgent(saved));
+      setTab("runs");
+      setTestOutput(resultText(result));
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar y ejecutar."),
   });
 
   const status = useMutation({
@@ -248,10 +317,14 @@ export function AgentsConsole() {
   });
 
   const invoke = useMutation({
-    mutationFn: ({ id, message }: { id: string; message: string }) => invokeAgent(id, message),
-    onSuccess: (result) => {
-      setTestOutput(result.output_text || result.text || JSON.stringify(result, null, 2));
+    mutationFn: async ({ id, message, showRuns = false }: { id: string; message: string; showRuns?: boolean }) => ({
+      result: await invokeAgent(id, message),
+      showRuns,
+    }),
+    onSuccess: ({ result, showRuns }) => {
+      setTestOutput(resultText(result));
       queryClient.invalidateQueries({ queryKey: ["agents", selectedId, "runs"] });
+      if (showRuns) setTab("runs");
     },
     onError: (error) => setTestOutput(error instanceof Error ? error.message : "No se pudo invocar el agente."),
   });
@@ -448,7 +521,10 @@ export function AgentsConsole() {
             selectedRunId={selectedRunId}
             setSelectedRunId={setSelectedRunId}
             saving={save.isPending}
+            savingAndRunning={saveAndRun.isPending}
+            executing={invoke.isPending}
             onSave={() => save.mutate(draft)}
+            onSaveAndRun={() => saveAndRun.mutate(draft)}
             onCancel={() => {
               setSelectedId(null);
               setDraft(null);
@@ -461,6 +537,11 @@ export function AgentsConsole() {
               if (draft.id) remove.mutate(draft.id);
             }}
             canDelete={Boolean(draft.id)}
+            onExecuteNow={() => {
+              if (!draft.id) return;
+              setTestOutput("");
+              invoke.mutate({ id: draft.id, message: operationalMessage(draft), showRuns: true });
+            }}
             testMessage={testMessage}
             setTestMessage={setTestMessage}
             testOutput={testOutput}
@@ -508,11 +589,15 @@ function AgentEditor(props: {
   selectedRunId: number | string | null;
   setSelectedRunId: (runId: number | string | null) => void;
   saving: boolean;
+  savingAndRunning: boolean;
+  executing: boolean;
   onSave: () => void;
+  onSaveAndRun: () => void;
   onCancel: () => void;
   onStatusToggle: () => void;
   onDelete: () => void;
   canDelete: boolean;
+  onExecuteNow: () => void;
   testMessage: string;
   setTestMessage: (value: string) => void;
   testOutput: string;
@@ -534,11 +619,15 @@ function AgentEditor(props: {
     selectedRunId,
     setSelectedRunId,
     saving,
+    savingAndRunning,
+    executing,
     onSave,
+    onSaveAndRun,
     onCancel,
     onStatusToggle,
     onDelete,
     canDelete,
+    onExecuteNow,
     testMessage,
     setTestMessage,
     testOutput,
@@ -554,6 +643,9 @@ function AgentEditor(props: {
     { id: "runs", label: "Ejecuciones" },
     { id: "test", label: "Probar" },
   ];
+  const warnings = agentWarnings(draft);
+  const canExecuteSaved = Boolean(draft.id && draft.is_active);
+  const busy = saving || savingAndRunning || executing || invoking;
 
   return (
     <div className="min-w-0">
@@ -567,7 +659,15 @@ function AgentEditor(props: {
           <button type="button" onClick={onStatusToggle} className="inline-flex min-h-[40px] items-center rounded-md border px-3 text-xs font-medium">
             {draft.is_active ? "Desactivar" : "Activar"}
           </button>
-          <button type="button" onClick={onSave} disabled={saving} className="inline-flex min-h-[40px] items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-60">
+          <button type="button" onClick={onExecuteNow} disabled={!canExecuteSaved || busy} className="inline-flex min-h-[40px] items-center gap-2 rounded-md border px-3 text-xs font-medium disabled:opacity-60">
+            <Play aria-hidden className="h-4 w-4" />
+            {executing ? "Ejecutando..." : "Ejecutar ahora"}
+          </button>
+          <button type="button" onClick={onSaveAndRun} disabled={busy} className="inline-flex min-h-[40px] items-center gap-2 rounded-md border border-primary/60 px-3 text-xs font-medium text-primary disabled:opacity-60">
+            <Play aria-hidden className="h-4 w-4" />
+            {savingAndRunning ? "Guardando y ejecutando..." : "Guardar y ejecutar"}
+          </button>
+          <button type="button" onClick={onSave} disabled={busy} className="inline-flex min-h-[40px] items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-60">
             <Save aria-hidden className="h-4 w-4" />
             {saving ? "Guardando..." : "Guardar"}
           </button>
@@ -581,6 +681,7 @@ function AgentEditor(props: {
           </button>
         </div>
       </header>
+      <OperationalStatus draft={draft} warnings={warnings} />
 
       <nav className="overflow-x-auto border-b" aria-label="Editor de agente">
         <div className="flex min-w-max gap-1 px-4">
@@ -629,6 +730,60 @@ function AgentEditor(props: {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function OperationalStatus({ draft, warnings }: { draft: AgentDraft; warnings: string[] }) {
+  const monitorContract = hasMonitorContract(draft);
+  const hasSchedule = Boolean(draft.schedule.cron.trim());
+  const latestState = draft.id ? "Guardado" : "Sin guardar";
+  const executionState = draft.id && draft.is_active ? "Listo para ejecucion manual" : "No ejecutable aun";
+  const scheduleState = hasSchedule && draft.schedule.enabled ? "Tarea programada" : hasSchedule ? "Tarea pausada" : "Sin tarea";
+  const monitorState = draft.role === "monitor"
+    ? monitorContract ? "Monitor operativo" : "Monitor incompleto"
+    : "Agente general";
+
+  return (
+    <section className="grid gap-3 border-b bg-muted/10 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <StatusTile icon={<Save className="h-4 w-4" />} label="Configuracion" value={latestState} tone={draft.id ? "ok" : "warn"} />
+        <StatusTile icon={<Play className="h-4 w-4" />} label="Ejecucion" value={executionState} tone={draft.id && draft.is_active ? "ok" : "warn"} />
+        <StatusTile icon={<Clock className="h-4 w-4" />} label="Tarea" value={scheduleState} tone={hasSchedule && draft.schedule.enabled ? "ok" : "neutral"} />
+        <StatusTile icon={<Bot className="h-4 w-4" />} label="Modo" value={monitorState} tone={draft.role === "monitor" && !monitorContract ? "warn" : "ok"} />
+      </div>
+      <div className={cn(
+        "rounded-md border p-3 text-sm",
+        warnings.length ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-100" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100",
+      )}>
+        <div className="mb-2 flex items-center gap-2 font-medium">
+          {warnings.length ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {warnings.length ? "Antes de operar" : "Listo"}
+        </div>
+        {warnings.length ? (
+          <ul className="space-y-1 text-xs">
+            {warnings.map((warning) => <li key={warning}>- {warning}</li>)}
+          </ul>
+        ) : (
+          <p className="text-xs">Guardar solo persiste la configuracion; usa Ejecutar ahora o Guardar y ejecutar para crear una corrida.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function StatusTile({ icon, label, value, tone }: { icon: ReactNode; label: string; value: string; tone: "ok" | "warn" | "neutral" }) {
+  return (
+    <div className={cn(
+      "rounded-md border bg-background p-3",
+      tone === "ok" && "border-emerald-500/30",
+      tone === "warn" && "border-amber-500/40",
+    )}>
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+        {icon}
+        {label}
+      </div>
+      <p className="mt-2 text-sm font-medium">{value}</p>
     </div>
   );
 }

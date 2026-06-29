@@ -20,7 +20,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import require_authenticated
-from app.services import audit_service, copilot_service, proactive_service
+from app.services import (
+    audit_service,
+    copilot_context_service,
+    copilot_service,
+    proactive_service,
+)
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -296,7 +301,112 @@ async def get_briefing(
     highlight on the dashboard.
     """
     highlights = await proactive_service.briefing_for_user(user["id"], user_context=user)
+    try:
+        live = await copilot_context_service.list_recommendations(user, limit=6)
+        live_highlights = [
+            {
+                "id": item.get("fingerprint") or item.get("id"),
+                "severity": item.get("severity") or "info",
+                "title": item.get("title") or "Recomendación",
+                "body": item.get("body") or "",
+                "category": item.get("category") or "console",
+                "action_label": item.get("action_label"),
+                "action_href": item.get("action_href"),
+            }
+            for item in live.get("recommendations", [])
+            if isinstance(item, dict) and item.get("status") != "dismissed"
+        ]
+        seen: set[str] = set()
+        merged = []
+        for item in [*live_highlights, *highlights]:
+            key = str(item.get("id") or item.get("title") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+        highlights = merged[:6]
+    except Exception:
+        # The live snapshot is additive. The original proactive briefing remains
+        # available even if the persisted context tables have not been migrated.
+        pass
     return {"highlights": highlights}
+
+
+@router.get("/context/snapshot")
+async def get_live_context_snapshot(
+    user: dict = Depends(require_authenticated),
+):
+    """Latest persisted workspace-wide console cut for Copilot."""
+    return await copilot_context_service.latest_snapshot(user)
+
+
+@router.post("/context/refresh", dependencies=[Depends(require_csrf)])
+async def refresh_live_context(
+    request: Request,
+    user: dict = Depends(require_authenticated),
+):
+    """Refresh the live console context now for the active workspace."""
+    result = await copilot_context_service.collect_workspace_context(
+        user,
+        generated_by="manual",
+        persist=True,
+    )
+    ip, ua = _forensic(request)
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.context.refresh",
+        resource_type="workspace",
+        resource_id=str(result.get("workspace_id") or ""),
+        ip=ip,
+        user_agent=ua,
+        status="success" if result.get("status") != "failed" else "error",
+        metadata={
+            "status": result.get("status"),
+            "sources_ready": (result.get("summary") or {}).get("sources_ready"),
+            "sources_total": (result.get("summary") or {}).get("sources_total"),
+            "recommendations": len(result.get("recommendations") or []),
+        },
+    )
+    return result
+
+
+@router.get("/recommendations")
+async def list_live_recommendations(
+    limit: int = 20,
+    include_dismissed: bool = False,
+    user: dict = Depends(require_authenticated),
+):
+    return await copilot_context_service.list_recommendations(
+        user,
+        limit=limit,
+        include_dismissed=include_dismissed,
+    )
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/dismiss",
+    dependencies=[Depends(require_csrf)],
+)
+async def dismiss_live_recommendation(
+    recommendation_id: str,
+    request: Request,
+    user: dict = Depends(require_authenticated),
+):
+    result = await copilot_context_service.dismiss_recommendation(user, recommendation_id)
+    ip, ua = _forensic(request)
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.recommendation.dismiss",
+        resource_type="copilot_recommendation",
+        resource_id=str(result.get("id") or recommendation_id),
+        ip=ip,
+        user_agent=ua,
+        status="success",
+        metadata={"fingerprint": result.get("fingerprint")},
+    )
+    return result
 
 
 @router.post(
