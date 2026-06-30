@@ -372,6 +372,19 @@ entities:
       - endDate
       - lastModifiedDateTime
 
+  - entity: FOPayGrade
+    description: "Foundation Object: pay grades for employment context. Used only as non-salary metadata."
+    mode: full
+    page_size: 1000
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
+
   - entity: Position
     description: "Position Management: positions (incumbent, parent, FTE)."
     mode: incremental
@@ -508,6 +521,135 @@ entities:
     protection:
       formSubjectId: shadowed
 
+  - entity: FormPerfPotSummarySection
+    description: "Performance: performance/potential summary section used for 9-box when exposed by PMGM."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: formDataId
+    select_fields:
+      - formDataId
+      - formSubjectId
+      - performanceRating
+      - potentialRating
+      - lastModifiedDateTime
+    protection:
+      formSubjectId: shadowed
+
+  - entity: FormObjective
+    description: "Performance: objective section rows linked to review forms."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: objectiveId
+    select_fields:
+      - objectiveId
+      - formDataId
+      - userId
+      - name
+      - status
+      - percentComplete
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: FormObjectiveDetails
+    description: "Performance: objective detail rows linked to PMGM objective sections."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: objectiveDetailId
+    select_fields:
+      - objectiveDetailId
+      - objectiveId
+      - formDataId
+      - userId
+      - status
+      - percentComplete
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: SimpleGoal
+    description: "Performance & Goals: simple goal entity alternative to GoalPlan/Goal."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: id
+    select_fields:
+      - id
+      - userId
+      - name
+      - state
+      - percentComplete
+      - startDate
+      - dueDate
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: GoalAchievements
+    description: "Performance & Goals: goal achievement/progress observations."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: achievementId
+    select_fields:
+      - achievementId
+      - goalId
+      - userId
+      - status
+      - achievementPercent
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: CalibrationSession
+    description: "Calibration: talent/performance calibration sessions."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    primary_key: sessionId
+    select_fields:
+      - sessionId
+      - name
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
+
+  - entity: CalibrationSessionSubject
+    description: "Calibration: employees included in a calibration session."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: subjectId
+    select_fields:
+      - subjectId
+      - sessionId
+      - userId
+      - performanceRating
+      - potentialRating
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: CalibrationSubjectRank
+    description: "Calibration: calibrated rank or box for a session subject."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: rankId
+    select_fields:
+      - rankId
+      - sessionId
+      - subjectId
+      - userId
+      - rank
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
   # ── Competencies and skills ───────────────────────────────────────────────
   - entity: CompetencyEntity
     description: "Tenant competency catalog used to map role requirements and employee skills."
@@ -556,9 +698,71 @@ entities:
     protection:
       userId: shadowed
 
+  - entity: WorkerCompetencyAssessment
+    description: "Competencies: worker competency assessments when exposed by the tenant."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - competency
+      - competencyName
+      - rating
+      - proficiency
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: FormCompetency
+    description: "Competencies: competency section ratings from PMGM forms."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: formCompetencyId
+    select_fields:
+      - formCompetencyId
+      - formDataId
+      - userId
+      - competency
+      - competencyName
+      - rating
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: SysOverallCompetency
+    description: "Competencies: overall competency score when exposed by PMGM."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - userId
+      - competency
+      - rating
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: SkillEntity
+    description: "Talent Intelligence Hub: skill catalog used for role requirements and gaps."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - name
+      - description
+      - status
+      - lastModifiedDateTime
+
   # ── Career aspiration and succession ──────────────────────────────────────
   - entity: CareerWorksheet
-    description: "Career worksheet target roles and readiness preferences."
+    description: "Custom/enrichment career worksheet. Not a standard SuccessFactors C/P/A blocker unless tenant metadata exposes it."
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
@@ -574,7 +778,7 @@ entities:
       userId: shadowed
 
   - entity: CareerInterest
-    description: "Declared career interests and mobility preferences."
+    description: "Custom/enrichment career interest. Not a standard SuccessFactors C/P/A blocker unless tenant metadata exposes it."
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
@@ -585,6 +789,67 @@ entities:
       - jobRole
       - interest
       - mobilityPreference
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: DevGoal
+    description: "Career development: development goals and aspirations."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: id
+    select_fields:
+      - id
+      - userId
+      - name
+      - status
+      - startDate
+      - dueDate
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: DevGoalCompetency
+    description: "Career development: competencies attached to development goals."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - devGoalId
+      - userId
+      - competency
+      - competencyName
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: TalentPool
+    description: "Succession: talent pool catalog when exposed by Succession."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: poolId
+    select_fields:
+      - poolId
+      - name
+      - status
+      - lastModifiedDateTime
+
+  - entity: TalentPoolNav
+    description: "Succession: employee membership/navigation for talent pools."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: externalCode
+    select_fields:
+      - externalCode
+      - poolId
+      - userId
+      - readiness
+      - status
       - lastModifiedDateTime
     protection:
       userId: shadowed
@@ -656,6 +921,93 @@ entities:
       - lastModifiedDateTime
     protection:
       userId: shadowed
+
+  - entity: UserCourses
+    description: "Learning v4 userassignment-service: course assignments by user. Requires Learning OData v4 endpoint."
+    service_family: learning_v4
+    service_path: userassignment-service
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: assignmentId
+    select_fields:
+      - assignmentId
+      - userId
+      - courseId
+      - status
+      - dueDate
+      - completionDate
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: UserPrograms
+    description: "Learning v4 userassignment-service: program assignments by user. Requires Learning OData v4 endpoint."
+    service_family: learning_v4
+    service_path: userassignment-service
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: assignmentId
+    select_fields:
+      - assignmentId
+      - userId
+      - programId
+      - status
+      - dueDate
+      - completionDate
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: LearningEvents
+    description: "Learning v4 learning-history: completed learning events. Requires Learning OData v4 endpoint."
+    service_family: learning_v4
+    service_path: learning-history
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: eventId
+    select_fields:
+      - eventId
+      - userId
+      - itemId
+      - completionDate
+      - status
+      - lastModifiedDateTime
+    protection:
+      userId: shadowed
+
+  - entity: Curricula
+    description: "Learning v4 curriculum-service: curricula/certification structure. Requires Learning OData v4 endpoint."
+    service_family: learning_v4
+    service_path: curriculum-service
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: curriculumId
+    select_fields:
+      - curriculumId
+      - title
+      - status
+      - expirationDate
+      - lastModifiedDateTime
+
+  - entity: CatalogsFeed
+    description: "Learning v4 catalog-service: learning catalog feed. Requires Learning OData v4 endpoint."
+    service_family: learning_v4
+    service_path: catalog-service
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    primary_key: itemId
+    select_fields:
+      - itemId
+      - title
+      - status
+      - duration
+      - creditHours
+      - lastModifiedDateTime
 
   # ── Job relationships ─────────────────────────────────────────────────────
   - entity: EmpJob_History
