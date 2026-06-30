@@ -21,6 +21,18 @@ SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
     "sap_successfactors_manager_hierarchy",
 ]
 
+SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER = [
+    "sap_successfactors_performance_cycle",
+    "sap_successfactors_employee_competency",
+    "sap_successfactors_employee_aspiration",
+    "sap_successfactors_role_requirements",
+    "sap_successfactors_learning_completion",
+    "sap_successfactors_job_application_pipeline",
+    "sap_successfactors_movement_events",
+    "sap_successfactors_recruitment_pipeline",
+    "sap_successfactors_compensation_full",
+]
+
 SUCCESSFACTORS_GOLD_TALENT_ORDER = [
     "sap_successfactors_talent_employee_profile",
     "sap_successfactors_talent_role_profile",
@@ -110,10 +122,18 @@ def successfactors_gold_datasets_for_target(target: str = "all") -> list[str]:
     return list(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) + list(SUCCESSFACTORS_GOLD_TALENT_ORDER)
 
 
+def successfactors_curated_silver_datasets_for_target(target: str = "all") -> list[str]:
+    target = str(target or "all").strip().lower()
+    if target == "foundation":
+        return []
+    return list(SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER)
+
+
 async def trigger_successfactors_gold_refresh(
     target: str = "all",
     security_context: dict | None = None,
 ) -> dict[str, Any]:
+    silver_datasets = successfactors_curated_silver_datasets_for_target(target)
     datasets = successfactors_gold_datasets_for_target(target)
     api_key, internal_service = _refinement_auth()
     headers = {
@@ -127,8 +147,45 @@ async def trigger_successfactors_gold_refresh(
             ensure_ascii=False,
         ),
     }
+    silver_results: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=600) as client:
+        for name in silver_datasets:
+            try:
+                response = await client.post(
+                    f"{REFINEMENT_URL}/datasets/{quote(name, safe='')}/refresh",
+                    headers=headers,
+                )
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = {"text": response.text[:300]}
+                if response.status_code >= 400:
+                    silver_results.append(
+                        {
+                            "name": name,
+                            "status": "error",
+                            "status_code": response.status_code,
+                            "error": payload,
+                        }
+                    )
+                    continue
+                silver_results.append(
+                    {
+                        "name": name,
+                        "status": "ok",
+                        "row_count": payload.get("row_count"),
+                        "storage_uri": payload.get("storage_uri"),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                silver_results.append(
+                    {
+                        "name": name,
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
         for name in datasets:
             try:
                 response = await client.post(
@@ -166,10 +223,23 @@ async def trigger_successfactors_gold_refresh(
                     }
                 )
     ok = sum(1 for item in results if item.get("status") == "ok")
+    silver_ok = sum(1 for item in silver_results if item.get("status") == "ok")
     return {
         "status": "success" if ok == len(results) else "partial" if ok else "failed",
         "target": target,
         "materialized": ok,
         "total": len(results),
         "results": results,
+        "silver_status": (
+            "success"
+            if silver_results and silver_ok == len(silver_results)
+            else "partial"
+            if silver_ok
+            else "failed"
+            if silver_results
+            else "skipped"
+        ),
+        "silver_materialized": silver_ok,
+        "silver_total": len(silver_results),
+        "silver_results": silver_results,
     }

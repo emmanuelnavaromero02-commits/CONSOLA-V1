@@ -87,6 +87,264 @@ WHERE FALSE
 
 
 TALENT_GOLD_FALLBACK_SQL: dict[str, str] = {
+    "sap_successfactors_talent_employee_profile": """
+WITH emp AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+    WHERE COALESCE(is_active, FALSE) = TRUE
+)
+SELECT
+    tenant_id,
+    workspace_id,
+    user_id,
+    full_name,
+    company_id,
+    company_name,
+    division_id,
+    division_name,
+    department_id,
+    department_name,
+    location_id,
+    location_name,
+    job_code,
+    manager_id,
+    0::BIGINT AS direct_reports,
+    0::BIGINT AS hierarchy_depth,
+    start_date,
+    end_date,
+    CASE
+        WHEN TRY_CAST(start_date AS DATE) IS NULL THEN NULL
+        ELSE DATE_DIFF('month', TRY_CAST(start_date AS DATE), CURRENT_DATE)
+    END AS tenure_months,
+    NULL::DOUBLE AS competency_score,
+    NULL::DOUBLE AS performance_score,
+    NULL::DOUBLE AS aspiration_score,
+    'insufficient_data' AS cpa_status,
+    'foundation_ready' AS profile_status,
+    '["missing_competency","missing_performance","missing_aspiration"]' AS blockers,
+    CURRENT_TIMESTAMP AS generated_at
+FROM emp
+ORDER BY user_id
+""",
+    "sap_successfactors_talent_role_profile": """
+WITH emp AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+    WHERE job_code IS NOT NULL
+),
+rollup AS (
+    SELECT
+        tenant_id,
+        workspace_id,
+        job_code,
+        COUNT(*) AS employee_count,
+        COUNT(*) FILTER (WHERE COALESCE(is_active, FALSE) = TRUE) AS active_employee_count,
+        COUNT(DISTINCT department_id) AS departments_count,
+        COUNT(DISTINCT location_id) AS locations_count,
+        COUNT(DISTINCT company_id) AS companies_count
+    FROM emp
+    GROUP BY tenant_id, workspace_id, job_code
+)
+SELECT
+    tenant_id,
+    workspace_id,
+    job_code,
+    job_code AS role_name,
+    employee_count,
+    active_employee_count,
+    departments_count,
+    locations_count,
+    companies_count,
+    'blocked' AS required_skills_status,
+    'partial' AS role_profile_status,
+    '["Position requirements pending","Skills/competencies metadata pending"]' AS blockers,
+    CURRENT_TIMESTAMP AS generated_at
+FROM rollup
+ORDER BY active_employee_count DESC, job_code
+""",
+    "sap_successfactors_talent_cpa_scores": """
+WITH emp AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_employee_profile/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+)
+SELECT
+    tenant_id,
+    workspace_id,
+    user_id,
+    full_name,
+    company_name,
+    department_name,
+    location_name,
+    job_code,
+    direct_reports,
+    tenure_months,
+    COALESCE(job_code, '(sin rol)') AS role_name,
+    TRY_CAST(competency_score AS DOUBLE) AS competency_score,
+    TRY_CAST(performance_score AS DOUBLE) AS performance_score,
+    TRY_CAST(aspiration_score AS DOUBLE) AS aspiration_score,
+    NULL::DOUBLE AS competency_100,
+    NULL::DOUBLE AS performance_100,
+    NULL::DOUBLE AS aspiration_100,
+    NULL::DOUBLE AS fit_score,
+    'insufficient_data' AS cpa_status,
+    'partial' AS role_profile_status,
+    'blocked' AS required_skills_status,
+    '["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]' AS blockers,
+    CURRENT_TIMESTAMP AS generated_at
+FROM emp
+ORDER BY user_id
+""",
+    "sap_successfactors_talent_readiness": """
+WITH cpa AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_cpa_scores/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+)
+SELECT
+    user_id,
+    full_name,
+    company_name,
+    department_name,
+    location_name,
+    job_code,
+    direct_reports,
+    tenure_months,
+    role_name,
+    competency_score,
+    performance_score,
+    aspiration_score,
+    fit_score,
+    NULL::DOUBLE AS benchmark_score,
+    ROUND(TRY_CAST(fit_score AS DOUBLE), 2) AS readiness_score,
+    CASE WHEN TRY_CAST(fit_score AS DOUBLE) IS NULL THEN 'insufficient_data' ELSE 'cpa_real' END AS source_mode,
+    NULL::VARCHAR AS benchmark_version,
+    CASE
+        WHEN TRY_CAST(fit_score AS DOUBLE) IS NULL THEN 'insufficient_data'
+        WHEN TRY_CAST(fit_score AS DOUBLE) >= 80 THEN 'ready'
+        WHEN TRY_CAST(fit_score AS DOUBLE) >= 60 THEN 'near'
+        ELSE 'not_ready'
+    END AS readiness_status,
+    CASE
+        WHEN TRY_CAST(fit_score AS DOUBLE) IS NULL THEN 'Datos insuficientes'
+        WHEN TRY_CAST(fit_score AS DOUBLE) >= 80 THEN 'Ready'
+        WHEN TRY_CAST(fit_score AS DOUBLE) >= 60 THEN 'Near'
+        ELSE 'Not ready'
+    END AS readiness_label,
+    role_profile_status,
+    required_skills_status,
+    CASE WHEN TRY_CAST(fit_score AS DOUBLE) IS NULL THEN 3 ELSE 0 END AS blocker_count,
+    CASE
+        WHEN TRY_CAST(fit_score AS DOUBLE) IS NULL
+            THEN '["talent_cpa_inputs_missing","benchmark_internal_not_configured"]'
+        ELSE '[]'
+    END AS blockers,
+    'talent_readiness.v2' AS contract_version,
+    CURRENT_TIMESTAMP AS generated_at
+FROM cpa
+ORDER BY user_id
+""",
+    "sap_successfactors_talent_9box": """
+WITH readiness AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_readiness/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+),
+scored AS (
+    SELECT
+        *,
+        CASE
+            WHEN TRY_CAST(performance_score AS DOUBLE) IS NOT NULL AND TRY_CAST(performance_score AS DOUBLE) > 5
+                THEN TRY_CAST(performance_score AS DOUBLE) / 20
+            WHEN TRY_CAST(performance_score AS DOUBLE) IS NOT NULL
+                THEN TRY_CAST(performance_score AS DOUBLE)
+            WHEN TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
+                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
+            ELSE NULL
+        END AS performance_scale,
+        CASE
+            WHEN TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
+                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
+            ELSE NULL
+        END AS potential_scale
+    FROM readiness
+),
+banded AS (
+    SELECT
+        *,
+        CASE
+            WHEN performance_scale IS NULL THEN 'insufficient_data'
+            WHEN performance_scale >= 4 THEN 'high'
+            WHEN performance_scale >= 3 THEN 'medium'
+            ELSE 'low'
+        END AS performance_band_calc,
+        CASE
+            WHEN potential_scale IS NULL THEN 'insufficient_data'
+            WHEN potential_scale >= 4 THEN 'high'
+            WHEN potential_scale >= 3 THEN 'medium'
+            ELSE 'low'
+        END AS potential_band_calc
+    FROM scored
+)
+SELECT
+    user_id,
+    full_name,
+    company_name,
+    department_name,
+    location_name,
+    job_code,
+    role_name,
+    performance_score,
+    ROUND(potential_scale, 2) AS potential_score,
+    ROUND(readiness_score, 2) AS readiness_score,
+    source_mode,
+    benchmark_version,
+    performance_band_calc AS performance_band,
+    potential_band_calc AS potential_band,
+    CASE
+        WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'insufficient_data'
+        WHEN potential_band_calc = 'high' AND performance_band_calc = 'low' THEN 'enigma'
+        WHEN potential_band_calc = 'high' AND performance_band_calc = 'medium' THEN 'crecimiento'
+        WHEN potential_band_calc = 'high' AND performance_band_calc = 'high' THEN 'estrella'
+        WHEN potential_band_calc = 'medium' AND performance_band_calc = 'low' THEN 'dilema'
+        WHEN potential_band_calc = 'medium' AND performance_band_calc = 'medium' THEN 'core'
+        WHEN potential_band_calc = 'medium' AND performance_band_calc = 'high' THEN 'alto_impacto'
+        WHEN potential_band_calc = 'low' AND performance_band_calc = 'low' THEN 'riesgo'
+        WHEN potential_band_calc = 'low' AND performance_band_calc = 'medium' THEN 'efectivo'
+        WHEN potential_band_calc = 'low' AND performance_band_calc = 'high' THEN 'experto'
+        ELSE 'insufficient_data'
+    END AS box_key,
+    CASE
+        WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'Sin datos suficientes'
+        WHEN potential_band_calc = 'high' AND performance_band_calc = 'low' THEN 'Enigma'
+        WHEN potential_band_calc = 'high' AND performance_band_calc = 'medium' THEN 'Crecimiento'
+        WHEN potential_band_calc = 'high' AND performance_band_calc = 'high' THEN 'Estrella'
+        WHEN potential_band_calc = 'medium' AND performance_band_calc = 'low' THEN 'Dilema'
+        WHEN potential_band_calc = 'medium' AND performance_band_calc = 'medium' THEN 'Core'
+        WHEN potential_band_calc = 'medium' AND performance_band_calc = 'high' THEN 'Alto Impacto'
+        WHEN potential_band_calc = 'low' AND performance_band_calc = 'low' THEN 'Riesgo'
+        WHEN potential_band_calc = 'low' AND performance_band_calc = 'medium' THEN 'Efectivo'
+        WHEN potential_band_calc = 'low' AND performance_band_calc = 'high' THEN 'Experto'
+        ELSE 'Sin datos suficientes'
+    END AS box_label,
+    CASE
+        WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'blocked'
+        WHEN source_mode = 'benchmark_internal' THEN 'benchmark_internal'
+        ELSE 'ready'
+    END AS box_status,
+    blockers,
+    'talent_9box.v2' AS contract_version,
+    CURRENT_TIMESTAMP AS generated_at
+FROM banded
+ORDER BY user_id
+""",
     "sap_successfactors_talent_mobility_history": """
 SELECT
     NULL::VARCHAR AS user_id,
@@ -333,6 +591,24 @@ SELECT
 """,
 }
 
+SUCCESSFACTORS_GOLD_FALLBACK_SOURCES: dict[str, list[str]] = {
+    "sap_successfactors_talent_employee_profile": [
+        "gold/sap_successfactors/sap_successfactors_employee_360",
+    ],
+    "sap_successfactors_talent_role_profile": [
+        "gold/sap_successfactors/sap_successfactors_employee_360",
+    ],
+    "sap_successfactors_talent_cpa_scores": [
+        "gold/sap_successfactors/sap_successfactors_talent_employee_profile",
+    ],
+    "sap_successfactors_talent_readiness": [
+        "gold/sap_successfactors/sap_successfactors_talent_cpa_scores",
+    ],
+    "sap_successfactors_talent_9box": [
+        "gold/sap_successfactors/sap_successfactors_talent_readiness",
+    ],
+}
+
 SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {
     **FOUNDATION_GOLD_FALLBACK_SQL,
     **TALENT_GOLD_FALLBACK_SQL,
@@ -352,7 +628,7 @@ def fallback_dataset_for_successfactors(ds: dict[str, Any], exc: Exception | Any
     return {
         **ds,
         "sql_def": sql.strip(),
-        "sources": [],
+        "sources": SUCCESSFACTORS_GOLD_FALLBACK_SOURCES.get(name, []),
         "description": (
             str(ds.get("description") or "").strip()
             + " Fallback operativo: dependencia SuccessFactors no materializada."
