@@ -9131,6 +9131,28 @@ async def _build_sync_run_status(
             control_room_ready = bool(
                 gold_ready and gold_kpis and talent_kpis and not control_room_publish_failed
             )
+            control_room_total = max(
+                control_room_snapshot["source_count"]
+                or control_room_snapshot["item_count"],
+                1,
+            )
+            if control_room_ready:
+                control_room_completed = control_room_total
+                control_room_percent = 100
+            else:
+                control_room_completed = (
+                    control_room_snapshot["data_ready_sources"]
+                    or (
+                        control_room_snapshot["source_count"]
+                        if control_room_snapshot["item_count"]
+                        else 0
+                    )
+                )
+                control_room_completed = min(control_room_completed, control_room_total)
+                control_room_percent = min(
+                    95,
+                    round((control_room_completed / control_room_total) * 100),
+                )
             updates["control_room"] = {
                 "label": "Control Room",
                 "status": "success" if control_room_ready else "partial",
@@ -9151,33 +9173,9 @@ async def _build_sync_run_status(
                     if gold_ready
                     else "Control Room materializado con fuentes Bronze/Silver; esperando Gold."
                 ),
-                "completed": control_room_snapshot["data_ready_sources"]
-                if control_room_snapshot["data_ready_sources"]
-                else control_room_snapshot["item_count"],
-                "total": max(
-                    control_room_snapshot["source_count"],
-                    control_room_snapshot["item_count"],
-                    1,
-                ),
-                "percent": 100
-                if control_room_ready
-                else min(
-                    95,
-                    round(
-                        (
-                            (
-                                control_room_snapshot["data_ready_sources"]
-                                or control_room_snapshot["item_count"]
-                            )
-                            / max(
-                                control_room_snapshot["source_count"],
-                                control_room_snapshot["item_count"],
-                                1,
-                            )
-                        )
-                        * 100
-                    ),
-                ),
+                "completed": control_room_completed,
+                "total": control_room_total,
+                "percent": control_room_percent,
                 "metrics": control_room_snapshot,
             }
         except Exception as exc:

@@ -1350,6 +1350,11 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
         step["id"] == "agents_intelligence" and step["status"] == "success"
         for step in result["steps"]
     )
+    control_room_step = next(
+        step for step in result["steps"] if step["id"] == "control_room"
+    )
+    assert control_room_step["status"] == "success"
+    assert control_room_step["percent"] == 100
     assert result["progress_percent"] >= 80
 
 

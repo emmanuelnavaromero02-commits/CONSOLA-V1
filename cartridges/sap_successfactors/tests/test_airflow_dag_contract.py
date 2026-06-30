@@ -158,8 +158,20 @@ def test_successfactors_gold_refresh_order_respects_target():
 
     foundation = job_runner._successfactors_gold_datasets_for_target("foundation")
     talent = job_runner._successfactors_gold_datasets_for_target("talent")
+    foundation_silver = job_runner._successfactors_curated_silver_datasets_for_target(
+        "foundation"
+    )
+    talent_silver = job_runner._successfactors_curated_silver_datasets_for_target(
+        "talent"
+    )
 
     assert foundation == job_runner.SUCCESSFACTORS_GOLD_FOUNDATION_ORDER
+    assert foundation_silver == []
+    assert talent_silver[:3] == [
+        "sap_successfactors_performance_cycle",
+        "sap_successfactors_employee_competency",
+        "sap_successfactors_employee_aspiration",
+    ]
     assert talent[: len(foundation)] == foundation
     assert talent[-3:] == [
         "sap_successfactors_talent_signals",
