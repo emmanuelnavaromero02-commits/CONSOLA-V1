@@ -1,6 +1,6 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-50 silver + 33 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
+72 silver + 33 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
 Historical install migrations seed the original foundation/talent set; Console
 startup refreshes the full packaged catalog from datasets/*.sql.
 
@@ -29,7 +29,7 @@ TALENT_MIGRATION = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
-EXPECTED_SILVER = 50
+EXPECTED_SILVER = 72
 EXPECTED_GOLD = 33
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 BASE_MIGRATION_DEDUP_KEYS = {
@@ -80,6 +80,28 @@ DEDUP_LATEST_KEYS = {
     "sap_successfactors_timeaccount_latest.sql": ("userId", "accountType"),
     "sap_successfactors_workschedule_latest.sql": ("externalCode",),
     "sap_successfactors_empjob_history_latest.sql": ("userId", "startDate", "relationshipType", "relUserId"),
+    "sap_successfactors_fopaygrade_latest.sql": ("externalCode",),
+    "sap_successfactors_formperfpotsummarysection_latest.sql": ("formDataId",),
+    "sap_successfactors_formobjective_latest.sql": ("objectiveId",),
+    "sap_successfactors_formobjectivedetails_latest.sql": ("objectiveDetailId",),
+    "sap_successfactors_simplegoal_latest.sql": ("id",),
+    "sap_successfactors_goalachievements_latest.sql": ("achievementId",),
+    "sap_successfactors_calibrationsession_latest.sql": ("sessionId",),
+    "sap_successfactors_calibrationsessionsubject_latest.sql": ("subjectId",),
+    "sap_successfactors_calibrationsubjectrank_latest.sql": ("rankId",),
+    "sap_successfactors_workercompetencyassessment_latest.sql": ("externalCode",),
+    "sap_successfactors_formcompetency_latest.sql": ("formCompetencyId",),
+    "sap_successfactors_sysoverallcompetency_latest.sql": ("externalCode",),
+    "sap_successfactors_skillentity_latest.sql": ("externalCode",),
+    "sap_successfactors_devgoal_latest.sql": ("id",),
+    "sap_successfactors_devgoalcompetency_latest.sql": ("externalCode",),
+    "sap_successfactors_talentpool_latest.sql": ("poolId",),
+    "sap_successfactors_talentpoolnav_latest.sql": ("externalCode",),
+    "sap_successfactors_usercourses_latest.sql": ("assignmentId",),
+    "sap_successfactors_userprograms_latest.sql": ("assignmentId",),
+    "sap_successfactors_learningevents_latest.sql": ("eventId",),
+    "sap_successfactors_curricula_latest.sql": ("curriculumId",),
+    "sap_successfactors_catalogsfeed_latest.sql": ("itemId",),
 }
 
 
@@ -238,7 +260,7 @@ def test_base_migration_embeds_latest_dedup_sql():
 
 def test_declared_sources_are_real_sf_entities():
     entities = _sf_entities()
-    assert len(entities) == 41
+    assert len(entities) == 63
     dataset_names = {p.stem for p in _dataset_files()}
     for path in _dataset_files():
         _, _, sources, _ = _parse_header(path)

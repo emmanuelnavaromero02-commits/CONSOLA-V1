@@ -175,7 +175,7 @@ def test_sf_inventory_blocks_a_to_e():
     assert len(kb_ids) == 27, f"expected 27 KBs, got {len(kb_ids)}"
     assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 21
     n_datasets = len(_dataset_names())
-    assert n_datasets == 83, f"expected 83 datasets, got {n_datasets}"
+    assert n_datasets == 105, f"expected 105 datasets, got {n_datasets}"
     apps = sorted(p.stem for p in APPS_DIR.glob("*.html"))
     assert apps == ["sap_successfactors_talent_health", "sap_successfactors_workforce_overview"]
     assert HINTS.is_file()
