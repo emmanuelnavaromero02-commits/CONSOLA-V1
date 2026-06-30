@@ -165,6 +165,31 @@ class FakePool:
 
 
 GOAL_ID_VALID = "12345678-1234-1234-1234-1234567890ab"
+TENANT_ID_VALID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+WORKSPACE_ID_VALID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+def test_create_goal_sets_rls_scope_for_workspace(goal_mod, monkeypatch):
+    fake = FakePool()
+    fake._fetchval_queue = ["copilot_goals"]
+    fake._fetchrow_queue = [FakeRecord(
+        id=GOAL_ID_VALID, status="planning", created_at=None,
+    )]
+    monkeypatch.setattr(goal_mod.auth, "pool", AsyncMock(return_value=fake))
+
+    out = asyncio.run(
+        goal_mod.create_goal(
+            user_id=1,
+            tenant_id=TENANT_ID_VALID,
+            workspace_id=WORKSPACE_ID_VALID,
+            goal_text="Diagnostica margen",
+        )
+    )
+
+    assert out["id"] == GOAL_ID_VALID
+    assert fake.execs, "workspace-scoped insert should set RLS scope first"
+    assert "set_config('app.tenant_id'" in fake.execs[0][0]
+    assert fake.execs[0][1] == (TENANT_ID_VALID, WORKSPACE_ID_VALID)
 
 
 def test_diagnose_goal_persists_plan(goal_mod, monkeypatch):

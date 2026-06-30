@@ -20,6 +20,10 @@ def test_agent_crud_and_manual_invoke_use_workspace_agent_permissions():
     assert "await _agents.get_agent(agent_id, user_context=user)" in src
     assert '@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])' in src
     assert '@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])' in src
+    invoke_section = src.split("async def api_agents_invoke", 1)[1].split("async def api_agents_invoke_scheduled", 1)[0]
+    assert "_agent_invoke_background_requested(body)" in invoke_section
+    assert "_start_agent_invoke_background(agent, message, history, user)" in invoke_section
+    assert "_agent_invoke_background_response(agent)" in invoke_section
 
 
 def test_scheduled_agent_invoke_requires_enabled_cron_and_constant_time_token():

@@ -47,13 +47,12 @@ async def api_agents_list(
     user: dict = Depends(require_permission("agents.read")),
 ):
     agents = await _agents.list_agents(cartridge_id, include_inactive, user_context=user)
-    if not include_inactive:
-        agents = await _repair_successfactors_talent_monitor_list_if_needed(
-            agents,
-            user,
-            cartridge_id=cartridge_id,
-            include_inactive=include_inactive,
-        )
+    agents = await _repair_successfactors_talent_monitor_list_if_needed(
+        agents,
+        user,
+        cartridge_id=cartridge_id,
+        include_inactive=include_inactive,
+    )
     return {"agents": agents}
 
 # /api/agents/_tool-catalog
@@ -95,6 +94,7 @@ async def api_agents_get(request: Request, agent_id: str, user: dict = Depends(r
 @router.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
 async def api_agents_create(request: Request, body: dict, user: dict = Depends(require_permission("agents.write"))):
+    body = _coerce_successfactors_talent_monitor_payload(body)
     try:
         return await _agents.create_agent(body, owner_user_id=user.get("id"), user_context=user)
     except PermissionError as exc:
@@ -106,6 +106,7 @@ async def api_agents_create(request: Request, body: dict, user: dict = Depends(r
 @router.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
 async def api_agents_update(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.write"))):
+    body = _coerce_successfactors_talent_monitor_payload(body)
     try:
         a = await _agents.update_agent(agent_id, body, user_context=user)
     except PermissionError as exc:
@@ -142,6 +143,9 @@ async def api_agents_invoke(request: Request, agent_id: str, body: dict, user: d
     if not message:
         raise HTTPException(400, "message is required")
     history = body.get("history") or []
+    if _agent_invoke_background_requested(body):
+        _start_agent_invoke_background(agent, message, history, user)
+        return _agent_invoke_background_response(agent)
     result = await _agent_runtime.run(agent, message, history=history, user=user)
     return result
 

@@ -233,6 +233,17 @@ export function AgentsConsole() {
   const [testOutput, setTestOutput] = useState("");
   const [selectedRunId, setSelectedRunId] = useState<number | string | null>(null);
 
+  const refreshRunsSoon = (agentId: string) => {
+    queryClient.invalidateQueries({ queryKey: ["agents", agentId, "runs"] });
+    if (typeof window === "undefined") return;
+    window.setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ["agents", agentId, "runs"] });
+    }, 1_500);
+    window.setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ["agents", agentId, "runs"] });
+    }, 6_000);
+  };
+
   const agents = useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
@@ -284,13 +295,13 @@ export function AgentsConsole() {
       }
       const saved = nextDraft.id ? await updateAgent(nextDraft.id, payload) : await createAgent(payload);
       const savedDraft = draftFromAgent(saved);
-      const result = await invokeAgent(saved.id, operationalMessage(savedDraft));
+      const result = await invokeAgent(saved.id, operationalMessage(savedDraft), [], { background: true });
       return { saved, result };
     },
     onSuccess: ({ saved, result }) => {
-      toast.success("Agente guardado y ejecutado.");
+      toast.success("Agente guardado. Ejecucion iniciada.");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
-      queryClient.invalidateQueries({ queryKey: ["agents", saved.id, "runs"] });
+      refreshRunsSoon(saved.id);
       setSelectedId(saved.id);
       setDraft(draftFromAgent(saved));
       setTab("runs");
@@ -318,13 +329,17 @@ export function AgentsConsole() {
 
   const invoke = useMutation({
     mutationFn: async ({ id, message, showRuns = false }: { id: string; message: string; showRuns?: boolean }) => ({
-      result: await invokeAgent(id, message),
+      result: await invokeAgent(id, message, [], showRuns ? { background: true } : {}),
+      agentId: id,
       showRuns,
     }),
-    onSuccess: ({ result, showRuns }) => {
+    onSuccess: ({ result, agentId, showRuns }) => {
       setTestOutput(resultText(result));
-      queryClient.invalidateQueries({ queryKey: ["agents", selectedId, "runs"] });
-      if (showRuns) setTab("runs");
+      queryClient.invalidateQueries({ queryKey: ["agents", agentId, "runs"] });
+      if (showRuns) {
+        refreshRunsSoon(agentId);
+        setTab("runs");
+      }
     },
     onError: (error) => setTestOutput(error instanceof Error ? error.message : "No se pudo invocar el agente."),
   });

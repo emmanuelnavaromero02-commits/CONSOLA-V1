@@ -193,6 +193,9 @@ export interface AgentInvokeResponse {
   run_id?: number | string;
   output_text?: string;
   text?: string;
+  reply?: string;
+  queued?: boolean;
+  status?: string;
   tool_calls?: unknown;
   error_message?: string | null;
   [key: string]: unknown;
@@ -401,10 +404,15 @@ export async function getAgentRun(runId: number | string): Promise<AgentRunRecor
   return data;
 }
 
-export async function invokeAgent(id: string, message: string, history: Array<Record<string, string>> = []): Promise<AgentInvokeResponse> {
+export async function invokeAgent(
+  id: string,
+  message: string,
+  history: Array<Record<string, string>> = [],
+  options: { background?: boolean } = {},
+): Promise<AgentInvokeResponse> {
   const { data } = await api.post<AgentInvokeResponse>(
     `/api/agents/${encodeURIComponent(id)}/invoke`,
-    { message, history },
+    { message, history, ...(options.background ? { background: true, wait: false } : {}) },
   );
   return data;
 }

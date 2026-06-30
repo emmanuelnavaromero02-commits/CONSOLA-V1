@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from typing import Any
 
 from app.services import auth, lessons_service, watchdog_registry
@@ -35,6 +36,7 @@ from app.services._copilot_helpers import (
     coerce_uuid_or_none as _coerce_uuid_or_none,
     has_table_cached,
 )
+from app.services.db_scope import scoped_db
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,18 @@ async def _has_table() -> bool:
     return await has_table_cached(pool, "copilot_goals")
 
 
+@asynccontextmanager
+async def _goal_db(pool: Any, tenant_id: str | None, workspace_id: str | None):
+    """Yield a DB handle scoped for copilot_goals RLS when possible."""
+
+    workspace_uuid = _coerce_uuid_or_none(workspace_id)
+    if workspace_uuid:
+        async with scoped_db(pool, tenant_id, workspace_uuid) as conn:
+            yield conn, workspace_uuid
+        return
+    yield pool, None
+
+
 # ── Goal CRUD ─────────────────────────────────────────────────────────
 
 
@@ -89,6 +103,7 @@ async def create_goal(
     *,
     user_id: int,
     workspace_id: str | None,
+    tenant_id: str | None = None,
     goal_text: str,
     conversation_id: str | None = None,
 ) -> dict[str, Any] | None:
@@ -102,21 +117,27 @@ async def create_goal(
     # at insert time. Coerce here so the bad input becomes NULL
     # instead of a 500 from asyncpg.
     conversation_id_uuid = _coerce_uuid_or_none(conversation_id)
-    workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO copilot_goals
-            (user_id, workspace_id, conversation_id, goal_text, status)
-        VALUES ($1, $2::uuid, $3::uuid, $4, 'planning')
-        RETURNING id::text AS id, status, created_at
-        """,
-        user_id, workspace_id_uuid, conversation_id_uuid, goal_text,
-    )
+    async with _goal_db(pool, tenant_id, workspace_id) as (conn, workspace_id_uuid):
+        row = await conn.fetchrow(
+            """
+            INSERT INTO copilot_goals
+                (user_id, workspace_id, conversation_id, goal_text, status)
+            VALUES ($1, $2::uuid, $3::uuid, $4, 'planning')
+            RETURNING id::text AS id, status, created_at
+            """,
+            user_id, workspace_id_uuid, conversation_id_uuid, goal_text,
+        )
     return dict(row) if row else None
 
 
-async def get_goal(*, goal_id: str, user_id: int) -> dict[str, Any] | None:
+async def get_goal(
+    *,
+    goal_id: str,
+    user_id: int,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any] | None:
     if not await _has_table():
         return None
     goal_uuid = _coerce_uuid_or_none(goal_id)
@@ -125,54 +146,60 @@ async def get_goal(*, goal_id: str, user_id: int) -> dict[str, Any] | None:
     pool = await auth.pool()
     # Cast the parameter to uuid so we hit the PK index instead of
     # forcing a sequential scan with a per-row id::text cast.
-    row = await pool.fetchrow(
-        """
-        SELECT id::text          AS id,
-               user_id,
-               workspace_id::text AS workspace_id,
-               conversation_id::text AS conversation_id,
-               goal_text,
-               plan_summary,
-               status,
-               impact_estimate,
-               outcome_summary,
-               workflow_ids,
-               metadata,
-               created_at,
-               finished_at
-          FROM copilot_goals
-         WHERE id       = $1::uuid
-           AND user_id  = $2
-        """,
-        goal_uuid, user_id,
-    )
+    async with _goal_db(pool, tenant_id, workspace_id) as (conn, _workspace_id_uuid):
+        row = await conn.fetchrow(
+            """
+            SELECT id::text          AS id,
+                   user_id,
+                   workspace_id::text AS workspace_id,
+                   conversation_id::text AS conversation_id,
+                   goal_text,
+                   plan_summary,
+                   status,
+                   impact_estimate,
+                   outcome_summary,
+                   workflow_ids,
+                   metadata,
+                   created_at,
+                   finished_at
+              FROM copilot_goals
+             WHERE id       = $1::uuid
+               AND user_id  = $2
+            """,
+            goal_uuid, user_id,
+        )
     return dict(row) if row else None
 
 
 async def list_goals(
-    *, user_id: int, limit: int = _MAX_LIST_LIMIT,
+    *,
+    user_id: int,
+    limit: int = _MAX_LIST_LIMIT,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
     if not await _has_table():
         return []
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT id::text          AS id,
-               goal_text,
-               plan_summary,
-               status,
-               impact_estimate,
-               outcome_summary,
-               workflow_ids,
-               created_at,
-               finished_at
-          FROM copilot_goals
-         WHERE user_id = $1
-         ORDER BY created_at DESC
-         LIMIT $2
-        """,
-        user_id, min(_MAX_LIST_LIMIT, max(1, limit)),
-    )
+    async with _goal_db(pool, tenant_id, workspace_id) as (conn, _workspace_id_uuid):
+        rows = await conn.fetch(
+            """
+            SELECT id::text          AS id,
+                   goal_text,
+                   plan_summary,
+                   status,
+                   impact_estimate,
+                   outcome_summary,
+                   workflow_ids,
+                   created_at,
+                   finished_at
+              FROM copilot_goals
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT $2
+            """,
+            user_id, min(_MAX_LIST_LIMIT, max(1, limit)),
+        )
     return [dict(r) for r in rows]
 
 
@@ -186,6 +213,8 @@ async def update_goal_status(
     outcome_summary: str | None = None,
     workflow_ids: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> bool:
     if not await _has_table():
         return False
@@ -208,27 +237,28 @@ async def update_goal_status(
         if status in ("completed", "failed", "cancelled")
         else ""
     )
-    res = await pool.execute(
-        f"""
-        UPDATE copilot_goals
-           SET status           = $1,
-               plan_summary     = COALESCE($2, plan_summary),
-               impact_estimate  = COALESCE($3::jsonb, impact_estimate),
-               outcome_summary  = COALESCE($4, outcome_summary),
-               workflow_ids     = COALESCE($5::uuid[], workflow_ids),
-               metadata         = COALESCE($6::jsonb, metadata)
-               {finished}
-         WHERE id       = $7::uuid
-           AND user_id  = $8
-        """,
-        status,
-        plan_summary[:_MAX_PLAN_SUMMARY] if plan_summary else None,
-        json.dumps(impact_estimate) if impact_estimate is not None else None,
-        outcome_summary[:_MAX_OUTCOME_SUMMARY] if outcome_summary else None,
-        safe_workflow_ids,
-        json.dumps(metadata) if metadata is not None else None,
-        goal_uuid, user_id,
-    )
+    async with _goal_db(pool, tenant_id, workspace_id) as (conn, _workspace_id_uuid):
+        res = await conn.execute(
+            f"""
+            UPDATE copilot_goals
+               SET status           = $1,
+                   plan_summary     = COALESCE($2, plan_summary),
+                   impact_estimate  = COALESCE($3::jsonb, impact_estimate),
+                   outcome_summary  = COALESCE($4, outcome_summary),
+                   workflow_ids     = COALESCE($5::uuid[], workflow_ids),
+                   metadata         = COALESCE($6::jsonb, metadata)
+                   {finished}
+             WHERE id       = $7::uuid
+               AND user_id  = $8
+            """,
+            status,
+            plan_summary[:_MAX_PLAN_SUMMARY] if plan_summary else None,
+            json.dumps(impact_estimate) if impact_estimate is not None else None,
+            outcome_summary[:_MAX_OUTCOME_SUMMARY] if outcome_summary else None,
+            safe_workflow_ids,
+            json.dumps(metadata) if metadata is not None else None,
+            goal_uuid, user_id,
+        )
     return res.endswith("UPDATE 1")
 
 
@@ -375,6 +405,8 @@ async def diagnose_goal(
     *,
     goal_id: str,
     user_id: int,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
     llm_call,
 ) -> dict[str, Any]:
     """Ask the LLM to decompose the goal. ``llm_call`` matches
@@ -384,7 +416,12 @@ async def diagnose_goal(
     the parsed diagnosis dict (which the caller can use to pick
     watchdogs / plan workflows).
     """
-    goal = await get_goal(goal_id=goal_id, user_id=user_id)
+    goal = await get_goal(
+        goal_id=goal_id,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
     if not goal:
         raise ValueError("goal not found")
     if goal["status"] not in ("planning", "running"):
@@ -418,6 +455,8 @@ async def diagnose_goal(
             "intent_keywords": diagnosis["intent_keywords"],
             "subgoals": diagnosis["subgoals"],
         },
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
     )
     return diagnosis
 
@@ -498,6 +537,8 @@ async def conclude_goal(
     *,
     goal_id: str,
     user_id: int,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
     workflow_outcomes: list[dict[str, Any]],
     llm_call,
 ) -> dict[str, Any] | None:
@@ -505,7 +546,12 @@ async def conclude_goal(
     persist it, and record one lesson per approved destructive step
     so the next turn benefits from this history.
     """
-    goal = await get_goal(goal_id=goal_id, user_id=user_id)
+    goal = await get_goal(
+        goal_id=goal_id,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
     if not goal:
         return None
 
@@ -548,6 +594,8 @@ async def conclude_goal(
         user_id=user_id,
         status=terminal,
         outcome_summary=summary,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
     )
 
     # Promote each approved destructive step into a lesson so the

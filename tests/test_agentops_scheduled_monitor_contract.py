@@ -156,7 +156,26 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
         1,
     )[0]
     assert "_repair_successfactors_talent_monitor_list_if_needed" in list_section
+    assert "if not include_inactive" not in list_section
     assert "_repair_successfactors_talent_monitor_row_if_needed" in get_section
+    create_section = source.split("async def api_agents_create", 1)[1].split(
+        "@app.patch(",
+        1,
+    )[0]
+    update_section = source.split("async def api_agents_update", 1)[1].split(
+        "@app.delete(",
+        1,
+    )[0]
+    assert "_coerce_successfactors_talent_monitor_payload(body)" in create_section
+    assert "_coerce_successfactors_talent_monitor_payload(body)" in update_section
+    coerce_section = source.split("def _coerce_successfactors_talent_monitor_payload", 1)[1].split(
+        "async def _ensure_successfactors_talent_monitor",
+        1,
+    )[0]
+    assert 'slug != _SUCCESSFACTORS_TALENT_MONITOR_SLUG' in coerce_section
+    assert 'patched["extra"] = merged_extra' in coerce_section
+    assert 'patched["role"] = "monitor"' in coerce_section
+    assert 'patched["allowed_tools"] = _merge_agent_tools' in coerce_section
 
     v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
     v1_list_section = v1_source.split("async def api_agents_list", 1)[1].split(
@@ -168,4 +187,6 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
         1,
     )[0]
     assert "_repair_successfactors_talent_monitor_list_if_needed" in v1_list_section
+    assert "if not include_inactive" not in v1_list_section
     assert "_repair_successfactors_talent_monitor_row_if_needed" in v1_get_section
+    assert "_coerce_successfactors_talent_monitor_payload(body)" in v1_source
