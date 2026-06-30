@@ -123,7 +123,7 @@ def test_diagnose_goal_504_on_llm_timeout(cuspide_modules, monkeypatch):
     async def timeout_llm(system, messages, **_kw):
         raise RuntimeError("llm_call_timeout")
 
-    async def diag_calls(goal_id, user_id, llm_call):
+    async def diag_calls(goal_id, user_id, llm_call, **_scope):
         # Invoke the llm so the conversion to RuntimeError happens
         # via the real router-level adapter.
         return await llm_call("x", [])
@@ -146,7 +146,7 @@ def test_diagnose_goal_502_on_llm_generic_failure(cuspide_modules, monkeypatch):
     async def boom_llm(system, messages):
         raise RuntimeError("llm_call_failed")
 
-    async def diag_calls(goal_id, user_id, llm_call):
+    async def diag_calls(goal_id, user_id, llm_call, **_scope):
         return await llm_call("x", [])
 
     monkeypatch.setattr(

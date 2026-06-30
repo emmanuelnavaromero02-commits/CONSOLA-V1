@@ -90,6 +90,13 @@ def _workspace_id(user: dict[str, Any]) -> str | None:
     return str(ws)
 
 
+def _tenant_id(user: dict[str, Any]) -> str | None:
+    tenant = user.get("active_tenant_id") or user.get("tenant_id")
+    if tenant is None or tenant == "":
+        return None
+    return str(tenant)
+
+
 async def _noop_invoke_tool(*_args, **_kwargs) -> dict:
     """No-op invoke_tool for single-shot text calls — goal diagnosis,
     goal conclusion and ask-with-context never use tools, so the
@@ -232,6 +239,7 @@ async def create_goal_endpoint(
             )
     goal = await goal_solver.create_goal(
         user_id=_user_id(user),
+        tenant_id=_tenant_id(user),
         workspace_id=_workspace_id(user),
         goal_text=str(goal_text),
         conversation_id=conversation_id,
@@ -265,7 +273,12 @@ async def list_goals_endpoint(
     limit: int = Query(50, ge=1, le=100),
     user: dict = Depends(require_authenticated),
 ):
-    return await goal_solver.list_goals(user_id=_user_id(user), limit=limit)
+    return await goal_solver.list_goals(
+        user_id=_user_id(user),
+        tenant_id=_tenant_id(user),
+        workspace_id=_workspace_id(user),
+        limit=limit,
+    )
 
 
 @router.get("/goals/{goal_id}")
@@ -274,7 +287,12 @@ async def get_goal_endpoint(
     user: dict = Depends(require_authenticated),
 ):
     goal_id = _require_uuid_path(goal_id, label="goal_id")
-    goal = await goal_solver.get_goal(goal_id=goal_id, user_id=_user_id(user))
+    goal = await goal_solver.get_goal(
+        goal_id=goal_id,
+        user_id=_user_id(user),
+        tenant_id=_tenant_id(user),
+        workspace_id=_workspace_id(user),
+    )
     if not goal:
         raise HTTPException(404, "goal not found")
     return goal
@@ -296,6 +314,8 @@ async def diagnose_goal_endpoint(
         diagnosis = await goal_solver.diagnose_goal(
             goal_id=goal_id,
             user_id=_user_id(user),
+            tenant_id=_tenant_id(user),
+            workspace_id=_workspace_id(user),
             llm_call=_llm_text_call,
         )
     except ValueError as exc:
@@ -343,6 +363,8 @@ async def conclude_goal_endpoint(
     result = await goal_solver.conclude_goal(
         goal_id=goal_id,
         user_id=_user_id(user),
+        tenant_id=_tenant_id(user),
+        workspace_id=_workspace_id(user),
         workflow_outcomes=workflow_outcomes,
         llm_call=_llm_text_call,
     )

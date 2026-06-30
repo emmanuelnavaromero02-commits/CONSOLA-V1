@@ -8027,6 +8027,68 @@ def _successfactors_talent_monitor_needs_runtime_repair(agent: Any) -> bool:
     return role != "monitor" or not _has_operational_monitor_contract(agent)
 
 
+def _merge_agent_tools(primary: list[str], secondary: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    candidates: list[Any] = list(primary)
+    if isinstance(secondary, list):
+        candidates.extend(secondary)
+    for tool in candidates:
+        if not isinstance(tool, str):
+            continue
+        value = tool.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        merged.append(value)
+    return merged
+
+
+def _coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
+    if not isinstance(body, dict):
+        return body
+    cartridge_id = str(body.get("cartridge_id") or "").strip()
+    slug = str(body.get("slug") or "").strip()
+    if cartridge_id != "sap_successfactors" or slug != _SUCCESSFACTORS_TALENT_MONITOR_SLUG:
+        return body
+
+    allowed_tools, rag_filter, contract_extra = _successfactors_talent_monitor_contract()
+    patched = dict(body)
+    incoming_extra = patched.get("extra") if isinstance(patched.get("extra"), dict) else {}
+    merged_extra = {**contract_extra, **incoming_extra}
+    merged_extra["role"] = "monitor"
+    merged_extra["category"] = str(merged_extra.get("category") or "control_room")
+    merged_extra["scope"] = str(merged_extra.get("scope") or "workspace")
+
+    schedule = merged_extra.get("schedule")
+    if not isinstance(schedule, dict) or not schedule.get("cron"):
+        merged_extra["schedule"] = contract_extra.get("schedule")
+
+    monitor = merged_extra.get("monitor")
+    if isinstance(monitor, dict) and monitor:
+        merged_monitor = {**contract_extra.get("monitor", {}), **monitor}
+        if not isinstance(merged_monitor.get("engines"), list) or not merged_monitor.get("engines"):
+            merged_monitor["engines"] = contract_extra.get("monitor", {}).get("engines", [])
+        merged_extra["monitor"] = merged_monitor
+    else:
+        merged_extra["monitor"] = contract_extra.get("monitor")
+
+    if not isinstance(merged_extra.get("variables"), dict):
+        merged_extra["variables"] = {}
+
+    patched["extra"] = merged_extra
+    patched["role"] = "monitor"
+    patched["allowed_tools"] = _merge_agent_tools(allowed_tools, patched.get("allowed_tools"))
+    if not isinstance(patched.get("rag_filter"), dict) or not patched.get("rag_filter"):
+        patched["rag_filter"] = rag_filter
+    patched["model"] = str(patched.get("model") or "claude-sonnet-4-6")
+    if patched.get("max_tokens") in (None, ""):
+        patched["max_tokens"] = 2400
+    if patched.get("temperature") in (None, ""):
+        patched["temperature"] = 0.2
+    return patched
+
+
 async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
     ctx = build_security_context(user)
     tenant_id = str(ctx.get("tenant_id") or "").strip()
@@ -10402,13 +10464,12 @@ async def api_agents_list(
     agents = await _agents.list_agents(
         cartridge_id, include_inactive, user_context=user
     )
-    if not include_inactive:
-        agents = await _repair_successfactors_talent_monitor_list_if_needed(
-            agents,
-            user,
-            cartridge_id=cartridge_id,
-            include_inactive=include_inactive,
-        )
+    agents = await _repair_successfactors_talent_monitor_list_if_needed(
+        agents,
+        user,
+        cartridge_id=cartridge_id,
+        include_inactive=include_inactive,
+    )
     return {
         "agents": agents
     }
@@ -10465,6 +10526,7 @@ async def api_agents_create(
     body: dict,
     user: dict = Depends(require_permission("agents.write")),
 ):
+    body = _coerce_successfactors_talent_monitor_payload(body)
     try:
         return await _agents.create_agent(
             body, owner_user_id=user.get("id"), user_context=user
@@ -10485,6 +10547,7 @@ async def api_agents_update(
     body: dict,
     user: dict = Depends(require_permission("agents.write")),
 ):
+    body = _coerce_successfactors_talent_monitor_payload(body)
     try:
         a = await _agents.update_agent(agent_id, body, user_context=user)
     except PermissionError as exc:
@@ -10514,6 +10577,47 @@ async def api_agents_delete(
     return {"deleted": True}
 
 
+def _agent_invoke_background_requested(body: dict) -> bool:
+    if not isinstance(body, dict):
+        return False
+    if body.get("background") is True or body.get("queued") is True:
+        return True
+    if body.get("async") is True:
+        return True
+    return body.get("wait") is False
+
+
+def _agent_invoke_background_response(agent: Any) -> dict:
+    return {
+        "reply": "Ejecucion iniciada. Revisa la pestana Ejecuciones para ver el resultado.",
+        "viewer_urls": [],
+        "messages": [],
+        "agent_id": getattr(agent, "id", None),
+        "run_id": None,
+        "status": "queued",
+        "queued": True,
+    }
+
+
+def _start_agent_invoke_background(agent: Any, message: str, history: list, user: dict) -> None:
+    agent_id = str(getattr(agent, "id", "") or "")
+    history_context = list(history or [])
+    user_context = dict(user or {})
+
+    async def runner() -> None:
+        try:
+            await _agent_runtime.run(
+                agent,
+                message,
+                history=history_context,
+                user=user_context,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("agent background invoke failed agent_id=%s", agent_id)
+
+    asyncio.create_task(runner())
+
+
 @app.post(
     "/api/agents/{agent_id}/invoke",
     dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))],
@@ -10534,6 +10638,9 @@ async def api_agents_invoke(
     if not message:
         raise HTTPException(400, "message is required")
     history = body.get("history") or []
+    if _agent_invoke_background_requested(body):
+        _start_agent_invoke_background(agent, message, history, user)
+        return _agent_invoke_background_response(agent)
     result = await _agent_runtime.run(agent, message, history=history, user=user)
     return result
 

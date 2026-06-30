@@ -66,3 +66,13 @@ def test_agent_api_client_covers_full_legacy_surface():
         "/api/agents/${encodeURIComponent(id)}/invoke",
     ):
         assert endpoint in src
+    assert "options: { background?: boolean }" in src
+    assert "background: true, wait: false" in src
+
+
+def test_agents_console_queues_long_running_operational_invocations():
+    src = read("console-next/src/components/agents/AgentsConsole.tsx")
+    assert "invokeAgent(saved.id, operationalMessage(savedDraft), [], { background: true })" in src
+    assert "showRuns ? { background: true } : {}" in src
+    assert "refreshRunsSoon" in src
+    assert "Agente guardado. Ejecucion iniciada." in src
