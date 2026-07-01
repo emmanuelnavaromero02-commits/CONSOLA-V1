@@ -13,7 +13,7 @@ def test_data_api_uses_authenticated_user_dependency_in_main_and_v1_router():
         Path("console/app/routers/v1/data.py"),
     ):
         section = _api_data_section(path.read_text())
-        assert "user: dict = Depends(require_authenticated)" in section
+        assert 'user: dict = Depends(require_permission("datasets.read"))' in section
         assert 'getattr(request.state, "user"' not in section
         assert "query_gold_dataset_rows(dataset, user, limit)" in section
         assert '"user_context": _rls_user_context(user)' in section or '"user_context": rls_user_context(user)' in section
