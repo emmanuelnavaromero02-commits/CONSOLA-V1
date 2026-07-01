@@ -58,6 +58,11 @@ CREATE INDEX IF NOT EXISTS idx_sap_sf_talent_alias_tenant
         approved
     );
 
+CREATE TABLE IF NOT EXISTS applied_migrations (
+    filename   TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO applied_migrations (filename, applied_at)
 VALUES ('99zp_sap_successfactors_tenant_aliases.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;
