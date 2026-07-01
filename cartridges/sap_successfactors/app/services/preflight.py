@@ -11,10 +11,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import create_engine, text
+
 from app.core.config import settings
 from app.core.sap_client import SAPClientError, SapSfClient
 
 _PG_REQUIRED = ("database_url",)
+_ALIAS_ENGINE = None
 
 _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
     {
@@ -399,6 +402,213 @@ _TALENT_CPA_REQUIREMENTS: tuple[dict[str, Any], ...] = (
     },
 )
 
+_TALENT_COMPONENT_ALIAS_GROUP: dict[str, str] = {
+    "performance": "performance",
+    "competency": "employee_skill",
+    "aspiration": "aspiration",
+    "role_requirements": "role",
+    "learning": "learning",
+    "recruiting": "application",
+    "movement_events": "event_reason",
+}
+
+
+def _get_alias_engine():
+    global _ALIAS_ENGINE
+    if _ALIAS_ENGINE is None:
+        if not settings.database_url:
+            raise RuntimeError("DATABASE_URL is not configured")
+        _ALIAS_ENGINE = create_engine(settings.database_url, future=True, pool_pre_ping=True)
+    return _ALIAS_ENGINE
+
+
+def _security_scope(security_context: dict[str, Any] | str | None) -> tuple[str, str]:
+    if isinstance(security_context, str):
+        try:
+            parsed = json.loads(security_context)
+        except json.JSONDecodeError:
+            parsed = {}
+        security_context = parsed if isinstance(parsed, dict) else {}
+    if not isinstance(security_context, dict):
+        return "", ""
+    return (
+        str(security_context.get("tenant_id") or "").strip(),
+        str(security_context.get("workspace_id") or "").strip(),
+    )
+
+
+def _json_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    parsed = value
+    if isinstance(value, str):
+        text_value = value.strip()
+        if not text_value:
+            return []
+        try:
+            parsed = json.loads(text_value)
+        except json.JSONDecodeError:
+            parsed = [part.strip() for part in text_value.split(",")]
+    if isinstance(parsed, (list, tuple, set)):
+        return [str(item).strip() for item in parsed if str(item or "").strip()]
+    return [str(parsed).strip()] if str(parsed or "").strip() else []
+
+
+def _json_dict(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    parsed = value
+    if isinstance(value, str):
+        text_value = value.strip()
+        if not text_value:
+            return {}
+        try:
+            parsed = json.loads(text_value)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(val) for key, val in parsed.items() if str(key or "").strip() and str(val or "").strip()}
+
+
+def _load_talent_alias_candidates(
+    *,
+    security_context: dict[str, Any] | str | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Load approved tenant/workspace mappings for custom SAP MDF/entity names.
+
+    Older deployments do not have the alias table yet; in that case the live
+    preflight falls back to the built-in candidate list instead of failing.
+    """
+
+    tenant_id, workspace_id = _security_scope(security_context)
+    try:
+        engine = _get_alias_engine()
+        with engine.connect() as conn:
+            exists = conn.execute(
+                text("SELECT to_regclass('public.sap_successfactors_tenant_entity_aliases')")
+            ).scalar()
+            if not exists:
+                return {}
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        tenant_id::TEXT AS tenant_id,
+                        workspace_id::TEXT AS workspace_id,
+                        component,
+                        group_name,
+                        canonical_entity,
+                        odata_entity,
+                        primary_key,
+                        watermark_field,
+                        required_fields,
+                        optional_fields,
+                        select_fields,
+                        field_aliases,
+                        source
+                    FROM sap_successfactors_tenant_entity_aliases
+                    WHERE cartridge_id = 'sap_successfactors'
+                      AND enabled = TRUE
+                      AND approved = TRUE
+                      AND (tenant_id IS NULL OR tenant_id::TEXT = :tenant_id OR :tenant_id = '')
+                      AND (workspace_id IS NULL OR workspace_id::TEXT = :workspace_id OR :workspace_id = '')
+                    ORDER BY
+                      CASE WHEN workspace_id::TEXT = :workspace_id THEN 0 ELSE 1 END,
+                      CASE WHEN tenant_id::TEXT = :tenant_id THEN 0 ELSE 1 END,
+                      updated_at DESC
+                    """
+                ),
+                {"tenant_id": tenant_id, "workspace_id": workspace_id},
+            ).mappings().all()
+    except Exception:
+        return {}
+
+    aliases: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        component = str(row.get("component") or "").strip()
+        canonical_entity = str(row.get("canonical_entity") or "").strip()
+        odata_entity = str(row.get("odata_entity") or "").strip()
+        if not component or not canonical_entity or not odata_entity:
+            continue
+        required_fields = _json_list(row.get("required_fields")) or _json_list(row.get("select_fields"))
+        optional_fields = _json_list(row.get("optional_fields"))
+        aliases.setdefault(component, []).append(
+            {
+                "entity": odata_entity,
+                "odata_entity": odata_entity,
+                "extract_entity": canonical_entity,
+                "primary_key": str(row.get("primary_key") or ""),
+                "watermark_field": str(row.get("watermark_field") or ""),
+                "group": str(row.get("group_name") or _TALENT_COMPONENT_ALIAS_GROUP.get(component) or component),
+                "scope": "tenant_config_alias",
+                "standard": False,
+                "fields_required": tuple(required_fields),
+                "fields_optional": tuple(optional_fields),
+                "field_aliases": _json_dict(row.get("field_aliases")),
+                "alias_id": str(row.get("id") or ""),
+                "alias_source": str(row.get("source") or "tenant_config"),
+            }
+        )
+    return aliases
+
+
+def _requirement_candidates_with_aliases(
+    requirement: dict[str, Any],
+    aliases_by_component: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    component_id = str(requirement.get("id") or "")
+    aliases = aliases_by_component.get(component_id) or []
+    if not aliases:
+        return list(requirement["candidates"])
+    seen = {str(candidate.get("entity") or "") for candidate in aliases}
+    built_in = [
+        candidate
+        for candidate in requirement["candidates"]
+        if str(candidate.get("entity") or "") not in seen
+    ]
+    return [*aliases, *built_in]
+
+
+def _candidate_blocker_reason(candidates: list[dict[str, Any]]) -> str:
+    statuses = {str(item.get("status") or "") for item in candidates}
+    reasons = {str(item.get("reason") or "") for item in candidates}
+    if "permission_blocked" in statuses or "permission_denied" in reasons:
+        return "permission_denied"
+    if "field_blocked" in statuses or "invalid_select_field" in reasons:
+        return "invalid_select_field"
+    if "metadata_ready" in statuses or "ready" in statuses:
+        return "missing_required_group"
+    if "missing" in statuses or "entity_not_exposed_in_sap" in reasons:
+        return "entity_not_exposed_in_sap"
+    return "missing_metadata"
+
+
+def _candidate_blocker_detail(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    fields_missing: list[str] = []
+    missing_entities: list[str] = []
+    permission_errors: list[str] = []
+    invalid_field_entities: list[str] = []
+    for item in candidates:
+        entity = str(item.get("odata_entity") or item.get("entity") or "").strip()
+        if str(item.get("status") or "") == "missing" and entity:
+            missing_entities.append(entity)
+        if str(item.get("status") or "") == "field_blocked" and entity:
+            invalid_field_entities.append(entity)
+        if str(item.get("status") or "") == "permission_blocked":
+            permission_errors.append(str(item.get("error") or entity or "permission_denied")[:240])
+        for field in item.get("fields_missing") or []:
+            field_value = str(field or "").strip()
+            if field_value and field_value not in fields_missing:
+                fields_missing.append(field_value)
+    return {
+        "fields_missing": fields_missing,
+        "missing_entities": sorted(set(missing_entities)),
+        "invalid_field_entities": sorted(set(invalid_field_entities)),
+        "permission_errors": permission_errors,
+    }
+
 
 def _missing(*names: str) -> list[str]:
     return [n.upper() for n in names if not getattr(settings, n, "")]
@@ -478,21 +688,31 @@ def _candidate_status(
     sample: bool,
 ) -> dict[str, Any]:
     entity = str(candidate.get("entity") or "")
+    odata_entity = str(candidate.get("odata_entity") or entity)
     extract_entity = str(candidate.get("extract_entity") or entity)
     required = tuple(str(field) for field in (candidate.get("fields_required") or ()) if field)
     if not required:
         required = tuple(str(field) for field in (candidate.get("fields_any") or ()) if field)
     optional = tuple(str(field) for field in (candidate.get("fields_optional") or ()) if field)
-    fields = metadata_entities.get(entity)
+    fields = metadata_entities.get(odata_entity)
+    field_aliases = _json_dict(candidate.get("field_aliases"))
     if fields is None:
         return {
-            "entity": entity,
+            "entity": odata_entity,
+            "canonical_entity": extract_entity,
             "extract_entity": extract_entity,
+            "odata_entity": odata_entity,
             "group": str(candidate.get("group") or ""),
             "scope": str(candidate.get("scope") or ""),
             "service_family": str(candidate.get("service_family") or ""),
             "standard": bool(candidate.get("standard", True)),
+            "alias_id": str(candidate.get("alias_id") or ""),
+            "alias_source": str(candidate.get("alias_source") or ""),
+            "field_aliases": field_aliases,
+            "primary_key": str(candidate.get("primary_key") or ""),
+            "watermark_field": str(candidate.get("watermark_field") or ""),
             "status": "missing",
+            "reason": "entity_not_exposed_in_sap",
             "available": False,
             "fields_present": [],
             "fields_missing": list(required),
@@ -506,13 +726,16 @@ def _candidate_status(
     present_optional = [field for field in optional if field in fields]
     available = not missing_required
     item: dict[str, Any] = {
-        "entity": entity,
+        "entity": odata_entity,
+        "canonical_entity": extract_entity,
         "extract_entity": extract_entity,
+        "odata_entity": odata_entity,
         "group": str(candidate.get("group") or ""),
         "scope": str(candidate.get("scope") or ""),
         "service_family": str(candidate.get("service_family") or ""),
         "standard": bool(candidate.get("standard", True)),
         "status": "metadata_ready" if available else "field_blocked",
+        "reason": "ready" if available else "invalid_select_field",
         "available": available,
         "fields_present": [*present_required, *present_optional],
         "fields_missing": missing_required,
@@ -520,21 +743,28 @@ def _candidate_status(
         "fields_required_missing": missing_required,
         "fields_optional_present": present_optional,
         "fields_optional_missing": [field for field in optional if field not in fields],
+        "alias_id": str(candidate.get("alias_id") or ""),
+        "alias_source": str(candidate.get("alias_source") or ""),
+        "field_aliases": field_aliases,
+        "primary_key": str(candidate.get("primary_key") or ""),
+        "watermark_field": str(candidate.get("watermark_field") or ""),
         "sample_status": "not_checked",
     }
     if not available or not sample:
         return item
 
     try:
-        rows = client.fetch_entity(entity, select=item["fields_present"][: min(3, len(item["fields_present"]))], page_size=1)
+        rows = client.fetch_entity(odata_entity, select=item["fields_present"][: min(3, len(item["fields_present"]))], page_size=1)
         item["sample_status"] = "ready" if rows else "empty"
         item["sample_rows"] = min(len(rows), 1)
         if rows:
             item["status"] = "ready"
+            item["reason"] = "ready"
     except Exception as exc:  # noqa: BLE001 - upstream/permission errors are blockers, not crashes.
         item["status"] = "permission_blocked"
         item["available"] = False
         item["sample_status"] = "blocked"
+        item["reason"] = "permission_denied"
         item["error"] = str(exc)[:240]
     return item
 
@@ -601,9 +831,11 @@ def talent_metadata_readiness(
             ],
         }
 
+    aliases_by_component = _load_talent_alias_candidates(security_context=security_context)
     components: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
     for requirement in _TALENT_CPA_REQUIREMENTS:
+        candidate_definitions = _requirement_candidates_with_aliases(requirement, aliases_by_component)
         candidates = [
             _candidate_status(
                 candidate=candidate,
@@ -611,7 +843,7 @@ def talent_metadata_readiness(
                 client=client,
                 sample=sample,
             )
-            for candidate in requirement["candidates"]
+            for candidate in candidate_definitions
         ]
         ready_candidates = [item for item in candidates if item["status"] in {"ready", "metadata_ready"}]
         ready_group_ids = {str(item.get("group") or "") for item in ready_candidates if item.get("group")}
@@ -651,12 +883,26 @@ def talent_metadata_readiness(
         }
         components.append(component)
         if required and not has_required_groups:
+            blocker_detail = _candidate_blocker_detail(candidates)
             blockers.append(
                 {
                     "component": requirement["id"],
-                    "reason": "metadata_or_permission_missing",
+                    "reason": _candidate_blocker_reason(candidates),
                     "missing_groups": sorted(required_groups - ready_group_ids),
                     "entities_checked": [item["entity"] for item in candidates],
+                    "candidate_statuses": [
+                        {
+                            "entity": item.get("entity"),
+                            "odata_entity": item.get("odata_entity"),
+                            "extract_entity": item.get("extract_entity"),
+                            "status": item.get("status"),
+                            "reason": item.get("reason"),
+                            "fields_missing": item.get("fields_missing") or [],
+                            "sample_status": item.get("sample_status"),
+                        }
+                        for item in candidates
+                    ],
+                    **blocker_detail,
                 }
             )
 
@@ -694,6 +940,11 @@ def talent_metadata_readiness(
                     "fields_present": candidate.get("fields_present") or [],
                     "fields_found": candidate.get("fields_present") or [],
                     "fields_missing": candidate.get("fields_missing") or [],
+                    "alias_id": candidate.get("alias_id") or "",
+                    "alias_source": candidate.get("alias_source") or "",
+                    "field_aliases": candidate.get("field_aliases") or {},
+                    "primary_key": candidate.get("primary_key") or "",
+                    "watermark_field": candidate.get("watermark_field") or "",
                 }
             )
     return {
@@ -707,6 +958,7 @@ def talent_metadata_readiness(
             "optional_ready": optional_ready,
             "optional_total": len(optional_components),
             "metadata_entities": len(metadata_entities),
+            "configured_aliases": sum(len(items) for items in aliases_by_component.values()),
         },
         "components": components,
         "extraction_targets": extraction_targets,

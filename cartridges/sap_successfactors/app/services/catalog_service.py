@@ -515,7 +515,7 @@ def _talent_extract_target_entities(
     *,
     conn_id: str | None,
     security_context: dict[str, Any] | None,
-) -> tuple[set[str], list[dict[str, Any]], dict[str, set[str]]]:
+) -> tuple[set[str], list[dict[str, Any]], dict[str, set[str]], dict[str, dict[str, Any]]]:
     try:
         from app.services.preflight import talent_metadata_readiness
 
@@ -532,7 +532,7 @@ def _talent_extract_target_entities(
                 reason="metadata_preflight_failed",
                 error=str(exc)[:240],
             )
-        ], {}
+        ], {}, {}
 
     targets = readiness.get("extraction_targets")
     if not isinstance(targets, list):
@@ -545,13 +545,33 @@ def _talent_extract_target_entities(
         and str(item.get("status") or "") in {"ready_to_extract", "metadata_ready"}
     }
     fields_by_entity: dict[str, set[str]] = {}
+    overrides_by_entity: dict[str, dict[str, Any]] = {}
     for item in targets:
         if not isinstance(item, dict):
             continue
         entity = str(item.get("entity") or "").strip()
         if not entity or entity not in ready_entities:
             continue
+        odata_entity = str(item.get("odata_entity") or "").strip()
         fields = {str(field) for field in (item.get("fields_present") or []) if field}
+        primary_key = str(item.get("primary_key") or "").strip()
+        watermark_field = str(item.get("watermark_field") or "").strip()
+        if primary_key:
+            fields.add(primary_key)
+        if watermark_field:
+            fields.add(watermark_field)
+        if odata_entity:
+            overrides_by_entity[entity] = {
+                "odata_entity": odata_entity,
+                "primary_key": primary_key,
+                "watermark_field": watermark_field,
+                "select_fields": sorted(fields),
+                "metadata_status": str(item.get("status") or "metadata_ready"),
+                "metadata_sample_status": str(item.get("sample_status") or ""),
+                "metadata_alias_id": str(item.get("alias_id") or ""),
+                "metadata_alias_source": str(item.get("alias_source") or ""),
+                "metadata_field_aliases": item.get("field_aliases") or {},
+            }
         if fields:
             fields_by_entity.setdefault(entity, set()).update(fields)
     skipped: list[dict[str, Any]] = []
@@ -565,7 +585,7 @@ def _talent_extract_target_entities(
                 blockers=blockers if isinstance(blockers, list) else [],
             )
         )
-    return set(TALENT_EXTRACT_ALL_ENTITIES), skipped, fields_by_entity
+    return set(TALENT_EXTRACT_ALL_ENTITIES), skipped, fields_by_entity, overrides_by_entity
 
 
 def _target_entity_filter(
@@ -573,11 +593,11 @@ def _target_entity_filter(
     target: str,
     conn_id: str | None,
     security_context: dict[str, Any] | None,
-) -> tuple[set[str] | None, list[dict[str, Any]], dict[str, set[str]]]:
+) -> tuple[set[str] | None, list[dict[str, Any]], dict[str, set[str]], dict[str, dict[str, Any]]]:
     if target == "all":
-        return None, [], {}
+        return None, [], {}, {}
     if target == "foundation":
-        return set(FOUNDATION_EXTRACT_ALL_ENTITIES), [], {}
+        return set(FOUNDATION_EXTRACT_ALL_ENTITIES), [], {}, {}
     return _talent_extract_target_entities(
         conn_id=conn_id,
         security_context=security_context,
@@ -599,7 +619,7 @@ def get_extract_all_plan(
     selected_conn_id = (conn_id or "").strip()
     tenant_id, workspace_id = _security_scope(security_context)
     normalized_target = _normalize_extract_all_target(target)
-    target_entities, target_skipped, target_fields = _target_entity_filter(
+    target_entities, target_skipped, target_fields, target_overrides = _target_entity_filter(
         target=normalized_target,
         conn_id=selected_conn_id or None,
         security_context=security_context,
@@ -622,6 +642,13 @@ def get_extract_all_plan(
 
         if target_entities is not None and entity not in target_entities:
             continue
+
+        if normalized_target == "talent" and entity in target_overrides:
+            override = target_overrides[entity]
+            config = {
+                **config,
+                **{key: value for key, value in override.items() if value not in (None, "")},
+            }
 
         if selected_conn_id:
             config_conn_id = str(config.get("connection_id") or "").strip()

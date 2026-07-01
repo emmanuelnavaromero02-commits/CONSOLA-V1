@@ -1117,6 +1117,94 @@ def _sf_talent_metadata_entities() -> list[dict[str, Any]]:
     ]
 
 
+_SF_TALENT_LIVE_COMPONENT_IDS = {
+    "roles": "role_requirements",
+    "succession": "movement_events",
+}
+
+
+@_bind_to_core
+def _sf_talent_live_component_for(
+    entity_id: str,
+    live_components: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    return live_components.get(entity_id) or live_components.get(
+        _SF_TALENT_LIVE_COMPONENT_IDS.get(entity_id, "")
+    ) or {}
+
+
+@_bind_to_core
+def _sf_talent_live_blocker_items(component: dict[str, Any]) -> list[str]:
+    candidates = [
+        item for item in component.get("candidates", []) if isinstance(item, dict)
+    ]
+    if not candidates:
+        return [str(item) for item in component.get("blockers", []) if str(item or "").strip()]
+
+    permission = [
+        str(item.get("odata_entity") or item.get("entity") or "").strip()
+        for item in candidates
+        if str(item.get("status") or "") == "permission_blocked"
+    ]
+    if permission:
+        return [f"Permiso de lectura pendiente: {entity}" for entity in permission if entity]
+
+    invalid_fields: list[str] = []
+    for item in candidates:
+        if str(item.get("status") or "") != "field_blocked":
+            continue
+        entity = str(item.get("odata_entity") or item.get("entity") or "").strip()
+        fields = ", ".join(str(field) for field in (item.get("fields_missing") or []) if field)
+        invalid_fields.append(f"Campos no expuestos en {entity}: {fields}" if fields else f"Campos no expuestos en {entity}")
+    if invalid_fields:
+        return invalid_fields
+
+    missing = [
+        str(item.get("odata_entity") or item.get("entity") or "").strip()
+        for item in candidates
+        if str(item.get("status") or "") == "missing"
+    ]
+    if missing:
+        return [f"Entidad no expuesta en SAP: {entity}" for entity in missing if entity]
+
+    missing_groups = component.get("required_groups") or []
+    ready_groups = component.get("ready_groups") or []
+    if missing_groups:
+        return [
+            "Grupo requerido pendiente: "
+            + ", ".join(str(group) for group in missing_groups if group)
+            + ("; encontrados: " + ", ".join(str(group) for group in ready_groups if group) if ready_groups else "")
+        ]
+    return ["Metadata pendiente de confirmar"]
+
+
+@_bind_to_core
+def _sf_talent_merge_live_metadata(
+    entity: dict[str, Any],
+    live_components: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    component = _sf_talent_live_component_for(str(entity.get("id") or ""), live_components)
+    if not component:
+        return entity
+    status = _sf_talent_status(component.get("status"), entity.get("status", "partial"))
+    selected_entity = component.get("entity") or component.get("selected_entity")
+    return {
+        **entity,
+        "status": status,
+        "entity": str(selected_entity or entity.get("entity") or ""),
+        "odata_entity": component.get("odata_entity") or component.get("selected_entity"),
+        "fields_found": component.get("fields_found") or [],
+        "fields_missing": component.get("fields_missing") or [],
+        "sample_status": component.get("sample_status"),
+        "ready_to_extract": bool(component.get("ready_to_extract")),
+        "extraction_target": selected_entity,
+        "blockers": [] if status == "ready" else _sf_talent_live_blocker_items(component),
+        "live_status": component.get("status"),
+        "live_selected_entity": component.get("selected_entity"),
+        "live_candidates": component.get("candidates", []),
+    }
+
+
 @_bind_to_core
 def _sf_talent_blockers_from_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
@@ -1190,16 +1278,20 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         row = rows_by_box.get(definition["box_id"], {})
         employee_count = _sf_talent_int(row.get("employee_count"))
         ready_count = _sf_talent_int(row.get("ready_count"))
+        benchmark_count = _sf_talent_int(row.get("benchmark_count"))
         blocked_count = _sf_talent_int(row.get("blocked_count"))
+        classified_count = ready_count
         status = _sf_talent_status(
             row.get("box_status"),
-            "ready" if ready_count > 0 else "blocked",
+            "ready" if classified_count > 0 else "blocked",
         )
         cells.append(
             {
                 **definition,
                 "employee_count": employee_count,
-                "ready_count": ready_count,
+                "ready_count": classified_count,
+                "cpa_real_count": max(ready_count - benchmark_count, 0),
+                "reference_count": benchmark_count,
                 "blocked_count": blocked_count,
                 "status": status,
                 "href": f"/control-room/talent?box={definition['box_id']}",
@@ -1208,6 +1300,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
 
     total_employees = sum(_sf_talent_int(cell["employee_count"]) for cell in cells)
     total_ready = sum(_sf_talent_int(cell["ready_count"]) for cell in cells)
+    total_reference = sum(_sf_talent_int(cell.get("reference_count")) for cell in cells)
     blockers = _sf_talent_blockers_from_results([result])
     if total_ready == 0:
         blockers.append(
@@ -1231,6 +1324,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "totals": {
             "employees": total_employees,
             "ready": total_ready,
+            "reference": total_reference,
             "blocked": sum(_sf_talent_int(cell["blocked_count"]) for cell in cells),
             "cells": len(cells),
         },
@@ -1349,17 +1443,7 @@ async def sap_successfactors_talent_metadata_readiness(
         if isinstance(component, dict)
     }
     if live_components:
-        entities = [
-            {
-                **entity,
-                "live_status": live_components.get(entity["id"], {}).get("status"),
-                "live_selected_entity": live_components.get(entity["id"], {}).get("selected_entity"),
-                "live_candidates": live_components.get(entity["id"], {}).get("candidates", []),
-            }
-            if entity["id"] in live_components
-            else entity
-            for entity in entities
-        ]
+        entities = [_sf_talent_merge_live_metadata(entity, live_components) for entity in entities]
     if ready_cpa:
         entities = [
             {**entity, "status": "ready", "blockers": []}

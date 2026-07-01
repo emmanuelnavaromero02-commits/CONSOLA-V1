@@ -453,6 +453,36 @@ async def test_sap_successfactors_talent_9box_payload_is_aggregate(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeypatch):
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_9box_operational":
+            return [
+                {
+                    "box_key": "core",
+                    "box_label": "Core",
+                    "employee_count": 8,
+                    "ready_count": 8,
+                    "benchmark_count": 8,
+                    "blocked_count": 0,
+                    "box_status": "benchmark_internal",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+
+    result = await control_room_service.sap_successfactors_talent_9box(USER)
+
+    assert result["status"] == "ready"
+    assert result["totals"]["ready"] == 8
+    assert result["totals"]["reference"] == 8
+    assert not any(blocker["id"] == "talent_9box_cpa_incomplete" for blocker in result["blockers"])
+    core = next(cell for cell in result["cells"] if cell["box_id"] == "core")
+    assert core["ready_count"] == 8
+    assert core["reference_count"] == 8
+
+
+@pytest.mark.asyncio
 async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box":
