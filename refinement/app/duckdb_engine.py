@@ -940,15 +940,41 @@ class DuckDBEngine:
                 con = self._conn()
                 expr = self._bronze_read(source, user_context)
                 schema_rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
-                data = con.execute(f"SELECT * FROM {expr} LIMIT {limit}").fetchall()
-            cols = [r[0] for r in schema_rows]
+        except Exception as exc:
+            return {"source": source, "error": str(exc)}
+
+        cols = [r[0] for r in schema_rows]
+        try:
+            safe_limit = max(0, min(int(limit), 100))
+        except (TypeError, ValueError):
+            safe_limit = 5
+        try:
+            with self._duckdb_lock:
+                con = self._conn()
+                expr = self._bronze_read(source, user_context)
+                data = con.execute(f"SELECT * FROM {expr} LIMIT {safe_limit}").fetchall()
             return {
                 "source": source,
                 "schema": [{"name": r[0], "type": r[1]} for r in schema_rows],
+                "columns": [{"name": r[0], "type": r[1]} for r in schema_rows],
                 "data": [dict(zip(cols, row)) for row in data],
             }
         except Exception as exc:
-            return {"source": source, "error": str(exc)}
+            return {
+                "source": source,
+                "status": "partial",
+                "schema": [{"name": r[0], "type": r[1]} for r in schema_rows],
+                "columns": [{"name": r[0], "type": r[1]} for r in schema_rows],
+                "data": [],
+                "rows": [],
+                "warnings": [
+                    {
+                        "stage": "preview_rows",
+                        "reason": "sample_read_error",
+                        "detail": str(exc),
+                    }
+                ],
+            }
 
     # ── SQL preview ───────────────────────────────────────────────────────────
 

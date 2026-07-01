@@ -4113,6 +4113,92 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
             "detail": detail,
         }
 
+    def _schema_payload_warnings(stage: str, payload: Any) -> list[dict]:
+        if not isinstance(payload, dict):
+            return []
+        warnings = payload.get("warnings") or []
+        if isinstance(warnings, dict):
+            warnings = [warnings]
+        if not isinstance(warnings, list):
+            warnings = [warnings]
+        normalized: list[dict] = []
+        for warning in warnings:
+            if isinstance(warning, dict):
+                detail = str(
+                    warning.get("detail")
+                    or warning.get("warning")
+                    or warning.get("reason")
+                    or "datos parciales"
+                )
+                reason = str(warning.get("reason") or "partial")
+                message = str(warning.get("message") or "datos parciales")
+                warning_stage = str(warning.get("stage") or stage)
+            else:
+                detail = str(warning or "datos parciales")
+                reason = "partial"
+                message = "datos parciales"
+                warning_stage = stage
+            normalized.append(
+                {
+                    "stage": warning_stage,
+                    "status_code": 200,
+                    "reason": reason,
+                    "message": message,
+                    "detail": _redact(detail) or detail,
+                }
+            )
+        if str(payload.get("status") or "").lower() == "partial" and not normalized:
+            normalized.append(
+                {
+                    "stage": stage,
+                    "status_code": 200,
+                    "reason": "partial",
+                    "message": "datos parciales",
+                    "detail": "La fuente devolvió un resultado parcial.",
+                }
+            )
+        return normalized
+
+    def _preview_has_columns(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        for key in ("columns", "schema"):
+            value = payload.get(key)
+            if isinstance(value, list) and value:
+                return True
+        rows = payload.get("rows") or payload.get("data") or payload.get("result")
+        return isinstance(rows, list) and bool(rows)
+
+    def _schema_status(errors: list[dict], preview: dict) -> str:
+        if not errors:
+            return "ready"
+        hard_stages = {
+            str(error.get("stage") or "")
+            for error in errors
+            if int(error.get("status_code") or 0) >= 400
+        }
+        if {"partitions", "preview"}.issubset(hard_stages):
+            return "error"
+        if "preview" in hard_stages and not _preview_has_columns(preview):
+            return "error"
+        return "partial"
+
+    def _schema_message(status: str, errors: list[dict]) -> str | None:
+        if not errors:
+            return None
+        if status == "error":
+            hard_messages = [
+                str(error.get("message") or "")
+                for error in errors
+                if int(error.get("status_code") or 0) >= 400
+            ]
+            if hard_messages and all(message == hard_messages[0] for message in hard_messages):
+                return hard_messages[0]
+            return hard_messages[0] if hard_messages else "error leyendo fuente"
+        if any(error.get("reason") == "empty_schema" for error in errors):
+            return "sin columnas inferidas"
+        return "datos parciales"
+
     async def load_schema() -> dict:
         if _gold_dataset_from_source(source):
             try:
@@ -4154,14 +4240,21 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
             errors.append(error)
             preview = _empty_preview("error", error["message"])
 
-        status = "error" if len(errors) == 2 else "partial" if errors else "ready"
-        message = (
-            errors[0]["message"]
-            if len(errors) == 2 and errors[0]["message"] == errors[1]["message"]
-            else "datos parciales"
-            if errors
-            else None
-        )
+        errors.extend(_schema_payload_warnings("partitions", partitions))
+        errors.extend(_schema_payload_warnings("preview", preview))
+        if not _preview_has_columns(preview):
+            errors.append(
+                {
+                    "stage": "preview",
+                    "status_code": 200,
+                    "reason": "empty_schema",
+                    "message": "sin columnas inferidas",
+                    "detail": "La fuente no devolvió columnas inferidas desde el parquet.",
+                }
+            )
+
+        status = _schema_status(errors, preview)
+        message = _schema_message(status, errors)
         payload = {
             "source": source,
             "source_kind": "bronze",

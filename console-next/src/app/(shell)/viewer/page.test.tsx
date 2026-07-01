@@ -33,4 +33,25 @@ describe("SchemaPanel", () => {
     expect(markup).toContain("Sin parquet materializado");
     expect(markup).toContain("Sin columnas inferidas");
   });
+
+  it("shows partial diagnostics without hiding inferred columns", () => {
+    const markup = renderToStaticMarkup(
+      <SchemaPanel
+        payload={{
+          status: "partial",
+          message: "datos parciales",
+          errors: [{ stage: "particiones", reason: "permission_denied", message: "sin permisos para leer la fuente" }],
+          partitions: { partitions: [] },
+          preview: {
+            schema: [{ name: "userId", type: "VARCHAR" }],
+            data: [],
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("datos parciales");
+    expect(markup).toContain("sin permisos para leer la fuente");
+    expect(markup).toContain("userId");
+  });
 });

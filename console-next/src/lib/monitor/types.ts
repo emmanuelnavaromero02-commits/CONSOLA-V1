@@ -126,18 +126,27 @@ export interface DatasetLineageRow {
 export type DataRow = Record<string, unknown>;
 
 export interface SourceSchemaPayload {
+  status?: string | null;
+  message?: string | null;
+  errors?: Array<string | Record<string, unknown>>;
   partitions?: {
     partitions?: Array<string | Record<string, unknown>>;
     latest?: string | Record<string, unknown> | null;
     sql_latest?: string | null;
+    status?: string | null;
+    message?: string | null;
+    warnings?: Array<string | Record<string, unknown>>;
     [key: string]: unknown;
   };
   preview?: {
+    status?: string | null;
+    message?: string | null;
     columns?: Array<string | Record<string, unknown>>;
     schema?: Array<{ name?: string; type?: string; [key: string]: unknown }>;
     data?: DataRow[];
     rows?: DataRow[];
     result?: DataRow[];
+    warnings?: Array<string | Record<string, unknown>>;
     [key: string]: unknown;
   };
 }
