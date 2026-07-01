@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from refinement.app.duckdb_engine import DuckDBEngine
 
 
@@ -87,3 +89,32 @@ def test_list_sources_uses_object_store_and_scope(monkeypatch):
         "raw/sap_successfactors/Candidate",
         "raw/sap_successfactors/User",
     ]
+
+
+def test_preview_source_keeps_schema_when_sample_rows_fail(monkeypatch):
+    engine = DuckDBEngine()
+
+    class FakeConnection:
+        def execute(self, sql):
+            if sql.startswith("DESCRIBE"):
+                return SimpleNamespace(
+                    fetchall=lambda: [
+                        ("userId", "VARCHAR"),
+                        ("status", "VARCHAR"),
+                    ]
+                )
+            if sql.startswith("SELECT *"):
+                raise RuntimeError("sample read failed")
+            raise AssertionError(sql)
+
+    monkeypatch.setattr(engine, "_conn", lambda: FakeConnection())
+
+    payload = engine.preview_source(
+        "raw/sap_successfactors/User",
+        user_context={"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert payload["status"] == "partial"
+    assert [column["name"] for column in payload["schema"]] == ["userId", "status"]
+    assert payload["data"] == []
+    assert payload["warnings"][0]["reason"] == "sample_read_error"

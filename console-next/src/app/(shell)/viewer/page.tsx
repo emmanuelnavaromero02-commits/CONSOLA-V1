@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
+  AlertTriangle,
   Database,
   Droplets,
   FileText,
@@ -71,6 +72,13 @@ type ViewerType =
   | "dataset"
   | "lineage"
   | "vault";
+
+type SchemaIssue = {
+  stage?: string;
+  reason?: string;
+  message: string;
+  detail?: string;
+};
 
 const VIEWER_LINKS: Array<{ type: ViewerType; label: string; icon: LucideIcon }> = [
   { type: "jobs", label: "Jobs", icon: ListChecks },
@@ -744,36 +752,43 @@ export function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefi
     : schemaColumns.length
       ? schemaColumns
       : columnsFromRows(rows);
+  const status = normalizeStatus(payload?.status);
+  const issues = normalizeSchemaIssues(payload);
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-      <section className="space-y-3 rounded-lg border bg-card p-4">
-        <h2 className="text-base font-semibold">Particiones</h2>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <MetricBox label="Total" value={partitions.length} />
-          <MetricBox label="Última" value={latest || "-"} />
-        </div>
-        {partitions.length ? (
-          <div className="flex flex-wrap gap-2">
-            {partitions.slice(-24).reverse().map((partition) => (
-              <span
-                key={partition.key}
-                className="rounded-full border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground"
-              >
-                {partition.label}
-              </span>
-            ))}
+    <div className="space-y-4">
+      {status !== "ready" || issues.length ? (
+        <SchemaStatusNotice status={status} message={payload?.message} issues={issues} />
+      ) : null}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+        <section className="space-y-3 rounded-lg border bg-card p-4">
+          <h2 className="text-base font-semibold">Particiones</h2>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <MetricBox label="Total" value={partitions.length} />
+            <MetricBox label="Última" value={latest || "-"} />
           </div>
-        ) : (
-          <EmptyPanel icon={Database} title="Sin parquet materializado" detail="No hay particiones disponibles para esta fuente." />
-        )}
-        {sqlLatest ? <JsonBlock label="SQL última partición" value={{ sql_latest: sqlLatest }} /> : null}
-      </section>
-      <section className="space-y-3 rounded-lg border bg-card p-4">
-        <h2 className="text-base font-semibold">Columnas y preview</h2>
-        <ColumnTable columns={columns} sample={rows[0]} />
-        <PreviewTable rows={rows.slice(0, 5)} />
-      </section>
+          {partitions.length ? (
+            <div className="flex flex-wrap gap-2">
+              {partitions.slice(-24).reverse().map((partition) => (
+                <span
+                  key={partition.key}
+                  className="rounded-full border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground"
+                >
+                  {partition.label}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <EmptyPanel icon={Database} title="Sin parquet materializado" detail="No hay particiones disponibles para esta fuente." />
+          )}
+          {sqlLatest ? <JsonBlock label="SQL última partición" value={{ sql_latest: sqlLatest }} /> : null}
+        </section>
+        <section className="space-y-3 rounded-lg border bg-card p-4">
+          <h2 className="text-base font-semibold">Columnas y preview</h2>
+          <ColumnTable columns={columns} sample={rows[0]} />
+          <PreviewTable rows={rows.slice(0, 5)} />
+        </section>
+      </div>
     </div>
   );
 }
@@ -1390,6 +1405,47 @@ function PreviewTable({ rows }: { rows: DataRow[] }) {
   );
 }
 
+function SchemaStatusNotice({ status, message, issues }: { status: string; message?: string | null; issues: SchemaIssue[] }) {
+  const isError = status === "error";
+  const label = message || schemaStatusLabel(status);
+  return (
+    <section
+      role={isError ? "alert" : "status"}
+      className={cn(
+        "rounded-md border p-4 text-sm",
+        isError
+          ? "border-destructive/30 bg-destructive/5 text-destructive"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="min-w-0 space-y-2">
+          <p className="font-medium">{label}</p>
+          {issues.length ? (
+            <div className="space-y-1 text-xs opacity-90">
+              {issues.slice(0, 4).map((issue, index) => (
+                <p key={`${issue.stage || "schema"}:${issue.reason || index}`} className="break-words">
+                  {issue.stage ? `${issue.stage}: ` : ""}
+                  {issue.message}
+                  {issue.detail && issue.detail !== issue.message ? ` · ${issue.detail}` : ""}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function schemaStatusLabel(status: string): string {
+  if (status === "error") return "No se pudo cargar el schema";
+  if (status === "partial") return "Datos parciales";
+  if (status === "empty") return "Sin columnas inferidas";
+  return "Schema disponible";
+}
+
 function MetricBox({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-md border bg-background p-3">
@@ -1421,6 +1477,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeRows(value: unknown): DataRow[] {
   if (!Array.isArray(value)) return [];
   return value.filter(isRecord).map((row) => ({ ...row }));
+}
+
+function normalizeStatus(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "ready";
+}
+
+function normalizeSchemaIssues(payload: SourceSchemaPayload | undefined): SchemaIssue[] {
+  if (!payload) return [];
+  const issues: SchemaIssue[] = [];
+  appendSchemaIssues(issues, payload.errors, "schema");
+  appendSchemaIssues(issues, payload.partitions?.warnings, "particiones");
+  appendSchemaIssues(issues, payload.preview?.warnings, "preview");
+  if (payload.partitions?.status && payload.partitions.status !== "ready" && payload.partitions.message) {
+    issues.push({ stage: "particiones", reason: payload.partitions.status, message: payload.partitions.message });
+  }
+  if (payload.preview?.status && payload.preview.status !== "ready" && payload.preview.message) {
+    issues.push({ stage: "preview", reason: payload.preview.status, message: payload.preview.message });
+  }
+  return issues;
+}
+
+function appendSchemaIssues(target: SchemaIssue[], value: unknown, fallbackStage: string) {
+  if (!Array.isArray(value)) return;
+  for (const item of value) {
+    const issue = normalizeSchemaIssue(item, fallbackStage);
+    if (issue) target.push(issue);
+  }
+}
+
+function normalizeSchemaIssue(value: unknown, fallbackStage: string): SchemaIssue | null {
+  if (typeof value === "string") {
+    return value.trim() ? { stage: fallbackStage, message: value.trim() } : null;
+  }
+  if (!isRecord(value)) return null;
+  const message = value.message ?? value.reason ?? value.detail ?? "datos parciales";
+  const detail = value.detail ?? value.error ?? value.raw_error;
+  return {
+    stage: typeof value.stage === "string" ? value.stage : fallbackStage,
+    reason: typeof value.reason === "string" ? value.reason : undefined,
+    message: displayValue(message),
+    detail: detail === undefined ? undefined : displayValue(detail),
+  };
 }
 
 function normalizeColumnName(value: unknown): string | null {

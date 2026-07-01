@@ -227,6 +227,13 @@ jobs:
         if: failure()
         run: |
           docker compose --env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.dev.yml --profile sap ps || true
+          docker logs mode_postgres --tail 220 2>&1 || true
+          docker logs mode_postgres_gold --tail 220 2>&1 || true
+          docker logs mode_minio --tail 160 2>&1 || true
+          docker logs mode_refinement --tail 180 2>&1 || true
+          docker logs mode_vault --tail 180 2>&1 || true
+          docker logs mode_workspace --tail 180 2>&1 || true
+          docker logs mode_mcp_infra --tail 180 2>&1 || true
           docker logs mode_airflow_init --tail 220 2>&1 || true
           docker logs mode_superset_init --tail 180 2>&1 || true
           docker logs mode_console --tail 160 2>&1 || true

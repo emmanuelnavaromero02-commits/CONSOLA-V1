@@ -123,23 +123,29 @@ async def test_bronze_query_maps_refinement_error_payload_to_http(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_schema_maps_partition_error_payload_to_controlled_status(monkeypatch):
+    monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "0")
+    fake_client = FakeClient([
+        {"source": "raw/sap_successfactors/PerPerson", "error": "AccessDenied: not authorized"},
+        {
+            "source": "raw/sap_successfactors/PerPerson",
+            "schema": [{"name": "userId", "type": "VARCHAR"}],
+            "columns": [{"name": "userId", "type": "VARCHAR"}],
+            "data": [],
+        },
+    ])
     monkeypatch.setattr(
         console_main.httpx,
         "AsyncClient",
-        lambda **_kwargs: FakeClient([
-            {"source": "raw/sap_successfactors/PerPerson", "error": "AccessDenied: not authorized"},
-            {"source": "raw/sap_successfactors/PerPerson", "data": []},
-        ]),
+        lambda **_kwargs: fake_client,
     )
 
     payload = await console_main.api_schema("raw/sap_successfactors/PerPerson", user=USER)
 
-    assert payload["status"] == "error"
-    assert payload["message"] == "sin permisos para leer la fuente"
+    assert payload["status"] == "partial"
+    assert payload["message"] == "datos parciales"
     assert payload["errors"][0]["reason"] == "permission_denied"
-    assert payload["errors"][1]["reason"] == "permission_denied"
     assert payload["partitions"]["status"] == "error"
-    assert payload["preview"]["status"] == "error"
+    assert payload["preview"]["columns"][0]["name"] == "userId"
     assert payload["preview"]["data"] == []
 
 
