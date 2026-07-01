@@ -177,7 +177,8 @@ def test_admin_js_only_calls_existing_backend_endpoints():
     assert js_urls, "admin_users.js should call /api/admin/users/* or /auth/*"
 
     route_re = re.compile(
-        r'@app\.(?:get|post|put|patch|delete)\("(/(?:api/admin/users|auth)[^"]*)"'
+        r'@app\.(?:get|post|put|patch|delete)\(\s*"(/(?:api/admin/users|auth)[^"]*)"',
+        re.S,
     )
     py_routes = {_normalize(m) for m in route_re.findall(py)}
 

@@ -201,7 +201,7 @@ def test_single_value_uses_placeholder_not_interpolation(console_main, monkeypat
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -228,7 +228,7 @@ def test_sql_injection_attempt_in_value_is_neutralised(console_main, monkeypatch
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     injection = "x' OR 1=1 --"
     resp = client.post(
@@ -251,7 +251,7 @@ def test_single_quote_in_value(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -270,7 +270,7 @@ def test_backslash_in_value(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -288,7 +288,7 @@ def test_in_list_with_multiple_values(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -312,7 +312,7 @@ def test_filters_must_be_dict(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -327,7 +327,7 @@ def test_too_many_filters_rejected(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     filters = {f"col_{i}": "val" for i in range(21)}
     resp = client.post("/api/data/ventas/query", json={"filters": filters})
@@ -341,7 +341,7 @@ def test_too_many_values_per_filter_rejected(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -357,7 +357,7 @@ def test_value_too_long_rejected(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -374,7 +374,7 @@ def test_invalid_column_name_is_dropped(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/ventas/query",
@@ -393,7 +393,7 @@ def test_invalid_dataset_name_rejected(console_main, monkeypatch):
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    client.cookies.set("mod_session", "x")
+    client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
         "/api/data/bad-dataset!/query",
