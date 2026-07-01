@@ -38,11 +38,13 @@ async def viewer_decisions(request: Request):
     return _console_next_response(request, "decisions/index.html")
 
 # /api/decisions
-@router.get("/api/decisions")
+@router.get("/api/decisions", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_authenticated)):
+async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_permission("datasets.read"))):
     where, params = [], []
     workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        return {"decisions": []}
     where.append(_dec_visible_clause(user["id"], _dec_is_workspace_admin(user), params, workspace_id))
     if status in ("open", "closed"):
         params.append(status)
@@ -52,13 +54,14 @@ async def api_decisions_list(status: str = "", overdue: str = "", user: dict = D
     sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
     sql += " ORDER BY created_at DESC LIMIT 500"
     pool = await _dec_pool()
-    rows = await pool.fetch(sql, *params)
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        rows = await conn.fetch(sql, *params)
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 # /api/decisions
-@router.post("/api/decisions", dependencies=[Depends(require_csrf)])
+@router.post("/api/decisions", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
-async def api_decisions_create(body: dict, user: dict = Depends(require_authenticated)):
+async def api_decisions_create(body: dict, user: dict = Depends(require_permission("control_room.write"))):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
@@ -71,34 +74,36 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_authenti
     if not workspace_id:
         raise HTTPException(400, "active workspace is required to create a decision")
     pool = await _dec_pool()
-    row = await pool.fetchrow(
-        """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
-           RETURNING *""",
-        title,
-        body.get("description") or "",
-        _coerce_date(body.get("commitment_date")),
-        _json_dec.dumps(body.get("kpis") or []),
-        user["id"],
-        body.get("assignee_id"),
-        body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
-        workspace_id,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            """INSERT INTO decisions
+                  (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
+               RETURNING *""",
+            title,
+            body.get("description") or "",
+            _coerce_date(body.get("commitment_date")),
+            _json_dec.dumps(body.get("kpis") or []),
+            user["id"],
+            body.get("assignee_id"),
+            body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
+            workspace_id,
+        )
     return _dec_row_to_dict(row)
 
 # /api/decisions/{decision_id}
-@router.get("/api/decisions/{decision_id}")
+@router.get("/api/decisions/{decision_id}", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_decisions_get(decision_id: int, user: dict = Depends(require_authenticated)):
+async def api_decisions_get(decision_id: int, user: dict = Depends(require_permission("datasets.read"))):
     row = await _dec_load_with_visibility(decision_id, user)
     if not row:
         raise HTTPException(404, f"Decision {decision_id} not found")
     pool = await _dec_pool()
-    actions = await pool.fetch(
-        "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
-        decision_id,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        actions = await conn.fetch(
+            "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
+            decision_id,
+        )
     out = _dec_row_to_dict(row)
     out["actions"] = [
         {**dict(a), "ts": a["ts"].isoformat() if a["ts"] else None} for a in actions
@@ -106,9 +111,9 @@ async def api_decisions_get(decision_id: int, user: dict = Depends(require_authe
     return out
 
 # /api/decisions/{decision_id}
-@router.patch("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
+@router.patch("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
-async def api_decisions_update(decision_id: int, body: dict, user: dict = Depends(require_authenticated)):
+async def api_decisions_update(decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))):
     """Patch any subset of: title, description, commitment_date, kpis, status, outcome,
     closed_at, follow_up_decision_id, assignee_id, visibility."""
     existing = await _dec_load_with_visibility(decision_id, user)
@@ -157,7 +162,8 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
         f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
     )
     pool = await _dec_pool()
-    row = await pool.fetchrow(sql, *params)
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(sql, *params)
     if not row:
         # The visibility check passed but the row vanished between
         # SELECT and UPDATE (e.g. a concurrent delete, or the row was
@@ -167,9 +173,9 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
     return _dec_row_to_dict(row)
 
 # /api/decisions/{decision_id}
-@router.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
+@router.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
-async def api_decisions_delete(decision_id: int, user: dict = Depends(require_authenticated)):
+async def api_decisions_delete(decision_id: int, user: dict = Depends(require_permission("control_room.write"))):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
         raise HTTPException(404, f"Decision {decision_id} not found")
@@ -179,17 +185,18 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_au
     # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
     # as the UPDATE above. ``existing["workspace_id"]`` came from
     # ``_dec_load_with_visibility`` which is already workspace-scoped.
-    await pool.execute(
-        "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
-        decision_id,
-        existing["workspace_id"],
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        await conn.execute(
+            "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+            decision_id,
+            existing["workspace_id"],
+        )
     return {"deleted": True, "id": decision_id}
 
 # /api/decisions/{decision_id}/actions
-@router.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf)])
+@router.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))])
 @_bind_to_main
-async def api_decisions_add_action(decision_id: int, body: dict, user: dict = Depends(require_authenticated)):
+async def api_decisions_add_action(decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
         raise HTTPException(404, f"Decision {decision_id} not found")
@@ -200,12 +207,13 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
         raise HTTPException(400, "action_text is required")
     pool = await _dec_pool()
     actor = user.get("email") or "user"
-    row = await pool.fetchrow(
-        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *""",
-        decision_id, action_text, body.get("note"), actor,
-    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *""",
+            decision_id, action_text, body.get("note"), actor,
+        )
     return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
 
 # /api/users
@@ -237,7 +245,10 @@ async def api_admin_users_list(admin_user: dict = Depends(require_permission("ia
     return {"users": [u for u in users if u.get("id") in visible_ids]}
 
 # /api/admin/users
-@router.post("/api/admin/users", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/api/admin/users",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_create(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     email_raw = body.get("email")
@@ -289,7 +300,10 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
     return target_user
 
 # /api/admin/users/{user_id}
-@router.patch("/api/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
+@router.patch(
+    "/api/admin/users/{user_id}",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_update(user_id: int, body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     # Don't let an admin demote / disable themselves accidentally
@@ -368,7 +382,10 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
     return target_user
 
 # /api/admin/users/{user_id}
-@router.delete("/api/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
+@router.delete(
+    "/api/admin/users/{user_id}",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_delete(
     user_id: int,
@@ -414,7 +431,10 @@ async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
     )
 
 # /api/admin/users/{user_id}/vpn-reissue
-@router.post("/api/admin/users/{user_id}/vpn-reissue", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/api/admin/users/{user_id}/vpn-reissue",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_vpn_reissue(
     user_id: int,
@@ -439,7 +459,10 @@ async def api_admin_users_vpn_reissue(
     return {"reissued": res.get("issued", False), **res}
 
 # /api/admin/users/invite
-@router.post("/api/admin/users/invite", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/api/admin/users/invite",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_invite(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Invite a new user by email. Creates an inactive user with no password,
@@ -499,7 +522,10 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
     return {"invited": True, "user": target_user, "email_sent": sent, "vpn": vpn_result}
 
 # /api/admin/users/{user_id}/reinvite
-@router.post("/api/admin/users/{user_id}/reinvite", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/api/admin/users/{user_id}/reinvite",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_reinvite(
     user_id: int,
@@ -557,7 +583,10 @@ async def api_admin_users_reinvite(
     return {"reinvited": True, "email_sent": sent, "vpn": vpn_result}
 
 # /api/admin/users/{user_id}/send-reset
-@router.post("/api/admin/users/{user_id}/send-reset", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/api/admin/users/{user_id}/send-reset",
+    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+)
 @_bind_to_main
 async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict = Depends(require_permission("iam.users.write"))):
     """Email a password reset link and issue a one-time admin temporary password."""

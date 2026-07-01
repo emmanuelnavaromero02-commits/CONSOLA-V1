@@ -52,9 +52,16 @@ async def api_apps(
     )
 
 # /api/apps/{name}
-@router.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@router.delete(
+    "/api/apps/{name}",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("apps.write")),
+        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def api_apps_delete(name: str, user: dict = Depends(require_authenticated)):
+async def api_apps_delete(name: str, user: dict = Depends(require_permission("apps.write"))):
     """Delete a published analytic app by name."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",

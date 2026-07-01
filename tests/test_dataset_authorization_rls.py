@@ -152,6 +152,64 @@ def test_raw_layer_behaviour_unchanged():
     assert _prefix_allowed(sec, "raw/replicon/Entity/") is False
 
 
+def test_dataset_source_sanitizer_hides_foreign_physical_references():
+    sec = _scoped_sec(cartridges=("replicon",))
+    dataset = {
+        "name": "safe",
+        "sources": [
+            "raw/replicon/Entity",
+            "plain_upstream_dataset",
+            "s3://lakehouse/raw/replicon/Entity/data.parquet",
+            "s3://lakehouse/raw/replicon/Entity/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+            "s3://lakehouse/raw/replicon/Entity/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
+            "s3://lakehouse/raw/hubspot/Deal/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+        ],
+        "metadata": {
+            "sources": [
+                "silver/replicon/current/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+                "silver/replicon/foreign/tenant_id=tenant-2/workspace_id=ws-2/data.parquet",
+            ]
+        },
+    }
+
+    sanitized = refinement_main._sanitize_dataset_for_scope(sec, dataset)
+
+    assert sanitized["sources"] == [
+        "raw/replicon/Entity",
+        "plain_upstream_dataset",
+        "s3://lakehouse/raw/replicon/Entity/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+    ]
+    assert sanitized["metadata"]["sources"] == [
+        "silver/replicon/current/tenant_id=tenant-1/workspace_id=ws-1/data.parquet"
+    ]
+
+
+def test_scoped_lineage_hides_legacy_or_foreign_rows_without_workspace_proof():
+    sec = _scoped_sec(cartridges=("replicon",))
+
+    assert refinement_main._lineage_row_visible_for_scope(
+        sec,
+        {
+            "source_entity": "raw/replicon/Entity",
+            "storage_uri": "s3://lakehouse/silver/replicon/dataset/data.parquet",
+        },
+    ) is False
+    assert refinement_main._lineage_row_visible_for_scope(
+        sec,
+        {
+            "source_entity": "raw/replicon/Entity/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+            "storage_uri": "s3://lakehouse/silver/replicon/dataset/tenant_id=tenant-1/workspace_id=ws-1/data.parquet",
+        },
+    ) is True
+    assert refinement_main._lineage_row_visible_for_scope(
+        sec,
+        {
+            "source_entity": "raw/replicon/Entity/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
+            "storage_uri": "s3://lakehouse/silver/replicon/dataset/tenant_id=tenant-9/workspace_id=ws-9/data.parquet",
+        },
+    ) is False
+
+
 def test_declared_source_physical_glob_requires_scope_for_scoped_query():
     sec = _scoped_sec(cartridges=("sap_hcm",))
     with pytest.raises(HTTPException) as exc:

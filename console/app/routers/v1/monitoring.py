@@ -442,9 +442,12 @@ async def monitoring_tools(user: dict = Depends(require_permission("monitor.read
     ]}
 
 # /monitoring/invoke
-@router.post("/monitoring/invoke", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/monitoring/invoke",
+    dependencies=[Depends(require_csrf), Depends(require_permission("monitor.read"))],
+)
 @_bind_to_main
-async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticated)):
+async def monitoring_invoke(body: dict, user: dict = Depends(require_permission("monitor.read"))):
     # Sprint v1.22: was reachable without any auth. monitoring tools
     # read job state and DAG metadata, which a session-less caller has
     # no business seeing. CSRF added because this is a state-shaped
@@ -506,9 +509,12 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticat
     raise HTTPException(400, f"Unknown tool: {tool}")
 
 # /api/dags/parse
-@router.post("/api/dags/parse", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/api/dags/parse",
+    dependencies=[Depends(require_csrf), Depends(require_permission("studio.read"))],
+)
 @_bind_to_main
-async def api_dag_parse(body: dict, user: dict = Depends(require_authenticated)):
+async def api_dag_parse(body: dict, user: dict = Depends(require_permission("studio.read"))):
     # Sprint v1.22: parsing arbitrary Python source is non-trivial work
     # and an anonymous caller could DOS the parser. Auth + CSRF required.
     source = body.get("source", "")

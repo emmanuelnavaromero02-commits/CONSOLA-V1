@@ -20,9 +20,14 @@ from fastapi import APIRouter, Depends, Request
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth
 from app.services.csrf import require_csrf
+from app.services.permissions import require_permission
 
 
-router = APIRouter(prefix="/api/system/onboarding", tags=["Onboarding"])
+router = APIRouter(
+    prefix="/api/system/onboarding",
+    tags=["Onboarding"],
+    dependencies=[Depends(require_permission("workspace.access"))],
+)
 
 # Single source of truth for the wizard step count. If the wizard grows
 # from 5 steps to 6, change this constant — the UI reads it.

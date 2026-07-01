@@ -7,14 +7,14 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import require_authenticated, ROLE_ADMIN
+from app.dependencies import ROLE_ADMIN
 from app.security import get_internal_api_key
 from app.services import operations_service
 from app.services.permissions import canonical_role, require_permission
 from app.services.security_context import build_security_context
 
 
-async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
+async def _require_admin(user: dict = Depends(require_permission("operations.read"))) -> dict:
     role = (user or {}).get("role") or (user or {}).get("workspace_role")
     if role not in {ROLE_ADMIN, "owner", "super_admin"}:
         raise HTTPException(status_code=403, detail="admin role required")
