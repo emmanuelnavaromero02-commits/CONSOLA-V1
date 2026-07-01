@@ -293,6 +293,72 @@ def test_extract_all_plan_talent_target_uses_live_metadata_targets(monkeypatch):
     assert any(row["entity"] == "CompetencyEntity" and row["status"] == "blocked" for row in skipped)
 
 
+def test_extract_all_plan_talent_target_applies_live_odata_alias(monkeypatch):
+    from app.services import catalog_service, preflight
+
+    rows = [
+        {
+            "entity": "PerformanceReview",
+            "odata_entity": "FormHeader",
+            "connection_id": "femsa_sf",
+            "primary_key": "formDataId",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+            "select_fields": ["formDataId", "formSubjectId", "overallRating", "lastModifiedDateTime"],
+        }
+    ]
+    monkeypatch.setattr(catalog_service, "get_all_entities", lambda: rows)
+    monkeypatch.setattr(
+        catalog_service,
+        "_metadata_entities_for_connection",
+        lambda **_kwargs: (
+            {
+                "cust_PerformanceTalent": {
+                    "externalCode",
+                    "worker",
+                    "rating",
+                    "lastModifiedDateTime",
+                },
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        preflight,
+        "talent_metadata_readiness",
+        lambda **_kwargs: {
+            "status": "partial",
+            "extraction_targets": [
+                {
+                    "component": "performance",
+                    "entity": "PerformanceReview",
+                    "odata_entity": "cust_PerformanceTalent",
+                    "status": "ready_to_extract",
+                    "fields_present": ["externalCode", "worker", "rating", "lastModifiedDateTime"],
+                    "primary_key": "externalCode",
+                    "watermark_field": "lastModifiedDateTime",
+                    "alias_id": "alias-1",
+                    "field_aliases": {"formSubjectId": "worker", "overallRating": "rating"},
+                },
+            ],
+            "blockers": [],
+        },
+    )
+
+    entities, skipped = catalog_service.get_extract_all_plan(
+        conn_id="femsa_sf",
+        security_context=_ctx(),
+        target="talent",
+    )
+
+    performance = next(row for row in entities if row["entity"] == "PerformanceReview")
+    assert performance["odata_entity"] == "cust_PerformanceTalent"
+    assert performance["primary_key"] == "externalCode"
+    assert performance["select_fields"] == ["externalCode", "lastModifiedDateTime", "rating", "worker"]
+    assert performance["metadata_alias_id"] == "alias-1"
+    assert not any(row.get("entity") == "PerformanceReview" for row in skipped)
+
+
 def test_extract_all_plan_talent_target_reports_metadata_blocker(monkeypatch):
     from app.services import catalog_service, preflight
 

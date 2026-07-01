@@ -127,6 +127,85 @@ def test_talent_metadata_readiness_reports_live_cpa_blockers(monkeypatch):
     assert all("redacted" not in item for item in payload["extraction_targets"])
 
 
+def test_talent_metadata_readiness_uses_approved_tenant_aliases(monkeypatch):
+    _, preflight = _import_modules()
+
+    class FakeSapSfClient:
+        def __init__(self, conn_id=None, security_context=None):
+            self.conn_id = conn_id
+            self.security_context = security_context
+
+        def configuration_status(self):
+            return {
+                "cartridge": "sap_successfactors",
+                "configured": True,
+                "missing": [],
+                "base_url": "https://example.successfactors.com/odata/v2",
+            }
+
+        def metadata_entities(self):
+            return {
+                "cust_PerformanceTalent": {
+                    "externalCode",
+                    "worker",
+                    "rating",
+                    "lastModifiedDateTime",
+                },
+                "CompetencyEntity": {"externalCode", "name", "lastModifiedDateTime"},
+                "SkillProfile": {"externalCode", "skill", "lastModifiedDateTime"},
+                "CareerInterest": {"externalCode", "userId", "interest", "lastModifiedDateTime"},
+                "Position": {"code", "lastModifiedDateTime"},
+            }
+
+        def fetch_entity(self, entity, select=None, page_size=200, **_kwargs):
+            assert entity != "PerformanceReview"
+            return [{"redacted": True}]
+
+    monkeypatch.setattr(preflight, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(
+        preflight,
+        "_load_talent_alias_candidates",
+        lambda **_kwargs: {
+            "performance": [
+                {
+                    "entity": "cust_PerformanceTalent",
+                    "odata_entity": "cust_PerformanceTalent",
+                    "extract_entity": "PerformanceReview",
+                    "group": "performance",
+                    "scope": "tenant_config_alias",
+                    "standard": False,
+                    "fields_required": ("externalCode", "worker", "rating"),
+                    "fields_optional": ("lastModifiedDateTime",),
+                    "primary_key": "externalCode",
+                    "watermark_field": "lastModifiedDateTime",
+                    "alias_id": "alias-1",
+                    "alias_source": "tenant_config",
+                    "field_aliases": {"formSubjectId": "worker", "overallRating": "rating"},
+                }
+            ]
+        },
+    )
+
+    payload = preflight.talent_metadata_readiness(
+        conn_id="femsa_sf",
+        security_context={"tenant_id": "t1", "workspace_id": "w1"},
+        sample=True,
+    )
+
+    performance = next(item for item in payload["components"] if item["id"] == "performance")
+    assert performance["status"] == "ready"
+    assert performance["selected_entity"] == "cust_PerformanceTalent"
+    assert performance["entity"] == "PerformanceReview"
+    assert payload["summary"]["configured_aliases"] == 1
+
+    target = next(item for item in payload["extraction_targets"] if item["component"] == "performance")
+    assert target["entity"] == "PerformanceReview"
+    assert target["odata_entity"] == "cust_PerformanceTalent"
+    assert target["primary_key"] == "externalCode"
+    assert target["watermark_field"] == "lastModifiedDateTime"
+    assert target["field_aliases"]["overallRating"] == "rating"
+
+
 def test_talent_metadata_readiness_blocks_when_metadata_unavailable(monkeypatch):
     _, preflight = _import_modules()
 
