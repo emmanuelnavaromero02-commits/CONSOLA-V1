@@ -149,9 +149,9 @@ def test_test_connection_returns_normalised_shape_with_audit():
 
 def test_dashboard_router_declares_kpis_endpoint():
     src = _read(DASH_ROUTER)
-    assert '@router.get("/kpis")' in src
+    assert '@router.get("/kpis"' in src
     # Authenticated only.
-    assert "require_authenticated" in src
+    assert "require_permission" in src
 
 
 def test_dashboard_kpis_payload_includes_all_sections():

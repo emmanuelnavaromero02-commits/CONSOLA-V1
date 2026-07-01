@@ -55,9 +55,25 @@ def _make_app(mod, fetch_rows):
     mod.auth.pool = AsyncMock(return_value=_FakePool())
 
     api = FastAPI()
+
+    @api.middleware("http")
+    async def _install_test_user(request, call_next):
+        request.state.user = {
+            "id": 1,
+            "email": "admin@example.com",
+            "role": "admin",
+            "permissions": ["*"],
+            "allowed_cartridges": ["*"],
+        }
+        return await call_next(request)
+
     api.include_router(mod.router)
     api.dependency_overrides[require_authenticated] = lambda: {
-        "id": 1, "email": "admin@example.com", "role": "admin",
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+        "permissions": ["*"],
+        "allowed_cartridges": ["*"],
     }
     return api
 
