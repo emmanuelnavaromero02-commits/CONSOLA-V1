@@ -136,7 +136,7 @@ def test_20c_dataset_app_and_lineage_reads_by_name_are_workspace_scoped():
     lineage_block = refinement.split('if tool == "get_lineage":', 1)[1].split('if tool == "describe_source":', 1)[0]
     assert 'store.get_dataset(args["name"], **_dataset_store_scope(sec))' in lineage_block
     assert "if not ds:" in lineage_block
-    assert "return _get_lineage(args[\"name\"], args.get(\"limit\", 10))" in lineage_block
+    assert 'return _get_lineage(args["name"], args.get("limit", 10), sec)' in lineage_block
 
 
 def test_20c_scheduled_agent_policy_requires_rls_workspace_match():

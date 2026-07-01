@@ -3404,7 +3404,8 @@ async def dataset_data(
     # Forward user context so refinement can apply RLS. Without it the GOLD
     # tables fall through to the empty-tenant filter (or the revenue_manager
     # 'N/D' fallback) and any authenticated user could read cross-tenant rows.
-    user = user or getattr(request.state, "user", None) or {}
+    user = user if isinstance(user, dict) else getattr(request.state, "user", None)
+    user = _runtime_user(user) or {}
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
