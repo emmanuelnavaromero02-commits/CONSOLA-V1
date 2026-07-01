@@ -30,9 +30,9 @@ def _bind_to_main(fn):
     return rebound
 
 # /studio/cartridges/{cartridge_id}/connections
-@router.get("/studio/cartridges/{cartridge_id}/connections", dependencies=[Depends(require_authenticated)])
+@router.get("/studio/cartridges/{cartridge_id}/connections", dependencies=[Depends(require_permission("vault.connections.read"))])
 @_bind_to_main
-async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(require_authenticated)):
+async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(require_permission("vault.connections.read"))):
     """Proxy to Vault — returns masked connection config for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
     vault_url = _vault_url()
@@ -48,9 +48,9 @@ async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(r
             return {"connections": []}
 
 # /api/pipeline
-@router.get("/api/pipeline", dependencies=[Depends(require_authenticated)])
+@router.get("/api/pipeline", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
-async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authenticated)):
+async def api_pipeline(cartridge: str = "", user: dict = Depends(require_permission("pipelines.read"))):
     """
     Ensambla el DAG completo: entidades × bronze status × silver datasets × gold deps.
     Fuentes: entity_config (entities), pipeline_runs + jobs (run history), refinement (datasets).
@@ -322,14 +322,14 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
     return {"pipeline": rows}
 
 # /api/dag_templates
-@router.get("/api/dag_templates", dependencies=[Depends(require_authenticated)])
+@router.get("/api/dag_templates", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_dag_templates():
     from app.services import dag_templates
     return {"templates": dag_templates.get_all()}
 
 # /api/dag_templates/{template_id}
-@router.get("/api/dag_templates/{template_id}", dependencies=[Depends(require_authenticated)])
+@router.get("/api/dag_templates/{template_id}", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
 async def api_dag_template_code(template_id: str,
                                 cartridge: str = "my_cartridge",
@@ -341,9 +341,9 @@ async def api_dag_template_code(template_id: str,
     return {"id": template_id, "cartridge": cartridge, "entity": entity, "code": code}
 
 # /api/pipeline_runs
-@router.get("/api/pipeline_runs", dependencies=[Depends(require_authenticated)])
+@router.get("/api/pipeline_runs", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
-async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50, user: dict = Depends(require_authenticated)):
+async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50, user: dict = Depends(require_permission("pipelines.read"))):
     """Recent DAG run history from pipeline_runs table."""
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
@@ -363,11 +363,16 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
                 f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
                 cartridge, limit, *scope_values,
             )
-        response_rows = [dict(r) for r in rows]
+        response_rows = [_sanitize_pipeline_run_for_user(dict(r), user) for r in rows]
         if entity:
             refreshed_rows = []
             for row in response_rows:
-                refreshed_rows.append(await _refresh_dag_run_status(row, user))
+                refreshed_rows.append(
+                    _sanitize_pipeline_run_for_user(
+                        await _refresh_dag_run_status(row, user),
+                        user,
+                    )
+                )
             response_rows = refreshed_rows
         return {"runs": response_rows}
     except Exception:
@@ -376,9 +381,9 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
         raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
 # /api/pipeline/{cartridge}/{entity}/runs
-@router.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_authenticated)])
+@router.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
-async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20, user: dict = Depends(require_authenticated)):
+async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20, user: dict = Depends(require_permission("pipelines.read"))):
     """Recent DAG-based pipeline runs for one cartridge entity."""
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
@@ -416,7 +421,7 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
     runs = []
     for row in rows:
         refreshed = await _refresh_dag_run_status(dict(row), user)
-        runs.append(_format_pipeline_entity_run(refreshed))
+        runs.append(_format_pipeline_entity_run(refreshed, user))
 
     return {
         "cartridge": cartridge,
@@ -425,9 +430,9 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
     }
 
 # /api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs
-@router.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_authenticated)])
+@router.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_permission("pipelines.read"))])
 @_bind_to_main
-async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, user: dict = Depends(require_authenticated)):
+async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, user: dict = Depends(require_permission("pipelines.read"))):
     """Basic DAG run logs summary for one cartridge entity run."""
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
@@ -703,14 +708,17 @@ async def api_pipeline_extract_all(
     }
 
 # /studio/cartridges/{cartridge_id}/entities/{entity}/rename
-@router.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/studio/cartridges/{cartridge_id}/entities/{entity}/rename",
+    dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))],
+)
 @_bind_to_main
 async def studio_rename_entity(
     cartridge_id: str,
     entity: str,
     body: dict,
     _global_admin: dict = Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
-    user: dict = Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+    user: dict = Depends(require_permission("studio.write")),
 ):
     _require_cartridge_visible(user, cartridge_id)
     new_name = (body.get("new_name") or "").strip()
@@ -731,14 +739,17 @@ async def studio_rename_entity(
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
 # /studio/cartridges/{cartridge_id}/entities/{entity}
-@router.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_csrf)])
+@router.patch(
+    "/studio/cartridges/{cartridge_id}/entities/{entity}",
+    dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))],
+)
 @_bind_to_main
 async def studio_update_entity(
     cartridge_id: str,
     entity: str,
     body: dict,
     _global_admin: dict = Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
-    user: dict = Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+    user: dict = Depends(require_permission("studio.write")),
 ):
     """Update entity_config fields."""
     _require_cartridge_visible(user, cartridge_id)
@@ -752,9 +763,9 @@ async def studio_update_entity(
     return {"updated": True, "entity": entity, **updates}
 
 # /studio/cartridges
-@router.get("/studio/cartridges", dependencies=[Depends(require_authenticated)])
+@router.get("/studio/cartridges", dependencies=[Depends(require_permission("cartridges.read"))])
 @_bind_to_main
-async def studio_list_cartridges(user: dict = Depends(require_authenticated)):
+async def studio_list_cartridges(user: dict = Depends(require_permission("cartridges.read"))):
     cartridges = await cartridge_service.list_cartridges()
     ctx = build_security_context(user)
     allowed = {str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()}
@@ -763,9 +774,9 @@ async def studio_list_cartridges(user: dict = Depends(require_authenticated)):
     return {"cartridges": cartridges}
 
 # /studio/cartridges/{cartridge_id}/status
-@router.get("/studio/cartridges/{cartridge_id}/status", dependencies=[Depends(require_authenticated)])
+@router.get("/studio/cartridges/{cartridge_id}/status", dependencies=[Depends(require_permission("cartridges.read"))])
 @_bind_to_main
-async def studio_cartridge_status(cartridge_id: str, user: dict = Depends(require_authenticated)):
+async def studio_cartridge_status(cartridge_id: str, user: dict = Depends(require_permission("cartridges.read"))):
     """Lightweight status probe for the cartridge.
 
     For Replicon (and any cartridge not backed by a dedicated microservice in
@@ -785,7 +796,14 @@ async def studio_cartridge_status(cartridge_id: str, user: dict = Depends(requir
     return {"cartridge_id": cartridge_id, **probe}
 
 # /studio/cartridges
-@router.post("/studio/cartridges", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.post(
+    "/studio/cartridges",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("cartridges.write")),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
 @_bind_to_main
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
@@ -802,9 +820,9 @@ async def studio_create_cartridge(body: dict):
     return manifest
 
 # /studio/cartridges/{cartridge_id}
-@router.get("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_authenticated)])
+@router.get("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_permission("cartridges.read"))])
 @_bind_to_main
-async def studio_get_cartridge(cartridge_id: str, user: dict = Depends(require_authenticated)):
+async def studio_get_cartridge(cartridge_id: str, user: dict = Depends(require_permission("cartridges.read"))):
     _require_cartridge_visible(user, cartridge_id)
     manifest = await cartridge_service.get_cartridge(cartridge_id)
     if not manifest:
@@ -812,9 +830,16 @@ async def studio_get_cartridge(cartridge_id: str, user: dict = Depends(require_a
     return manifest
 
 # /studio/cartridges/{cartridge_id}
-@router.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.patch(
+    "/studio/cartridges/{cartridge_id}",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("cartridges.write")),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def studio_update_cartridge(cartridge_id: str, body: dict, user: dict = Depends(require_authenticated)):
+async def studio_update_cartridge(cartridge_id: str, body: dict, user: dict = Depends(require_permission("cartridges.write"))):
     _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
@@ -824,9 +849,16 @@ async def studio_update_cartridge(cartridge_id: str, body: dict, user: dict = De
         raise HTTPException(400, "invalid cartridge update") from exc
 
 # /studio/cartridges/{cartridge_id}/spec
-@router.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.post(
+    "/studio/cartridges/{cartridge_id}/spec",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("cartridges.write")),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...), user: dict = Depends(require_authenticated)):
+async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...), user: dict = Depends(require_permission("cartridges.write"))):
     """Upload a spec file (OpenAPI YAML, WSDL, OData $metadata) for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -860,9 +892,16 @@ async def studio_export_cartridge(
     )
 
 # /studio/import
-@router.post("/studio/import", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.post(
+    "/studio/import",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("cartridges.write")),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Depends(require_authenticated)):
+async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Depends(require_permission("cartridges.write"))):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
     try:
@@ -874,7 +913,7 @@ async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Dep
 # /studio/chat
 @router.post("/studio/chat", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 @_bind_to_main
-async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
+async def studio_chat(body: dict, user: dict = Depends(require_permission("studio.write"))):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
     return await studio_assistant.chat(
@@ -889,7 +928,7 @@ async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
 # /studio/chat/stream
 @router.post("/studio/chat/stream", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 @_bind_to_main
-async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
+async def studio_chat_stream(body: dict, user: dict = Depends(require_permission("studio.write"))):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
     cartridge_id = body.get("cartridge_id")

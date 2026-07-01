@@ -474,6 +474,75 @@ def _prefix_allowed(sec: dict, value: str) -> bool:
     return False
 
 
+_TECHNICAL_SOURCE_PREFIXES = ("raw/", "silver/", "gold/", "uploads/", "cartridges/")
+
+
+def _technical_source_from_reference(source: str) -> str | None:
+    value = str(source or "").strip().strip("/")
+    if not value:
+        return None
+    if value.startswith(_TECHNICAL_SOURCE_PREFIXES):
+        return value
+    if value.startswith("s3://"):
+        parts = value.split("/", 3)
+        if len(parts) == 4 and parts[3].startswith(_TECHNICAL_SOURCE_PREFIXES):
+            return parts[3]
+    return None
+
+
+def _source_visible_for_scope(sec: dict, source: object) -> bool:
+    if not isinstance(source, str):
+        return False
+    value = source.strip()
+    if not value:
+        return False
+    if _is_unscoped_admin_security_context(sec):
+        return True
+    is_physical_reference = "://" in value or "tenant_id=" in value or "workspace_id=" in value
+    candidate = _technical_source_from_reference(value)
+    if candidate is not None:
+        if is_physical_reference:
+            tenant_id = str(sec.get("tenant_id") or "").strip()
+            workspace_id = str(sec.get("workspace_id") or "").strip()
+            if (
+                not tenant_id
+                or not workspace_id
+                or f"tenant_id={tenant_id}" not in candidate
+                or f"workspace_id={workspace_id}" not in candidate
+            ):
+                return False
+        return _prefix_allowed(sec, candidate)
+    if is_physical_reference:
+        return False
+    return True
+
+
+def _filter_dataset_sources_for_scope(sec: dict, sources: object) -> list[str]:
+    if not isinstance(sources, list):
+        return []
+    return [
+        source.strip()
+        for source in sources
+        if _source_visible_for_scope(sec, source)
+    ]
+
+
+def _sanitize_dataset_for_scope(sec: dict, dataset: dict) -> dict:
+    sanitized = {**dataset}
+    sanitized["sources"] = _filter_dataset_sources_for_scope(
+        sec, sanitized.get("sources") or []
+    )
+    metadata = sanitized.get("metadata")
+    if isinstance(metadata, dict):
+        sanitized["metadata"] = {
+            **metadata,
+            "sources": _filter_dataset_sources_for_scope(
+                sec, metadata.get("sources") or []
+            ),
+        }
+    return sanitized
+
+
 def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
     tenant: str | None = None
     workspace: str | None = None
@@ -1691,7 +1760,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         sec = _require_security_permission(body, "datasets.read")
         return {
             "datasets": [
-                ds
+                _sanitize_dataset_for_scope(sec, ds)
                 for ds in store.list_datasets(**_dataset_store_scope(sec))
                 if _dataset_allowed(sec, ds)
             ]
@@ -1703,7 +1772,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
-        return ds
+        return _sanitize_dataset_for_scope(sec, ds)
 
     if tool == "get_schema":
         sec = _require_security_permission(body, "datasets.read")
@@ -1733,7 +1802,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
-        return _get_lineage(args["name"], args.get("limit", 10))
+        return _get_lineage(args["name"], args.get("limit", 10), sec)
 
     if tool == "describe_source":
         source = args["source"]
@@ -1800,7 +1869,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                 "name":      ds_meta["name"],
                 "layer":     ds_meta["layer"],
                 "cartridge": ds_meta["cartridge"],
-                "sources":   ds_meta["sources"],
+                "sources":   _filter_dataset_sources_for_scope(sec, ds_meta.get("sources") or []),
                 "row_count": ds_meta["row_count"],
                 "fields":    [],
             }
@@ -1870,27 +1939,101 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
     raise HTTPException(400, f"Unknown tool: {tool}")
 
 
-def _get_lineage(name: str, limit: int) -> dict:
+def _lineage_row_visible_for_scope(sec: dict | None, row: dict) -> bool:
+    if not sec or _is_unscoped_admin_security_context(sec):
+        return True
+    workspace = str(sec.get("workspace_id") or "").strip()
+    tenant = str(sec.get("tenant_id") or "").strip()
+    if not workspace:
+        return False
+    for value in (row.get("source_entity"), row.get("storage_uri")):
+        candidate = _technical_source_from_reference(str(value or ""))
+        if not candidate:
+            continue
+        if f"workspace_id={workspace}" not in candidate:
+            continue
+        if tenant and f"tenant_id={tenant}" not in candidate:
+            continue
+        if _prefix_allowed(sec, candidate):
+            return True
+    return False
+
+
+def _sanitize_lineage_row_for_scope(sec: dict | None, row: dict) -> dict:
+    sanitized = {**row}
+    if sec and not _is_unscoped_admin_security_context(sec):
+        storage_uri = str(sanitized.get("storage_uri") or "")
+        candidate = _technical_source_from_reference(storage_uri)
+        if not candidate or not _prefix_allowed(sec, candidate):
+            sanitized["storage_uri"] = None
+    return sanitized
+
+
+def _get_lineage(name: str, limit: int, security_context: dict | None = None) -> dict:
+    if (
+        isinstance(security_context, dict)
+        and not _is_unscoped_admin_security_context(security_context)
+        and not str(security_context.get("workspace_id") or "").strip()
+    ):
+        return {"name": name, "lineage": []}
     try:
         import psycopg2
         conn = psycopg2.connect(_postgres_dsn())
         with conn.cursor() as cur:
-            cur.execute("""
+            _pg_set_scope(cur, security_context)
+            cur.execute(
+                """
+                SELECT column_name
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'silver_lineage'
+                """
+            )
+            columns = {str(row[0]) for row in cur.fetchall()}
+            conditions = ["silver_name = %s"]
+            params: list = [name]
+            scoped = (
+                isinstance(security_context, dict)
+                and not _is_unscoped_admin_security_context(security_context)
+            )
+            if scoped:
+                workspace = str(security_context.get("workspace_id") or "").strip()
+                tenant = str(security_context.get("tenant_id") or "").strip()
+                if "workspace_id" in columns:
+                    conditions.append("workspace_id = %s::uuid")
+                    params.append(workspace)
+                    if tenant and "tenant_id" in columns:
+                        conditions.append("(tenant_id IS NULL OR tenant_id = %s::uuid)")
+                        params.append(tenant)
+            where = " AND ".join(conditions)
+            params.append(min(limit, 50))
+            cur.execute(f"""
                 SELECT silver_name, cartridge_id, source_entity,
                        source_load_date, source_batch_id, layer,
                        row_count, storage_uri, created_by, created_at
                 FROM silver_lineage
-                WHERE silver_name = %s
+                WHERE {where}
                 ORDER BY created_at DESC LIMIT %s
-            """, (name, min(limit, 50)))
+            """, params)
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         conn.close()
+        if (
+            isinstance(security_context, dict)
+            and not _is_unscoped_admin_security_context(security_context)
+            and "workspace_id" not in columns
+        ):
+            rows = [
+                row
+                for row in rows
+                if _lineage_row_visible_for_scope(security_context, row)
+            ]
         for r in rows:
             if r.get("created_at"):
                 r["created_at"] = r["created_at"].isoformat()
             if r.get("source_load_date"):
                 r["source_load_date"] = str(r["source_load_date"])
+        rows = [_sanitize_lineage_row_for_scope(security_context, row) for row in rows]
         return {"name": name, "lineage": rows}
     except Exception as exc:
         request_id = _log_internal_error(exc, "dataset lineage lookup failed")
@@ -2530,7 +2673,7 @@ async def list_datasets(
     body = _body_from_security_header(internal_service, x_security_context)
     sec = _require_security_permission(body, "datasets.read")
     datasets = [
-        d
+        _sanitize_dataset_for_scope(sec, d)
         for d in store.list_datasets(**_dataset_store_scope(sec))
         if _dataset_allowed(sec, d)
     ]
@@ -2632,7 +2775,7 @@ async def dataset_definition(
     if not ds:
         raise HTTPException(404)
     _require_dataset_scope(body, ds)
-    return ds
+    return _sanitize_dataset_for_scope(sec, ds)
 
 
 @app.get("/datasets/{name}/schema")

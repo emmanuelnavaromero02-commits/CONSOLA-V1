@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.dependencies import require_authenticated
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user, workspace_scope_from_user
+from app.services.permissions import require_permission
 from app.services.security_context import build_security_context
 
 
@@ -28,7 +29,7 @@ _KNOWN_CARTRIDGES = frozenset({
 router = APIRouter(
     prefix="/api/freshness",
     tags=["freshness"],
-    dependencies=[Depends(require_authenticated)],
+    dependencies=[Depends(require_permission("pipelines.read"))],
 )
 
 

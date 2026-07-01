@@ -5,13 +5,9 @@ home renders. Designed to be fast (one or two short queries per
 section, no JOINs across hot tables) so the 30s frontend poll
 doesn't move the Postgres needle.
 
-The endpoint is authenticated. RBAC: today every authenticated
-user sees the same KPIs — the brief mentions "different fields
-visible according to role (admin vs viewer)" as a future
-refinement. The hooks for that are wired through the
-``viewer_only`` short-circuits below; the role plumbing follows
-once the dashboard ships and we know what viewers actually want
-to hide.
+The endpoint requires workspace access and scopes tenant/workspace
+reads for non-platform users. Viewer-specific field hiding is still
+handled by the ``viewer_only`` short-circuits below.
 """
 from __future__ import annotations
 
@@ -23,11 +19,10 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends
 
-from app.dependencies import require_authenticated
 from app.security import get_internal_api_key
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.permissions import canonical_role
+from app.services.permissions import canonical_role, require_permission
 from app.services.security_context import build_security_context
 
 
@@ -472,8 +467,8 @@ async def _audit_counts(
     }
 
 
-@router.get("/kpis")
-async def dashboard_kpis(user: dict = Depends(require_authenticated)):
+@router.get("/kpis", dependencies=[Depends(require_permission("workspace.access"))])
+async def dashboard_kpis(user: dict = Depends(require_permission("workspace.access"))):
     """Aggregate dashboard payload. One round-trip; the per-section
     helpers run sequentially (cheap; no I/O parallelism win on
     small queries) and return the shape documented in the v1.44.1

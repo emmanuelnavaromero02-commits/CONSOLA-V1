@@ -30,23 +30,26 @@ def _bind_to_main(fn):
     return rebound
 
 # /jobs
-@router.get("/jobs", dependencies=[Depends(require_authenticated)])
+@router.get("/jobs", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
-async def list_jobs(limit: int = 20, user: dict = Depends(require_authenticated)):
+async def list_jobs(limit: int = 20, user: dict = Depends(require_permission("monitor.read"))):
     jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
     return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 # /jobs/{job_id}
-@router.get("/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
+@router.get("/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
-async def get_job(job_id: str, user: dict = Depends(require_authenticated)):
+async def get_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
 
 # /assistant/chat
-@router.post("/assistant/chat", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/assistant/chat",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.use"))],
+)
 @_bind_to_main
-async def chat(body: dict, user: dict = Depends(require_authenticated)):
+async def chat(body: dict, user: dict = Depends(require_permission("copilot.use"))):
     return await _call_with_optional_user(
         assistant.chat,
         body.get("message", ""),
@@ -55,23 +58,23 @@ async def chat(body: dict, user: dict = Depends(require_authenticated)):
     )
 
 # /api/jobs
-@router.get("/api/jobs", dependencies=[Depends(require_authenticated)])
+@router.get("/api/jobs", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
-async def api_jobs(limit: int = 50, user: dict = Depends(require_authenticated)):
+async def api_jobs(limit: int = 50, user: dict = Depends(require_permission("monitor.read"))):
     jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
     return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 # /api/jobs/{job_id}
-@router.get("/api/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
+@router.get("/api/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
-async def api_job(job_id: str, user: dict = Depends(require_authenticated)):
+async def api_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
 
 # /api/jobs/{job_id}/logs
-@router.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_authenticated)])
+@router.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_permission("monitor.read"))])
 @_bind_to_main
-async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(require_authenticated)):
+async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(require_permission("monitor.read"))):
     import json as _json
     scoped = await job_service.get_scoped(job_id, user=user)
     if scoped.get("error"):
@@ -111,9 +114,9 @@ async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(requi
     return {"logs": result}
 
 # /api/tools/manifest
-@router.get("/api/tools/manifest", dependencies=[Depends(require_authenticated)])
+@router.get("/api/tools/manifest", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
-async def api_tools_manifest():
+async def api_tools_manifest(user: dict = Depends(require_permission("agents.read"))):
     """Sprint v1.41.0 (tornillo copilot): unified tool catalog with risk_level
     + requires_approval, sourced from every registered MCP server. The copilot
     router (v1.42+) consumes this to decide auto-execution vs approval prompts."""

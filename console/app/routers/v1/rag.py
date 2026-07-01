@@ -38,9 +38,9 @@ async def rag_page():
     return RedirectResponse(url="/studio")
 
 # /api/rag/sources
-@router.get("/api/rag/sources", dependencies=[Depends(require_authenticated)])
+@router.get("/api/rag/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_rag_sources(kinds: str = "", user: dict = Depends(require_authenticated)):
+async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permission("datasets.read"))):
     async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
         params = {"kinds": kinds} if kinds else None
         r = await c.get(f"{_RAG_URL}/rag/sources", params=params)
@@ -48,9 +48,16 @@ async def api_rag_sources(kinds: str = "", user: dict = Depends(require_authenti
         return r.json()
 
 # /api/rag/sources/{source_id}
-@router.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@router.delete(
+    "/api/rag/sources/{source_id}",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("datasets.write")),
+        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def api_rag_delete_source(source_id: int, user: dict = Depends(require_authenticated)):
+async def api_rag_delete_source(source_id: int, user: dict = Depends(require_permission("datasets.write"))):
     async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
         if r.status_code == 404:
@@ -59,9 +66,9 @@ async def api_rag_delete_source(source_id: int, user: dict = Depends(require_aut
         return r.json()
 
 # /api/rag/search
-@router.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_authenticated)])
+@router.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_rag_search(body: dict, user: dict = Depends(require_authenticated)):
+async def api_rag_search(body: dict, user: dict = Depends(require_permission("datasets.read"))):
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(
             f"{_RAG_URL}/mcp/invoke",
@@ -81,9 +88,16 @@ async def api_rag_search(body: dict, user: dict = Depends(require_authenticated)
         return r.json().get("result") or r.json()
 
 # /api/rag/reindex
-@router.post("/api/rag/reindex", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@router.post(
+    "/api/rag/reindex",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("datasets.write")),
+        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def api_rag_reindex(body: dict, user: dict = Depends(require_authenticated)):
+async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("datasets.write"))):
     body = {**body, "security_context": build_security_context(user)}
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/reindex", json=body)
@@ -92,9 +106,16 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_authenticated
         return r.json()
 
 # /api/rag/ingest
-@router.post("/api/rag/ingest", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@router.post(
+    "/api/rag/ingest",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("datasets.write")),
+        Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+    ],
+)
 @_bind_to_main
-async def api_rag_ingest(body: dict, user: dict = Depends(require_authenticated)):
+async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("datasets.write"))):
     body = {**body, "security_context": build_security_context(user)}
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
@@ -103,9 +124,9 @@ async def api_rag_ingest(body: dict, user: dict = Depends(require_authenticated)
         return r.json()
 
 # /api/rag/ask
-@router.post("/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_authenticated)])
+@router.post("/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
+async def api_rag_ask(body: dict, user: dict = Depends(require_permission("datasets.read"))):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
 
