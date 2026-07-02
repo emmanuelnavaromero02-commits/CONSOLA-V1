@@ -92,6 +92,20 @@ export interface SemanticPayload {
   entities?: Record<string, SemanticEntity[]> | SemanticEntity[];
 }
 
+export interface SemanticEnrichPayload {
+  ok?: boolean;
+  cartridge?: string;
+  mode?: string;
+  approval_required?: boolean;
+  candidate_count?: number;
+  enriched?: number;
+  scanned_datasets?: number;
+  scanned_columns?: number;
+  message?: string;
+  entries_preview?: Array<Record<string, unknown>>;
+  result?: Record<string, unknown>;
+}
+
 export interface DatasetSummary {
   name: string;
   layer?: string | null;

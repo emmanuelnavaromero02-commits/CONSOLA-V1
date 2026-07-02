@@ -9,6 +9,7 @@ import type {
   JobRun,
   LineagePayload,
   PipelineEntity,
+  SemanticEnrichPayload,
   SemanticPayload,
   SourceSchemaPayload,
   VaultConnection,
@@ -50,6 +51,14 @@ export async function getSemantic(cartridge: string): Promise<SemanticPayload> {
   const { data } = await api.get<SemanticPayload>(
     `/api/semantic?cartridge=${encodeURIComponent(cartridge)}`,
   );
+  return data;
+}
+
+export async function enrichSemantic(cartridge: string, limit = 80): Promise<SemanticEnrichPayload> {
+  const { data } = await api.post<SemanticEnrichPayload>("/api/semantic/enrich", {
+    cartridge,
+    limit,
+  });
   return data;
 }
 
