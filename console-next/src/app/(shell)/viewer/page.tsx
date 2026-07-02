@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
@@ -17,13 +18,16 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  Sparkles,
   Table2,
 } from "lucide-react";
+import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
 
 import { JobTable } from "@/components/monitor/JobTable";
 import { PipelineTable } from "@/components/monitor/PipelineTable";
 import { StatusPill } from "@/components/monitor/StatusPill";
+import { enrichSemantic } from "@/lib/monitor/client";
 import { cn } from "@/lib/utils";
 import {
   useDatasetDetail,
@@ -374,13 +378,44 @@ function WatermarksViewer({ cartridge }: { cartridge: string }) {
 
 function SemanticViewer({ cartridge }: { cartridge: string }) {
   const semantic = useSemantic(cartridge);
+  const queryClient = useQueryClient();
   const entities = useMemo(() => flattenSemantic(semantic.data), [semantic.data]);
+  const enrich = useMutation({
+    mutationFn: () => enrichSemantic(cartridge),
+    onSuccess: (payload) => {
+      queryClient.invalidateQueries({ queryKey: ["monitor", "semantic", cartridge] });
+      semantic.refetch();
+      const enriched = Number(payload.enriched ?? payload.candidate_count ?? 0);
+      if (enriched > 0) {
+        toast.success(`Catálogo enriquecido: ${enriched} campos actualizados.`);
+      } else {
+        toast.info(payload.message || "No había campos pendientes de descripción.");
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "No se pudo enriquecer la capa semántica.");
+    },
+  });
 
   return (
     <ViewerShell
       title="Semantic Layer"
       subtitle={`Cartucho ${cartridge}: entidades, campos y metadatos expuestos por /api/semantic.`}
-      actions={<RefreshButton onClick={() => semantic.refetch()} />}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => enrich.mutate()}
+            disabled={enrich.isPending}
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 text-sm font-medium text-primary transition hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+            title="Completar descripciones semánticas sin pasar por aprobación de herramientas"
+          >
+            <Sparkles className="h-4 w-4" />
+            {enrich.isPending ? "Enriqueciendo..." : "Enriquecer con IA"}
+          </button>
+          <RefreshButton onClick={() => semantic.refetch()} />
+        </div>
+      }
       activeCartridge={cartridge}
     >
       {semantic.isError ? (

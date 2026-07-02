@@ -4,6 +4,16 @@ function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 const params = new URLSearchParams(location.search);
 let semanticData = null;
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function csrfHeaders(base = {}) {
+  const token = csrfToken();
+  return token ? { ...base, 'X-CSRF-Token': token } : base;
+}
+
 async function activeScopedCartridges() {
   try {
     const r = await fetch('/api/apps', { credentials: 'same-origin' });
@@ -66,6 +76,35 @@ async function loadSemantic() {
   }
 }
 
+async function enrichSemantic() {
+  const cartridge = document.getElementById('cartridge-sel').value || params.get('cartridge') || 'sap_successfactors';
+  const btn = document.getElementById('btn-enrich-semantic');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Enriqueciendo...';
+  }
+  try {
+    const r = await fetch('/api/semantic/enrich', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: csrfHeaders({ 'Content-Type': 'application/json', 'Accept': 'application/json' }),
+      body: JSON.stringify({ cartridge, limit: 80 }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(payload.detail || payload.message || `HTTP ${r.status}`);
+    const count = Number(payload.enriched || payload.candidate_count || 0);
+    window.alert(count > 0 ? `Catalogo enriquecido: ${count} campos.` : (payload.message || 'No habia campos pendientes.'));
+    await loadSemantic();
+  } catch (e) {
+    window.alert(`No se pudo enriquecer la capa semantica: ${e.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '◈ Enriquecer con IA';
+    }
+  }
+}
+
 function modeTags(modes) {
   if (!modes || !modes.length) return '<span class="mode-tag mode-full">full</span>';
   return modes.map(m => `<span class="mode-tag mode-${esc(m)}">${esc(m)}</span>`).join('');
@@ -91,6 +130,10 @@ function renderMain(entities) {
       <div class="stat"><div class="stat-val">${esc(list.length)}</div><div class="stat-lbl">ENTIDADES</div></div>
       <div class="stat"><div class="stat-val">${total_fields}</div><div class="stat-lbl">CAMPOS TOTAL</div></div>
       <div class="stat"><div class="stat-val" style="color:var(--amber)">${has_watermark}</div><div class="stat-lbl">CON WATERMARK</div></div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin:0 0 12px">
+      <button id="btn-enrich-semantic" class="btn btn-primary" type="button">◈ Enriquecer con IA</button>
     </div>
 
     <div class="card">
@@ -197,6 +240,10 @@ document.addEventListener('DOMContentLoaded', () => {
   //   * #mode-filter     → filterEntities (change)
   const main = document.getElementById('main-area');
   main.addEventListener('click', (ev) => {
+    if (ev.target.closest('#btn-enrich-semantic')) {
+      enrichSemantic();
+      return;
+    }
     const tab = ev.target.closest('.tab[data-view]');
     if (tab) switchView(tab.dataset.view);
   });

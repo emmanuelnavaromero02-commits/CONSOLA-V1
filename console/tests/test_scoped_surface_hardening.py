@@ -432,6 +432,81 @@ async def test_catalog_defaults_to_active_scoped_cartridge(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_semantic_enrich_uses_direct_catalog_tools(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_refinement(tool, args, user=None, **_kwargs):
+        calls.append((tool, args))
+        if tool == "get_data_catalog":
+            return {
+                "datasets": {
+                    "sap_successfactors_talent_operational_features": {
+                        "layer": "gold",
+                        "cartridge": "sap_successfactors",
+                        "columns": [
+                            {"name": "employee_count", "description": ""},
+                            {"name": "workspace_id", "description": "Workspace"},
+                        ],
+                    }
+                }
+            }
+        if tool == "upsert_catalog_entries":
+            return {"updated": len(args["entries"])}
+        raise AssertionError(f"unexpected tool {tool}")
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
+
+    result = await console_main.api_semantic_enrich(
+        {"cartridge": "sap_successfactors", "limit": 10},
+        user=USER,
+    )
+
+    assert result["approval_required"] is False
+    assert result["enriched"] == 1
+    assert [tool for tool, _args in calls] == [
+        "get_data_catalog",
+        "upsert_catalog_entries",
+    ]
+    entry = calls[1][1]["entries"][0]
+    assert entry["dataset"] == "sap_successfactors_talent_operational_features"
+    assert entry["column_name"] == "employee_count"
+    assert entry["is_metric"] is True
+
+
+@pytest.mark.asyncio
+async def test_semantic_enrich_skips_when_catalog_has_no_missing_descriptions(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    calls: list[str] = []
+
+    async def fake_refinement(tool, args, user=None, **_kwargs):
+        calls.append(tool)
+        return {
+            "datasets": {
+                "gold_ready": {
+                    "layer": "gold",
+                    "cartridge": "sap_successfactors",
+                    "columns": [{"name": "employee_count", "description": "Total"}],
+                }
+            }
+        }
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
+
+    result = await console_main.api_semantic_enrich({"cartridge": "sap_successfactors"}, user=USER)
+
+    assert result["enriched"] == 0
+    assert result["approval_required"] is False
+    assert calls == ["get_data_catalog"]
+
+
+@pytest.mark.asyncio
 async def test_catalog_cache_is_scoped_by_workspace(monkeypatch):
     console_main._SCOPED_READ_CACHE.clear()
     monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "60")
