@@ -412,6 +412,197 @@ _TALENT_COMPONENT_ALIAS_GROUP: dict[str, str] = {
     "movement_events": "event_reason",
 }
 
+_DISCOVERY_COMMON_USER_FIELDS = (
+    "userId",
+    "personIdExternal",
+    "personId",
+    "employeeId",
+    "worker",
+    "workerId",
+    "subjectUserId",
+    "formSubjectId",
+)
+_DISCOVERY_COMMON_WATERMARK_FIELDS = (
+    "lastModifiedDateTime",
+    "lastModifiedOn",
+    "lastModifiedDate",
+    "modifiedDateTime",
+    "modifiedDate",
+    "createdDateTime",
+    "createdDate",
+)
+
+_TALENT_METADATA_DISCOVERY_PROFILES: tuple[dict[str, Any], ...] = (
+    {
+        "component": "performance",
+        "extract_entity": "PerformanceReview",
+        "group": "performance",
+        "name_terms": ("performance", "performancereview", "perf", "formheader", "formperf", "rating", "review"),
+        "exclude_terms": ("payment", "paycomponent", "compensation", "payroll"),
+        "required_aliases": {
+            "formSubjectId": _DISCOVERY_COMMON_USER_FIELDS,
+            "overallRating": (
+                "overallRating",
+                "performanceRating",
+                "perfRating",
+                "calibratedRating",
+                "rating",
+                "score",
+            ),
+        },
+        "optional_aliases": {
+            "formDataId": ("formDataId", "formId", "reviewId", "externalCode", "id"),
+            "potentialRating": ("potentialRating", "potRating", "potential", "potentialScore"),
+            "status": ("status", "formStatus", "reviewStatus"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("formDataId", "externalCode", "reviewId", "id"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "performance",
+        "extract_entity": "GoalPlan",
+        "group": "goals",
+        "name_terms": ("goal", "objective"),
+        "exclude_terms": ("developmentgoal", "devgoal"),
+        "required_aliases": {
+            "userId": _DISCOVERY_COMMON_USER_FIELDS,
+            "id": ("id", "goalId", "objectiveId", "externalCode"),
+        },
+        "optional_aliases": {
+            "state": ("state", "status", "goalStatus"),
+            "percentComplete": ("percentComplete", "completionPercent", "progress", "achievementPercent"),
+            "name": ("name", "title", "goalName", "objectiveName"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("id", "goalId", "objectiveId", "externalCode"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "competency",
+        "extract_entity": "SkillProfile",
+        "group": "employee_skill",
+        "name_terms": ("skillprofile", "userskill", "skill", "competencyassessment", "competencyrating"),
+        "required_aliases": {
+            "userId": _DISCOVERY_COMMON_USER_FIELDS,
+            "skill": ("skill", "skillId", "competency", "competencyId", "externalCode"),
+        },
+        "optional_aliases": {
+            "proficiency": ("proficiency", "proficiencyLevel", "rating", "score", "level"),
+            "skillName": ("skillName", "competencyName", "name", "title"),
+            "externalCode": ("externalCode", "id", "recordId"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("externalCode", "id", "recordId"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "competency",
+        "extract_entity": "CompetencyEntity",
+        "group": "skill_catalog",
+        "name_terms": ("competency", "competence", "skillentity", "skillcatalog", "skilllibrary"),
+        "required_aliases": {
+            "externalCode": ("externalCode", "id", "skill", "skillId", "competency", "competencyId"),
+            "name": ("name", "skillName", "competencyName", "externalName_defaultValue", "title"),
+        },
+        "optional_aliases": {
+            "description": ("description", "desc", "longDescription"),
+            "status": ("status", "mdfSystemStatus"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("externalCode", "id", "skillId", "competencyId"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "aspiration",
+        "extract_entity": "CareerInterest",
+        "group": "aspiration",
+        "name_terms": ("career", "aspiration", "interest", "succession", "nomination", "talentpool", "devgoal"),
+        "required_aliases": {
+            "userId": _DISCOVERY_COMMON_USER_FIELDS,
+            "interest": ("interest", "careerInterest", "aspiration", "readiness", "jobRole", "role", "position"),
+        },
+        "optional_aliases": {
+            "jobRole": ("jobRole", "role", "targetRole", "position", "positionCode"),
+            "mobilityPreference": ("mobilityPreference", "mobility", "relocation", "locationPreference"),
+            "externalCode": ("externalCode", "id", "recordId", "nominationId"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("externalCode", "id", "recordId", "nominationId"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "role_requirements",
+        "extract_entity": "Position",
+        "group": "role",
+        "name_terms": ("position", "jobcode", "role", "jobprofile", "requirements"),
+        "required_aliases": {
+            "code": ("code", "positionCode", "externalCode", "jobCode", "roleId"),
+        },
+        "optional_aliases": {
+            "department": ("department", "departmentCode", "departmentNav"),
+            "jobCode": ("jobCode", "jobClassification", "jobCodeNav"),
+            "externalName_defaultValue": ("externalName_defaultValue", "name", "title", "jobTitle"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("code", "positionCode", "externalCode", "jobCode", "roleId"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "learning",
+        "extract_entity": "LearningAssignment",
+        "group": "learning",
+        "name_terms": ("learning", "course", "assignment", "history", "curricula", "catalog", "item"),
+        "required_aliases": {
+            "userId": _DISCOVERY_COMMON_USER_FIELDS,
+            "itemId": ("itemId", "learningItemId", "courseId", "programId", "curriculumId"),
+        },
+        "optional_aliases": {
+            "assignmentId": ("assignmentId", "historyId", "eventId", "externalCode", "id"),
+            "status": ("status", "assignmentStatus", "completionStatus"),
+            "completionDate": ("completionDate", "completedDate", "finishDate"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("assignmentId", "historyId", "eventId", "externalCode", "id"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "recruiting",
+        "extract_entity": "JobApplication",
+        "group": "application",
+        "name_terms": ("jobapplication", "application", "jobrequisition", "candidate", "recruit"),
+        "required_aliases": {
+            "applicationId": ("applicationId", "id", "externalCode"),
+            "jobReqId": ("jobReqId", "requisitionId", "jobRequisitionId", "reqId"),
+            "candidateId": ("candidateId", "candidate", "applicantId", "personIdExternal"),
+        },
+        "optional_aliases": {
+            "applicationStatus": ("applicationStatus", "status", "candidateStatus", "appStatus"),
+            "source": ("source", "sourceLabel"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("applicationId", "id", "externalCode"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+    {
+        "component": "movement_events",
+        "extract_entity": "FOEventReason",
+        "group": "event_reason",
+        "name_terms": ("eventreason", "event", "movement", "reason"),
+        "required_aliases": {
+            "externalCode": ("externalCode", "code", "id"),
+        },
+        "optional_aliases": {
+            "name_defaultValue": ("name_defaultValue", "name", "externalName_defaultValue", "label"),
+            "event": ("event", "eventCode", "eventCategory"),
+            "status": ("status", "mdfSystemStatus"),
+            "lastModifiedDateTime": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+        },
+        "primary_key_candidates": ("externalCode", "code", "id"),
+        "watermark_candidates": _DISCOVERY_COMMON_WATERMARK_FIELDS,
+    },
+)
+
 
 def _get_alias_engine():
     global _ALIAS_ENGINE
@@ -469,6 +660,139 @@ def _json_dict(value: Any) -> dict[str, str]:
     if not isinstance(parsed, dict):
         return {}
     return {str(key): str(val) for key, val in parsed.items() if str(key or "").strip() and str(val or "").strip()}
+
+
+def _metadata_key(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _metadata_name_matches(entity_name: str, profile: dict[str, Any]) -> bool:
+    normalized = _metadata_key(entity_name)
+    exclude_terms = {_metadata_key(term) for term in profile.get("exclude_terms") or ()}
+    if any(term and term in normalized for term in exclude_terms):
+        return False
+    return any(_metadata_key(term) in normalized for term in profile.get("name_terms") or ())
+
+
+def _field_lookup(fields: set[str]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for field in fields:
+        key = _metadata_key(field)
+        if key and key not in lookup:
+            lookup[key] = field
+    return lookup
+
+
+def _pick_metadata_field(
+    fields: set[str],
+    alternatives: tuple[str, ...] | list[str],
+) -> str:
+    lookup = _field_lookup(fields)
+    for alternative in alternatives:
+        exact = str(alternative or "").strip()
+        if exact in fields:
+            return exact
+        normalized = _metadata_key(exact)
+        if normalized in lookup:
+            return lookup[normalized]
+    return ""
+
+
+def _discovery_fields(
+    fields: set[str],
+    profile: dict[str, Any],
+) -> tuple[list[str], list[str], dict[str, str], str, str]:
+    required_actual: list[str] = []
+    optional_actual: list[str] = []
+    field_aliases: dict[str, str] = {}
+    for canonical, alternatives in (profile.get("required_aliases") or {}).items():
+        actual = _pick_metadata_field(fields, tuple(alternatives))
+        if not actual:
+            return [], [], {}, "", ""
+        required_actual.append(actual)
+        if actual != canonical:
+            field_aliases[str(canonical)] = actual
+    for canonical, alternatives in (profile.get("optional_aliases") or {}).items():
+        actual = _pick_metadata_field(fields, tuple(alternatives))
+        if not actual or actual in required_actual or actual in optional_actual:
+            continue
+        optional_actual.append(actual)
+        if actual != canonical:
+            field_aliases[str(canonical)] = actual
+    primary_key = _pick_metadata_field(fields, tuple(profile.get("primary_key_candidates") or ()))
+    if not primary_key:
+        primary_key = required_actual[0] if required_actual else ""
+    watermark = _pick_metadata_field(fields, tuple(profile.get("watermark_candidates") or ()))
+    return required_actual, optional_actual, field_aliases, primary_key, watermark
+
+
+def _discover_talent_alias_candidates(
+    metadata_entities: dict[str, set[str]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Infer safe runtime mappings from live $metadata.
+
+    Discovery is intentionally conservative: it only proposes candidates when
+    both the entity name and the minimum field shape match a known Talent
+    component. It does not persist config and does not fabricate scores.
+    """
+
+    discovered: dict[str, list[dict[str, Any]]] = {}
+    for entity, fields in metadata_entities.items():
+        if not fields:
+            continue
+        for profile in _TALENT_METADATA_DISCOVERY_PROFILES:
+            if not _metadata_name_matches(entity, profile):
+                continue
+            required, optional, field_aliases, primary_key, watermark = _discovery_fields(fields, profile)
+            if not required:
+                continue
+            component = str(profile["component"])
+            candidate = {
+                "entity": entity,
+                "odata_entity": entity,
+                "extract_entity": str(profile["extract_entity"]),
+                "primary_key": primary_key,
+                "watermark_field": watermark,
+                "group": str(profile["group"]),
+                "scope": "metadata_discovery",
+                "standard": False,
+                "fields_required": tuple(required),
+                "fields_optional": tuple(optional),
+                "field_aliases": field_aliases,
+                "alias_id": "",
+                "alias_source": "metadata_discovery",
+                "discovery_reason": "entity_name_and_required_fields_matched",
+            }
+            discovered.setdefault(component, []).append(candidate)
+    for component, candidates in discovered.items():
+        candidates.sort(
+            key=lambda item: (
+                str(item.get("alias_source") or ""),
+                str(item.get("entity") or ""),
+                str(item.get("extract_entity") or ""),
+            )
+        )
+    return discovered
+
+
+def _merge_talent_alias_candidates(
+    *sources: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    merged: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for source in sources:
+        for component, candidates in (source or {}).items():
+            for candidate in candidates:
+                key = (
+                    str(component or ""),
+                    str(candidate.get("extract_entity") or candidate.get("entity") or ""),
+                    str(candidate.get("odata_entity") or candidate.get("entity") or ""),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.setdefault(str(component), []).append(candidate)
+    return merged
 
 
 def _load_talent_alias_candidates(
@@ -711,6 +1035,7 @@ def _candidate_status(
             "field_aliases": field_aliases,
             "primary_key": str(candidate.get("primary_key") or ""),
             "watermark_field": str(candidate.get("watermark_field") or ""),
+            "discovery_reason": str(candidate.get("discovery_reason") or ""),
             "status": "missing",
             "reason": "entity_not_exposed_in_sap",
             "available": False,
@@ -748,6 +1073,7 @@ def _candidate_status(
         "field_aliases": field_aliases,
         "primary_key": str(candidate.get("primary_key") or ""),
         "watermark_field": str(candidate.get("watermark_field") or ""),
+        "discovery_reason": str(candidate.get("discovery_reason") or ""),
         "sample_status": "not_checked",
     }
     if not available or not sample:
@@ -831,7 +1157,12 @@ def talent_metadata_readiness(
             ],
         }
 
-    aliases_by_component = _load_talent_alias_candidates(security_context=security_context)
+    configured_aliases_by_component = _load_talent_alias_candidates(security_context=security_context)
+    discovered_aliases_by_component = _discover_talent_alias_candidates(metadata_entities)
+    aliases_by_component = _merge_talent_alias_candidates(
+        configured_aliases_by_component,
+        discovered_aliases_by_component,
+    )
     components: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
     for requirement in _TALENT_CPA_REQUIREMENTS:
@@ -899,6 +1230,7 @@ def talent_metadata_readiness(
                             "reason": item.get("reason"),
                             "fields_missing": item.get("fields_missing") or [],
                             "sample_status": item.get("sample_status"),
+                            "alias_source": item.get("alias_source") or "",
                         }
                         for item in candidates
                     ],
@@ -945,6 +1277,7 @@ def talent_metadata_readiness(
                     "field_aliases": candidate.get("field_aliases") or {},
                     "primary_key": candidate.get("primary_key") or "",
                     "watermark_field": candidate.get("watermark_field") or "",
+                    "discovery_reason": candidate.get("discovery_reason") or "",
                 }
             )
     return {
@@ -958,7 +1291,8 @@ def talent_metadata_readiness(
             "optional_ready": optional_ready,
             "optional_total": len(optional_components),
             "metadata_entities": len(metadata_entities),
-            "configured_aliases": sum(len(items) for items in aliases_by_component.values()),
+            "configured_aliases": sum(len(items) for items in configured_aliases_by_component.values()),
+            "discovered_aliases": sum(len(items) for items in discovered_aliases_by_component.values()),
         },
         "components": components,
         "extraction_targets": extraction_targets,

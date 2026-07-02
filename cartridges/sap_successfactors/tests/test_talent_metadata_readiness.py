@@ -206,6 +206,79 @@ def test_talent_metadata_readiness_uses_approved_tenant_aliases(monkeypatch):
     assert target["field_aliases"]["overallRating"] == "rating"
 
 
+def test_talent_metadata_readiness_discovers_custom_metadata_targets(monkeypatch):
+    _, preflight = _import_modules()
+
+    class FakeSapSfClient:
+        def __init__(self, conn_id=None, security_context=None):
+            self.conn_id = conn_id
+            self.security_context = security_context
+
+        def configuration_status(self):
+            return {
+                "cartridge": "sap_successfactors",
+                "configured": True,
+                "missing": [],
+                "base_url": "https://example.successfactors.com/odata/v2",
+            }
+
+        def metadata_entities(self):
+            return {
+                "cust_TalentPerformanceReview": {
+                    "externalCode",
+                    "worker",
+                    "rating",
+                    "lastModifiedDateTime",
+                },
+                "cust_EmployeeSkillProfile": {
+                    "externalCode",
+                    "worker",
+                    "competencyId",
+                    "proficiency",
+                    "lastModifiedDateTime",
+                },
+                "cust_CareerAspiration": {
+                    "externalCode",
+                    "worker",
+                    "targetRole",
+                    "readiness",
+                    "lastModifiedDateTime",
+                },
+            }
+
+        def fetch_entity(self, entity, select=None, page_size=200, **_kwargs):
+            assert entity.startswith("cust_")
+            assert page_size == 1
+            assert select
+            return [{"redacted": True}]
+
+    monkeypatch.setattr(preflight, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(preflight, "_load_talent_alias_candidates", lambda **_kwargs: {})
+
+    payload = preflight.talent_metadata_readiness(
+        conn_id="femsa_sf",
+        security_context={"tenant_id": "t1", "workspace_id": "w1"},
+        sample=True,
+    )
+
+    assert payload["status"] == "ready"
+    assert payload["summary"]["configured_aliases"] == 0
+    assert payload["summary"]["discovered_aliases"] >= 3
+    targets = {
+        (item["component"], item["entity"], item["odata_entity"]): item
+        for item in payload["extraction_targets"]
+    }
+    performance = targets[("performance", "PerformanceReview", "cust_TalentPerformanceReview")]
+    assert performance["alias_source"] == "metadata_discovery"
+    assert performance["field_aliases"]["formSubjectId"] == "worker"
+    assert performance["field_aliases"]["overallRating"] == "rating"
+    competency = targets[("competency", "SkillProfile", "cust_EmployeeSkillProfile")]
+    assert competency["field_aliases"]["userId"] == "worker"
+    assert competency["field_aliases"]["skill"] == "competencyId"
+    aspiration = targets[("aspiration", "CareerInterest", "cust_CareerAspiration")]
+    assert aspiration["field_aliases"]["userId"] == "worker"
+
+
 def test_talent_metadata_readiness_blocks_when_metadata_unavailable(monkeypatch):
     _, preflight = _import_modules()
 

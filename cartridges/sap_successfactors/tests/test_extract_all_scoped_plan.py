@@ -355,7 +355,16 @@ def test_extract_all_plan_talent_target_applies_live_odata_alias(monkeypatch):
     assert performance["odata_entity"] == "cust_PerformanceTalent"
     assert performance["primary_key"] == "externalCode"
     assert performance["select_fields"] == ["externalCode", "lastModifiedDateTime", "rating", "worker"]
+    assert set(performance["expected_select_fields"]) == {
+        "externalCode",
+        "lastModifiedDateTime",
+        "rating",
+        "worker",
+        "formSubjectId",
+        "overallRating",
+    }
     assert performance["metadata_alias_id"] == "alias-1"
+    assert performance["metadata_field_aliases"]["overallRating"] == "rating"
     assert not any(row.get("entity") == "PerformanceReview" for row in skipped)
 
 
