@@ -148,7 +148,16 @@ def test_fastapi_pages_router_serves_console_next_export():
     assert "CONSOLE_NEXT_STATIC" in src
     assert "_console_next_response" in src
     assert "set_csrf_cookie" in src
-    for route in ('"/dashboard"', '"/cartridges"', '"/copilot"', '"/copilot/actions"', '"/monitor"', '"/viewer"'):
+    for route in (
+        '"/dashboard"',
+        '"/cartridges"',
+        '"/copilot"',
+        '"/copilot/actions"',
+        '"/monitor"',
+        '"/operational-intelligence"',
+        '"/supervised-actions"',
+        '"/viewer"',
+    ):
         assert route in src
 
 

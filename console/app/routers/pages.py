@@ -274,6 +274,38 @@ async def control_room_talent_page_slash(request: Request):
     return _console_next_response(request, "control-room/talent/index.html")
 
 
+@router.get(
+    "/operational-intelligence",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def operational_intelligence_page(request: Request):
+    return _console_next_response(request, "operational-intelligence/index.html")
+
+
+@router.get(
+    "/operational-intelligence/",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def operational_intelligence_page_slash(request: Request):
+    return _console_next_response(request, "operational-intelligence/index.html")
+
+
+@router.get(
+    "/supervised-actions",
+    dependencies=[Depends(require_permission("control_room.write"))],
+)
+async def supervised_actions_page(request: Request):
+    return _console_next_response(request, "supervised-actions/index.html")
+
+
+@router.get(
+    "/supervised-actions/",
+    dependencies=[Depends(require_permission("control_room.write"))],
+)
+async def supervised_actions_page_slash(request: Request):
+    return _console_next_response(request, "supervised-actions/index.html")
+
+
 # Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of
 # their own identity, role, workspace, effective permissions and cartridge
 # entitlements. Available to any authenticated user. No admin powers
