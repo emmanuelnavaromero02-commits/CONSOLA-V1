@@ -54,9 +54,11 @@ describe("CopilotActionsConsole", () => {
 
     expect(markup).toContain("Acciones");
     expect(markup).toContain("Crear + diagnosticar");
-    expect(markup).toContain("Buscar watchdogs");
-    expect(markup).toContain("Ask with context");
+    expect(markup).toContain("Buscar vigilancias");
+    expect(markup).toContain("Analizar contexto");
     expect(markup).toContain("Mandar al chat");
+    expect(markup).toContain("Contexto Vivo");
+    expect(markup).toContain("Actualizar contexto");
     expect(markup).toContain("Diagnosticar margen");
     expect(markup).toContain("Riesgo de margen");
     expect(markup).toContain("Revenue drop");

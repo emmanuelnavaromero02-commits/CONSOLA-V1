@@ -5,7 +5,9 @@ import { useMemo, useState, type Ref } from "react";
 import {
   AppWindow,
   Bot,
+  BrainCircuit,
   Coins,
+  ClipboardCheck,
   Database,
   GitBranch,
   Gauge,
@@ -82,6 +84,8 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Operación",
     items: [
       { href: "/control-room", label: "Control Room", icon: Monitor, section: "Operación", capability: "can_view_control_room", keywords: "control sala room operaciones" },
+      { href: "/operational-intelligence", label: "Inteligencia Operativa", icon: BrainCircuit, section: "Operación", permission: "datasets.read", keywords: "escenarios confianza historial planes validacion inteligencia operativa" },
+      { href: "/supervised-actions", label: "Acciones Supervisadas", icon: ClipboardCheck, section: "Operación", permission: "control_room.write", keywords: "acciones supervisadas aprobar validar ejecutar cancelar decisiones" },
       { href: "/agents", label: "Agentes", icon: Sparkles, section: "Operación", capability: "can_view_agents", keywords: "automatizacion agentes tools monitores" },
       { href: "/decisions", label: "Decisiones", icon: GitBranch, section: "Operación", capability: "can_view_decisions", keywords: "decisiones approvals" },
     ],
