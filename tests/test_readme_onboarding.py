@@ -12,7 +12,7 @@ def test_readme_is_onboarding_not_phase_changelog() -> None:
     src = README.read_text(encoding="utf-8")
     first_lines = "\n".join(src.splitlines()[:12])
 
-    assert src.startswith("# CONSOLA-BETA / OMEGA")
+    assert src.startswith("# CONSOLA-V1 / OMEGA")
     assert "## Primer Arranque Local" in src
     assert "## Validacion Rapida" in src
     assert "## Reset y Reparacion Local" in src
