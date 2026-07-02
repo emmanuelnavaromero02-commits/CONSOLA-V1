@@ -211,9 +211,10 @@ def test_copilot_actions_are_on_dedicated_screen_not_chat_surface():
     for visible_label in (
         "Acciones",
         "Crear + diagnosticar",
-        "Ask with context",
-        "Watchdogs",
-        "Lessons",
+        "Analizar contexto",
+        "Buscar vigilancias",
+        "Contexto Vivo",
+        "Aprendizajes",
     ):
         assert visible_label in panel
 
