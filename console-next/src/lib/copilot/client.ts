@@ -25,7 +25,9 @@ import type {
   BriefingV2Highlight,
   CopilotGoal,
   CopilotGoalDiagnosisResponse,
+  CopilotContextSnapshot,
   CopilotLesson,
+  CopilotRecommendation,
   CopilotWatchdog,
   CreateFactResponse,
   Draft,
@@ -355,6 +357,52 @@ export async function askCopilotWithContext(
   const { data } = await api.post<AskWithContextResponse>(
     "/api/copilot/ask-with-context",
     { question, page_context: pageContext },
+  );
+  return data;
+}
+
+
+// ── Live console context ────────────────────────────────────────────
+
+
+export async function getCopilotContextSnapshot(): Promise<CopilotContextSnapshot> {
+  const { data } = await api.get<CopilotContextSnapshot>("/api/copilot/context/snapshot");
+  return data;
+}
+
+
+export async function refreshCopilotContext(): Promise<CopilotContextSnapshot> {
+  const { data } = await api.post<CopilotContextSnapshot>("/api/copilot/context/refresh", {});
+  return data;
+}
+
+
+export async function listCopilotRecommendations(
+  limit = 20,
+  includeDismissed = false,
+): Promise<CopilotRecommendation[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    include_dismissed: includeDismissed ? "true" : "false",
+  });
+  const { data } = await api.get<unknown>(`/api/copilot/recommendations?${params.toString()}`);
+  if (Array.isArray(data)) return data as CopilotRecommendation[];
+  if (data && typeof data === "object") {
+    const rows = (data as Record<string, unknown>).recommendations
+      ?? (data as Record<string, unknown>).items
+      ?? (data as Record<string, unknown>).rows;
+    return Array.isArray(rows) ? rows as CopilotRecommendation[] : [];
+  }
+  return [];
+}
+
+
+export async function dismissCopilotRecommendation(
+  recommendationId: string,
+): Promise<CopilotRecommendation> {
+  const { data } = await api.post<CopilotRecommendation>(
+    `/api/copilot/recommendations/${encodeURIComponent(recommendationId)}/dismiss`,
+    {},
   );
   return data;
 }

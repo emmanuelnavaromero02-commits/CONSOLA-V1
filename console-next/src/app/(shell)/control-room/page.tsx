@@ -2569,6 +2569,20 @@ function Header({
                 {syncTargetSupportsTalent ? <option value="talent">Talento</option> : null}
               </select>
             </label>
+            <a
+              href="/operational-intelligence"
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-background/70 px-3 text-sm font-medium text-cyan-700 hover:bg-cyan-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 dark:border-cyan-300/20 dark:bg-[#07111e] dark:text-cyan-100"
+            >
+              <Target aria-hidden className="h-4 w-4" />
+              Inteligencia Operativa
+            </a>
+            <a
+              href="/supervised-actions"
+              className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-background/70 px-3 text-sm font-medium text-cyan-700 hover:bg-cyan-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 dark:border-cyan-300/20 dark:bg-[#07111e] dark:text-cyan-100"
+            >
+              <ShieldCheck aria-hidden className="h-4 w-4" />
+              Acciones Supervisadas
+            </a>
             <button
               type="button"
               onClick={onSyncData}

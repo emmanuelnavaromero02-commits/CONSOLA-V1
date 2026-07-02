@@ -24,10 +24,35 @@ describe("AppSidebar", () => {
     expect(markup).toContain("Control Room");
     expect(markup).toContain("Catálogo técnico");
     expect(markup).not.toContain("Jobs y extracción");
+    expect(markup).not.toContain("Inteligencia Operativa");
+    expect(markup).not.toContain("Acciones Supervisadas");
     expect(markup).not.toContain("Usuarios");
     expect(markup).not.toContain("Empresas");
     expect(markup).not.toContain("Vault");
     expect(markup).not.toContain("Ajustes");
+  });
+
+  it("shows operational intelligence and supervised actions only with their permissions", () => {
+    const permitted = render({
+      role: { is_platform_admin: false },
+      permissions: ["datasets.read", "control_room.write"],
+      ui_capabilities: {},
+    }, "/operational-intelligence");
+
+    expect(permitted).toContain("Inteligencia Operativa");
+    expect(permitted).toContain('href="/operational-intelligence"');
+    expect(permitted).toContain("Acciones Supervisadas");
+    expect(permitted).toContain('href="/supervised-actions"');
+    expect(permitted).toContain('aria-current="page"');
+
+    const blocked = render({
+      role: { is_platform_admin: false },
+      permissions: ["workspace.access"],
+      ui_capabilities: {},
+    }, "/operational-intelligence");
+
+    expect(blocked).not.toContain("Inteligencia Operativa");
+    expect(blocked).not.toContain("Acciones Supervisadas");
   });
 
   it("marks the active nav item and keeps nested data routes active", () => {

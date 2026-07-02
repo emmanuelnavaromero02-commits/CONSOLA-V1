@@ -20,17 +20,23 @@ import {
   askCopilotWithContext,
   createCopilotGoal,
   diagnoseCopilotGoal,
+  dismissCopilotRecommendation,
+  getCopilotContextSnapshot,
   listCopilotBriefingV2,
   listCopilotGoals,
   listCopilotLessons,
+  listCopilotRecommendations,
   listCopilotWatchdogs,
   matchCopilotWatchdogs,
+  refreshCopilotContext,
 } from "@/lib/copilot/client";
 import type {
   BriefingV2Highlight,
+  CopilotContextSnapshot,
   CopilotGoal,
   CopilotGoalDiagnosisResponse,
   CopilotLesson,
+  CopilotRecommendation,
   CopilotWatchdog,
 } from "@/lib/copilot/types";
 import { cn } from "@/lib/utils";
@@ -97,6 +103,16 @@ export function CopilotActionsConsole() {
     queryFn: () => listCopilotLessons(6),
     staleTime: 30_000,
   });
+  const liveContextQuery = useQuery<CopilotContextSnapshot>({
+    queryKey: ["copilot", "actions", "live-context"],
+    queryFn: getCopilotContextSnapshot,
+    staleTime: 30_000,
+  });
+  const recommendationsQuery = useQuery<CopilotRecommendation[]>({
+    queryKey: ["copilot", "actions", "recommendations"],
+    queryFn: () => listCopilotRecommendations(8, false),
+    staleTime: 30_000,
+  });
 
   const topGoal = goalsQuery.data?.[0];
   const topBriefing = briefingQuery.data?.[0];
@@ -137,14 +153,40 @@ export function CopilotActionsConsole() {
     },
   });
 
+  const refreshContext = useMutation({
+    mutationFn: refreshCopilotContext,
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["copilot", "actions", "live-context"] }),
+        qc.invalidateQueries({ queryKey: ["copilot", "actions", "recommendations"] }),
+        qc.invalidateQueries({ queryKey: ["copilot", "actions", "briefing-v2"] }),
+      ]);
+      toast.success("Contexto actualizado.");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "No se pudo actualizar el contexto.");
+    },
+  });
+
+  const dismissRecommendation = useMutation({
+    mutationFn: dismissCopilotRecommendation,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["copilot", "actions", "recommendations"] });
+      toast.success("Recomendación descartada.");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "No se pudo descartar la recomendación.");
+    },
+  });
+
   const matchWatchdogs = useMutation({
     mutationFn: async (text: string) => matchCopilotWatchdogs(text, 5),
     onSuccess: (rows) => {
       setMatchedWatchdogs(rows);
-      toast.success(rows.length ? "Watchdogs encontrados." : "Sin watchdogs relevantes.");
+      toast.success(rows.length ? "Vigilancias encontradas." : "Sin vigilancias relevantes.");
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "No se pudieron buscar watchdogs.");
+      toast.error(error instanceof Error ? error.message : "No se pudieron buscar vigilancias.");
     },
   });
 
@@ -158,7 +200,9 @@ export function CopilotActionsConsole() {
     goalsQuery.isLoading ||
     briefingQuery.isLoading ||
     watchdogsQuery.isLoading ||
-    lessonsQuery.isLoading;
+    lessonsQuery.isLoading ||
+    liveContextQuery.isLoading ||
+    recommendationsQuery.isLoading;
 
   return (
     <main
@@ -175,7 +219,7 @@ export function CopilotActionsConsole() {
             </div>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Acciones</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Objetivos, briefing, contexto, watchdogs y lessons viven aquí para no invadir el chat normal.
+              Objetivos, recomendaciones, contexto vivo, vigilancias y aprendizajes viven aquí para no invadir el chat normal.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -193,6 +237,8 @@ export function CopilotActionsConsole() {
                 briefingQuery.refetch();
                 watchdogsQuery.refetch();
                 lessonsQuery.refetch();
+                liveContextQuery.refetch();
+                recommendationsQuery.refetch();
               }}
               className="inline-flex min-h-[40px] items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
@@ -232,7 +278,7 @@ export function CopilotActionsConsole() {
                 className="inline-flex min-h-[40px] items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {matchWatchdogs.isPending ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Crosshair aria-hidden className="h-4 w-4" />}
-                Buscar watchdogs
+                Buscar vigilancias
               </button>
               <button
                 type="button"
@@ -241,7 +287,7 @@ export function CopilotActionsConsole() {
                 className="inline-flex min-h-[40px] items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {askContext.isPending ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Activity aria-hidden className="h-4 w-4" />}
-                Ask with context
+                Analizar contexto
               </button>
               <Link
                 href={`/copilot?prompt=${encodeURIComponent(goalText)}`}
@@ -293,7 +339,7 @@ export function CopilotActionsConsole() {
 
           <aside className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
             <MiniPanel
-              title="Briefing v2"
+              title="Recomendaciones"
               value={briefingQuery.data?.length ?? 0}
               loading={briefingQuery.isLoading}
               empty="Sin alertas proactivas."
@@ -303,11 +349,21 @@ export function CopilotActionsConsole() {
               ))}
             </MiniPanel>
 
+            <LiveContextPanel
+              snapshot={liveContextQuery.data}
+              recommendations={recommendationsQuery.data ?? []}
+              loading={liveContextQuery.isLoading || recommendationsQuery.isLoading}
+              refreshing={refreshContext.isPending}
+              dismissingId={dismissRecommendation.variables}
+              onRefresh={() => refreshContext.mutate()}
+              onDismiss={(id) => dismissRecommendation.mutate(id)}
+            />
+
             <MiniPanel
-              title="Watchdogs"
+              title="Vigilancias"
               value={(matchedWatchdogs.length || watchdogsQuery.data?.length || 0)}
               loading={watchdogsQuery.isLoading || matchWatchdogs.isPending}
-              empty="Sin watchdogs visibles."
+              empty="Sin vigilancias visibles."
             >
               {(matchedWatchdogs.length ? matchedWatchdogs : watchdogsQuery.data ?? []).slice(0, 6).map((watchdog) => (
                 <div key={`${watchdog.cartridge_id}:${watchdog.slug}`} className="rounded-md border bg-background p-2">
@@ -331,7 +387,7 @@ export function CopilotActionsConsole() {
             </MiniPanel>
 
             <MiniPanel
-              title="Lessons"
+              title="Aprendizajes"
               value={lessonsQuery.data?.length ?? 0}
               loading={lessonsQuery.isLoading}
               empty="Sin lecciones activas."
@@ -349,6 +405,100 @@ export function CopilotActionsConsole() {
         </div>
       </div>
     </main>
+  );
+}
+
+function LiveContextPanel({
+  snapshot,
+  recommendations,
+  loading,
+  refreshing,
+  dismissingId,
+  onRefresh,
+  onDismiss,
+}: {
+  snapshot?: CopilotContextSnapshot;
+  recommendations: CopilotRecommendation[];
+  loading: boolean;
+  refreshing: boolean;
+  dismissingId?: string;
+  onRefresh: () => void;
+  onDismiss: (id: string) => void;
+}) {
+  const sources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
+  const lastRead = shortDate(snapshot?.generated_at || snapshot?.materialized_at || null);
+  const readySources = sources.filter((source) => ["ready", "success", "ok"].includes(String(source.status || ""))).length;
+  return (
+    <section className="rounded-md border bg-card p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase text-muted-foreground">Contexto Vivo</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {lastRead ? `Última lectura ${lastRead}` : "Contexto no actualizado"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="inline-flex min-h-[36px] items-center gap-2 rounded-md border px-2 text-xs font-medium hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <RefreshCw aria-hidden className={cn("h-4 w-4", refreshing && "animate-spin")} />
+          Actualizar contexto
+        </button>
+      </div>
+      {loading ? (
+        <div className="h-16 animate-pulse rounded-md bg-muted" />
+      ) : (
+        <div className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+            <div className="rounded-md border bg-background p-2">
+              <div className="text-xs text-muted-foreground">Fuentes revisadas</div>
+              <div className="mt-1 text-lg font-semibold">{readySources}/{sources.length}</div>
+            </div>
+            <div className="rounded-md border bg-background p-2">
+              <div className="text-xs text-muted-foreground">Recomendaciones nuevas</div>
+              <div className="mt-1 text-lg font-semibold">{recommendations.length}</div>
+            </div>
+          </div>
+          {sources.length ? (
+            <div className="space-y-1">
+              {sources.slice(0, 4).map((source, index) => (
+                <div key={String(source.id || source.key || index)} className="flex items-center justify-between gap-2 rounded-md border bg-background px-2 py-1.5 text-xs">
+                  <span className="truncate">{source.label || source.key || source.id || "Fuente"}</span>
+                  <span className="shrink-0 text-muted-foreground">{source.status || "sin estado"}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Sin fuentes revisadas todavía.</p>
+          )}
+          <div className="space-y-2">
+            {recommendations.slice(0, 4).map((item) => (
+              <div key={item.id} className="rounded-md border bg-background p-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="line-clamp-2 text-sm font-medium">{item.title || "Recomendación"}</div>
+                    {item.body ? <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.body}</div> : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDismiss(item.id)}
+                    disabled={dismissingId === item.id}
+                    className="shrink-0 rounded-md border px-2 py-1 text-xs hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {dismissingId === item.id ? "..." : "Descartar"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {recommendations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin recomendaciones nuevas.</p>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

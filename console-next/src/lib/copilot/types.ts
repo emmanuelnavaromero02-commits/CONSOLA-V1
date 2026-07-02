@@ -387,3 +387,45 @@ export interface AskWithContextResponse {
   answer:       string;
   context_used: Record<string, unknown>;
 }
+
+
+// ── Live console context ────────────────────────────────────────────
+
+
+export interface CopilotContextSource {
+  id?:          string;
+  key?:         string;
+  label?:       string;
+  status?:      string;
+  item_count?:  number;
+  last_read_at?: string | null;
+  [key: string]: unknown;
+}
+
+
+export interface CopilotContextSnapshot {
+  id?:              string;
+  status?:          string;
+  generated_at?:    string;
+  materialized_at?: string;
+  summary?:         Record<string, unknown> | null;
+  sources?:         CopilotContextSource[];
+  recommendations?: CopilotRecommendation[];
+  [key: string]:    unknown;
+}
+
+
+export interface CopilotRecommendation {
+  id:               string;
+  title?:           string;
+  body?:            string;
+  category?:        string;
+  priority?:        number;
+  priority_score?:  number;
+  status?:          string;
+  dismissed_at?:    string | null;
+  created_at?:      string;
+  action_label?:    string | null;
+  action_href?:     string | null;
+  [key: string]:    unknown;
+}
