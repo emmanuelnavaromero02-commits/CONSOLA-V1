@@ -434,7 +434,9 @@ def _prepare_config_with_metadata_fields(
     prepared = dict(config)
     if select_fields:
         prepared["select_fields"] = present_select_fields
-        prepared["expected_select_fields"] = select_fields
+        prepared["expected_select_fields"] = _list_fields(
+            config.get("expected_select_fields")
+        ) or select_fields
     if missing_select_fields:
         prepared["metadata_status"] = "select_pruned"
         prepared["metadata_pruned_fields"] = missing_select_fields
@@ -554,6 +556,12 @@ def _talent_extract_target_entities(
             continue
         odata_entity = str(item.get("odata_entity") or "").strip()
         fields = {str(field) for field in (item.get("fields_present") or []) if field}
+        field_aliases = item.get("field_aliases") or {}
+        if isinstance(field_aliases, dict):
+            canonical_fields = {str(field) for field in field_aliases.keys() if str(field or "").strip()}
+        else:
+            field_aliases = {}
+            canonical_fields = set()
         primary_key = str(item.get("primary_key") or "").strip()
         watermark_field = str(item.get("watermark_field") or "").strip()
         if primary_key:
@@ -566,11 +574,14 @@ def _talent_extract_target_entities(
                 "primary_key": primary_key,
                 "watermark_field": watermark_field,
                 "select_fields": sorted(fields),
+                "expected_select_fields": sorted(fields | canonical_fields),
                 "metadata_status": str(item.get("status") or "metadata_ready"),
                 "metadata_sample_status": str(item.get("sample_status") or ""),
                 "metadata_alias_id": str(item.get("alias_id") or ""),
                 "metadata_alias_source": str(item.get("alias_source") or ""),
-                "metadata_field_aliases": item.get("field_aliases") or {},
+                "metadata_field_aliases": field_aliases,
+                "field_aliases": field_aliases,
+                "metadata_discovery_reason": str(item.get("discovery_reason") or ""),
             }
         if fields:
             fields_by_entity.setdefault(entity, set()).update(fields)

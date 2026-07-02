@@ -171,6 +171,38 @@ def _page_signature(rows: list[dict[str, Any]]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _field_aliases_from_config(config: dict[str, Any]) -> dict[str, str]:
+    raw_aliases = config.get("metadata_field_aliases") or config.get("field_aliases") or {}
+    if isinstance(raw_aliases, str):
+        try:
+            raw_aliases = json.loads(raw_aliases)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(raw_aliases, dict):
+        return {}
+    return {
+        str(canonical): str(actual)
+        for canonical, actual in raw_aliases.items()
+        if str(canonical or "").strip() and str(actual or "").strip()
+    }
+
+
+def _apply_field_aliases(
+    rows: list[dict[str, Any]],
+    field_aliases: dict[str, str],
+) -> list[dict[str, Any]]:
+    if not rows or not field_aliases:
+        return rows
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for canonical, actual in field_aliases.items():
+            if canonical in row or actual not in row:
+                continue
+            row[canonical] = row.get(actual)
+    return rows
+
+
 def _apply_watermark_filter(
     rows: list[dict[str, Any]],
     watermark_field: str,
@@ -267,8 +299,10 @@ def run_entity(
         if raw_expected_select_fields
         else []
     )
+    field_aliases = _field_aliases_from_config(config)
     expected_columns = list(dict.fromkeys([
         *(expected_select_fields or []),
+        *field_aliases.keys(),
         *([watermark_field] if watermark_field else []),
         *([date_field] if date_field else []),
     ]))
@@ -388,6 +422,7 @@ def run_entity(
             server_page_len = len(page)
             if not page:
                 break
+            page = _apply_field_aliases(page, field_aliases)
             signature = _page_signature(page)
             if offset and signature in seen_page_signatures:
                 pagination_status = "repeated_page_truncated"

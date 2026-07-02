@@ -152,6 +152,61 @@ def test_run_entity_preserves_expected_columns_after_metadata_select_pruning(mon
     assert result["metadata_pruned_fields"] == ["jobTitle"]
 
 
+def test_run_entity_copies_metadata_alias_fields_before_parquet_write(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeSapSfClient:
+        def __init__(self, conn_id=None, security_context=None):
+            assert conn_id == "femsa_sf"
+
+        def fetch_entity(self, **kwargs):
+            captured["select"] = kwargs["select"]
+            if kwargs["skip"]:
+                return []
+            return [
+                {
+                    "externalCode": "review-1",
+                    "worker": "u-1",
+                    "rating": "4",
+                    "lastModifiedDateTime": "2026-06-25T00:00:00Z",
+                }
+            ]
+
+    _stub_run(monkeypatch)
+    monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(extraction_service, "get_watermark", lambda _entity: None)
+    monkeypatch.setattr(extraction_service, "update_watermark", lambda **_kwargs: None)
+
+    def fake_write(**kwargs):
+        captured["rows"] = kwargs["rows"]
+        captured["expected_columns"] = kwargs["expected_columns"]
+        return "s3://lakehouse/PerformanceReview"
+
+    monkeypatch.setattr(extraction_service, "write_parquet_and_upload", fake_write)
+
+    result = extraction_service.run_entity(
+        {
+            "entity": "PerformanceReview",
+            "odata_entity": "cust_TalentPerformanceReview",
+            "mode": "incremental",
+            "watermark_field": "lastModifiedDateTime",
+            "conn_id": "femsa_sf",
+            "select_fields": ["externalCode", "worker", "rating", "lastModifiedDateTime"],
+            "metadata_field_aliases": {
+                "formSubjectId": "worker",
+                "overallRating": "rating",
+            },
+        }
+    )
+
+    assert captured["select"] == ["externalCode", "worker", "rating", "lastModifiedDateTime"]
+    assert captured["rows"][0]["formSubjectId"] == "u-1"
+    assert captured["rows"][0]["overallRating"] == "4"
+    assert "formSubjectId" in captured["expected_columns"]
+    assert "overallRating" in captured["expected_columns"]
+    assert result["record_count"] == 1
+
+
 def test_token_400_is_not_treated_as_incremental_filter_rejection(monkeypatch) -> None:
     calls: list[dict] = []
 
