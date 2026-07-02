@@ -1,4 +1,4 @@
-# CONSOLA-BETA / OMEGA
+# CONSOLA-V1 / OMEGA
 
 OMEGA es una consola enterprise en beta privada para operar integraciones,
 datasets, Vault, MCP/Copilot, Airflow, Superset y experiencias de consola
