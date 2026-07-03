@@ -91,6 +91,9 @@ from app.domains.data_platform.gold_catalog import (
     empty_catalog_payload as _empty_catalog_payload,
     gold_dataset_from_source as _gold_dataset_from_source,
 )
+from app.domains.data_platform.lineage_payloads import (
+    lineage_graph_payload as _lineage_graph_payload,
+)
 from app.domains.data_platform.explorer_access import (
     explorer_path_allowed as _explorer_path_allowed_impl,
     explorer_quicklinks_for_cartridges as _explorer_quicklinks_for_cartridges_impl,
@@ -3142,56 +3145,12 @@ async def api_lineage(
     if allowed is not None:
         datasets = [d for d in datasets if str(d.get("cartridge") or "") in allowed]
 
-    by_name = {d["name"]: d for d in datasets if d.get("name")}
-    nodes: dict[str, dict] = {}
-    edges: list[dict] = []
+    def source_visible(source: str) -> bool:
+        if not _dataset_source_visible_for_user(user, source):
+            return False
+        return True
 
-    for d in datasets:
-        name = d.get("name")
-        if not name:
-            continue
-        nid = f"ds:{name}"
-        nodes[nid] = {
-            "id": nid,
-            "label": name,
-            "type": d.get("layer", "silver"),
-            "cartridge": d.get("cartridge", ""),
-            "is_stale": bool(d.get("is_stale")),
-            "staleness_reason": d.get("staleness_reason"),
-            "row_count": d.get("row_count"),
-            "last_refresh": d.get("last_refresh"),
-        }
-        for src in d.get("sources") or []:
-            source = (src or "").strip()
-            if not _dataset_source_visible_for_user(user, source):
-                continue
-            source_lower = source.lower()
-            if source_lower.startswith("raw/"):
-                rid = f"raw:{source[4:]}"
-                if rid not in nodes:
-                    parts = source[4:].split("/", 1)
-                    nodes[rid] = {
-                        "id": rid,
-                        "label": parts[-1] if parts else source,
-                        "type": "raw",
-                        "cartridge": parts[0] if len(parts) > 1 else "",
-                    }
-                edges.append({"from": rid, "to": nid})
-                continue
-            candidates = [
-                source,
-                source.replace("silver_", "", 1),
-                source.replace("gold_", "", 1),
-            ]
-            if "/" in source:
-                candidates.append(source.rsplit("/", 1)[-1])
-            matched = next(
-                (candidate for candidate in candidates if candidate in by_name), None
-            )
-            if matched:
-                edges.append({"from": f"ds:{matched}", "to": nid})
-
-    return {"nodes": list(nodes.values()), "edges": edges}
+    return _lineage_graph_payload(datasets, source_visible=source_visible)
 
 
 # ── Analytic Apps ─────────────────────────────────────────────────────────────
