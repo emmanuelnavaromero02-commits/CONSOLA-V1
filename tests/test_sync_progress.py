@@ -369,3 +369,68 @@ def test_sync_pipeline_materialization_summary_prefers_gold_refresh_counts():
     assert summary["gold_ready"] == 4
     assert summary["gold_total"] == 5
     assert summary["gold_partial"] is True
+
+
+def test_sync_connection_step_update_reflects_started_pipeline():
+    pending = sync_progress.sync_connection_step_update(
+        triggered=[],
+        child_rows=[],
+        bronze_ready=0,
+    )
+    started = sync_progress.sync_connection_step_update(
+        triggered=[{"entity": "EmpJob"}],
+        child_rows=[],
+        bronze_ready=0,
+    )
+
+    assert pending["status"] == "running"
+    assert pending["percent"] == 20
+    assert started["status"] == "success"
+    assert started["percent"] == 100
+
+
+def test_sync_silver_gold_step_update_distinguishes_waiting_partial_and_failed():
+    queued = sync_progress.sync_silver_gold_step_update(
+        bronze_status="running",
+        running_children=True,
+        gold_total=2,
+        silver_ready=1,
+        gold_ready=0,
+        failed_children=0,
+        partial_children=0,
+        blocked_children=0,
+        gold_partial=False,
+        errors=[],
+    )
+    partial = sync_progress.sync_silver_gold_step_update(
+        bronze_status="partial",
+        running_children=False,
+        gold_total=5,
+        silver_ready=4,
+        gold_ready=3,
+        failed_children=0,
+        partial_children=1,
+        blocked_children=0,
+        gold_partial=True,
+        errors=[],
+    )
+    failed = sync_progress.sync_silver_gold_step_update(
+        bronze_status="failed",
+        running_children=False,
+        gold_total=0,
+        silver_ready=0,
+        gold_ready=0,
+        failed_children=1,
+        partial_children=0,
+        blocked_children=0,
+        gold_partial=False,
+        errors=[],
+    )
+
+    assert queued is not None
+    assert queued["status"] == "queued"
+    assert partial is not None
+    assert partial["status"] == "partial"
+    assert partial["completed"] == 3
+    assert failed is not None
+    assert failed["status"] == "failed"

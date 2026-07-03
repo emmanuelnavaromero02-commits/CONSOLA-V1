@@ -7064,18 +7064,11 @@ async def _build_sync_run_status(
         )
 
     updates: dict[str, dict[str, Any]] = {
-        "connection": {
-            "label": "Conexión",
-            "status": "success"
-            if triggered or child_rows or bronze_ready
-            else "running",
-            "detail": "Scope y conexión aceptados por el pipeline."
-            if triggered or child_rows or bronze_ready
-            else "Validando al iniciar extracción.",
-            "completed": 1 if triggered or child_rows or bronze_ready else 0,
-            "total": 1,
-            "percent": 100 if triggered or child_rows or bronze_ready else 20,
-        }
+        "connection": _sync_progress.sync_connection_step_update(
+            triggered=triggered,
+            child_rows=child_rows,
+            bronze_ready=bronze_ready,
+        )
     }
     child_total = max(
         len(entity_child_rows),
@@ -7136,53 +7129,20 @@ async def _build_sync_run_status(
             "blockers": entity_summary["blockers"],
         }
 
-    if (
-        updates.get("bronze", {}).get("status") in {"queued", "running"}
-        or running_children
-    ):
-        updates["silver_gold"] = {
-            "label": "Silver/Gold",
-            "status": "queued",
-            "detail": "Esperando a que Airflow termine extracción.",
-            "completed": 0,
-            "total": max(gold_total, silver_ready, 1),
-        }
-    elif gold_ready:
-        gold_detail = (
-            f"{gold_ready}/{gold_total} Gold materializados o disponibles"
-            if gold_total and gold_total != gold_ready
-            else f"{gold_ready} Gold frescos o disponibles"
-        )
-        updates["silver_gold"] = {
-            "label": "Silver/Gold",
-            "status": "success"
-            if (
-                not failed_children
-                and not partial_children
-                and not blocked_children
-                and not gold_partial
-            )
-            else "partial",
-            "detail": f"{silver_ready} Silver · {gold_detail}.",
-            "completed": gold_ready,
-            "total": max(gold_total, gold_ready, 1),
-        }
-    elif silver_ready:
-        updates["silver_gold"] = {
-            "label": "Silver/Gold",
-            "status": "partial",
-            "detail": f"{silver_ready} Silver disponibles; Gold todavía incompleto.",
-            "completed": silver_ready,
-            "total": max(silver_ready + 1, gold_total, 1),
-        }
-    elif failed_children or errors:
-        updates["silver_gold"] = {
-            "label": "Silver/Gold",
-            "status": "failed",
-            "detail": "No se pudo confirmar materialización downstream.",
-            "completed": 0,
-            "total": max(gold_total, 1),
-        }
+    silver_gold_update = _sync_progress.sync_silver_gold_step_update(
+        bronze_status=str(updates.get("bronze", {}).get("status") or ""),
+        running_children=running_children,
+        gold_total=gold_total,
+        silver_ready=silver_ready,
+        gold_ready=gold_ready,
+        failed_children=failed_children,
+        partial_children=partial_children,
+        blocked_children=blocked_children,
+        gold_partial=gold_partial,
+        errors=errors,
+    )
+    if silver_gold_update:
+        updates["silver_gold"] = silver_gold_update
 
     control_room_ready = False
     control_room_checked_at: str | None = None

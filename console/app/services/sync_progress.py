@@ -402,6 +402,85 @@ def sync_pipeline_materialization_summary(
     }
 
 
+def sync_connection_step_update(
+    *,
+    triggered: list[Any],
+    child_rows: list[dict[str, Any]],
+    bronze_ready: int,
+) -> dict[str, Any]:
+    started = bool(triggered or child_rows or bronze_ready)
+    return {
+        "label": "Conexión",
+        "status": "success" if started else "running",
+        "detail": "Scope y conexión aceptados por el pipeline."
+        if started
+        else "Validando al iniciar extracción.",
+        "completed": 1 if started else 0,
+        "total": 1,
+        "percent": 100 if started else 20,
+    }
+
+
+def sync_silver_gold_step_update(
+    *,
+    bronze_status: str,
+    running_children: bool,
+    gold_total: int,
+    silver_ready: int,
+    gold_ready: int,
+    failed_children: int,
+    partial_children: int,
+    blocked_children: int,
+    gold_partial: bool,
+    errors: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if bronze_status in {"queued", "running"} or running_children:
+        return {
+            "label": "Silver/Gold",
+            "status": "queued",
+            "detail": "Esperando a que Airflow termine extracción.",
+            "completed": 0,
+            "total": max(gold_total, silver_ready, 1),
+        }
+    if gold_ready:
+        gold_detail = (
+            f"{gold_ready}/{gold_total} Gold materializados o disponibles"
+            if gold_total and gold_total != gold_ready
+            else f"{gold_ready} Gold frescos o disponibles"
+        )
+        return {
+            "label": "Silver/Gold",
+            "status": "success"
+            if (
+                not failed_children
+                and not partial_children
+                and not blocked_children
+                and not gold_partial
+            )
+            else "partial",
+            "detail": f"{silver_ready} Silver · {gold_detail}.",
+            "completed": gold_ready,
+            "total": max(gold_total, gold_ready, 1),
+        }
+    if silver_ready:
+        return {
+            "label": "Silver/Gold",
+            "status": "partial",
+            "detail": f"{silver_ready} Silver disponibles; Gold todavía incompleto.",
+            "completed": silver_ready,
+            "total": max(silver_ready + 1, gold_total, 1),
+        }
+    if failed_children or errors:
+        return {
+            "label": "Silver/Gold",
+            "status": "failed",
+            "detail": "No se pudo confirmar materialización downstream.",
+            "completed": 0,
+            "total": max(gold_total, 1),
+        }
+    return None
+
+
 def sync_step_entity_summary(
     rows: list[dict[str, Any]],
     *,
