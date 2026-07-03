@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import HTTPException
 
 
 RequireUserAccess = Callable[[dict | None], None]
 RequireCartridgeAccess = Callable[[dict | None, str], None]
+ContextFactory = Callable[[dict | None], dict[str, Any]]
+WorkspaceMemberships = Callable[[int], Awaitable[list[dict[str, Any]]]]
+DbPoolFactory = Callable[[], Awaitable[Any]]
 
 
 def normalize_candidate_cartridges(candidates: set[str] | None) -> set[str]:
@@ -15,6 +20,111 @@ def normalize_candidate_cartridges(candidates: set[str] | None) -> set[str]:
         for cartridge in (candidates or set())
         if str(cartridge).strip()
     }
+
+
+async def workspace_scope_for_apps_filter(
+    user: dict | None,
+    *,
+    context_factory: ContextFactory,
+    workspace_memberships: WorkspaceMemberships,
+    get_db_pool: DbPoolFactory,
+    role_admin: str,
+    logger: logging.Logger,
+) -> tuple[str, str]:
+    if not user:
+        return "", ""
+    ctx = context_factory(user)
+    tenant_id = str(
+        ctx.get("tenant_id")
+        or user.get("active_tenant_id")
+        or user.get("tenant_id")
+        or ""
+    ).strip()
+    workspace_id = str(
+        ctx.get("workspace_id")
+        or user.get("active_workspace_id")
+        or user.get("workspace_id")
+        or ""
+    ).strip()
+
+    workspaces = user.get("workspaces")
+    if (not tenant_id or not workspace_id) and not isinstance(workspaces, list):
+        user_id = user.get("id")
+        if user_id is not None:
+            try:
+                workspaces = await workspace_memberships(int(user_id))
+            except Exception:
+                logger.debug(
+                    "Failed to resolve user workspaces for scoped apps filter",
+                    exc_info=True,
+                )
+                workspaces = []
+
+    if (
+        (not tenant_id or not workspace_id)
+        and isinstance(workspaces, list)
+        and workspaces
+    ):
+        active = None
+        if workspace_id:
+            active = next(
+                (
+                    w
+                    for w in workspaces
+                    if str(w.get("workspace_id") or "") == workspace_id
+                ),
+                None,
+            )
+        if active is None:
+            active = workspaces[0]
+        tenant_id = tenant_id or str(active.get("tenant_id") or "").strip()
+        workspace_id = workspace_id or str(active.get("workspace_id") or "").strip()
+
+    if workspace_id and not tenant_id:
+        try:
+            pool = await get_db_pool()
+            tenant_id = str(
+                await pool.fetchval(
+                    "SELECT tenant_id::text FROM workspaces WHERE id = $1::uuid",
+                    workspace_id,
+                )
+                or ""
+            ).strip()
+        except Exception:
+            logger.debug(
+                "Failed to resolve tenant from workspace for scoped apps filter",
+                exc_info=True,
+            )
+
+    if (not tenant_id or not workspace_id) and str(
+        (user or {}).get("role") or ""
+    ).lower() in {"owner", "super_admin", role_admin}:
+        try:
+            pool = await get_db_pool()
+            row = await pool.fetchrow(
+                """
+                SELECT d.workspace_id::text AS workspace_id, w.tenant_id::text AS tenant_id
+                  FROM datasets d
+                  JOIN workspaces w ON w.id = d.workspace_id
+                 WHERE d.layer = 'gold'
+                   AND d.workspace_id IS NOT NULL
+                   AND COALESCE(d.row_count, 0) > 0
+                 ORDER BY d.updated_at DESC NULLS LAST,
+                          d.last_refresh DESC NULLS LAST,
+                          d.created_at DESC NULLS LAST
+                 LIMIT 1
+                """
+            )
+            if row:
+                tenant_id = tenant_id or str(row["tenant_id"] or "").strip()
+                workspace_id = workspace_id or str(row["workspace_id"] or "").strip()
+        except Exception:
+            logger.debug(
+                "Failed to resolve fallback Gold workspace for scoped apps filter",
+                exc_info=True,
+            )
+
+    return tenant_id, workspace_id
 
 
 def resolve_scoped_operation_cartridge(

@@ -48,6 +48,7 @@ from app.domains.apps.scope import (
     resolve_scoped_config_cartridge as _resolve_scoped_config_cartridge_impl,
     resolve_scoped_operation_cartridge as _resolve_scoped_operation_cartridge_impl,
     scope_catalog_cartridge_arg as _scope_catalog_cartridge_arg_impl,
+    workspace_scope_for_apps_filter as _workspace_scope_for_apps_filter_impl,
 )
 from app.domains.apps.embed import (
     app_content_headers as _app_content_headers,
@@ -3321,100 +3322,14 @@ async def serve_app(
 
 
 async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]:
-    if not user:
-        return "", ""
-    ctx = build_security_context(user)
-    tenant_id = str(
-        ctx.get("tenant_id")
-        or user.get("active_tenant_id")
-        or user.get("tenant_id")
-        or ""
-    ).strip()
-    workspace_id = str(
-        ctx.get("workspace_id")
-        or user.get("active_workspace_id")
-        or user.get("workspace_id")
-        or ""
-    ).strip()
-
-    workspaces = user.get("workspaces")
-    if (not tenant_id or not workspace_id) and not isinstance(workspaces, list):
-        user_id = user.get("id")
-        if user_id is not None:
-            try:
-                workspaces = await _workspace_memberships(int(user_id))
-            except Exception:
-                logger.debug(
-                    "Failed to resolve user workspaces for scoped apps filter",
-                    exc_info=True,
-                )
-                workspaces = []
-
-    if (
-        (not tenant_id or not workspace_id)
-        and isinstance(workspaces, list)
-        and workspaces
-    ):
-        active = None
-        if workspace_id:
-            active = next(
-                (
-                    w
-                    for w in workspaces
-                    if str(w.get("workspace_id") or "") == workspace_id
-                ),
-                None,
-            )
-        if active is None:
-            active = workspaces[0]
-        tenant_id = tenant_id or str(active.get("tenant_id") or "").strip()
-        workspace_id = workspace_id or str(active.get("workspace_id") or "").strip()
-
-    if workspace_id and not tenant_id:
-        try:
-            pool = await _get_db_pool()
-            tenant_id = str(
-                await pool.fetchval(
-                    "SELECT tenant_id::text FROM workspaces WHERE id = $1::uuid",
-                    workspace_id,
-                )
-                or ""
-            ).strip()
-        except Exception:
-            logger.debug(
-                "Failed to resolve tenant from workspace for scoped apps filter",
-                exc_info=True,
-            )
-
-    if (not tenant_id or not workspace_id) and str(
-        (user or {}).get("role") or ""
-    ).lower() in {"owner", "super_admin", ROLE_ADMIN}:
-        try:
-            pool = await _get_db_pool()
-            row = await pool.fetchrow(
-                """
-                SELECT d.workspace_id::text AS workspace_id, w.tenant_id::text AS tenant_id
-                  FROM datasets d
-                  JOIN workspaces w ON w.id = d.workspace_id
-                 WHERE d.layer = 'gold'
-                   AND d.workspace_id IS NOT NULL
-                   AND COALESCE(d.row_count, 0) > 0
-                 ORDER BY d.updated_at DESC NULLS LAST,
-                          d.last_refresh DESC NULLS LAST,
-                          d.created_at DESC NULLS LAST
-                 LIMIT 1
-                """
-            )
-            if row:
-                tenant_id = tenant_id or str(row["tenant_id"] or "").strip()
-                workspace_id = workspace_id or str(row["workspace_id"] or "").strip()
-        except Exception:
-            logger.debug(
-                "Failed to resolve fallback Gold workspace for scoped apps filter",
-                exc_info=True,
-            )
-
-    return tenant_id, workspace_id
+    return await _workspace_scope_for_apps_filter_impl(
+        user,
+        context_factory=build_security_context,
+        workspace_memberships=_workspace_memberships,
+        get_db_pool=_get_db_pool,
+        role_admin=ROLE_ADMIN,
+        logger=logger,
+    )
 
 
 async def _active_scoped_connection_cartridges(
