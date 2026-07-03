@@ -42,6 +42,14 @@ from app.domains.studio.static_introspection import (
     schema_entities_from_fields as _schema_entities_from_fields_impl,
     static_introspection_payload as _static_introspection_payload_impl,
 )
+from app.domains.studio.source_metadata import (
+    base_url_for_source as _base_url_for_source_impl,
+    connection_value as _connection_value_impl,
+    connector_payload as _connector_payload_impl,
+    env_or_connection as _env_or_connection_impl,
+    looks_odata as _looks_odata_impl,
+    service_metadata_paths as _service_metadata_paths_impl,
+)
 from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
@@ -215,20 +223,15 @@ async def _vault_connection(cartridge_id: str, conn_id: str = "default", user: d
 
 
 def _connector_payload(connector_schema: dict[str, Any]) -> dict[str, Any]:
-    connector = connector_schema.get("connector") if isinstance(connector_schema.get("connector"), dict) else connector_schema
-    return connector if isinstance(connector, dict) else {}
+    return _connector_payload_impl(connector_schema)
 
 
 def _connection_value(connection: dict[str, Any], *names: str) -> str:
-    for name in names:
-        value = connection.get(name)
-        if value not in (None, ""):
-            return str(value)
-    return ""
+    return _connection_value_impl(connection, *names)
 
 
 def _env_or_connection(connection: dict[str, Any], env_name: str, *names: str) -> str:
-    return os.environ.get(env_name or "", "") or _connection_value(connection, *names)
+    return _env_or_connection_impl(connection, env_name, *names)
 
 
 async def _source_auth(
@@ -292,31 +295,15 @@ async def _source_auth(
 
 
 def _base_url_for_source(connector: dict[str, Any], connection: dict[str, Any]) -> str:
-    api = connector.get("api") if isinstance(connector.get("api"), dict) else {}
-    env_name = str(api.get("base_url_env") or "")
-    return _env_or_connection(connection, env_name, "base_url", "url").rstrip("/")
+    return _base_url_for_source_impl(connector, connection)
 
 
 def _service_metadata_paths(cartridge_id: str) -> list[str]:
-    paths = [""]
-    for item in _load_static_entity_specs(cartridge_id):
-        odata_entity = str(item.get("service_path") or item.get("odata_entity") or "")
-        if "/" not in odata_entity:
-            continue
-        service = odata_entity.split("/", 1)[0].strip("/")
-        if service and service not in paths:
-            paths.append(service)
-    return paths[:8]
+    return _service_metadata_paths_impl(_load_static_entity_specs(cartridge_id))
 
 
 def _looks_odata(cartridge_id: str, connector: dict[str, Any], args: dict[str, Any]) -> bool:
-    explicit = str(args.get("source_kind") or args.get("kind") or "").lower()
-    if explicit in {"odata", "sap"}:
-        return True
-    if cartridge_id.startswith("sap_"):
-        return True
-    auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
-    return str(auth.get("type") or "").lower() in {"basic", "oauth2_client_credentials"}
+    return _looks_odata_impl(cartridge_id, connector, args)
 
 
 def _is_production_env() -> bool:
