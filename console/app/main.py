@@ -208,6 +208,14 @@ from app.domains.pipeline.sync_state import (
 from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
 )
+from app.domains.pipeline.extract_config import (
+    build_dag_extract_conf as _build_dag_extract_conf_impl,
+    connection_id_from_vault_payload as _connection_id_from_vault_payload_impl,
+    dag_run_id_from_idempotency_key as _dag_run_id_from_idempotency_key_impl,
+    entity_declared_in_static_catalog as _entity_declared_in_static_catalog_impl,
+    is_transient_airflow_trigger_error as _is_transient_airflow_trigger_error_impl,
+    normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
+)
 from app.domains.studio.dag_graph import parse_dag_graph as _parse_dag_graph
 from app.services.db_scope import scoped_db_for_user
 from app.services.service_urls import (
@@ -6343,92 +6351,25 @@ async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
 
 
 def _entity_declared_in_static_catalog(cartridge: str, entity: str) -> bool:
-    import yaml
-
-    wanted = str(entity or "").strip()
-    if not wanted:
-        return False
-    candidates = [
-        Path(f"/registry/cartridges/{cartridge}/app/config/entities.yaml"),
-        Path(__file__).resolve().parents[2]
-        / "cartridges"
-        / cartridge
-        / "app"
-        / "config"
-        / "entities.yaml",
-    ]
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            continue
-        raw_entities = parsed.get("entities") if isinstance(parsed, dict) else []
-        if not isinstance(raw_entities, list):
-            continue
-        for item in raw_entities:
-            if not isinstance(item, dict):
-                continue
-            name = str(
-                item.get("entity") or item.get("name") or item.get("id") or ""
-            ).strip()
-            if name == wanted:
-                return True
-    return False
+    return _entity_declared_in_static_catalog_impl(
+        cartridge,
+        entity,
+        repo_root=Path(__file__).resolve().parents[2],
+    )
 
 
 def _build_dag_extract_conf(
     cartridge: str, entity: str, configured_mode: str | None, body: dict
 ) -> dict:
-    mode = body.get("mode") or configured_mode or "incremental"
-    conf = {
-        "cartridge_id": cartridge,
-        "entity": entity,
-        "mode": mode,
-    }
-    conn_id = _normalize_pipeline_conn_id(
-        body.get("conn_id") or body.get("connection_id")
-    )
-    if conn_id:
-        conf["conn_id"] = conn_id
-    if body.get("from_date"):
-        conf["from_date"] = body["from_date"]
-    if body.get("to_date"):
-        conf["to_date"] = body["to_date"]
-    return conf
+    return _build_dag_extract_conf_impl(cartridge, entity, configured_mode, body)
 
 
 def _normalize_pipeline_conn_id(conn_id: object | None) -> str | None:
-    if conn_id is None:
-        return None
-    value = str(conn_id).strip()
-    if not value:
-        return None
-    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
-        raise HTTPException(400, "invalid connection id")
-    return value
+    return _normalize_pipeline_conn_id_impl(conn_id)
 
 
 def _connection_id_from_vault_payload(payload: Any) -> str | None:
-    candidates: list[Any] = []
-    if isinstance(payload, dict):
-        raw_connections = payload.get("connections")
-        if isinstance(raw_connections, list):
-            candidates.extend(raw_connections)
-        raw_items = payload.get("items")
-        if isinstance(raw_items, list):
-            candidates.extend(raw_items)
-    elif isinstance(payload, list):
-        candidates.extend(payload)
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        raw = item.get("conn_id") or item.get("id") or item.get("key")
-        conn_id = _normalize_pipeline_conn_id(raw)
-        if conn_id:
-            return conn_id
-    return None
+    return _connection_id_from_vault_payload_impl(payload)
 
 
 async def _resolve_pipeline_sync_conn_id(
@@ -6503,14 +6444,7 @@ def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:
 def _dag_run_id_from_idempotency_key(
     dag_id: str, idempotency_key: object | None
 ) -> str | None:
-    if idempotency_key is None:
-        return None
-    key = str(idempotency_key).strip()
-    if not key:
-        return None
-    if len(key) > 160:
-        raise HTTPException(400, "idempotency_key is too long")
-    return f"console__{dag_id}__{uuid.uuid5(uuid.NAMESPACE_URL, f'{dag_id}:{key}').hex}"
+    return _dag_run_id_from_idempotency_key_impl(dag_id, idempotency_key)
 
 
 async def _trigger_airflow_extract_dag(
@@ -6541,8 +6475,7 @@ async def _trigger_airflow_extract_dag(
 
 
 def _is_transient_airflow_trigger_error(error: str) -> bool:
-    lowered = str(error).lower()
-    return "connection" in lowered or "connect" in lowered
+    return _is_transient_airflow_trigger_error_impl(error)
 
 
 # ── Studio — Entity config ───────────────────────────────────────────────────

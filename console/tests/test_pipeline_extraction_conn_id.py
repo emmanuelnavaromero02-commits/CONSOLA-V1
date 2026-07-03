@@ -6,6 +6,12 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
+from app.domains.pipeline.extract_config import (
+    connection_id_from_vault_payload,
+    dag_run_id_from_idempotency_key,
+    entity_declared_in_static_catalog,
+    is_transient_airflow_trigger_error,
+)
 import app.main as console_main
 
 
@@ -39,4 +45,43 @@ def test_pipeline_extract_metadata_selects_connection_id():
     assert re.search(
         r'extract_conf\["conn_id"\]\s*=\s*_normalize_pipeline_conn_id\(\s*metadata\.get\("connection_id"\)\s*\)',
         source,
+    )
+
+
+def test_extract_config_helpers_parse_vault_and_idempotency():
+    assert (
+        connection_id_from_vault_payload(
+            {"connections": [{"conn_id": ""}], "items": [{"id": "femsa_sf"}]}
+        )
+        == "femsa_sf"
+    )
+    run_id = dag_run_id_from_idempotency_key("sap_successfactors_extract", "same-key")
+    assert run_id == dag_run_id_from_idempotency_key(
+        "sap_successfactors_extract",
+        "same-key",
+    )
+    assert run_id.startswith("console__sap_successfactors_extract__")
+    assert is_transient_airflow_trigger_error("Connection refused")
+    assert not is_transient_airflow_trigger_error("invalid conf")
+
+
+def test_entity_declared_in_static_catalog_reads_local_yaml(tmp_path):
+    config_dir = tmp_path / "cartridges" / "sap_successfactors" / "app" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "entities.yaml").write_text(
+        "entities:\n  - entity: User\n  - name: EmpJob\n",
+        encoding="utf-8",
+    )
+
+    assert entity_declared_in_static_catalog(
+        "sap_successfactors",
+        "EmpJob",
+        repo_root=tmp_path,
+        registry_root=tmp_path / "registry",
+    )
+    assert not entity_declared_in_static_catalog(
+        "sap_successfactors",
+        "Missing",
+        repo_root=tmp_path,
+        registry_root=tmp_path / "registry",
     )
