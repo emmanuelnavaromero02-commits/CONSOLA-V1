@@ -214,6 +214,7 @@ from app.domains.pipeline.sync_state import (
     SYNC_NOW_DAG_ID as _SYNC_NOW_DAG_ID,
     SYNC_NOW_ENTITY as _SYNC_NOW_ENTITY,
     SYNC_TERMINAL_STATUSES as _SYNC_TERMINAL_STATUSES,
+    active_sync_run_lookup_parts as _active_sync_run_lookup_parts,
     active_extract_run_payload as _active_extract_run_payload,
     airflow_run_id_fragment as _airflow_run_id_fragment,
     inactive_sync_run_payload as _inactive_sync_run_payload,
@@ -233,6 +234,7 @@ from app.domains.pipeline.sync_state import (
     sync_errors_retryable as _sync_errors_retryable,
     sync_extra_from_row as _sync_extra_from_row,
     sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
+    sync_now_lock_key as _sync_now_lock_key_impl,
     sync_now_run_id_from_request_id as _sync_now_run_id_from_request_id,
     sync_public_payload as _sync_public_payload,
     sync_run_age_seconds as _sync_run_age_seconds,
@@ -4462,7 +4464,7 @@ def _sync_now_lock_key(
     user: dict | None,
 ) -> str:
     ctx = build_security_context(user)
-    return _sync_progress.sync_now_lock_key(
+    return _sync_now_lock_key_impl(
         cartridge=cartridge,
         mode=mode,
         target=target,
@@ -4486,26 +4488,20 @@ async def _fetch_active_sync_run(
     has_started_at = await _table_has_column(
         "pipeline_runs", "started_at", refresh=True
     )
-    clauses = [
-        "cartridge_id=$1",
-        f"entity='{_SYNC_NOW_ENTITY}'",
-        "(status IS NULL OR status <> ALL($2::text[]))",
-    ]
-    args: list[Any] = [cartridge, list(_SYNC_TERMINAL_STATUSES)]
-    if has_mode:
-        args.append(mode)
-        clauses.append(f"COALESCE(mode, ${len(args)})=${len(args)}")
-    if has_extra:
-        args.append(target)
-        clauses.append(f"COALESCE(extra->>'target', 'all')=${len(args)}")
-    if has_started_at:
-        clauses.append(
-            "(started_at IS NULL OR started_at > NOW() - INTERVAL '4 hours')"
-        )
+    lookup = _active_sync_run_lookup_parts(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        has_mode=has_mode,
+        has_extra=has_extra,
+        has_started_at=has_started_at,
+    )
+    clauses = lookup["clauses"]
+    args = lookup["args"]
     scope_sql, scope_values = await _pipeline_runs_scope_predicate(
         user, len(args) + 1, refresh_columns=True
     )
-    order_sql = "started_at DESC NULLS LAST" if has_started_at else "run_id DESC"
+    order_sql = lookup["order_sql"]
     try:
         async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
             row = await conn.fetchrow(

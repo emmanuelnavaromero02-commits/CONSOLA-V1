@@ -126,6 +126,54 @@ def pipeline_extract_all_public_response(result: dict[str, Any]) -> dict[str, An
     return sync_progress.extract_all_public_response(result)
 
 
+def sync_now_lock_key(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    tenant_id: Any | None,
+    workspace_id: Any | None,
+) -> str:
+    return sync_progress.sync_now_lock_key(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
+
+
+def active_sync_run_lookup_parts(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    has_mode: bool,
+    has_extra: bool,
+    has_started_at: bool,
+) -> dict[str, Any]:
+    clauses = [
+        "cartridge_id=$1",
+        f"entity='{SYNC_NOW_ENTITY}'",
+        "(status IS NULL OR status <> ALL($2::text[]))",
+    ]
+    args: list[Any] = [cartridge, list(SYNC_TERMINAL_STATUSES)]
+    if has_mode:
+        args.append(mode)
+        clauses.append(f"COALESCE(mode, ${len(args)})=${len(args)}")
+    if has_extra:
+        args.append(target)
+        clauses.append(f"COALESCE(extra->>'target', 'all')=${len(args)}")
+    if has_started_at:
+        clauses.append(
+            "(started_at IS NULL OR started_at > NOW() - INTERVAL '4 hours')"
+        )
+    order_sql = "started_at DESC NULLS LAST" if has_started_at else "run_id DESC"
+    return {"clauses": clauses, "args": args, "order_sql": order_sql}
+
+
 def normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
     return sync_progress.normalize_sync_step_payload(
         step,
