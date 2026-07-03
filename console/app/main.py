@@ -13,7 +13,6 @@ import logging
 import os
 import re
 import secrets
-import sys
 import time
 import uuid
 from copy import deepcopy
@@ -84,6 +83,14 @@ from app.domains.accounts.lifecycle import (
     vpn_token_link as _vpn_token_link,
 )
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
+from app.domains.iam.roles import (
+    GLOBAL_ASSIGNABLE_ROLES as _IAM_GLOBAL_ASSIGNABLE_ROLES,
+    WORKSPACE_ASSIGNABLE_ROLES as _IAM_WORKSPACE_ASSIGNABLE_ROLES,
+    assignable_role as _assignable_role_impl,
+    is_global_iam_admin as _is_global_iam_admin_impl,
+    session_workspace_ids as _session_workspace_ids_impl,
+    workspace_scope_db_unavailable as _workspace_scope_db_unavailable_impl,
+)
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
@@ -8497,34 +8504,21 @@ async def api_decisions_add_action(
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
 _GLOBAL_ASSIGNABLE_ROLES = {
-    "owner",
-    "super_admin",
+    *_IAM_GLOBAL_ASSIGNABLE_ROLES,
     ROLE_ADMIN,
-    "security_admin",
-    "auditor",
 }
-_WORKSPACE_ASSIGNABLE_ROLES = {
-    "tenant_admin",
-    "analyst",
-    "viewer",
-    "workspace_user",
-    "user",
-}
+_WORKSPACE_ASSIGNABLE_ROLES = set(_IAM_WORKSPACE_ASSIGNABLE_ROLES)
 
 
 def _assignable_role(value: str | None, actor_user: dict | None = None) -> str:
-    role = (value or "user").strip()
-    info = ROLE_DEFINITIONS.get(role)
-    if not info or not info.get("assignable"):
-        return "user"
-    if _is_global_iam_admin(actor_user):
-        return role
-    # Workspace admins can invite/manage users inside their workspace, but
-    # cannot write platform/global roles into users.role. That keeps tenant
-    # IAM from becoming a hidden global privilege escalation path.
-    if role in _GLOBAL_ASSIGNABLE_ROLES:
-        raise HTTPException(403, "global role assignment requires platform admin")
-    return role if role in _WORKSPACE_ASSIGNABLE_ROLES else "user"
+    return _assignable_role_impl(
+        value,
+        actor_user,
+        role_definitions=ROLE_DEFINITIONS,
+        role_admin=ROLE_ADMIN,
+        global_assignable_roles=_GLOBAL_ASSIGNABLE_ROLES,
+        workspace_assignable_roles=_WORKSPACE_ASSIGNABLE_ROLES,
+    )
 
 
 @app.get("/api/users")
@@ -8549,27 +8543,15 @@ async def viewer_admin_users(
 
 
 def _is_global_iam_admin(user: dict | None) -> bool:
-    return (user or {}).get("role") in {"owner", "super_admin", ROLE_ADMIN}
+    return _is_global_iam_admin_impl(user, role_admin=ROLE_ADMIN)
 
 
 def _session_workspace_ids(user: dict | None) -> set[str]:
-    return {
-        str(w.get("workspace_id"))
-        for w in ((user or {}).get("workspaces") or [])
-        if w.get("workspace_id")
-    }
+    return _session_workspace_ids_impl(user)
 
 
 def _workspace_scope_db_unavailable(exc: BaseException) -> bool:
-    message = str(exc)
-    asyncpg_module = sys.modules.get("asyncpg")
-    return (
-        isinstance(exc, RuntimeError) and "DATABASE_URL is not configured" in message
-    ) or (
-        isinstance(exc, AttributeError)
-        and "create_pool" in message
-        and getattr(asyncpg_module, "__name__", "") == "stub"
-    )
+    return _workspace_scope_db_unavailable_impl(exc)
 
 
 async def _workspace_rows_from_auth_stub(user_id: int) -> list[dict]:
