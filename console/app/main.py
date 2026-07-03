@@ -43,6 +43,7 @@ from app.domains.apps.payloads import (
     user_with_apps_scope as _user_with_apps_scope,
 )
 from app.domains.apps.scope import (
+    installed_scoped_app_cartridges as _installed_scoped_app_cartridges_impl,
     normalize_candidate_cartridges as _normalize_candidate_cartridges,
     resolve_scoped_config_cartridge as _resolve_scoped_config_cartridge_impl,
     resolve_scoped_operation_cartridge as _resolve_scoped_operation_cartridge_impl,
@@ -2905,42 +2906,15 @@ async def _installed_scoped_app_cartridges(
     user: dict | None,
     candidate_cartridges: set[str] | None = None,
 ) -> set[str]:
-    candidates = _normalize_candidate_cartridges(candidate_cartridges)
-    if not candidates:
-        return set()
-    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
-    if not tenant_id or not workspace_id:
-        return set()
-    pool = await _get_db_pool()
-    scoped_user = _user_with_apps_scope(user, tenant_id, workspace_id)
-    async with scoped_db_for_user(pool, scoped_user or {}) as (conn, _, _):
-        rows = await conn.fetch(
-            """
-            SELECT ci.cartridge_id
-              FROM cartridge_installations ci
-              LEFT JOIN tenant_entitlements te
-                ON te.tenant_id = ci.tenant_id
-               AND te.workspace_id = ci.workspace_id
-               AND te.cartridge_id = ci.cartridge_id
-             WHERE ci.tenant_id = $1::uuid
-               AND ci.workspace_id = $2::uuid
-               AND ci.cartridge_id = ANY($3::text[])
-               AND ci.status IN ('ready', 'active', 'installed')
-               AND COALESCE(te.status, 'active') = 'active'
-            """,
-            tenant_id,
-            workspace_id,
-            sorted(candidates),
-        )
-    installed = {
-        str(row["cartridge_id"]).strip()
-        for row in rows
-        if str(row["cartridge_id"] or "").strip()
-    }
-    visible = _context_visible_cartridges(user)
-    if visible is not None:
-        installed &= visible
-    return installed
+    return await _installed_scoped_app_cartridges_impl(
+        user,
+        candidate_cartridges,
+        scope_resolver=_workspace_scope_for_apps_filter,
+        get_db_pool=_get_db_pool,
+        scoped_db_for_user=scoped_db_for_user,
+        scoped_user_factory=_user_with_apps_scope,
+        context_visible_cartridges=_context_visible_cartridges,
+    )
 
 
 async def _resolve_scoped_operation_cartridge(

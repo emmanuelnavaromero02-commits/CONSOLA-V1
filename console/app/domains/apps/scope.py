@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, AsyncContextManager
 
 from fastapi import HTTPException
 
@@ -12,6 +12,10 @@ RequireCartridgeAccess = Callable[[dict | None, str], None]
 ContextFactory = Callable[[dict | None], dict[str, Any]]
 WorkspaceMemberships = Callable[[int], Awaitable[list[dict[str, Any]]]]
 DbPoolFactory = Callable[[], Awaitable[Any]]
+WorkspaceScopeResolver = Callable[[dict | None], Awaitable[tuple[str, str]]]
+ScopedDbForUser = Callable[[Any, dict], AsyncContextManager[tuple[Any, Any, Any]]]
+ScopedUserFactory = Callable[[dict | None, str, str], dict | None]
+VisibleCartridges = Callable[[dict | None], set[str] | None]
 
 
 def normalize_candidate_cartridges(candidates: set[str] | None) -> set[str]:
@@ -20,6 +24,54 @@ def normalize_candidate_cartridges(candidates: set[str] | None) -> set[str]:
         for cartridge in (candidates or set())
         if str(cartridge).strip()
     }
+
+
+async def installed_scoped_app_cartridges(
+    user: dict | None,
+    candidate_cartridges: set[str] | None,
+    *,
+    scope_resolver: WorkspaceScopeResolver,
+    get_db_pool: DbPoolFactory,
+    scoped_db_for_user: ScopedDbForUser,
+    scoped_user_factory: ScopedUserFactory,
+    context_visible_cartridges: VisibleCartridges,
+) -> set[str]:
+    candidates = normalize_candidate_cartridges(candidate_cartridges)
+    if not candidates:
+        return set()
+    tenant_id, workspace_id = await scope_resolver(user)
+    if not tenant_id or not workspace_id:
+        return set()
+    pool = await get_db_pool()
+    scoped_user = scoped_user_factory(user, tenant_id, workspace_id)
+    async with scoped_db_for_user(pool, scoped_user or {}) as (conn, _, _):
+        rows = await conn.fetch(
+            """
+            SELECT ci.cartridge_id
+              FROM cartridge_installations ci
+              LEFT JOIN tenant_entitlements te
+                ON te.tenant_id = ci.tenant_id
+               AND te.workspace_id = ci.workspace_id
+               AND te.cartridge_id = ci.cartridge_id
+             WHERE ci.tenant_id = $1::uuid
+               AND ci.workspace_id = $2::uuid
+               AND ci.cartridge_id = ANY($3::text[])
+               AND ci.status IN ('ready', 'active', 'installed')
+               AND COALESCE(te.status, 'active') = 'active'
+            """,
+            tenant_id,
+            workspace_id,
+            sorted(candidates),
+        )
+    installed = {
+        str(row["cartridge_id"]).strip()
+        for row in rows
+        if str(row["cartridge_id"] or "").strip()
+    }
+    visible = context_visible_cartridges(user)
+    if visible is not None:
+        installed &= visible
+    return installed
 
 
 async def workspace_scope_for_apps_filter(

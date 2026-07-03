@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import pytest
 from fastapi import HTTPException
 
 from app.domains.apps.scope import (
+    installed_scoped_app_cartridges,
     normalize_candidate_cartridges,
     resolve_scoped_config_cartridge,
     resolve_scoped_operation_cartridge,
@@ -110,6 +113,14 @@ def _context(_user):
     return {}
 
 
+def _scoped_user(user, tenant_id, workspace_id):
+    return {
+        **(user or {}),
+        "active_tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
+    }
+
+
 class _Logger:
     def debug(self, *_args, **_kwargs):
         return None
@@ -149,3 +160,75 @@ async def test_workspace_scope_for_apps_filter_owner_falls_back_to_gold_workspac
         role_admin="admin",
         logger=_Logger(),
     ) == ("tenant-gold", "workspace-gold")
+
+
+class _InstallConn:
+    def __init__(self):
+        self.fetch_args = None
+
+    async def fetch(self, _sql, *args):
+        self.fetch_args = args
+        return [
+            {"cartridge_id": "sap_successfactors"},
+            {"cartridge_id": "hubspot"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_installed_scoped_app_cartridges_filters_to_visible_scope():
+    conn = _InstallConn()
+
+    async def _scope(_user):
+        return "tenant-1", "workspace-1"
+
+    async def _install_pool():
+        return object()
+
+    @asynccontextmanager
+    async def _scoped_db(_pool, scoped_user):
+        assert scoped_user["active_tenant_id"] == "tenant-1"
+        assert scoped_user["active_workspace_id"] == "workspace-1"
+        yield conn, None, None
+
+    result = await installed_scoped_app_cartridges(
+        {"id": 1},
+        {"sap_successfactors", "hubspot", ""},
+        scope_resolver=_scope,
+        get_db_pool=_install_pool,
+        scoped_db_for_user=_scoped_db,
+        scoped_user_factory=_scoped_user,
+        context_visible_cartridges=lambda _user: {"sap_successfactors"},
+    )
+
+    assert result == {"sap_successfactors"}
+    assert conn.fetch_args == (
+        "tenant-1",
+        "workspace-1",
+        ["hubspot", "sap_successfactors"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_installed_scoped_app_cartridges_returns_empty_without_scope():
+    async def _scope(_user):
+        return "", ""
+
+    async def _unexpected_pool():
+        raise AssertionError("pool should not be requested without scope")
+
+    @asynccontextmanager
+    async def _scoped_db(_pool, _scoped_user):
+        yield None, None, None
+
+    assert (
+        await installed_scoped_app_cartridges(
+            {"id": 1},
+            {"sap_successfactors"},
+            scope_resolver=_scope,
+            get_db_pool=_unexpected_pool,
+            scoped_db_for_user=_scoped_db,
+            scoped_user_factory=_scoped_user,
+            context_visible_cartridges=lambda _user: None,
+        )
+        == set()
+    )
