@@ -146,6 +146,7 @@ from app.domains.pipeline.run_state import (
     pipeline_freshness_status as _pipeline_freshness_status,
     pipeline_gold_dependencies_for_silver as _pipeline_gold_dependencies_for_silver,
     pipeline_is_zero_count as _pipeline_is_zero_count,
+    pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
@@ -4593,12 +4594,7 @@ async def api_pipeline(
 
     # 2b. jobs table — internal queue (legacy / console-triggered runs)
     all_jobs = await _call_with_optional_user(job_service.list_recent, 100, user=user)
-    jobs_by_entity: dict[str, dict] = {}
-    for j in all_jobs:
-        entity = (j.get("args") or {}).get("entity") or ""
-        if not entity or entity in jobs_by_entity:
-            continue
-        jobs_by_entity[entity] = j
+    jobs_by_entity = _pipeline_jobs_by_entity(all_jobs)
 
     # 3. Silver datasets from refinement
     try:

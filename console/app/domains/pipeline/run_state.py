@@ -129,6 +129,16 @@ def pipeline_gold_dependencies_for_silver(
     return deps
 
 
+def pipeline_jobs_by_entity(jobs: list[dict]) -> dict[str, dict]:
+    by_entity: dict[str, dict] = {}
+    for job in jobs:
+        entity = (job.get("args") or {}).get("entity") or ""
+        if not entity or entity in by_entity:
+            continue
+        by_entity[entity] = job
+    return by_entity
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")

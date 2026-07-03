@@ -135,3 +135,17 @@ def test_pipeline_silver_and_gold_dependency_helpers():
     assert run_state.pipeline_gold_dependencies_for_silver(
         "employee_profile", gold, cartridge="sap_successfactors"
     ) == [gold[0], gold[1]]
+
+
+def test_pipeline_jobs_by_entity_keeps_first_job_per_entity():
+    jobs = [
+        {"id": 1, "args": {"entity": "User"}},
+        {"id": 2, "args": {"entity": "User"}},
+        {"id": 3, "args": {"entity": "EmpJob"}},
+        {"id": 4, "args": {}},
+    ]
+
+    assert run_state.pipeline_jobs_by_entity(jobs) == {
+        "User": jobs[0],
+        "EmpJob": jobs[2],
+    }
