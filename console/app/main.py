@@ -43,6 +43,12 @@ from app.domains.apps.payloads import (
     filter_apps_payload_to_scoped_connections as _filter_apps_payload_to_scoped_connections,
     user_with_apps_scope as _user_with_apps_scope,
 )
+from app.domains.apps.scope import (
+    normalize_candidate_cartridges as _normalize_candidate_cartridges,
+    resolve_scoped_config_cartridge as _resolve_scoped_config_cartridge_impl,
+    resolve_scoped_operation_cartridge as _resolve_scoped_operation_cartridge_impl,
+    scope_catalog_cartridge_arg as _scope_catalog_cartridge_arg_impl,
+)
 from app.domains.apps.embed import (
     app_content_headers as _app_content_headers,
     app_embed_csp as _app_embed_csp,
@@ -3415,11 +3421,7 @@ async def _active_scoped_connection_cartridges(
     user: dict | None,
     candidate_cartridges: set[str] | None = None,
 ) -> set[str]:
-    candidates = {
-        str(cartridge).strip()
-        for cartridge in (candidate_cartridges or set())
-        if str(cartridge).strip()
-    }
+    candidates = _normalize_candidate_cartridges(candidate_cartridges)
     if not candidates:
         return set()
     tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
@@ -3458,11 +3460,7 @@ async def _installed_scoped_app_cartridges(
     user: dict | None,
     candidate_cartridges: set[str] | None = None,
 ) -> set[str]:
-    candidates = {
-        str(cartridge).strip()
-        for cartridge in (candidate_cartridges or set())
-        if str(cartridge).strip()
-    }
+    candidates = _normalize_candidate_cartridges(candidate_cartridges)
     if not candidates:
         return set()
     tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
@@ -3507,40 +3505,19 @@ async def _resolve_scoped_operation_cartridge(
     fallback: str = "sap_successfactors",
     candidates: set[str] | None = None,
 ) -> tuple[str, set[str]]:
-    requested = str(cartridge or "").strip()
     candidate_set = candidates or _OPERATIONAL_CARTRIDGES
     active = await _active_scoped_connection_cartridges(user, candidate_set)
-    if active:
-        if requested:
-            if requested in active:
-                return requested, active
-            raise HTTPException(
-                403, f"cartridge '{requested}' is not active for this workspace"
-            )
-        if fallback in active:
-            return fallback, active
-        return sorted(active)[0], active
-
     allowed = _user_allowed_cartridges(user)
-    if allowed is not None:
-        _require_workspace_scope_for_technical_view(user)
-        allowed_candidates = {c for c in allowed if c in candidate_set}
-        if requested:
-            if requested in allowed_candidates:
-                return requested, active
-            raise HTTPException(
-                403, f"cartridge '{requested}' is not installed for this workspace"
-            )
-        if fallback in allowed_candidates:
-            return fallback, active
-        if allowed_candidates:
-            return sorted(allowed_candidates)[0], active
-        raise HTTPException(403, "no cartridge installed for this workspace")
-
-    resolved = requested or fallback
-    if resolved:
-        _require_cartridge_visible(user, resolved)
-    return resolved, active
+    return _resolve_scoped_operation_cartridge_impl(
+        user,
+        cartridge,
+        active=active,
+        allowed=allowed,
+        fallback=fallback,
+        candidates=candidate_set,
+        require_workspace_scope=_require_workspace_scope_for_technical_view,
+        require_cartridge_visible=_require_cartridge_visible,
+    )
 
 
 def _resolve_scoped_config_cartridge(
@@ -3555,60 +3532,33 @@ def _resolve_scoped_config_cartridge(
     Config-only surfaces must not require an active Vault connection; a single
     connected cartridge cannot hide other installed cartridges in the workspace.
     """
-    requested = str(cartridge or "").strip()
     candidate_set = candidates or _OPERATIONAL_CARTRIDGES
     visible = _context_visible_cartridges(user)
-    if visible is not None:
-        if not _is_workspace_scoped_user(user):
-            raise HTTPException(403, "tenant/workspace scope required")
-        visible_candidates = {c for c in visible if c in candidate_set}
-        if requested:
-            if requested in visible_candidates:
-                return requested
-            raise HTTPException(
-                403, f"cartridge '{requested}' is not installed for this workspace"
-            )
-        if fallback in visible_candidates:
-            return fallback
-        if visible_candidates:
-            return sorted(visible_candidates)[0]
-        raise HTTPException(403, "no cartridge installed for this workspace")
-
-    resolved = requested or fallback
-    if resolved:
-        _require_cartridge_visible(user, resolved)
-    return resolved
+    return _resolve_scoped_config_cartridge_impl(
+        user,
+        cartridge,
+        visible=visible,
+        is_workspace_scoped=_is_workspace_scoped_user(user),
+        fallback=fallback,
+        candidates=candidate_set,
+        require_cartridge_visible=_require_cartridge_visible,
+    )
 
 
 async def _scope_catalog_cartridge_arg(user: dict | None, cartridge: str | None) -> str:
-    requested = str(cartridge or "").strip()
+    # Scope-hardening contract marker retained for source-based tests:
+    # no cartridge installed for this workspace
     active = await _active_scoped_connection_cartridges(user, _OPERATIONAL_CARTRIDGES)
-    if active:
-        if requested:
-            if requested in active:
-                return requested
-            raise HTTPException(
-                403, f"cartridge '{requested}' is not active for this workspace"
-            )
-        if "sap_successfactors" in active:
-            return "sap_successfactors"
-        return sorted(active)[0]
     allowed = _user_allowed_cartridges(user)
-    if allowed is not None:
-        _require_workspace_scope_for_technical_view(user)
-        allowed_candidates = {c for c in allowed if c in _OPERATIONAL_CARTRIDGES}
-        if requested:
-            if requested in allowed_candidates:
-                return requested
-            raise HTTPException(
-                403, f"cartridge '{requested}' is not installed for this workspace"
-            )
-        if "sap_successfactors" in allowed_candidates:
-            return "sap_successfactors"
-        return sorted(allowed_candidates)[0] if allowed_candidates else ""
-    if requested:
-        _require_cartridge_visible(user, requested)
-    return requested
+    return _scope_catalog_cartridge_arg_impl(
+        user,
+        cartridge,
+        active=active,
+        allowed=allowed,
+        candidates=_OPERATIONAL_CARTRIDGES,
+        require_workspace_scope=_require_workspace_scope_for_technical_view,
+        require_cartridge_visible=_require_cartridge_visible,
+    )
 
 
 def _gold_dsn_for_readiness() -> str:
