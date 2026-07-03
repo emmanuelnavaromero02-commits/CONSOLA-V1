@@ -46,6 +46,10 @@ from app.domains.agentops.successfactors_talent_monitor import (
     sync_agentops_is_terminal as _agentops_sync_agentops_is_terminal,
     sync_agentops_monitor_candidates as _agentops_sync_agentops_monitor_candidates,
 )
+from app.domains.data_platform.catalog_payloads import (
+    catalog_cache_key as _catalog_cache_key,
+    catalog_query_args as _catalog_query_args,
+)
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns as _dataset_detail_columns,
     empty_partitions as _empty_partitions,
@@ -9393,19 +9397,16 @@ async def api_catalog_get(
     datasets: str = "",
     user: dict = Depends(require_permission("datasets.read")),
 ):
-    args: dict = {}
-    if layer:
-        args["layer"] = layer
     cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
     if not cartridge and _user_allowed_cartridges(user) is not None:
         return _empty_catalog_payload()
-    if cartridge:
-        args["cartridge"] = cartridge
-    if tags:
-        args["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
-    if datasets:
-        args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
-    cache_args = json.dumps(args, sort_keys=True, default=str)
+    args = _catalog_query_args(
+        layer=layer,
+        cartridge=cartridge,
+        tags=tags,
+        datasets=datasets,
+    )
+    cache_args = _catalog_cache_key(args)
 
     async def load_catalog() -> Any:
         result = await _refinement_invoke("get_data_catalog", args, user=user)

@@ -1,5 +1,9 @@
 from fastapi import HTTPException
 
+from app.domains.data_platform.catalog_payloads import (
+    catalog_cache_key,
+    catalog_query_args,
+)
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns,
     empty_partitions,
@@ -95,6 +99,22 @@ def test_normalize_dataset_detail_uses_injected_sanitizer():
     assert detail["status"] == "empty"
     assert detail["sql"] == "select masked"
     assert detail["sources"] == ["raw/acme/User"]
+
+
+def test_catalog_payload_helpers_build_stable_filter_args():
+    args = catalog_query_args(
+        layer="gold",
+        cartridge="sap_successfactors",
+        tags=" metric, , talent ",
+        datasets="employee_profile, talent_9box",
+    )
+    assert args == {
+        "layer": "gold",
+        "cartridge": "sap_successfactors",
+        "tags": ["metric", "talent"],
+        "datasets": ["employee_profile", "talent_9box"],
+    }
+    assert catalog_cache_key({"b": 1, "a": 2}) == '{"a": 2, "b": 1}'
 
 
 def test_semantic_enrichment_candidates_describes_missing_columns():
