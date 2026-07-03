@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.domains.pipeline.extract_config import (
+    apply_user_scope_to_dag_conf,
     connection_id_from_vault_payload,
     dag_run_id_from_idempotency_key,
     entity_declared_in_static_catalog,
@@ -63,6 +64,36 @@ def test_extract_config_helpers_parse_vault_and_idempotency():
     assert run_id.startswith("console__sap_successfactors_extract__")
     assert is_transient_airflow_trigger_error("Connection refused")
     assert not is_transient_airflow_trigger_error("invalid conf")
+
+
+def test_apply_user_scope_to_dag_conf_adds_security_context():
+    scoped = apply_user_scope_to_dag_conf(
+        {"entity": "User"},
+        {"id": 1},
+        security_context_builder=lambda user: {
+            "tenant_id": "tenant-1",
+            "workspace_id": "workspace-1",
+            "user_id": user["id"],
+        },
+    )
+
+    assert scoped["tenant_id"] == "tenant-1"
+    assert scoped["workspace_id"] == "workspace-1"
+    assert scoped["security_context"]["user_id"] == 1
+
+
+def test_apply_user_scope_to_dag_conf_rejects_scope_mismatch():
+    with pytest.raises(HTTPException) as exc:
+        apply_user_scope_to_dag_conf(
+            {"tenant_id": "tenant-2"},
+            {"id": 1},
+            security_context_builder=lambda _user: {
+                "tenant_id": "tenant-1",
+                "workspace_id": "workspace-1",
+            },
+        )
+
+    assert exc.value.status_code == 403
 
 
 def test_entity_declared_in_static_catalog_reads_local_yaml(tmp_path):

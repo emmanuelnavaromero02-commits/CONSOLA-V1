@@ -241,6 +241,7 @@ from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
 )
 from app.domains.pipeline.extract_config import (
+    apply_user_scope_to_dag_conf as _apply_user_scope_to_dag_conf_impl,
     build_dag_extract_conf as _build_dag_extract_conf_impl,
     connection_id_from_vault_payload as _connection_id_from_vault_payload_impl,
     dag_run_id_from_idempotency_key as _dag_run_id_from_idempotency_key_impl,
@@ -6000,19 +6001,11 @@ async def _resolve_pipeline_sync_conn_id(
 
 
 def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:
-    scoped = dict(conf or {})
-    ctx = build_security_context(user)
-    tenant_id = ctx.get("tenant_id")
-    workspace_id = ctx.get("workspace_id")
-    if not tenant_id or not workspace_id:
-        return scoped
-    for key, value in (("tenant_id", tenant_id), ("workspace_id", workspace_id)):
-        existing = scoped.get(key)
-        if existing and str(existing) != str(value):
-            raise HTTPException(403, detail=f"{key} scope mismatch")
-        scoped[key] = str(value)
-    scoped["security_context"] = ctx
-    return scoped
+    return _apply_user_scope_to_dag_conf_impl(
+        conf,
+        user,
+        security_context_builder=build_security_context,
+    )
 
 
 def _dag_run_id_from_idempotency_key(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException
 
@@ -72,6 +72,27 @@ def dag_run_id_from_idempotency_key(
     if len(key) > 160:
         raise HTTPException(400, "idempotency_key is too long")
     return f"console__{dag_id}__{uuid.uuid5(uuid.NAMESPACE_URL, f'{dag_id}:{key}').hex}"
+
+
+def apply_user_scope_to_dag_conf(
+    conf: dict[str, Any],
+    user: dict[str, Any] | None,
+    *,
+    security_context_builder: Callable[[dict[str, Any] | None], dict[str, Any]],
+) -> dict[str, Any]:
+    scoped = dict(conf or {})
+    ctx = security_context_builder(user)
+    tenant_id = ctx.get("tenant_id")
+    workspace_id = ctx.get("workspace_id")
+    if not tenant_id or not workspace_id:
+        return scoped
+    for key, value in (("tenant_id", tenant_id), ("workspace_id", workspace_id)):
+        existing = scoped.get(key)
+        if existing and str(existing) != str(value):
+            raise HTTPException(403, detail=f"{key} scope mismatch")
+        scoped[key] = str(value)
+    scoped["security_context"] = ctx
+    return scoped
 
 
 def is_transient_airflow_trigger_error(error: str) -> bool:
