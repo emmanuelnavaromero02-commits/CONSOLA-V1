@@ -83,6 +83,11 @@ from app.domains.accounts.lifecycle import (
     vpn_token_link as _vpn_token_link,
 )
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
+from app.domains.decisions.payloads import (
+    coerce_date as _coerce_date_impl,
+    coerce_datetime as _coerce_dt_impl,
+    decision_row_to_dict as _dec_row_to_dict_impl,
+)
 from app.domains.iam.roles import (
     GLOBAL_ASSIGNABLE_ROLES as _IAM_GLOBAL_ASSIGNABLE_ROLES,
     WORKSPACE_ASSIGNABLE_ROLES as _IAM_WORKSPACE_ASSIGNABLE_ROLES,
@@ -8125,26 +8130,17 @@ async def api_dag_parse(body: dict, user: dict = Depends(require_permission("stu
 # ── Decision Manager ─────────────────────────────────────────────────────────
 
 import json as _json_dec
-from datetime import date as _date_dec, datetime as _datetime_dec
 import asyncpg as _asyncpg_dec
 
 _DEC_POOL: _asyncpg_dec.Pool | None = None
 
 
 def _coerce_date(v):
-    if v is None or v == "":
-        return None
-    if isinstance(v, _date_dec):
-        return v
-    return _date_dec.fromisoformat(str(v)[:10])
+    return _coerce_date_impl(v)
 
 
 def _coerce_dt(v):
-    if v is None or v == "":
-        return None
-    if isinstance(v, _datetime_dec):
-        return v
-    return _datetime_dec.fromisoformat(str(v).replace("Z", "+00:00"))
+    return _coerce_dt_impl(v)
 
 
 async def _dec_pool() -> _asyncpg_dec.Pool:
@@ -8180,19 +8176,7 @@ async def _close_dec_pool() -> None:
 
 
 def _dec_row_to_dict(row) -> dict:
-    d = dict(row)
-    for k in ("created_at", "closed_at"):
-        if d.get(k):
-            d[k] = d[k].isoformat()
-    if d.get("commitment_date"):
-        d["commitment_date"] = d["commitment_date"].isoformat()
-    # Some asyncpg/codec combinations return jsonb as raw string; normalize.
-    if isinstance(d.get("kpis"), str):
-        try:
-            d["kpis"] = _json_dec.loads(d["kpis"])
-        except Exception:
-            d["kpis"] = []
-    return d
+    return _dec_row_to_dict_impl(row)
 
 
 @app.get("/decisions", dependencies=[Depends(require_admin)])
