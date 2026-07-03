@@ -5,10 +5,14 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_query_args,
 )
 from app.domains.data_platform.data_api_payloads import (
+    DataApiQueryValidationError,
     data_api_columns_param,
+    data_api_filtered_query,
     data_api_invalid_column,
     data_api_options_response,
     data_api_options_sql,
+    data_api_query_limit,
+    data_api_select_clause,
 )
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns,
@@ -149,6 +153,53 @@ def test_data_api_payload_helpers_preserve_options_contract():
             {"col": "cliente", "val": None},
         ],
     ) == {"revenue_manager": ["Ana"], "cliente": ["123"]}
+
+
+def test_data_api_filtered_query_builds_parameterized_sql():
+    query = data_api_filtered_query(
+        "ventas",
+        filters={
+            "region": ["Norte", "Sur"],
+            "unsafe-col": "ignored",
+            "empty": "",
+            "fiscal_year": [2025],
+        },
+        limit=data_api_query_limit("99999"),
+        columns=["region", "bad-col", "*"],
+    )
+
+    assert query.limit == 10000
+    assert query.params == ["Norte", "Sur", "2025"]
+    assert "Norte" not in query.sql
+    assert "unsafe-col" not in query.sql
+    assert "bad-col" not in query.sql
+    assert "region IN (?,?)" in query.sql
+    assert "EXTRACT(MONTH FROM mes)" in query.sql
+    assert query.sql.endswith("LIMIT 10000")
+    assert data_api_select_clause(["valid", "bad-col"]) == "valid"
+    assert data_api_select_clause(["bad-col"]) == "*"
+
+
+def test_data_api_filtered_query_rejects_unsafe_filter_shapes():
+    try:
+        data_api_filtered_query("ventas", filters=[], limit=100, columns=["*"])
+    except DataApiQueryValidationError as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "filters must be an object"
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected DataApiQueryValidationError")
+
+    try:
+        data_api_filtered_query(
+            "ventas",
+            filters={"region": ["v"] * 101},
+            limit=100,
+            columns=["*"],
+        )
+    except DataApiQueryValidationError as exc:
+        assert "100" in exc.detail
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected DataApiQueryValidationError")
 
 
 def test_semantic_enrichment_candidates_describes_missing_columns():

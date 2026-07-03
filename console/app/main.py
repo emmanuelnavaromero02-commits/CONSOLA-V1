@@ -61,10 +61,13 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_query_args as _catalog_query_args,
 )
 from app.domains.data_platform.data_api_payloads import (
+    DataApiQueryValidationError as _DataApiQueryValidationError,
     data_api_columns_param as _data_api_columns_param,
+    data_api_filtered_query as _data_api_filtered_query,
     data_api_invalid_column as _data_api_invalid_column,
     data_api_options_response as _data_api_options_response,
     data_api_options_sql as _data_api_options_sql,
+    data_api_query_limit as _data_api_query_limit,
 )
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns as _dataset_detail_columns,
@@ -4438,67 +4441,24 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     fiscal_year uses March-February logic automatically.
     """
     _validate_dataset_name(dataset)
-    import re as _re
 
     filters = body.get("filters", {})
-    limit = min(int(body.get("limit", 2000)), 10000)
+    limit = _data_api_query_limit(body.get("limit", 2000))
     columns = body.get("columns", ["*"])
 
     # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
     _user_context = _rls_user_context(_user)
 
-    # Validate column names
-    safe_cols = []
-    for col in columns:
-        if col == "*" or _re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col):
-            safe_cols.append(col)
-    select_clause = ", ".join(safe_cols) if safe_cols else "*"
-
-    if not isinstance(filters, dict):
-        raise HTTPException(400, "filters must be an object")
-    if len(filters) > 20:
-        raise HTTPException(400, "Too many filters (max 20)")
-
-    # Build a parameterized query — values go into `params`, never interpolated into SQL.
-    # Column/table identifiers are allowlisted via regex; only values are parametrized.
-    params: list = []
-
-    def _add_param(v) -> str:
-        """Append value to params list and return a DuckDB positional placeholder."""
-        s = str(v)
-        if len(s) > 500:
-            raise HTTPException(400, "Filter value too long (max 500 chars)")
-        params.append(s)
-        return "?"
-
-    conditions = []
-    for key, val in filters.items():
-        if val is None or val == "" or val == []:
-            continue
-        if key == "fiscal_year":
-            # March-February fiscal year: month<=2 belongs to previous calendar year.
-            # fiscal_year values must be integers — cast before adding to params.
-            fy_expr = "(CASE WHEN EXTRACT(MONTH FROM mes)<=2 THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END)"
-            vals = val if isinstance(val, list) else [val]
-            if len(vals) > 50:
-                raise HTTPException(400, "Too many fiscal_year values (max 50)")
-            placeholders = ",".join(_add_param(int(v)) for v in vals)
-            conditions.append(f"{fy_expr} IN ({placeholders})")
-        elif _re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
-            vals = val if isinstance(val, list) else [val]
-            if len(vals) > 100:
-                raise HTTPException(
-                    400, f"Too many values for filter '{key}' (max 100)"
-                )
-            if len(vals) == 1:
-                conditions.append(f"{key} = {_add_param(vals[0])}")
-            else:
-                placeholders = ",".join(_add_param(v) for v in vals)
-                conditions.append(f"{key} IN ({placeholders})")
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
+    try:
+        filtered_query = _data_api_filtered_query(
+            dataset,
+            filters=filters,
+            limit=limit,
+            columns=columns,
+        )
+    except _DataApiQueryValidationError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(
@@ -4506,9 +4466,9 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
             json=_mcp_payload(
                 "preview_transform",
                 {
-                    "sql": sql,
-                    "params": params,
-                    "limit": limit,
+                    "sql": filtered_query.sql,
+                    "params": filtered_query.params,
+                    "limit": filtered_query.limit,
                     "user_context": _user_context,
                 },
                 _user,
