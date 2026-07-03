@@ -73,6 +73,7 @@ from app.domains.agentops.invocation import (
     agent_schedule_due as _agent_schedule_due_impl,
     parse_agent_scheduled_fire_at as _parse_agent_scheduled_fire_at_impl,
 )
+from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
@@ -2180,14 +2181,7 @@ async def tokens_summary(user: dict = Depends(require_permission("copilot.use"))
 
 
 def _llm_secret_keys(data: dict) -> set[str]:
-    keys: set[str] = set()
-    for key in data.get("keys") or []:
-        if key:
-            keys.add(str(key))
-    for item in data.get("secrets") or []:
-        if isinstance(item, dict) and item.get("key"):
-            keys.add(str(item["key"]))
-    return keys
+    return _llm_secret_keys_impl(data)
 
 
 @app.get(
