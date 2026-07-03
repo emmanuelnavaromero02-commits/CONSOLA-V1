@@ -218,6 +218,87 @@ async def test_fetch_active_sync_run_returns_none_on_query_error():
     assert warnings[0][1] == {"exc_info": True}
 
 
+@pytest.mark.anyio
+async def test_fetch_sync_run_uses_scoped_lookup():
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        async def fetchrow(self, query, *args):
+            self.calls.append((query, args))
+            return {"run_id": "sync-now-1", "status": "partial"}
+
+    class FakeScope:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn, "tenant-1", "workspace-1"
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def get_db_pool():
+        return object()
+
+    async def scope_predicate(user, start_index, **kwargs):
+        assert user == {"sub": "user-1"}
+        assert start_index == 3
+        assert kwargs == {"refresh_columns": True}
+        return "AND workspace_id=$3", ["workspace-1"]
+
+    conn = FakeConn()
+
+    row = await sync_state.fetch_sync_run(
+        cartridge="sap_successfactors",
+        run_id="sync-now-1",
+        user={"sub": "user-1"},
+        get_db_pool=get_db_pool,
+        pipeline_runs_scope_predicate=scope_predicate,
+        scoped_db_for_user=lambda pool, user: FakeScope(conn),
+    )
+
+    assert row == {"run_id": "sync-now-1", "status": "partial"}
+    query, args = conn.calls[0]
+    assert "FROM pipeline_runs" in query
+    assert "cartridge_id=$1" in query
+    assert "run_id=$2" in query
+    assert "entity='__sync_now__'" in query
+    assert "AND workspace_id=$3" in query
+    assert args == ("sap_successfactors", "sync-now-1", "workspace-1")
+
+
+@pytest.mark.anyio
+async def test_fetch_sync_run_returns_none_without_row():
+    class FakeConn:
+        async def fetchrow(self, *_args):
+            return None
+
+    class FakeScope:
+        async def __aenter__(self):
+            return FakeConn(), None, None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def get_db_pool():
+        return object()
+
+    async def scope_predicate(*_args, **_kwargs):
+        return "", []
+
+    row = await sync_state.fetch_sync_run(
+        cartridge="sap_successfactors",
+        run_id="missing",
+        user=None,
+        get_db_pool=get_db_pool,
+        pipeline_runs_scope_predicate=scope_predicate,
+        scoped_db_for_user=lambda pool, user: FakeScope(),
+    )
+
+    assert row is None
+
+
 def test_sync_state_public_payload_uses_project_terminal_statuses():
     payload = sync_state.sync_public_payload(
         {"run_id": "r1", "status": "partial", "cartridge_id": "sap_successfactors"},

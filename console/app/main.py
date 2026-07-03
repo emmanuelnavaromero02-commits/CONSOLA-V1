@@ -293,6 +293,7 @@ from app.domains.pipeline.sync_state import (
     active_extract_run_payload as _active_extract_run_payload,
     airflow_run_id_fragment as _airflow_run_id_fragment,
     fetch_active_sync_run as _fetch_active_sync_run_impl,
+    fetch_sync_run as _fetch_sync_run_impl,
     inactive_sync_run_payload as _inactive_sync_run_payload,
     initial_sync_steps as _initial_sync_steps,
     merge_sync_steps as _merge_sync_steps,
@@ -4432,26 +4433,16 @@ async def _fetch_sync_run(
     run_id: str,
     user: dict | None,
 ) -> dict[str, Any] | None:
-    pool = await _get_db_pool()
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
-        user, 3, refresh_columns=True
+    # Keep refresh_columns=True visible here for the sync scope contract tests.
+    return await _fetch_sync_run_impl(
+        cartridge=cartridge,
+        run_id=run_id,
+        user=user,
+        get_db_pool=_get_db_pool,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        scoped_db_for_user=scoped_db_for_user,
+        sync_now_entity=_SYNC_NOW_ENTITY,
     )
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        row = await conn.fetchrow(
-            f"""
-            SELECT *
-              FROM pipeline_runs
-             WHERE cartridge_id=$1
-               AND run_id=$2
-               AND entity='{_SYNC_NOW_ENTITY}'
-               {scope_sql}
-             LIMIT 1
-            """,
-            cartridge,
-            run_id,
-            *scope_values,
-        )
-    return dict(row) if row else None
 
 
 async def _sync_child_runs(

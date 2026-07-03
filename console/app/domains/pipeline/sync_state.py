@@ -236,6 +236,38 @@ async def fetch_active_sync_run(
     return dict(row) if row else None
 
 
+async def fetch_sync_run(
+    *,
+    cartridge: str,
+    run_id: str,
+    user: dict[str, Any] | None,
+    get_db_pool: Any,
+    pipeline_runs_scope_predicate: Any,
+    scoped_db_for_user: Any,
+    sync_now_entity: str = SYNC_NOW_ENTITY,
+) -> dict[str, Any] | None:
+    pool = await get_db_pool()
+    scope_sql, scope_values = await pipeline_runs_scope_predicate(
+        user, 3, refresh_columns=True
+    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        row = await conn.fetchrow(
+            f"""
+            SELECT *
+              FROM pipeline_runs
+             WHERE cartridge_id=$1
+               AND run_id=$2
+               AND entity='{sync_now_entity}'
+               {scope_sql}
+             LIMIT 1
+            """,
+            cartridge,
+            run_id,
+            *scope_values,
+        )
+    return dict(row) if row else None
+
+
 def normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
     return sync_progress.normalize_sync_step_payload(
         step,
