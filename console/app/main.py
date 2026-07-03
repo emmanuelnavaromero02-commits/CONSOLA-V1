@@ -208,6 +208,12 @@ from app.domains.security.request_classification import (
     is_direct_static_html_request as _is_direct_static_html_request_impl,
     uses_rbac_dependency as _uses_rbac_dependency_impl,
 )
+from app.domains.security.internal_auth import (
+    internal_service_user as _internal_service_user_impl,
+    is_internal_service_actor as _is_internal_service_actor_impl,
+    require_effective_permission as _require_effective_permission_impl,
+    user_payload as _user_payload_impl,
+)
 from app.domains.pipeline.run_state import (
     airflow_log_attempt as _airflow_log_attempt,
     airflow_log_task_ids as _airflow_log_task_ids,
@@ -669,22 +675,11 @@ def _cartridge_vault_reveal_user(request: Request) -> dict | None:
 
 
 def _internal_service_user() -> dict:
-    return {
-        "id": 0,
-        "email": "internal@omega.local",
-        "role": ROLE_ADMIN,
-        "workspace_role": None,
-        "active_tenant_id": None,
-        "active_workspace_id": None,
-    }
+    return _internal_service_user_impl(role_admin=ROLE_ADMIN)
 
 
 def _user_payload(user: dict | None) -> dict | None:
-    if not user:
-        return None
-    payload = dict(user)
-    payload["permissions"] = sorted(get_effective_permissions(payload))
-    return payload
+    return _user_payload_impl(user, get_effective_permissions=get_effective_permissions)
 
 
 async def _internal_or_authenticated(request: Request) -> dict:
@@ -697,18 +692,15 @@ async def _internal_or_authenticated(request: Request) -> dict:
 
 
 def _is_internal_service_actor(user: dict | None) -> bool:
-    if not user:
-        return False
-    return (
-        int(user.get("id") or -1) == 0 and user.get("email") == "internal@omega.local"
-    )
+    return _is_internal_service_actor_impl(user)
 
 
 def _require_effective_permission(user: dict | None, permission: str) -> None:
-    if not has_permission(user, permission):
-        raise HTTPException(
-            status_code=403, detail=f"permission required: {permission}"
-        )
+    return _require_effective_permission_impl(
+        user,
+        permission,
+        has_permission=has_permission,
+    )
 
 
 app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
