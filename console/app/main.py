@@ -192,15 +192,15 @@ from app.domains.pipeline.concurrency import (
 )
 from app.services.db_scope import scoped_db_for_user
 from app.services.service_urls import (
-    app_env as _service_app_env,
-    env_float as _service_env_float,
-    env_int as _service_env_int,
-    is_private_public_url as _service_is_private_public_url,
-    is_production_env as _service_is_production_env,
-    public_url as _service_public_url,
-    running_in_container as _service_running_in_container,
-    service_url as _service_url_value,
-    vault_url as _service_vault_url,
+    app_env as _app_env,
+    env_float as _env_float,
+    env_int as _env_int,
+    is_private_public_url as _is_private_public_url,
+    is_production_env as _is_production_env,
+    public_url as _public_url,
+    running_in_container as _running_in_container,
+    service_url as _service_url,
+    vault_url as _vault_url,
 )
 from app.services import request_rate_limits as _request_rate_limits
 from app.services import security_headers as _security_headers
@@ -274,56 +274,11 @@ _apply_security_headers = _security_headers.apply_security_headers
 _inject_published_app_theme = _security_headers.inject_published_app_theme
 
 
-def _env_float(name: str, default: float) -> float:
-    return _service_env_float(name, default)
-
-
-def _env_int(name: str, default: int) -> int:
-    return _service_env_int(name, default)
-
-
 PIPELINE_DAG_STATUS_TIMEOUT_SEC = _env_float("PIPELINE_DAG_STATUS_TIMEOUT_SEC", 1.5)
 PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC = _env_float(
     "PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC", 2.5
 )
 PIPELINE_DATASETS_TIMEOUT_SEC = _env_float("PIPELINE_DATASETS_TIMEOUT_SEC", 4.0)
-
-
-def _app_env() -> str:
-    return _service_app_env()
-
-
-def _is_production_env() -> bool:
-    return _service_is_production_env()
-
-
-def _public_url(
-    env_name: str,
-    *,
-    fallback_env: str | None = None,
-    development_default: str = "",
-) -> str:
-    return _service_public_url(
-        env_name,
-        fallback_env=fallback_env,
-        development_default=development_default,
-    )
-
-
-def _is_private_public_url(value: str) -> bool:
-    return _service_is_private_public_url(value)
-
-
-def _running_in_container() -> bool:
-    return _service_running_in_container()
-
-
-def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
-    return _service_url_value(env_name, docker_default, local_default)
-
-
-def _vault_url() -> str:
-    return _service_vault_url()
 
 
 from app.services import (

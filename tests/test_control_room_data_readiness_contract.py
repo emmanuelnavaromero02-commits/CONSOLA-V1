@@ -90,6 +90,7 @@ def test_dashboard_exposes_data_readiness_in_backend_and_ui():
 def test_readyz_supports_strict_control_room_data_mode():
     main_src = _read(REPO / "console/app/main.py")
     router_src = _read(REPO / "console/app/routers/v1/system.py")
+    readyz_data_src = _read(REPO / "console/app/services/readyz_data.py")
     makefile = _read(REPO / "Makefile")
     for src in (main_src, router_src):
         assert "control_room_data" in src
@@ -100,8 +101,8 @@ def test_readyz_supports_strict_control_room_data_mode():
         assert "intelligence_opt_out_allowed" in src
         assert "require_data=require_intelligence_data" in src
         assert re.search(r"status_code=200 if ok else 503", src)
-    assert "silver_lineage" in main_src
-    assert "lineage_gold_rows" in main_src
+    assert "silver_lineage" in readyz_data_src
+    assert "lineage_gold_rows" in readyz_data_src
     intelligence = _read(REPO / "console/app/services/intelligence/readiness.py")
     assert "def _lineage_gold_counts" in intelligence
     assert '"source": "silver_lineage"' in intelligence
