@@ -30,6 +30,12 @@ from app.domains.security.internal_auth import (
     internal_outbound_headers as _internal_outbound_headers_impl,
     internal_outbound_key as _internal_outbound_key_impl,
 )
+from app.domains.studio.validation import (
+    clean_dag_id as _clean_dag_id_impl,
+    clean_filename as _clean_filename_impl,
+    clean_identifier as _clean_identifier_impl,
+    valid_identifier as _valid_identifier_impl,
+)
 from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
@@ -63,9 +69,6 @@ SUPERSET_INTERNAL_ONLY_MESSAGE = (
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_SAFE_DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
-_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _MAX_SPEC_BYTES = 2 * 1024 * 1024
 _MAX_METADATA_BYTES = 5 * 1024 * 1024
 _BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
@@ -128,10 +131,7 @@ def _mcp_payload(tool: str, args: dict[str, Any], user: dict | None = None) -> d
 
 
 def _clean_identifier(value: str, *, label: str) -> str:
-    ident = (value or "").strip()
-    if not _IDENT_RE.fullmatch(ident):
-        raise HTTPException(400, f"Invalid {label}: use letters, numbers and underscores only")
-    return ident
+    return _clean_identifier_impl(value, label=label)
 
 
 def _schema_entities_from_fields(fields_by_entity: dict[str, list[schema_introspect.Field]]) -> list[dict[str, Any]]:
@@ -672,7 +672,7 @@ async def _live_sql_introspection(args: dict[str, Any], connection: dict[str, An
     }
     if not table_filter:
         return [], "tables are required for SQL introspection"
-    if any(not _IDENT_RE.fullmatch(table) for table in table_filter):
+    if any(not _valid_identifier_impl(table) for table in table_filter):
         return [], "table names must use letters, numbers and underscores only"
     parsed_dsn = urlparse(dsn)
     dsn_query = parse_qs(parsed_dsn.query, keep_blank_values=True)
@@ -1240,15 +1240,11 @@ studio_assistant.register_local_tool(
 
 
 def _clean_filename(value: str) -> str:
-    name = _SAFE_FILENAME_RE.sub("_", os.path.basename(value or "spec.yaml")).strip("._")
-    return name or "spec.yaml"
+    return _clean_filename_impl(value)
 
 
 def _clean_dag_id(value: str) -> str:
-    dag_id = (value or "").strip()
-    if not _SAFE_DAG_ID_RE.fullmatch(dag_id):
-        raise HTTPException(400, "Invalid dag_id: use letters, numbers and underscores only")
-    return dag_id
+    return _clean_dag_id_impl(value)
 
 
 def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:
