@@ -57,6 +57,11 @@ from app.domains.data_platform.schema_payloads import (
     schema_payload_warnings as _schema_payload_warnings,
     schema_status as _schema_status,
 )
+from app.domains.data_platform.rag_payloads import (
+    rag_empty_answer as _rag_empty_answer,
+    rag_search_arguments as _rag_search_arguments,
+    rag_synthesis_messages as _rag_synthesis_messages,
+)
 from app.domains.data_platform.scoped_reads import (
     BRONZE_LOGICAL_READ_PARQUET_CALL_RE as _BRONZE_LOGICAL_READ_PARQUET_CALL_RE,
     BRONZE_LOGICAL_READ_PARQUET_PATH_RE as _BRONZE_LOGICAL_READ_PARQUET_PATH_RE,
@@ -9247,26 +9252,15 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_permission("datas
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
 
-    query = (body.get("query") or "").strip()
+    search_args = _rag_search_arguments(body)
+    query = search_args["query"]
     if not query:
         raise HTTPException(400, "Missing 'query'")
-    top_k = int(body.get("top_k") or 5)
-    source_ids = body.get("source_ids") or None
-    kinds = body.get("kinds") or None
 
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(
             f"{_RAG_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "search_rag",
-                {
-                    "query": query,
-                    "top_k": top_k,
-                    "source_ids": source_ids,
-                    "kinds": kinds,
-                },
-                user,
-            ),
+            json=_mcp_payload("search_rag", search_args, user),
         )
         if r.status_code >= 400:
             raise HTTPException(
@@ -9275,33 +9269,17 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_permission("datas
         results = (r.json().get("result") or {}).get("results") or []
 
     if not results:
-        return {
-            "answer": "No encontré información relacionada en las fuentes ingeridas.",
-            "results": [],
-        }
+        return _rag_empty_answer()
 
-    ctx_blocks = []
-    for i, h in enumerate(results, start=1):
-        src = h.get("source_name") or "?"
-        body_text = h.get("context") or h.get("child_content") or ""
-        ctx_blocks.append(f"[{i}] Fuente: {src}\n{body_text}")
-    context = "\n\n---\n\n".join(ctx_blocks)
-
-    system = (
-        "Eres un asistente que responde preguntas usando ÚNICAMENTE el contexto provisto. "
-        "Si la respuesta no está en el contexto, di explícitamente que no la encuentras. "
-        "Cita las fuentes usando el formato [n] al final de cada afirmación. "
-        "Sé conciso y responde en el idioma de la pregunta."
-    )
-    user_msg = f"Contexto:\n\n{context}\n\nPregunta: {query}"
+    rag_messages = _rag_synthesis_messages(query, results)
 
     try:
         _llm._ensure_provider_configured("anthropic")
         resp = await _llm._anthropic_client().messages.create(
             model=_llm._resolve_chat_model(None),
             max_tokens=1024,
-            system=system,
-            messages=[{"role": "user", "content": user_msg}],
+            system=rag_messages["system"],
+            messages=[{"role": "user", "content": rag_messages["user"]}],
         )
         answer = (
             next(

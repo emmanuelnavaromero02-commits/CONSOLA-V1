@@ -9,6 +9,12 @@ from app.domains.data_platform.schema_payloads import (
     schema_message,
     schema_status,
 )
+from app.domains.data_platform.rag_payloads import (
+    rag_context_from_results,
+    rag_empty_answer,
+    rag_search_arguments,
+    rag_synthesis_messages,
+)
 from app.domains.data_platform.semantic_enrichment import (
     semantic_enrichment_candidates,
 )
@@ -113,6 +119,41 @@ def test_semantic_enrichment_candidates_describes_missing_columns():
     assert payload["entries"][0]["dataset"] == "employee_profile"
     assert payload["entries"][0]["column_name"] == "employee_id"
     assert "key" in payload["entries"][0]["tags"]
+
+
+def test_rag_payload_helpers_preserve_existing_request_shape():
+    assert rag_search_arguments(
+        {
+            "query": "  quien falta  ",
+            "top_k": "3",
+            "source_ids": [],
+            "kinds": ["dataset"],
+        }
+    ) == {
+        "query": "quien falta",
+        "top_k": 3,
+        "source_ids": None,
+        "kinds": ["dataset"],
+    }
+    assert rag_empty_answer() == {
+        "answer": "No encontré información relacionada en las fuentes ingeridas.",
+        "results": [],
+    }
+
+
+def test_rag_synthesis_messages_build_cited_context():
+    results = [
+        {"source_name": "dataset_a", "context": "Dato A"},
+        {"source_name": "", "child_content": "Dato B"},
+    ]
+
+    assert rag_context_from_results(results) == (
+        "[1] Fuente: dataset_a\nDato A\n\n---\n\n[2] Fuente: ?\nDato B"
+    )
+    messages = rag_synthesis_messages("Que pasa?", results)
+    assert "ÚNICAMENTE el contexto provisto" in messages["system"]
+    assert "[1] Fuente: dataset_a" in messages["user"]
+    assert "Pregunta: Que pasa?" in messages["user"]
 
 
 def test_technical_source_visibility_requires_active_scope():
