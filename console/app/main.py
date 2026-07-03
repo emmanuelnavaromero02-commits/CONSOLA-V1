@@ -64,11 +64,14 @@ from app.domains.data_platform.scoped_reads import (
     SAFE_BRONZE_SOURCE_SEGMENT_RE as _SAFE_BRONZE_SOURCE_SEGMENT_RE,
     SCOPED_READ_CACHE as _SCOPED_READ_CACHE,
     SCOPED_READ_CACHE_LOCKS as _SCOPED_READ_CACHE_LOCKS,
+    bronze_latest_date_from_objects as _bronze_latest_date_from_objects,
+    bronze_latest_s3_glob as _bronze_latest_s3_glob,
     bronze_bucket_name as _bronze_bucket_name,
     bronze_source_from_reader_path as _bronze_source_from_reader_path,
     infer_bronze_sources_from_sql as _infer_bronze_sources_from_sql,
     merge_declared_and_inferred_bronze_sources as _merge_declared_and_inferred_bronze_sources,
     rewrite_bronze_logical_paths as _rewrite_bronze_logical_paths,
+    safe_pipeline_name as _safe_pipeline_name,
     scoped_bronze_s3_path as _scoped_bronze_s3_path,
     scoped_cache_identity as _scoped_cache_identity,
     scoped_read_cache_get as _scoped_read_cache_get,
@@ -861,48 +864,6 @@ def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
     if user is not None:
         payload["security_context"] = build_security_context(user)
     return payload
-
-
-def _safe_pipeline_name(value: str) -> bool:
-    return bool(DATASET_NAME_RE.fullmatch(value or ""))
-
-
-def _bronze_latest_date_from_objects(
-    cartridge: str, entity: str, object_names: list[str]
-) -> str | None:
-    if not _safe_pipeline_name(cartridge) or not _safe_pipeline_name(entity):
-        return None
-
-    prefix = f"raw/{cartridge}/{entity}/"
-    pattern = re.compile(
-        rf"^{re.escape(prefix)}(?:tenant_id=[^/]+/workspace_id=[^/]+/)?load_date=(\d{{4}}-\d{{2}}-\d{{2}})/.+\.parquet$"
-    )
-    dates = []
-    for object_name in object_names:
-        match = pattern.match(object_name or "")
-        if match:
-            dates.append(match.group(1))
-    return max(dates) if dates else None
-
-
-def _bronze_latest_s3_glob(source: str, latest_date: str, user: dict | None) -> str:
-    path = str(source or "").strip().strip("/")
-    parts = path.split("/")
-    if (
-        len(parts) < 3
-        or parts[0] != "raw"
-        or any(part in {"", ".", ".."} for part in parts)
-    ):
-        raise HTTPException(400, "Invalid bronze source path")
-    bucket = _bronze_bucket_name()
-    try:
-        tenant_id, workspace_id = _workspace_scope_from_user(user)
-    except HTTPException:
-        return f"s3://{bucket}/{path}/load_date={latest_date}/**/*.parquet"
-    return (
-        f"s3://{bucket}/{path}/tenant_id={tenant_id}/"
-        f"workspace_id={workspace_id}/load_date={latest_date}/**/*.parquet"
-    )
 
 
 def _minio_client():

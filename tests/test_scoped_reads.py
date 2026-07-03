@@ -55,6 +55,29 @@ def test_merge_declared_and_inferred_sources_preserves_order():
     ]
 
 
+def test_bronze_latest_date_from_objects_supports_scoped_and_legacy_paths():
+    assert scoped_reads.bronze_latest_date_from_objects(
+        "sap_successfactors",
+        "User",
+        [
+            "raw/sap_successfactors/User/load_date=2026-06-28/part-000.parquet",
+            (
+                "raw/sap_successfactors/User/tenant_id=t1/workspace_id=w1/"
+                "load_date=2026-06-29/part-000.parquet"
+            ),
+            "raw/sap_successfactors/User/load_date=2026-06-27/not-parquet.csv",
+        ],
+    ) == "2026-06-29"
+
+
+def test_bronze_latest_date_from_objects_rejects_unsafe_names():
+    assert scoped_reads.bronze_latest_date_from_objects(
+        "sap_successfactors",
+        "../User",
+        ["raw/sap_successfactors/User/load_date=2026-06-28/part-000.parquet"],
+    ) is None
+
+
 def test_scoped_bronze_s3_path_uses_tenant_workspace_partitions(monkeypatch):
     monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
 
@@ -75,6 +98,30 @@ def test_scoped_bronze_s3_path_rejects_prepartitioned_paths():
         )
 
     assert exc.value.status_code == 400
+
+
+def test_bronze_latest_s3_glob_uses_scope_when_available(monkeypatch):
+    monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
+
+    assert scoped_reads.bronze_latest_s3_glob(
+        "raw/sap_successfactors/User",
+        "2026-06-29",
+        USER,
+    ) == (
+        "s3://lakehouse-test/raw/sap_successfactors/User/"
+        "tenant_id=tenant-1/workspace_id=workspace-1/"
+        "load_date=2026-06-29/**/*.parquet"
+    )
+
+
+def test_bronze_latest_s3_glob_falls_back_without_scope(monkeypatch):
+    monkeypatch.setenv("S3_BUCKET_NAME", "lakehouse-test")
+
+    assert scoped_reads.bronze_latest_s3_glob(
+        "raw/sap_successfactors/User",
+        "2026-06-29",
+        None,
+    ) == "s3://lakehouse-test/raw/sap_successfactors/User/load_date=2026-06-29/**/*.parquet"
 
 
 def test_rewrite_bronze_logical_paths_adds_scoped_read_options(monkeypatch):

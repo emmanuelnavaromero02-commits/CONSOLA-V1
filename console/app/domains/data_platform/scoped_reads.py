@@ -31,6 +31,7 @@ BRONZE_READ_PARQUET_SOURCE_RE = re.compile(
     re.IGNORECASE,
 )
 SAFE_BRONZE_SOURCE_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+SAFE_PIPELINE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 SCOPED_READ_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
 SCOPED_READ_CACHE_LOCKS: dict[tuple[Any, ...], asyncio.Lock] = {}
@@ -87,6 +88,28 @@ def merge_declared_and_inferred_bronze_sources(
             seen.add(value)
             merged.append(value)
     return merged
+
+
+def safe_pipeline_name(value: str) -> bool:
+    return bool(SAFE_PIPELINE_NAME_RE.fullmatch(value or ""))
+
+
+def bronze_latest_date_from_objects(
+    cartridge: str, entity: str, object_names: list[str]
+) -> str | None:
+    if not safe_pipeline_name(cartridge) or not safe_pipeline_name(entity):
+        return None
+
+    prefix = f"raw/{cartridge}/{entity}/"
+    pattern = re.compile(
+        rf"^{re.escape(prefix)}(?:tenant_id=[^/]+/workspace_id=[^/]+/)?load_date=(\d{{4}}-\d{{2}}-\d{{2}})/.+\.parquet$"
+    )
+    dates = []
+    for object_name in object_names:
+        match = pattern.match(object_name or "")
+        if match:
+            dates.append(match.group(1))
+    return max(dates) if dates else None
 
 
 def workspace_scope_from_user(user: dict | None) -> tuple[str, str]:
@@ -239,6 +262,26 @@ def scoped_bronze_s3_path(logical_path: str, user: dict | None) -> str:
     return (
         f"s3://{bronze_bucket_name()}/{path}/"
         f"tenant_id={tenant_id}/workspace_id={workspace_id}/**/*.parquet"
+    )
+
+
+def bronze_latest_s3_glob(source: str, latest_date: str, user: dict | None) -> str:
+    path = str(source or "").strip().strip("/")
+    parts = path.split("/")
+    if (
+        len(parts) < 3
+        or parts[0] != "raw"
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise HTTPException(400, "Invalid bronze source path")
+    bucket = bronze_bucket_name()
+    try:
+        tenant_id, workspace_id = workspace_scope_from_user(user)
+    except HTTPException:
+        return f"s3://{bucket}/{path}/load_date={latest_date}/**/*.parquet"
+    return (
+        f"s3://{bucket}/{path}/tenant_id={tenant_id}/"
+        f"workspace_id={workspace_id}/load_date={latest_date}/**/*.parquet"
     )
 
 
