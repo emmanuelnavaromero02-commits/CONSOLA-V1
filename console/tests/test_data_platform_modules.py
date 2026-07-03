@@ -13,6 +13,7 @@ from app.domains.data_platform.data_api_payloads import (
     data_api_options_sql,
     data_api_query_limit,
     data_api_select_clause,
+    data_api_valid_dataset_name,
 )
 from app.domains.data_platform.schema_payloads import (
     bronze_schema_payload,
@@ -192,6 +193,11 @@ def test_data_api_payload_helpers_preserve_options_contract():
     assert data_api_columns_param("") == []
     assert data_api_invalid_column(["good_column", "bad column"]) == "bad column"
     assert data_api_invalid_column(["good_column"]) is None
+    assert data_api_valid_dataset_name("gold_sales")
+    assert data_api_valid_dataset_name("_gold_sales_2026")
+    assert not data_api_valid_dataset_name("bad-name")
+    assert not data_api_valid_dataset_name("1bad")
+    assert not data_api_valid_dataset_name("")
     assert data_api_options_sql("gold_sales", columns) == (
         "SELECT DISTINCT revenue_manager AS val, 'revenue_manager' AS col "
         "FROM pggold.gold_gold_sales WHERE revenue_manager IS NOT NULL UNION ALL "

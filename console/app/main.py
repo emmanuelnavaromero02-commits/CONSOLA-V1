@@ -117,6 +117,7 @@ from app.domains.data_platform.data_api_payloads import (
     data_api_options_response as _data_api_options_response,
     data_api_options_sql as _data_api_options_sql,
     data_api_query_limit as _data_api_query_limit,
+    data_api_valid_dataset_name as _data_api_valid_dataset_name,
 )
 from app.domains.data_platform.gold_catalog import (
     GoldCatalogRuntime as _GoldCatalogRuntime,
@@ -407,7 +408,6 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 SECURITY_HEADERS = _security_headers.SECURITY_HEADERS
@@ -797,7 +797,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
 def _validate_dataset_name(dataset: str) -> None:
-    if not DATASET_NAME_RE.fullmatch(dataset or ""):
+    if not _data_api_valid_dataset_name(dataset):
         raise HTTPException(400, "Invalid dataset name")
 
 

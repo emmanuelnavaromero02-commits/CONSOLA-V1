@@ -48,6 +48,10 @@ def data_api_invalid_column(columns: Iterable[str]) -> str | None:
     return None
 
 
+def data_api_valid_dataset_name(dataset: str | None) -> bool:
+    return bool(DATA_API_IDENTIFIER_RE.fullmatch(dataset or ""))
+
+
 def data_api_options_sql(dataset: str, columns: list[str]) -> str:
     """Build the legacy distinct-options SQL used by Refinement."""
 
