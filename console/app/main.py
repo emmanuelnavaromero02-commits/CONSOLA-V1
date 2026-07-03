@@ -240,6 +240,9 @@ from app.domains.pipeline.sync_state import (
 from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
 )
+from app.domains.pipeline.airflow_trigger import (
+    trigger_airflow_extract_dag as _trigger_airflow_extract_dag_impl,
+)
 from app.domains.pipeline.extract_config import (
     apply_user_scope_to_dag_conf as _apply_user_scope_to_dag_conf_impl,
     build_dag_extract_conf as _build_dag_extract_conf_impl,
@@ -6014,25 +6017,21 @@ async def _trigger_airflow_extract_dag(
     user: dict | None,
     dag_run_id: str | None = None,
 ) -> dict:
-    scoped_conf = _apply_user_scope_to_dag_conf(conf, user)
-    result: dict = {}
-    for attempt in range(5):
-        args = {
-            "dag_id": dag_id,
-            "conf": scoped_conf,
-        }
-        if dag_run_id:
-            args["dag_run_id"] = dag_run_id
-        result = await mcp_registry.invoke(
-            "infra", "airflow_trigger_dag", args, user=user
+    async def _airflow_trigger(args: dict, current_user: dict | None) -> dict:
+        return await mcp_registry.invoke(
+            "infra", "airflow_trigger_dag", args, user=current_user
         )
-        error = result.get("error")
-        if not error:
-            return result
-        if not _is_transient_airflow_trigger_error(error) or attempt == 4:
-            return result
-        await asyncio.sleep(4)
-    return result
+
+    return await _trigger_airflow_extract_dag_impl(
+        dag_id,
+        conf,
+        user,
+        dag_run_id,
+        scoped_conf_builder=_apply_user_scope_to_dag_conf,
+        airflow_trigger=_airflow_trigger,
+        transient_error_checker=_is_transient_airflow_trigger_error,
+        sleep=asyncio.sleep,
+    )
 
 
 def _is_transient_airflow_trigger_error(error: str) -> bool:
