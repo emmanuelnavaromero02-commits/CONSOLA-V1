@@ -140,6 +140,10 @@ from app.services.db_pool import (
 )
 from app.services.mcp_payloads import mcp_payload as _mcp_payload
 from app.services.rate_limiter import get_rate_limiter
+from app.services.readyz_dependencies import (
+    READYZ_DEPENDENCY_CACHE as _READYZ_DEPENDENCY_CACHE,
+    dependency_health as _readyz_dependency_health,
+)
 from app.services.runtime_calls import (
     call_with_optional_user as _call_with_optional_user,
     runtime_user as _runtime_user,
@@ -1831,86 +1835,16 @@ async def healthz():
     }
 
 
-_READYZ_DEPENDENCY_CACHE: dict[str, dict] = {}
-
-
-def _float_env(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _readyz_dependency_cache_key(name: str, url: str) -> str:
-    return f"{name}:{url}"
-
-
-def _readyz_dependency_cache_ttl() -> float:
-    return max(0.0, _float_env("READYZ_DEPENDENCY_CACHE_TTL_SECONDS", 15.0))
-
-
-def _readyz_dependency_stale_ttl() -> float:
-    return max(0.0, _float_env("READYZ_DEPENDENCY_STALE_TTL_SECONDS", 600.0))
-
-
-def _readyz_dependency_timeout() -> float:
-    return max(0.5, _float_env("READYZ_DEPENDENCY_TIMEOUT_SECONDS", 30.0))
-
-
 async def _dependency_health(name: str, url: str, server: str | None = None) -> dict:
-    if not url:
-        return {"status": "down", "error": "missing_url"}
-    cache_key = _readyz_dependency_cache_key(name, url)
-    now = time.monotonic()
-    cached = _READYZ_DEPENDENCY_CACHE.get(cache_key)
-    if (
-        cached
-        and now - float(cached.get("checked_at", 0.0)) <= _readyz_dependency_cache_ttl()
-    ):
-        return dict(cached["result"])
-    try:
-        headers = _hdr_for(server) if server else {}
-        async with httpx.AsyncClient(
-            headers=headers, timeout=_readyz_dependency_timeout()
-        ) as c:
-            r = await c.get(url)
-        status = "up" if r.status_code < 500 else "down"
-        result = {"status": status, "code": r.status_code}
-        _READYZ_DEPENDENCY_CACHE[cache_key] = {
-            "checked_at": now,
-            "result": result,
-            "last_up_at": now if status == "up" else (cached or {}).get("last_up_at"),
-            "last_up_result": result
-            if status == "up"
-            else (cached or {}).get("last_up_result"),
-        }
-        return dict(result)
-    except Exception as exc:
-        logger.warning("readiness probe failed for %s", name, exc_info=True)
-        if (
-            cached
-            and cached.get("last_up_result")
-            and now - float(cached.get("last_up_at", 0.0))
-            <= _readyz_dependency_stale_ttl()
-        ):
-            result = dict(cached["last_up_result"])
-            result["cached"] = True
-            result["stale"] = True
-            result["last_error"] = type(exc).__name__
-            _READYZ_DEPENDENCY_CACHE[cache_key] = {
-                **cached,
-                "checked_at": now,
-                "result": result,
-            }
-            return result
-        result = {"status": "down", "error": type(exc).__name__}
-        _READYZ_DEPENDENCY_CACHE[cache_key] = {
-            "checked_at": now,
-            "result": result,
-            "last_up_at": (cached or {}).get("last_up_at"),
-            "last_up_result": (cached or {}).get("last_up_result"),
-        }
-        return result
+    return await _readyz_dependency_health(
+        name,
+        url,
+        server,
+        header_factory=_hdr_for,
+        http_client_factory=httpx.AsyncClient,
+        monotonic=time.monotonic,
+        log=logger,
+    )
 
 
 async def _control_room_data_check(*, require_data: bool = False) -> dict:

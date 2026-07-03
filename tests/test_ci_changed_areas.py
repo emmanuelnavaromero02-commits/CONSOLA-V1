@@ -217,3 +217,18 @@ def test_console_runtime_call_helper_refactor_does_not_trigger_full_stack_releas
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
     assert flags["root_test_targets"] == "tests/test_runtime_calls.py"
+
+
+def test_console_readyz_dependency_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/readyz_dependencies.py",
+        "console/app/main.py",
+        "tests/test_readyz_dependencies.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_readyz_dependencies.py"

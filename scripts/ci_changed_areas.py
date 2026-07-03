@@ -56,6 +56,7 @@ CONSOLE_SERVICE_RELEASE_EXCLUDE = (
     r"^console/app/services/operations_service\.py$",
     r"^console/app/services/mcp_payloads\.py$",
     r"^console/app/services/request_rate_limits\.py$",
+    r"^console/app/services/readyz_dependencies\.py$",
     r"^console/app/services/runtime_calls\.py$",
     r"^console/app/services/security_headers\.py$",
     r"^console/app/services/service_urls\.py$",
