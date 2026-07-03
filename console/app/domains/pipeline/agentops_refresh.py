@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services import sync_progress
+
 
 async def run_sync_agentops_monitors(
     *,
@@ -153,3 +155,71 @@ async def run_sync_agentops_monitors(
         failed=failed,
         results=results,
     )
+
+
+async def run_sync_agentops_status(
+    *,
+    cartridge: str,
+    sync_run_id: str,
+    running_children: bool,
+    bronze_ready: int,
+    silver_ready: int,
+    gold_ready: int,
+    control_room_update: dict[str, Any],
+    agentops_refresh: dict[str, Any],
+    user: dict[str, Any] | None,
+    run_sync_agentops_monitors: Any,
+    sync_agentops_is_terminal: Any,
+    logger_warning: Any | None = None,
+) -> dict[str, Any]:
+    if cartridge == "sap_successfactors":
+        can_run_agentops = (
+            not running_children
+            and str(control_room_update.get("status") or "") in {"success", "partial"}
+            and bool(bronze_ready or silver_ready or gold_ready)
+        )
+        if can_run_agentops and not sync_agentops_is_terminal(agentops_refresh):
+            try:
+                agentops_refresh = await run_sync_agentops_monitors(
+                    cartridge=cartridge,
+                    sync_run_id=sync_run_id,
+                    user=user,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if logger_warning is not None:
+                    logger_warning(
+                        "sync AgentOps refresh failed cartridge=%s run_id=%s: %s",
+                        cartridge,
+                        sync_run_id,
+                        exc,
+                    )
+                agentops_refresh = {
+                    "status": "failed",
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "total": 1,
+                    "completed": 0,
+                    "failed": 1,
+                    "results": [],
+                    "reason": f"{type(exc).__name__}: {exc}"[:500],
+                }
+        update = sync_progress.sync_agents_intelligence_step_update(
+            applies=True,
+            can_run_agentops=can_run_agentops,
+            running_children=running_children,
+            agentops_refresh=agentops_refresh,
+        )
+    else:
+        can_run_agentops = False
+        agentops_refresh = {}
+        update = sync_progress.sync_agents_intelligence_step_update(
+            applies=False,
+            can_run_agentops=False,
+            running_children=running_children,
+            agentops_refresh={},
+        )
+
+    return {
+        "agentops_refresh": agentops_refresh,
+        "can_run_agentops": can_run_agentops,
+        "update": update,
+    }

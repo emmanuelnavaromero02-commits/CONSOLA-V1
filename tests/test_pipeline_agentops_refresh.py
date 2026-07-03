@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domains.pipeline.agentops_refresh import run_sync_agentops_monitors
+from app.domains.pipeline.agentops_refresh import (
+    run_sync_agentops_monitors,
+    run_sync_agentops_status,
+)
 from app.services import sync_agentops
 
 
@@ -120,3 +123,124 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
             },
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_run_sync_agentops_status_runs_successfactors_monitor_when_ready():
+    calls = []
+
+    async def run_monitors(**kwargs):
+        calls.append(kwargs)
+        return {
+            "status": "success",
+            "checked_at": "2026-07-03T00:00:00+00:00",
+            "total": 1,
+            "completed": 1,
+            "failed": 0,
+            "results": [{"status": "success"}],
+        }
+
+    status = await run_sync_agentops_status(
+        cartridge="sap_successfactors",
+        sync_run_id="sync-now-1",
+        running_children=False,
+        bronze_ready=1,
+        silver_ready=0,
+        gold_ready=0,
+        control_room_update={"status": "partial"},
+        agentops_refresh={},
+        user={"sub": "user-1"},
+        run_sync_agentops_monitors=run_monitors,
+        sync_agentops_is_terminal=lambda payload: False,
+        logger_warning=None,
+    )
+
+    assert calls == [
+        {
+            "cartridge": "sap_successfactors",
+            "sync_run_id": "sync-now-1",
+            "user": {"sub": "user-1"},
+        }
+    ]
+    assert status["can_run_agentops"] is True
+    assert status["agentops_refresh"]["status"] == "success"
+    assert status["update"]["status"] == "success"
+
+
+@pytest.mark.anyio
+async def test_run_sync_agentops_status_reuses_terminal_payload():
+    async def run_monitors(**_kwargs):
+        raise AssertionError("terminal payload should not trigger a monitor")
+
+    status = await run_sync_agentops_status(
+        cartridge="sap_successfactors",
+        sync_run_id="sync-now-1",
+        running_children=False,
+        bronze_ready=1,
+        silver_ready=1,
+        gold_ready=1,
+        control_room_update={"status": "success"},
+        agentops_refresh={"status": "success", "total": 1, "completed": 1},
+        user=None,
+        run_sync_agentops_monitors=run_monitors,
+        sync_agentops_is_terminal=lambda payload: payload.get("status") == "success",
+        logger_warning=None,
+    )
+
+    assert status["can_run_agentops"] is True
+    assert status["agentops_refresh"]["status"] == "success"
+    assert status["update"]["status"] == "success"
+
+
+@pytest.mark.anyio
+async def test_run_sync_agentops_status_captures_monitor_failure():
+    warnings = []
+
+    async def run_monitors(**_kwargs):
+        raise RuntimeError("agent runner offline")
+
+    status = await run_sync_agentops_status(
+        cartridge="sap_successfactors",
+        sync_run_id="sync-now-1",
+        running_children=False,
+        bronze_ready=1,
+        silver_ready=0,
+        gold_ready=0,
+        control_room_update={"status": "partial"},
+        agentops_refresh={},
+        user=None,
+        run_sync_agentops_monitors=run_monitors,
+        sync_agentops_is_terminal=lambda payload: False,
+        logger_warning=lambda *args, **kwargs: warnings.append((args, kwargs)),
+    )
+
+    assert warnings
+    assert status["can_run_agentops"] is True
+    assert status["agentops_refresh"]["status"] == "failed"
+    assert "agent runner offline" in status["agentops_refresh"]["reason"]
+    assert status["update"]["status"] == "failed"
+
+
+@pytest.mark.anyio
+async def test_run_sync_agentops_status_skips_non_successfactors_cartridge():
+    async def run_monitors(**_kwargs):
+        raise AssertionError("non SuccessFactors cartridges should not run here")
+
+    status = await run_sync_agentops_status(
+        cartridge="replicon",
+        sync_run_id="sync-now-1",
+        running_children=False,
+        bronze_ready=1,
+        silver_ready=1,
+        gold_ready=1,
+        control_room_update={"status": "success"},
+        agentops_refresh={"status": "success"},
+        user=None,
+        run_sync_agentops_monitors=run_monitors,
+        sync_agentops_is_terminal=lambda payload: True,
+        logger_warning=None,
+    )
+
+    assert status["can_run_agentops"] is False
+    assert status["agentops_refresh"] == {}
+    assert status["update"]["status"] == "skipped"

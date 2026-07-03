@@ -329,6 +329,7 @@ from app.domains.pipeline.concurrency import (
 )
 from app.domains.pipeline.agentops_refresh import (
     run_sync_agentops_monitors as _run_sync_agentops_monitors_impl,
+    run_sync_agentops_status as _run_sync_agentops_status_impl,
 )
 from app.domains.pipeline.control_room_refresh import (
     run_sync_control_room_gold_refresh as _run_sync_control_room_gold_refresh_impl,
@@ -4599,55 +4600,22 @@ async def _build_sync_run_status(
         if isinstance(extra.get("agentops_refresh"), dict)
         else {}
     )
-    if cartridge == "sap_successfactors":
-        can_run_agentops = (
-            not running_children
-            and str(updates.get("control_room", {}).get("status") or "")
-            in {"success", "partial"}
-            and bool(bronze_ready or silver_ready or gold_ready)
-        )
-        if can_run_agentops and not _sync_agentops_is_terminal(agentops_refresh):
-            try:
-                agentops_refresh = await _run_sync_agentops_monitors(
-                    cartridge=cartridge,
-                    sync_run_id=str(row["run_id"]),
-                    user=user,
-                )
-            except Exception as exc:  # noqa: BLE001
-                from datetime import datetime as _dt, timezone as _tz
-
-                logger.warning(
-                    "sync AgentOps refresh failed cartridge=%s run_id=%s: %s",
-                    cartridge,
-                    row.get("run_id"),
-                    exc,
-                )
-                agentops_refresh = {
-                    "status": "failed",
-                    "checked_at": _dt.now(_tz.utc).isoformat(),
-                    "total": 1,
-                    "completed": 0,
-                    "failed": 1,
-                    "results": [],
-                    "reason": f"{type(exc).__name__}: {exc}"[:500],
-                }
-        updates["agents_intelligence"] = (
-            _sync_progress.sync_agents_intelligence_step_update(
-                applies=True,
-                can_run_agentops=can_run_agentops,
-                running_children=running_children,
-                agentops_refresh=agentops_refresh,
-            )
-        )
-    else:
-        updates["agents_intelligence"] = (
-            _sync_progress.sync_agents_intelligence_step_update(
-                applies=False,
-                can_run_agentops=False,
-                running_children=running_children,
-                agentops_refresh={},
-            )
-        )
+    agentops_status = await _run_sync_agentops_status_impl(
+        cartridge=cartridge,
+        sync_run_id=str(row["run_id"]),
+        running_children=running_children,
+        bronze_ready=bronze_ready,
+        silver_ready=silver_ready,
+        gold_ready=gold_ready,
+        control_room_update=updates.get("control_room", {}),
+        agentops_refresh=agentops_refresh,
+        user=user,
+        run_sync_agentops_monitors=_run_sync_agentops_monitors,
+        sync_agentops_is_terminal=_sync_agentops_is_terminal,
+        logger_warning=logger.warning,
+    )
+    agentops_refresh = agentops_status["agentops_refresh"]
+    updates["agents_intelligence"] = agentops_status["update"]
 
     steps = _merge_sync_steps(steps, updates)
     status = _sync_status_from_steps(steps)
