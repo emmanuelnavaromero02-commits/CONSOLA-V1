@@ -202,6 +202,16 @@ from app.domains.pipeline.recording import (
     refresh_dag_run_status as _refresh_dag_run_status_impl,
     record_dag_pipeline_trigger as _record_dag_pipeline_trigger_impl,
 )
+from app.domains.pipeline.successfactors_reservation import (
+    active_entity_limit_payload as _sf_active_entity_limit_payload,
+    active_entity_run as _sf_active_entity_run,
+    active_entity_run_count as _sf_active_entity_run_count,
+    active_scope_args as _sf_active_scope_args,
+    extract_all_conflict as _sf_extract_all_conflict,
+    reservation_applies as _sf_reservation_applies,
+    reservation_extra as _sf_reservation_extra,
+    reservation_run_id as _sf_reservation_run_id,
+)
 from app.domains.pipeline.sync_state import (
     SAP_SUCCESSFACTORS_CARTRIDGE as _SAP_SUCCESSFACTORS_CARTRIDGE,
     SAP_SUCCESSFACTORS_ENTITY_DAG_ID as _SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
@@ -4236,9 +4246,11 @@ async def _reserve_successfactors_entity_extract_slot(
     user: dict | None,
     requested_dag_run_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if (
-        cartridge != _SAP_SUCCESSFACTORS_CARTRIDGE
-        or dag_id != _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
+    if not _sf_reservation_applies(
+        cartridge=cartridge,
+        dag_id=dag_id,
+        expected_cartridge=_SAP_SUCCESSFACTORS_CARTRIDGE,
+        entity_dag_id=_SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
     ):
         return None
 
@@ -4252,17 +4264,13 @@ async def _reserve_successfactors_entity_extract_slot(
     if scope_columns_present and not (tenant_id and workspace_id):
         raise HTTPException(403, "pipeline run tenant/workspace scope is required")
 
-    dag_run_id = requested_dag_run_id or (
-        f"console__{dag_id}__{_airflow_run_id_fragment(entity)}__{uuid.uuid4().hex}"
+    dag_run_id = _sf_reservation_run_id(
+        dag_id=dag_id,
+        requested_dag_run_id=requested_dag_run_id,
+        entity_fragment=_airflow_run_id_fragment(entity),
+        token=uuid.uuid4().hex,
     )
-    extra = json.dumps(
-        {
-            "raw_conf": conf,
-            "triggered_by": "console",
-            "reserved": True,
-            "reason": "successfactors_entity_extract_backpressure",
-        }
-    )
+    extra = _sf_reservation_extra(conf)
     pool = await _get_db_pool()
     try:
         async with pool.acquire() as conn:
@@ -4279,14 +4287,13 @@ async def _reserve_successfactors_entity_extract_slot(
                     _SAP_SUCCESSFACTORS_CARTRIDGE,
                     f"{tenant_id or '*'}:{workspace_id or '*'}",
                 )
-                scope_sql = ""
-                args: list[Any] = [
-                    _SAP_SUCCESSFACTORS_CARTRIDGE,
-                    _SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS,
-                ]
-                if scope_columns_present:
-                    scope_sql = "AND tenant_id=$3::uuid AND workspace_id=$4::uuid"
-                    args.extend([tenant_id, workspace_id])
+                scope_sql, args = _sf_active_scope_args(
+                    cartridge=_SAP_SUCCESSFACTORS_CARTRIDGE,
+                    active_window_seconds=_SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS,
+                    scope_columns_present=scope_columns_present,
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                )
                 rows = [
                     dict(row)
                     for row in await conn.fetch(
@@ -4305,61 +4312,42 @@ async def _reserve_successfactors_entity_extract_slot(
                     )
                 ]
 
-                for row in rows:
-                    if (
-                        row.get("dag_id") == _SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID
-                        and row.get("entity") == _SYNC_AGGREGATE_ENTITY
-                    ):
-                        raise HTTPException(
-                            429,
-                            detail={
-                                "reason": "extract_all_already_running",
-                                "message": (
-                                    "SAP SuccessFactors extract_all is already running; "
-                                    "wait for it to finish before triggering individual entities."
-                                ),
-                                "job_id": row.get("airflow_dag_run_id")
-                                or row.get("run_id"),
-                            },
+                extract_all_conflict = _sf_extract_all_conflict(
+                    rows,
+                    extract_all_dag_id=_SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID,
+                    aggregate_entity=_SYNC_AGGREGATE_ENTITY,
+                )
+                if extract_all_conflict:
+                    raise HTTPException(429, detail=extract_all_conflict)
+
+                active_row = _sf_active_entity_run(
+                    rows,
+                    entity=entity,
+                    entity_dag_id=_SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
+                )
+                if active_row:
+                    return {
+                        "response": _active_extract_run_payload(
+                            row=active_row,
+                            cartridge=cartridge,
+                            entity=entity,
+                            dag_id=dag_id,
+                            conf=conf,
+                            reason="active_entity_run",
                         )
+                    }
 
-                for row in rows:
-                    if (
-                        row.get("dag_id") == _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
-                        and row.get("entity") == entity
-                    ):
-                        return {
-                            "response": _active_extract_run_payload(
-                                row=row,
-                                cartridge=cartridge,
-                                entity=entity,
-                                dag_id=dag_id,
-                                conf=conf,
-                                reason="active_entity_run",
-                            )
-                        }
-
-                active_entity_runs = [
-                    row
-                    for row in rows
-                    if row.get("dag_id") == _SAP_SUCCESSFACTORS_ENTITY_DAG_ID
-                ]
-                if (
-                    len(active_entity_runs)
-                    >= _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS
-                ):
+                active_entity_runs = _sf_active_entity_run_count(
+                    rows,
+                    entity_dag_id=_SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
+                )
+                if active_entity_runs >= _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS:
                     raise HTTPException(
                         429,
-                        detail={
-                            "reason": "too_many_active_entity_extracts",
-                            "message": (
-                                "SAP SuccessFactors extraction backpressure: "
-                                f"{len(active_entity_runs)} active entity runs; "
-                                "use Extract All/sync or wait."
-                            ),
-                            "active": len(active_entity_runs),
-                            "limit": _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS,
-                        },
+                        detail=_sf_active_entity_limit_payload(
+                            active=active_entity_runs,
+                            limit=_SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS,
+                        ),
                     )
 
                 if scope_columns_present:
