@@ -44,6 +44,9 @@ from app.domains.apps.payloads import (
 from app.domains.apps.readiness import (
     gold_ready_datasets_for_apps as _gold_ready_datasets_for_apps_impl,
 )
+from app.domains.apps.service import (
+    apps_payload_visible_and_ready as _apps_payload_visible_and_ready_impl,
+)
 from app.domains.apps.scope import (
     active_scoped_connection_cartridges as _active_scoped_connection_cartridges_impl,
     installed_scoped_app_cartridges as _installed_scoped_app_cartridges_impl,
@@ -2984,37 +2987,28 @@ async def _apps_payload_visible_and_ready(
     include_unready: bool = False,
     cartridge: str | None = None,
 ) -> dict[str, Any]:
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke", json=_mcp_payload("list_apps", {}, user)
-        )
-    if r.status_code >= 400:
-        raise HTTPException(
-            r.status_code, _upstream_error_detail(r, "Apps service unavailable")
-        )
-    payload = r.json()
-    requested_cartridge = str(cartridge or "").strip()
-    if requested_cartridge:
-        _require_cartridge_visible(user, requested_cartridge)
-    payload_candidates = _app_payload_cartridge_candidates(payload)
-    candidates = {requested_cartridge} if requested_cartridge else payload_candidates
-    active_cartridges = await _active_scoped_connection_cartridges(user, candidates)
-    scope_mode = "active_connections"
-    if include_unready and not active_cartridges:
-        active_cartridges = await _installed_scoped_app_cartridges(user, candidates)
-        if active_cartridges:
-            scope_mode = "installed_cartridges"
-    scoped_payload = _filter_apps_payload_to_scoped_connections(
-        payload, active_cartridges, scope_mode=scope_mode
-    )
-    ready_datasets, readiness_mode = await _gold_ready_datasets_for_apps(
-        user, scoped_payload
-    )
-    return _filter_apps_payload_to_ready_datasets(
-        scoped_payload,
-        ready_datasets,
-        mode=readiness_mode,
+    async def _load_apps_payload(load_user: dict) -> Any:
+        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
+            response = await c.post(
+                f"{REFINEMENT_URL}/mcp/invoke",
+                json=_mcp_payload("list_apps", {}, load_user),
+            )
+        if response.status_code >= 400:
+            raise HTTPException(
+                response.status_code,
+                _upstream_error_detail(response, "Apps service unavailable"),
+            )
+        return response.json()
+
+    return await _apps_payload_visible_and_ready_impl(
+        user,
         include_unready=include_unready,
+        cartridge=cartridge,
+        load_apps_payload=_load_apps_payload,
+        require_cartridge_visible=_require_cartridge_visible,
+        active_scoped_connection_cartridges=_active_scoped_connection_cartridges,
+        installed_scoped_app_cartridges=_installed_scoped_app_cartridges,
+        gold_ready_datasets_for_apps=_gold_ready_datasets_for_apps,
     )
 
 
