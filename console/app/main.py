@@ -213,6 +213,8 @@ from app.domains.security.request_classification import (
     uses_rbac_dependency as _uses_rbac_dependency_impl,
 )
 from app.domains.security.internal_auth import (
+    internal_outbound_headers as _internal_outbound_headers_impl,
+    internal_outbound_key as _internal_outbound_key_impl,
     internal_service_user as _internal_service_user_impl,
     is_internal_service_actor as _is_internal_service_actor_impl,
     require_effective_permission as _require_effective_permission_impl,
@@ -593,27 +595,21 @@ def _key_for(server: str) -> str:
     secret if present, falling back to the shared legacy INTERNAL_API_KEY so
     that a half-migrated stack keeps working. ``server`` must be one of
     ``REFINEMENT`` / ``VAULT`` / ``MCP_INFRA``."""
-    pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
-    if pair:
-        return pair
-    if _is_production_env():
-        raise RuntimeError(
-            f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production"
-        )
-    if INTERNAL_API_KEY:
-        return INTERNAL_API_KEY
-    raise RuntimeError(
-        f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server} (no legacy fallback either)"
+    return _internal_outbound_key_impl(
+        server,
+        internal_api_key=INTERNAL_API_KEY,
+        is_production=_is_production_env(),
     )
 
 
 def _hdr_for(server: str) -> dict[str, str]:
     """Headers for an outbound internal call from console to ``server``."""
-    headers = {"x-api-key": _key_for(server), "x-internal-service": "console"}
-    rid = request_id_var.get()
-    if rid:
-        headers["x-request-id"] = rid
-    return headers
+    return _internal_outbound_headers_impl(
+        server,
+        internal_api_key=INTERNAL_API_KEY,
+        is_production=_is_production_env(),
+        request_id=request_id_var.get(),
+    )
 
 
 def _is_internal_request(request: Request) -> bool:

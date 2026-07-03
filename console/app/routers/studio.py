@@ -26,6 +26,10 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
+from app.domains.security.internal_auth import (
+    internal_outbound_headers as _internal_outbound_headers_impl,
+    internal_outbound_key as _internal_outbound_key_impl,
+)
 from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
@@ -87,20 +91,22 @@ class _PinnedHTTPResponse:
 
 
 def _key_for(server: str) -> str:
-    pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
-    if pair:
-        return pair
-    if os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
-        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production")
-    return get_internal_api_key()
+    return _internal_outbound_key_impl(
+        server,
+        internal_api_key=get_internal_api_key(),
+        is_production=os.environ.get("APP_ENV", "production").strip().lower()
+        in {"production", "prod"},
+    )
 
 
 def _hdr_for(server: str) -> dict[str, str]:
-    headers = {"x-api-key": _key_for(server), "x-internal-service": "console"}
-    rid = request_id_var.get()
-    if rid:
-        headers["x-request-id"] = rid
-    return headers
+    return _internal_outbound_headers_impl(
+        server,
+        internal_api_key=get_internal_api_key(),
+        is_production=os.environ.get("APP_ENV", "production").strip().lower()
+        in {"production", "prod"},
+        request_id=request_id_var.get(),
+    )
 
 
 def _vault_headers_for_user(user: dict | None) -> dict[str, str]:

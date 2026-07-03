@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+import os
 from typing import Any
 
 from fastapi import HTTPException
@@ -52,3 +53,47 @@ def require_effective_permission(
         raise HTTPException(
             status_code=403, detail=f"permission required: {permission}"
         )
+
+
+def internal_outbound_key(
+    server: str,
+    *,
+    internal_api_key: str | None,
+    is_production: bool,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    env = os.environ if environ is None else environ
+    pair = env.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
+    if pair:
+        return pair
+    if is_production:
+        raise RuntimeError(
+            f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production"
+        )
+    if internal_api_key:
+        return internal_api_key
+    raise RuntimeError(
+        f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server} (no legacy fallback either)"
+    )
+
+
+def internal_outbound_headers(
+    server: str,
+    *,
+    internal_api_key: str | None,
+    is_production: bool,
+    request_id: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    headers = {
+        "x-api-key": internal_outbound_key(
+            server,
+            internal_api_key=internal_api_key,
+            is_production=is_production,
+            environ=environ,
+        ),
+        "x-internal-service": "console",
+    }
+    if request_id:
+        headers["x-request-id"] = request_id
+    return headers

@@ -6,6 +6,8 @@ from fastapi import HTTPException
 from app.domains.security.internal_auth import (
     INTERNAL_SERVICE_EMAIL,
     INTERNAL_SERVICE_ID,
+    internal_outbound_headers,
+    internal_outbound_key,
     internal_service_user,
     is_internal_service_actor,
     require_effective_permission,
@@ -73,3 +75,56 @@ def test_require_effective_permission_allows_granted_permission():
         "monitor.read",
         has_permission=lambda _user, permission: permission == "monitor.read",
     )
+
+
+def test_internal_outbound_key_prefers_pair_specific_secret():
+    key = internal_outbound_key(
+        "VAULT",
+        internal_api_key="legacy",
+        is_production=True,
+        environ={"INTERNAL_API_KEY_CONSOLE_TO_VAULT": "pair-secret"},
+    )
+
+    assert key == "pair-secret"
+
+
+def test_internal_outbound_key_allows_legacy_fallback_outside_production():
+    key = internal_outbound_key(
+        "REFINEMENT",
+        internal_api_key="legacy",
+        is_production=False,
+        environ={},
+    )
+
+    assert key == "legacy"
+
+
+def test_internal_outbound_key_rejects_legacy_fallback_in_production():
+    with pytest.raises(RuntimeError) as exc:
+        internal_outbound_key(
+            "MCP_INFRA",
+            internal_api_key="legacy",
+            is_production=True,
+            environ={},
+        )
+
+    assert (
+        str(exc.value)
+        == "Missing INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA; legacy fallback disabled in production"
+    )
+
+
+def test_internal_outbound_headers_include_request_id_when_present():
+    headers = internal_outbound_headers(
+        "VAULT",
+        internal_api_key="legacy",
+        is_production=False,
+        request_id="req-123",
+        environ={},
+    )
+
+    assert headers == {
+        "x-api-key": "legacy",
+        "x-internal-service": "console",
+        "x-request-id": "req-123",
+    }
