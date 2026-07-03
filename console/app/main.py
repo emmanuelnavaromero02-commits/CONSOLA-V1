@@ -83,6 +83,12 @@ from app.domains.accounts.lifecycle import (
     vpn_token_link as _vpn_token_link,
 )
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
+from app.domains.decisions.access import (
+    can_delete_decision as _dec_can_delete_impl,
+    can_edit_decision as _dec_can_edit_impl,
+    current_workspace_id as _current_workspace_id_impl,
+    is_decision_workspace_admin as _dec_is_workspace_admin_impl,
+)
 from app.domains.decisions.payloads import (
     coerce_date as _coerce_date_impl,
     coerce_datetime as _coerce_dt_impl,
@@ -8192,7 +8198,7 @@ def _current_workspace_id(user: dict) -> str | None:
     helper so console and workspace agree on which workspace owns a
     decision row.
     """
-    return user.get("active_workspace_id") or user.get("workspace_id")
+    return _current_workspace_id_impl(user)
 
 
 def _dec_visible_clause(
@@ -8228,10 +8234,10 @@ def _dec_visible_clause(
 
 
 def _dec_is_workspace_admin(user: dict) -> bool:
-    return _is_global_iam_admin(user) or _workspace_role(user) in {
-        "workspace_admin",
-        "tenant_admin",
-    }
+    return _dec_is_workspace_admin_impl(
+        is_global_admin=_is_global_iam_admin(user),
+        workspace_role=_workspace_role(user),
+    )
 
 
 async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None:
@@ -8257,17 +8263,19 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
 
 
 def _dec_can_edit(row: dict, user: dict) -> bool:
-    if _dec_is_workspace_admin(user):
-        return True
-    return (
-        row.get("created_by_id") == user["id"] or row.get("assignee_id") == user["id"]
+    return _dec_can_edit_impl(
+        row,
+        user,
+        is_workspace_admin=_dec_is_workspace_admin(user),
     )
 
 
 def _dec_can_delete(row: dict, user: dict) -> bool:
-    if _dec_is_workspace_admin(user):
-        return True
-    return row.get("created_by_id") == user["id"]
+    return _dec_can_delete_impl(
+        row,
+        user,
+        is_workspace_admin=_dec_is_workspace_admin(user),
+    )
 
 
 @app.get("/api/decisions", dependencies=[Depends(require_permission("datasets.read"))])
