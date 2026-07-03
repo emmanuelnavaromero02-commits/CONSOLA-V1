@@ -251,3 +251,85 @@ def test_pipeline_bronze_status_orders_operational_states():
         )
         == "never"
     )
+
+
+def test_pipeline_last_run_payload_helpers_preserve_viewer_contract():
+    airflow_info, dag_status = run_state.pipeline_airflow_last_run_info(
+        {
+            "dag_id": "sap_successfactors_extract",
+            "run_id": "run-1",
+            "airflow_dag_run_id": "dag-run-1",
+            "status": "success",
+            "mode": "incremental",
+            "started_at": "2026-07-03T10:00:00+00:00",
+            "finished_at": "2026-07-03T10:02:00+00:00",
+            "duration_seconds": 120,
+            "record_count": 1288,
+            "extra": {
+                "result_status": "partial",
+                "empty_result": False,
+                "silver_refresh": {"status": "success"},
+            },
+        }
+    )
+
+    assert dag_status == "success"
+    assert airflow_info == {
+        "source": "airflow",
+        "dag_id": "sap_successfactors_extract",
+        "dag_run_id": "dag-run-1",
+        "run_id": "dag-run-1",
+        "status": "success",
+        "result_status": "partial",
+        "silver_refresh_status": "success",
+        "empty_result": False,
+        "extra": {
+            "result_status": "partial",
+            "empty_result": False,
+            "silver_refresh": {"status": "success"},
+        },
+        "mode": "incremental",
+        "triggered_at": "2026-07-03T10:00:00+00:00",
+        "started_at": "2026-07-03T10:00:00+00:00",
+        "finished_at": "2026-07-03T10:02:00+00:00",
+        "duration_sec": 120.0,
+        "error": None,
+    }
+
+    assert run_state.pipeline_job_last_run_info(
+        {
+            "job_id": "job-1",
+            "status": "done",
+            "finished_at": "2026-07-03T10:02:00+00:00",
+            "message": "ok",
+        }
+    ) == {
+        "source": "jobs",
+        "job_id": "job-1",
+        "status": "done",
+        "finished_at": "2026-07-03T10:02:00+00:00",
+        "message": "ok",
+    }
+    assert run_state.pipeline_bronze_last_run_info(
+        bronze_date="2026-07-03", bronze_count=0, mode="full"
+    ) == {
+        "source": "bronze",
+        "status": "empty",
+        "mode": "full",
+        "finished_at": "2026-07-03T00:00:00+00:00",
+        "message": "Bronze materializado; corrida no registrada en pipeline_runs",
+        "record_count": 0,
+    }
+    assert run_state.pipeline_legacy_last_job(airflow_info) == {
+        "job_id": None,
+        "dag_id": "sap_successfactors_extract",
+        "dag_run_id": "dag-run-1",
+        "status": "success",
+        "mode": "incremental",
+        "triggered_at": "2026-07-03T10:00:00+00:00",
+        "finished_at": "2026-07-03T10:02:00+00:00",
+        "duration_sec": 120.0,
+        "created_at": "2026-07-03T10:02:00+00:00",
+        "message": None,
+    }
+    assert run_state.pipeline_legacy_last_job(None) is None

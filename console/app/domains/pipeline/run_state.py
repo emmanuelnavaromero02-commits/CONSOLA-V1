@@ -183,6 +183,81 @@ def pipeline_bronze_status(
     return "never"
 
 
+def pipeline_airflow_last_run_info(dag_run: dict) -> tuple[dict, str]:
+    finished_at = dag_run.get("finished_at")
+    dag_status = normalize_airflow_state(dag_run.get("status"))
+    dag_run_id = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
+    extra = pipeline_run_extra(dag_run)
+    silver_refresh_status = pipeline_downstream_status(extra, "silver_refresh")
+    return (
+        {
+            "source": "airflow",
+            "dag_id": dag_run.get("dag_id"),
+            "dag_run_id": dag_run_id,
+            "run_id": dag_run_id,
+            "status": dag_status,
+            "result_status": extra.get("result_status"),
+            "silver_refresh_status": silver_refresh_status,
+            "empty_result": bool(extra.get("empty_result")),
+            "extra": extra,
+            "mode": dag_run.get("mode"),
+            "triggered_at": str(dag_run.get("started_at", ""))
+            if dag_run.get("started_at")
+            else None,
+            "started_at": str(dag_run.get("started_at", ""))
+            if dag_run.get("started_at")
+            else None,
+            "finished_at": str(finished_at) if finished_at else None,
+            "duration_sec": float(dag_run.get("duration_seconds"))
+            if dag_run.get("duration_seconds") is not None
+            else None,
+            "error": dag_run.get("error_message"),
+        },
+        dag_status,
+    )
+
+
+def pipeline_job_last_run_info(last_job: dict) -> dict:
+    return {
+        "source": "jobs",
+        "job_id": last_job["job_id"],
+        "status": last_job["status"],
+        "finished_at": last_job.get("finished_at") or last_job.get("created_at"),
+        "message": last_job.get("message"),
+    }
+
+
+def pipeline_bronze_last_run_info(
+    *, bronze_date: str, bronze_count: Any, mode: str | None
+) -> dict:
+    return {
+        "source": "bronze",
+        "status": "empty" if pipeline_is_zero_count(bronze_count) else "success",
+        "mode": mode,
+        "finished_at": f"{bronze_date}T00:00:00+00:00",
+        "message": "Bronze materializado; corrida no registrada en pipeline_runs",
+        "record_count": bronze_count,
+    }
+
+
+def pipeline_legacy_last_job(last_run_info: dict | None) -> dict | None:
+    if not last_run_info:
+        return None
+    return {
+        "job_id": last_run_info.get("job_id"),
+        "dag_id": last_run_info.get("dag_id"),
+        "dag_run_id": last_run_info.get("dag_run_id"),
+        "status": last_run_info.get("status"),
+        "mode": last_run_info.get("mode"),
+        "triggered_at": last_run_info.get("triggered_at"),
+        "finished_at": last_run_info.get("finished_at"),
+        "duration_sec": last_run_info.get("duration_sec"),
+        "created_at": last_run_info.get("finished_at")
+        or last_run_info.get("triggered_at"),
+        "message": last_run_info.get("message"),
+    }
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")

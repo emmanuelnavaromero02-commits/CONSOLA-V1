@@ -141,13 +141,16 @@ from app.domains.pipeline.run_state import (
     duration_seconds as _duration_seconds,
     normalize_airflow_state as _normalize_airflow_state,
     pipeline_bronze_date_count as _pipeline_bronze_date_count,
+    pipeline_airflow_last_run_info as _pipeline_airflow_last_run_info,
+    pipeline_bronze_last_run_info as _pipeline_bronze_last_run_info,
     pipeline_bronze_status as _pipeline_bronze_status,
     pipeline_dataset_status as _pipeline_dataset_status,
     parse_iso_datetime as _parse_iso_datetime,
-    pipeline_downstream_status as _pipeline_downstream_status,
     pipeline_gold_dependencies_for_silver as _pipeline_gold_dependencies_for_silver,
     pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
+    pipeline_job_last_run_info as _pipeline_job_last_run_info,
+    pipeline_legacy_last_job as _pipeline_legacy_last_job,
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
@@ -4666,46 +4669,9 @@ async def api_pipeline(
         bronze_date, bronze_count = _pipeline_bronze_date_count(dag_run, last_job)
 
         if dag_run:
-            # Airflow DAG run is authoritative
-            fin = dag_run.get("finished_at")
-            dag_status = _normalize_airflow_state(dag_run.get("status"))
-            dag_run_id = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
-            dag_extra = _pipeline_run_extra(dag_run)
-            silver_refresh_status = _pipeline_downstream_status(
-                dag_extra, "silver_refresh"
-            )
-            last_run_info = {
-                "source": "airflow",
-                "dag_id": dag_run.get("dag_id"),
-                "dag_run_id": dag_run_id,
-                "run_id": dag_run_id,
-                "status": dag_status,
-                "result_status": dag_extra.get("result_status"),
-                "silver_refresh_status": silver_refresh_status,
-                "empty_result": bool(dag_extra.get("empty_result")),
-                "extra": dag_extra,
-                "mode": dag_run.get("mode"),
-                "triggered_at": str(dag_run.get("started_at", ""))
-                if dag_run.get("started_at")
-                else None,
-                "started_at": str(dag_run.get("started_at", ""))
-                if dag_run.get("started_at")
-                else None,
-                "finished_at": str(fin) if fin else None,
-                "duration_sec": float(dag_run.get("duration_seconds"))
-                if dag_run.get("duration_seconds") is not None
-                else None,
-                "error": dag_run.get("error_message"),
-            }
+            last_run_info, dag_status = _pipeline_airflow_last_run_info(dag_run)
         elif last_job:
-            last_run_info = {
-                "source": "jobs",
-                "job_id": last_job["job_id"],
-                "status": last_job["status"],
-                "finished_at": last_job.get("finished_at")
-                or last_job.get("created_at"),
-                "message": last_job.get("message"),
-            }
+            last_run_info = _pipeline_job_last_run_info(last_job)
 
         if not bronze_date or bronze_count is None:
             physical_bronze = physical_bronze_by_entity.get(entity) or {}
@@ -4714,21 +4680,11 @@ async def api_pipeline(
                 if bronze_count is None:
                     bronze_count = physical_bronze.get("record_count")
                 if last_run_info is None and bronze_date:
-                    bronze_finished_at = f"{bronze_date}T00:00:00+00:00"
-                    last_run_info = {
-                        "source": "bronze",
-                        "status": (
-                            "empty"
-                            if _pipeline_is_zero_count(bronze_count)
-                            else "success"
-                        ),
-                        "mode": e.get("mode"),
-                        "finished_at": bronze_finished_at,
-                        "message": (
-                            "Bronze materializado; corrida no registrada en pipeline_runs"
-                        ),
-                        "record_count": bronze_count,
-                    }
+                    last_run_info = _pipeline_bronze_last_run_info(
+                        bronze_date=bronze_date,
+                        bronze_count=bronze_count,
+                        mode=e.get("mode"),
+                    )
 
         bronze_status = _pipeline_bronze_status(
             dag_run=dag_run,
@@ -4780,31 +4736,7 @@ async def api_pipeline(
                 "watermark": e.get("watermark_field") or "",
                 "last_run": last_run_info,
                 # Keep last_job for backward compat with pipeline.html polling logic
-                "last_job": {
-                    "job_id": last_run_info.get("job_id") if last_run_info else None,
-                    "dag_id": last_run_info.get("dag_id") if last_run_info else None,
-                    "dag_run_id": last_run_info.get("dag_run_id")
-                    if last_run_info
-                    else None,
-                    "status": last_run_info.get("status") if last_run_info else None,
-                    "mode": last_run_info.get("mode") if last_run_info else None,
-                    "triggered_at": last_run_info.get("triggered_at")
-                    if last_run_info
-                    else None,
-                    "finished_at": last_run_info.get("finished_at")
-                    if last_run_info
-                    else None,
-                    "duration_sec": last_run_info.get("duration_sec")
-                    if last_run_info
-                    else None,
-                    "created_at": last_run_info.get("finished_at")
-                    or last_run_info.get("triggered_at")
-                    if last_run_info
-                    else None,
-                    "message": last_run_info.get("message") if last_run_info else None,
-                }
-                if last_run_info
-                else None,
+                "last_job": _pipeline_legacy_last_job(last_run_info),
                 "bronze": {
                     "source": source,
                     "latest_date": bronze_date,
