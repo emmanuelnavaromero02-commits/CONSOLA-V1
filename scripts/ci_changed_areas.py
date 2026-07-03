@@ -52,6 +52,7 @@ PY_RUNTIME_ROOTS = (
 )
 
 CONSOLE_SERVICE_RELEASE_EXCLUDE = (
+    r"^console/app/services/db_pool\.py$",
     r"^console/app/services/operations_service\.py$",
     r"^console/app/services/mcp_payloads\.py$",
     r"^console/app/services/request_rate_limits\.py$",

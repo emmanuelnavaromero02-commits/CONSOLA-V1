@@ -133,6 +133,11 @@ from app.services.service_urls import (
 )
 from app.services import request_rate_limits as _request_rate_limits
 from app.services import security_headers as _security_headers
+from app.services.db_pool import (
+    close_main_pool as _close_main_pool,
+    db_dsn as _db_dsn,
+    get_db_pool as _get_db_pool,
+)
 from app.services.mcp_payloads import mcp_payload as _mcp_payload
 from app.services.rate_limiter import get_rate_limiter
 from app.services.status_pages import (
@@ -304,38 +309,6 @@ async def _periodic_health_check():
         except Exception:
             logger.debug("Periodic health check failed", exc_info=True)
         await asyncio.sleep(60)
-
-
-_MAIN_POOL: "asyncpg.Pool | None" = None
-
-
-def _db_dsn() -> str:
-    return (
-        os.environ.get("DATABASE_URL", "")
-        .replace("postgresql+psycopg2://", "postgresql://")
-        .replace("postgres+psycopg2://", "postgresql://")
-    )
-
-
-async def _get_db_pool() -> "asyncpg.Pool":
-    global _MAIN_POOL
-    import asyncpg as _asyncpg
-
-    if _MAIN_POOL is None:
-        dsn = _db_dsn()
-        if not dsn:
-            raise RuntimeError("DATABASE_URL is not configured (console)")
-        _MAIN_POOL = await _asyncpg.create_pool(
-            dsn, min_size=1, max_size=5, command_timeout=10
-        )
-    return _MAIN_POOL
-
-
-async def _close_main_pool() -> None:
-    global _MAIN_POOL
-    if _MAIN_POOL is not None:
-        await _MAIN_POOL.close()
-        _MAIN_POOL = None
 
 
 def _reset_startup_readiness_state(app: FastAPI) -> None:
