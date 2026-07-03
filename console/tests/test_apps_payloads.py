@@ -4,6 +4,7 @@ from app.domains.apps.payloads import (
     app_declared_datasets,
     app_payload_cartridge_candidates,
     apps_from_payload,
+    filter_apps_payload_to_ready_datasets,
     filter_apps_payload_to_scoped_connections,
     user_with_apps_scope,
 )
@@ -51,3 +52,37 @@ def test_apps_payload_helpers_resolve_cartridge_scope_and_datasets():
     )
     assert scoped_user["active_tenant_id"] == "tenant-a"
     assert scoped_user["active_workspace_id"] == "workspace-a"
+
+
+def test_apps_payload_helpers_filter_by_ready_datasets():
+    payload = {
+        "apps": [
+            {"name": "forecast", "datasets_used": ["forecast_mensual"]},
+            {"name": "margin", "datasets_used": ["pnl_mensual"]},
+            {"name": "shell"},
+        ]
+    }
+
+    ready = filter_apps_payload_to_ready_datasets(payload, {"forecast_mensual"})
+    assert [app["name"] for app in ready["apps"]] == ["forecast"]
+    assert ready["apps"][0]["data_status"] == "ready"
+    assert ready["apps_readiness"]["unavailable_datasets"] == ["pnl_mensual"]
+
+    unready = filter_apps_payload_to_ready_datasets(
+        payload,
+        {"forecast_mensual"},
+        include_unready=True,
+    )
+    assert [app["data_status"] for app in unready["apps"]] == [
+        "ready",
+        "unready",
+        "dataset_metadata_missing",
+    ]
+
+    unchecked = filter_apps_payload_to_ready_datasets(
+        payload,
+        None,
+        mode="gold_unreachable",
+    )
+    assert unchecked["apps"] == payload["apps"]
+    assert unchecked["apps_readiness"]["mode"] == "gold_unreachable"

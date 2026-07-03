@@ -41,6 +41,7 @@ from app.domains.apps.payloads import (
     app_declared_datasets as _app_declared_datasets,
     app_payload_cartridge_candidates as _app_payload_cartridge_candidates,
     apps_from_payload as _apps_from_payload,
+    filter_apps_payload_to_ready_datasets as _filter_apps_payload_to_ready_datasets,
     filter_apps_payload_to_scoped_connections as _filter_apps_payload_to_scoped_connections,
     user_with_apps_scope as _user_with_apps_scope,
 )
@@ -4263,79 +4264,6 @@ async def _gold_ready_datasets_for_apps(
     finally:
         await conn.close()
     return ready, "checked"
-
-
-def _filter_apps_payload_to_ready_datasets(
-    payload: Any,
-    ready_datasets: set[str] | None,
-    *,
-    mode: str = "checked",
-    include_unready: bool = False,
-) -> dict[str, Any]:
-    if isinstance(payload, list):
-        normalized: dict[str, Any] = {"apps": payload}
-    elif isinstance(payload, dict):
-        normalized = dict(payload)
-    else:
-        normalized = {"apps": []}
-
-    apps = normalized.get("apps")
-    result = normalized.get("result")
-    apps_key = "apps"
-    if not isinstance(apps, list) and isinstance(result, list):
-        apps = result
-        apps_key = "result"
-    if not isinstance(apps, list):
-        apps = []
-    normalized["apps"] = apps
-
-    if ready_datasets is None:
-        normalized["apps_readiness"] = {
-            "mode": mode,
-            "hidden_unready_count": 0,
-            "unavailable_datasets": [],
-            "message": "No se pudo verificar Gold; apps filtradas solo por conexiones activas.",
-        }
-        return normalized
-
-    visible_apps: list[dict] = []
-    unavailable: set[str] = set()
-    for app in apps:
-        if not isinstance(app, dict):
-            continue
-        required = _app_declared_datasets(app)
-        missing = required - ready_datasets
-        if required and not missing:
-            visible_apps.append(
-                {**app, "data_status": "ready", "datasets_used": sorted(required)}
-            )
-        elif include_unready:
-            status = "dataset_metadata_missing" if not required else "unready"
-            visible_apps.append(
-                {
-                    **app,
-                    "data_status": status,
-                    "datasets_used": sorted(required),
-                    "unavailable_datasets": sorted(missing or required),
-                }
-            )
-            unavailable.update(missing or required)
-        else:
-            unavailable.update(missing or required)
-
-    normalized[apps_key] = visible_apps
-    normalized["apps"] = visible_apps
-    normalized["apps_readiness"] = {
-        "mode": "gold_ready",
-        "hidden_unready_count": max(0, len(apps) - len(visible_apps)),
-        "unavailable_datasets": sorted(unavailable),
-        "message": (
-            "Apps filtradas por datasets Gold disponibles para el workspace."
-            if visible_apps
-            else "No hay apps con datasets Gold materializados para este workspace."
-        ),
-    }
-    return normalized
 
 
 async def _apps_payload_visible_and_ready(
