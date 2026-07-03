@@ -20,7 +20,7 @@ from copy import deepcopy
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +286,7 @@ from app.domains.vault.reveal import (
     cartridge_vault_reveal_user as _cartridge_vault_reveal_user_impl,
     is_cartridge_vault_reveal_request as _is_cartridge_vault_reveal_request_impl,
 )
+from app.domains.viewer.navigation import viewer_redirect_url as _viewer_redirect_url
 from app.services.db_scope import scoped_db_for_user
 from app.services.service_urls import (
     app_env as _app_env,
@@ -6400,12 +6401,10 @@ async def studio_page():
 def _viewer_redirect(
     request: Request, viewer_type: str, **params: str
 ) -> RedirectResponse:
-    query = dict(request.query_params)
-    query["type"] = viewer_type
-    for key, value in params.items():
-        if value:
-            query[key] = value
-    return RedirectResponse(url=f"/viewer?{urlencode(query)}", status_code=307)
+    return RedirectResponse(
+        url=_viewer_redirect_url(request.query_params, viewer_type, params),
+        status_code=307,
+    )
 
 
 @app.get("/viewer/pipeline", dependencies=[Depends(require_permission("monitor.read"))])
