@@ -12,6 +12,7 @@ from app.domains.pipeline.extract_config import (
     dag_run_id_from_idempotency_key,
     entity_declared_in_static_catalog,
     is_transient_airflow_trigger_error,
+    resolve_pipeline_sync_conn_id,
 )
 import app.main as console_main
 
@@ -64,6 +65,66 @@ def test_extract_config_helpers_parse_vault_and_idempotency():
     assert run_id.startswith("console__sap_successfactors_extract__")
     assert is_transient_airflow_trigger_error("Connection refused")
     assert not is_transient_airflow_trigger_error("invalid conf")
+
+
+@pytest.mark.asyncio
+async def test_resolve_pipeline_sync_conn_id_prefers_requested_value():
+    async def fail_vault(*_args):
+        raise AssertionError("vault should not be called")
+
+    async def fail_entity_config(*_args):
+        raise AssertionError("entity_config should not be called")
+
+    assert (
+        await resolve_pipeline_sync_conn_id(
+            "sap_successfactors",
+            "requested_conn",
+            {"id": 1},
+            vault_payload_loader=fail_vault,
+            entity_config_conn_loader=fail_entity_config,
+        )
+        == "requested_conn"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pipeline_sync_conn_id_uses_vault_before_entity_config():
+    async def vault_payload(*_args):
+        return {"connections": [{"conn_id": "vault_conn"}]}
+
+    async def fail_entity_config(*_args):
+        raise AssertionError("entity_config should not be called")
+
+    assert (
+        await resolve_pipeline_sync_conn_id(
+            "sap_successfactors",
+            None,
+            {"id": 1},
+            vault_payload_loader=vault_payload,
+            entity_config_conn_loader=fail_entity_config,
+        )
+        == "vault_conn"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pipeline_sync_conn_id_falls_back_to_entity_config():
+    async def vault_payload(*_args):
+        return None
+
+    async def entity_config_conn_id(*_args):
+        return "entity_config_conn"
+
+    assert (
+        await resolve_pipeline_sync_conn_id(
+            "sap_successfactors",
+            None,
+            {"id": 1},
+            vault_payload_loader=vault_payload,
+            entity_config_conn_loader=entity_config_conn_id,
+        )
+        == "entity_config_conn"
+    )
 
 
 def test_apply_user_scope_to_dag_conf_adds_security_context():

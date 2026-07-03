@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
@@ -58,6 +58,48 @@ def connection_id_from_vault_payload(payload: Any) -> str | None:
         conn_id = normalize_pipeline_conn_id(raw)
         if conn_id:
             return conn_id
+    return None
+
+
+async def resolve_pipeline_sync_conn_id(
+    cartridge: str,
+    requested_conn_id: object | None,
+    user: dict[str, Any] | None,
+    *,
+    vault_payload_loader: Callable[[str, dict[str, Any] | None], Awaitable[Any]],
+    entity_config_conn_loader: Callable[[str], Awaitable[Any]],
+    logger_debug: Callable[..., None] | None = None,
+) -> str | None:
+    conn_id = normalize_pipeline_conn_id(requested_conn_id)
+    if conn_id:
+        return conn_id
+
+    try:
+        payload = await vault_payload_loader(cartridge, user)
+        conn_id = connection_id_from_vault_payload(payload)
+        if conn_id:
+            return conn_id
+    except Exception:
+        if logger_debug:
+            logger_debug(
+                "Could not resolve pipeline connection from Vault for cartridge=%s",
+                cartridge,
+                exc_info=True,
+            )
+
+    try:
+        conn_id = normalize_pipeline_conn_id(
+            await entity_config_conn_loader(cartridge)
+        )
+        if conn_id:
+            return conn_id
+    except Exception:
+        if logger_debug:
+            logger_debug(
+                "Could not resolve pipeline connection from entity_config for cartridge=%s",
+                cartridge,
+                exc_info=True,
+            )
     return None
 
 

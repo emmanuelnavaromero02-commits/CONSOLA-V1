@@ -248,6 +248,7 @@ from app.domains.pipeline.extract_config import (
     entity_declared_in_static_catalog as _entity_declared_in_static_catalog_impl,
     is_transient_airflow_trigger_error as _is_transient_airflow_trigger_error_impl,
     normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
+    resolve_pipeline_sync_conn_id as _resolve_pipeline_sync_conn_id_impl,
 )
 from app.domains.studio.cartridge_probe import (
     probe_microservice as _probe_microservice_impl,
@@ -5952,28 +5953,21 @@ async def _resolve_pipeline_sync_conn_id(
     requested_conn_id: object | None,
     user: dict | None,
 ) -> str | None:
-    conn_id = _normalize_pipeline_conn_id(requested_conn_id)
-    if conn_id:
-        return conn_id
-
-    try:
+    async def _load_vault_payload(
+        cartridge_id: str, current_user: dict | None
+    ) -> Any:
         async with httpx.AsyncClient(
-            headers=_vault_headers_for_user(user or {}), timeout=5
+            headers=_vault_headers_for_user(current_user or {}), timeout=5
         ) as c:
-            r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
+            r = await c.get(
+                f"{_VAULT_URL}/connections/{quote(cartridge_id, safe='')}"
+            )
         if r.status_code not in (404, 204):
             r.raise_for_status()
-            conn_id = _connection_id_from_vault_payload(r.json())
-            if conn_id:
-                return conn_id
-    except Exception:
-        logger.debug(
-            "Could not resolve pipeline connection from Vault for cartridge=%s",
-            cartridge,
-            exc_info=True,
-        )
+            return r.json()
+        return None
 
-    try:
+    async def _load_entity_config_conn_id(cartridge_id: str) -> Any:
         pool = await _get_db_pool()
         row = await pool.fetchrow(
             """
@@ -5984,20 +5978,20 @@ async def _resolve_pipeline_sync_conn_id(
                AND NULLIF(BTRIM(COALESCE(connection_id, '')), '') IS NOT NULL
              GROUP BY connection_id
              ORDER BY COUNT(*) DESC, connection_id ASC
-             LIMIT 1
+            LIMIT 1
             """,
-            cartridge,
+            cartridge_id,
         )
-        conn_id = _normalize_pipeline_conn_id(row["connection_id"] if row else None)
-        if conn_id:
-            return conn_id
-    except Exception:
-        logger.debug(
-            "Could not resolve pipeline connection from entity_config for cartridge=%s",
-            cartridge,
-            exc_info=True,
-        )
-    return None
+        return row["connection_id"] if row else None
+
+    return await _resolve_pipeline_sync_conn_id_impl(
+        cartridge,
+        requested_conn_id,
+        user,
+        vault_payload_loader=_load_vault_payload,
+        entity_config_conn_loader=_load_entity_config_conn_id,
+        logger_debug=logger.debug,
+    )
 
 
 def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:
