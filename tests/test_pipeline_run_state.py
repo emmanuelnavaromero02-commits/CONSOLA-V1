@@ -32,6 +32,24 @@ def test_pipeline_run_extra_accepts_dict_and_json_object():
     assert run_state.pipeline_run_extra({"extra": "not-json"}) == {}
 
 
+def test_sanitize_pipeline_run_hides_invisible_storage_uri():
+    row = {"run_id": "run-1", "storage_uri": "s3://bucket/raw/other/Entity"}
+
+    hidden = run_state.sanitize_pipeline_run_for_user(
+        row,
+        {"active_workspace_id": "workspace-a"},
+        dataset_source_visible_for_user=lambda _user, _source: False,
+    )
+    visible = run_state.sanitize_pipeline_run_for_user(
+        row,
+        {"active_workspace_id": "workspace-a"},
+        dataset_source_visible_for_user=lambda _user, _source: True,
+    )
+
+    assert hidden == {"run_id": "run-1"}
+    assert visible == row
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

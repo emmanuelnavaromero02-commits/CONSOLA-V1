@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -457,6 +458,19 @@ def pipeline_entity_run_payload(row: dict) -> dict:
     if row.get("watermark_updated_to"):
         payload["watermark_updated_to"] = row.get("watermark_updated_to")
     return payload
+
+
+def sanitize_pipeline_run_for_user(
+    row: dict,
+    user: dict | None,
+    *,
+    dataset_source_visible_for_user: Callable[[dict | None, str], bool],
+) -> dict:
+    sanitized = dict(row)
+    storage_uri = sanitized.get("storage_uri")
+    if storage_uri and not dataset_source_visible_for_user(user, storage_uri):
+        sanitized.pop("storage_uri", None)
+    return sanitized
 
 
 def airflow_task_id(task: Any) -> str | None:

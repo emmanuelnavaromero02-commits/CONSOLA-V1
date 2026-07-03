@@ -184,6 +184,7 @@ from app.domains.pipeline.run_state import (
     pipeline_response_payload as _pipeline_response_payload,
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
+    sanitize_pipeline_run_for_user as _sanitize_pipeline_run_for_user_impl,
 )
 from app.domains.pipeline.job_payloads import (
     is_pipeline_job_payload as _is_pipeline_job_payload,
@@ -3905,11 +3906,11 @@ async def api_pipeline_runs(
 
 
 def _sanitize_pipeline_run_for_user(row: dict, user: dict | None) -> dict:
-    sanitized = dict(row)
-    storage_uri = sanitized.get("storage_uri")
-    if storage_uri and not _dataset_source_visible_for_user(user, storage_uri):
-        sanitized.pop("storage_uri", None)
-    return sanitized
+    return _sanitize_pipeline_run_for_user_impl(
+        row,
+        user,
+        dataset_source_visible_for_user=_dataset_source_visible_for_user,
+    )
 
 
 def _format_pipeline_entity_run(row: dict, user: dict | None = None) -> dict:
