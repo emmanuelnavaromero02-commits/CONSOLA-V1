@@ -214,6 +214,9 @@ from app.domains.security.internal_auth import (
     require_effective_permission as _require_effective_permission_impl,
     user_payload as _user_payload_impl,
 )
+from app.domains.security.cors import (
+    allowed_origins as _allowed_origins_impl,
+)
 from app.domains.pipeline.run_state import (
     airflow_log_attempt as _airflow_log_attempt,
     airflow_log_task_ids as _airflow_log_task_ids,
@@ -739,60 +742,12 @@ def _allowed_origins() -> list[str]:
     # Keep workspace :8001 in the local default because it remains a
     # legitimate browser client for credentialed workspace flows.
     # Production MUST override via the env var (see prod fail-closed guard).
-    raw_env = os.environ.get("ALLOWED_ORIGINS")
-    app_env = os.environ.get("APP_ENV", "production").lower()
-
-    # R-Mac-3 review (Security P1): a prod deployment that ships
-    # without ALLOWED_ORIGINS used to silently whitelist localhost
-    # for credentialed requests. Fail closed instead — mirror the
-    # INTERNAL_API_KEY prod guard pattern in console/app/security.py.
-    if raw_env is None and app_env in {"production", "prod"}:
-        raise RuntimeError(
-            "ALLOWED_ORIGINS must be set in production (APP_ENV="
-            f"{app_env}). Refusing to fall back to the localhost "
-            "default with allow_credentials=True."
-        )
-
-    raw = (
-        raw_env
-        if raw_env is not None
-        else "http://localhost:8000,http://localhost:8001"
+    default_local_origins = "http://localhost:8000,http://localhost:8001"
+    return _allowed_origins_impl(
+        os.environ,
+        warn=logger.warning,
+        default_local_origins=default_local_origins,
     )
-    # Phase-0 P1 fix: ALLOWED_ORIGINS="" (env var set but empty) used to be
-    # accepted silently and produced an empty allowlist. That combination
-    # plus allow_credentials=True is exactly the misconfiguration the
-    # production fail-closed guard above is meant to catch. Treat empty
-    # string the same as unset in prod, and warn loudly in dev/test.
-    if raw_env is not None and not raw_env.strip():
-        if app_env in {"production", "prod"}:
-            raise RuntimeError(
-                "ALLOWED_ORIGINS is set to an empty value in production. "
-                "Either unset it (we will refuse to start) or list the "
-                "exact origins allowed for credentialed requests."
-            )
-        logger.warning(
-            "ALLOWED_ORIGINS is set but empty; falling back to the "
-            "localhost default. This is only safe in dev/test."
-        )
-        raw = "http://localhost:8000,http://localhost:8001"
-    origins: list[str] = []
-    for chunk in raw.split(","):
-        origin = chunk.strip()
-        if not origin:
-            continue
-        if origin == "*":
-            # R-Mac-3 review (DevOps P2): wildcards are incompatible
-            # with allow_credentials=True (browsers reject the combo
-            # outright). Silently dropping the entry left operators
-            # debugging an empty allowlist with no clue why — log so
-            # the cause is visible in startup logs.
-            logger.warning(
-                "ALLOWED_ORIGINS=* is incompatible with "
-                "allow_credentials=True; ignoring wildcard entry"
-            )
-            continue
-        origins.append(origin)
-    return origins
 
 
 # v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): the CORSMiddleware
