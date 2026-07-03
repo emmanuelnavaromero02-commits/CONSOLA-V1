@@ -73,6 +73,16 @@ from app.domains.agentops.invocation import (
     agent_schedule_due as _agent_schedule_due_impl,
     parse_agent_scheduled_fire_at as _parse_agent_scheduled_fire_at_impl,
 )
+from app.domains.accounts.lifecycle import (
+    normalize_email_or_400 as _normalize_email_or_400_impl,
+    pack_vpn_conf as _pack_vpn_conf_impl,
+    password_min_length as _password_min_length_impl,
+    safe_filename as _safe_filename_impl,
+    token_link as _token_link,
+    validate_password_or_400 as _validate_password_or_400_impl,
+    vpn_configured as _vpn_configured_impl,
+    vpn_token_link as _vpn_token_link,
+)
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
@@ -1560,41 +1570,37 @@ VPN_TTL_HOURS = int(os.environ.get("VPN_TOKEN_TTL_HOURS", "72"))
 def _normalize_email_or_400(
     value: object | None, *, required_message: str = "email is required"
 ) -> str:
-    email = str(value or "").strip().lower()
-    if not email:
-        raise HTTPException(400, required_message)
-    if len(email) > 254 or not EMAIL_RE.fullmatch(email):
-        raise HTTPException(400, "invalid email")
-    return email
+    return _normalize_email_or_400_impl(
+        value,
+        email_re=EMAIL_RE,
+        required_message=required_message,
+    )
 
 
 def _password_min_length() -> int:
-    return int(getattr(_auth, "MIN_PASSWORD_LENGTH", 12))
+    return _password_min_length_impl(_auth)
 
 
 def _validate_password_or_400(
     password: object | None, *, field: str = "password"
 ) -> str:
-    password = str(password or "")
-    if not password:
-        raise HTTPException(400, f"{field} is required")
-    if len(password) < _password_min_length():
-        raise HTTPException(
-            400, f"el password debe tener al menos {_password_min_length()} caracteres"
-        )
-    return password
+    return _validate_password_or_400_impl(
+        password,
+        field=field,
+        min_length=_password_min_length(),
+    )
 
 
 def _activation_link(token: str) -> str:
-    return f"{APP_BASE_URL}/activate?token={token}"
+    return _token_link(APP_BASE_URL, "activate", token)
 
 
 def _reset_link(token: str) -> str:
-    return f"{APP_BASE_URL}/reset-password?token={token}"
+    return _token_link(APP_BASE_URL, "reset-password", token)
 
 
 def _vpn_link(token: str) -> str:
-    return f"{APP_BASE_URL}/vpn-config/{token}"
+    return _vpn_token_link(APP_BASE_URL, token)
 
 
 def _set_session_cookie(resp: JSONResponse, token: str, expires) -> None:
@@ -8946,30 +8952,15 @@ async def api_admin_users_delete(
 
 
 def _vpn_configured() -> bool:
-    return bool(os.environ.get("VPN_API_URL") and os.environ.get("VPN_API_PASSWORD"))
+    return _vpn_configured_impl(os.environ)
 
 
 def _pack_vpn_conf(conf_text: str, email: str) -> tuple[bytes, str]:
-    import io as _io
-    import secrets as _secrets
-    import pyzipper
-
-    password = _secrets.token_urlsafe(9)
-    buf = _io.BytesIO()
-    with pyzipper.AESZipFile(
-        buf,
-        "w",
-        compression=pyzipper.ZIP_DEFLATED,
-        encryption=pyzipper.WZ_AES,
-    ) as zf:
-        zf.setpassword(password.encode("utf-8"))
-        zf.writestr(f"{_safe_filename(email)}.conf", conf_text)
-    return buf.getvalue(), password
+    return _pack_vpn_conf_impl(conf_text, email)
 
 
 def _safe_filename(email: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(email or "user")).strip("._-")
-    return (cleaned or "user")[:120]
+    return _safe_filename_impl(email)
 
 
 async def _create_vpn_config_link(user_id: int, email: str) -> dict:
