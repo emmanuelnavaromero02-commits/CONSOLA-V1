@@ -112,6 +112,112 @@ def test_active_sync_run_lookup_parts_tolerate_legacy_schema():
     assert lookup["order_sql"] == "run_id DESC"
 
 
+@pytest.mark.anyio
+async def test_fetch_active_sync_run_uses_scoped_lookup():
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        async def fetchrow(self, query, *args):
+            self.calls.append((query, args))
+            return {"run_id": "sync-now-1", "status": "running"}
+
+    class FakeScope:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn, "tenant-1", "workspace-1"
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def get_db_pool():
+        return object()
+
+    async def table_has_column(table, column, **kwargs):
+        assert table == "pipeline_runs"
+        assert kwargs == {"refresh": True}
+        return column in {"mode", "extra", "started_at"}
+
+    async def scope_predicate(user, start_index, **kwargs):
+        assert user == {"sub": "user-1"}
+        assert start_index == 5
+        assert kwargs == {"refresh_columns": True}
+        return "AND workspace_id=$5", ["workspace-1"]
+
+    conn = FakeConn()
+
+    row = await sync_state.fetch_active_sync_run(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        user={"sub": "user-1"},
+        get_db_pool=get_db_pool,
+        table_has_column=table_has_column,
+        pipeline_runs_scope_predicate=scope_predicate,
+        scoped_db_for_user=lambda pool, user: FakeScope(conn),
+    )
+
+    assert row == {"run_id": "sync-now-1", "status": "running"}
+    query, args = conn.calls[0]
+    assert "FROM pipeline_runs" in query
+    assert "COALESCE(mode, $3)=$3" in query
+    assert "COALESCE(extra->>'target', 'all')=$4" in query
+    assert "AND workspace_id=$5" in query
+    assert "ORDER BY started_at DESC NULLS LAST" in query
+    assert args == (
+        "sap_successfactors",
+        list(sync_state.SYNC_TERMINAL_STATUSES),
+        "incremental",
+        "all",
+        "workspace-1",
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_active_sync_run_returns_none_on_query_error():
+    class BrokenConn:
+        async def fetchrow(self, *_args, **_kwargs):
+            raise RuntimeError("schema drift")
+
+    class FakeScope:
+        async def __aenter__(self):
+            return BrokenConn(), None, None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def get_db_pool():
+        return object()
+
+    async def table_has_column(*_args, **_kwargs):
+        return False
+
+    async def scope_predicate(*_args, **_kwargs):
+        return "", []
+
+    warnings = []
+
+    row = await sync_state.fetch_active_sync_run(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        user=None,
+        get_db_pool=get_db_pool,
+        table_has_column=table_has_column,
+        pipeline_runs_scope_predicate=scope_predicate,
+        scoped_db_for_user=lambda pool, user: FakeScope(),
+        logger_warning=lambda *args, **kwargs: warnings.append((args, kwargs)),
+    )
+
+    assert row is None
+    assert warnings
+    assert warnings[0][1] == {"exc_info": True}
+
+
 def test_sync_state_public_payload_uses_project_terminal_statuses():
     payload = sync_state.sync_public_payload(
         {"run_id": "r1", "status": "partial", "cartridge_id": "sap_successfactors"},

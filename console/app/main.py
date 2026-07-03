@@ -292,6 +292,7 @@ from app.domains.pipeline.sync_state import (
     active_sync_run_lookup_parts as _active_sync_run_lookup_parts,
     active_extract_run_payload as _active_extract_run_payload,
     airflow_run_id_fragment as _airflow_run_id_fragment,
+    fetch_active_sync_run as _fetch_active_sync_run_impl,
     inactive_sync_run_payload as _inactive_sync_run_payload,
     initial_sync_steps as _initial_sync_steps,
     merge_sync_steps as _merge_sync_steps,
@@ -4134,51 +4135,19 @@ async def _fetch_active_sync_run(
     conn_id: str | None,
     user: dict | None,
 ) -> dict[str, Any] | None:
-    pool = await _get_db_pool()
-    has_mode = await _table_has_column("pipeline_runs", "mode", refresh=True)
-    has_extra = await _table_has_column("pipeline_runs", "extra", refresh=True)
-    has_started_at = await _table_has_column(
-        "pipeline_runs", "started_at", refresh=True
-    )
-    lookup = _active_sync_run_lookup_parts(
+    return await _fetch_active_sync_run_impl(
         cartridge=cartridge,
         mode=mode,
         target=target,
-        has_mode=has_mode,
-        has_extra=has_extra,
-        has_started_at=has_started_at,
+        conn_id=conn_id,
+        user=user,
+        get_db_pool=_get_db_pool,
+        table_has_column=_table_has_column,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        scoped_db_for_user=scoped_db_for_user,
+        active_sync_run_lookup_parts_func=_active_sync_run_lookup_parts,
+        logger_warning=logger.warning,
     )
-    clauses = lookup["clauses"]
-    args = lookup["args"]
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
-        user, len(args) + 1, refresh_columns=True
-    )
-    order_sql = lookup["order_sql"]
-    try:
-        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-            row = await conn.fetchrow(
-                f"""
-                SELECT *
-                  FROM pipeline_runs
-                 WHERE {' AND '.join(clauses)}
-                   {scope_sql}
-                 ORDER BY {order_sql}
-                 LIMIT 1
-                """,
-                *args,
-                *scope_values,
-            )
-    except Exception:
-        logger.warning(
-            "active sync run lookup failed for cartridge=%s mode=%s target=%s conn_id=%s",
-            cartridge,
-            mode,
-            target,
-            conn_id,
-            exc_info=True,
-        )
-        return None
-    return dict(row) if row else None
 
 
 async def _trigger_sync_aggregate_extract_all(

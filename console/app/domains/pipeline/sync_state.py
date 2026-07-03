@@ -174,6 +174,68 @@ def active_sync_run_lookup_parts(
     return {"clauses": clauses, "args": args, "order_sql": order_sql}
 
 
+async def fetch_active_sync_run(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    user: dict[str, Any] | None,
+    get_db_pool: Any,
+    table_has_column: Any,
+    pipeline_runs_scope_predicate: Any,
+    scoped_db_for_user: Any,
+    active_sync_run_lookup_parts_func: Any = active_sync_run_lookup_parts,
+    logger_warning: Any | None = None,
+) -> dict[str, Any] | None:
+    pool = await get_db_pool()
+    has_mode = await table_has_column("pipeline_runs", "mode", refresh=True)
+    has_extra = await table_has_column("pipeline_runs", "extra", refresh=True)
+    has_started_at = await table_has_column(
+        "pipeline_runs", "started_at", refresh=True
+    )
+    lookup = active_sync_run_lookup_parts_func(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        has_mode=has_mode,
+        has_extra=has_extra,
+        has_started_at=has_started_at,
+    )
+    clauses = lookup["clauses"]
+    args = lookup["args"]
+    scope_sql, scope_values = await pipeline_runs_scope_predicate(
+        user, len(args) + 1, refresh_columns=True
+    )
+    order_sql = lookup["order_sql"]
+    try:
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+            row = await conn.fetchrow(
+                f"""
+                SELECT *
+                  FROM pipeline_runs
+                 WHERE {' AND '.join(clauses)}
+                   {scope_sql}
+                 ORDER BY {order_sql}
+                 LIMIT 1
+                """,
+                *args,
+                *scope_values,
+            )
+    except Exception:
+        if logger_warning:
+            logger_warning(
+                "active sync run lookup failed for cartridge=%s mode=%s target=%s conn_id=%s",
+                cartridge,
+                mode,
+                target,
+                conn_id,
+                exc_info=True,
+            )
+        return None
+    return dict(row) if row else None
+
+
 def normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
     return sync_progress.normalize_sync_step_payload(
         step,
