@@ -97,3 +97,19 @@ def internal_outbound_headers(
     if request_id:
         headers["x-request-id"] = request_id
     return headers
+
+
+def internal_cartridge_headers(
+    *,
+    cartridge_api_key: str | None,
+    internal_api_key: str | None,
+    is_production: bool,
+) -> dict[str, str]:
+    if not cartridge_api_key and is_production:
+        raise RuntimeError(
+            "Missing INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE; legacy fallback disabled in production"
+        )
+    return {
+        "x-api-key": cartridge_api_key or internal_api_key or "",
+        "x-internal-service": "console",
+    }

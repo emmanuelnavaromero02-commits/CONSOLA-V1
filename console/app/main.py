@@ -213,6 +213,7 @@ from app.domains.security.request_classification import (
     uses_rbac_dependency as _uses_rbac_dependency_impl,
 )
 from app.domains.security.internal_auth import (
+    internal_cartridge_headers as _internal_cartridge_headers_impl,
     internal_outbound_headers as _internal_outbound_headers_impl,
     internal_outbound_key as _internal_outbound_key_impl,
     internal_service_user as _internal_service_user_impl,
@@ -5959,12 +5960,11 @@ _MICROSERVICE_CARTRIDGES = {
 
 
 def _internal_headers() -> dict:
-    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
-    if not key and _is_production_env():
-        raise RuntimeError(
-            "Missing INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE; legacy fallback disabled in production"
-        )
-    return {"x-api-key": key or INTERNAL_API_KEY, "x-internal-service": "console"}
+    return _internal_cartridge_headers_impl(
+        cartridge_api_key=os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE"),
+        internal_api_key=INTERNAL_API_KEY,
+        is_production=_is_production_env(),
+    )
 
 
 async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:

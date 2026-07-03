@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.domains.security.internal_auth import (
     INTERNAL_SERVICE_EMAIL,
     INTERNAL_SERVICE_ID,
+    internal_cartridge_headers,
     internal_outbound_headers,
     internal_outbound_key,
     internal_service_user,
@@ -128,3 +129,40 @@ def test_internal_outbound_headers_include_request_id_when_present():
         "x-internal-service": "console",
         "x-request-id": "req-123",
     }
+
+
+def test_internal_cartridge_headers_prefer_pair_key():
+    headers = internal_cartridge_headers(
+        cartridge_api_key="cartridge-key",
+        internal_api_key="legacy",
+        is_production=True,
+    )
+
+    assert headers == {
+        "x-api-key": "cartridge-key",
+        "x-internal-service": "console",
+    }
+
+
+def test_internal_cartridge_headers_allow_legacy_outside_production():
+    headers = internal_cartridge_headers(
+        cartridge_api_key=None,
+        internal_api_key="legacy",
+        is_production=False,
+    )
+
+    assert headers == {"x-api-key": "legacy", "x-internal-service": "console"}
+
+
+def test_internal_cartridge_headers_reject_legacy_in_production():
+    with pytest.raises(RuntimeError) as exc:
+        internal_cartridge_headers(
+            cartridge_api_key=None,
+            internal_api_key="legacy",
+            is_production=True,
+        )
+
+    assert (
+        str(exc.value)
+        == "Missing INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE; legacy fallback disabled in production"
+    )
