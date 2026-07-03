@@ -233,3 +233,54 @@ def test_sync_run_age_seconds_handles_strings_and_future_dates():
         now=now,
     ) == 0
     assert sync_progress.sync_run_age_seconds({"started_at": "not-a-date"}, now=now) is None
+
+
+def test_sync_run_needs_final_reconcile_for_successfactors_aggregate_summary():
+    steps = [
+        {"id": "connection", "status": "success"},
+        {"id": "bronze", "status": "success"},
+    ]
+    row = {"status": "partial", "cartridge_id": "sap_successfactors"}
+    extra = {
+        "steps": steps,
+        "triggered_entities": [
+            {"entity": "__extract_all__", "dag_run_id": "aggregate-run"}
+        ],
+        "control_room_checked_at": "2026-07-03T12:00:00Z",
+    }
+
+    assert sync_progress.sync_run_needs_final_reconcile(
+        row,
+        extra,
+        terminal_statuses={"success", "partial", "failed"},
+        initial_step_count=2,
+        aggregate_entity="__extract_all__",
+    )
+    extra["extract_all_summary_seen"] = True
+    assert not sync_progress.sync_run_needs_final_reconcile(
+        row,
+        extra,
+        terminal_statuses={"success", "partial", "failed"},
+        initial_step_count=2,
+        aggregate_entity="__extract_all__",
+    )
+
+
+def test_sync_run_needs_final_reconcile_waits_for_pending_steps():
+    assert sync_progress.sync_run_needs_final_reconcile(
+        {"status": "success", "cartridge_id": "replicon"},
+        {"steps": [{"id": "bronze", "status": "running"}]},
+        terminal_statuses={"success", "partial", "failed"},
+        initial_step_count=1,
+        aggregate_entity="__extract_all__",
+    )
+
+
+def test_sync_errors_retryable_only_allows_transient_errors():
+    assert sync_progress.sync_errors_retryable(
+        [{"status_code": 500}, {"status_code": 400, "error": "timeout from airflow"}]
+    )
+    assert not sync_progress.sync_errors_retryable(
+        [{"status_code": 404, "error": "entity missing"}]
+    )
+    assert not sync_progress.sync_errors_retryable([])

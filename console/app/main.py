@@ -6721,32 +6721,13 @@ async def _run_sync_agentops_monitors(
 
 def _sync_run_needs_final_reconcile(row: dict[str, Any], extra: dict[str, Any]) -> bool:
     """Terminal sync rows may predate the final Control Room/materialization check."""
-    status = str(row.get("status") or "").lower()
-    if status not in _SYNC_TERMINAL_STATUSES:
-        return True
-    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else []
-    if len(steps) < len(_initial_sync_steps()):
-        return True
-    if any(
-        str(step.get("status") or "").lower() in {"queued", "running", ""}
-        for step in steps
-        if isinstance(step, dict)
-    ):
-        return True
-    if str(row.get("cartridge_id") or "") == "sap_successfactors":
-        triggered = extra.get("triggered_entities")
-        has_aggregate_child = any(
-            isinstance(item, dict)
-            and str(item.get("entity") or "") == _SYNC_AGGREGATE_ENTITY
-            and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
-            for item in (triggered if isinstance(triggered, list) else [])
-        )
-        if status != "failed" and has_aggregate_child and not bool(
-            extra.get("extract_all_summary_seen")
-        ):
-            return True
-        return not bool(extra.get("control_room_checked_at"))
-    return False
+    return _sync_progress.sync_run_needs_final_reconcile(
+        row,
+        extra,
+        terminal_statuses=_SYNC_TERMINAL_STATUSES,
+        initial_step_count=len(_initial_sync_steps()),
+        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
+    )
 
 
 async def _upsert_sync_run(
@@ -6886,25 +6867,7 @@ async def _fetch_sync_run(
 
 
 def _sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
-    if not errors:
-        return False
-    for error in errors:
-        status_code = int(error.get("status_code") or 0)
-        message = str(error.get("error") or "").lower()
-        if status_code >= 500:
-            continue
-        if any(
-            token in message
-            for token in (
-                "timeout",
-                "tempor",
-                "airflow trigger failed",
-                "connection reset",
-            )
-        ):
-            continue
-        return False
-    return True
+    return _sync_progress.sync_errors_retryable(errors)
 
 
 async def _sync_child_runs(

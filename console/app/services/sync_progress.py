@@ -218,6 +218,64 @@ def sync_run_age_seconds(row: dict[str, Any], *, now: datetime | None = None) ->
     return max((now - started_at).total_seconds(), 0.0)
 
 
+def sync_run_needs_final_reconcile(
+    row: dict[str, Any],
+    extra: dict[str, Any],
+    *,
+    terminal_statuses: set[str],
+    initial_step_count: int,
+    aggregate_entity: str,
+) -> bool:
+    status = str(row.get("status") or "").lower()
+    if status not in terminal_statuses:
+        return True
+    steps = extra.get("steps") if isinstance(extra.get("steps"), list) else []
+    if len(steps) < initial_step_count:
+        return True
+    if any(
+        str(step.get("status") or "").lower() in {"queued", "running", ""}
+        for step in steps
+        if isinstance(step, dict)
+    ):
+        return True
+    if str(row.get("cartridge_id") or "") == "sap_successfactors":
+        triggered = extra.get("triggered_entities")
+        has_aggregate_child = any(
+            isinstance(item, dict)
+            and str(item.get("entity") or "") == aggregate_entity
+            and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+            for item in (triggered if isinstance(triggered, list) else [])
+        )
+        if status != "failed" and has_aggregate_child and not bool(
+            extra.get("extract_all_summary_seen")
+        ):
+            return True
+        return not bool(extra.get("control_room_checked_at"))
+    return False
+
+
+def sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
+    if not errors:
+        return False
+    for error in errors:
+        status_code = int(error.get("status_code") or 0)
+        message = str(error.get("error") or "").lower()
+        if status_code >= 500:
+            continue
+        if any(
+            token in message
+            for token in (
+                "timeout",
+                "tempor",
+                "airflow trigger failed",
+                "connection reset",
+            )
+        ):
+            continue
+        return False
+    return True
+
+
 def sync_step_entity_summary(
     rows: list[dict[str, Any]],
     *,
