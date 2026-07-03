@@ -15,6 +15,14 @@ SYNC_STEP_RECOMPUTE_PERCENT_STATUSES = {
     "skipped_explicit",
 }
 SYNC_CHILD_BLOCKED_STATUSES = {"blocked", "skipped", "skipped_explicit"}
+SYNC_AGGREGATE_READY_KEYS = {
+    "summary",
+    "result_status",
+    "gold_refresh",
+    "selected",
+    "attempted",
+    "outcomes",
+}
 SYNC_STEP_ORDER = (
     "connection",
     "bronze",
@@ -274,6 +282,70 @@ def sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
             continue
         return False
     return True
+
+
+def sync_child_progress_rows(
+    child_rows: list[dict[str, Any]],
+    *,
+    aggregate_entity: str,
+    sync_now_entity: str,
+    ready_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    ready_keys = ready_keys or SYNC_AGGREGATE_READY_KEYS
+    aggregate_child_rows = [
+        item
+        for item in child_rows
+        if str(item.get("entity") or "") == aggregate_entity
+    ]
+    aggregate_payload_ready = any(
+        any(key in sync_extra_from_row(item) for key in ready_keys)
+        for item in aggregate_child_rows
+    )
+    entity_child_rows = [
+        item
+        for item in child_rows
+        if str(item.get("entity") or "") not in {aggregate_entity, sync_now_entity}
+    ]
+    aggregate_summary_pending = (
+        bool(aggregate_child_rows) and not aggregate_payload_ready and not entity_child_rows
+    )
+    if aggregate_summary_pending:
+        progress_rows = [
+            {
+                **item,
+                "status": "running"
+                if str(item.get("status") or "").lower() in {"success", "partial"}
+                else item.get("status"),
+            }
+            for item in aggregate_child_rows
+        ]
+    else:
+        progress_rows = entity_child_rows or child_rows
+    return {
+        "aggregate_child_rows": aggregate_child_rows,
+        "aggregate_payload_ready": aggregate_payload_ready,
+        "entity_child_rows": entity_child_rows,
+        "aggregate_summary_pending": aggregate_summary_pending,
+        "progress_rows": progress_rows,
+    }
+
+
+def sync_child_status_counts(
+    progress_rows: list[dict[str, Any]],
+    *,
+    blocked_statuses: set[str] = SYNC_CHILD_BLOCKED_STATUSES,
+    terminal_statuses: set[str],
+) -> dict[str, Any]:
+    statuses = [str(item.get("status") or "").lower() for item in progress_rows]
+    return {
+        "statuses": statuses,
+        "running": any(status in {"queued", "running", "unknown"} for status in statuses),
+        "failed": sum(1 for status in statuses if status in {"failed", "error"}),
+        "success": sum(1 for status in statuses if status == "success"),
+        "partial": sum(1 for status in statuses if status == "partial"),
+        "blocked": sum(1 for status in statuses if status in blocked_statuses),
+        "terminal": sum(1 for status in statuses if status in terminal_statuses),
+    }
 
 
 def sync_step_entity_summary(

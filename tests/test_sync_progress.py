@@ -284,3 +284,67 @@ def test_sync_errors_retryable_only_allows_transient_errors():
         [{"status_code": 404, "error": "entity missing"}]
     )
     assert not sync_progress.sync_errors_retryable([])
+
+
+def test_sync_child_progress_rows_marks_aggregate_pending_as_running():
+    progress = sync_progress.sync_child_progress_rows(
+        [
+            {
+                "entity": "__extract_all__",
+                "status": "success",
+                "extra": {},
+            }
+        ],
+        aggregate_entity="__extract_all__",
+        sync_now_entity="__sync_now__",
+    )
+
+    assert progress["aggregate_summary_pending"] is True
+    assert progress["aggregate_payload_ready"] is False
+    assert progress["entity_child_rows"] == []
+    assert progress["progress_rows"][0]["status"] == "running"
+
+
+def test_sync_child_progress_rows_prefers_entity_rows_when_aggregate_has_payload():
+    rows = [
+        {
+            "entity": "__extract_all__",
+            "status": "success",
+            "extra": {"gold_refresh": {"status": "success"}},
+        },
+        {"entity": "EmpJob", "status": "success"},
+        {"entity": "__sync_now__", "status": "running"},
+    ]
+
+    progress = sync_progress.sync_child_progress_rows(
+        rows,
+        aggregate_entity="__extract_all__",
+        sync_now_entity="__sync_now__",
+    )
+
+    assert progress["aggregate_summary_pending"] is False
+    assert progress["aggregate_payload_ready"] is True
+    assert progress["progress_rows"] == [{"entity": "EmpJob", "status": "success"}]
+
+
+def test_sync_child_status_counts_normalizes_pipeline_child_states():
+    counts = sync_progress.sync_child_status_counts(
+        [
+            {"status": "success"},
+            {"status": "partial"},
+            {"status": "blocked"},
+            {"status": "error"},
+            {"status": "queued"},
+        ],
+        terminal_statuses={"success", "partial", "blocked", "failed", "error"},
+    )
+
+    assert counts == {
+        "statuses": ["success", "partial", "blocked", "error", "queued"],
+        "running": True,
+        "failed": 1,
+        "success": 1,
+        "partial": 1,
+        "blocked": 1,
+        "terminal": 4,
+    }

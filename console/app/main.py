@@ -6983,58 +6983,27 @@ async def _build_sync_run_status(
         cartridge=cartridge, run_ids=child_run_ids, user=user
     )
     gold_refresh_summary = _sync_child_gold_refresh_summary(child_rows)
-    aggregate_child_rows = [
-        item
-        for item in child_rows
-        if str(item.get("entity") or "") == _SYNC_AGGREGATE_ENTITY
-    ]
-    aggregate_payload_ready = any(
-        any(
-            key in _sync_extra_from_row(item)
-            for key in (
-                "summary",
-                "result_status",
-                "gold_refresh",
-                "selected",
-                "attempted",
-                "outcomes",
-            )
-        )
-        for item in aggregate_child_rows
+    child_progress = _sync_progress.sync_child_progress_rows(
+        child_rows,
+        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
+        sync_now_entity=_SYNC_NOW_ENTITY,
     )
-    entity_child_rows = [
-        item
-        for item in child_rows
-        if str(item.get("entity") or "") not in {_SYNC_AGGREGATE_ENTITY, _SYNC_NOW_ENTITY}
-    ]
-    aggregate_summary_pending = bool(aggregate_child_rows) and not aggregate_payload_ready and not entity_child_rows
-    if aggregate_summary_pending:
-        progress_rows = [
-            {
-                **item,
-                "status": "running"
-                if str(item.get("status") or "").lower() in {"success", "partial"}
-                else item.get("status"),
-            }
-            for item in aggregate_child_rows
-        ]
-    else:
-        progress_rows = entity_child_rows or child_rows
-    child_statuses = [str(item.get("status") or "").lower() for item in progress_rows]
-    running_children = any(
-        status in {"queued", "running", "unknown"} for status in child_statuses
+    aggregate_child_rows = child_progress["aggregate_child_rows"]
+    aggregate_payload_ready = child_progress["aggregate_payload_ready"]
+    entity_child_rows = child_progress["entity_child_rows"]
+    aggregate_summary_pending = child_progress["aggregate_summary_pending"]
+    progress_rows = child_progress["progress_rows"]
+    child_counts = _sync_progress.sync_child_status_counts(
+        progress_rows,
+        blocked_statuses=_SYNC_CHILD_BLOCKED_STATUSES,
+        terminal_statuses=_SYNC_CHILD_TERMINAL_STATUSES,
     )
-    failed_children = sum(
-        1 for status in child_statuses if status in {"failed", "error"}
-    )
-    success_children = sum(1 for status in child_statuses if status == "success")
-    partial_children = sum(1 for status in child_statuses if status == "partial")
-    blocked_children = sum(
-        1 for status in child_statuses if status in _SYNC_CHILD_BLOCKED_STATUSES
-    )
-    terminal_children = sum(
-        1 for status in child_statuses if status in _SYNC_CHILD_TERMINAL_STATUSES
-    )
+    running_children = bool(child_counts["running"])
+    failed_children = int(child_counts["failed"])
+    success_children = int(child_counts["success"])
+    partial_children = int(child_counts["partial"])
+    blocked_children = int(child_counts["blocked"])
+    terminal_children = int(child_counts["terminal"])
     entity_summary = _sync_step_entity_summary(progress_rows)
     stale_running = (
         str(row.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES
