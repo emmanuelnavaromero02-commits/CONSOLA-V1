@@ -7281,62 +7281,23 @@ async def _build_sync_run_status(
                     "results": [],
                     "reason": f"{type(exc).__name__}: {exc}"[:500],
                 }
-        agent_status = str(agentops_refresh.get("status") or "").lower()
-        agent_total = int(agentops_refresh.get("total") or 0)
-        agent_completed = int(agentops_refresh.get("completed") or 0)
-        agent_failed = int(agentops_refresh.get("failed") or 0)
-        if not can_run_agentops:
-            updates["agents_intelligence"] = {
-                "label": "Agentes/IA",
-                "status": "queued" if running_children else "partial",
-                "detail": "Esperando datos materializados para ejecutar monitores reales.",
-                "completed": 0,
-                "total": 1,
-            }
-        elif agent_status == "success":
-            updates["agents_intelligence"] = {
-                "label": "Agentes/IA",
-                "status": "success",
-                "detail": f"{agent_completed}/{max(agent_total, 1)} monitores ejecutados con AgentOps.",
-                "completed": agent_completed,
-                "total": max(agent_total, agent_completed, 1),
-                "percent": 100,
-                "metrics": agentops_refresh,
-            }
-        elif agent_status == "failed":
-            updates["agents_intelligence"] = {
-                "label": "Agentes/IA",
-                "status": "failed",
-                "detail": str(
-                    agentops_refresh.get("reason")
-                    or f"{agent_failed} monitores fallaron."
-                ),
-                "completed": agent_completed,
-                "total": max(agent_total, agent_failed, 1),
-                "metrics": agentops_refresh,
-            }
-        else:
-            reason = str(
-                agentops_refresh.get("reason")
-                or f"{agent_completed}/{max(agent_total, 1)} monitores ejecutados; {agent_failed} con error."
+        updates["agents_intelligence"] = (
+            _sync_progress.sync_agents_intelligence_step_update(
+                applies=True,
+                can_run_agentops=can_run_agentops,
+                running_children=running_children,
+                agentops_refresh=agentops_refresh,
             )
-            updates["agents_intelligence"] = {
-                "label": "Agentes/IA",
-                "status": "partial",
-                "detail": reason,
-                "completed": agent_completed,
-                "total": max(agent_total, agent_completed + agent_failed, 1),
-                "metrics": agentops_refresh,
-            }
+        )
     else:
-        updates["agents_intelligence"] = {
-            "label": "Agentes/IA",
-            "status": "skipped",
-            "detail": "Monitores específicos no aplican para este cartucho.",
-            "completed": 1,
-            "total": 1,
-            "percent": 100,
-        }
+        updates["agents_intelligence"] = (
+            _sync_progress.sync_agents_intelligence_step_update(
+                applies=False,
+                can_run_agentops=False,
+                running_children=running_children,
+                agentops_refresh={},
+            )
+        )
 
     steps = _merge_sync_steps(steps, updates)
     status = _sync_status_from_steps(steps)

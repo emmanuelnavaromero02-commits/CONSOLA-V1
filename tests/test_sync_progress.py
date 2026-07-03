@@ -494,3 +494,43 @@ def test_sync_silver_gold_step_update_distinguishes_waiting_partial_and_failed()
     assert partial["completed"] == 3
     assert failed is not None
     assert failed["status"] == "failed"
+
+
+def test_sync_agents_intelligence_step_update_covers_common_states():
+    skipped = sync_progress.sync_agents_intelligence_step_update(
+        applies=False,
+        can_run_agentops=False,
+        running_children=False,
+        agentops_refresh={},
+    )
+    waiting = sync_progress.sync_agents_intelligence_step_update(
+        applies=True,
+        can_run_agentops=False,
+        running_children=True,
+        agentops_refresh={},
+    )
+    success = sync_progress.sync_agents_intelligence_step_update(
+        applies=True,
+        can_run_agentops=True,
+        running_children=False,
+        agentops_refresh={"status": "success", "completed": 1, "total": 1},
+    )
+    failed = sync_progress.sync_agents_intelligence_step_update(
+        applies=True,
+        can_run_agentops=True,
+        running_children=False,
+        agentops_refresh={
+            "status": "failed",
+            "completed": 0,
+            "failed": 1,
+            "reason": "runner unavailable",
+        },
+    )
+
+    assert skipped["status"] == "skipped"
+    assert skipped["percent"] == 100
+    assert waiting["status"] == "queued"
+    assert success["status"] == "success"
+    assert success["detail"] == "1/1 monitores ejecutados con AgentOps."
+    assert failed["status"] == "failed"
+    assert failed["detail"] == "runner unavailable"
