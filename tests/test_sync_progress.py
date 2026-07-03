@@ -165,3 +165,41 @@ def test_control_room_gold_refresh_terminal_statuses():
     assert sync_progress.control_room_gold_refresh_terminal({"status": "not_ready"})
     assert not sync_progress.control_room_gold_refresh_terminal({"status": "running"})
     assert not sync_progress.control_room_gold_refresh_terminal(None)
+
+
+def test_sync_entity_idempotency_key_truncates_long_material():
+    key = sync_progress.sync_entity_idempotency_key("x" * 150, "Candidate")
+
+    assert key is not None
+    assert len(key) <= 160
+    assert key.startswith("x" * 100)
+
+
+def test_sync_now_run_id_from_request_id_is_stable():
+    first = sync_progress.sync_now_run_id_from_request_id(
+        cartridge="sap_successfactors",
+        request_id="manual-1",
+        lock_key="tenant:workspace:sap_successfactors",
+    )
+    second = sync_progress.sync_now_run_id_from_request_id(
+        cartridge="sap_successfactors",
+        request_id="manual-1",
+        lock_key="tenant:workspace:sap_successfactors",
+    )
+
+    assert first == second
+    assert first.startswith("sync_now:sap_successfactors:")
+
+
+def test_sync_run_age_seconds_handles_strings_and_future_dates():
+    now = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
+
+    assert sync_progress.sync_run_age_seconds(
+        {"started_at": "2026-07-03T11:59:00+00:00"},
+        now=now,
+    ) == 60
+    assert sync_progress.sync_run_age_seconds(
+        {"started_at": "2026-07-03T12:01:00+00:00"},
+        now=now,
+    ) == 0
+    assert sync_progress.sync_run_age_seconds({"started_at": "not-a-date"}, now=now) is None

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 
@@ -175,6 +177,45 @@ def sync_child_reason(row: dict[str, Any]) -> str | None:
     raw_conf = extra.get("raw_conf") if isinstance(extra.get("raw_conf"), dict) else {}
     reason = raw_conf.get("reason") or raw_conf.get("metadata_status")
     return str(reason)[:240] if reason else None
+
+
+def sync_entity_idempotency_key(base_key: object | None, entity: object | None) -> str | None:
+    if base_key is None:
+        return None
+    base = str(base_key).strip()
+    if not base:
+        return None
+    entity_name = str(entity or "").strip() or "entity"
+    candidate = f"{base}:{entity_name}"
+    if len(candidate) <= 160:
+        return candidate
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, candidate).hex
+    return f"{base[:100]}:{digest}"
+
+
+def sync_now_run_id_from_request_id(
+    *, cartridge: str, request_id: str | None, lock_key: str
+) -> str:
+    if not request_id:
+        return f"sync_now:{cartridge}:{uuid.uuid4().hex}"
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, f"{lock_key}:{request_id}").hex
+    return f"sync_now:{cartridge}:{digest}"
+
+
+def sync_run_age_seconds(row: dict[str, Any], *, now: datetime | None = None) -> float | None:
+    started_at = row.get("started_at")
+    if isinstance(started_at, str):
+        try:
+            normalized = started_at.replace("Z", "+00:00")
+            started_at = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    if not started_at:
+        return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    return max((now - started_at).total_seconds(), 0.0)
 
 
 def sync_step_entity_summary(

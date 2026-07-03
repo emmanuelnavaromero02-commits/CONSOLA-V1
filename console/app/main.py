@@ -6154,17 +6154,7 @@ def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
 def _sync_entity_idempotency_key(
     base_key: object | None, entity: object | None
 ) -> str | None:
-    if base_key is None:
-        return None
-    base = str(base_key).strip()
-    if not base:
-        return None
-    entity_name = str(entity or "").strip() or "entity"
-    candidate = f"{base}:{entity_name}"
-    if len(candidate) <= 160:
-        return candidate
-    digest = uuid.uuid5(uuid.NAMESPACE_URL, candidate).hex
-    return f"{base[:100]}:{digest}"
+    return _sync_progress.sync_entity_idempotency_key(base_key, entity)
 
 
 def _sync_now_lock_key(
@@ -6206,23 +6196,18 @@ def _normalize_sync_now_request_id(value: object | None) -> str | None:
 def _sync_now_run_id_from_request_id(
     *, cartridge: str, request_id: str | None, lock_key: str
 ) -> str:
-    if not request_id:
-        return f"sync_now:{cartridge}:{uuid.uuid4().hex}"
-    digest = uuid.uuid5(uuid.NAMESPACE_URL, f"{lock_key}:{request_id}").hex
-    return f"sync_now:{cartridge}:{digest}"
+    return _sync_progress.sync_now_run_id_from_request_id(
+        cartridge=cartridge,
+        request_id=request_id,
+        lock_key=lock_key,
+    )
 
 
 def _sync_run_age_seconds(row: dict[str, Any]) -> float | None:
     started_at = row.get("started_at")
     if isinstance(started_at, str):
         started_at = _parse_iso_datetime(started_at)
-    if not started_at:
-        return None
-    from datetime import datetime as _dt, timezone as _tz
-
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=_tz.utc)
-    return max((_dt.now(_tz.utc) - started_at).total_seconds(), 0.0)
+    return _sync_progress.sync_run_age_seconds({"started_at": started_at})
 
 
 def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
