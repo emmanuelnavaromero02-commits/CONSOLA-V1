@@ -268,6 +268,9 @@ from app.domains.pipeline.extract_config import (
     normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
     resolve_pipeline_sync_conn_id as _resolve_pipeline_sync_conn_id_impl,
 )
+from app.domains.studio.access import (
+    cartridge_visible_for_context as _cartridge_visible_for_context,
+)
 from app.domains.studio.cartridge_probe import (
     probe_microservice as _probe_microservice_impl,
 )
@@ -6253,12 +6256,7 @@ def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:
     ctx = build_security_context(user)
     if _is_security_admin_context(ctx):
         return
-    allowed = {
-        str(c).strip()
-        for c in (ctx.get("allowed_cartridges") or [])
-        if str(c).strip() and str(c).strip() != "*"
-    }
-    if str(cartridge_id) not in allowed:
+    if not _cartridge_visible_for_context(ctx, cartridge_id):
         raise HTTPException(403, "cartridge not allowed")
 
 
