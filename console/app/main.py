@@ -7224,31 +7224,24 @@ async def _build_sync_run_status(
 
     steps = _merge_sync_steps(steps, updates)
     status = _sync_status_from_steps(steps)
-    updated_extra = {
-        "steps": steps,
-        "triggered_entities": triggered,
-        "errors": errors,
-        "control_room_ready": control_room_ready,
-        "control_room_checked_at": control_room_checked_at
-        or extra.get("control_room_checked_at"),
-        "control_room_snapshot": control_room_snapshot
-        or extra.get("control_room_snapshot")
-        or {},
-        "agentops_refresh": agentops_refresh or extra.get("agentops_refresh") or {},
-        "gold_refresh": gold_refresh_summary or extra.get("gold_refresh") or {},
-        "control_room_gold_refresh": control_room_gold_refresh
-        or extra.get("control_room_gold_refresh")
-        or {},
-        "extract_all_summary_seen": aggregate_payload_ready
-        or bool(extra.get("extract_all_summary_seen")),
-        "aggregate_summary_pending": aggregate_summary_pending,
-        "child_run_count": len(child_rows),
-        "entity_child_run_count": len(entity_child_rows),
-        "entity_outcomes": entity_summary["entities"],
-        "blockers": entity_summary["blockers"],
-        "target": extra.get("target") or "all",
-        "mode": extra.get("mode") or row.get("mode") or "incremental",
-    }
+    updated_extra = _sync_progress.sync_updated_extra(
+        steps=steps,
+        triggered=triggered,
+        errors=errors,
+        control_room_ready=control_room_ready,
+        control_room_checked_at=control_room_checked_at,
+        control_room_snapshot=control_room_snapshot,
+        agentops_refresh=agentops_refresh,
+        gold_refresh_summary=gold_refresh_summary,
+        control_room_gold_refresh=control_room_gold_refresh,
+        aggregate_payload_ready=aggregate_payload_ready,
+        aggregate_summary_pending=aggregate_summary_pending,
+        child_run_count=len(child_rows),
+        entity_child_run_count=len(entity_child_rows),
+        entity_summary=entity_summary,
+        previous_extra=extra,
+        row_mode=str(row.get("mode") or "") or None,
+    )
     await _upsert_sync_run(
         run_id=str(row["run_id"]),
         cartridge=cartridge,
@@ -7256,12 +7249,7 @@ async def _build_sync_run_status(
         status=status,
         user=user,
         extra=updated_extra,
-        error_message="; ".join(
-            str(item.get("error") or "")
-            for item in errors[:3]
-            if isinstance(item, dict)
-        )
-        or None,
+        error_message=_sync_progress.sync_run_error_message(errors),
     )
     if status in _SYNC_TERMINAL_STATUSES:
         try:

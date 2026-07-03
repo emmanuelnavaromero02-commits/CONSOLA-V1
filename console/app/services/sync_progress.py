@@ -715,6 +715,63 @@ def sync_agents_intelligence_step_update(
     }
 
 
+def sync_run_error_message(errors: list[dict[str, Any]]) -> str | None:
+    message = "; ".join(
+        str(item.get("error") or "") for item in errors[:3] if isinstance(item, dict)
+    )
+    return message or None
+
+
+def sync_updated_extra(
+    *,
+    steps: list[dict[str, Any]],
+    triggered: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    control_room_ready: bool,
+    control_room_checked_at: str | None,
+    control_room_snapshot: dict[str, Any],
+    agentops_refresh: dict[str, Any],
+    gold_refresh_summary: dict[str, Any],
+    control_room_gold_refresh: dict[str, Any],
+    aggregate_payload_ready: bool,
+    aggregate_summary_pending: bool,
+    child_run_count: int,
+    entity_child_run_count: int,
+    entity_summary: dict[str, Any],
+    previous_extra: dict[str, Any],
+    row_mode: str | None,
+) -> dict[str, Any]:
+    return {
+        "steps": steps,
+        "triggered_entities": triggered,
+        "errors": errors,
+        "control_room_ready": control_room_ready,
+        "control_room_checked_at": control_room_checked_at
+        or previous_extra.get("control_room_checked_at"),
+        "control_room_snapshot": control_room_snapshot
+        or previous_extra.get("control_room_snapshot")
+        or {},
+        "agentops_refresh": agentops_refresh
+        or previous_extra.get("agentops_refresh")
+        or {},
+        "gold_refresh": gold_refresh_summary
+        or previous_extra.get("gold_refresh")
+        or {},
+        "control_room_gold_refresh": control_room_gold_refresh
+        or previous_extra.get("control_room_gold_refresh")
+        or {},
+        "extract_all_summary_seen": aggregate_payload_ready
+        or bool(previous_extra.get("extract_all_summary_seen")),
+        "aggregate_summary_pending": aggregate_summary_pending,
+        "child_run_count": child_run_count,
+        "entity_child_run_count": entity_child_run_count,
+        "entity_outcomes": entity_summary.get("entities") or [],
+        "blockers": entity_summary.get("blockers") or [],
+        "target": previous_extra.get("target") or "all",
+        "mode": previous_extra.get("mode") or row_mode or "incremental",
+    }
+
+
 def sync_step_entity_summary(
     rows: list[dict[str, Any]],
     *,

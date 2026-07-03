@@ -585,3 +585,54 @@ def test_sync_control_room_step_update_covers_waiting_generic_and_errors():
     assert waiting["status"] == "queued"
     assert skipped["status"] == "skipped"
     assert error["error"] == "boom"
+
+
+def test_sync_updated_extra_preserves_operational_state_and_defaults():
+    extra = sync_progress.sync_updated_extra(
+        steps=[{"id": "bronze", "status": "success"}],
+        triggered=[{"entity": "EmpJob"}],
+        errors=[{"error": "first"}, {"error": "second"}],
+        control_room_ready=True,
+        control_room_checked_at=None,
+        control_room_snapshot={},
+        agentops_refresh={"status": "success"},
+        gold_refresh_summary={},
+        control_room_gold_refresh={"status": "partial"},
+        aggregate_payload_ready=True,
+        aggregate_summary_pending=False,
+        child_run_count=3,
+        entity_child_run_count=2,
+        entity_summary={
+            "entities": [{"entity": "EmpJob", "status": "success"}],
+            "blockers": [],
+        },
+        previous_extra={
+            "target": "talent",
+            "mode": "full",
+            "control_room_checked_at": "2026-07-03T00:00:00Z",
+            "control_room_snapshot": {"source_count": 1},
+        },
+        row_mode="incremental",
+    )
+
+    assert extra["target"] == "talent"
+    assert extra["mode"] == "full"
+    assert extra["control_room_checked_at"] == "2026-07-03T00:00:00Z"
+    assert extra["control_room_snapshot"] == {"source_count": 1}
+    assert extra["agentops_refresh"] == {"status": "success"}
+    assert extra["control_room_gold_refresh"] == {"status": "partial"}
+    assert extra["extract_all_summary_seen"] is True
+    assert extra["child_run_count"] == 3
+    assert extra["entity_outcomes"][0]["entity"] == "EmpJob"
+
+
+def test_sync_run_error_message_uses_first_three_errors():
+    assert sync_progress.sync_run_error_message(
+        [
+            {"error": "one"},
+            {"error": "two"},
+            {"error": "three"},
+            {"error": "four"},
+        ]
+    ) == "one; two; three"
+    assert sync_progress.sync_run_error_message([]) is None
