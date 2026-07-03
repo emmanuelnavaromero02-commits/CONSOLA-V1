@@ -6007,10 +6007,13 @@ async def _reserve_successfactors_entity_extract_slot(
 
 def _pipeline_extract_all_mode_target(body: dict[str, Any]) -> tuple[str, str]:
     try:
-        return _sync_clean_mode(body.get("mode")), _sync_clean_target(body.get("target"))
-    except HTTPException as exc:
-        detail = "invalid extract mode" if "mode" in str(exc.detail) else "invalid extract target"
-        raise HTTPException(400, detail=detail) from exc
+        return _sync_progress.pipeline_extract_all_mode_target(
+            body,
+            valid_modes=_SYNC_VALID_MODES,
+            valid_targets=_SYNC_VALID_TARGETS,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
 
 def _pipeline_extract_all_run_id(

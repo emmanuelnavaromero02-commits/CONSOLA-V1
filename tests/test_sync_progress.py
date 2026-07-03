@@ -260,6 +260,36 @@ def test_clean_sync_mode_and_target_normalize_defaults_and_reject_invalid_values
         raise AssertionError("invalid target should have been rejected")
 
 
+def test_pipeline_extract_all_mode_target_maps_validation_errors_to_extract_labels():
+    assert sync_progress.pipeline_extract_all_mode_target(
+        {"mode": "FULL", "target": "Talent"},
+        valid_modes={"incremental", "full"},
+        valid_targets={"all", "foundation", "talent"},
+    ) == ("full", "talent")
+
+    try:
+        sync_progress.pipeline_extract_all_mode_target(
+            {"mode": "bad", "target": "all"},
+            valid_modes={"incremental", "full"},
+            valid_targets={"all", "foundation", "talent"},
+        )
+    except ValueError as exc:
+        assert str(exc) == "invalid extract mode"
+    else:  # pragma: no cover
+        raise AssertionError("invalid extract mode should have been rejected")
+
+    try:
+        sync_progress.pipeline_extract_all_mode_target(
+            {"mode": "full", "target": "bad"},
+            valid_modes={"incremental", "full"},
+            valid_targets={"all", "foundation", "talent"},
+        )
+    except ValueError as exc:
+        assert str(exc) == "invalid extract target"
+    else:  # pragma: no cover
+        raise AssertionError("invalid extract target should have been rejected")
+
+
 def test_normalize_sync_now_request_id_accepts_safe_ids_and_rejects_bad_ones():
     assert sync_progress.normalize_sync_now_request_id(None) is None
     assert sync_progress.normalize_sync_now_request_id("  ") is None

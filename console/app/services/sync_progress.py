@@ -182,6 +182,23 @@ def clean_sync_target(value: Any | None, *, valid_targets: set[str]) -> str:
     return target
 
 
+def pipeline_extract_all_mode_target(
+    body: dict[str, Any],
+    *,
+    valid_modes: set[str],
+    valid_targets: set[str],
+) -> tuple[str, str]:
+    try:
+        mode = clean_sync_mode(body.get("mode"), valid_modes=valid_modes)
+    except ValueError as exc:
+        raise ValueError("invalid extract mode") from exc
+    try:
+        target = clean_sync_target(body.get("target"), valid_targets=valid_targets)
+    except ValueError as exc:
+        raise ValueError("invalid extract target") from exc
+    return mode, target
+
+
 def sync_child_reason(row: dict[str, Any]) -> str | None:
     extra = sync_extra_from_row(row)
     for key in (
