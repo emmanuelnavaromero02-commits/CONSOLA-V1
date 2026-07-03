@@ -46,6 +46,10 @@ from app.domains.copilot.context_payloads import (
     sanitise_page_context as _sanitise_page_context,
     scrub_value as _scrub_value,
 )
+from app.domains.copilot.admin_scope import (
+    COPILOT_ADMIN_ROLE_ALLOWLIST,
+    has_admin as _has_admin_impl,
+)
 from app.domains.copilot.router_helpers import (
     require_uuid_path as _require_uuid_path_impl,
     tenant_id as _tenant_id_impl,
@@ -476,9 +480,7 @@ async def create_lesson_endpoint(
     return {"id": new_id, "scope": scope}
 
 
-_ADMIN_ROLE_ALLOWLIST = frozenset({
-    "owner", "super_admin", "admin", "workspace_admin",
-})
+_ADMIN_ROLE_ALLOWLIST = COPILOT_ADMIN_ROLE_ALLOWLIST
 
 
 def _has_admin(user: dict[str, Any]) -> bool:
@@ -502,18 +504,7 @@ def _has_admin(user: dict[str, Any]) -> bool:
     ``"non_admin_observer"``) which was the wrong direction of
     failure for an admin gate.
     """
-    role = str(user.get("role") or "").lower()
-    if role in _ADMIN_ROLE_ALLOWLIST:
-        return True
-    # Effective permissions are role-derived in `permissions.py`, so
-    # this also lets a custom role with `iam.users.write` through.
-    try:
-        from app.services import permissions as _perms
-        if "iam.users.write" in _perms.get_effective_permissions(user):
-            return True
-    except Exception:
-        pass
-    return False
+    return _has_admin_impl(user)
 
 
 @router.post(
