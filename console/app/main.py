@@ -6061,33 +6061,6 @@ async def _maybe_trigger_aggregate_extract_all(
     return _pipeline_extract_all_public_response(result)
 
 
-def _sync_step(
-    step_id: str,
-    label: str,
-    status: str,
-    detail: str = "",
-    *,
-    attempts: int = 0,
-    error: str | None = None,
-    completed: int | None = None,
-    total: int | None = None,
-    percent: int | None = None,
-    metrics: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    return _sync_progress.sync_step(
-        step_id,
-        label,
-        status,
-        detail,
-        attempts=attempts,
-        error=error,
-        completed=completed,
-        total=total,
-        percent=percent,
-        metrics=metrics,
-    )
-
-
 def _normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
     return _sync_progress.normalize_sync_step_payload(
         step,
