@@ -5762,17 +5762,17 @@ _SYNC_AGENTOPS_TOOLS = {
 
 
 def _sync_clean_mode(value: Any | None) -> str:
-    mode = str(value or "incremental").strip().lower()
-    if mode not in _SYNC_VALID_MODES:
-        raise HTTPException(400, "mode must be incremental or full")
-    return mode
+    try:
+        return _sync_progress.clean_sync_mode(value, valid_modes=_SYNC_VALID_MODES)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _sync_clean_target(value: Any | None) -> str:
-    target = str(value or "all").strip().lower()
-    if target not in _SYNC_VALID_TARGETS:
-        raise HTTPException(400, "target must be all, foundation or talent")
-    return target
+    try:
+        return _sync_progress.clean_sync_target(value, valid_targets=_SYNC_VALID_TARGETS)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _airflow_run_id_fragment(value: str) -> str:

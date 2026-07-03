@@ -168,6 +168,20 @@ def sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
     return {}
 
 
+def clean_sync_mode(value: Any | None, *, valid_modes: set[str]) -> str:
+    mode = str(value or "incremental").strip().lower()
+    if mode not in valid_modes:
+        raise ValueError("mode must be incremental or full")
+    return mode
+
+
+def clean_sync_target(value: Any | None, *, valid_targets: set[str]) -> str:
+    target = str(value or "all").strip().lower()
+    if target not in valid_targets:
+        raise ValueError("target must be all, foundation or talent")
+    return target
+
+
 def sync_child_reason(row: dict[str, Any]) -> str | None:
     extra = sync_extra_from_row(row)
     for key in (

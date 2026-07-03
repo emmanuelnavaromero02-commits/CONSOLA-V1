@@ -229,6 +229,37 @@ def test_sync_now_lock_key_uses_scope_and_connection_defaults():
     assert defaulted == "sync-now:platform:global:replicon:full:all:__default__"
 
 
+def test_clean_sync_mode_and_target_normalize_defaults_and_reject_invalid_values():
+    assert sync_progress.clean_sync_mode(
+        None, valid_modes={"incremental", "full"}
+    ) == "incremental"
+    assert sync_progress.clean_sync_mode(
+        " FULL ", valid_modes={"incremental", "full"}
+    ) == "full"
+    assert sync_progress.clean_sync_target(
+        None, valid_targets={"all", "foundation", "talent"}
+    ) == "all"
+    assert sync_progress.clean_sync_target(
+        " Talent ", valid_targets={"all", "foundation", "talent"}
+    ) == "talent"
+
+    try:
+        sync_progress.clean_sync_mode("bad", valid_modes={"incremental", "full"})
+    except ValueError as exc:
+        assert str(exc) == "mode must be incremental or full"
+    else:  # pragma: no cover
+        raise AssertionError("invalid mode should have been rejected")
+
+    try:
+        sync_progress.clean_sync_target(
+            "bad", valid_targets={"all", "foundation", "talent"}
+        )
+    except ValueError as exc:
+        assert str(exc) == "target must be all, foundation or talent"
+    else:  # pragma: no cover
+        raise AssertionError("invalid target should have been rejected")
+
+
 def test_normalize_sync_now_request_id_accepts_safe_ids_and_rejects_bad_ones():
     assert sync_progress.normalize_sync_now_request_id(None) is None
     assert sync_progress.normalize_sync_now_request_id("  ") is None
