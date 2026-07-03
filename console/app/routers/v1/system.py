@@ -43,12 +43,7 @@ async def healthz():
     Carries ``version`` + ``app_env`` (no secrets) so an operator can
     confirm WHAT is deployed without authenticating — useful for the
     beta/demo runbook's health checks."""
-    return {
-        "ok": True,
-        "service": "console",
-        "version": _console_version(),
-        "app_env": _app_env(),
-    }
+    return _healthz_payload(version=_console_version(), app_env=_app_env())
 
 # /readyz
 @router.get("/readyz")
@@ -159,41 +154,19 @@ async def readyz(request: Request):
 @_bind_to_main
 async def api_config(request: Request):
     """Runtime config (URLs only, no secrets)."""
-    return {
-        "workspace_url": _public_url(
-            "WORKSPACE_URL",
-            fallback_env="WORKSPACE_PUBLIC_URL",
-            development_default="http://localhost:8001",
-        ),
-        "console_url": _public_url("CONSOLE_URL", development_default="http://localhost:8000"),
-        "airflow_url": _public_url("AIRFLOW_PUBLIC_URL", development_default="http://localhost:8082"),
-        "superset_url": _public_url("SUPERSET_PUBLIC_URL", development_default="http://localhost:8088"),
-        "s3_bucket":     os.environ.get("S3_BUCKET_NAME") or os.environ.get("MINIO_BUCKET", "lakehouse"),
-    }
+    return _runtime_config_payload(os.environ, public_url=_public_url)
 
 # /api/system/info
 @router.get("/api/system/info")
 @_bind_to_main
 async def system_info(user: dict = Depends(require_authenticated)):
-    version = _console_version()
     # v1.43.2 (Frontend R1 hardening): expose ``dev_mode`` so the UI
     # can hide CTAs that gate on dev-only mcp-infra tools (Studio
     # Deploy DAG, etc). Pre-v1.43.2 the console rendered those
     # buttons unconditionally; clicking them in production now surfaces
     # a PermissionError from airflow_create_dag — which is correct but
     # confusing. The button is hidden by checking this flag.
-    app_env = os.environ.get("APP_ENV", "production").lower()
-    rce_tools_enabled = os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
-    dev_mode = app_env in {"development", "dev", "local", "test"}
-    return {
-        "version": version,
-        "env": os.environ.get("MODE", "local"),
-        "service": "console",
-        "app_env": app_env,
-        "dev_mode": dev_mode,
-        "rce_tools_enabled": rce_tools_enabled,
-        "dag_deploy_enabled": dev_mode and rce_tools_enabled,
-    }
+    return _system_info_payload(os.environ, version=_console_version())
 
 # /me
 @router.get("/me")
