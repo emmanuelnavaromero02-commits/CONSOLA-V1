@@ -36,6 +36,17 @@ from app.logging_config import _redact, setup_logging  # noqa: E402
 setup_logging(service_name="console")
 
 import httpx
+from app.domains.agentops.successfactors_talent_monitor import (
+    SUCCESSFACTORS_TALENT_MONITOR_SLUG as _SUCCESSFACTORS_TALENT_MONITOR_SLUG,
+    coerce_successfactors_talent_monitor_payload as _agentops_coerce_successfactors_talent_monitor_payload,
+    has_operational_monitor_contract as _agentops_has_operational_monitor_contract,
+    is_successfactors_talent_monitor_row as _agentops_is_successfactors_talent_monitor_row,
+    merge_agent_tools as _agentops_merge_agent_tools,
+    successfactors_talent_monitor_contract as _agentops_successfactors_talent_monitor_contract,
+    successfactors_talent_monitor_needs_runtime_repair as _agentops_successfactors_talent_monitor_needs_runtime_repair,
+    sync_agentops_is_terminal as _agentops_sync_agentops_is_terminal,
+    sync_agentops_monitor_candidates as _agentops_sync_agentops_monitor_candidates,
+)
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns as _dataset_detail_columns,
     empty_partitions as _empty_partitions,
@@ -7612,270 +7623,35 @@ async def _ensure_sync_packaged_datasets(
 
 
 def _sync_agentops_is_terminal(payload: Any) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    return str(payload.get("status") or "").lower() in {
-        "success",
-        "partial",
-        "failed",
-        "skipped",
-    }
+    return _agentops_sync_agentops_is_terminal(payload)
 
 
 def _sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    for agent in agents:
-        if not agent.get("is_active", True):
-            continue
-        if not (
-            str(agent.get("tenant_id") or "").strip()
-            and str(agent.get("workspace_id") or "").strip()
-        ):
-            continue
-        extra = agent.get("extra") if isinstance(agent.get("extra"), dict) else {}
-        role = str((extra or {}).get("role") or "").strip().lower()
-        monitor = (extra or {}).get("monitor")
-        allowed_tools = agent.get("allowed_tools") or []
-        allowed_set = {
-            str(tool)
-            for tool in allowed_tools
-            if isinstance(tool, str) and tool.strip()
-        }
-        if (
-            role == "monitor"
-            and isinstance(monitor, dict)
-            and monitor
-            and (allowed_set & _SYNC_AGENTOPS_TOOLS)
-        ):
-            candidates.append(agent)
-    return candidates
+    return _agentops_sync_agentops_monitor_candidates(agents)
 
 
 def _successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any], dict[str, Any]]:
-    allowed_tools = [
-        "mcp-infra__wisdom_bits__run",
-        "mcp-infra__control_room__raise_analysis_alert",
-        "mcp-infra__decision__orchestrate",
-        "mcp-infra__simulation__monte_carlo_run",
-        "mcp-infra__calibration__bayesian_state",
-        "refinement__query_dataset",
-        "refinement__get_schema",
-    ]
-    rag_filter = {"cartridges": ["sap_successfactors"], "kinds": ["document", "schema"]}
-    extra = {
-        "role": "monitor",
-        "category": "control_room",
-        "scope": "workspace",
-        "variables": {},
-        "schedule": {
-            "enabled": True,
-            "cron": "*/15 * * * *",
-            "tz": "UTC",
-            "prompt": "Ejecuta el monitor WB-TALENTO con evidencia agregada y recommendation_only.",
-        },
-        "monitor": {
-            "engine": "wisdom_bit",
-            "wisdom_bit_id": "WB-TALENTO",
-            "dataset": "sap_successfactors_talent_operational_features",
-            "threshold": {
-                "status_not_in": ["ready"],
-                "min_signal_count": 1,
-                "blockers_present": True,
-            },
-            "severity": "medium",
-            "dedup_key": "sap_successfactors:WB-TALENTO:workspace",
-            "recommended_action": "Revisar blockers C/P/A y priorizar acciones supervisadas en Control Room.",
-            "recommendation_only": True,
-            "writeback_enabled": False,
-            "engines": [
-                {
-                    "name": "monte_carlo",
-                    "enabled": True,
-                    "source_type": "wisdom_bit",
-                    "source_id": "WB-TALENTO",
-                    "horizon_days": 30,
-                    "iterations": 1000,
-                    "seed": 45120,
-                    "model_version": "wb-talento.monitor.v2",
-                    "output_metric": "delta",
-                    "breach_threshold": -5,
-                    "breach_direction": "below",
-                    "input_dataset": "sap_successfactors_talent_simulation_inputs",
-                    "input_variables_field": "input_variables_json",
-                    "assumptions_field": "assumptions_json",
-                    "evidence_refs_field": "evidence_refs_json",
-                    "status_field": "input_status",
-                    "ready_statuses": ["ready"],
-                    "assumptions": {
-                        "basis": "Agregado WB-TALENTO desde Gold operativo.",
-                        "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
-                        "decision_mode": "recommendation_only",
-                    },
-                    "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-                },
-                {
-                    "name": "bayesian_calibration",
-                    "enabled": True,
-                    "calibration_group": "sap_successfactors:talent_readiness",
-                    "model_version": "bayesian_calibration.v1",
-                    "limit": 10,
-                    "assumptions": {
-                        "basis": "Estado historico agregado de readiness de talento.",
-                        "privacy": "Sin full_name, user_id, PERNR, salario ni payCompValue.",
-                        "decision_mode": "recommendation_only",
-                    },
-                    "evidence_refs": [
-                        {
-                            "type": "calibration_group",
-                            "id": "sap_successfactors:talent_readiness",
-                        }
-                    ],
-                },
-                {
-                    "name": "decision_orchestrator",
-                    "enabled": True,
-                    "source_type": "wisdom_bit",
-                    "source_id": "WB-TALENTO",
-                    "title": "Decision operativa WB-TALENTO",
-                    "description": "Evaluar senales agregadas de talento con seguimiento supervisado.",
-                    "time_horizon": "30d",
-                    "metrics": {
-                        "risk_metric": "talent_readiness_delta",
-                        "target": "recommendation_only",
-                        "privacy": "aggregated",
-                    },
-                    "constraints": {
-                        "recommendation_only": True,
-                        "no_external_writeback": True,
-                        "no_pii": True,
-                    },
-                    "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-                    "execute_engines": True,
-                    "engine_inputs": {
-                        "monte_carlo": {
-                            "source_type": "wisdom_bit",
-                            "source_id": "WB-TALENTO",
-                            "horizon_days": 30,
-                            "iterations": 1000,
-                            "seed": 45120,
-                            "model_version": "wb-talento.monitor.v2",
-                            "input_dataset": "sap_successfactors_talent_simulation_inputs",
-                            "input_variables_field": "input_variables_json",
-                            "assumptions_field": "assumptions_json",
-                            "evidence_refs_field": "evidence_refs_json",
-                            "status_field": "input_status",
-                            "ready_statuses": ["ready"],
-                            "output_metric": "delta",
-                            "breach_threshold": -5,
-                            "breach_direction": "below",
-                            "assumptions": {
-                                "basis": "Agregado WB-TALENTO.",
-                                "privacy": "Sin PII.",
-                                "decision_mode": "recommendation_only",
-                            },
-                            "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-                        },
-                        "bayesian_calibration": {
-                            "calibration_group": "sap_successfactors:talent_readiness",
-                            "model_version": "bayesian_calibration.v1",
-                            "limit": 10,
-                        },
-                    },
-                },
-            ],
-        },
-    }
-    return allowed_tools, rag_filter, extra
-
-
-_SUCCESSFACTORS_TALENT_MONITOR_SLUG = "sap_successfactors_talent_monitor"
+    return _agentops_successfactors_talent_monitor_contract()
 
 
 def _is_successfactors_talent_monitor_row(agent: Any) -> bool:
-    if not isinstance(agent, dict):
-        return False
-    return (
-        str(agent.get("cartridge_id") or "").strip() == "sap_successfactors"
-        and str(agent.get("slug") or "").strip() == _SUCCESSFACTORS_TALENT_MONITOR_SLUG
-    )
+    return _agentops_is_successfactors_talent_monitor_row(agent)
 
 
 def _has_operational_monitor_contract(agent: Any) -> bool:
-    extra = agent.get("extra") if isinstance(agent, dict) else None
-    monitor = extra.get("monitor") if isinstance(extra, dict) else None
-    return isinstance(monitor, dict) and bool(monitor)
+    return _agentops_has_operational_monitor_contract(agent)
 
 
 def _successfactors_talent_monitor_needs_runtime_repair(agent: Any) -> bool:
-    if not _is_successfactors_talent_monitor_row(agent):
-        return False
-    extra = agent.get("extra") if isinstance(agent, dict) else None
-    if not isinstance(extra, dict):
-        return True
-    role = str(extra.get("role") or "").strip().lower()
-    return role != "monitor" or not _has_operational_monitor_contract(agent)
+    return _agentops_successfactors_talent_monitor_needs_runtime_repair(agent)
 
 
 def _merge_agent_tools(primary: list[str], secondary: Any) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    candidates: list[Any] = list(primary)
-    if isinstance(secondary, list):
-        candidates.extend(secondary)
-    for tool in candidates:
-        if not isinstance(tool, str):
-            continue
-        value = tool.strip()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        merged.append(value)
-    return merged
+    return _agentops_merge_agent_tools(primary, secondary)
 
 
 def _coerce_successfactors_talent_monitor_payload(body: dict) -> dict:
-    if not isinstance(body, dict):
-        return body
-    cartridge_id = str(body.get("cartridge_id") or "").strip()
-    slug = str(body.get("slug") or "").strip()
-    if cartridge_id != "sap_successfactors" or slug != _SUCCESSFACTORS_TALENT_MONITOR_SLUG:
-        return body
-
-    allowed_tools, rag_filter, contract_extra = _successfactors_talent_monitor_contract()
-    patched = dict(body)
-    incoming_extra = patched.get("extra") if isinstance(patched.get("extra"), dict) else {}
-    merged_extra = {**contract_extra, **incoming_extra}
-    merged_extra["role"] = "monitor"
-    merged_extra["category"] = str(merged_extra.get("category") or "control_room")
-    merged_extra["scope"] = str(merged_extra.get("scope") or "workspace")
-
-    schedule = merged_extra.get("schedule")
-    if not isinstance(schedule, dict) or not schedule.get("cron"):
-        merged_extra["schedule"] = contract_extra.get("schedule")
-
-    monitor = merged_extra.get("monitor")
-    if isinstance(monitor, dict) and monitor:
-        merged_monitor = {**contract_extra.get("monitor", {}), **monitor}
-        if not isinstance(merged_monitor.get("engines"), list) or not merged_monitor.get("engines"):
-            merged_monitor["engines"] = contract_extra.get("monitor", {}).get("engines", [])
-        merged_extra["monitor"] = merged_monitor
-    else:
-        merged_extra["monitor"] = contract_extra.get("monitor")
-
-    if not isinstance(merged_extra.get("variables"), dict):
-        merged_extra["variables"] = {}
-
-    patched["extra"] = merged_extra
-    patched["role"] = "monitor"
-    patched["allowed_tools"] = _merge_agent_tools(allowed_tools, patched.get("allowed_tools"))
-    if not isinstance(patched.get("rag_filter"), dict) or not patched.get("rag_filter"):
-        patched["rag_filter"] = rag_filter
-    patched["model"] = str(patched.get("model") or "claude-sonnet-4-6")
-    if patched.get("max_tokens") in (None, ""):
-        patched["max_tokens"] = 2400
-    if patched.get("temperature") in (None, ""):
-        patched["temperature"] = 0.2
-    return patched
+    return _agentops_coerce_successfactors_talent_monitor_payload(body)
 
 
 async def _ensure_successfactors_talent_monitor(user: dict | None) -> None:
