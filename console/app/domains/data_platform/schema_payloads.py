@@ -175,6 +175,41 @@ def schema_message(status: str, errors: list[dict]) -> str | None:
     return "datos parciales"
 
 
+def gold_schema_error_payload(source: str, error: dict) -> dict:
+    message = str(error.get("message") or "error leyendo fuente")
+    return {
+        "source": source,
+        "source_kind": "gold",
+        "status": "error",
+        "message": message,
+        "errors": [error],
+        "partitions": empty_partitions(source, "error", message),
+        "preview": empty_preview(source, "error", message),
+    }
+
+
+def bronze_schema_payload(
+    source: str,
+    partitions: dict,
+    preview: dict,
+    errors: list[dict],
+) -> dict:
+    status = schema_status(errors, preview)
+    message = schema_message(status, errors)
+    payload: dict[str, Any] = {
+        "source": source,
+        "source_kind": "bronze",
+        "status": status,
+        "partitions": partitions,
+        "preview": preview,
+    }
+    if message:
+        payload["message"] = message
+    if errors:
+        payload["errors"] = errors
+    return payload
+
+
 def dataset_detail_columns(schema_payload: dict | None) -> list[dict]:
     if not isinstance(schema_payload, dict):
         return []

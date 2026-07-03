@@ -104,9 +104,11 @@ from app.domains.data_platform.refinement_errors import (
     upstream_error_detail as _upstream_error_detail,
 )
 from app.domains.data_platform.schema_payloads import (
+    bronze_schema_payload as _bronze_schema_payload,
     dataset_detail_columns as _dataset_detail_columns,
     empty_partitions as _empty_partitions,
     empty_preview as _empty_preview,
+    gold_schema_error_payload as _gold_schema_error_payload,
     normalize_dataset_detail as _normalize_dataset_detail,
     preview_has_columns as _preview_has_columns,
     schema_error as _schema_error,
@@ -2700,15 +2702,7 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
                 return await _gold_schema_payload(source, user)
             except Exception as exc:
                 error = _schema_error("gold", exc)
-                return {
-                    "source": source,
-                    "source_kind": "gold",
-                    "status": "error",
-                    "message": error["message"],
-                    "errors": [error],
-                    "partitions": _empty_partitions(source, "error", error["message"]),
-                    "preview": _empty_preview(source, "error", error["message"]),
-                }
+                return _gold_schema_error_payload(source, error)
 
         errors: list[dict] = []
         try:
@@ -2748,20 +2742,7 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
                 }
             )
 
-        status = _schema_status(errors, preview)
-        message = _schema_message(status, errors)
-        payload = {
-            "source": source,
-            "source_kind": "bronze",
-            "status": status,
-            "partitions": partitions,
-            "preview": preview,
-        }
-        if message:
-            payload["message"] = message
-        if errors:
-            payload["errors"] = errors
-        return payload
+        return _bronze_schema_payload(source, partitions, preview, errors)
 
     return await _scoped_read_cache_get_or_set("schema", user, (source,), load_schema)
 

@@ -15,9 +15,11 @@ from app.domains.data_platform.data_api_payloads import (
     data_api_select_clause,
 )
 from app.domains.data_platform.schema_payloads import (
+    bronze_schema_payload,
     dataset_detail_columns,
     empty_partitions,
     empty_preview,
+    gold_schema_error_payload,
     normalize_dataset_detail,
     schema_error,
     schema_message,
@@ -87,6 +89,26 @@ def test_schema_error_and_message_classify_missing_parquet():
     assert error["message"] == "sin parquet materializado"
     assert schema_status([error], {"columns": []}) == "error"
     assert schema_message("error", [error]) == "sin parquet materializado"
+
+
+def test_schema_response_payloads_keep_safe_statuses():
+    error = schema_error("preview", HTTPException(404, "No files found"))
+
+    gold_payload = gold_schema_error_payload("gold/acme/employees", error)
+    assert gold_payload["source_kind"] == "gold"
+    assert gold_payload["status"] == "error"
+    assert gold_payload["message"] == "sin parquet materializado"
+    assert gold_payload["preview"]["rows"] == []
+
+    bronze_payload = bronze_schema_payload(
+        "raw/acme/User",
+        empty_partitions("raw/acme/User"),
+        empty_preview("raw/acme/User"),
+        [error],
+    )
+    assert bronze_payload["source_kind"] == "bronze"
+    assert bronze_payload["status"] == "error"
+    assert bronze_payload["errors"] == [error]
 
 
 def test_dataset_detail_columns_normalizes_multiple_shapes():
