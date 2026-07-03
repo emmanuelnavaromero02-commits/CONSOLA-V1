@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.domains.apps.scope import (
+    active_scoped_connection_cartridges,
     installed_scoped_app_cartridges,
     normalize_candidate_cartridges,
     resolve_scoped_config_cartridge,
@@ -229,6 +230,90 @@ async def test_installed_scoped_app_cartridges_returns_empty_without_scope():
             scoped_db_for_user=_scoped_db,
             scoped_user_factory=_scoped_user,
             context_visible_cartridges=lambda _user: None,
+        )
+        == set()
+    )
+
+
+class _VaultResponse:
+    def __init__(self, status_code, payload=None, *, invalid_json=False):
+        self.status_code = status_code
+        self._payload = payload
+        self._invalid_json = invalid_json
+
+    def json(self):
+        if self._invalid_json:
+            raise ValueError("invalid json")
+        return self._payload
+
+
+class _VaultClient:
+    requests: list[tuple[dict, str]] = []
+
+    def __init__(self, *, headers, timeout):
+        self.headers = headers
+        self.timeout = timeout
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def get(self, url):
+        self.requests.append((self.headers, url))
+        if url.endswith("/sap_successfactors"):
+            return _VaultResponse(200, {"connections": [{"id": "sf"}]})
+        if url.endswith("/hubspot"):
+            return _VaultResponse(404, {})
+        if url.endswith("/salesforce"):
+            return _VaultResponse(200, {"connections": []})
+        if url.endswith("/replicon"):
+            return _VaultResponse(200, {}, invalid_json=True)
+        raise RuntimeError("vault unavailable")
+
+
+@pytest.mark.asyncio
+async def test_active_scoped_connection_cartridges_reads_vault_connections():
+    _VaultClient.requests = []
+
+    async def _scope(_user):
+        return "tenant-1", "workspace-1"
+
+    result = await active_scoped_connection_cartridges(
+        {"id": 1},
+        {"sap_successfactors", "hubspot", "salesforce", "replicon", "bad"},
+        scope_resolver=_scope,
+        scoped_user_factory=_scoped_user,
+        vault_url="http://vault",
+        vault_headers_for_user=lambda user: {
+            "x-tenant": user["active_tenant_id"],
+            "x-workspace": user["active_workspace_id"],
+        },
+        http_client_factory=_VaultClient,
+    )
+
+    assert result == {"sap_successfactors"}
+    assert _VaultClient.requests
+    first_headers, first_url = _VaultClient.requests[0]
+    assert first_headers == {"x-tenant": "tenant-1", "x-workspace": "workspace-1"}
+    assert first_url.startswith("http://vault/connections/")
+
+
+@pytest.mark.asyncio
+async def test_active_scoped_connection_cartridges_returns_empty_without_candidates():
+    async def _scope(_user):
+        raise AssertionError("scope should not be resolved without candidates")
+
+    assert (
+        await active_scoped_connection_cartridges(
+            {"id": 1},
+            set(),
+            scope_resolver=_scope,
+            scoped_user_factory=_scoped_user,
+            vault_url="http://vault",
+            vault_headers_for_user=lambda _user: {},
+            http_client_factory=_VaultClient,
         )
         == set()
     )

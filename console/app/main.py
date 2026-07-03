@@ -45,6 +45,7 @@ from app.domains.apps.readiness import (
     gold_ready_datasets_for_apps as _gold_ready_datasets_for_apps_impl,
 )
 from app.domains.apps.scope import (
+    active_scoped_connection_cartridges as _active_scoped_connection_cartridges_impl,
     installed_scoped_app_cartridges as _installed_scoped_app_cartridges_impl,
     normalize_candidate_cartridges as _normalize_candidate_cartridges,
     resolve_scoped_config_cartridge as _resolve_scoped_config_cartridge_impl,
@@ -2869,39 +2870,16 @@ async def _active_scoped_connection_cartridges(
     user: dict | None,
     candidate_cartridges: set[str] | None = None,
 ) -> set[str]:
-    candidates = _normalize_candidate_cartridges(candidate_cartridges)
-    if not candidates:
-        return set()
-    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
-    scoped_user = _user_with_apps_scope(user, tenant_id, workspace_id)
-    active: set[str] = set()
-    for cartridge in sorted(candidates):
-        try:
-            async with httpx.AsyncClient(
-                headers=_vault_headers_for_user(scoped_user or {}), timeout=5
-            ) as c:
-                response = await c.get(
-                    f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}"
-                )
-        except Exception:
-            logger.debug(
-                "Failed to load scoped Vault connections for %s",
-                cartridge,
-                exc_info=True,
-            )
-            continue
-        if response.status_code in {404, 204} or response.status_code >= 400:
-            continue
-        try:
-            payload = response.json()
-        except ValueError:
-            continue
-        connections = payload.get("connections") if isinstance(payload, dict) else []
-        if isinstance(connections, list) and any(
-            isinstance(conn, dict) for conn in connections
-        ):
-            active.add(cartridge)
-    return active
+    return await _active_scoped_connection_cartridges_impl(
+        user,
+        candidate_cartridges,
+        scope_resolver=_workspace_scope_for_apps_filter,
+        scoped_user_factory=_user_with_apps_scope,
+        vault_url=_VAULT_URL,
+        vault_headers_for_user=_vault_headers_for_user,
+        http_client_factory=httpx.AsyncClient,
+        logger_debug=logger.debug,
+    )
 
 
 async def _installed_scoped_app_cartridges(

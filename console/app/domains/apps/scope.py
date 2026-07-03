@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, AsyncContextManager
+from urllib.parse import quote
 
 from fastapi import HTTPException
 
@@ -16,6 +17,9 @@ WorkspaceScopeResolver = Callable[[dict | None], Awaitable[tuple[str, str]]]
 ScopedDbForUser = Callable[[Any, dict], AsyncContextManager[tuple[Any, Any, Any]]]
 ScopedUserFactory = Callable[[dict | None, str, str], dict | None]
 VisibleCartridges = Callable[[dict | None], set[str] | None]
+VaultHeaders = Callable[[dict], dict[str, str]]
+HttpClientFactory = Callable[..., AsyncContextManager[Any]]
+LoggerDebug = Callable[..., None]
 
 
 def normalize_candidate_cartridges(candidates: set[str] | None) -> set[str]:
@@ -24,6 +28,53 @@ def normalize_candidate_cartridges(candidates: set[str] | None) -> set[str]:
         for cartridge in (candidates or set())
         if str(cartridge).strip()
     }
+
+
+async def active_scoped_connection_cartridges(
+    user: dict | None,
+    candidate_cartridges: set[str] | None,
+    *,
+    scope_resolver: WorkspaceScopeResolver,
+    scoped_user_factory: ScopedUserFactory,
+    vault_url: str,
+    vault_headers_for_user: VaultHeaders,
+    http_client_factory: HttpClientFactory,
+    logger_debug: LoggerDebug | None = None,
+) -> set[str]:
+    candidates = normalize_candidate_cartridges(candidate_cartridges)
+    if not candidates:
+        return set()
+    tenant_id, workspace_id = await scope_resolver(user)
+    scoped_user = scoped_user_factory(user, tenant_id, workspace_id)
+    active: set[str] = set()
+    for cartridge in sorted(candidates):
+        try:
+            async with http_client_factory(
+                headers=vault_headers_for_user(scoped_user or {}), timeout=5
+            ) as client:
+                response = await client.get(
+                    f"{vault_url}/connections/{quote(cartridge, safe='')}"
+                )
+        except Exception:
+            if logger_debug:
+                logger_debug(
+                    "Failed to load scoped Vault connections for %s",
+                    cartridge,
+                    exc_info=True,
+                )
+            continue
+        if response.status_code in {404, 204} or response.status_code >= 400:
+            continue
+        try:
+            payload = response.json()
+        except ValueError:
+            continue
+        connections = payload.get("connections") if isinstance(payload, dict) else []
+        if isinstance(connections, list) and any(
+            isinstance(conn, dict) for conn in connections
+        ):
+            active.add(cartridge)
+    return active
 
 
 async def installed_scoped_app_cartridges(
