@@ -158,6 +158,11 @@ from app.domains.pipeline.run_state import (
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
+from app.domains.pipeline.job_payloads import (
+    is_pipeline_job_payload as _is_pipeline_job_payload,
+    refresh_pipeline_job_payload as _refresh_pipeline_job_payload_impl,
+    refresh_pipeline_job_payloads as _refresh_pipeline_job_payloads_impl,
+)
 from app.domains.pipeline.sync_state import (
     SAP_SUCCESSFACTORS_CARTRIDGE as _SAP_SUCCESSFACTORS_CARTRIDGE,
     SAP_SUCCESSFACTORS_ENTITY_DAG_ID as _SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
@@ -2503,68 +2508,22 @@ async def refresh_dataset(
 # ── Viewer data APIs ──────────────────────────────────────────────────────────
 
 
-def _is_pipeline_job_payload(job: dict | None) -> bool:
-    if not isinstance(job, dict):
-        return False
-    result = job.get("result")
-    return isinstance(result, dict) and result.get("source") == "pipeline_runs"
-
-
 async def _refresh_pipeline_job_payload(job: dict, user: dict | None) -> dict:
-    if not _is_pipeline_job_payload(job):
-        return job
-    status = str(job.get("status") or "").lower()
-    result = job.get("result") if isinstance(job.get("result"), dict) else {}
-    args = job.get("args") if isinstance(job.get("args"), dict) else {}
-    if status not in {"running", "queued"}:
-        return job
-
-    row = {
-        "run_id": job.get("job_id"),
-        "dag_id": args.get("dag_id") or result.get("dag_id"),
-        "airflow_dag_run_id": (
-            args.get("dag_run_id")
-            or result.get("dag_run_id")
-            or result.get("airflow_dag_run_id")
-            or job.get("job_id")
-        ),
-        "status": result.get("pipeline_status") or status,
-        "started_at": job.get("created_at"),
-        "finished_at": job.get("finished_at"),
-        "duration_seconds": None,
-    }
-    refreshed = await _refresh_dag_run_status(row, user)
-    pipeline_status = _normalize_airflow_state(refreshed.get("status"))
-    result["pipeline_status"] = pipeline_status
-    job["result"] = result
-    if pipeline_status in {"queued", "running", "unknown"}:
-        job["status"] = "running"
-        job["finished_at"] = None
-    elif pipeline_status == "failed":
-        job["status"] = "failed"
-        job["finished_at"] = (
-            refreshed.get("finished_at").isoformat()
-            if hasattr(refreshed.get("finished_at"), "isoformat")
-            else refreshed.get("finished_at")
-        )
-    else:
-        job["status"] = "done"
-        job["finished_at"] = (
-            refreshed.get("finished_at").isoformat()
-            if hasattr(refreshed.get("finished_at"), "isoformat")
-            else refreshed.get("finished_at")
-        )
-    job["updated_at"] = job.get("finished_at") or job.get("updated_at")
-    return job
+    return await _refresh_pipeline_job_payload_impl(
+        job,
+        user,
+        refresh_dag_run_status=_refresh_dag_run_status,
+    )
 
 
 async def _refresh_pipeline_job_payloads(
     jobs: list[dict], user: dict | None
 ) -> list[dict]:
-    refreshed: list[dict] = []
-    for job in jobs:
-        refreshed.append(await _refresh_pipeline_job_payload(job, user))
-    return refreshed
+    return await _refresh_pipeline_job_payloads_impl(
+        jobs,
+        user,
+        refresh_dag_run_status=_refresh_dag_run_status,
+    )
 
 
 @app.get("/api/jobs", dependencies=[Depends(require_permission("monitor.read"))])
