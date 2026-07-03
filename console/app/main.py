@@ -116,6 +116,9 @@ from app.domains.pipeline.run_state import (
     pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_run_extra as _pipeline_run_extra,
 )
+from app.domains.pipeline.concurrency import (
+    gather_by_entity as _pipeline_gather_by_entity,
+)
 from app.services.db_scope import scoped_db_for_user
 from app.services.service_urls import (
     app_env as _service_app_env,
@@ -837,26 +840,6 @@ async def _call_with_optional_user(fn, *args, user=None):
     if inspect.isawaitable(result):
         return await result
     return result
-
-
-async def _pipeline_gather_by_entity(
-    work: dict[str, Any], timeout: float
-) -> tuple[dict[str, Any], set[str], set[str]]:
-    if not work:
-        return {}, set(), set()
-    tasks_by_task = {asyncio.create_task(coro): entity for entity, coro in work.items()}
-    done, pending = await asyncio.wait(tasks_by_task, timeout=max(timeout, 0.001))
-    results: dict[str, Any] = {}
-    failed: set[str] = set()
-    for task in done:
-        entity = tasks_by_task[task]
-        try:
-            results[entity] = task.result()
-        except Exception:
-            failed.add(entity)
-    for task in pending:
-        task.cancel()
-    return results, {tasks_by_task[task] for task in pending}, failed
 
 
 def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
