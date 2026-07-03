@@ -141,16 +141,10 @@ from app.domains.pipeline.run_state import (
     duration_seconds as _duration_seconds,
     normalize_airflow_state as _normalize_airflow_state,
     pipeline_bronze_date_count as _pipeline_bronze_date_count,
-    pipeline_airflow_last_run_info as _pipeline_airflow_last_run_info,
-    pipeline_bronze_last_run_info as _pipeline_bronze_last_run_info,
-    pipeline_bronze_status as _pipeline_bronze_status,
     parse_iso_datetime as _parse_iso_datetime,
-    pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
-    pipeline_job_last_run_info as _pipeline_job_last_run_info,
-    pipeline_legacy_last_job as _pipeline_legacy_last_job,
+    pipeline_entity_row as _pipeline_entity_row,
     pipeline_run_extra as _pipeline_run_extra,
-    pipeline_silver_gold_nodes as _pipeline_silver_gold_nodes,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
 from app.domains.pipeline.concurrency import (
@@ -4657,79 +4651,17 @@ async def api_pipeline(
     rows = []
     for e in entity_list:
         entity = e.get("entity") or e.get("name") or ""
-        source = f"raw/{cartridge}/{entity}"
-
-        # Prefer pipeline_runs (Airflow DAGs); fall back to jobs table
-        dag_run = dag_runs_by_entity.get(entity)
-        last_job = jobs_by_entity.get(entity)
-
-        last_run_info = None
-        dag_status = None
-        bronze_date, bronze_count = _pipeline_bronze_date_count(dag_run, last_job)
-
-        if dag_run:
-            last_run_info, dag_status = _pipeline_airflow_last_run_info(dag_run)
-        elif last_job:
-            last_run_info = _pipeline_job_last_run_info(last_job)
-
-        if not bronze_date or bronze_count is None:
-            physical_bronze = physical_bronze_by_entity.get(entity) or {}
-            if physical_bronze:
-                bronze_date = bronze_date or physical_bronze.get("latest_date")
-                if bronze_count is None:
-                    bronze_count = physical_bronze.get("record_count")
-                if last_run_info is None and bronze_date:
-                    last_run_info = _pipeline_bronze_last_run_info(
-                        bronze_date=bronze_date,
-                        bronze_count=bronze_count,
-                        mode=e.get("mode"),
-                    )
-
-        bronze_status = _pipeline_bronze_status(
-            dag_run=dag_run,
-            dag_status=dag_status,
-            bronze_date=bronze_date,
-            bronze_count=bronze_count,
-            has_partial_reasons=entity in partial_reasons,
-        )
-
-        # Silver/Gold nodes
-        is_failed = (dag_run and dag_run["status"] == "failed") or (
-            last_job and last_job.get("status") == "failed"
-        )
-        silver_nodes, gold_nodes = _pipeline_silver_gold_nodes(
-            source=source,
-            silver_by_source=silver_by_source,
-            gold_datasets=gold_ds,
-            failed=bool(is_failed),
-            cartridge=cartridge,
-        )
-
-        entity_partial = sorted(partial_reasons.get(entity, set()))
         rows.append(
-            {
-                "entity": entity,
-                "cartridge": cartridge,
-                "modes": e.get("modes") or ([e["mode"]] if e.get("mode") else ["full"]),
-                "watermark": e.get("watermark_field") or "",
-                "last_run": last_run_info,
-                # Keep last_job for backward compat with pipeline.html polling logic
-                "last_job": _pipeline_legacy_last_job(last_run_info),
-                "bronze": {
-                    "source": source,
-                    "latest_date": bronze_date,
-                    "record_count": bronze_count,
-                    "status": bronze_status,
-                    "empty": _pipeline_is_zero_count(bronze_count),
-                },
-                "silver": silver_nodes,
-                "gold": gold_nodes,
-                "metadata": {
-                    "partial": bool(entity_partial),
-                    "pending": entity_partial,
-                    "stale": bool(entity_partial),
-                },
-            }
+            _pipeline_entity_row(
+                entity_config=e,
+                cartridge=cartridge,
+                dag_run=dag_runs_by_entity.get(entity),
+                last_job=jobs_by_entity.get(entity),
+                physical_bronze=physical_bronze_by_entity.get(entity),
+                partial_reasons=partial_reasons.get(entity),
+                silver_by_source=silver_by_source,
+                gold_datasets=gold_ds,
+            )
         )
 
     _order = {

@@ -306,6 +306,86 @@ def pipeline_legacy_last_job(last_run_info: dict | None) -> dict | None:
     }
 
 
+def pipeline_entity_row(
+    *,
+    entity_config: dict,
+    cartridge: str,
+    dag_run: dict | None,
+    last_job: dict | None,
+    physical_bronze: dict | None,
+    partial_reasons: set[str] | list[str] | tuple[str, ...] | None,
+    silver_by_source: dict[str, list[dict]],
+    gold_datasets: list[dict],
+) -> dict:
+    entity = entity_config.get("entity") or entity_config.get("name") or ""
+    source = f"raw/{cartridge}/{entity}"
+
+    last_run_info = None
+    dag_status = None
+    bronze_date, bronze_count = pipeline_bronze_date_count(dag_run, last_job)
+
+    if dag_run:
+        last_run_info, dag_status = pipeline_airflow_last_run_info(dag_run)
+    elif last_job:
+        last_run_info = pipeline_job_last_run_info(last_job)
+
+    if (not bronze_date or bronze_count is None) and physical_bronze:
+        bronze_date = bronze_date or physical_bronze.get("latest_date")
+        if bronze_count is None:
+            bronze_count = physical_bronze.get("record_count")
+        if last_run_info is None and bronze_date:
+            last_run_info = pipeline_bronze_last_run_info(
+                bronze_date=bronze_date,
+                bronze_count=bronze_count,
+                mode=entity_config.get("mode"),
+            )
+
+    entity_partial = sorted(set(partial_reasons or ()))
+    bronze_status = pipeline_bronze_status(
+        dag_run=dag_run,
+        dag_status=dag_status,
+        bronze_date=bronze_date,
+        bronze_count=bronze_count,
+        has_partial_reasons=bool(entity_partial),
+    )
+
+    is_failed = (dag_run and dag_run["status"] == "failed") or (
+        last_job and last_job.get("status") == "failed"
+    )
+    silver_nodes, gold_nodes = pipeline_silver_gold_nodes(
+        source=source,
+        silver_by_source=silver_by_source,
+        gold_datasets=gold_datasets,
+        failed=bool(is_failed),
+        cartridge=cartridge,
+    )
+
+    return {
+        "entity": entity,
+        "cartridge": cartridge,
+        "modes": entity_config.get("modes")
+        or ([entity_config["mode"]] if entity_config.get("mode") else ["full"]),
+        "watermark": entity_config.get("watermark_field") or "",
+        "last_run": last_run_info,
+        # Keep last_job for backward compat with pipeline.html polling logic
+        "last_job": pipeline_legacy_last_job(last_run_info),
+        "bronze": {
+            "source": source,
+            "latest_date": bronze_date,
+            "record_count": bronze_count,
+            "status": bronze_status,
+            "empty": pipeline_is_zero_count(bronze_count),
+        },
+        "silver": silver_nodes,
+        "gold": gold_nodes,
+        "metadata": {
+            "partial": bool(entity_partial),
+            "pending": entity_partial,
+            "stale": bool(entity_partial),
+        },
+    }
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")

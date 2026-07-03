@@ -376,3 +376,66 @@ def test_pipeline_last_run_payload_helpers_preserve_viewer_contract():
         "message": None,
     }
     assert run_state.pipeline_legacy_last_job(None) is None
+
+
+def test_pipeline_entity_row_assembles_viewer_payload():
+    row = run_state.pipeline_entity_row(
+        entity_config={
+            "entity": "User",
+            "mode": "incremental",
+            "watermark_field": "lastModifiedDateTime",
+        },
+        cartridge="sap_successfactors",
+        dag_run={
+            "dag_id": "sap_successfactors_extract",
+            "run_id": "run-1",
+            "status": "partial",
+            "mode": "incremental",
+            "started_at": "2026-07-03T10:00:00+00:00",
+            "finished_at": "2026-07-03T10:02:00+00:00",
+            "duration_seconds": 120,
+            "record_count": 1288,
+            "extra": "{}",
+        },
+        last_job=None,
+        physical_bronze=None,
+        partial_reasons={"metadata"},
+        silver_by_source={
+            "raw/sap_successfactors/User": [
+                {
+                    "name": "user_latest",
+                    "sources": ["raw/sap_successfactors/User"],
+                    "row_count": 1288,
+                    "last_refresh": "2026-07-03T10:03:00+00:00",
+                }
+            ]
+        },
+        gold_datasets=[
+            {
+                "name": "employee_profile",
+                "sql": "select * from silver_user_latest",
+                "row_count": 1288,
+                "last_refresh": "2026-07-03T10:04:00+00:00",
+            }
+        ],
+    )
+
+    assert row["entity"] == "User"
+    assert row["modes"] == ["incremental"]
+    assert row["watermark"] == "lastModifiedDateTime"
+    assert row["last_run"]["source"] == "airflow"
+    assert row["last_job"]["dag_id"] == "sap_successfactors_extract"
+    assert row["bronze"] == {
+        "source": "raw/sap_successfactors/User",
+        "latest_date": "2026-07-03",
+        "record_count": 1288,
+        "status": "partial",
+        "empty": False,
+    }
+    assert row["silver"][0]["name"] == "user_latest"
+    assert row["gold"][0]["name"] == "employee_profile"
+    assert row["metadata"] == {
+        "partial": True,
+        "pending": ["metadata"],
+        "stale": True,
+    }
