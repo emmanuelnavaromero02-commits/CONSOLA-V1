@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # applied to every record. Imported and called here (rather than at the
 # bottom of imports) so the logger configured below is the JSON one
 # from the very first record.
-from app.logging_config import _redact, setup_logging  # noqa: E402
+from app.logging_config import setup_logging  # noqa: E402
 
 setup_logging(service_name="console")
 
@@ -77,6 +77,10 @@ from app.domains.data_platform.gold_catalog import (
     GoldCatalogRuntime as _GoldCatalogRuntime,
     empty_catalog_payload as _empty_catalog_payload,
     gold_dataset_from_source as _gold_dataset_from_source,
+)
+from app.domains.data_platform.refinement_errors import (
+    raise_for_refinement_payload_error as _raise_for_refinement_payload_error,
+    upstream_error_detail as _upstream_error_detail,
 )
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns as _dataset_detail_columns,
@@ -8124,118 +8128,6 @@ async def api_catalog_relationship(
     _raise_for_refinement_payload_error(result, "Refinement relationship update failed")
     _scoped_read_cache_invalidate("catalog", user)
     return result
-
-
-def _upstream_error_detail(response, fallback: str = "Upstream request failed"):
-    try:
-        payload = response.json()
-    except ValueError:
-        text = response.text.strip()
-        return text or fallback
-    if isinstance(payload, dict):
-        detail = payload.get("detail") or payload.get("error") or payload.get("message")
-        if isinstance(detail, dict):
-            return detail
-        if detail:
-            return str(detail)
-        result = payload.get("result")
-        if isinstance(result, dict):
-            nested = (
-                result.get("detail") or result.get("error") or result.get("message")
-            )
-            if isinstance(nested, dict):
-                return nested
-            if nested:
-                return str(nested)
-    return fallback
-
-
-def _payload_error_detail(payload) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    for key in ("detail", "error", "message"):
-        value = payload.get(key)
-        if isinstance(value, dict):
-            nested = _payload_error_detail(value)
-            if nested:
-                return nested
-            return _redact(str(value))
-        if value:
-            detail = str(value)
-            raw_error = payload.get("raw_error")
-            if raw_error and str(raw_error) not in detail:
-                detail = f"{detail}: {raw_error}"
-            code = payload.get("code")
-            if code and str(code) not in detail:
-                detail = f"{code}: {detail}"
-            return _redact(detail) or detail
-    result = payload.get("result")
-    if isinstance(result, dict):
-        return _payload_error_detail(result)
-    return None
-
-
-def _refinement_error_status(detail: str) -> int:
-    lower = (detail or "").lower()
-    if any(
-        token in lower
-        for token in (
-            "accessdenied",
-            "access denied",
-            "not authorized",
-            "forbidden",
-            "permission",
-            "outside the caller tenant",
-            "unapproved bucket",
-            "storage path not allowed",
-            "path not allowed",
-        )
-    ):
-        return 403
-    if any(
-        token in lower
-        for token in (
-            "source_files_missing",
-            "no files found",
-            "not found",
-            "404",
-            "no such key",
-            "does not exist",
-        )
-    ):
-        return 404
-    if any(
-        token in lower
-        for token in (
-            "timeout",
-            "timed out",
-            "connecterror",
-            "connection refused",
-            "temporarily unavailable",
-            "service unavailable",
-        )
-    ):
-        return 503
-    if any(
-        token in lower
-        for token in (
-            "sql could not be parsed",
-            "failed ast parse",
-            "invalid bronze source",
-            "sql is required",
-        )
-    ):
-        return 400
-    return 502
-
-
-def _raise_for_refinement_payload_error(
-    payload, fallback: str = "Refinement request failed"
-) -> None:
-    detail = _payload_error_detail(payload)
-    if not detail:
-        return
-    raise HTTPException(_refinement_error_status(detail), detail or fallback)
 
 
 async def _refinement_invoke(

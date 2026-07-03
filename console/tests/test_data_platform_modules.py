@@ -29,6 +29,11 @@ from app.domains.data_platform.rag_payloads import (
     rag_search_arguments,
     rag_synthesis_messages,
 )
+from app.domains.data_platform.refinement_errors import (
+    payload_error_detail,
+    refinement_error_status,
+    upstream_error_detail,
+)
 from app.domains.data_platform.semantic_enrichment import (
     semantic_enrichment_candidates,
     semantic_enrichment_empty_response,
@@ -129,6 +134,34 @@ def test_catalog_payload_helpers_build_stable_filter_args():
         "datasets": ["employee_profile", "talent_9box"],
     }
     assert catalog_cache_key({"b": 1, "a": 2}) == '{"a": 2, "b": 1}'
+
+
+def test_refinement_error_helpers_classify_payload_errors():
+    assert (
+        payload_error_detail(
+            {
+                "code": "SOURCE_FILES_MISSING",
+                "error": "No files found for dataset",
+                "raw_error": "s3://private/path",
+            }
+        )
+        == "SOURCE_FILES_MISSING: No files found for dataset: s3://private/path"
+    )
+    assert refinement_error_status("SOURCE_FILES_MISSING: no files found") == 404
+    assert refinement_error_status("permission denied") == 403
+    assert refinement_error_status("timeout waiting for refinement") == 503
+    assert refinement_error_status("sql is required") == 400
+    assert refinement_error_status("unexpected") == 502
+
+
+def test_upstream_error_detail_reads_nested_result_payload():
+    class Response:
+        text = ""
+
+        def json(self):
+            return {"result": {"message": "nested failure"}}
+
+    assert upstream_error_detail(Response()) == "nested failure"
 
 
 def test_data_api_payload_helpers_preserve_options_contract():
