@@ -327,6 +327,9 @@ from app.domains.pipeline.agentops_refresh import (
 from app.domains.pipeline.control_room_refresh import (
     run_sync_control_room_gold_refresh as _run_sync_control_room_gold_refresh_impl,
 )
+from app.domains.pipeline.aggregate_trigger import (
+    trigger_sync_aggregate_extract_all as _trigger_sync_aggregate_extract_all_impl,
+)
 from app.domains.pipeline.airflow_trigger import (
     trigger_airflow_extract_dag as _trigger_airflow_extract_dag_impl,
 )
@@ -4165,69 +4168,20 @@ async def _trigger_sync_aggregate_extract_all(
     run_id: str,
     user: dict | None,
 ) -> dict[str, Any] | None:
-    dag_id = _SYNC_EXTRACT_ALL_DAGS.get(cartridge)
-    if not dag_id:
-        return None
-
-    conf = {
-        "cartridge_id": cartridge,
-        "mode": mode,
-        "target": target,
-        "idempotency_key": run_id,
-    }
-    if conn_id:
-        conf["conn_id"] = conn_id
-    conf = _apply_user_scope_to_dag_conf(conf, user)
-    requested_dag_run_id = _dag_run_id_from_idempotency_key(dag_id, run_id)
-    result = await _trigger_airflow_extract_dag(
-        dag_id, conf, user, requested_dag_run_id
-    )
-    if result.get("error"):
-        return {
-            "cartridge": cartridge,
-            "triggered": [],
-            "errors": [
-                {
-                    "entity": _SYNC_AGGREGATE_ENTITY,
-                    "status_code": 502,
-                    "error": f"Airflow trigger failed: {result['error']}",
-                }
-            ],
-            "count": 0,
-            "error_count": 1,
-            "trigger_strategy": "aggregate_dag",
-        }
-
-    dag_run_id = (
-        result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
-    )
-    await _record_dag_pipeline_trigger(
+    return await _trigger_sync_aggregate_extract_all_impl(
         cartridge=cartridge,
-        entity=_SYNC_AGGREGATE_ENTITY,
-        dag_id=dag_id,
-        dag_run_id=dag_run_id,
-        mode=conf.get("mode", mode),
-        status=result.get("state") or "queued",
-        conf=conf,
-        tenant_id=conf.get("tenant_id"),
-        workspace_id=conf.get("workspace_id"),
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        user=user,
+        sync_extract_all_dags=_SYNC_EXTRACT_ALL_DAGS,
+        sync_aggregate_entity=_SYNC_AGGREGATE_ENTITY,
+        apply_user_scope_to_dag_conf=_apply_user_scope_to_dag_conf,
+        dag_run_id_from_idempotency_key=_dag_run_id_from_idempotency_key,
+        trigger_airflow_extract_dag=_trigger_airflow_extract_dag,
+        record_dag_pipeline_trigger=_record_dag_pipeline_trigger,
     )
-    triggered = {
-        "entity": _SYNC_AGGREGATE_ENTITY,
-        "job_id": dag_run_id,
-        "dag_run_id": dag_run_id,
-        "dag_id": dag_id,
-        "state": result.get("state"),
-        "result": result,
-    }
-    return {
-        "cartridge": cartridge,
-        "triggered": [triggered],
-        "errors": [],
-        "count": 1,
-        "error_count": 0,
-        "trigger_strategy": "aggregate_dag",
-    }
 
 
 async def _ensure_sync_packaged_datasets(
