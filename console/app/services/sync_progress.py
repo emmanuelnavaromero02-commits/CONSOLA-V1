@@ -349,6 +349,43 @@ def inactive_sync_run_payload(
     }
 
 
+def extract_all_public_response(result: dict[str, Any]) -> dict[str, Any]:
+    triggered = list(result.get("triggered") or [])
+    errors = list(result.get("errors") or [])
+    partial = list(result.get("partial") or [])
+    skipped_explicit = list(result.get("skipped_explicit") or [])
+    blocked = [
+        item for item in errors
+        if item.get("status_code") in {400, 403, 404}
+    ]
+    failed = [
+        item for item in errors
+        if item.get("status_code") not in {400, 403, 404}
+    ]
+    attempted = len(triggered) + len(errors) + len(partial) + len(skipped_explicit)
+    return {
+        **result,
+        "attempted": attempted,
+        "triggered": triggered,
+        "errors": errors,
+        "blocked": blocked,
+        "failed": failed,
+        "partial": partial,
+        "skipped_explicit": skipped_explicit,
+        "summary": {
+            "attempted": attempted,
+            "triggered": len(triggered),
+            "errors": len(errors),
+            "blocked": len(blocked),
+            "failed": len(failed),
+            "partial": len(partial),
+            "skipped_explicit": len(skipped_explicit),
+        },
+        "count": len(triggered),
+        "error_count": len(errors),
+    }
+
+
 def child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[str, Any]:
     materialized = 0
     total = 0

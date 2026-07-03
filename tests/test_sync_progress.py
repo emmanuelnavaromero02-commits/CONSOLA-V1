@@ -113,6 +113,36 @@ def test_inactive_sync_run_payload_is_explicit():
     assert payload["conn_id"] == "femsa_sf"
 
 
+def test_extract_all_public_response_separates_blocked_failed_and_partial():
+    payload = sync_progress.extract_all_public_response(
+        {
+            "cartridge": "sap_successfactors",
+            "triggered": [{"entity": "EmpJob"}],
+            "errors": [
+                {"entity": "CareerWorksheet", "status_code": 404},
+                {"entity": "User", "status_code": 500},
+            ],
+            "partial": [{"entity": "JobApplication"}],
+            "skipped_explicit": [{"entity": "LearningHistory"}],
+        }
+    )
+
+    assert payload["attempted"] == 5
+    assert payload["count"] == 1
+    assert payload["error_count"] == 2
+    assert payload["blocked"] == [{"entity": "CareerWorksheet", "status_code": 404}]
+    assert payload["failed"] == [{"entity": "User", "status_code": 500}]
+    assert payload["summary"] == {
+        "attempted": 5,
+        "triggered": 1,
+        "errors": 2,
+        "blocked": 1,
+        "failed": 1,
+        "partial": 1,
+        "skipped_explicit": 1,
+    }
+
+
 def test_child_gold_refresh_summary_counts_partial_results():
     summary = sync_progress.child_gold_refresh_summary(
         [
