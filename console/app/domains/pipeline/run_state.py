@@ -139,6 +139,23 @@ def pipeline_jobs_by_entity(jobs: list[dict]) -> dict[str, dict]:
     return by_entity
 
 
+def pipeline_bronze_date_count(
+    dag_run: dict | None, last_job: dict | None
+) -> tuple[str | None, Any | None]:
+    if dag_run:
+        finished_at = dag_run.get("finished_at")
+        bronze_date = str(finished_at)[:10] if finished_at else None
+        return bronze_date, dag_run.get("record_count")
+    if last_job and last_job.get("status") == "done":
+        result = last_job.get("result") or {}
+        bronze_date = (last_job.get("finished_at") or last_job.get("created_at") or "")[
+            :10
+        ]
+        bronze_count = result.get("record_count") or result.get("total_records")
+        return bronze_date, bronze_count
+    return None, None
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")

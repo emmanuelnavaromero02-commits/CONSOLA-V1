@@ -149,3 +149,23 @@ def test_pipeline_jobs_by_entity_keeps_first_job_per_entity():
         "User": jobs[0],
         "EmpJob": jobs[2],
     }
+
+
+def test_pipeline_bronze_date_count_prefers_airflow_then_done_job():
+    assert run_state.pipeline_bronze_date_count(
+        {"finished_at": "2026-07-03T11:22:33+00:00", "record_count": 12},
+        {"status": "done", "result": {"record_count": 99}},
+    ) == ("2026-07-03", 12)
+    assert run_state.pipeline_bronze_date_count(
+        None,
+        {
+            "status": "done",
+            "finished_at": "2026-07-02T10:00:00+00:00",
+            "created_at": "2026-07-01T10:00:00+00:00",
+            "result": {"record_count": 0, "total_records": 7},
+        },
+    ) == ("2026-07-02", 7)
+    assert run_state.pipeline_bronze_date_count(None, {"status": "failed"}) == (
+        None,
+        None,
+    )

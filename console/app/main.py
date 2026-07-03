@@ -140,6 +140,7 @@ from app.domains.pipeline.run_state import (
     airflow_task_id as _airflow_task_id,
     duration_seconds as _duration_seconds,
     normalize_airflow_state as _normalize_airflow_state,
+    pipeline_bronze_date_count as _pipeline_bronze_date_count,
     pipeline_dataset_status as _pipeline_dataset_status,
     parse_iso_datetime as _parse_iso_datetime,
     pipeline_downstream_status as _pipeline_downstream_status,
@@ -4630,21 +4631,7 @@ async def api_pipeline(
             continue
         dag_run = dag_runs_by_entity.get(entity)
         last_job = jobs_by_entity.get(entity)
-        bronze_date = None
-        bronze_count = None
-        if dag_run:
-            bronze_date = (
-                str(dag_run.get("finished_at"))[:10]
-                if dag_run.get("finished_at")
-                else None
-            )
-            bronze_count = dag_run.get("record_count")
-        elif last_job and last_job.get("status") == "done":
-            res = last_job.get("result") or {}
-            bronze_date = (
-                last_job.get("finished_at") or last_job.get("created_at") or ""
-            )[:10]
-            bronze_count = res.get("record_count") or res.get("total_records")
+        bronze_date, bronze_count = _pipeline_bronze_date_count(dag_run, last_job)
         if not bronze_date or bronze_count is None:
             snapshot_work[entity] = _call_with_optional_user(
                 _bronze_physical_snapshot,
@@ -4674,16 +4661,13 @@ async def api_pipeline(
         dag_run = dag_runs_by_entity.get(entity)
         last_job = jobs_by_entity.get(entity)
 
-        bronze_date = None
-        bronze_count = None
         last_run_info = None
         dag_status = None
+        bronze_date, bronze_count = _pipeline_bronze_date_count(dag_run, last_job)
 
         if dag_run:
             # Airflow DAG run is authoritative
             fin = dag_run.get("finished_at")
-            bronze_date = str(fin)[:10] if fin else None
-            bronze_count = dag_run.get("record_count")
             dag_status = _normalize_airflow_state(dag_run.get("status"))
             dag_run_id = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
             dag_extra = _pipeline_run_extra(dag_run)
@@ -4714,12 +4698,6 @@ async def api_pipeline(
                 "error": dag_run.get("error_message"),
             }
         elif last_job:
-            if last_job.get("status") == "done":
-                res = last_job.get("result") or {}
-                bronze_date = (
-                    last_job.get("finished_at") or last_job.get("created_at") or ""
-                )[:10]
-                bronze_count = res.get("record_count") or res.get("total_records")
             last_run_info = {
                 "source": "jobs",
                 "job_id": last_job["job_id"],
