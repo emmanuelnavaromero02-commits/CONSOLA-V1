@@ -247,3 +247,18 @@ def test_console_readyz_data_helper_refactor_does_not_trigger_full_stack_release
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
     assert flags["root_test_targets"] == "tests/test_readyz_data.py"
+
+
+def test_console_sync_progress_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/sync_progress.py",
+        "console/app/main.py",
+        "tests/test_sync_progress.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_sync_progress.py"

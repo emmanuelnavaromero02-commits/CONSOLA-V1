@@ -420,6 +420,9 @@ def console_main(monkeypatch):
         return FakePool()
 
     asyncpg_stub.create_pool = create_pool
+    from app.services import db_pool as db_pool_service
+
+    db_pool_service.reset_db_pool_for_tests()
 
     service_stubs = {
         "app.services.auth": auth_stub,
@@ -464,6 +467,7 @@ def console_main(monkeypatch):
     main = importlib.import_module("app.main")
     main._test_asyncpg_stub = asyncpg_stub
     yield main
+    db_pool_service.reset_db_pool_for_tests()
     sys.modules.pop("app.routers.studio", None)
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)
