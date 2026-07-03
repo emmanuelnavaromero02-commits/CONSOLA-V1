@@ -60,6 +60,12 @@ from app.domains.agentops.successfactors_talent_monitor import (
     sync_agentops_is_terminal as _agentops_sync_agentops_is_terminal,
     sync_agentops_monitor_candidates as _agentops_sync_agentops_monitor_candidates,
 )
+from app.domains.agentops.invocation import (
+    agent_invoke_background_requested as _agent_invoke_background_requested_impl,
+    agent_invoke_background_response as _agent_invoke_background_response_impl,
+    agent_schedule_due as _agent_schedule_due_impl,
+    parse_agent_scheduled_fire_at as _parse_agent_scheduled_fire_at_impl,
+)
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
@@ -7080,25 +7086,11 @@ async def api_agents_delete(
 
 
 def _agent_invoke_background_requested(body: dict) -> bool:
-    if not isinstance(body, dict):
-        return False
-    if body.get("background") is True or body.get("queued") is True:
-        return True
-    if body.get("async") is True:
-        return True
-    return body.get("wait") is False
+    return _agent_invoke_background_requested_impl(body)
 
 
 def _agent_invoke_background_response(agent: Any) -> dict:
-    return {
-        "reply": "Ejecucion iniciada. Revisa la pestana Ejecuciones para ver el resultado.",
-        "viewer_urls": [],
-        "messages": [],
-        "agent_id": getattr(agent, "id", None),
-        "run_id": None,
-        "status": "queued",
-        "queued": True,
-    }
+    return _agent_invoke_background_response_impl(agent)
 
 
 def _start_agent_invoke_background(agent: Any, message: str, history: list, user: dict) -> None:
@@ -7155,55 +7147,16 @@ _AGENT_RUNNER_GRACE_MINUTES = int(os.environ.get("AGENT_RUNNER_GRACE_MINUTES", "
 
 
 def _parse_agent_scheduled_fire_at(value: Any) -> Any:
-    if value in (None, ""):
-        return None
-    try:
-        from datetime import datetime as _dt, timezone as _tz
-
-        parsed = _dt.fromisoformat(str(value).replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=_tz.utc)
-        return parsed.astimezone(_tz.utc)
-    except Exception as exc:
-        raise HTTPException(400, "scheduled_fire_at is invalid") from exc
+    return _parse_agent_scheduled_fire_at_impl(value)
 
 
 def _agent_schedule_due(schedule: dict, scheduled_fire_at: Any | None = None) -> bool:
-    cron_expr = str(
-        schedule.get("cron") or schedule.get("cron_expression") or ""
-    ).strip()
-    if not cron_expr:
-        return False
-    try:
-        from croniter import croniter
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-        from zoneinfo import ZoneInfo
-    except Exception as exc:
-        raise HTTPException(503, "cron scheduler dependency unavailable") from exc
-    try:
-        tz = ZoneInfo(str(schedule.get("tz") or "UTC"))
-        if scheduled_fire_at is not None:
-            fire_utc = scheduled_fire_at.astimezone(_tz.utc)
-            iterator = croniter(cron_expr, fire_utc.astimezone(tz) - _td(seconds=1))
-            next_fire = iterator.get_next(_dt)
-            if next_fire.tzinfo is None:
-                next_fire = next_fire.replace(tzinfo=tz)
-            next_fire_utc = next_fire.astimezone(_tz.utc)
-            return abs((next_fire_utc - fire_utc).total_seconds()) <= 1
-
-        now_utc = _dt.now(_tz.utc)
-        window_start_utc = now_utc - _td(
-            minutes=max(_AGENT_RUNNER_INTERVAL_MINUTES, 1) + _AGENT_RUNNER_GRACE_MINUTES
-        )
-        window_end_utc = now_utc + _td(minutes=_AGENT_RUNNER_GRACE_MINUTES)
-        iterator = croniter(cron_expr, window_start_utc.astimezone(tz))
-        next_fire = iterator.get_next(_dt)
-        if next_fire.tzinfo is None:
-            next_fire = next_fire.replace(tzinfo=tz)
-        next_fire_utc = next_fire.astimezone(_tz.utc)
-    except Exception as exc:
-        raise HTTPException(403, "agent schedule cron is invalid") from exc
-    return window_start_utc <= next_fire_utc <= window_end_utc
+    return _agent_schedule_due_impl(
+        schedule,
+        scheduled_fire_at=scheduled_fire_at,
+        interval_minutes=_AGENT_RUNNER_INTERVAL_MINUTES,
+        grace_minutes=_AGENT_RUNNER_GRACE_MINUTES,
+    )
 
 
 @app.post(
