@@ -144,8 +144,10 @@ from app.domains.pipeline.run_state import (
     parse_iso_datetime as _parse_iso_datetime,
     pipeline_downstream_status as _pipeline_downstream_status,
     pipeline_freshness_status as _pipeline_freshness_status,
+    pipeline_gold_dependencies_for_silver as _pipeline_gold_dependencies_for_silver,
     pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_run_extra as _pipeline_run_extra,
+    pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
 from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
@@ -4523,7 +4525,6 @@ async def api_pipeline(
         cartridge,
         fallback="sap_successfactors",
     )
-    import re as _re
 
     # 1. Entities
     from app.services import cartridge_service as _cs
@@ -4624,32 +4625,7 @@ async def api_pipeline(
 
     silver_ds = [d for d in all_datasets if d.get("layer") == "silver"]
     gold_ds = [d for d in all_datasets if d.get("layer") == "gold"]
-
-    silver_by_source: dict[str, list[dict]] = {}
-    for ds in silver_ds:
-        for src in ds.get("sources") or []:
-            silver_by_source.setdefault(src, []).append(ds)
-
-    def _gold_deps_for_silver(silver_name: str) -> list[dict]:
-        deps = []
-        silver_lower = silver_name.lower()
-        cartridge_lower = cartridge.lower()
-        for gds in gold_ds:
-            sql = gds.get("sql_def") or gds.get("sql") or ""
-            sources = [
-                str(source)
-                for source in (gds.get("sources") or [])
-                if str(source).strip()
-            ]
-            haystack = "\n".join([sql, *sources])
-            normalized = haystack.replace("\\", "/").lower()
-            if _re.search(
-                rf"\bsilver_{_re.escape(silver_name)}\b", sql, _re.IGNORECASE
-            ) or (
-                f"silver/{cartridge_lower}/{silver_lower}" in normalized
-            ):
-                deps.append(gds)
-        return deps
+    silver_by_source = _pipeline_silver_datasets_by_source(silver_ds)
 
     snapshot_work: dict[str, Any] = {}
     for e in entity_list:
@@ -4815,7 +4791,9 @@ async def api_pipeline(
                     "status": s_status,
                 }
             )
-            for gds in _gold_deps_for_silver(ds["name"]):
+            for gds in _pipeline_gold_dependencies_for_silver(
+                ds["name"], gold_ds, cartridge=cartridge
+            ):
                 if not any(g["name"] == gds["name"] for g in gold_nodes):
                     gold_nodes.append(
                         {

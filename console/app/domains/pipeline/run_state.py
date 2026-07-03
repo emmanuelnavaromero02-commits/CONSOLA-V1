@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -96,6 +97,36 @@ def pipeline_dataset_status(
     return pipeline_freshness_status(
         dataset.get("last_refresh"), threshold_h=threshold_h, now=now
     )
+
+
+def pipeline_silver_datasets_by_source(silver_datasets: list[dict]) -> dict[str, list[dict]]:
+    by_source: dict[str, list[dict]] = {}
+    for dataset in silver_datasets:
+        for source in dataset.get("sources") or []:
+            by_source.setdefault(source, []).append(dataset)
+    return by_source
+
+
+def pipeline_gold_dependencies_for_silver(
+    silver_name: str, gold_datasets: list[dict], *, cartridge: str
+) -> list[dict]:
+    deps = []
+    silver_lower = silver_name.lower()
+    cartridge_lower = cartridge.lower()
+    for gold_dataset in gold_datasets:
+        sql = gold_dataset.get("sql_def") or gold_dataset.get("sql") or ""
+        sources = [
+            str(source)
+            for source in (gold_dataset.get("sources") or [])
+            if str(source).strip()
+        ]
+        haystack = "\n".join([sql, *sources])
+        normalized = haystack.replace("\\", "/").lower()
+        if re.search(
+            rf"\bsilver_{re.escape(silver_name)}\b", sql, re.IGNORECASE
+        ) or (f"silver/{cartridge_lower}/{silver_lower}" in normalized):
+            deps.append(gold_dataset)
+    return deps
 
 
 def airflow_task_id(task: Any) -> str | None:

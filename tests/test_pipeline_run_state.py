@@ -109,3 +109,29 @@ def test_pipeline_dataset_status_prioritizes_failed_and_empty():
         )
         == "empty"
     )
+
+
+def test_pipeline_silver_and_gold_dependency_helpers():
+    silver = [
+        {"name": "employee_profile", "sources": ["raw/sap/User", "raw/sap/EmpJob"]},
+        {"name": "empty", "sources": []},
+    ]
+    gold = [
+        {
+            "name": "talent_profile",
+            "sql": "select * from silver_employee_profile",
+            "sources": [],
+        },
+        {
+            "name": "talent_signals",
+            "sql": "",
+            "sources": ["silver/sap_successfactors/employee_profile"],
+        },
+        {"name": "other", "sql": "select 1", "sources": ["silver/other/employee_profile"]},
+    ]
+
+    by_source = run_state.pipeline_silver_datasets_by_source(silver)
+    assert by_source["raw/sap/User"] == [silver[0]]
+    assert run_state.pipeline_gold_dependencies_for_silver(
+        "employee_profile", gold, cartridge="sap_successfactors"
+    ) == [gold[0], gold[1]]
