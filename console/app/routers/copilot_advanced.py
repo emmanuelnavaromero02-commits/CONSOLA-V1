@@ -46,6 +46,12 @@ from app.domains.copilot.context_payloads import (
     sanitise_page_context as _sanitise_page_context,
     scrub_value as _scrub_value,
 )
+from app.domains.copilot.router_helpers import (
+    require_uuid_path as _require_uuid_path_impl,
+    tenant_id as _tenant_id_impl,
+    user_id as _user_id_impl,
+    workspace_id as _workspace_id_impl,
+)
 from app.services import (
     audit_service,
     briefing_v2,
@@ -77,30 +83,18 @@ router = APIRouter(
 
 
 def _user_id(user: dict[str, Any]) -> int:
-    uid = user.get("id") or user.get("user_id")
-    if uid is None:
-        raise HTTPException(401, "session has no user id")
-    try:
-        return int(uid)
-    except (TypeError, ValueError):
-        raise HTTPException(401, "invalid user id in session")
+    return _user_id_impl(user)
 
 
 def _workspace_id(user: dict[str, Any]) -> str | None:
     """``workspaces.id`` is a UUID string (see infra/init/13_rbac_models.sql).
     We return it verbatim so asyncpg can do the UUID cast at query time.
     """
-    ws = user.get("active_workspace_id") or user.get("workspace_id")
-    if ws is None or ws == "":
-        return None
-    return str(ws)
+    return _workspace_id_impl(user)
 
 
 def _tenant_id(user: dict[str, Any]) -> str | None:
-    tenant = user.get("active_tenant_id") or user.get("tenant_id")
-    if tenant is None or tenant == "":
-        return None
-    return str(tenant)
+    return _tenant_id_impl(user)
 
 
 async def _noop_invoke_tool(*_args, **_kwargs) -> dict:
@@ -119,13 +113,7 @@ def _require_uuid_path(value: str, *, label: str) -> str:
     the service-layer ``_coerce_uuid_or_none`` runs we've already
     burned a DB pool checkout and (potentially) audited a request.
     """
-    from app.services._copilot_helpers import (
-        coerce_uuid_or_none as _coerce,
-    )
-    coerced = _coerce(value)
-    if coerced is None:
-        raise HTTPException(400, f"{label} must be a valid UUID")
-    return coerced
+    return _require_uuid_path_impl(value, label=label)
 
 
 async def _conversation_belongs_to_user(
