@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import HTTPException
 
@@ -160,6 +162,64 @@ def test_sync_run_working_state_defaults_invalid_extra_shapes():
     assert working_state["triggered"] == []
     assert working_state["errors"] == []
     assert working_state["child_run_ids"] == []
+
+
+def test_sync_child_runtime_state_counts_progress_rows():
+    runtime = sync_state.sync_child_runtime_state(
+        row={"status": "running"},
+        child_rows=[
+            {
+                "entity": "__extract_all__",
+                "status": "success",
+                "extra": {
+                    "gold_refresh": {
+                        "status": "success",
+                        "materialized": 1,
+                        "total": 1,
+                    }
+                },
+            },
+            {"entity": "EmpJob", "status": "success", "row_count": 3},
+            {"entity": "CareerWorksheet", "status": "blocked", "row_count": 0},
+        ],
+        child_run_ids=["aggregate-run"],
+        triggered=[{"entity": "__extract_all__"}],
+        errors=[],
+        stale_after_seconds=3600,
+    )
+
+    assert runtime["running_children"] is False
+    assert runtime["success_children"] == 1
+    assert runtime["blocked_children"] == 1
+    assert runtime["terminal_children"] == 2
+    assert runtime["child_total"] == 2
+    assert runtime["entity_summary"]["counts"]["success"] == 1
+    assert runtime["entity_summary"]["counts"]["blocked"] == 1
+    assert runtime["gold_refresh_summary"]["status"] == "success"
+
+
+def test_sync_child_runtime_state_marks_stale_running_children_failed():
+    runtime = sync_state.sync_child_runtime_state(
+        row={
+            "status": "running",
+            "started_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+        },
+        child_rows=[{"entity": "EmpJob", "status": "running"}],
+        child_run_ids=["entity-run"],
+        triggered=[{"entity": "EmpJob"}],
+        errors=[],
+        stale_after_seconds=1,
+    )
+
+    assert runtime["running_children"] is False
+    assert runtime["failed_children"] == 1
+    assert runtime["errors"] == [
+        {
+            "entity": "__sync_now__",
+            "status_code": 504,
+            "error": "Airflow sync run timed out before completing; start a new sync.",
+        }
+    ]
 
 
 @pytest.mark.anyio

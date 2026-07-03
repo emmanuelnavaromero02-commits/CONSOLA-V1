@@ -312,6 +312,7 @@ from app.domains.pipeline.sync_state import (
     sync_errors_retryable as _sync_errors_retryable,
     sync_extra_from_row as _sync_extra_from_row,
     sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
+    sync_child_runtime_state as _sync_child_runtime_state,
     sync_now_lock_key as _sync_now_lock_key_impl,
     sync_now_run_id_from_request_id as _sync_now_run_id_from_request_id,
     sync_public_payload as _sync_public_payload,
@@ -4512,46 +4513,28 @@ async def _build_sync_run_status(
     child_rows = await _sync_child_runs(
         cartridge=cartridge, run_ids=child_run_ids, user=user
     )
-    gold_refresh_summary = _sync_child_gold_refresh_summary(child_rows)
-    child_progress = _sync_progress.sync_child_progress_rows(
-        child_rows,
-        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
-        sync_now_entity=_SYNC_NOW_ENTITY,
+    child_runtime = _sync_child_runtime_state(
+        row=row,
+        child_rows=child_rows,
+        child_run_ids=child_run_ids,
+        triggered=triggered,
+        errors=errors,
+        stale_after_seconds=_SYNC_NOW_STALE_AFTER_SECONDS,
     )
-    aggregate_child_rows = child_progress["aggregate_child_rows"]
-    aggregate_payload_ready = child_progress["aggregate_payload_ready"]
-    entity_child_rows = child_progress["entity_child_rows"]
-    aggregate_summary_pending = child_progress["aggregate_summary_pending"]
-    progress_rows = child_progress["progress_rows"]
-    child_counts = _sync_progress.sync_child_status_counts(
-        progress_rows,
-        blocked_statuses=_SYNC_CHILD_BLOCKED_STATUSES,
-        terminal_statuses=_SYNC_CHILD_TERMINAL_STATUSES,
-    )
-    running_children = bool(child_counts["running"])
-    failed_children = int(child_counts["failed"])
-    success_children = int(child_counts["success"])
-    partial_children = int(child_counts["partial"])
-    blocked_children = int(child_counts["blocked"])
-    terminal_children = int(child_counts["terminal"])
-    entity_summary = _sync_step_entity_summary(progress_rows)
-    stale_running = (
-        str(row.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES
-        and running_children
-        and not success_children
-        and (_sync_run_age_seconds(row) or 0) > _SYNC_NOW_STALE_AFTER_SECONDS
-    )
-    if stale_running:
-        running_children = False
-        failed_children = max(failed_children, 1)
-        errors = [
-            *errors,
-            {
-                "entity": _SYNC_NOW_ENTITY,
-                "status_code": 504,
-                "error": "Airflow sync run timed out before completing; start a new sync.",
-            },
-        ]
+    gold_refresh_summary = child_runtime["gold_refresh_summary"]
+    aggregate_child_rows = child_runtime["aggregate_child_rows"]
+    aggregate_payload_ready = child_runtime["aggregate_payload_ready"]
+    entity_child_rows = child_runtime["entity_child_rows"]
+    aggregate_summary_pending = child_runtime["aggregate_summary_pending"]
+    progress_rows = child_runtime["progress_rows"]
+    running_children = child_runtime["running_children"]
+    failed_children = child_runtime["failed_children"]
+    success_children = child_runtime["success_children"]
+    partial_children = child_runtime["partial_children"]
+    blocked_children = child_runtime["blocked_children"]
+    terminal_children = child_runtime["terminal_children"]
+    entity_summary = child_runtime["entity_summary"]
+    errors = child_runtime["errors"]
 
     try:
         pipeline_payload = await _call_with_optional_user(
@@ -4600,13 +4583,7 @@ async def _build_sync_run_status(
             bronze_ready=bronze_ready,
         )
     }
-    child_total = max(
-        len(entity_child_rows),
-        len(progress_rows),
-        len(child_run_ids),
-        len(triggered),
-        1,
-    )
+    child_total = child_runtime["child_total"]
     child_done = terminal_children
     bronze_update = _sync_progress.sync_bronze_step_update(
         running_children=running_children,

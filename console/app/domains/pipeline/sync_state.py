@@ -360,6 +360,80 @@ def sync_run_working_state(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def sync_child_runtime_state(
+    *,
+    row: dict[str, Any],
+    child_rows: list[dict[str, Any]],
+    child_run_ids: list[str],
+    triggered: list[Any],
+    errors: list[dict[str, Any]],
+    stale_after_seconds: int,
+) -> dict[str, Any]:
+    gold_refresh_summary = sync_child_gold_refresh_summary(child_rows)
+    child_progress = sync_progress.sync_child_progress_rows(
+        child_rows,
+        aggregate_entity=SYNC_AGGREGATE_ENTITY,
+        sync_now_entity=SYNC_NOW_ENTITY,
+    )
+    aggregate_child_rows = child_progress["aggregate_child_rows"]
+    aggregate_payload_ready = child_progress["aggregate_payload_ready"]
+    entity_child_rows = child_progress["entity_child_rows"]
+    aggregate_summary_pending = child_progress["aggregate_summary_pending"]
+    progress_rows = child_progress["progress_rows"]
+    child_counts = sync_progress.sync_child_status_counts(
+        progress_rows,
+        blocked_statuses=SYNC_CHILD_BLOCKED_STATUSES,
+        terminal_statuses=SYNC_CHILD_TERMINAL_STATUSES,
+    )
+    running_children = bool(child_counts["running"])
+    failed_children = int(child_counts["failed"])
+    success_children = int(child_counts["success"])
+    partial_children = int(child_counts["partial"])
+    blocked_children = int(child_counts["blocked"])
+    terminal_children = int(child_counts["terminal"])
+    entity_summary = sync_step_entity_summary(progress_rows)
+    stale_running = (
+        str(row.get("status") or "").lower() not in SYNC_TERMINAL_STATUSES
+        and running_children
+        and not success_children
+        and (sync_run_age_seconds(row) or 0) > stale_after_seconds
+    )
+    if stale_running:
+        running_children = False
+        failed_children = max(failed_children, 1)
+        errors = [
+            *errors,
+            {
+                "entity": SYNC_NOW_ENTITY,
+                "status_code": 504,
+                "error": "Airflow sync run timed out before completing; start a new sync.",
+            },
+        ]
+    return {
+        "gold_refresh_summary": gold_refresh_summary,
+        "aggregate_child_rows": aggregate_child_rows,
+        "aggregate_payload_ready": aggregate_payload_ready,
+        "entity_child_rows": entity_child_rows,
+        "aggregate_summary_pending": aggregate_summary_pending,
+        "progress_rows": progress_rows,
+        "running_children": running_children,
+        "failed_children": failed_children,
+        "success_children": success_children,
+        "partial_children": partial_children,
+        "blocked_children": blocked_children,
+        "terminal_children": terminal_children,
+        "entity_summary": entity_summary,
+        "errors": errors,
+        "child_total": max(
+            len(entity_child_rows),
+            len(progress_rows),
+            len(child_run_ids),
+            len(triggered),
+            1,
+        ),
+    }
+
+
 def sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
     return sync_progress.sync_status_from_steps(steps)
 
