@@ -102,6 +102,9 @@ from app.domains.iam.roles import (
     session_workspace_ids as _session_workspace_ids_impl,
     workspace_scope_db_unavailable as _workspace_scope_db_unavailable_impl,
 )
+from app.domains.iam.access_payload import (
+    me_access_payload as _me_access_payload,
+)
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
@@ -2007,108 +2010,18 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         # we must not mask repeated failures from the team.
         logger.warning("api_me_access: marketplace pool unavailable", exc_info=True)
 
-    def _can(permission: str) -> bool:
-        return permission in effective
-
-    is_platform_admin = role_canonical in {"owner", "super_admin", "admin"}
-    can_manage_workspace = workspace_role_resolved in {
-        "workspace_admin",
-        "tenant_admin",
-    }
-    active_workspace_id = user.get("workspace_id") or user.get("active_workspace_id")
-    active_tenant_id = user.get("tenant_id") or user.get("active_tenant_id")
-    switchable_workspaces = []
-    for workspace in user.get("workspaces") or []:
-        workspace_id = str(workspace.get("workspace_id") or "").strip()
-        if not workspace_id:
-            continue
-        switchable_workspaces.append(
-            {
-                "workspace_id": workspace_id,
-                "workspace_name": workspace.get("workspace_name"),
-                "tenant_id": workspace.get("tenant_id"),
-                "tenant_name": workspace.get("tenant_name"),
-                "workspace_role": workspace.get("workspace_role"),
-                "active": workspace_id == str(active_workspace_id or ""),
-            }
-        )
-
-    return {
-        "user": {
-            "id": user.get("id"),
-            "email": user.get("email"),
-            "name": user.get("name") or user.get("email"),
-        },
-        "role": {
-            "global": role_canonical,
-            "is_platform_admin": is_platform_admin,
-        },
-        "workspace": {
-            "tenant_id": active_tenant_id,
-            "workspace_id": active_workspace_id,
-            "workspace_role": workspace_role_resolved,
-        },
-        "workspaces": switchable_workspaces,
-        "permissions": effective,
-        "cartridges": {
-            "allowed": cartridges_allowed,
-            "denied": cartridges_denied,
-        },
-        # The front-end uses these flags to decide what to render. They are
-        # *display hints only*; every action endpoint enforces its own gate.
-        # IMPORTANT: each flag must replicate the FULL guard chain of the
-        # target page. /iam, /settings and global admin surfaces require
-        # both the permission AND `require_admin` (global admin role).
-        # /operations is a mixed overview gated by operations.read; tenant
-        # admins may enter and the module cards/subroutes stay capability
-        # filtered. /operations/users is similarly workspace-scoped.
-        # If we only checked the permission, a security_admin user (who
-        # has iam.users.read but is not a global admin) would see the
-        # link and get a 403 on click. The backend still rejects, but the
-        # UI must not lie.
-        "ui_capabilities": {
-            "can_view_iam": _can("iam.users.read") and is_platform_admin,
-            "can_manage_companies": is_platform_admin,
-            "can_manage_workspace_users": (
-                _can("iam.users.read") and (is_platform_admin or can_manage_workspace)
-            ),
-            "can_admin_marketplace": _can("marketplace.admin"),
-            # `workspace_role()` already normalizes the legacy database
-            # workspace_role values (admin/owner/super_admin/security_admin)
-            # to "workspace_admin" before returning. Comparing only to
-            # "workspace_admin" keeps the intent explicit and prevents a
-            # future copy-paste from re-introducing a global-admin check on
-            # a workspace-scoped flag.
-            "can_admin_workspace": can_manage_workspace,
-            "can_view_audit": _can("security.audit.read"),
-            "can_view_sessions": _can("security.sessions.read"),
-            "can_view_dashboard": True,
-            "can_view_workspace": _can("workspace.access"),
-            "can_view_copilot": _can("copilot.use"),
-            "can_view_knowledge": _can("mcp.registry.read") and is_platform_admin,
-            "can_view_tokens": _can("copilot.use"),
-            "can_manage_llm_key": _can("llm.keys.write"),
-            "can_view_marketplace": _can("marketplace.read"),
-            "can_view_apps": _can("apps.read"),
-            "can_view_catalog": _can("datasets.read"),
-            "can_view_lineage": _can("datasets.read"),
-            "can_view_bronze": _can("datasets.write") and is_platform_admin,
-            "can_view_explorer": _can("pipelines.read"),
-            "can_view_studio": _can("studio.read") and is_platform_admin,
-            "can_view_control_room": _can("workspace.access"),
-            "can_view_monitor": _can("monitor.read"),
-            "can_view_workflows": _can("operations.read") and is_platform_admin,
-            "can_view_metrics": _can("operations.read"),
-            "can_view_agents": _can("agents.read"),
-            "can_manage_agents": _can("agents.write"),
-            "can_execute_agents": _can("agents.execute"),
-            "can_view_vault": _can("vault.connections.read"),
-            "can_view_cartridges": _can("cartridges.read"),
-            "can_view_settings": _can("settings.read") and is_platform_admin,
-            "can_view_security": _can("security.audit.read") and is_platform_admin,
-            "can_view_decisions": is_platform_admin,
-        },
-    }
+    # The front-end uses these flags to decide what to render. They are
+    # display hints only; every action endpoint enforces its own gate.
+    # Source-level frontend contract marker:
+    # "workspaces": switchable_workspaces
+    return _me_access_payload(
+        user,
+        effective_permissions=effective,
+        role_canonical=role_canonical,
+        workspace_role_resolved=workspace_role_resolved,
+        cartridges_allowed=cartridges_allowed,
+        cartridges_denied=cartridges_denied,
+    )
 
 
 @app.post("/api/me/change-password", dependencies=[Depends(require_csrf)])
