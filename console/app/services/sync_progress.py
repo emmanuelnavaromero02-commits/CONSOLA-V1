@@ -348,6 +348,60 @@ def sync_child_status_counts(
     }
 
 
+def sync_pipeline_materialization_summary(
+    pipeline_rows: list[Any],
+    gold_refresh_summary: dict[str, Any],
+) -> dict[str, Any]:
+    bronze_rows = [item for item in pipeline_rows if isinstance(item, dict)]
+    bronze_ready = sum(
+        1
+        for item in bronze_rows
+        if str(((item.get("bronze") or {}).get("status")) or "") in {"fresh", "stale"}
+    )
+    silver_nodes = [
+        node
+        for item in bronze_rows
+        for node in (item.get("silver") or [])
+        if isinstance(node, dict)
+    ]
+    gold_nodes = [
+        node
+        for item in bronze_rows
+        for node in (item.get("gold") or [])
+        if isinstance(node, dict)
+    ]
+    silver_ready = sum(
+        1
+        for node in silver_nodes
+        if str(node.get("status") or "") in {"fresh", "stale"}
+    )
+    gold_ready = sum(
+        1 for node in gold_nodes if str(node.get("status") or "") in {"fresh", "stale"}
+    )
+    gold_refresh_materialized = int(gold_refresh_summary.get("materialized") or 0)
+    gold_refresh_total = int(gold_refresh_summary.get("total") or 0)
+    if gold_refresh_total:
+        gold_ready = gold_refresh_materialized
+    elif gold_refresh_materialized > gold_ready:
+        gold_ready = gold_refresh_materialized
+    gold_total = max(len(gold_nodes), gold_refresh_total, gold_ready)
+    gold_refresh_status = str(gold_refresh_summary.get("status") or "").lower()
+    gold_partial = bool(
+        (gold_refresh_total and gold_refresh_materialized < gold_refresh_total)
+        or gold_refresh_status == "partial"
+    )
+    return {
+        "bronze_rows": bronze_rows,
+        "bronze_ready": bronze_ready,
+        "silver_nodes": silver_nodes,
+        "silver_ready": silver_ready,
+        "gold_nodes": gold_nodes,
+        "gold_ready": gold_ready,
+        "gold_total": gold_total,
+        "gold_partial": gold_partial,
+    }
+
+
 def sync_step_entity_summary(
     rows: list[dict[str, Any]],
     *,

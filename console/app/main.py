@@ -7035,44 +7035,15 @@ async def _build_sync_run_status(
             {"entity": "__pipeline__", "status_code": 503, "error": str(exc)},
         ]
 
-    bronze_rows = [item for item in pipeline_rows if isinstance(item, dict)]
-    bronze_ready = sum(
-        1
-        for item in bronze_rows
-        if str(((item.get("bronze") or {}).get("status")) or "") in {"fresh", "stale"}
+    materialization = _sync_progress.sync_pipeline_materialization_summary(
+        pipeline_rows,
+        gold_refresh_summary,
     )
-    silver_nodes = [
-        node
-        for item in bronze_rows
-        for node in (item.get("silver") or [])
-        if isinstance(node, dict)
-    ]
-    gold_nodes = [
-        node
-        for item in bronze_rows
-        for node in (item.get("gold") or [])
-        if isinstance(node, dict)
-    ]
-    silver_ready = sum(
-        1
-        for node in silver_nodes
-        if str(node.get("status") or "") in {"fresh", "stale"}
-    )
-    gold_ready = sum(
-        1 for node in gold_nodes if str(node.get("status") or "") in {"fresh", "stale"}
-    )
-    gold_refresh_materialized = int(gold_refresh_summary.get("materialized") or 0)
-    gold_refresh_total = int(gold_refresh_summary.get("total") or 0)
-    if gold_refresh_total:
-        gold_ready = gold_refresh_materialized
-    elif gold_refresh_materialized > gold_ready:
-        gold_ready = gold_refresh_materialized
-    gold_total = max(len(gold_nodes), gold_refresh_total, gold_ready)
-    gold_refresh_status = str(gold_refresh_summary.get("status") or "").lower()
-    gold_partial = bool(
-        (gold_refresh_total and gold_refresh_materialized < gold_refresh_total)
-        or gold_refresh_status == "partial"
-    )
+    bronze_ready = int(materialization["bronze_ready"])
+    silver_ready = int(materialization["silver_ready"])
+    gold_ready = int(materialization["gold_ready"])
+    gold_total = int(materialization["gold_total"])
+    gold_partial = bool(materialization["gold_partial"])
     control_room_gold_refresh = (
         dict(extra.get("control_room_gold_refresh"))
         if isinstance(extra.get("control_room_gold_refresh"), dict)

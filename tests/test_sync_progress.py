@@ -348,3 +348,24 @@ def test_sync_child_status_counts_normalizes_pipeline_child_states():
         "blocked": 1,
         "terminal": 4,
     }
+
+
+def test_sync_pipeline_materialization_summary_prefers_gold_refresh_counts():
+    summary = sync_progress.sync_pipeline_materialization_summary(
+        [
+            {
+                "bronze": {"status": "fresh"},
+                "silver": [{"status": "fresh"}, {"status": "missing"}],
+                "gold": [{"status": "fresh"}, {"status": "fresh"}, {"status": "missing"}],
+            },
+            {"bronze": {"status": "missing"}, "silver": [], "gold": []},
+            "not-a-row",
+        ],
+        {"status": "partial", "materialized": 4, "total": 5},
+    )
+
+    assert summary["bronze_ready"] == 1
+    assert summary["silver_ready"] == 1
+    assert summary["gold_ready"] == 4
+    assert summary["gold_total"] == 5
+    assert summary["gold_partial"] is True
