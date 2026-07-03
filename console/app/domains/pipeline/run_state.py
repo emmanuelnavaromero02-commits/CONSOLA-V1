@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -73,6 +73,31 @@ def pipeline_is_zero_count(value: Any) -> bool:
     return False
 
 
+def pipeline_freshness_status(
+    dt_str: str | None, *, threshold_h: int = 24, now: datetime | None = None
+) -> str:
+    if not dt_str:
+        return "never"
+    try:
+        dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
+        age = (now or datetime.now(timezone.utc)) - dt
+        return "fresh" if age < timedelta(hours=threshold_h) else "stale"
+    except Exception:
+        return "unknown"
+
+
+def pipeline_dataset_status(
+    dataset: dict, *, failed: bool, threshold_h: int = 24, now: datetime | None = None
+) -> str:
+    if failed:
+        return "stale"
+    if pipeline_is_zero_count(dataset.get("row_count")):
+        return "empty"
+    return pipeline_freshness_status(
+        dataset.get("last_refresh"), threshold_h=threshold_h, now=now
+    )
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")
@@ -117,4 +142,3 @@ def airflow_log_attempt(
             if task_id
         ],
     }
-

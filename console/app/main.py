@@ -140,8 +140,10 @@ from app.domains.pipeline.run_state import (
     airflow_task_id as _airflow_task_id,
     duration_seconds as _duration_seconds,
     normalize_airflow_state as _normalize_airflow_state,
+    pipeline_dataset_status as _pipeline_dataset_status,
     parse_iso_datetime as _parse_iso_datetime,
     pipeline_downstream_status as _pipeline_downstream_status,
+    pipeline_freshness_status as _pipeline_freshness_status,
     pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_run_extra as _pipeline_run_extra,
 )
@@ -4522,24 +4524,6 @@ async def api_pipeline(
         fallback="sap_successfactors",
     )
     import re as _re
-    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-
-    def _freshness(dt_str: str | None, threshold_h: int = 24) -> str:
-        if not dt_str:
-            return "never"
-        try:
-            dt = _dt.fromisoformat(str(dt_str).replace("Z", "+00:00"))
-            age = _dt.now(_tz.utc) - dt
-            return "fresh" if age < _td(hours=threshold_h) else "stale"
-        except Exception:
-            return "unknown"
-
-    def _dataset_status(ds: dict, *, failed: bool, threshold_h: int = 24) -> str:
-        if failed:
-            return "stale"
-        if _pipeline_is_zero_count(ds.get("row_count")):
-            return "empty"
-        return _freshness(ds.get("last_refresh"), threshold_h=threshold_h)
 
     # 1. Entities
     from app.services import cartridge_service as _cs
@@ -4806,7 +4790,9 @@ async def api_pipeline(
         elif bronze_date and _pipeline_is_zero_count(bronze_count):
             bronze_status = "empty"
         elif bronze_date:
-            bronze_status = _freshness(bronze_date + "T00:00:00+00:00")
+            bronze_status = _pipeline_freshness_status(
+                bronze_date + "T00:00:00+00:00"
+            )
         elif entity in partial_reasons:
             bronze_status = "unknown"
         else:
@@ -4819,7 +4805,7 @@ async def api_pipeline(
         silver_nodes = []
         gold_nodes = []
         for ds in silver_by_source.get(source, []):
-            s_status = _dataset_status(ds, failed=is_failed, threshold_h=24)
+            s_status = _pipeline_dataset_status(ds, failed=is_failed, threshold_h=24)
             silver_nodes.append(
                 {
                     "name": ds["name"],
@@ -4837,7 +4823,7 @@ async def api_pipeline(
                             "layer": "gold",
                             "row_count": gds.get("row_count"),
                             "last_refresh": gds.get("last_refresh"),
-                            "status": _dataset_status(
+                            "status": _pipeline_dataset_status(
                                 gds, failed=is_failed, threshold_h=24
                             ),
                         }

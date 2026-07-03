@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.domains.pipeline import run_state
@@ -68,3 +70,42 @@ def test_duration_seconds_uses_iso_dates():
     ) == 5.0
     assert run_state.duration_seconds("bad", "2026-07-03T10:00:05+00:00") is None
 
+
+def test_pipeline_freshness_status_uses_thresholds():
+    now = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
+
+    assert (
+        run_state.pipeline_freshness_status(
+            "2026-07-03T11:00:00+00:00", threshold_h=24, now=now
+        )
+        == "fresh"
+    )
+    assert (
+        run_state.pipeline_freshness_status(
+            "2026-07-01T11:00:00+00:00", threshold_h=24, now=now
+        )
+        == "stale"
+    )
+    assert run_state.pipeline_freshness_status(None, now=now) == "never"
+    assert run_state.pipeline_freshness_status("bad", now=now) == "unknown"
+
+
+def test_pipeline_dataset_status_prioritizes_failed_and_empty():
+    now = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
+
+    assert (
+        run_state.pipeline_dataset_status(
+            {"row_count": 10, "last_refresh": "2026-07-03T11:00:00+00:00"},
+            failed=True,
+            now=now,
+        )
+        == "stale"
+    )
+    assert (
+        run_state.pipeline_dataset_status(
+            {"row_count": 0, "last_refresh": "2026-07-03T11:00:00+00:00"},
+            failed=False,
+            now=now,
+        )
+        == "empty"
+    )
