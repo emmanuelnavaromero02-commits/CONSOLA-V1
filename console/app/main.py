@@ -330,6 +330,9 @@ from app.domains.pipeline.control_room_refresh import (
 from app.domains.pipeline.aggregate_trigger import (
     trigger_sync_aggregate_extract_all as _trigger_sync_aggregate_extract_all_impl,
 )
+from app.domains.pipeline.packaged_datasets import (
+    ensure_sync_packaged_datasets as _ensure_sync_packaged_datasets_impl,
+)
 from app.domains.pipeline.airflow_trigger import (
     trigger_airflow_extract_dag as _trigger_airflow_extract_dag_impl,
 )
@@ -4187,29 +4190,18 @@ async def _trigger_sync_aggregate_extract_all(
 async def _ensure_sync_packaged_datasets(
     *, cartridge: str, user: dict | None
 ) -> dict[str, Any]:
-    if cartridge != "sap_successfactors":
-        return {"status": "skipped", "reason": "cartridge_not_packaged"}
-    tenant_id, workspace_id = _workspace_scope_from_user(user)
     from app.services.seed_packaged_datasets import (
         seed_packaged_datasets_for_workspace,
     )
 
-    pool = await _get_db_pool()
-    result = await seed_packaged_datasets_for_workspace(
-        pool,
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
-        cartridge_id=cartridge,
+    return await _ensure_sync_packaged_datasets_impl(
+        cartridge=cartridge,
+        user=user,
+        workspace_scope_from_user=_workspace_scope_from_user,
+        get_db_pool=_get_db_pool,
+        seed_packaged_datasets_for_workspace=seed_packaged_datasets_for_workspace,
+        logger_info=logger.info,
     )
-    logger.info(
-        "sync packaged dataset seed cartridge=%s tenant=%s workspace=%s status=%s seeded_rows=%s",
-        cartridge,
-        tenant_id,
-        workspace_id,
-        result.get("status"),
-        result.get("seeded_rows"),
-    )
-    return result
 
 
 def _sync_agentops_is_terminal(payload: Any) -> bool:
