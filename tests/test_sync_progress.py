@@ -111,3 +111,57 @@ def test_inactive_sync_run_payload_is_explicit():
     assert payload["active"] is False
     assert payload["reason"] == "no_active_sync_run"
     assert payload["conn_id"] == "femsa_sf"
+
+
+def test_child_gold_refresh_summary_counts_partial_results():
+    summary = sync_progress.child_gold_refresh_summary(
+        [
+            {
+                "extra": {
+                    "gold_refresh": {
+                        "status": "partial",
+                        "materialized": 2,
+                        "total": 3,
+                        "results": [
+                            {"name": "ok_one", "status": "ok"},
+                            {"name": "failed_one", "status": "error"},
+                        ],
+                    }
+                }
+            },
+            {
+                "extra": {
+                    "gold_refresh": {
+                        "results": [
+                            {"name": "ok_two", "status": "ok"},
+                        ],
+                    }
+                }
+            },
+        ]
+    )
+
+    assert summary["status"] == "partial"
+    assert summary["materialized"] == 3
+    assert summary["total"] == 4
+    assert summary["failed"] == 1
+
+
+def test_gold_refresh_dataset_names_returns_only_successful_names():
+    assert sync_progress.gold_refresh_dataset_names(
+        {
+            "results": [
+                {"name": "b_dataset", "status": "ok"},
+                {"name": "a_dataset", "status": "OK"},
+                {"name": "bad_dataset", "status": "error"},
+                {"name": "", "status": "ok"},
+            ]
+        }
+    ) == ["a_dataset", "b_dataset"]
+
+
+def test_control_room_gold_refresh_terminal_statuses():
+    assert sync_progress.control_room_gold_refresh_terminal({"status": "completed"})
+    assert sync_progress.control_room_gold_refresh_terminal({"status": "not_ready"})
+    assert not sync_progress.control_room_gold_refresh_terminal({"status": "running"})
+    assert not sync_progress.control_room_gold_refresh_terminal(None)

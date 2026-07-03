@@ -306,3 +306,81 @@ def inactive_sync_run_payload(
         "reason": "no_active_sync_run",
         "conn_id": conn_id,
     }
+
+
+def child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    materialized = 0
+    total = 0
+    results: list[dict[str, Any]] = []
+    statuses: list[str] = []
+    for row in child_rows:
+        extra = sync_extra_from_row(row)
+        payload = extra.get("gold_refresh")
+        if not isinstance(payload, dict):
+            continue
+        status = str(payload.get("status") or "").strip().lower()
+        if status:
+            statuses.append(status)
+        payload_results = [
+            item for item in (payload.get("results") or []) if isinstance(item, dict)
+        ]
+        results.extend(payload_results)
+        payload_total = payload.get("total")
+        if isinstance(payload_total, int):
+            total += payload_total
+        elif payload_results:
+            total += len(payload_results)
+        payload_materialized = payload.get("materialized")
+        if isinstance(payload_materialized, int):
+            materialized += payload_materialized
+        elif payload_results:
+            materialized += sum(
+                1 for item in payload_results if item.get("status") == "ok"
+            )
+    if not total and not results:
+        return {}
+    status = (
+        "success"
+        if total and materialized >= total
+        else "partial"
+        if materialized
+        else "failed"
+    )
+    if "failed" in statuses and not materialized:
+        status = "failed"
+    elif "partial" in statuses and status == "success":
+        status = "partial"
+    return {
+        "status": status,
+        "materialized": materialized,
+        "total": total or len(results),
+        "failed": max((total or len(results)) - materialized, 0),
+        "results": results,
+    }
+
+
+def gold_refresh_dataset_names(gold_refresh_summary: dict[str, Any]) -> list[str]:
+    names: set[str] = set()
+    for item in gold_refresh_summary.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().lower() != "ok":
+            continue
+        name = str(item.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return sorted(names)
+
+
+def control_room_gold_refresh_terminal(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    status = str(payload.get("status") or "").strip().lower()
+    return status in {
+        "success",
+        "partial",
+        "failed",
+        "skipped",
+        "not_ready",
+        "completed",
+    }
