@@ -156,6 +156,33 @@ def pipeline_bronze_date_count(
     return None, None
 
 
+def pipeline_bronze_status(
+    *,
+    dag_run: dict | None,
+    dag_status: str | None,
+    bronze_date: str | None,
+    bronze_count: Any,
+    has_partial_reasons: bool,
+    now: datetime | None = None,
+) -> str:
+    if dag_run and dag_run.get("status") == "failed" and not bronze_date:
+        return "error"
+    if dag_status in {"queued", "running"} and not bronze_date:
+        return "running"
+    if dag_status == "partial":
+        return "partial"
+    if bronze_date and pipeline_is_zero_count(bronze_count):
+        return "empty"
+    if bronze_date:
+        return pipeline_freshness_status(
+            bronze_date + "T00:00:00+00:00",
+            now=now,
+        )
+    if has_partial_reasons:
+        return "unknown"
+    return "never"
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")

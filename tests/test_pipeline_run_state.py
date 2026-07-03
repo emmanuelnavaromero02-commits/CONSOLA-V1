@@ -169,3 +169,85 @@ def test_pipeline_bronze_date_count_prefers_airflow_then_done_job():
         None,
         None,
     )
+
+
+def test_pipeline_bronze_status_orders_operational_states():
+    now = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
+
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run={"status": "failed"},
+            dag_status="failed",
+            bronze_date=None,
+            bronze_count=None,
+            has_partial_reasons=False,
+            now=now,
+        )
+        == "error"
+    )
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run=None,
+            dag_status="running",
+            bronze_date=None,
+            bronze_count=None,
+            has_partial_reasons=False,
+            now=now,
+        )
+        == "running"
+    )
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run=None,
+            dag_status="partial",
+            bronze_date="2026-07-03",
+            bronze_count=10,
+            has_partial_reasons=False,
+            now=now,
+        )
+        == "partial"
+    )
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run=None,
+            dag_status=None,
+            bronze_date="2026-07-03",
+            bronze_count=0,
+            has_partial_reasons=False,
+            now=now,
+        )
+        == "empty"
+    )
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run=None,
+            dag_status=None,
+            bronze_date=None,
+            bronze_count=None,
+            has_partial_reasons=True,
+            now=now,
+        )
+        == "unknown"
+    )
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run=None,
+            dag_status=None,
+            bronze_date="2026-07-03",
+            bronze_count=3,
+            has_partial_reasons=False,
+            now=now,
+        )
+        == "fresh"
+    )
+    assert (
+        run_state.pipeline_bronze_status(
+            dag_run=None,
+            dag_status=None,
+            bronze_date=None,
+            bronze_count=None,
+            has_partial_reasons=False,
+            now=now,
+        )
+        == "never"
+    )

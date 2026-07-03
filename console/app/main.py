@@ -141,10 +141,10 @@ from app.domains.pipeline.run_state import (
     duration_seconds as _duration_seconds,
     normalize_airflow_state as _normalize_airflow_state,
     pipeline_bronze_date_count as _pipeline_bronze_date_count,
+    pipeline_bronze_status as _pipeline_bronze_status,
     pipeline_dataset_status as _pipeline_dataset_status,
     parse_iso_datetime as _parse_iso_datetime,
     pipeline_downstream_status as _pipeline_downstream_status,
-    pipeline_freshness_status as _pipeline_freshness_status,
     pipeline_gold_dependencies_for_silver as _pipeline_gold_dependencies_for_silver,
     pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
@@ -4730,23 +4730,13 @@ async def api_pipeline(
                         "record_count": bronze_count,
                     }
 
-        # Bronze freshness
-        if dag_run and dag_run["status"] == "failed" and not bronze_date:
-            bronze_status = "error"
-        elif dag_status in {"queued", "running"} and not bronze_date:
-            bronze_status = "running"
-        elif dag_status == "partial":
-            bronze_status = "partial"
-        elif bronze_date and _pipeline_is_zero_count(bronze_count):
-            bronze_status = "empty"
-        elif bronze_date:
-            bronze_status = _pipeline_freshness_status(
-                bronze_date + "T00:00:00+00:00"
-            )
-        elif entity in partial_reasons:
-            bronze_status = "unknown"
-        else:
-            bronze_status = "never"
+        bronze_status = _pipeline_bronze_status(
+            dag_run=dag_run,
+            dag_status=dag_status,
+            bronze_date=bronze_date,
+            bronze_count=bronze_count,
+            has_partial_reasons=entity in partial_reasons,
+        )
 
         # Silver/Gold nodes
         is_failed = (dag_run and dag_run["status"] == "failed") or (
