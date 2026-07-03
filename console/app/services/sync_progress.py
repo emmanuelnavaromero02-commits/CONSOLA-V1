@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -199,6 +200,42 @@ def sync_entity_idempotency_key(base_key: object | None, entity: object | None) 
         return candidate
     digest = uuid.uuid5(uuid.NAMESPACE_URL, candidate).hex
     return f"{base[:100]}:{digest}"
+
+
+def sync_now_lock_key(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    tenant_id: object | None,
+    workspace_id: object | None,
+) -> str:
+    normalized_tenant = str(tenant_id or "platform").strip() or "platform"
+    normalized_workspace = str(workspace_id or "global").strip() or "global"
+    connection_key = str(conn_id or "__default__").strip() or "__default__"
+    return ":".join(
+        (
+            "sync-now",
+            normalized_tenant,
+            normalized_workspace,
+            cartridge,
+            mode,
+            target,
+            connection_key,
+        )
+    )
+
+
+def normalize_sync_now_request_id(value: object | None) -> str | None:
+    if value is None:
+        return None
+    request_id = str(value).strip()
+    if not request_id:
+        return None
+    if len(request_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_.:-]+", request_id):
+        raise ValueError("invalid sync request id")
+    return request_id
 
 
 def sync_now_run_id_from_request_id(

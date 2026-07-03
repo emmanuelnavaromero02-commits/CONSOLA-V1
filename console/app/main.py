@@ -6130,31 +6130,21 @@ def _sync_now_lock_key(
     user: dict | None,
 ) -> str:
     ctx = build_security_context(user)
-    tenant_id = str(ctx.get("tenant_id") or "platform").strip() or "platform"
-    workspace_id = str(ctx.get("workspace_id") or "global").strip() or "global"
-    connection_key = str(conn_id or "__default__").strip() or "__default__"
-    return ":".join(
-        (
-            "sync-now",
-            tenant_id,
-            workspace_id,
-            cartridge,
-            mode,
-            target,
-            connection_key,
-        )
+    return _sync_progress.sync_now_lock_key(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        tenant_id=ctx.get("tenant_id"),
+        workspace_id=ctx.get("workspace_id"),
     )
 
 
 def _normalize_sync_now_request_id(value: object | None) -> str | None:
-    if value is None:
-        return None
-    request_id = str(value).strip()
-    if not request_id:
-        return None
-    if len(request_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_.:-]+", request_id):
-        raise HTTPException(400, "invalid sync request id")
-    return request_id
+    try:
+        return _sync_progress.normalize_sync_now_request_id(value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _sync_now_run_id_from_request_id(

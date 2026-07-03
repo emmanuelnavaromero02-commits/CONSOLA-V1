@@ -205,6 +205,46 @@ def test_sync_entity_idempotency_key_truncates_long_material():
     assert key.startswith("x" * 100)
 
 
+def test_sync_now_lock_key_uses_scope_and_connection_defaults():
+    scoped = sync_progress.sync_now_lock_key(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        tenant_id="tenant-1",
+        workspace_id="workspace-1",
+    )
+    defaulted = sync_progress.sync_now_lock_key(
+        cartridge="replicon",
+        mode="full",
+        target="all",
+        conn_id=None,
+        tenant_id=None,
+        workspace_id=None,
+    )
+
+    assert scoped == (
+        "sync-now:tenant-1:workspace-1:sap_successfactors:incremental:all:femsa_sf"
+    )
+    assert defaulted == "sync-now:platform:global:replicon:full:all:__default__"
+
+
+def test_normalize_sync_now_request_id_accepts_safe_ids_and_rejects_bad_ones():
+    assert sync_progress.normalize_sync_now_request_id(None) is None
+    assert sync_progress.normalize_sync_now_request_id("  ") is None
+    assert sync_progress.normalize_sync_now_request_id("manual_1:retry.2") == (
+        "manual_1:retry.2"
+    )
+
+    for bad in ("with spaces", "bad/value", "x" * 129):
+        try:
+            sync_progress.normalize_sync_now_request_id(bad)
+        except ValueError as exc:
+            assert str(exc) == "invalid sync request id"
+        else:  # pragma: no cover - explicit assertion message is clearer here
+            raise AssertionError(f"{bad!r} should have been rejected")
+
+
 def test_sync_now_run_id_from_request_id_is_stable():
     first = sync_progress.sync_now_run_id_from_request_id(
         cartridge="sap_successfactors",
