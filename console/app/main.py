@@ -89,6 +89,9 @@ from app.domains.data_platform.scoped_reads import (
 )
 from app.domains.data_platform.semantic_enrichment import (
     semantic_enrichment_candidates as _semantic_enrichment_candidates,
+    semantic_enrichment_empty_response as _semantic_enrichment_empty_response,
+    semantic_enrichment_limit as _semantic_enrichment_limit,
+    semantic_enrichment_success_response as _semantic_enrichment_success_response,
 )
 from app.domains.data_platform.source_visibility import (
     OPERATIONAL_CARTRIDGES as _OPERATIONAL_CARTRIDGES,
@@ -9344,11 +9347,7 @@ async def api_semantic_enrich(
     cartridge = await _scope_catalog_cartridge_arg(user, body.get("cartridge"))
     if not cartridge:
         raise HTTPException(404, "No active cartridge available for semantic enrichment")
-    try:
-        limit = int(body.get("limit") or 80)
-    except (TypeError, ValueError):
-        limit = 80
-    limit = max(1, min(limit, 200))
+    limit = _semantic_enrichment_limit(body)
 
     catalog = await _refinement_invoke(
         "get_data_catalog",
@@ -9363,17 +9362,10 @@ async def api_semantic_enrich(
     )
     entries = candidate_payload["entries"]
     if not entries:
-        return {
-            "ok": True,
-            "cartridge": cartridge,
-            "mode": "direct_semantic_enrichment",
-            "approval_required": False,
-            "enriched": 0,
-            "candidate_count": 0,
-            "scanned_datasets": candidate_payload["scanned_datasets"],
-            "scanned_columns": candidate_payload["scanned_columns"],
-            "message": "No hay columnas pendientes de descripción en el catálogo visible.",
-        }
+        return _semantic_enrichment_empty_response(
+            cartridge=cartridge,
+            candidate_payload=candidate_payload,
+        )
 
     result = await _refinement_invoke(
         "upsert_catalog_entries",
@@ -9383,19 +9375,11 @@ async def api_semantic_enrich(
     )
     _raise_for_refinement_payload_error(result, "Semantic enrichment failed")
     _scoped_read_cache_invalidate("catalog", user)
-    updated = int(result.get("updated") or 0) if isinstance(result, dict) else 0
-    return {
-        "ok": True,
-        "cartridge": cartridge,
-        "mode": "direct_semantic_enrichment",
-        "approval_required": False,
-        "candidate_count": len(entries),
-        "enriched": updated,
-        "scanned_datasets": candidate_payload["scanned_datasets"],
-        "scanned_columns": candidate_payload["scanned_columns"],
-        "entries_preview": entries[:5],
-        "result": result,
-    }
+    return _semantic_enrichment_success_response(
+        cartridge=cartridge,
+        candidate_payload=candidate_payload,
+        result=result,
+    )
 
 
 # ── Data Catalog API ──────────────────────────────────────────────────────────

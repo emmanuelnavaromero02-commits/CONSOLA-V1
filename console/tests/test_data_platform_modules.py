@@ -17,6 +17,9 @@ from app.domains.data_platform.rag_payloads import (
 )
 from app.domains.data_platform.semantic_enrichment import (
     semantic_enrichment_candidates,
+    semantic_enrichment_empty_response,
+    semantic_enrichment_limit,
+    semantic_enrichment_success_response,
 )
 from app.domains.data_platform.source_visibility import (
     dataset_source_visible_for_user,
@@ -119,6 +122,34 @@ def test_semantic_enrichment_candidates_describes_missing_columns():
     assert payload["entries"][0]["dataset"] == "employee_profile"
     assert payload["entries"][0]["column_name"] == "employee_id"
     assert "key" in payload["entries"][0]["tags"]
+
+
+def test_semantic_enrichment_response_helpers_keep_direct_mode_contract():
+    candidates = {
+        "entries": [{"dataset": "gold_ready", "column_name": "employee_count"}],
+        "scanned_datasets": 2,
+        "scanned_columns": 4,
+    }
+
+    assert semantic_enrichment_limit({"limit": "999"}) == 200
+    assert semantic_enrichment_limit({"limit": "bad"}) == 80
+    empty = semantic_enrichment_empty_response(
+        cartridge="sap_successfactors",
+        candidate_payload={**candidates, "entries": []},
+    )
+    assert empty["approval_required"] is False
+    assert empty["enriched"] == 0
+    assert empty["message"] == "No hay columnas pendientes de descripción en el catálogo visible."
+
+    success = semantic_enrichment_success_response(
+        cartridge="sap_successfactors",
+        candidate_payload=candidates,
+        result={"updated": "1"},
+    )
+    assert success["mode"] == "direct_semantic_enrichment"
+    assert success["candidate_count"] == 1
+    assert success["enriched"] == 1
+    assert success["entries_preview"] == candidates["entries"]
 
 
 def test_rag_payload_helpers_preserve_existing_request_shape():

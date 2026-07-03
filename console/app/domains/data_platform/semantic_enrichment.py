@@ -203,3 +203,50 @@ def semantic_enrichment_candidates(
         "scanned_columns": scanned_columns,
     }
 
+
+def semantic_enrichment_limit(
+    body: dict[str, Any] | None, *, default: int = 80, maximum: int = 200
+) -> int:
+    try:
+        limit = int((body or {}).get("limit") or default)
+    except (TypeError, ValueError):
+        limit = default
+    return max(1, min(limit, maximum))
+
+
+def semantic_enrichment_empty_response(
+    *, cartridge: str, candidate_payload: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "cartridge": cartridge,
+        "mode": "direct_semantic_enrichment",
+        "approval_required": False,
+        "enriched": 0,
+        "candidate_count": 0,
+        "scanned_datasets": candidate_payload["scanned_datasets"],
+        "scanned_columns": candidate_payload["scanned_columns"],
+        "message": "No hay columnas pendientes de descripción en el catálogo visible.",
+    }
+
+
+def semantic_enrichment_success_response(
+    *,
+    cartridge: str,
+    candidate_payload: dict[str, Any],
+    result: dict[str, Any] | Any,
+) -> dict[str, Any]:
+    entries = candidate_payload["entries"]
+    updated = int(result.get("updated") or 0) if isinstance(result, dict) else 0
+    return {
+        "ok": True,
+        "cartridge": cartridge,
+        "mode": "direct_semantic_enrichment",
+        "approval_required": False,
+        "candidate_count": len(entries),
+        "enriched": updated,
+        "scanned_datasets": candidate_payload["scanned_datasets"],
+        "scanned_columns": candidate_payload["scanned_columns"],
+        "entries_preview": entries[:5],
+        "result": result,
+    }
