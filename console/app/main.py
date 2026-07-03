@@ -140,6 +140,10 @@ from app.services.db_pool import (
 )
 from app.services.mcp_payloads import mcp_payload as _mcp_payload
 from app.services.rate_limiter import get_rate_limiter
+from app.services.runtime_calls import (
+    call_with_optional_user as _call_with_optional_user,
+    runtime_user as _runtime_user,
+)
 from app.services.startup_readiness import (
     record_startup_failure as _record_startup_failure,
     reset_startup_readiness_state as _reset_startup_readiness_state,
@@ -733,32 +737,6 @@ def _validate_dataset_name(dataset: str) -> None:
 
 def _rls_user_context(user: dict | None) -> dict:
     return rls_user_context(user)
-
-
-def _runtime_user(user) -> dict | None:
-    if isinstance(user, dict):
-        return user
-    if user is None:
-        return None
-    # Direct unit calls hit route functions with FastAPI's Depends sentinel.
-    # Runtime requests still pass through require_authenticated before this
-    # point; this fallback only preserves internal/platform test semantics.
-    return {"role": "owner", "allowed_cartridges": ["*"]}
-
-
-async def _call_with_optional_user(fn, *args, user=None):
-    runtime_user = _runtime_user(user)
-    try:
-        params = inspect.signature(fn).parameters
-        accepts_user = "user" in params or any(
-            param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
-        )
-    except (TypeError, ValueError):
-        accepts_user = False
-    result = fn(*args, user=runtime_user) if accepts_user else fn(*args)
-    if inspect.isawaitable(result):
-        return await result
-    return result
 
 
 def _minio_client():
