@@ -83,12 +83,7 @@ from app.domains.data_platform.scoped_reads import (
     workspace_scope_from_user as _workspace_scope_from_user,
 )
 from app.domains.data_platform.semantic_enrichment import (
-    SEMANTIC_WEAK_DESCRIPTIONS as _SEMANTIC_WEAK_DESCRIPTIONS,
-    semantic_build_column_description as _semantic_build_column_description,
-    semantic_column_traits as _semantic_column_traits,
-    semantic_description_is_missing as _semantic_description_is_missing,
     semantic_enrichment_candidates as _semantic_enrichment_candidates,
-    semantic_humanize_identifier as _semantic_humanize_identifier,
 )
 from app.domains.data_platform.source_visibility import (
     OPERATIONAL_CARTRIDGES as _OPERATIONAL_CARTRIDGES,
