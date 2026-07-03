@@ -34,13 +34,15 @@ setup_logging(service_name="console")
 import httpx
 from app.domains.apps.payloads import (
     app_cartridge_id as _app_cartridge_id,
-    app_datasets_from_payload as _app_datasets_from_payload,
     app_declared_datasets as _app_declared_datasets,
     app_payload_cartridge_candidates as _app_payload_cartridge_candidates,
     apps_from_payload as _apps_from_payload,
     filter_apps_payload_to_ready_datasets as _filter_apps_payload_to_ready_datasets,
     filter_apps_payload_to_scoped_connections as _filter_apps_payload_to_scoped_connections,
     user_with_apps_scope as _user_with_apps_scope,
+)
+from app.domains.apps.readiness import (
+    gold_ready_datasets_for_apps as _gold_ready_datasets_for_apps_impl,
 )
 from app.domains.apps.scope import (
     installed_scoped_app_cartridges as _installed_scoped_app_cartridges_impl,
@@ -2989,70 +2991,13 @@ def _gold_dsn_for_readiness() -> str:
 async def _gold_ready_datasets_for_apps(
     user: dict | None, apps_payload: Any
 ) -> tuple[set[str] | None, str]:
-    requested = _app_datasets_from_payload(apps_payload)
-    if not requested:
-        return None, "no_dataset_metadata"
-    dsn = _gold_dsn_for_readiness()
-    if not dsn:
-        return None, "gold_dsn_missing"
-    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
-    if not workspace_id:
-        return set(), "workspace_scope_missing"
-    try:
-        import asyncpg as _asyncpg
-
-        conn = await _asyncpg.connect(dsn, command_timeout=5)
-    except Exception:
-        logger.debug("Failed to connect to Gold for app readiness", exc_info=True)
-        return None, "gold_unreachable"
-    ready: set[str] = set()
-    try:
-        async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-                tenant_id or "",
-                workspace_id,
-            )
-            for dataset in sorted(requested):
-                table = f"gold_{dataset}"
-                exists = bool(
-                    await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
-                )
-                if not exists:
-                    continue
-                columns = {
-                    str(row["column_name"])
-                    for row in await conn.fetch(
-                        """
-                        SELECT column_name
-                          FROM information_schema.columns
-                         WHERE table_schema = 'public'
-                           AND table_name = $1
-                        """,
-                        table,
-                    )
-                }
-                if "workspace_id" not in columns:
-                    continue
-                if "tenant_id" in columns and tenant_id:
-                    has_row = await conn.fetchval(
-                        f'SELECT 1 FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT 1',
-                        workspace_id,
-                        tenant_id,
-                    )
-                else:
-                    has_row = await conn.fetchval(
-                        f'SELECT 1 FROM public."{table}" WHERE workspace_id::text = $1 LIMIT 1',
-                        workspace_id,
-                    )
-                if has_row:
-                    ready.add(dataset)
-    except Exception:
-        logger.debug("Failed to verify Gold readiness for apps", exc_info=True)
-        return None, "gold_check_failed"
-    finally:
-        await conn.close()
-    return ready, "checked"
+    return await _gold_ready_datasets_for_apps_impl(
+        user,
+        apps_payload,
+        dsn=_gold_dsn_for_readiness(),
+        workspace_scope_resolver=_workspace_scope_for_apps_filter,
+        logger_debug=logger.debug,
+    )
 
 
 async def _apps_payload_visible_and_ready(
