@@ -173,6 +173,12 @@ from app.domains.data_platform.source_visibility import (
 from app.domains.data_platform.table_metadata import (
     table_has_column as _table_has_column_impl,
 )
+from app.domains.security.request_classification import (
+    is_agent_runner_request as _is_agent_runner_request_impl,
+    is_api_like as _is_api_like_impl,
+    is_direct_static_html_request as _is_direct_static_html_request_impl,
+    uses_rbac_dependency as _uses_rbac_dependency_impl,
+)
 from app.domains.pipeline.run_state import (
     airflow_log_attempt as _airflow_log_attempt,
     airflow_log_task_ids as _airflow_log_task_ids,
@@ -1133,30 +1139,23 @@ _RBAC_DEPENDENCY_PREFIXES = (
 
 
 def _is_api_like(path: str, accept: str) -> bool:
-    if any(path.startswith(p) for p in _AUTH_API_LIKE_PREFIX):
-        return True
-    return "application/json" in (accept or "")
+    return _is_api_like_impl(path, accept, _AUTH_API_LIKE_PREFIX)
 
 
 def _is_direct_static_html_request(path: str) -> bool:
-    lowered = path.lower()
-    return lowered.startswith("/static/") and lowered.endswith((".html", ".htm"))
+    return _is_direct_static_html_request_impl(path)
 
 
 def _uses_rbac_dependency(path: str) -> bool:
-    return any(
-        path == prefix or path.startswith(prefix + "/")
-        for prefix in _RBAC_DEPENDENCY_PREFIXES
-    )
+    return _uses_rbac_dependency_impl(path, _RBAC_DEPENDENCY_PREFIXES)
 
 
 def _is_agent_runner_request(request: Request) -> bool:
-    path = request.url.path
-    if not (path.startswith("/api/agents/") and path.endswith("/invoke/scheduled")):
-        return False
-    expected = os.environ.get("AGENT_RUNNER_TOKEN", "")
-    supplied = request.headers.get("X-Agent-Runner-Token", "")
-    return bool(expected and supplied == expected)
+    return _is_agent_runner_request_impl(
+        request.url.path,
+        supplied_token=request.headers.get("X-Agent-Runner-Token", ""),
+        expected_token=os.environ.get("AGENT_RUNNER_TOKEN", ""),
+    )
 
 
 @app.middleware("http")
