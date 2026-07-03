@@ -421,6 +421,74 @@ def sync_connection_step_update(
     }
 
 
+def sync_bronze_step_update(
+    *,
+    running_children: bool,
+    aggregate_summary_pending: bool,
+    progress_count: int,
+    failed_children: int,
+    success_children: int,
+    partial_children: int,
+    blocked_children: int,
+    errors: list[dict[str, Any]],
+    child_done: int,
+    child_total: int,
+    bronze_ready: int,
+    entity_summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    entities = entity_summary.get("entities", [])
+    blockers = entity_summary.get("blockers", [])
+    base = {
+        "label": "Bronze",
+        "entities": entities,
+        "blockers": blockers,
+    }
+    if running_children:
+        return {
+            **base,
+            "status": "running",
+            "detail": "Esperando resumen final del DAG agregado."
+            if aggregate_summary_pending
+            else f"{progress_count} corridas del sync actual en curso.",
+            "completed": child_done,
+            "total": child_total,
+        }
+    if failed_children and not success_children and not partial_children:
+        return {
+            **base,
+            "status": "failed",
+            "detail": "Las extracciones fallaron antes de completar Bronze.",
+            "completed": child_done or failed_children,
+            "total": child_total,
+        }
+    if failed_children or partial_children or blocked_children or errors:
+        return {
+            **base,
+            "status": "partial",
+            "detail": (
+                f"{success_children} OK; {partial_children} parciales; "
+                f"{blocked_children} bloqueadas; "
+                f"{failed_children + len(errors)} con error."
+            ),
+            "completed": max(
+                success_children + partial_children + blocked_children,
+                child_done,
+            ),
+            "total": child_total,
+        }
+    if success_children or bronze_ready:
+        completed = bronze_ready or success_children
+        return {
+            **base,
+            "status": "success",
+            "detail": f"{completed} entidades con datos raw.",
+            "completed": completed,
+            "total": max(completed, 1),
+            "percent": 100,
+        }
+    return None
+
+
 def sync_silver_gold_step_update(
     *,
     bronze_status: str,

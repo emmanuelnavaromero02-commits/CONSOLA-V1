@@ -389,6 +389,66 @@ def test_sync_connection_step_update_reflects_started_pipeline():
     assert started["percent"] == 100
 
 
+def test_sync_bronze_step_update_summarizes_running_partial_and_success():
+    summary = {
+        "entities": [{"entity": "EmpJob", "status": "success"}],
+        "blockers": [{"entity": "CareerInterest", "reason": "entity_not_exposed"}],
+    }
+    running = sync_progress.sync_bronze_step_update(
+        running_children=True,
+        aggregate_summary_pending=False,
+        progress_count=3,
+        failed_children=0,
+        success_children=0,
+        partial_children=0,
+        blocked_children=0,
+        errors=[],
+        child_done=1,
+        child_total=4,
+        bronze_ready=0,
+        entity_summary=summary,
+    )
+    partial = sync_progress.sync_bronze_step_update(
+        running_children=False,
+        aggregate_summary_pending=False,
+        progress_count=4,
+        failed_children=1,
+        success_children=2,
+        partial_children=1,
+        blocked_children=1,
+        errors=[{"entity": "User"}],
+        child_done=5,
+        child_total=6,
+        bronze_ready=0,
+        entity_summary=summary,
+    )
+    success = sync_progress.sync_bronze_step_update(
+        running_children=False,
+        aggregate_summary_pending=False,
+        progress_count=0,
+        failed_children=0,
+        success_children=0,
+        partial_children=0,
+        blocked_children=0,
+        errors=[],
+        child_done=0,
+        child_total=1,
+        bronze_ready=8,
+        entity_summary=summary,
+    )
+
+    assert running is not None
+    assert running["status"] == "running"
+    assert running["detail"] == "3 corridas del sync actual en curso."
+    assert partial is not None
+    assert partial["status"] == "partial"
+    assert partial["detail"] == "2 OK; 1 parciales; 1 bloqueadas; 2 con error."
+    assert partial["blockers"] == summary["blockers"]
+    assert success is not None
+    assert success["status"] == "success"
+    assert success["completed"] == 8
+
+
 def test_sync_silver_gold_step_update_distinguishes_waiting_partial_and_failed():
     queued = sync_progress.sync_silver_gold_step_update(
         bronze_status="running",

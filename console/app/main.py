@@ -7078,56 +7078,22 @@ async def _build_sync_run_status(
         1,
     )
     child_done = terminal_children
-    if running_children:
-        updates["bronze"] = {
-            "label": "Bronze",
-            "status": "running",
-            "detail": "Esperando resumen final del DAG agregado."
-            if aggregate_summary_pending
-            else f"{len(progress_rows)} corridas del sync actual en curso.",
-            "completed": child_done,
-            "total": child_total,
-            "entities": entity_summary["entities"],
-            "blockers": entity_summary["blockers"],
-        }
-    elif failed_children and not success_children and not partial_children:
-        updates["bronze"] = {
-            "label": "Bronze",
-            "status": "failed",
-            "detail": "Las extracciones fallaron antes de completar Bronze.",
-            "completed": child_done or failed_children,
-            "total": child_total,
-            "entities": entity_summary["entities"],
-            "blockers": entity_summary["blockers"],
-        }
-    elif failed_children or partial_children or blocked_children or errors:
-        updates["bronze"] = {
-            "label": "Bronze",
-            "status": "partial",
-            "detail": (
-                f"{success_children} OK; {partial_children} parciales; "
-                f"{blocked_children} bloqueadas; "
-                f"{failed_children + len(errors)} con error."
-            ),
-            "completed": max(
-                success_children + partial_children + blocked_children,
-                child_done,
-            ),
-            "total": child_total,
-            "entities": entity_summary["entities"],
-            "blockers": entity_summary["blockers"],
-        }
-    elif success_children or bronze_ready:
-        updates["bronze"] = {
-            "label": "Bronze",
-            "status": "success",
-            "detail": f"{bronze_ready or success_children} entidades con datos raw.",
-            "completed": bronze_ready or success_children,
-            "total": max(bronze_ready or success_children, 1),
-            "percent": 100,
-            "entities": entity_summary["entities"],
-            "blockers": entity_summary["blockers"],
-        }
+    bronze_update = _sync_progress.sync_bronze_step_update(
+        running_children=running_children,
+        aggregate_summary_pending=aggregate_summary_pending,
+        progress_count=len(progress_rows),
+        failed_children=failed_children,
+        success_children=success_children,
+        partial_children=partial_children,
+        blocked_children=blocked_children,
+        errors=errors,
+        child_done=child_done,
+        child_total=child_total,
+        bronze_ready=bronze_ready,
+        entity_summary=entity_summary,
+    )
+    if bronze_update:
+        updates["bronze"] = bronze_update
 
     silver_gold_update = _sync_progress.sync_silver_gold_step_update(
         bronze_status=str(updates.get("bronze", {}).get("status") or ""),
