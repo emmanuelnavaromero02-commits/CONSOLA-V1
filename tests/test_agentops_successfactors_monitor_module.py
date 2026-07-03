@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.domains.agentops.successfactors_talent_monitor import (
     SUCCESSFACTORS_TALENT_MONITOR_SLUG,
     coerce_successfactors_talent_monitor_payload,
+    ensure_successfactors_talent_monitor,
     successfactors_talent_monitor_contract,
     successfactors_talent_monitor_needs_runtime_repair,
     sync_agentops_monitor_candidates,
@@ -98,3 +101,68 @@ def test_successfactors_talent_monitor_runtime_repair_detects_missing_contract()
         }
     )
 
+
+def test_ensure_successfactors_talent_monitor_scopes_update_and_insert():
+    class _AsyncContext:
+        def __init__(self, value=None):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _Conn:
+        def __init__(self):
+            self.calls = []
+
+        def transaction(self):
+            return _AsyncContext()
+
+        async def execute(self, sql, *args):
+            self.calls.append((sql, args))
+            if "UPDATE agents" in sql:
+                return "UPDATE 0"
+            return "OK"
+
+    class _Pool:
+        def __init__(self):
+            self.conn = _Conn()
+
+        def acquire(self):
+            return _AsyncContext(self.conn)
+
+    pool = _Pool()
+
+    async def _get_pool():
+        return pool
+
+    def _ctx(_user):
+        return {
+            "tenant_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_id": "22222222-2222-2222-2222-222222222222",
+        }
+
+    class _Logger:
+        def warning(self, *_args, **_kwargs):
+            raise AssertionError("unexpected warning")
+
+    asyncio.run(
+        ensure_successfactors_talent_monitor(
+            {"id": 1},
+            get_db_pool=_get_pool,
+            build_security_context=_ctx,
+            logger=_Logger(),
+        )
+    )
+
+    assert len(pool.conn.calls) == 3
+    assert "set_config('app.tenant_id'" in pool.conn.calls[0][0]
+    assert pool.conn.calls[0][1] == (
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    )
+    assert "UPDATE agents" in pool.conn.calls[1][0]
+    assert SUCCESSFACTORS_TALENT_MONITOR_SLUG in pool.conn.calls[1][1]
+    assert "INSERT INTO agents" in pool.conn.calls[2][0]
