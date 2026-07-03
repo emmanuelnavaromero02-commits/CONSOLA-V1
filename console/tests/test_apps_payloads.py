@@ -8,6 +8,11 @@ from app.domains.apps.payloads import (
     filter_apps_payload_to_scoped_connections,
     user_with_apps_scope,
 )
+from app.domains.apps.embed import (
+    app_embed_csp,
+    app_embed_wrapper_html,
+    datasets_from_app_html,
+)
 
 
 def test_apps_payload_helpers_normalize_and_scope_apps():
@@ -86,3 +91,27 @@ def test_apps_payload_helpers_filter_by_ready_datasets():
     )
     assert unchecked["apps"] == payload["apps"]
     assert unchecked["apps_readiness"]["mode"] == "gold_unreachable"
+
+
+def test_app_embed_helpers_extract_and_guard_declared_datasets():
+    assert datasets_from_app_html(
+        """
+        fetch('/api/data/valid_one')
+        fetch('/api/data/also_valid?limit=10')
+        fetch('/api/data/bad-name')
+        """
+    ) == ["also_valid", "valid_one"]
+
+    html = app_embed_wrapper_html(
+        "risk_board",
+        ["valid_one", "bad-name", "also_valid"],
+        "nonce-123",
+    )
+    assert 'sandbox="allow-scripts"' in html
+    assert "omega-app-fetch" in html
+    assert "omega-app-fetch-result" in html
+    assert '"/api/data/"' in html
+    assert '"also_valid", "valid_one"' in html
+    assert "bad-name" not in html
+    assert "dataset ${dataset || \"(empty)\"} not declared by app" in html
+    assert "script-src 'self' 'nonce-nonce-123'" in app_embed_csp("nonce-123")
