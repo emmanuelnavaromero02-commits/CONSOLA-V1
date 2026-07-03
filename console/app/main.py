@@ -149,6 +149,44 @@ from app.domains.pipeline.run_state import (
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
+from app.domains.pipeline.sync_state import (
+    SAP_SUCCESSFACTORS_CARTRIDGE as _SAP_SUCCESSFACTORS_CARTRIDGE,
+    SAP_SUCCESSFACTORS_ENTITY_DAG_ID as _SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
+    SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID as _SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID,
+    SYNC_AGENTOPS_TOOLS as _SYNC_AGENTOPS_TOOLS,
+    SYNC_AGGREGATE_ENTITY as _SYNC_AGGREGATE_ENTITY,
+    SYNC_CHILD_BLOCKED_STATUSES as _SYNC_CHILD_BLOCKED_STATUSES,
+    SYNC_CHILD_TERMINAL_STATUSES as _SYNC_CHILD_TERMINAL_STATUSES,
+    SYNC_EXTRACT_ALL_DAGS as _SYNC_EXTRACT_ALL_DAGS,
+    SYNC_NOW_DAG_ID as _SYNC_NOW_DAG_ID,
+    SYNC_NOW_ENTITY as _SYNC_NOW_ENTITY,
+    SYNC_TERMINAL_STATUSES as _SYNC_TERMINAL_STATUSES,
+    active_extract_run_payload as _active_extract_run_payload,
+    airflow_run_id_fragment as _airflow_run_id_fragment,
+    inactive_sync_run_payload as _inactive_sync_run_payload,
+    initial_sync_steps as _initial_sync_steps,
+    merge_sync_steps as _merge_sync_steps,
+    normalize_sync_now_request_id as _normalize_sync_now_request_id,
+    normalize_sync_step_payload as _normalize_sync_step_payload,
+    pipeline_extract_all_mode_target as _pipeline_extract_all_mode_target,
+    pipeline_extract_all_public_response as _pipeline_extract_all_public_response,
+    pipeline_extract_all_run_id as _pipeline_extract_all_run_id,
+    sync_child_gold_refresh_summary as _sync_child_gold_refresh_summary,
+    sync_child_reason as _sync_child_reason,
+    sync_clean_mode as _sync_clean_mode,
+    sync_clean_target as _sync_clean_target,
+    sync_control_room_gold_refresh_terminal as _sync_control_room_gold_refresh_terminal,
+    sync_entity_idempotency_key as _sync_entity_idempotency_key,
+    sync_errors_retryable as _sync_errors_retryable,
+    sync_extra_from_row as _sync_extra_from_row,
+    sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
+    sync_now_run_id_from_request_id as _sync_now_run_id_from_request_id,
+    sync_public_payload as _sync_public_payload,
+    sync_run_age_seconds as _sync_run_age_seconds,
+    sync_run_needs_final_reconcile as _sync_run_needs_final_reconcile,
+    sync_status_from_steps as _sync_status_from_steps,
+    sync_step_entity_summary as _sync_step_entity_summary,
+)
 from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
 )
@@ -5196,36 +5234,7 @@ async def api_pipeline_extract_all(
     }
 
 
-_SYNC_NOW_ENTITY = "__sync_now__"
-_SYNC_AGGREGATE_ENTITY = "__extract_all__"
-_SYNC_NOW_DAG_ID = "sync_now"
-_SYNC_TERMINAL_STATUSES = {
-    "success",
-    "partial",
-    "failed",
-    "blocked",
-    "skipped",
-    "skipped_explicit",
-}
-_SYNC_STEP_RECOMPUTE_PERCENT_STATUSES = {
-    "success",
-    "partial",
-    "blocked",
-    "failed",
-    "skipped",
-    "skipped_explicit",
-}
-_SYNC_CHILD_TERMINAL_STATUSES = _SYNC_TERMINAL_STATUSES | {"error"}
-_SYNC_CHILD_BLOCKED_STATUSES = {"blocked", "skipped", "skipped_explicit"}
-_SYNC_VALID_MODES = {"incremental", "full"}
-_SYNC_VALID_TARGETS = {"all", "foundation", "talent"}
 _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 60)
-_SYNC_EXTRACT_ALL_DAGS = {
-    "sap_successfactors": "sap_successfactors_extract_all",
-}
-_SAP_SUCCESSFACTORS_CARTRIDGE = "sap_successfactors"
-_SAP_SUCCESSFACTORS_ENTITY_DAG_ID = "sap_successfactors_extract"
-_SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID = "sap_successfactors_extract_all"
 _SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS = max(
     300,
     _env_int("SAP_SUCCESSFACTORS_ACTIVE_EXTRACT_WINDOW_SECONDS", 4 * 60 * 60),
@@ -5234,63 +5243,6 @@ _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS = max(
     1,
     _env_int("SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS", 2),
 )
-_SYNC_AGENTOPS_TOOLS = {
-    "mcp-infra__simulation__monte_carlo_run",
-    "mcp-infra__decision__orchestrate",
-    "mcp-infra__wisdom_bits__run",
-    "mcp-infra__control_room__raise_alert",
-    "mcp-infra__control_room__raise_analysis_alert",
-    "infra__simulation__monte_carlo_run",
-    "infra__decision__orchestrate",
-    "infra__wisdom_bits__run",
-    "infra__control_room__raise_alert",
-    "infra__control_room__raise_analysis_alert",
-}
-
-
-def _sync_clean_mode(value: Any | None) -> str:
-    try:
-        return _sync_progress.clean_sync_mode(value, valid_modes=_SYNC_VALID_MODES)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-def _sync_clean_target(value: Any | None) -> str:
-    try:
-        return _sync_progress.clean_sync_target(value, valid_targets=_SYNC_VALID_TARGETS)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-def _airflow_run_id_fragment(value: str) -> str:
-    fragment = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value or "")).strip("_")
-    return (fragment or "entity")[:80]
-
-
-def _active_extract_run_payload(
-    *,
-    row: dict[str, Any],
-    cartridge: str,
-    entity: str,
-    dag_id: str,
-    conf: dict[str, Any],
-    reason: str,
-) -> dict[str, Any]:
-    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
-    state = _normalize_airflow_state(row.get("status"))
-    return {
-        "triggered": False,
-        "reused": True,
-        "cartridge": cartridge,
-        "entity": entity,
-        "dag_id": dag_id,
-        "job_id": dag_run_id,
-        "run_id": dag_run_id,
-        "dag_run_id": dag_run_id,
-        "state": state,
-        "reason": reason,
-        "conf": conf,
-    }
 
 
 async def _reserve_successfactors_entity_extract_slot(
@@ -5492,36 +5444,6 @@ async def _reserve_successfactors_entity_extract_slot(
     return {"dag_run_id": dag_run_id, "reserved": True}
 
 
-def _pipeline_extract_all_mode_target(body: dict[str, Any]) -> tuple[str, str]:
-    try:
-        return _sync_progress.pipeline_extract_all_mode_target(
-            body,
-            valid_modes=_SYNC_VALID_MODES,
-            valid_targets=_SYNC_VALID_TARGETS,
-        )
-    except ValueError as exc:
-        raise HTTPException(400, detail=str(exc)) from exc
-
-
-def _pipeline_extract_all_run_id(
-    *, cartridge: str, mode: str, target: str, conn_id: str | None, body: dict[str, Any]
-) -> str:
-    try:
-        return _sync_progress.extract_all_run_id(
-            cartridge=cartridge,
-            mode=mode,
-            target=target,
-            conn_id=conn_id,
-            idempotency_key=body.get("idempotency_key") or body.get("request_id"),
-        )
-    except ValueError as exc:
-        raise HTTPException(400, detail=str(exc)) from exc
-
-
-def _pipeline_extract_all_public_response(result: dict[str, Any]) -> dict[str, Any]:
-    return _sync_progress.extract_all_public_response(result)
-
-
 async def _maybe_trigger_aggregate_extract_all(
     *, cartridge: str, body: dict[str, Any], user: dict | None
 ) -> dict[str, Any] | None:
@@ -5551,39 +5473,6 @@ async def _maybe_trigger_aggregate_extract_all(
     return _pipeline_extract_all_public_response(result)
 
 
-def _normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
-    return _sync_progress.normalize_sync_step_payload(
-        step,
-        recompute_statuses=_SYNC_STEP_RECOMPUTE_PERCENT_STATUSES,
-    )
-
-
-def _initial_sync_steps() -> list[dict[str, Any]]:
-    return _sync_progress.initial_sync_steps()
-
-
-def _merge_sync_steps(
-    current: list[dict[str, Any]] | None,
-    updates: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return _sync_progress.merge_sync_steps(
-        current,
-        updates,
-        normalizer=_normalize_sync_step_payload,
-        initial_steps_factory=_initial_sync_steps,
-    )
-
-
-def _sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
-    return _sync_progress.sync_status_from_steps(steps)
-
-
-def _sync_entity_idempotency_key(
-    base_key: object | None, entity: object | None
-) -> str | None:
-    return _sync_progress.sync_entity_idempotency_key(base_key, entity)
-
-
 def _sync_now_lock_key(
     *,
     cartridge: str,
@@ -5600,47 +5489,6 @@ def _sync_now_lock_key(
         conn_id=conn_id,
         tenant_id=ctx.get("tenant_id"),
         workspace_id=ctx.get("workspace_id"),
-    )
-
-
-def _normalize_sync_now_request_id(value: object | None) -> str | None:
-    try:
-        return _sync_progress.normalize_sync_now_request_id(value)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-def _sync_now_run_id_from_request_id(
-    *, cartridge: str, request_id: str | None, lock_key: str
-) -> str:
-    return _sync_progress.sync_now_run_id_from_request_id(
-        cartridge=cartridge,
-        request_id=request_id,
-        lock_key=lock_key,
-    )
-
-
-def _sync_run_age_seconds(row: dict[str, Any]) -> float | None:
-    started_at = row.get("started_at")
-    if isinstance(started_at, str):
-        started_at = _parse_iso_datetime(started_at)
-    return _sync_progress.sync_run_age_seconds({"started_at": started_at})
-
-
-def _sync_extra_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
-    return _sync_progress.sync_extra_from_row(row)
-
-
-def _sync_child_reason(row: dict[str, Any]) -> str | None:
-    return _sync_progress.sync_child_reason(row)
-
-
-def _sync_step_entity_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    return _sync_progress.sync_step_entity_summary(
-        rows,
-        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
-        sync_now_entity=_SYNC_NOW_ENTITY,
-        blocked_statuses=_SYNC_CHILD_BLOCKED_STATUSES,
     )
 
 
@@ -5777,27 +5625,6 @@ async def _trigger_sync_aggregate_extract_all(
         "error_count": 0,
         "trigger_strategy": "aggregate_dag",
     }
-
-
-def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    return _sync_progress.public_sync_payload(
-        row,
-        extra,
-        terminal_statuses=_SYNC_TERMINAL_STATUSES,
-        normalizer=_normalize_sync_step_payload,
-        initial_steps_factory=_initial_sync_steps,
-    )
-
-
-def _inactive_sync_run_payload(
-    *, cartridge: str, mode: str, target: str, conn_id: str | None = None
-) -> dict[str, Any]:
-    return _sync_progress.inactive_sync_run_payload(
-        cartridge=cartridge,
-        mode=mode,
-        target=target,
-        conn_id=conn_id,
-    )
 
 
 async def _ensure_sync_packaged_datasets(
@@ -6134,17 +5961,6 @@ async def _run_sync_agentops_monitors(
     )
 
 
-def _sync_run_needs_final_reconcile(row: dict[str, Any], extra: dict[str, Any]) -> bool:
-    """Terminal sync rows may predate the final Control Room/materialization check."""
-    return _sync_progress.sync_run_needs_final_reconcile(
-        row,
-        extra,
-        terminal_statuses=_SYNC_TERMINAL_STATUSES,
-        initial_step_count=len(_initial_sync_steps()),
-        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
-    )
-
-
 async def _upsert_sync_run(
     *,
     run_id: str,
@@ -6281,10 +6097,6 @@ async def _fetch_sync_run(
     return dict(row) if row else None
 
 
-def _sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
-    return _sync_progress.sync_errors_retryable(errors)
-
-
 async def _sync_child_runs(
     *,
     cartridge: str,
@@ -6321,14 +6133,6 @@ async def _sync_child_runs(
     return refreshed
 
 
-def _sync_child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    return _sync_progress.child_gold_refresh_summary(child_rows)
-
-
-def _sync_gold_refresh_dataset_names(gold_refresh_summary: dict[str, Any]) -> list[str]:
-    return _sync_progress.gold_refresh_dataset_names(gold_refresh_summary)
-
-
 def _sync_gold_refresh_airflow_run_id(
     row: dict[str, Any],
     child_rows: list[dict[str, Any]],
@@ -6338,10 +6142,6 @@ def _sync_gold_refresh_airflow_run_id(
         child_rows,
         aggregate_entity=_SYNC_AGGREGATE_ENTITY,
     )
-
-
-def _sync_control_room_gold_refresh_terminal(payload: Any) -> bool:
-    return _sync_progress.control_room_gold_refresh_terminal(payload)
 
 
 async def _run_sync_control_room_gold_refresh(

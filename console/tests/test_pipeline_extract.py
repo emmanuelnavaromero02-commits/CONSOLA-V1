@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import sys
 import types
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from app.domains.pipeline import run_state
 
 
 INTERNAL_KEY = "test_internal_api_key_with_more_than_32_chars"
@@ -59,10 +59,23 @@ def _scoped_sf_pipeline_user() -> dict:
 
 
 def test_pipeline_gold_dependency_matcher_accepts_successfactors_s3_paths(console_main):
-    source = inspect.getsource(console_main.api_pipeline)
-
-    assert "gds.get(\"sources\")" in source
-    assert "silver/{cartridge_lower}/{silver_lower}" in source
+    assert run_state.pipeline_gold_dependencies_for_silver(
+        "sap_successfactors_employee_profile",
+        [
+            {
+                "name": "sap_successfactors_talent_signals",
+                "sources": [
+                    "silver/sap_successfactors/sap_successfactors_employee_profile"
+                ],
+            }
+        ],
+        cartridge="sap_successfactors",
+    ) == [
+        {
+            "name": "sap_successfactors_talent_signals",
+            "sources": ["silver/sap_successfactors/sap_successfactors_employee_profile"],
+        }
+    ]
 
 
 def test_sync_child_gold_refresh_summary_counts_partial_aggregate(console_main):
