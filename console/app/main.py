@@ -317,6 +317,7 @@ from app.domains.pipeline.sync_state import (
     sync_public_payload as _sync_public_payload,
     sync_run_age_seconds as _sync_run_age_seconds,
     sync_run_needs_final_reconcile as _sync_run_needs_final_reconcile,
+    sync_run_working_state as _sync_run_working_state,
     sync_status_from_steps as _sync_status_from_steps,
     sync_step_entity_summary as _sync_step_entity_summary,
 )
@@ -4502,24 +4503,12 @@ async def _build_sync_run_status(
     row: dict[str, Any],
     user: dict | None,
 ) -> dict[str, Any]:
-    extra = _sync_extra_from_row(row)
-    steps = (
-        extra.get("steps")
-        if isinstance(extra.get("steps"), list)
-        else _initial_sync_steps()
-    )
-    triggered = (
-        extra.get("triggered_entities")
-        if isinstance(extra.get("triggered_entities"), list)
-        else []
-    )
-    errors = extra.get("errors") if isinstance(extra.get("errors"), list) else []
-    child_run_ids = [
-        str(item.get("dag_run_id") or item.get("job_id") or "").strip()
-        for item in triggered
-        if isinstance(item, dict)
-        and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
-    ]
+    working_state = _sync_run_working_state(row)
+    extra = working_state["extra"]
+    steps = working_state["steps"]
+    triggered = working_state["triggered"]
+    errors = working_state["errors"]
+    child_run_ids = working_state["child_run_ids"]
     child_rows = await _sync_child_runs(
         cartridge=cartridge, run_ids=child_run_ids, user=user
     )

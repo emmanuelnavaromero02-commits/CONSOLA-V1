@@ -332,6 +332,34 @@ def merge_sync_steps(
     )
 
 
+def sync_run_working_state(row: dict[str, Any]) -> dict[str, Any]:
+    extra = sync_extra_from_row(row)
+    steps = (
+        extra.get("steps")
+        if isinstance(extra.get("steps"), list)
+        else initial_sync_steps()
+    )
+    triggered = (
+        extra.get("triggered_entities")
+        if isinstance(extra.get("triggered_entities"), list)
+        else []
+    )
+    errors = extra.get("errors") if isinstance(extra.get("errors"), list) else []
+    child_run_ids = [
+        str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+        for item in triggered
+        if isinstance(item, dict)
+        and str(item.get("dag_run_id") or item.get("job_id") or "").strip()
+    ]
+    return {
+        "extra": extra,
+        "steps": steps,
+        "triggered": triggered,
+        "errors": errors,
+        "child_run_ids": child_run_ids,
+    }
+
+
 def sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
     return sync_progress.sync_status_from_steps(steps)
 

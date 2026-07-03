@@ -112,6 +112,56 @@ def test_active_sync_run_lookup_parts_tolerate_legacy_schema():
     assert lookup["order_sql"] == "run_id DESC"
 
 
+def test_sync_run_working_state_extracts_triggered_child_ids():
+    working_state = sync_state.sync_run_working_state(
+        {
+            "extra": {
+                "steps": [{"id": "bronze"}],
+                "triggered_entities": [
+                    {"entity": "EmpJob", "dag_run_id": " dag-run-1 "},
+                    {"entity": "User", "job_id": "job-run-2"},
+                    {"entity": "Ignored", "dag_run_id": "   "},
+                    "not-a-dict",
+                ],
+                "errors": [{"entity": "EmpJob", "error": "partial"}],
+                "target": "talent",
+            }
+        }
+    )
+
+    assert working_state["extra"]["target"] == "talent"
+    assert working_state["steps"] == [{"id": "bronze"}]
+    assert [
+        item["entity"]
+        for item in working_state["triggered"]
+        if isinstance(item, dict)
+    ] == [
+        "EmpJob",
+        "User",
+        "Ignored",
+    ]
+    assert working_state["triggered"][-1] == "not-a-dict"
+    assert working_state["errors"] == [{"entity": "EmpJob", "error": "partial"}]
+    assert working_state["child_run_ids"] == ["dag-run-1", "job-run-2"]
+
+
+def test_sync_run_working_state_defaults_invalid_extra_shapes():
+    working_state = sync_state.sync_run_working_state(
+        {"extra": {"steps": "bad", "triggered_entities": {}, "errors": "bad"}}
+    )
+
+    assert [step["id"] for step in working_state["steps"]] == [
+        "connection",
+        "bronze",
+        "silver_gold",
+        "control_room",
+        "agents_intelligence",
+    ]
+    assert working_state["triggered"] == []
+    assert working_state["errors"] == []
+    assert working_state["child_run_ids"] == []
+
+
 @pytest.mark.anyio
 async def test_fetch_active_sync_run_uses_scoped_lookup():
     class FakeConn:
