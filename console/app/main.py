@@ -170,6 +170,9 @@ from app.domains.data_platform.source_visibility import (
     sanitize_datasets_payload_for_user as _sanitize_datasets_payload_for_user_impl,
     user_allowed_cartridges as _user_allowed_cartridges,
 )
+from app.domains.data_platform.table_metadata import (
+    table_has_column as _table_has_column_impl,
+)
 from app.domains.pipeline.run_state import (
     airflow_log_attempt as _airflow_log_attempt,
     airflow_log_task_ids as _airflow_log_task_ids,
@@ -871,34 +874,14 @@ async def _bronze_physical_snapshot(
         return {}
 
 
-_COLUMN_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
-
-
 async def _table_has_column(table: str, column: str, *, refresh: bool = False) -> bool:
-    key = (table, column)
-    if not refresh and key in _COLUMN_EXISTS_CACHE:
-        return _COLUMN_EXISTS_CACHE[key]
-    try:
-        pool = await _get_db_pool()
-        exists = await pool.fetchval(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                  FROM information_schema.columns
-                 WHERE table_schema='public'
-                   AND table_name=$1
-                   AND column_name=$2
-            )
-            """,
-            table,
-            column,
-        )
-        _COLUMN_EXISTS_CACHE[key] = bool(exists)
-        return bool(exists)
-    except Exception:
-        logger.debug("Could not inspect column %s.%s", table, column, exc_info=True)
-        _COLUMN_EXISTS_CACHE[key] = False
-        return False
+    return await _table_has_column_impl(
+        table,
+        column,
+        pool_getter=_get_db_pool,
+        logger_debug=logger.debug,
+        refresh=refresh,
+    )
 
 
 async def _pipeline_runs_scope_predicate(
