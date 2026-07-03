@@ -133,6 +133,7 @@ from app.services.service_urls import (
 )
 from app.services import request_rate_limits as _request_rate_limits
 from app.services import security_headers as _security_headers
+from app.services.mcp_payloads import mcp_payload as _mcp_payload
 from app.services.rate_limiter import get_rate_limiter
 from app.services.status_pages import (
     functional_status_page as _functional_status_page,
@@ -840,13 +841,6 @@ async def _call_with_optional_user(fn, *args, user=None):
     if inspect.isawaitable(result):
         return await result
     return result
-
-
-def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
-    payload = {"tool": tool, "args": args}
-    if user is not None:
-        payload["security_context"] = build_security_context(user)
-    return payload
 
 
 def _minio_client():
