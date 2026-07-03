@@ -217,6 +217,13 @@ from app.domains.pipeline.extract_config import (
     normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
 )
 from app.domains.studio.dag_graph import parse_dag_graph as _parse_dag_graph
+from app.domains.vault.scope import (
+    require_vault_scope_visible as _require_vault_scope_visible_impl,
+    tenant_vault_conn_id as _tenant_vault_conn_id_impl,
+    tenant_vault_display_conn as _tenant_vault_display_conn_impl,
+    tenant_vault_prefix as _tenant_vault_prefix_impl,
+    tenant_vault_scope as _tenant_vault_scope_impl,
+)
 from app.services.db_scope import scoped_db_for_user
 from app.services.service_urls import (
     app_env as _app_env,
@@ -7398,15 +7405,7 @@ _RAG_URL = os.environ.get("RAG_URL", "http://mcp-infra:8010")  # migrado
 
 
 def _tenant_vault_prefix(user: dict) -> str | None:
-    if _is_global_iam_admin(user):
-        return None
-    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
-    workspace_id = str(
-        user.get("active_workspace_id") or user.get("workspace_id") or ""
-    ).strip()
-    if not tenant_id or not workspace_id:
-        raise HTTPException(400, "active tenant/workspace is required for vault access")
-    return f"tenant_{tenant_id}__workspace_{workspace_id}__"
+    return _tenant_vault_prefix_impl(user, is_global_admin=_is_global_iam_admin)
 
 
 def _vault_headers_for_user(user: dict) -> dict[str, str]:
@@ -7419,43 +7418,27 @@ def _vault_headers_for_user(user: dict) -> dict[str, str]:
 
 
 def _tenant_vault_conn_id(user: dict, conn_id: str) -> str:
-    clean = (conn_id or "").strip()
-    if not clean:
-        raise HTTPException(400, "connection id is required")
-    _tenant_vault_prefix(user)
-    return clean
+    return _tenant_vault_conn_id_impl(
+        user,
+        conn_id,
+        is_global_admin=_is_global_iam_admin,
+    )
 
 
 def _tenant_vault_display_conn(user: dict, conn: dict) -> dict | None:
-    prefix = _tenant_vault_prefix(user)
-    if prefix is None:
-        return conn
-    key = str(conn.get("conn_id") or conn.get("id") or conn.get("key") or "")
-    if key.startswith(prefix):
-        display_key = key[len(prefix) :]
-    elif key.startswith("tenant_") and "__workspace_" in key:
-        return None
-    else:
-        # Vault already applies the signed tenant/workspace scope and returns
-        # clean connection ids for scoped rows. Keep those visible; only hide
-        # explicit prefixed ids that point at another workspace.
-        display_key = key
-    display = {**conn, "conn_id": display_key}
-    if "id" in display:
-        display["id"] = display["conn_id"]
-    return display
+    return _tenant_vault_display_conn_impl(
+        user,
+        conn,
+        is_global_admin=_is_global_iam_admin,
+    )
 
 
 def _tenant_vault_scope(user: dict, scope: str) -> str:
-    clean = (scope or "").strip()
-    if not clean:
-        raise HTTPException(400, "vault scope is required")
-    if _is_global_iam_admin(user):
-        return clean
-    if clean in {"global", "platform", "studio", "system", "_system"}:
-        raise HTTPException(403, "global vault scope requires platform admin")
-    _tenant_vault_prefix(user)
-    return clean
+    return _tenant_vault_scope_impl(
+        user,
+        scope,
+        is_global_admin=_is_global_iam_admin,
+    )
 
 
 @app.get(
@@ -7621,13 +7604,11 @@ async def api_vault_delete_connection(
 
 
 def _require_vault_scope_visible(user: dict, scope: str) -> None:
-    scope = (scope or "").strip()
-    if scope in {"global", "platform", "studio", "system", "_system"}:
-        if not _is_global_iam_admin(user):
-            raise HTTPException(403, "global vault scope requires platform admin")
-        return
-    if _is_global_iam_admin(user):
-        return
+    return _require_vault_scope_visible_impl(
+        user,
+        scope,
+        is_global_admin=_is_global_iam_admin,
+    )
 
 
 @app.get(
