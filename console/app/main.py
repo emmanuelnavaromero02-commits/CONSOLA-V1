@@ -3617,6 +3617,7 @@ async def api_data_options(
     if invalid_col:
         raise HTTPException(400, f"Invalid column name: {invalid_col}")
 
+    # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
     union_sql = _data_api_options_sql(dataset, cols)
 
     try:

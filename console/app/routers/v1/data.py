@@ -395,41 +395,46 @@ async def api_data(
 async def api_data_options(dataset: str, columns: str = "", user: dict = Depends(require_permission("datasets.read"))):
     """Return distinct values per column for building filter selectors."""
     _validate_dataset_name(dataset)
-    cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
+    cols = _data_api_columns_param(columns)
     if not cols:
         raise HTTPException(400, "columns param required, e.g. ?columns=revenue_manager,cliente")
 
-    # Validate column names (alphanumeric + underscore only)
-    import re as _re
-    for col in cols:
-        if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
-            raise HTTPException(400, f"Invalid column name: {col}")
+    invalid_col = _data_api_invalid_column(cols)
+    if invalid_col:
+        raise HTTPException(400, f"Invalid column name: {invalid_col}")
 
-    sqls = [f"SELECT DISTINCT {col} AS val, '{col}' AS col FROM pggold.gold_{dataset} WHERE {col} IS NOT NULL"
-            for col in cols]
-    union_sql = " UNION ALL ".join(sqls) + f" ORDER BY col, val"
+    # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
+    union_sql = _data_api_options_sql(dataset, cols)
 
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "preview_transform",
-                             {
-                                 "sql": union_sql,
-                                 "limit": 5000,
-                                 "user_context": _rls_user_context(user),
-                             },
-                             user,
-                         ))
-    result = r.json()
-    rows = result.get("data", [])
-
-    # Group by column name
-    options: dict = {col: [] for col in cols}
-    for row in rows:
-        col_key = row.get("col")
-        if col_key in options and row.get("val") is not None:
-            options[col_key].append(str(row["val"]))
-    return options
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
+            r = await c.post(
+                f"{REFINEMENT_URL}/mcp/invoke",
+                json=_mcp_payload(
+                    "preview_transform",
+                    {
+                        "sql": union_sql,
+                        "limit": 5000,
+                        "user_context": _rls_user_context(user),
+                    },
+                    user,
+                ),
+            )
+    except httpx.TransportError as exc:
+        raise HTTPException(500, "Options backend unavailable") from exc
+    if r.status_code >= 400:
+        raise HTTPException(
+            r.status_code, _upstream_error_detail(r, "Options backend failed")
+        )
+    try:
+        result = r.json()
+    except ValueError as exc:
+        raise HTTPException(500, "Options backend returned invalid JSON") from exc
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(500, "Options backend failed")
+    if not isinstance(result, dict):
+        raise HTTPException(500, "Options backend returned invalid payload")
+    return _data_api_options_response(cols, result.get("data", []))
 
 # /api/data/{dataset}/query
 @router.post("/api/data/{dataset}/query", dependencies=[Depends(require_permission("datasets.read"))])
@@ -443,72 +448,38 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     fiscal_year uses March-February logic automatically.
     """
     _validate_dataset_name(dataset)
-    import re as _re
-    filters   = body.get("filters", {})
-    limit     = min(int(body.get("limit", 2000)), 10000)
-    columns   = body.get("columns", ["*"])
+    filters = body.get("filters", {})
+    limit = _data_api_query_limit(body.get("limit", 2000))
+    columns = body.get("columns", ["*"])
 
     # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
     _user_context = _rls_user_context(_user)
 
-    # Validate column names
-    safe_cols = []
-    for col in columns:
-        if col == "*" or _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
-            safe_cols.append(col)
-    select_clause = ", ".join(safe_cols) if safe_cols else "*"
-
-    if not isinstance(filters, dict):
-        raise HTTPException(400, "filters must be an object")
-    if len(filters) > 20:
-        raise HTTPException(400, "Too many filters (max 20)")
-
-    # Build a parameterized query — values go into `params`, never interpolated into SQL.
-    # Column/table identifiers are allowlisted via regex; only values are parametrized.
-    params: list = []
-
-    def _add_param(v) -> str:
-        """Append value to params list and return a DuckDB positional placeholder."""
-        s = str(v)
-        if len(s) > 500:
-            raise HTTPException(400, "Filter value too long (max 500 chars)")
-        params.append(s)
-        return "?"
-
-    conditions = []
-    for key, val in filters.items():
-        if val is None or val == "" or val == []:
-            continue
-        if key == "fiscal_year":
-            # March-February fiscal year: month<=2 belongs to previous calendar year.
-            # fiscal_year values must be integers — cast before adding to params.
-            fy_expr = "(CASE WHEN EXTRACT(MONTH FROM mes)<=2 THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END)"
-            vals = val if isinstance(val, list) else [val]
-            if len(vals) > 50:
-                raise HTTPException(400, "Too many fiscal_year values (max 50)")
-            placeholders = ",".join(_add_param(int(v)) for v in vals)
-            conditions.append(f"{fy_expr} IN ({placeholders})")
-        elif _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
-            vals = val if isinstance(val, list) else [val]
-            if len(vals) > 100:
-                raise HTTPException(400, f"Too many values for filter '{key}' (max 100)")
-            if len(vals) == 1:
-                conditions.append(f"{key} = {_add_param(vals[0])}")
-            else:
-                placeholders = ",".join(_add_param(v) for v in vals)
-                conditions.append(f"{key} IN ({placeholders})")
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
+    try:
+        filtered_query = _data_api_filtered_query(
+            dataset,
+            filters=filters,
+            limit=limit,
+            columns=columns,
+        )
+    except _DataApiQueryValidationError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "preview_transform",
-                             {"sql": sql, "params": params, "limit": limit, "user_context": _user_context},
-                             _user,
-                         ))
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json=_mcp_payload(
+                "preview_transform",
+                {
+                    "sql": filtered_query.sql,
+                    "params": filtered_query.params,
+                    "limit": filtered_query.limit,
+                    "user_context": _user_context,
+                },
+                _user,
+            ),
+        )
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()
