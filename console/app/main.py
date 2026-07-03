@@ -250,6 +250,10 @@ from app.domains.vault.scope import (
     tenant_vault_prefix as _tenant_vault_prefix_impl,
     tenant_vault_scope as _tenant_vault_scope_impl,
 )
+from app.domains.vault.reveal import (
+    cartridge_vault_reveal_user as _cartridge_vault_reveal_user_impl,
+    is_cartridge_vault_reveal_request as _is_cartridge_vault_reveal_request_impl,
+)
 from app.services.db_scope import scoped_db_for_user
 from app.services.service_urls import (
     app_env as _app_env,
@@ -575,82 +579,25 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
 
 
 def _is_cartridge_vault_reveal_request(request: Request) -> bool:
-    """Allow cartridge workers to reveal only their own Vault connection."""
-    if request.method != "GET":
-        return False
-    match = re.fullmatch(
-        r"/api/vault/connections/([^/]+)/[^/]+/reveal", request.url.path
+    return _is_cartridge_vault_reveal_request_impl(
+        request,
+        reveal_keys=_CARTRIDGE_VAULT_REVEAL_KEYS,
+        environ=os.environ,
+        is_production_env=_is_production_env,
+        internal_api_key=INTERNAL_API_KEY,
     )
-    if not match:
-        return False
-    cartridge = match.group(1)
-    service_keys = _CARTRIDGE_VAULT_REVEAL_KEYS.get(cartridge)
-    if not service_keys:
-        return False
-
-    service = (request.headers.get("x-internal-service") or "").strip().lower()
-    key_envs = service_keys.get(service)
-    if not key_envs:
-        return False
-    supplied = (
-        request.headers.get("x-api-key")
-        or request.headers.get("x-internal-api-key")
-        or ""
-    )
-    if not supplied:
-        return False
-
-    accepted = [os.environ.get(env, "") for env in key_envs]
-    if not _is_production_env():
-        accepted.append(INTERNAL_API_KEY)
-    return any(secrets.compare_digest(str(supplied), key) for key in accepted if key)
 
 
 def _cartridge_vault_reveal_user(request: Request) -> dict | None:
-    """Return the internal reveal actor, optionally scoped by signed context."""
-    if not _is_cartridge_vault_reveal_request(request):
-        return None
-    header = (request.headers.get("x-security-context") or "").strip()
-    if not header:
-        return _internal_service_user()
-    try:
-        raw_ctx = json.loads(header)
-        if not isinstance(raw_ctx, dict):
-            raise ValueError("security_context must be an object")
-        ctx = verify_signed_security_context(raw_ctx)
-    except Exception as exc:
-        raise HTTPException(403, "invalid signed security context") from exc
-    if ctx.get("trusted") is not True or ctx.get("source") != "console":
-        raise HTTPException(403, "invalid signed security context")
-
-    match = re.fullmatch(
-        r"/api/vault/connections/([^/]+)/[^/]+/reveal", request.url.path
+    return _cartridge_vault_reveal_user_impl(
+        request,
+        reveal_keys=_CARTRIDGE_VAULT_REVEAL_KEYS,
+        environ=os.environ,
+        is_production_env=_is_production_env,
+        internal_api_key=INTERNAL_API_KEY,
+        internal_service_user=_internal_service_user,
+        verify_signed_security_context=verify_signed_security_context,
     )
-    cartridge = match.group(1) if match else ""
-    allowed = {
-        str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()
-    }
-    if "*" not in allowed and cartridge not in allowed:
-        raise HTTPException(403, "cartridge not allowed")
-
-    user = _internal_service_user()
-    tenant_id = str(ctx.get("tenant_id") or "").strip() or None
-    workspace_id = str(ctx.get("workspace_id") or "").strip() or None
-    user.update(
-        {
-            "active_tenant_id": tenant_id,
-            "tenant_id": tenant_id,
-            "active_workspace_id": workspace_id,
-            "workspace_id": workspace_id,
-            "active_project_id": ctx.get("project_id"),
-            "project_id": ctx.get("project_id"),
-            "allowed_cartridges": sorted(allowed) if allowed else [cartridge],
-            "security_context_actor_id": ctx.get("user_id"),
-            "security_context_actor_email": ctx.get("email"),
-            "_service_scoped_context": bool(tenant_id and workspace_id),
-        }
-    )
-    return user
 
 
 def _internal_service_user() -> dict:
