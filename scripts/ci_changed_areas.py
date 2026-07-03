@@ -53,6 +53,7 @@ PY_RUNTIME_ROOTS = (
 
 CONSOLE_SERVICE_RELEASE_EXCLUDE = (
     r"^console/app/services/operations_service\.py$",
+    r"^console/app/services/request_rate_limits\.py$",
     r"^console/app/services/security_headers\.py$",
     r"^console/app/services/service_urls\.py$",
     r"^console/app/services/status_pages\.py$",

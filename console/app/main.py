@@ -103,7 +103,9 @@ from app.services.service_urls import (
     service_url as _service_url_value,
     vault_url as _service_vault_url,
 )
+from app.services import request_rate_limits as _request_rate_limits
 from app.services import security_headers as _security_headers
+from app.services.rate_limiter import get_rate_limiter
 from app.services.status_pages import (
     functional_status_page as _functional_status_page,
     internal_error_request_id as _internal_error_request_id,
@@ -1441,43 +1443,16 @@ async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
     return row
 
 
-RATE_LIMIT_WINDOW_SECONDS = 300
-RATE_LIMITS = {
-    "/auth/login": (8, RATE_LIMIT_WINDOW_SECONDS),
-    "/auth/forgot-password": (5, RATE_LIMIT_WINDOW_SECONDS),
-    "/auth/reset-password": (8, RATE_LIMIT_WINDOW_SECONDS),
-    "/auth/activate": (8, RATE_LIMIT_WINDOW_SECONDS),
-    # Refresh is more frequent than login (access tokens expire in minutes), so
-    # the cap is higher; still bounded to deter token-stuffing brute force.
-    "/auth/refresh": (60, RATE_LIMIT_WINDOW_SECONDS),
-    "/api/copilot": (120, 60),
-    "/api/agents": (80, 60),
-    "/api/mcp": (80, 60),
-    "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
-    "/api/explorer": (180, 60),
-}
-# The limiter backend picks Redis when REDIS_URL is set, otherwise falls back
-# to an in-memory sliding window. The in-memory path is per-process and can be
-# multiplied by an attacker across replicas; configure REDIS_URL in any
-# multi-replica deployment.
-from app.services.rate_limiter import get_rate_limiter  # noqa: E402
-
-
-_TRUSTED_PROXY_IPS: frozenset[str] = frozenset(
-    ip.strip()
-    for ip in os.environ.get("TRUSTED_PROXY_IPS", "").split(",")
-    if ip.strip()
-)
+RATE_LIMIT_WINDOW_SECONDS = _request_rate_limits.RATE_LIMIT_WINDOW_SECONDS
+RATE_LIMITS = _request_rate_limits.RATE_LIMITS
+_TRUSTED_PROXY_IPS = _request_rate_limits.trusted_proxy_ips()
 
 
 def _client_ip(request: Request) -> str:
-    real_ip = request.client.host if request.client else "unknown"
-    # Only trust X-Forwarded-For when the direct connection comes from a declared proxy.
-    if _TRUSTED_PROXY_IPS and real_ip in _TRUSTED_PROXY_IPS:
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        if forwarded_for:
-            return forwarded_for.split(",", 1)[0].strip()
-    return real_ip
+    return _request_rate_limits.client_ip(
+        request,
+        trusted_proxies=_TRUSTED_PROXY_IPS,
+    )
 
 
 async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
@@ -1494,53 +1469,25 @@ async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     # We also bypass when APP_ENV is ``test`` for the same reason
     # — the Python suite calls these endpoints repeatedly during
     # the auth contract tests.
-    if _rate_limit_disabled():
-        return
-
-    limit, window = RATE_LIMITS[action]
-    ip = _client_ip(request)
-    subject_key = subject.lower().strip() or "-"
-    # Two checks both must pass:
-    #   1) per (ip, subject) — keeps a noisy single user from drowning others
-    #   2) per ip — prevents subject-rotation bypass (e.g. an attacker
-    #      cycling many invitation tokens from one IP gets a fresh
-    #      (ip, subject) bucket for each token; the per-IP key is the
-    #      one that actually caps the brute-force budget).
-    # All registered actions are auth-sensitive (login / forgot / reset /
-    # activate) — fail closed so a Redis outage cannot silently disable
-    # brute-force protection.
-    limiter = get_rate_limiter()
-    keys = [f"{action}:{ip}:{subject_key}", f"{action}:{ip}:-"]
-    for key in keys:
-        if not await limiter.check(key, limit, window, sensitive=True):
-            raise HTTPException(status_code=429, detail="too many requests")
+    await _request_rate_limits.rate_limit(
+        request,
+        action,
+        subject,
+        limiter_factory=get_rate_limiter,
+        trusted_proxies=_TRUSTED_PROXY_IPS,
+    )
 
 
 async def _rate_limit_api_surface(
     request: Request, path: str, user: dict | None
 ) -> None:
-    if _rate_limit_disabled():
-        return
-    matched = None
-    for prefix in (
-        "/api/copilot",
-        "/api/agents",
-        "/api/mcp",
-        "/studio/import",
-        "/api/explorer",
-    ):
-        if path == prefix or path.startswith(prefix + "/"):
-            matched = prefix
-            break
-    if not matched:
-        return
-    limit, window = RATE_LIMITS[matched]
-    ip = _client_ip(request)
-    user_key = str((user or {}).get("id") or (user or {}).get("email") or "-")
-    limiter = get_rate_limiter()
-    for key in (f"{matched}:{ip}:{user_key}", f"{matched}:{ip}:-"):
-        if not await limiter.check(key, limit, window, sensitive=True):
-            raise HTTPException(status_code=429, detail="too many requests")
+    await _request_rate_limits.rate_limit_api_surface(
+        request,
+        path,
+        user,
+        limiter_factory=get_rate_limiter,
+        trusted_proxies=_TRUSTED_PROXY_IPS,
+    )
 
 
 def _rate_limit_disabled() -> bool:
@@ -1560,16 +1507,7 @@ def _rate_limit_disabled() -> bool:
     (see console/app/security.py) and leave RATE_LIMIT_ENABLED
     unset, so the limiter stays on.
     """
-    enabled_env = os.environ.get("RATE_LIMIT_ENABLED")
-    if enabled_env is not None and enabled_env.strip().lower() in {
-        "false",
-        "0",
-        "no",
-        "off",
-    }:
-        return True
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    return app_env in {"test", "testing"}
+    return _request_rate_limits.rate_limit_disabled()
 
 
 @app.middleware("http")
