@@ -452,6 +452,69 @@ def sync_materialization_state(
     }
 
 
+def sync_core_step_updates(
+    *,
+    triggered: list[Any],
+    child_rows: list[dict[str, Any]],
+    child_runtime: dict[str, Any],
+    materialization_state: dict[str, Any],
+    errors: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    bronze_ready = int(materialization_state["bronze_ready"])
+    silver_ready = int(materialization_state["silver_ready"])
+    gold_ready = int(materialization_state["gold_ready"])
+    gold_total = int(materialization_state["gold_total"])
+    gold_partial = bool(materialization_state["gold_partial"])
+    running_children = bool(child_runtime["running_children"])
+    failed_children = int(child_runtime["failed_children"])
+    success_children = int(child_runtime["success_children"])
+    partial_children = int(child_runtime["partial_children"])
+    blocked_children = int(child_runtime["blocked_children"])
+    terminal_children = int(child_runtime["terminal_children"])
+    progress_rows = child_runtime["progress_rows"]
+    entity_summary = child_runtime["entity_summary"]
+
+    updates: dict[str, dict[str, Any]] = {
+        "connection": sync_progress.sync_connection_step_update(
+            triggered=triggered,
+            child_rows=child_rows,
+            bronze_ready=bronze_ready,
+        )
+    }
+    bronze_update = sync_progress.sync_bronze_step_update(
+        running_children=running_children,
+        aggregate_summary_pending=bool(child_runtime["aggregate_summary_pending"]),
+        progress_count=len(progress_rows),
+        failed_children=failed_children,
+        success_children=success_children,
+        partial_children=partial_children,
+        blocked_children=blocked_children,
+        errors=errors,
+        child_done=terminal_children,
+        child_total=int(child_runtime["child_total"]),
+        bronze_ready=bronze_ready,
+        entity_summary=entity_summary,
+    )
+    if bronze_update:
+        updates["bronze"] = bronze_update
+
+    silver_gold_update = sync_progress.sync_silver_gold_step_update(
+        bronze_status=str(updates.get("bronze", {}).get("status") or ""),
+        running_children=running_children,
+        gold_total=gold_total,
+        silver_ready=silver_ready,
+        gold_ready=gold_ready,
+        failed_children=failed_children,
+        partial_children=partial_children,
+        blocked_children=blocked_children,
+        gold_partial=gold_partial,
+        errors=errors,
+    )
+    if silver_gold_update:
+        updates["silver_gold"] = silver_gold_update
+    return updates
+
+
 def sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
     return sync_progress.sync_status_from_steps(steps)
 

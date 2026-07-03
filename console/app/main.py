@@ -313,6 +313,7 @@ from app.domains.pipeline.sync_state import (
     sync_extra_from_row as _sync_extra_from_row,
     sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
     sync_child_runtime_state as _sync_child_runtime_state,
+    sync_core_step_updates as _sync_core_step_updates,
     sync_materialization_state as _sync_materialization_state,
     sync_now_lock_key as _sync_now_lock_key_impl,
     sync_now_run_id_from_request_id as _sync_now_run_id_from_request_id,
@@ -4523,17 +4524,10 @@ async def _build_sync_run_status(
         stale_after_seconds=_SYNC_NOW_STALE_AFTER_SECONDS,
     )
     gold_refresh_summary = child_runtime["gold_refresh_summary"]
-    aggregate_child_rows = child_runtime["aggregate_child_rows"]
     aggregate_payload_ready = child_runtime["aggregate_payload_ready"]
     entity_child_rows = child_runtime["entity_child_rows"]
     aggregate_summary_pending = child_runtime["aggregate_summary_pending"]
-    progress_rows = child_runtime["progress_rows"]
     running_children = child_runtime["running_children"]
-    failed_children = child_runtime["failed_children"]
-    success_children = child_runtime["success_children"]
-    partial_children = child_runtime["partial_children"]
-    blocked_children = child_runtime["blocked_children"]
-    terminal_children = child_runtime["terminal_children"]
     entity_summary = child_runtime["entity_summary"]
     errors = child_runtime["errors"]
 
@@ -4577,46 +4571,13 @@ async def _build_sync_run_status(
             user=user,
         )
 
-    updates: dict[str, dict[str, Any]] = {
-        "connection": _sync_progress.sync_connection_step_update(
-            triggered=triggered,
-            child_rows=child_rows,
-            bronze_ready=bronze_ready,
-        )
-    }
-    child_total = child_runtime["child_total"]
-    child_done = terminal_children
-    bronze_update = _sync_progress.sync_bronze_step_update(
-        running_children=running_children,
-        aggregate_summary_pending=aggregate_summary_pending,
-        progress_count=len(progress_rows),
-        failed_children=failed_children,
-        success_children=success_children,
-        partial_children=partial_children,
-        blocked_children=blocked_children,
-        errors=errors,
-        child_done=child_done,
-        child_total=child_total,
-        bronze_ready=bronze_ready,
-        entity_summary=entity_summary,
-    )
-    if bronze_update:
-        updates["bronze"] = bronze_update
-
-    silver_gold_update = _sync_progress.sync_silver_gold_step_update(
-        bronze_status=str(updates.get("bronze", {}).get("status") or ""),
-        running_children=running_children,
-        gold_total=gold_total,
-        silver_ready=silver_ready,
-        gold_ready=gold_ready,
-        failed_children=failed_children,
-        partial_children=partial_children,
-        blocked_children=blocked_children,
-        gold_partial=gold_partial,
+    updates: dict[str, dict[str, Any]] = _sync_core_step_updates(
+        triggered=triggered,
+        child_rows=child_rows,
+        child_runtime=child_runtime,
+        materialization_state=materialization_state,
         errors=errors,
     )
-    if silver_gold_update:
-        updates["silver_gold"] = silver_gold_update
 
     control_room_ready = False
     control_room_checked_at: str | None = None

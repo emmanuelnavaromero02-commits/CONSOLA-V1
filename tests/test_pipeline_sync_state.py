@@ -242,6 +242,51 @@ def test_sync_materialization_state_casts_pipeline_counts():
     assert state["materialization"]["gold_ready"] == 3
 
 
+def test_sync_core_step_updates_builds_connection_bronze_and_silver_gold():
+    child_runtime = sync_state.sync_child_runtime_state(
+        row={"status": "running"},
+        child_rows=[
+            {"entity": "EmpJob", "status": "success", "row_count": 3},
+            {
+                "entity": "CareerWorksheet",
+                "status": "blocked",
+                "row_count": 0,
+                "extra": {"reason": "entity_not_exposed_in_sap"},
+            },
+        ],
+        child_run_ids=["run-1", "run-2"],
+        triggered=[{"entity": "EmpJob"}, {"entity": "CareerWorksheet"}],
+        errors=[],
+        stale_after_seconds=3600,
+    )
+    materialization_state = {
+        "bronze_ready": 2,
+        "silver_ready": 1,
+        "gold_ready": 1,
+        "gold_total": 2,
+        "gold_partial": True,
+    }
+
+    updates = sync_state.sync_core_step_updates(
+        triggered=[{"entity": "EmpJob"}, {"entity": "CareerWorksheet"}],
+        child_rows=[
+            {"entity": "EmpJob", "status": "success"},
+            {"entity": "CareerWorksheet", "status": "blocked"},
+        ],
+        child_runtime=child_runtime,
+        materialization_state=materialization_state,
+        errors=[],
+    )
+
+    assert updates["connection"]["status"] == "success"
+    assert updates["bronze"]["status"] == "partial"
+    assert updates["bronze"]["completed"] == 2
+    assert updates["bronze"]["total"] == 2
+    assert updates["silver_gold"]["status"] == "partial"
+    assert updates["silver_gold"]["completed"] == 1
+    assert updates["silver_gold"]["total"] == 2
+
+
 @pytest.mark.anyio
 async def test_fetch_active_sync_run_uses_scoped_lookup():
     class FakeConn:
