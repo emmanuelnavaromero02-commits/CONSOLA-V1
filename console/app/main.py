@@ -195,6 +195,9 @@ from app.domains.pipeline.job_payloads import (
     refresh_pipeline_job_payload as _refresh_pipeline_job_payload_impl,
     refresh_pipeline_job_payloads as _refresh_pipeline_job_payloads_impl,
 )
+from app.domains.pipeline.recording import (
+    record_dag_pipeline_trigger as _record_dag_pipeline_trigger_impl,
+)
 from app.domains.pipeline.sync_state import (
     SAP_SUCCESSFACTORS_CARTRIDGE as _SAP_SUCCESSFACTORS_CARTRIDGE,
     SAP_SUCCESSFACTORS_ENTITY_DAG_ID as _SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
@@ -927,79 +930,20 @@ async def _record_dag_pipeline_trigger(
     tenant_id: str | None = None,
     workspace_id: str | None = None,
 ) -> None:
-    if not dag_run_id:
-        return
-
-    pool = await _get_db_pool()
-    scope_columns_present = await _table_has_column(
-        "pipeline_runs", "tenant_id", refresh=True
-    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
-    if (
-        scope_columns_present
-        and cartridge != "platform"
-        and not (tenant_id and workspace_id)
-    ):
-        raise HTTPException(403, "pipeline run tenant/workspace scope is required")
-    has_scope = tenant_id and workspace_id and scope_columns_present
-    extra = json.dumps({"raw_conf": conf, "triggered_by": "console"})
-    if has_scope:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('app.tenant_id', $1, true), "
-                    "set_config('app.workspace_id', $2, true)",
-                    tenant_id,
-                    workspace_id,
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO pipeline_runs (
-                        run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                        mode, status, started_at, extra, tenant_id, workspace_id
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb, $9::uuid, $10::uuid)
-                    ON CONFLICT (run_id) DO UPDATE SET
-                        airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                        mode = EXCLUDED.mode,
-                        status = EXCLUDED.status,
-                        tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
-                        workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                        extra = pipeline_runs.extra || EXCLUDED.extra
-                    """,
-                    dag_run_id,
-                    dag_id,
-                    cartridge,
-                    entity,
-                    dag_run_id,
-                    mode,
-                    _normalize_airflow_state(status),
-                    extra,
-                    tenant_id,
-                    workspace_id,
-                )
-    else:
-        await pool.execute(
-            """
-            INSERT INTO pipeline_runs (
-                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                mode, status, started_at, extra
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
-            ON CONFLICT (run_id) DO UPDATE SET
-                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                mode = EXCLUDED.mode,
-                status = EXCLUDED.status,
-                extra = pipeline_runs.extra || EXCLUDED.extra
-            """,
-            dag_run_id,
-            dag_id,
-            cartridge,
-            entity,
-            dag_run_id,
-            mode,
-            _normalize_airflow_state(status),
-            extra,
-        )
+    await _record_dag_pipeline_trigger_impl(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        mode=mode,
+        status=status,
+        conf=conf,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        get_db_pool=_get_db_pool,
+        table_has_column=_table_has_column,
+        normalize_airflow_state=_normalize_airflow_state,
+    )
 
 
 async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
