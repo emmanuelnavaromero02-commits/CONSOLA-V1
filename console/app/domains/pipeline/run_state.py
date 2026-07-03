@@ -129,6 +129,54 @@ def pipeline_gold_dependencies_for_silver(
     return deps
 
 
+def pipeline_silver_gold_nodes(
+    *,
+    source: str,
+    silver_by_source: dict[str, list[dict]],
+    gold_datasets: list[dict],
+    failed: bool,
+    cartridge: str,
+    now: datetime | None = None,
+) -> tuple[list[dict], list[dict]]:
+    silver_nodes: list[dict] = []
+    gold_nodes: list[dict] = []
+    for dataset in silver_by_source.get(source, []):
+        silver_nodes.append(
+            {
+                "name": dataset["name"],
+                "layer": dataset.get("layer", "silver"),
+                "row_count": dataset.get("row_count"),
+                "last_refresh": dataset.get("last_refresh"),
+                "status": pipeline_dataset_status(
+                    dataset,
+                    failed=failed,
+                    threshold_h=24,
+                    now=now,
+                ),
+            }
+        )
+        for gold_dataset in pipeline_gold_dependencies_for_silver(
+            dataset["name"], gold_datasets, cartridge=cartridge
+        ):
+            if any(node["name"] == gold_dataset["name"] for node in gold_nodes):
+                continue
+            gold_nodes.append(
+                {
+                    "name": gold_dataset["name"],
+                    "layer": "gold",
+                    "row_count": gold_dataset.get("row_count"),
+                    "last_refresh": gold_dataset.get("last_refresh"),
+                    "status": pipeline_dataset_status(
+                        gold_dataset,
+                        failed=failed,
+                        threshold_h=24,
+                        now=now,
+                    ),
+                }
+            )
+    return silver_nodes, gold_nodes
+
+
 def pipeline_jobs_by_entity(jobs: list[dict]) -> dict[str, dict]:
     by_entity: dict[str, dict] = {}
     for job in jobs:

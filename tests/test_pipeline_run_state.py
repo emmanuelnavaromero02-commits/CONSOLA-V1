@@ -112,8 +112,14 @@ def test_pipeline_dataset_status_prioritizes_failed_and_empty():
 
 
 def test_pipeline_silver_and_gold_dependency_helpers():
+    now = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
     silver = [
-        {"name": "employee_profile", "sources": ["raw/sap/User", "raw/sap/EmpJob"]},
+        {
+            "name": "employee_profile",
+            "sources": ["raw/sap/User", "raw/sap/EmpJob"],
+            "row_count": 10,
+            "last_refresh": "2026-07-03T11:00:00+00:00",
+        },
         {"name": "empty", "sources": []},
     ]
     gold = [
@@ -121,11 +127,15 @@ def test_pipeline_silver_and_gold_dependency_helpers():
             "name": "talent_profile",
             "sql": "select * from silver_employee_profile",
             "sources": [],
+            "row_count": 5,
+            "last_refresh": "2026-07-03T11:00:00+00:00",
         },
         {
             "name": "talent_signals",
             "sql": "",
             "sources": ["silver/sap_successfactors/employee_profile"],
+            "row_count": 0,
+            "last_refresh": "2026-07-03T11:00:00+00:00",
         },
         {"name": "other", "sql": "select 1", "sources": ["silver/other/employee_profile"]},
     ]
@@ -135,6 +145,39 @@ def test_pipeline_silver_and_gold_dependency_helpers():
     assert run_state.pipeline_gold_dependencies_for_silver(
         "employee_profile", gold, cartridge="sap_successfactors"
     ) == [gold[0], gold[1]]
+    silver_nodes, gold_nodes = run_state.pipeline_silver_gold_nodes(
+        source="raw/sap/User",
+        silver_by_source=by_source,
+        gold_datasets=gold,
+        failed=False,
+        cartridge="sap_successfactors",
+        now=now,
+    )
+    assert silver_nodes == [
+        {
+            "name": "employee_profile",
+            "layer": "silver",
+            "row_count": 10,
+            "last_refresh": "2026-07-03T11:00:00+00:00",
+            "status": "fresh",
+        }
+    ]
+    assert gold_nodes == [
+        {
+            "name": "talent_profile",
+            "layer": "gold",
+            "row_count": 5,
+            "last_refresh": "2026-07-03T11:00:00+00:00",
+            "status": "fresh",
+        },
+        {
+            "name": "talent_signals",
+            "layer": "gold",
+            "row_count": 0,
+            "last_refresh": "2026-07-03T11:00:00+00:00",
+            "status": "empty",
+        },
+    ]
 
 
 def test_pipeline_jobs_by_entity_keeps_first_job_per_entity():

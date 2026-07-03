@@ -144,14 +144,13 @@ from app.domains.pipeline.run_state import (
     pipeline_airflow_last_run_info as _pipeline_airflow_last_run_info,
     pipeline_bronze_last_run_info as _pipeline_bronze_last_run_info,
     pipeline_bronze_status as _pipeline_bronze_status,
-    pipeline_dataset_status as _pipeline_dataset_status,
     parse_iso_datetime as _parse_iso_datetime,
-    pipeline_gold_dependencies_for_silver as _pipeline_gold_dependencies_for_silver,
     pipeline_is_zero_count as _pipeline_is_zero_count,
     pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
     pipeline_job_last_run_info as _pipeline_job_last_run_info,
     pipeline_legacy_last_job as _pipeline_legacy_last_job,
     pipeline_run_extra as _pipeline_run_extra,
+    pipeline_silver_gold_nodes as _pipeline_silver_gold_nodes,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
 from app.domains.pipeline.concurrency import (
@@ -4698,34 +4697,13 @@ async def api_pipeline(
         is_failed = (dag_run and dag_run["status"] == "failed") or (
             last_job and last_job.get("status") == "failed"
         )
-        silver_nodes = []
-        gold_nodes = []
-        for ds in silver_by_source.get(source, []):
-            s_status = _pipeline_dataset_status(ds, failed=is_failed, threshold_h=24)
-            silver_nodes.append(
-                {
-                    "name": ds["name"],
-                    "layer": ds.get("layer", "silver"),
-                    "row_count": ds.get("row_count"),
-                    "last_refresh": ds.get("last_refresh"),
-                    "status": s_status,
-                }
-            )
-            for gds in _pipeline_gold_dependencies_for_silver(
-                ds["name"], gold_ds, cartridge=cartridge
-            ):
-                if not any(g["name"] == gds["name"] for g in gold_nodes):
-                    gold_nodes.append(
-                        {
-                            "name": gds["name"],
-                            "layer": "gold",
-                            "row_count": gds.get("row_count"),
-                            "last_refresh": gds.get("last_refresh"),
-                            "status": _pipeline_dataset_status(
-                                gds, failed=is_failed, threshold_h=24
-                            ),
-                        }
-                    )
+        silver_nodes, gold_nodes = _pipeline_silver_gold_nodes(
+            source=source,
+            silver_by_source=silver_by_source,
+            gold_datasets=gold_ds,
+            failed=bool(is_failed),
+            cartridge=cartridge,
+        )
 
         entity_partial = sorted(partial_reasons.get(entity, set()))
         rows.append(
