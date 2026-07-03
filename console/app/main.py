@@ -6016,16 +6016,16 @@ def _pipeline_extract_all_mode_target(body: dict[str, Any]) -> tuple[str, str]:
 def _pipeline_extract_all_run_id(
     *, cartridge: str, mode: str, target: str, conn_id: str | None, body: dict[str, Any]
 ) -> str:
-    provided = body.get("idempotency_key") or body.get("request_id")
-    if provided is not None:
-        key = str(provided).strip()
-        if not key:
-            raise HTTPException(400, detail="invalid idempotency_key")
-        if len(key) > 160:
-            raise HTTPException(400, detail="idempotency_key is too long")
-        material = f"{cartridge}:{mode}:{target}:{conn_id or '__default__'}:{key}"
-        return f"extract_all:{cartridge}:{uuid.uuid5(uuid.NAMESPACE_URL, material).hex}"
-    return f"extract_all:{cartridge}:{uuid.uuid4().hex}"
+    try:
+        return _sync_progress.extract_all_run_id(
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            idempotency_key=body.get("idempotency_key") or body.get("request_id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
 
 def _pipeline_extract_all_public_response(result: dict[str, Any]) -> dict[str, Any]:

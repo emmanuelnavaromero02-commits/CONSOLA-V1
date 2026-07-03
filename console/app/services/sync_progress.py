@@ -252,6 +252,25 @@ def normalize_sync_now_request_id(value: object | None) -> str | None:
     return request_id
 
 
+def extract_all_run_id(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    idempotency_key: object | None,
+) -> str:
+    if idempotency_key is not None:
+        key = str(idempotency_key).strip()
+        if not key:
+            raise ValueError("invalid idempotency_key")
+        if len(key) > 160:
+            raise ValueError("idempotency_key is too long")
+        material = f"{cartridge}:{mode}:{target}:{conn_id or '__default__'}:{key}"
+        return f"extract_all:{cartridge}:{uuid.uuid5(uuid.NAMESPACE_URL, material).hex}"
+    return f"extract_all:{cartridge}:{uuid.uuid4().hex}"
+
+
 def sync_now_run_id_from_request_id(
     *, cartridge: str, request_id: str | None, lock_key: str
 ) -> str:

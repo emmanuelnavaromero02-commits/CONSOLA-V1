@@ -276,6 +276,59 @@ def test_normalize_sync_now_request_id_accepts_safe_ids_and_rejects_bad_ones():
             raise AssertionError(f"{bad!r} should have been rejected")
 
 
+def test_extract_all_run_id_is_stable_with_idempotency_key_and_random_without_one():
+    first = sync_progress.extract_all_run_id(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        idempotency_key="manual-1",
+    )
+    second = sync_progress.extract_all_run_id(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        idempotency_key="manual-1",
+    )
+    random_one = sync_progress.extract_all_run_id(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        idempotency_key=None,
+    )
+    random_two = sync_progress.extract_all_run_id(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        idempotency_key=None,
+    )
+
+    assert first == second
+    assert first.startswith("extract_all:sap_successfactors:")
+    assert random_one.startswith("extract_all:sap_successfactors:")
+    assert random_two.startswith("extract_all:sap_successfactors:")
+    assert random_one != random_two
+
+
+def test_extract_all_run_id_rejects_bad_idempotency_keys():
+    for bad, message in (("", "invalid idempotency_key"), ("x" * 161, "too long")):
+        try:
+            sync_progress.extract_all_run_id(
+                cartridge="sap_successfactors",
+                mode="incremental",
+                target="all",
+                conn_id=None,
+                idempotency_key=bad,
+            )
+        except ValueError as exc:
+            assert message in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError(f"{bad!r} should have been rejected")
+
+
 def test_sync_now_run_id_from_request_id_is_stable():
     first = sync_progress.sync_now_run_id_from_request_id(
         cartridge="sap_successfactors",
