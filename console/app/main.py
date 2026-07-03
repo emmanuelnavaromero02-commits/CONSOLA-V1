@@ -36,6 +36,40 @@ from app.logging_config import _redact, setup_logging  # noqa: E402
 setup_logging(service_name="console")
 
 import httpx
+from app.domains.data_platform.schema_payloads import (
+    dataset_detail_columns as _dataset_detail_columns,
+    empty_partitions as _empty_partitions,
+    empty_preview as _empty_preview,
+    normalize_dataset_detail as _normalize_dataset_detail,
+    preview_has_columns as _preview_has_columns,
+    schema_error as _schema_error,
+    schema_message as _schema_message,
+    schema_payload_warnings as _schema_payload_warnings,
+    schema_status as _schema_status,
+)
+from app.domains.data_platform.semantic_enrichment import (
+    SEMANTIC_WEAK_DESCRIPTIONS as _SEMANTIC_WEAK_DESCRIPTIONS,
+    semantic_build_column_description as _semantic_build_column_description,
+    semantic_column_traits as _semantic_column_traits,
+    semantic_description_is_missing as _semantic_description_is_missing,
+    semantic_enrichment_candidates as _semantic_enrichment_candidates,
+    semantic_humanize_identifier as _semantic_humanize_identifier,
+)
+from app.domains.data_platform.source_visibility import (
+    OPERATIONAL_CARTRIDGES as _OPERATIONAL_CARTRIDGES,
+    allowed_cartridges_for_user as _allowed_cartridges_for_user,
+    context_visible_cartridges as _context_visible_cartridges,
+    dataset_source_visible_for_user as _dataset_source_visible_for_user,
+    filter_technical_sources as _filter_technical_sources,
+    is_security_admin_context as _is_security_admin_context,
+    is_workspace_scoped_user as _is_workspace_scoped_user,
+    require_technical_cartridge_access as _require_technical_cartridge_access,
+    require_technical_source_access as _require_technical_source_access,
+    require_workspace_scope_for_technical_view as _require_workspace_scope_for_technical_view,
+    sanitize_dataset_metadata_for_user as _sanitize_dataset_metadata_for_user,
+    sanitize_datasets_payload_for_user as _sanitize_datasets_payload_for_user,
+    user_allowed_cartridges as _user_allowed_cartridges,
+)
 from app.services.db_scope import scoped_db_for_user
 from fastapi import (
     Body,
@@ -450,18 +484,6 @@ def _is_internal_request(request: Request) -> bool:
     if _is_production_env():
         return False
     return secrets.compare_digest(str(supplied), str(INTERNAL_API_KEY))
-
-
-def _is_security_admin_context(ctx: dict) -> bool:
-    role = str(ctx.get("role") or "").lower()
-    if not (bool(ctx.get("trusted")) and role in {ROLE_ADMIN, "owner", "super_admin"}):
-        return False
-    if ctx.get("tenant_id") or ctx.get("workspace_id"):
-        return False
-    allowed = {
-        str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()
-    }
-    return "*" in allowed
 
 
 _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
@@ -3606,231 +3628,6 @@ def _gold_schema_dsn() -> str:
     )
 
 
-def _allowed_cartridges_for_user(user: dict | None) -> set[str] | None:
-    ctx = build_security_context(user)
-    raw = ctx.get("allowed_cartridges") or (user or {}).get("allowed_cartridges") or []
-    allowed = {str(item).strip() for item in raw if str(item).strip()}
-    if "*" in allowed or not allowed:
-        return (
-            None
-            if str((user or {}).get("role") or "").lower()
-            in {"owner", "super_admin", ROLE_ADMIN}
-            else set()
-        )
-    return allowed
-
-
-def _scope_ids_from_user(user: dict | None) -> tuple[str, str]:
-    ctx = build_security_context(user)
-    return (
-        str(ctx.get("tenant_id") or "").strip(),
-        str(ctx.get("workspace_id") or "").strip(),
-    )
-
-
-def _is_workspace_scoped_user(user: dict | None) -> bool:
-    tenant_id, workspace_id = _scope_ids_from_user(user)
-    return bool(tenant_id and workspace_id)
-
-
-def _user_allowed_cartridges(user: dict | None) -> set[str] | None:
-    ctx = build_security_context(user)
-    if _is_security_admin_context(ctx):
-        return None
-    role = str(ctx.get("role") or (user or {}).get("role") or "").strip().lower()
-    if role in {"owner", "super_admin", ROLE_ADMIN}:
-        return None
-    allowed = {
-        str(c).strip()
-        for c in (ctx.get("allowed_cartridges") or [])
-        if str(c).strip() and str(c).strip() != "*"
-    }
-    return allowed
-
-
-def _context_visible_cartridges(user: dict | None) -> set[str] | None:
-    ctx = build_security_context(user)
-    if _is_security_admin_context(ctx):
-        return None
-    allowed = {
-        str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()
-    }
-    if "*" in allowed:
-        return None
-    if allowed:
-        return allowed
-    if _is_workspace_scoped_user(user):
-        return set()
-    role = str(ctx.get("role") or (user or {}).get("role") or "").strip().lower()
-    if role in {"owner", "super_admin", ROLE_ADMIN}:
-        return None
-    return set()
-
-
-def _require_workspace_scope_for_technical_view(user: dict | None) -> None:
-    if _user_allowed_cartridges(user) is None:
-        return
-    if not _is_workspace_scoped_user(user):
-        raise HTTPException(403, "tenant/workspace scope required")
-
-
-def _cartridge_allowed_for_user(user: dict | None, cartridge_id: str) -> bool:
-    cartridge_id = str(cartridge_id or "").strip()
-    if not cartridge_id:
-        return False
-    allowed = _user_allowed_cartridges(user)
-    return allowed is None or cartridge_id in allowed
-
-
-def _require_technical_cartridge_access(user: dict | None, cartridge_id: str) -> None:
-    if not _cartridge_allowed_for_user(user, cartridge_id):
-        raise HTTPException(403, "cartridge not allowed for active workspace")
-
-
-def _cartridge_from_technical_source(source: str) -> str:
-    value = str(source or "").strip().strip("/")
-    if not value:
-        return ""
-    for prefix in ("raw", "silver", "gold", "uploads", "cartridges"):
-        marker = f"{prefix}/"
-        if value.startswith(marker):
-            parts = value.split("/")
-            return parts[1] if len(parts) > 1 else ""
-    for cartridge in sorted(_OPERATIONAL_CARTRIDGES, key=len, reverse=True):
-        if (
-            value == cartridge
-            or value.startswith(f"{cartridge}/")
-            or value.startswith(f"{cartridge}:")
-            or value.startswith(f"{cartridge}_")
-        ):
-            return cartridge
-    return ""
-
-
-def _technical_source_allowed(user: dict | None, source: str) -> bool:
-    allowed = _user_allowed_cartridges(user)
-    if allowed is None:
-        return True
-    _require_workspace_scope_for_technical_view(user)
-    cartridge = _cartridge_from_technical_source(source)
-    if not cartridge or cartridge not in allowed:
-        return False
-    tenant_id, workspace_id = _scope_ids_from_user(user)
-    parts = str(source or "").strip("/").split("/")
-    tenant_markers = [part for part in parts if part.startswith("tenant_id=")]
-    workspace_markers = [part for part in parts if part.startswith("workspace_id=")]
-    if tenant_markers and any(
-        part != f"tenant_id={tenant_id}" for part in tenant_markers
-    ):
-        return False
-    if workspace_markers and any(
-        part != f"workspace_id={workspace_id}" for part in workspace_markers
-    ):
-        return False
-    if workspace_markers and not tenant_markers:
-        return False
-    return True
-
-
-def _require_technical_source_access(user: dict | None, source: str) -> None:
-    if not _technical_source_allowed(user, source):
-        raise HTTPException(403, "source not allowed for active workspace")
-
-
-def _filter_technical_sources(user: dict | None, sources: list) -> list:
-    return [
-        source
-        for source in sources
-        if isinstance(source, str) and _technical_source_allowed(user, source)
-    ]
-
-
-_TECHNICAL_SOURCE_PREFIXES = ("raw/", "silver/", "gold/", "uploads/", "cartridges/")
-
-
-def _technical_source_from_storage_reference(source: str) -> str | None:
-    value = str(source or "").strip().strip("/")
-    if not value:
-        return None
-    if value.startswith(_TECHNICAL_SOURCE_PREFIXES):
-        return value
-    parsed = urlparse(value)
-    if parsed.scheme:
-        candidate = parsed.path.lstrip("/")
-        if candidate.startswith(_TECHNICAL_SOURCE_PREFIXES):
-            return candidate
-    return None
-
-
-def _dataset_source_visible_for_user(user: dict | None, source: Any) -> bool:
-    if not isinstance(source, str):
-        return False
-    value = source.strip()
-    if not value:
-        return False
-    if _user_allowed_cartridges(user) is None:
-        return True
-    is_physical_reference = "://" in value or "tenant_id=" in value or "workspace_id=" in value
-    candidate = _technical_source_from_storage_reference(value)
-    if candidate is not None:
-        if is_physical_reference:
-            tenant_id, workspace_id = _scope_ids_from_user(user)
-            if (
-                not tenant_id
-                or not workspace_id
-                or f"tenant_id={tenant_id}" not in candidate
-                or f"workspace_id={workspace_id}" not in candidate
-            ):
-                return False
-        try:
-            return _technical_source_allowed(user, candidate)
-        except HTTPException:
-            return False
-    if is_physical_reference:
-        return False
-    return True
-
-
-def _filter_dataset_sources_for_user(user: dict | None, sources: Any) -> list[str]:
-    if not isinstance(sources, list):
-        return []
-    return [
-        source.strip()
-        for source in sources
-        if _dataset_source_visible_for_user(user, source)
-    ]
-
-
-def _sanitize_dataset_metadata_for_user(user: dict | None, dataset: dict) -> dict:
-    sanitized = {**dataset}
-    sanitized["sources"] = _filter_dataset_sources_for_user(
-        user, sanitized.get("sources") or []
-    )
-    metadata = sanitized.get("metadata")
-    if isinstance(metadata, dict):
-        sanitized["metadata"] = {
-            **metadata,
-            "sources": _filter_dataset_sources_for_user(user, metadata.get("sources") or []),
-        }
-    return sanitized
-
-
-def _sanitize_datasets_payload_for_user(user: dict | None, payload: Any) -> Any:
-    if not isinstance(payload, dict):
-        return payload
-    datasets = payload.get("datasets")
-    if not isinstance(datasets, list):
-        return payload
-    return {
-        **payload,
-        "datasets": [
-            _sanitize_dataset_metadata_for_user(user, dataset)
-            for dataset in datasets
-            if isinstance(dataset, dict)
-        ],
-    }
-
-
 def _empty_catalog_payload() -> dict[str, Any]:
     return {"datasets": {}, "relationships": []}
 
@@ -4145,156 +3942,6 @@ async def _gold_schema_payload(source: str, user: dict | None) -> dict:
 async def api_schema(source: str, user: dict = Depends(require_permission("datasets.read"))):
     _require_technical_source_access(user, source)
 
-    def _empty_partitions(status: str | None = None, message: str | None = None) -> dict:
-        payload: dict[str, Any] = {
-            "source": source,
-            "partitions": [],
-            "latest": None,
-            "sql_latest": None,
-        }
-        if status:
-            payload["status"] = status
-        if message:
-            payload["message"] = message
-        return payload
-
-    def _empty_preview(status: str | None = None, message: str | None = None) -> dict:
-        payload: dict[str, Any] = {
-            "source": source,
-            "schema": [],
-            "columns": [],
-            "rows": [],
-            "data": [],
-        }
-        if status:
-            payload["status"] = status
-        if message:
-            payload["message"] = message
-        return payload
-
-    def _schema_error(stage: str, exc: Exception) -> dict:
-        if isinstance(exc, HTTPException):
-            status_code = exc.status_code
-            detail = str(exc.detail or "error leyendo fuente")
-        else:
-            status_code = 502
-            detail = str(exc) or type(exc).__name__
-        lower = detail.lower()
-        if status_code == 404 or any(
-            token in lower
-            for token in (
-                "source_files_missing",
-                "no files found",
-                "not found",
-                "no such key",
-                "does not exist",
-            )
-        ):
-            message = "sin parquet materializado"
-            reason = "source_files_missing"
-        elif status_code == 403 or any(
-            token in lower
-            for token in ("permission", "forbidden", "access denied", "not authorized")
-        ):
-            message = "sin permisos para leer la fuente"
-            reason = "permission_denied"
-        else:
-            message = "error leyendo fuente"
-            reason = "read_error"
-        return {
-            "stage": stage,
-            "status_code": status_code,
-            "reason": reason,
-            "message": message,
-            "detail": detail,
-        }
-
-    def _schema_payload_warnings(stage: str, payload: Any) -> list[dict]:
-        if not isinstance(payload, dict):
-            return []
-        warnings = payload.get("warnings") or []
-        if isinstance(warnings, dict):
-            warnings = [warnings]
-        if not isinstance(warnings, list):
-            warnings = [warnings]
-        normalized: list[dict] = []
-        for warning in warnings:
-            if isinstance(warning, dict):
-                detail = str(
-                    warning.get("detail")
-                    or warning.get("warning")
-                    or warning.get("reason")
-                    or "datos parciales"
-                )
-                reason = str(warning.get("reason") or "partial")
-                message = str(warning.get("message") or "datos parciales")
-                warning_stage = str(warning.get("stage") or stage)
-            else:
-                detail = str(warning or "datos parciales")
-                reason = "partial"
-                message = "datos parciales"
-                warning_stage = stage
-            normalized.append(
-                {
-                    "stage": warning_stage,
-                    "status_code": 200,
-                    "reason": reason,
-                    "message": message,
-                    "detail": _redact(detail) or detail,
-                }
-            )
-        if str(payload.get("status") or "").lower() == "partial" and not normalized:
-            normalized.append(
-                {
-                    "stage": stage,
-                    "status_code": 200,
-                    "reason": "partial",
-                    "message": "datos parciales",
-                    "detail": "La fuente devolvió un resultado parcial.",
-                }
-            )
-        return normalized
-
-    def _preview_has_columns(payload: Any) -> bool:
-        if not isinstance(payload, dict):
-            return False
-        for key in ("columns", "schema"):
-            value = payload.get(key)
-            if isinstance(value, list) and value:
-                return True
-        rows = payload.get("rows") or payload.get("data") or payload.get("result")
-        return isinstance(rows, list) and bool(rows)
-
-    def _schema_status(errors: list[dict], preview: dict) -> str:
-        if not errors:
-            return "ready"
-        hard_stages = {
-            str(error.get("stage") or "")
-            for error in errors
-            if int(error.get("status_code") or 0) >= 400
-        }
-        if {"partitions", "preview"}.issubset(hard_stages):
-            return "error"
-        if "preview" in hard_stages and not _preview_has_columns(preview):
-            return "error"
-        return "partial"
-
-    def _schema_message(status: str, errors: list[dict]) -> str | None:
-        if not errors:
-            return None
-        if status == "error":
-            hard_messages = [
-                str(error.get("message") or "")
-                for error in errors
-                if int(error.get("status_code") or 0) >= 400
-            ]
-            if hard_messages and all(message == hard_messages[0] for message in hard_messages):
-                return hard_messages[0]
-            return hard_messages[0] if hard_messages else "error leyendo fuente"
-        if any(error.get("reason") == "empty_schema" for error in errors):
-            return "sin columnas inferidas"
-        return "datos parciales"
-
     async def load_schema() -> dict:
         if _gold_dataset_from_source(source):
             try:
@@ -4307,8 +3954,8 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
                     "status": "error",
                     "message": error["message"],
                     "errors": [error],
-                    "partitions": _empty_partitions("error", error["message"]),
-                    "preview": _empty_preview("error", error["message"]),
+                    "partitions": _empty_partitions(source, "error", error["message"]),
+                    "preview": _empty_preview(source, "error", error["message"]),
                 }
 
         errors: list[dict] = []
@@ -4322,7 +3969,7 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
         except Exception as exc:
             error = _schema_error("partitions", exc)
             errors.append(error)
-            partitions = _empty_partitions("error", error["message"])
+            partitions = _empty_partitions(source, "error", error["message"])
 
         try:
             preview = await _refinement_invoke(
@@ -4334,7 +3981,7 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
         except Exception as exc:
             error = _schema_error("preview", exc)
             errors.append(error)
-            preview = _empty_preview("error", error["message"])
+            preview = _empty_preview(source, "error", error["message"])
 
         errors.extend(_schema_payload_warnings("partitions", partitions))
         errors.extend(_schema_payload_warnings("preview", preview))
@@ -4413,76 +4060,6 @@ async def api_dataset_save(
     return r.json()
 
 
-def _dataset_detail_columns(schema_payload: dict | None) -> list[dict]:
-    if not isinstance(schema_payload, dict):
-        return []
-    raw = (
-        schema_payload.get("columns")
-        or schema_payload.get("fields")
-        or schema_payload.get("schema")
-        or []
-    )
-    if not isinstance(raw, list):
-        return []
-    columns = []
-    for item in raw:
-        if isinstance(item, dict):
-            name = item.get("name") or item.get("column") or item.get("column_name")
-            columns.append({**item, "name": name} if name else dict(item))
-        elif item:
-            columns.append({"name": str(item)})
-    return columns
-
-
-def _normalize_dataset_detail(
-    definition: dict,
-    schema_payload: dict | None = None,
-    schema_error: str | None = None,
-    user: dict | None = None,
-) -> dict:
-    definition = _sanitize_dataset_metadata_for_user(user, definition)
-    row_count = definition.get("row_count")
-    status = str(definition.get("status") or "").strip().lower()
-    if schema_error:
-        status = "unavailable"
-    elif not status:
-        status = "empty" if row_count == 0 else "ok"
-    sql = definition.get("sql") or definition.get("sql_def") or ""
-    metadata = (
-        definition.get("metadata")
-        if isinstance(definition.get("metadata"), dict)
-        else {}
-    )
-    metadata = {
-        **metadata,
-        "sources": definition.get("sources") or [],
-        "schedule": definition.get("schedule"),
-        "description": definition.get("description") or "",
-        "column_mapping": definition.get("column_mapping") or {},
-    }
-    return {
-        "name": definition.get("name"),
-        "layer": definition.get("layer"),
-        "type": definition.get("type") or definition.get("layer"),
-        "sql": sql,
-        "sql_def": sql,
-        "columns": _dataset_detail_columns(schema_payload),
-        "metadata": metadata,
-        "source_load_date": definition.get("source_load_date"),
-        "source_batch_id": definition.get("source_batch_id"),
-        "status": status,
-        "error": schema_error or definition.get("error"),
-        "row_count": row_count,
-        "cartridge": definition.get("cartridge"),
-        "updated_at": definition.get("updated_at") or definition.get("last_refresh"),
-        "last_refresh": definition.get("last_refresh"),
-        "sources": definition.get("sources") or [],
-        "column_mapping": definition.get("column_mapping") or {},
-        "is_stale": definition.get("is_stale"),
-        "staleness_reason": definition.get("staleness_reason"),
-    }
-
-
 @app.get("/api/datasets/{name}/detail", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_dataset_detail(name: str, user: dict = Depends(require_permission("datasets.read"))):
     definition = await _refinement_invoke(
@@ -4496,7 +4073,13 @@ async def api_dataset_detail(name: str, user: dict = Depends(require_permission(
         )
     except HTTPException as exc:
         schema_error = str(exc.detail or "Dataset schema unavailable")
-    return _normalize_dataset_detail(definition, schema_payload, schema_error, user)
+    return _normalize_dataset_detail(
+        definition,
+        schema_payload,
+        schema_error,
+        user,
+        _sanitize_dataset_metadata_for_user,
+    )
 
 
 @app.post(
@@ -5507,16 +5090,6 @@ async def _installed_scoped_app_cartridges(
     if visible is not None:
         installed &= visible
     return installed
-
-
-_OPERATIONAL_CARTRIDGES = {
-    "hubspot",
-    "replicon",
-    "salesforce",
-    "sap_hcm",
-    "sap_s4hana",
-    "sap_successfactors",
-}
 
 
 async def _resolve_scoped_operation_cartridge(
@@ -11702,186 +11275,6 @@ async def api_semantic(
         raise HTTPException(404, f"Cartridge '{cartridge}' not registered")
     entities = await mcp_registry.invoke(cartridge, "list_entities", {}, user=user)
     return {"cartridge": cartridge, "server": srv, "entities": entities}
-
-
-_SEMANTIC_WEAK_DESCRIPTIONS = {
-    "",
-    "-",
-    "n/a",
-    "na",
-    "none",
-    "null",
-    "pendiente",
-    "sin descripcion",
-    "sin descripción",
-    "sin detalle",
-}
-
-
-def _semantic_humanize_identifier(value: str) -> str:
-    text = str(value or "").strip()
-    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
-    text = re.sub(r"[_\-/]+", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text.lower()
-
-
-def _semantic_description_is_missing(value: Any) -> bool:
-    text = str(value or "").strip()
-    return not text or text.lower() in _SEMANTIC_WEAK_DESCRIPTIONS
-
-
-def _semantic_column_traits(column_name: str, data_type: str | None = None) -> dict[str, Any]:
-    col = str(column_name or "").strip()
-    lowered = _semantic_humanize_identifier(col)
-    words = set(lowered.split())
-    data_type_text = str(data_type or "").strip().lower()
-    is_key = (
-        lowered == "id"
-        or lowered.endswith(" id")
-        or lowered.endswith(" key")
-        or lowered in {"uuid", "entity uuid", "external code"}
-    )
-    is_date = bool(
-        words & {"date", "time", "fecha", "created", "modified", "updated", "at"}
-    ) or any(token in lowered for token in ("datetime", "timestamp"))
-    is_status = any(token in lowered for token in ("status", "state", "estado", "active"))
-    is_amount = any(token in lowered for token in ("amount", "salary", "pay", "cost", "revenue", "valor", "importe"))
-    is_count = any(token in lowered for token in ("count", "total", "qty", "quantity", "filas", "records"))
-    is_score = any(token in lowered for token in ("score", "rating", "percent", "pct", "ratio", "rate", "confidence"))
-    is_metric = is_amount or is_count or is_score or data_type_text in {"int", "integer", "bigint", "float", "double", "decimal", "numeric"}
-    tags = ["semantic_enrichment", "auto_described"]
-    if is_key:
-        tags.append("key")
-    if is_date:
-        tags.append("date")
-    if is_status:
-        tags.append("status")
-    if is_metric:
-        tags.append("metric")
-    return {
-        "label": lowered or col,
-        "is_key": is_key,
-        "is_metric": is_metric,
-        "is_date": is_date,
-        "is_status": is_status,
-        "tags": tags,
-    }
-
-
-def _semantic_build_column_description(
-    *, dataset: str, layer: str | None, column_name: str, data_type: str | None = None
-) -> tuple[str, dict[str, Any]]:
-    traits = _semantic_column_traits(column_name, data_type)
-    dataset_label = _semantic_humanize_identifier(dataset)
-    layer_label = str(layer or "").strip().lower() or "catalogada"
-    column_label = traits["label"]
-    if traits["is_key"]:
-        description = (
-            f"Identificador de {column_label} usado para relacionar registros del dataset "
-            f"{dataset_label} en la capa {layer_label}."
-        )
-    elif traits["is_date"]:
-        description = (
-            f"Fecha o marca temporal asociada a {column_label} dentro del dataset "
-            f"{dataset_label}; se usa para ordenar, filtrar o auditar cambios."
-        )
-    elif traits["is_status"]:
-        description = (
-            f"Estado operativo de {column_label} en {dataset_label}; permite segmentar "
-            "registros activos, cerrados, bloqueados o pendientes segun el origen."
-        )
-    elif traits["is_metric"]:
-        description = (
-            f"Metrica o valor cuantitativo de {column_label} en {dataset_label}; se usa "
-            "para agregaciones, KPIs y analisis operativo."
-        )
-    else:
-        description = (
-            f"Atributo descriptivo de {column_label} proveniente de {dataset_label}; "
-            "aporta contexto de negocio para analisis y busqueda semantica."
-        )
-    return description, traits
-
-
-def _semantic_enrichment_candidates(
-    catalog: dict[str, Any], *, cartridge: str, limit: int
-) -> dict[str, Any]:
-    datasets = catalog.get("datasets") if isinstance(catalog, dict) else {}
-    if not isinstance(datasets, dict):
-        datasets = {}
-
-    scanned_datasets = 0
-    scanned_columns = 0
-    entries: list[dict[str, Any]] = []
-    for dataset_name in sorted(datasets):
-        dataset_meta = datasets.get(dataset_name) or {}
-        if not isinstance(dataset_meta, dict):
-            continue
-        ds_cartridge = str(dataset_meta.get("cartridge") or "").strip()
-        if cartridge and ds_cartridge and ds_cartridge != cartridge:
-            continue
-        scanned_datasets += 1
-        layer = str(dataset_meta.get("layer") or "").strip()
-        columns = dataset_meta.get("columns") or []
-        if not isinstance(columns, list):
-            continue
-        for column in columns:
-            if len(entries) >= limit:
-                break
-            scanned_columns += 1
-            if isinstance(column, str):
-                column_name = column
-                data_type = ""
-                existing_description = ""
-                existing_tags: list[str] = []
-            elif isinstance(column, dict):
-                column_name = str(
-                    column.get("name")
-                    or column.get("column")
-                    or column.get("field")
-                    or column.get("column_name")
-                    or ""
-                ).strip()
-                data_type = str(column.get("type") or column.get("data_type") or "").strip()
-                existing_description = column.get("description")
-                existing_tags = column.get("tags") if isinstance(column.get("tags"), list) else []
-            else:
-                continue
-            if not column_name or not _semantic_description_is_missing(existing_description):
-                continue
-            description, traits = _semantic_build_column_description(
-                dataset=dataset_name,
-                layer=layer,
-                column_name=column_name,
-                data_type=data_type,
-            )
-            tags = sorted(
-                {
-                    *(str(tag) for tag in existing_tags if str(tag).strip()),
-                    *traits["tags"],
-                    f"cartridge:{cartridge}",
-                }
-            )
-            entries.append(
-                {
-                    "dataset": dataset_name,
-                    "column_name": column_name,
-                    "description": description,
-                    "tags": tags,
-                    "is_key": traits["is_key"],
-                    "is_metric": traits["is_metric"],
-                    "cartridge": cartridge,
-                }
-            )
-        if len(entries) >= limit:
-            break
-
-    return {
-        "entries": entries,
-        "scanned_datasets": scanned_datasets,
-        "scanned_columns": scanned_columns,
-    }
 
 
 @app.post(

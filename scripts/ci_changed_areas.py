@@ -236,6 +236,20 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
     root_test_targets = _root_test_targets(files)
     cartridge_test_targets = _cartridge_test_targets(files)
 
+    release_full_stack = compose or _any(
+        files,
+        r"^console/Dockerfile$",
+        r"^console/app/(dependencies\.py|security\.py|config/|middleware/|services/)",
+        r"^refinement/(app|Dockerfile)",
+        r"^vault/(app|Dockerfile)",
+        r"^workspace/(app|Dockerfile)",
+        r"^mcp-infra/(app|Dockerfile)",
+        r"^cartridges/[^/]+/(app|dags|Dockerfile)",
+        r"^infra/airflow/",
+        r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
+        r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
+    )
+
     flags: dict[str, bool | str] = {
         "python": py_file,
         "python_runtime": py_runtime,
@@ -258,21 +272,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         "cartridge_requirement_paths": _cartridge_requirement_paths(files),
         "build_matrix": build_matrix,
         "has_build_matrix": _has_build_matrix(build_matrix),
-        "release_full_stack": e2e
-        or compose
-        or _any(
-            files,
-            r"^console/(app|Dockerfile)",
-            r"^console-next/",
-            r"^refinement/(app|Dockerfile)",
-            r"^vault/(app|Dockerfile)",
-            r"^workspace/(app|Dockerfile)",
-            r"^mcp-infra/(app|Dockerfile)",
-            r"^cartridges/[^/]+/(app|dags|Dockerfile)",
-            r"^infra/airflow/",
-            r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
-            r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
-        ),
+        "release_full_stack": release_full_stack,
     }
     bool_flags = {k: v for k, v in flags.items() if isinstance(v, bool)}
     _all_true_for_schedule(bool_flags)

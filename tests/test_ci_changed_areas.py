@@ -78,3 +78,21 @@ def test_dependency_changes_trigger_security_without_full_stack_by_default():
     assert flags["python_deps"] is True
     assert flags["node_deps"] is True
     assert flags["release_full_stack"] is False
+
+
+def test_console_page_route_changes_do_not_trigger_full_stack_release_gate():
+    flags = _flags("console/app/routers/pages.py")
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+
+
+def test_console_main_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags("console/app/main.py")
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["e2e"] is False
+    assert flags["release_full_stack"] is False
