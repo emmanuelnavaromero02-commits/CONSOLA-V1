@@ -133,6 +133,7 @@ from app.services.service_urls import (
 )
 from app.services import request_rate_limits as _request_rate_limits
 from app.services import security_headers as _security_headers
+from app.services import sync_agentops as _sync_agentops
 from app.services import sync_progress as _sync_progress
 from app.services.db_pool import (
     close_main_pool as _close_main_pool,
@@ -6557,7 +6558,7 @@ async def _run_sync_agentops_monitors(
     checked_at_dt = _dt.now(_tz.utc)
     checked_at = checked_at_dt.isoformat()
     sync_fire_at = _dt(1970, 1, 1, tzinfo=_tz.utc)
-    schedule_key = f"sync-now:{uuid.uuid5(uuid.NAMESPACE_URL, sync_run_id)}"
+    schedule_key = _sync_agentops.sync_agentops_schedule_key(sync_run_id)
     if cartridge == "sap_successfactors":
         await _ensure_successfactors_talent_monitor(user)
     agents = await _agents.list_agents(
@@ -6567,15 +6568,7 @@ async def _run_sync_agentops_monitors(
     )
     candidates = _sync_agentops_monitor_candidates(agents)
     if not candidates:
-        return {
-            "status": "partial",
-            "checked_at": checked_at,
-            "total": 0,
-            "completed": 0,
-            "failed": 0,
-            "results": [],
-            "reason": "No hay monitores activos con contrato AgentOps para este cartucho/workspace.",
-        }
+        return _sync_agentops.no_monitor_candidates_payload(checked_at)
 
     results: list[dict[str, Any]] = []
     completed = 0
@@ -6585,14 +6578,7 @@ async def _run_sync_agentops_monitors(
         agent_slug = str(agent_row.get("slug") or agent_id)
         if not agent_id:
             failed += 1
-            results.append(
-                {
-                    "agent_id": "",
-                    "agent_slug": agent_slug,
-                    "status": "failed",
-                    "error": "agent id missing",
-                }
-            )
+            results.append(_sync_agentops.missing_agent_id_result(agent_slug))
             continue
         try:
             agent = await _agent_runtime.load_agent(agent_id, user_context=user)
@@ -6617,19 +6603,15 @@ async def _run_sync_agentops_monitors(
             )
             if reservation.get("duplicate"):
                 status = str(reservation.get("status") or "unknown")
-                if status in {"ok", "skipped"}:
-                    completed += 1
-                elif status in {"error", "cancelled"}:
-                    failed += 1
+                completed_delta, failed_delta = _sync_agentops.duplicate_monitor_counters(status)
+                completed += completed_delta
+                failed += failed_delta
                 results.append(
-                    {
-                        "agent_id": agent_id,
-                        "agent_slug": agent_slug,
-                        "status": "duplicate",
-                        "schedule_status": status,
-                        "run_id": reservation.get("agent_run_id"),
-                        "schedule_run": reservation,
-                    }
+                    _sync_agentops.duplicate_monitor_result(
+                        agent_id=agent_id,
+                        agent_slug=agent_slug,
+                        reservation=reservation,
+                    )
                 )
                 continue
             message = (
@@ -6669,19 +6651,12 @@ async def _run_sync_agentops_monitors(
             )
             completed += 1
             results.append(
-                {
-                    "agent_id": agent_id,
-                    "agent_slug": agent_slug,
-                    "status": "success",
-                    "run_id": result.get("run_id") if isinstance(result, dict) else None,
-                    "schedule_run": reservation,
-                    "reply": str((result or {}).get("reply") or "")[:500]
-                    if isinstance(result, dict)
-                    else "",
-                    "deterministic_monitor": bool(
-                        isinstance(result, dict) and result.get("deterministic_monitor")
-                    ),
-                }
+                _sync_agentops.scheduled_monitor_success_result(
+                    agent_id=agent_id,
+                    agent_slug=agent_slug,
+                    result=result if isinstance(result, dict) else None,
+                    reservation=reservation,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             failed += 1
@@ -6692,31 +6667,22 @@ async def _run_sync_agentops_monitors(
                 exc,
             )
             results.append(
-                {
-                    "agent_id": agent_id,
-                    "agent_slug": agent_slug,
-                    "status": "failed",
-                    "error": f"{type(exc).__name__}: {exc}"[:500],
-                }
+                _sync_agentops.scheduled_monitor_failure_result(
+                    agent_id=agent_id,
+                    agent_slug=agent_slug,
+                    exc=exc,
+                )
             )
 
     total = len(candidates[:12])
-    status = (
-        "success"
-        if completed == total
-        else "partial"
-        if completed or results
-        else "failed"
+    return _sync_agentops.sync_agentops_summary(
+        checked_at=checked_at,
+        sync_run_id=sync_run_id,
+        total=total,
+        completed=completed,
+        failed=failed,
+        results=results,
     )
-    return {
-        "status": status,
-        "checked_at": checked_at,
-        "sync_run_id": sync_run_id,
-        "total": total,
-        "completed": completed,
-        "failed": failed,
-        "results": results,
-    }
 
 
 def _sync_run_needs_final_reconcile(row: dict[str, Any], extra: dict[str, Any]) -> bool:

@@ -63,6 +63,7 @@ CONSOLE_SERVICE_RELEASE_EXCLUDE = (
     r"^console/app/services/service_urls\.py$",
     r"^console/app/services/status_pages\.py$",
     r"^console/app/services/startup_readiness\.py$",
+    r"^console/app/services/sync_agentops\.py$",
     r"^console/app/services/sync_progress\.py$",
     r"^console/app/services/vault_utils\.py$",
 )
