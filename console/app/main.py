@@ -239,6 +239,9 @@ from app.domains.pipeline.extract_config import (
     is_transient_airflow_trigger_error as _is_transient_airflow_trigger_error_impl,
     normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
 )
+from app.domains.studio.cartridge_probe import (
+    probe_microservice as _probe_microservice_impl,
+)
 from app.domains.studio.dag_graph import parse_dag_graph as _parse_dag_graph
 from app.domains.vault.scope import (
     require_vault_scope_visible as _require_vault_scope_visible_impl,
@@ -6357,33 +6360,12 @@ async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:
       - {"status": "degraded",     "reason": ...} — /health OK, credentials missing
       - {"status": "offline",      "reason": ...} — /health unreachable
     """
-    try:
-        async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(f"{base_url}/health")
-    except (httpx.HTTPError, OSError) as exc:
-        return {"status": "offline", "reason": f"/health unreachable: {exc!s}"}
-    if r.status_code >= 500 or not r.is_success:
-        return {"status": "offline", "reason": f"/health HTTP {r.status_code}"}
-
-    # Liveness ok — try the deep check that hits SAP. Anything other than 200
-    # means the service is up but credentials / connectivity are pending.
-    try:
-        async with httpx.AsyncClient(timeout=5, headers=_internal_headers()) as c:
-            deep = await c.get(f"{base_url}/health/{cartridge_id}")
-        if deep.is_success:
-            data = (
-                deep.json()
-                if "application/json" in deep.headers.get("content-type", "")
-                else {}
-            )
-            return {"status": "operational", **(data or {})}
-        try:
-            payload = deep.json()
-        except Exception:
-            payload = {"detail": deep.text[:200]}
-        return {"status": "degraded", "reason": payload}
-    except (httpx.HTTPError, OSError, ValueError) as exc:
-        return {"status": "degraded", "reason": f"deep health unavailable: {exc!s}"}
+    return await _probe_microservice_impl(
+        base_url,
+        cartridge_id,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_internal_headers,
+    )
 
 
 @app.get(
