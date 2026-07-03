@@ -25,6 +25,10 @@ from app.domains.data_platform.semantic_enrichment import (
     semantic_enrichment_limit,
     semantic_enrichment_success_response,
 )
+from app.domains.data_platform.semantic_payloads import (
+    semantic_entities_with_catalog,
+    semantic_manifest_response,
+)
 from app.domains.data_platform.source_visibility import (
     dataset_source_visible_for_user,
     is_security_admin_context,
@@ -142,6 +146,33 @@ def test_semantic_enrichment_candidates_describes_missing_columns():
     assert payload["entries"][0]["dataset"] == "employee_profile"
     assert payload["entries"][0]["column_name"] == "employee_id"
     assert "key" in payload["entries"][0]["tags"]
+
+
+def test_semantic_payload_helpers_merge_manifest_and_gold_catalog_entities():
+    manifest = {
+        "entities": [
+            {"entity": "User", "display_name": "Usuarios"},
+            {"name": "talent_9box", "layer": "gold"},
+        ]
+    }
+    catalog_entities = [
+        {"name": "talent_9box", "layer": "gold"},
+        {"name": "talent_operational_features", "layer": "gold"},
+    ]
+
+    entities = semantic_entities_with_catalog(manifest["entities"], catalog_entities)
+    assert [item.get("entity") or item.get("name") for item in entities] == [
+        "User",
+        "talent_9box",
+        "talent_operational_features",
+    ]
+    response = semantic_manifest_response(
+        cartridge="sap_successfactors",
+        manifest=manifest,
+        catalog_entities=catalog_entities,
+    )
+    assert response["server"] is manifest
+    assert response["entities"] == entities
 
 
 def test_semantic_enrichment_response_helpers_keep_direct_mode_contract():

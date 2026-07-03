@@ -97,6 +97,9 @@ from app.domains.data_platform.semantic_enrichment import (
     semantic_enrichment_limit as _semantic_enrichment_limit,
     semantic_enrichment_success_response as _semantic_enrichment_success_response,
 )
+from app.domains.data_platform.semantic_payloads import (
+    semantic_manifest_response as _semantic_manifest_response,
+)
 from app.domains.data_platform.source_visibility import (
     OPERATIONAL_CARTRIDGES as _OPERATIONAL_CARTRIDGES,
     allowed_cartridges_for_user as _allowed_cartridges_for_user,
@@ -9316,16 +9319,11 @@ async def api_semantic(
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
-        entities = list(manifest.get("entities") or [])
-        existing_names = {
-            str(item.get("entity") or item.get("name") or "").strip()
-            for item in entities
-            if isinstance(item, dict)
-        }
-        for item in await _gold_semantic_entities_from_catalog(cartridge, user):
-            if item["name"] not in existing_names:
-                entities.append(item)
-        return {"cartridge": cartridge, "server": manifest, "entities": entities}
+        return _semantic_manifest_response(
+            cartridge=cartridge,
+            manifest=manifest,
+            catalog_entities=await _gold_semantic_entities_from_catalog(cartridge, user),
+        )
 
     # Fallback: Pattern A — invoke via MCP server
     servers = await mcp_registry.list_servers()
