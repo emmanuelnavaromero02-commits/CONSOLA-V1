@@ -299,6 +299,101 @@ async def test_fetch_sync_run_returns_none_without_row():
     assert row is None
 
 
+@pytest.mark.anyio
+async def test_fetch_sync_child_runs_returns_empty_without_run_ids():
+    async def fail_get_db_pool():
+        raise AssertionError("should not open the database for an empty run list")
+
+    rows = await sync_state.fetch_sync_child_runs(
+        cartridge="sap_successfactors",
+        run_ids=[],
+        user=None,
+        get_db_pool=fail_get_db_pool,
+        pipeline_runs_scope_predicate=None,
+        scoped_db_for_user=None,
+        refresh_dag_run_status=None,
+    )
+
+    assert rows == []
+
+
+@pytest.mark.anyio
+async def test_fetch_sync_child_runs_refreshes_scoped_rows():
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        async def fetch(self, query, *args):
+            self.calls.append((query, args))
+            return [
+                {
+                    "run_id": "entity-run-1",
+                    "airflow_dag_run_id": "airflow-run-1",
+                    "status": "running",
+                },
+                {
+                    "run_id": "entity-run-2",
+                    "airflow_dag_run_id": "airflow-run-2",
+                    "status": "success",
+                },
+            ]
+
+    class FakeScope:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn, "tenant-1", "workspace-1"
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def get_db_pool():
+        return object()
+
+    async def scope_predicate(user, start_index, **kwargs):
+        assert user == {"sub": "user-1"}
+        assert start_index == 3
+        assert kwargs == {"refresh_columns": True}
+        return "AND tenant_id=$3", ["tenant-1"]
+
+    refreshed = []
+
+    async def refresh_dag_run_status(row, user):
+        refreshed.append((row["run_id"], user))
+        return {**row, "status": "refreshed"}
+
+    conn = FakeConn()
+
+    rows = await sync_state.fetch_sync_child_runs(
+        cartridge="sap_successfactors",
+        run_ids=["entity-run-1", "airflow-run-2"],
+        user={"sub": "user-1"},
+        get_db_pool=get_db_pool,
+        pipeline_runs_scope_predicate=scope_predicate,
+        scoped_db_for_user=lambda pool, user: FakeScope(conn),
+        refresh_dag_run_status=refresh_dag_run_status,
+    )
+
+    assert [row["status"] for row in rows] == ["refreshed", "refreshed"]
+    assert refreshed == [
+        ("entity-run-1", {"sub": "user-1"}),
+        ("entity-run-2", {"sub": "user-1"}),
+    ]
+    query, args = conn.calls[0]
+    assert "run_id = ANY($1::text[])" in query
+    assert "airflow_dag_run_id = ANY($1::text[])" in query
+    assert "cartridge_id=$2" in query
+    assert "entity <> '__sync_now__'" in query
+    assert "AND tenant_id=$3" in query
+    assert "ORDER BY started_at ASC" in query
+    assert args == (
+        ["entity-run-1", "airflow-run-2"],
+        "sap_successfactors",
+        "tenant-1",
+    )
+
+
 def test_sync_state_public_payload_uses_project_terminal_statuses():
     payload = sync_state.sync_public_payload(
         {"run_id": "r1", "status": "partial", "cartridge_id": "sap_successfactors"},

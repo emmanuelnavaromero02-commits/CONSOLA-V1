@@ -293,6 +293,7 @@ from app.domains.pipeline.sync_state import (
     active_extract_run_payload as _active_extract_run_payload,
     airflow_run_id_fragment as _airflow_run_id_fragment,
     fetch_active_sync_run as _fetch_active_sync_run_impl,
+    fetch_sync_child_runs as _fetch_sync_child_runs_impl,
     fetch_sync_run as _fetch_sync_run_impl,
     inactive_sync_run_payload as _inactive_sync_run_payload,
     initial_sync_steps as _initial_sync_steps,
@@ -4451,34 +4452,16 @@ async def _sync_child_runs(
     run_ids: list[str],
     user: dict | None,
 ) -> list[dict[str, Any]]:
-    if not run_ids:
-        return []
-    pool = await _get_db_pool()
-    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
-        user, 3, refresh_columns=True
+    return await _fetch_sync_child_runs_impl(
+        cartridge=cartridge,
+        run_ids=run_ids,
+        user=user,
+        get_db_pool=_get_db_pool,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        scoped_db_for_user=scoped_db_for_user,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        sync_now_entity=_SYNC_NOW_ENTITY,
     )
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        rows = await conn.fetch(
-            f"""
-            SELECT *
-              FROM pipeline_runs
-             WHERE (
-                    run_id = ANY($1::text[])
-                 OR airflow_dag_run_id = ANY($1::text[])
-               )
-               AND cartridge_id=$2
-               AND entity <> '{_SYNC_NOW_ENTITY}'
-               {scope_sql}
-             ORDER BY started_at ASC
-            """,
-            run_ids,
-            cartridge,
-            *scope_values,
-        )
-    refreshed: list[dict[str, Any]] = []
-    for row in rows:
-        refreshed.append(await _refresh_dag_run_status(dict(row), user))
-    return refreshed
 
 
 def _sync_gold_refresh_airflow_run_id(

@@ -268,6 +268,47 @@ async def fetch_sync_run(
     return dict(row) if row else None
 
 
+async def fetch_sync_child_runs(
+    *,
+    cartridge: str,
+    run_ids: list[str],
+    user: dict[str, Any] | None,
+    get_db_pool: Any,
+    pipeline_runs_scope_predicate: Any,
+    scoped_db_for_user: Any,
+    refresh_dag_run_status: Any,
+    sync_now_entity: str = SYNC_NOW_ENTITY,
+) -> list[dict[str, Any]]:
+    if not run_ids:
+        return []
+    pool = await get_db_pool()
+    scope_sql, scope_values = await pipeline_runs_scope_predicate(
+        user, 3, refresh_columns=True
+    )
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        rows = await conn.fetch(
+            f"""
+            SELECT *
+              FROM pipeline_runs
+             WHERE (
+                    run_id = ANY($1::text[])
+                 OR airflow_dag_run_id = ANY($1::text[])
+               )
+               AND cartridge_id=$2
+               AND entity <> '{sync_now_entity}'
+               {scope_sql}
+             ORDER BY started_at ASC
+            """,
+            run_ids,
+            cartridge,
+            *scope_values,
+        )
+    refreshed: list[dict[str, Any]] = []
+    for row in rows:
+        refreshed.append(await refresh_dag_run_status(dict(row), user))
+    return refreshed
+
+
 def normalize_sync_step_payload(step: dict[str, Any]) -> dict[str, Any]:
     return sync_progress.normalize_sync_step_payload(
         step,
