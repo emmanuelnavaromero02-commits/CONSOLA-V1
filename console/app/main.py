@@ -324,6 +324,9 @@ from app.domains.pipeline.concurrency import (
 from app.domains.pipeline.agentops_refresh import (
     run_sync_agentops_monitors as _run_sync_agentops_monitors_impl,
 )
+from app.domains.pipeline.control_room_refresh import (
+    run_sync_control_room_gold_refresh as _run_sync_control_room_gold_refresh_impl,
+)
 from app.domains.pipeline.airflow_trigger import (
     trigger_airflow_extract_dag as _trigger_airflow_extract_dag_impl,
 )
@@ -4560,54 +4563,16 @@ async def _run_sync_control_room_gold_refresh(
     gold_refresh_summary: dict[str, Any],
     user: dict | None,
 ) -> dict[str, Any]:
-    from datetime import datetime as _dt, timezone as _tz
-
-    checked_at = _dt.now(_tz.utc).isoformat()
-    datasets = _sync_gold_refresh_dataset_names(gold_refresh_summary)
-    if not datasets:
-        return _sync_control_room.gold_refresh_skipped_payload(checked_at)
-    ctx = build_security_context(user)
-    tenant_id = str(
-        ctx.get("tenant_id") or ctx.get("active_tenant_id") or ""
-    ).strip()
-    workspace_id = str(
-        ctx.get("workspace_id") or ctx.get("active_workspace_id") or ""
-    ).strip()
-    if not tenant_id or not workspace_id:
-        return _sync_control_room.gold_refresh_missing_scope_payload(
-            checked_at=checked_at,
-            datasets=datasets,
-        )
-    airflow_dag_run_id = _sync_gold_refresh_airflow_run_id(row, child_rows)
-    run_ref = _sync_control_room.gold_refresh_run_ref(
-        workspace_id=workspace_id,
+    return await _run_sync_control_room_gold_refresh_impl(
         cartridge=cartridge,
-        airflow_dag_run_id=airflow_dag_run_id,
-    )
-    payload = _sync_control_room.gold_refresh_intelligence_payload(
-        cartridge=cartridge,
-        datasets=datasets,
         row=row,
-        airflow_dag_run_id=airflow_dag_run_id,
-        run_ref=run_ref,
+        child_rows=child_rows,
         gold_refresh_summary=gold_refresh_summary,
-    )
-    try:
-        from app.services import intelligence_engine
-
-        result = await intelligence_engine.run_intelligence(user, payload, persist=True)
-    except Exception as exc:  # noqa: BLE001
-        return _sync_control_room.gold_refresh_error_payload(
-            checked_at=checked_at,
-            run_ref=run_ref,
-            datasets=datasets,
-            exc=exc,
-        )
-    return _sync_control_room.gold_refresh_result_payload(
-        checked_at=checked_at,
-        run_ref=run_ref,
-        datasets=datasets,
-        result=result if isinstance(result, dict) else None,
+        user=user,
+        build_security_context=build_security_context,
+        sync_gold_refresh_dataset_names=_sync_gold_refresh_dataset_names,
+        sync_gold_refresh_airflow_run_id=_sync_gold_refresh_airflow_run_id,
+        sync_control_room=_sync_control_room,
     )
 
 
