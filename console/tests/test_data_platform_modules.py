@@ -4,6 +4,12 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key,
     catalog_query_args,
 )
+from app.domains.data_platform.data_api_payloads import (
+    data_api_columns_param,
+    data_api_invalid_column,
+    data_api_options_response,
+    data_api_options_sql,
+)
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns,
     empty_partitions,
@@ -119,6 +125,30 @@ def test_catalog_payload_helpers_build_stable_filter_args():
         "datasets": ["employee_profile", "talent_9box"],
     }
     assert catalog_cache_key({"b": 1, "a": 2}) == '{"a": 2, "b": 1}'
+
+
+def test_data_api_payload_helpers_preserve_options_contract():
+    columns = data_api_columns_param(" revenue_manager, ,cliente ")
+    assert columns == ["revenue_manager", "cliente"]
+    assert data_api_columns_param("") == []
+    assert data_api_invalid_column(["good_column", "bad column"]) == "bad column"
+    assert data_api_invalid_column(["good_column"]) is None
+    assert data_api_options_sql("gold_sales", columns) == (
+        "SELECT DISTINCT revenue_manager AS val, 'revenue_manager' AS col "
+        "FROM pggold.gold_gold_sales WHERE revenue_manager IS NOT NULL UNION ALL "
+        "SELECT DISTINCT cliente AS val, 'cliente' AS col "
+        "FROM pggold.gold_gold_sales WHERE cliente IS NOT NULL ORDER BY col, val"
+    )
+    assert data_api_options_response(columns, []) == []
+    assert data_api_options_response(
+        columns,
+        [
+            {"col": "revenue_manager", "val": "Ana"},
+            {"col": "cliente", "val": 123},
+            {"col": "ignored", "val": "x"},
+            {"col": "cliente", "val": None},
+        ],
+    ) == {"revenue_manager": ["Ana"], "cliente": ["123"]}
 
 
 def test_semantic_enrichment_candidates_describes_missing_columns():

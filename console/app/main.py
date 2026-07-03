@@ -60,6 +60,12 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
 )
+from app.domains.data_platform.data_api_payloads import (
+    data_api_columns_param as _data_api_columns_param,
+    data_api_invalid_column as _data_api_invalid_column,
+    data_api_options_response as _data_api_options_response,
+    data_api_options_sql as _data_api_options_sql,
+)
 from app.domains.data_platform.schema_payloads import (
     dataset_detail_columns as _dataset_detail_columns,
     empty_partitions as _empty_partitions,
@@ -4379,24 +4385,17 @@ async def api_data_options(
 ):
     """Return distinct values per column for building filter selectors."""
     _validate_dataset_name(dataset)
-    cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
+    cols = _data_api_columns_param(columns)
     if not cols:
         raise HTTPException(
             400, "columns param required, e.g. ?columns=revenue_manager,cliente"
         )
 
-    # Validate column names (alphanumeric + underscore only)
-    import re as _re
+    invalid_col = _data_api_invalid_column(cols)
+    if invalid_col:
+        raise HTTPException(400, f"Invalid column name: {invalid_col}")
 
-    for col in cols:
-        if not _re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col):
-            raise HTTPException(400, f"Invalid column name: {col}")
-
-    sqls = [
-        f"SELECT DISTINCT {col} AS val, '{col}' AS col FROM pggold.gold_{dataset} WHERE {col} IS NOT NULL"
-        for col in cols
-    ]
-    union_sql = " UNION ALL ".join(sqls) + f" ORDER BY col, val"
+    union_sql = _data_api_options_sql(dataset, cols)
 
     try:
         async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
@@ -4426,17 +4425,7 @@ async def api_data_options(
         raise HTTPException(500, "Options backend failed")
     if not isinstance(result, dict):
         raise HTTPException(500, "Options backend returned invalid payload")
-    rows = result.get("data", [])
-    if not rows:
-        return []
-
-    # Group by column name
-    options: dict = {col: [] for col in cols}
-    for row in rows:
-        col_key = row.get("col")
-        if col_key in options and row.get("val") is not None:
-            options[col_key].append(str(row["val"]))
-    return options
+    return _data_api_options_response(cols, result.get("data", []))
 
 
 @app.post("/api/data/{dataset}/query", dependencies=[Depends(require_permission("datasets.read"))])
