@@ -112,3 +112,18 @@ def test_console_service_url_helper_refactor_does_not_trigger_full_stack_release
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
     assert flags["root_test_targets"] == "tests/test_service_urls.py"
+
+
+def test_console_status_page_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/status_pages.py",
+        "console/app/main.py",
+        "tests/test_status_pages.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_status_pages.py"
