@@ -134,6 +134,7 @@ from app.services.service_urls import (
 from app.services import request_rate_limits as _request_rate_limits
 from app.services import security_headers as _security_headers
 from app.services import sync_agentops as _sync_agentops
+from app.services import sync_control_room as _sync_control_room
 from app.services import sync_progress as _sync_progress
 from app.services.db_pool import (
     close_main_pool as _close_main_pool,
@@ -6884,15 +6885,11 @@ def _sync_gold_refresh_airflow_run_id(
     row: dict[str, Any],
     child_rows: list[dict[str, Any]],
 ) -> str:
-    for item in child_rows:
-        if str(item.get("entity") or "") != _SYNC_AGGREGATE_ENTITY:
-            continue
-        value = str(
-            item.get("airflow_dag_run_id") or item.get("run_id") or ""
-        ).strip()
-        if value:
-            return value
-    return str(row.get("run_id") or "").strip() or "sync-now"
+    return _sync_control_room.gold_refresh_airflow_run_id(
+        row,
+        child_rows,
+        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
+    )
 
 
 def _sync_control_room_gold_refresh_terminal(payload: Any) -> bool:
@@ -6912,12 +6909,7 @@ async def _run_sync_control_room_gold_refresh(
     checked_at = _dt.now(_tz.utc).isoformat()
     datasets = _sync_gold_refresh_dataset_names(gold_refresh_summary)
     if not datasets:
-        return {
-            "status": "skipped",
-            "checked_at": checked_at,
-            "reason": "No Gold datasets were materialized successfully.",
-            "datasets": [],
-        }
+        return _sync_control_room.gold_refresh_skipped_payload(checked_at)
     ctx = build_security_context(user)
     tenant_id = str(
         ctx.get("tenant_id") or ctx.get("active_tenant_id") or ""
@@ -6926,66 +6918,41 @@ async def _run_sync_control_room_gold_refresh(
         ctx.get("workspace_id") or ctx.get("active_workspace_id") or ""
     ).strip()
     if not tenant_id or not workspace_id:
-        return {
-            "status": "failed",
-            "checked_at": checked_at,
-            "reason": "Missing tenant/workspace scope for Control Room Gold refresh.",
-            "datasets": datasets,
-        }
+        return _sync_control_room.gold_refresh_missing_scope_payload(
+            checked_at=checked_at,
+            datasets=datasets,
+        )
     airflow_dag_run_id = _sync_gold_refresh_airflow_run_id(row, child_rows)
-    run_ref = f"gold-refresh:{workspace_id}:{cartridge}:{airflow_dag_run_id}"
-    payload = {
-        "cartridge_id": cartridge,
-        "datasets": datasets,
-        "include_external": False,
-        "dry_run": False,
-        "run_mode": "gold_refresh",
-        "run_ref": run_ref,
-        "horizon_days": [7, 21],
-        "metadata": {
-            "trigger": "sync_now_gold_refresh",
-            "pipeline_run_id": row.get("run_id"),
-            "airflow_dag_run_id": airflow_dag_run_id,
-            "materialization_status": gold_refresh_summary.get("status") or "partial",
-            "datasets_received": datasets,
-            "finished_at": row.get("finished_at").isoformat()
-            if hasattr(row.get("finished_at"), "isoformat")
-            else row.get("finished_at"),
-        },
-    }
+    run_ref = _sync_control_room.gold_refresh_run_ref(
+        workspace_id=workspace_id,
+        cartridge=cartridge,
+        airflow_dag_run_id=airflow_dag_run_id,
+    )
+    payload = _sync_control_room.gold_refresh_intelligence_payload(
+        cartridge=cartridge,
+        datasets=datasets,
+        row=row,
+        airflow_dag_run_id=airflow_dag_run_id,
+        run_ref=run_ref,
+        gold_refresh_summary=gold_refresh_summary,
+    )
     try:
         from app.services import intelligence_engine
 
         result = await intelligence_engine.run_intelligence(user, payload, persist=True)
     except Exception as exc:  # noqa: BLE001
-        return {
-            "status": "failed",
-            "checked_at": checked_at,
-            "ok": False,
-            "run_ref": run_ref,
-            "datasets": datasets,
-            "error": f"{type(exc).__name__}: {exc}"[:500],
-        }
-    result_payload = result if isinstance(result, dict) else {}
-    signals = len(result_payload.get("signals") or [])
-    skipped = len(result_payload.get("skipped") or [])
-    engine_status = str(result_payload.get("status") or "").strip().lower()
-    public_status = engine_status or ("completed" if signals else "not_ready")
-    return {
-        "status": "success" if public_status in {"completed", "success"} else "partial",
-        "checked_at": checked_at,
-        "ok": True,
-        "run_ref": result_payload.get("run_ref") or run_ref,
-        "intelligence_run_id": result_payload.get("intelligence_run_id"),
-        "engine_status": public_status,
-        "idempotent": bool(result_payload.get("idempotent")),
-        "signals": signals,
-        "skipped": skipped,
-        "dataset_unavailable_count": result_payload.get("dataset_unavailable_count", 0),
-        "insufficient_history_count": result_payload.get("insufficient_history_count", 0),
-        "skipped_counts": result_payload.get("skipped_counts") or {},
-        "datasets": datasets,
-    }
+        return _sync_control_room.gold_refresh_error_payload(
+            checked_at=checked_at,
+            run_ref=run_ref,
+            datasets=datasets,
+            exc=exc,
+        )
+    return _sync_control_room.gold_refresh_result_payload(
+        checked_at=checked_at,
+        run_ref=run_ref,
+        datasets=datasets,
+        result=result if isinstance(result, dict) else None,
+    )
 
 
 async def _build_sync_run_status(
