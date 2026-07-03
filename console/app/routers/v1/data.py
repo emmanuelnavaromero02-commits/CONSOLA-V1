@@ -571,14 +571,21 @@ async def viewer_lineage(request: Request):
 # /api/semantic
 @router.get("/api/semantic", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_semantic(cartridge: str = "replicon", user: dict = Depends(require_permission("datasets.read"))):
+async def api_semantic(cartridge: str = "", user: dict = Depends(require_permission("datasets.read"))):
     from app.services import cartridge_service as _cs
-    _require_cartridge_visible(user, cartridge)
+    cartridge, _active = await _resolve_scoped_operation_cartridge(
+        user,
+        cartridge,
+        fallback="sap_successfactors",
+    )
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
-        entities = manifest.get("entities") or []
-        return {"cartridge": cartridge, "server": manifest, "entities": entities}
+        return _semantic_manifest_response(
+            cartridge=cartridge,
+            manifest=manifest,
+            catalog_entities=await _gold_semantic_entities_from_catalog(cartridge, user),
+        )
 
     # Fallback: Pattern A — invoke via MCP server
     servers = await mcp_registry.list_servers()
