@@ -4,6 +4,7 @@ import pytest
 
 from app.domains.pipeline.control_room_refresh import (
     run_sync_control_room_gold_refresh,
+    run_sync_control_room_status,
 )
 from app.services import sync_control_room
 
@@ -91,3 +92,82 @@ async def test_control_room_gold_refresh_persists_intelligence_payload():
             },
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_control_room_status_marks_successfactors_ready_with_kpis():
+    class FakeControlRoomService:
+        async def dashboard(self, user, persist=False):
+            assert user == {"sub": "user-1"}
+            assert persist is True
+            return {
+                "meta": {"source_count": 1, "item_count": 1},
+                "summary": {"total_items": 1, "data_ready_sources": 1},
+            }
+
+        async def sap_successfactors_gold_kpis(self, user):
+            assert user == {"sub": "user-1"}
+            return {"employee_count": 10}
+
+        async def sap_successfactors_talent_kpis(self, user):
+            assert user == {"sub": "user-1"}
+            return {"readiness_status": "ready"}
+
+    status = await run_sync_control_room_status(
+        cartridge="sap_successfactors",
+        bronze_ready=1,
+        silver_ready=1,
+        gold_ready=1,
+        running_children=False,
+        control_room_gold_refresh={"status": "success"},
+        user={"sub": "user-1"},
+        control_room_service=FakeControlRoomService(),
+    )
+
+    assert status["ready"] is True
+    assert status["checked_at"]
+    assert status["snapshot"]["source_count"] == 1
+    assert status["snapshot"]["item_count"] == 1
+    assert status["update"]["status"] == "success"
+
+
+@pytest.mark.anyio
+async def test_control_room_status_waits_for_successfactors_materialization():
+    status = await run_sync_control_room_status(
+        cartridge="sap_successfactors",
+        bronze_ready=0,
+        silver_ready=0,
+        gold_ready=0,
+        running_children=True,
+        control_room_gold_refresh={},
+        user=None,
+    )
+
+    assert status["ready"] is False
+    assert status["checked_at"]
+    assert status["snapshot"] == {}
+    assert status["update"]["status"] == "queued"
+
+
+@pytest.mark.anyio
+async def test_control_room_status_reports_error_step_safely():
+    class BrokenControlRoomService:
+        async def dashboard(self, *_args, **_kwargs):
+            raise RuntimeError("dashboard offline")
+
+    status = await run_sync_control_room_status(
+        cartridge="sap_successfactors",
+        bronze_ready=1,
+        silver_ready=0,
+        gold_ready=0,
+        running_children=False,
+        control_room_gold_refresh={},
+        user=None,
+        control_room_service=BrokenControlRoomService(),
+    )
+
+    assert status["ready"] is False
+    assert status["checked_at"]
+    assert status["snapshot"] == {}
+    assert status["update"]["status"] == "partial"
+    assert "dashboard offline" in status["update"]["error"]

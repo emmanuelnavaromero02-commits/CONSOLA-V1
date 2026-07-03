@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services import sync_progress
+
 
 async def run_sync_control_room_gold_refresh(
     *,
@@ -66,3 +68,70 @@ async def run_sync_control_room_gold_refresh(
         datasets=datasets,
         result=result if isinstance(result, dict) else None,
     )
+
+
+async def run_sync_control_room_status(
+    *,
+    cartridge: str,
+    bronze_ready: int,
+    silver_ready: int,
+    gold_ready: int,
+    running_children: bool,
+    control_room_gold_refresh: dict[str, Any],
+    user: dict[str, Any] | None,
+    control_room_service: Any | None = None,
+) -> dict[str, Any]:
+    ready = False
+    checked_at: str | None = None
+    snapshot: dict[str, Any] = {}
+    if cartridge == "sap_successfactors" and (bronze_ready or silver_ready or gold_ready):
+        try:
+            if control_room_service is None:
+                from app.services import control_room_service as service
+
+                control_room_service = service
+            dashboard_payload = await control_room_service.dashboard(user, persist=True)
+            gold_kpis = (
+                await control_room_service.sap_successfactors_gold_kpis(user)
+                if gold_ready
+                else {}
+            )
+            talent_kpis = (
+                await control_room_service.sap_successfactors_talent_kpis(user)
+                if gold_ready
+                else {}
+            )
+            checked_at = datetime.now(timezone.utc).isoformat()
+            snapshot = sync_progress.sync_control_room_snapshot(
+                dashboard_payload,
+                control_room_gold_refresh,
+            )
+            publish_failed = (
+                str(control_room_gold_refresh.get("status") or "").lower() == "failed"
+            )
+            ready = bool(gold_ready and gold_kpis and talent_kpis and not publish_failed)
+            update = sync_progress.sync_control_room_step_update(
+                control_room_snapshot=snapshot,
+                control_room_ready=ready,
+                control_room_publish_failed=publish_failed,
+                gold_ready=gold_ready,
+            )
+        except Exception as exc:  # noqa: BLE001
+            checked_at = datetime.now(timezone.utc).isoformat()
+            update = sync_progress.sync_control_room_error_step_update(exc)
+    elif cartridge == "sap_successfactors":
+        checked_at = datetime.now(timezone.utc).isoformat()
+        update = sync_progress.sync_control_room_waiting_step_update(
+            running_children=running_children
+        )
+    else:
+        ready = bool(gold_ready)
+        update = sync_progress.sync_control_room_generic_step_update(
+            gold_ready=gold_ready
+        )
+    return {
+        "ready": ready,
+        "checked_at": checked_at,
+        "snapshot": snapshot,
+        "update": update,
+    }

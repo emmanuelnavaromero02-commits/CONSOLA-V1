@@ -332,6 +332,7 @@ from app.domains.pipeline.agentops_refresh import (
 )
 from app.domains.pipeline.control_room_refresh import (
     run_sync_control_room_gold_refresh as _run_sync_control_room_gold_refresh_impl,
+    run_sync_control_room_status as _run_sync_control_room_status_impl,
 )
 from app.domains.pipeline.aggregate_trigger import (
     trigger_sync_aggregate_extract_all as _trigger_sync_aggregate_extract_all_impl,
@@ -4579,62 +4580,19 @@ async def _build_sync_run_status(
         errors=errors,
     )
 
-    control_room_ready = False
-    control_room_checked_at: str | None = None
-    control_room_snapshot: dict[str, Any] = {}
-    if cartridge == "sap_successfactors" and (bronze_ready or silver_ready or gold_ready):
-        try:
-            from app.services import control_room_service
-
-            dashboard_payload = await control_room_service.dashboard(user, persist=True)
-            gold_kpis = (
-                await control_room_service.sap_successfactors_gold_kpis(user)
-                if gold_ready
-                else {}
-            )
-            talent_kpis = (
-                await control_room_service.sap_successfactors_talent_kpis(user)
-                if gold_ready
-                else {}
-            )
-            from datetime import datetime as _dt, timezone as _tz
-
-            control_room_checked_at = _dt.now(_tz.utc).isoformat()
-            control_room_snapshot = _sync_progress.sync_control_room_snapshot(
-                dashboard_payload,
-                control_room_gold_refresh,
-            )
-            control_room_publish_failed = (
-                str(control_room_gold_refresh.get("status") or "").lower() == "failed"
-            )
-            control_room_ready = bool(
-                gold_ready and gold_kpis and talent_kpis and not control_room_publish_failed
-            )
-            updates["control_room"] = _sync_progress.sync_control_room_step_update(
-                control_room_snapshot=control_room_snapshot,
-                control_room_ready=control_room_ready,
-                control_room_publish_failed=control_room_publish_failed,
-                gold_ready=gold_ready,
-            )
-        except Exception as exc:
-            from datetime import datetime as _dt, timezone as _tz
-
-            control_room_checked_at = _dt.now(_tz.utc).isoformat()
-            updates["control_room"] = _sync_progress.sync_control_room_error_step_update(
-                exc
-            )
-    elif cartridge == "sap_successfactors":
-        from datetime import datetime as _dt, timezone as _tz
-
-        control_room_checked_at = _dt.now(_tz.utc).isoformat()
-        updates["control_room"] = _sync_progress.sync_control_room_waiting_step_update(
-            running_children=running_children
-        )
-    else:
-        control_room_ready = bool(gold_ready)
-        updates["control_room"] = _sync_progress.sync_control_room_generic_step_update(
-            gold_ready=gold_ready
-        )
+    control_room_status = await _run_sync_control_room_status_impl(
+        cartridge=cartridge,
+        bronze_ready=bronze_ready,
+        silver_ready=silver_ready,
+        gold_ready=gold_ready,
+        running_children=running_children,
+        control_room_gold_refresh=control_room_gold_refresh,
+        user=user,
+    )
+    control_room_ready = bool(control_room_status["ready"])
+    control_room_checked_at = control_room_status["checked_at"]
+    control_room_snapshot = control_room_status["snapshot"]
+    updates["control_room"] = control_room_status["update"]
 
     agentops_refresh = (
         dict(extra.get("agentops_refresh"))
