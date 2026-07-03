@@ -144,6 +144,7 @@ from app.domains.pipeline.run_state import (
     parse_iso_datetime as _parse_iso_datetime,
     pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
     pipeline_entity_row as _pipeline_entity_row,
+    pipeline_response_payload as _pipeline_response_payload,
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
 )
@@ -4664,28 +4665,7 @@ async def api_pipeline(
             )
         )
 
-    _order = {
-        "running": 0,
-        "error": 1,
-        "partial": 2,
-        "empty": 3,
-        "stale": 4,
-        "fresh": 5,
-        "never": 6,
-        "unknown": 7,
-    }
-    rows.sort(key=lambda r: _order.get(r["bronze"]["status"], 5))
-    pending_entities = sorted(partial_reasons)
-    return {
-        "pipeline": rows,
-        "metadata": {
-            "partial": bool(pending_entities),
-            "pending_entities": pending_entities,
-            "stale": bool(pending_entities),
-        },
-        "partial": bool(pending_entities),
-        "pending_entities": pending_entities,
-    }
+    return _pipeline_response_payload(rows, partial_reasons)
 
 
 @app.get("/api/dag_templates", dependencies=[Depends(require_permission("pipelines.read"))])

@@ -439,3 +439,34 @@ def test_pipeline_entity_row_assembles_viewer_payload():
         "pending": ["metadata"],
         "stale": True,
     }
+
+
+def test_pipeline_response_payload_orders_rows_and_metadata():
+    rows = [
+        {"entity": "Fresh", "bronze": {"status": "fresh"}},
+        {"entity": "Failed", "bronze": {"status": "error"}},
+        {"entity": "Never", "bronze": {"status": "never"}},
+        {"entity": "Running", "bronze": {"status": "running"}},
+    ]
+
+    payload = run_state.pipeline_response_payload(
+        rows,
+        {
+            "Never": {"metadata"},
+            "Fresh": {"bronze_snapshot"},
+        },
+    )
+
+    assert [row["entity"] for row in payload["pipeline"]] == [
+        "Running",
+        "Failed",
+        "Fresh",
+        "Never",
+    ]
+    assert payload["metadata"] == {
+        "partial": True,
+        "pending_entities": ["Fresh", "Never"],
+        "stale": True,
+    }
+    assert payload["partial"] is True
+    assert payload["pending_entities"] == ["Fresh", "Never"]

@@ -386,6 +386,33 @@ def pipeline_entity_row(
     }
 
 
+def pipeline_response_payload(
+    rows: list[dict], partial_reasons: dict[str, set[str]]
+) -> dict:
+    order = {
+        "running": 0,
+        "error": 1,
+        "partial": 2,
+        "empty": 3,
+        "stale": 4,
+        "fresh": 5,
+        "never": 6,
+        "unknown": 7,
+    }
+    sorted_rows = sorted(rows, key=lambda row: order.get(row["bronze"]["status"], 5))
+    pending_entities = sorted(partial_reasons)
+    return {
+        "pipeline": sorted_rows,
+        "metadata": {
+            "partial": bool(pending_entities),
+            "pending_entities": pending_entities,
+            "stale": bool(pending_entities),
+        },
+        "partial": bool(pending_entities),
+        "pending_entities": pending_entities,
+    }
+
+
 def airflow_task_id(task: Any) -> str | None:
     if isinstance(task, dict):
         value = task.get("task_id")
