@@ -196,6 +196,7 @@ from app.domains.pipeline.job_payloads import (
     refresh_pipeline_job_payloads as _refresh_pipeline_job_payloads_impl,
 )
 from app.domains.pipeline.recording import (
+    refresh_dag_run_status as _refresh_dag_run_status_impl,
     record_dag_pipeline_trigger as _record_dag_pipeline_trigger_impl,
 )
 from app.domains.pipeline.sync_state import (
@@ -947,88 +948,17 @@ async def _record_dag_pipeline_trigger(
 
 
 async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
-    status = _normalize_airflow_state(row.get("status"))
-    dag_id = row.get("dag_id")
-    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
-    if status not in {"queued", "running", "unknown"} or not dag_id or not dag_run_id:
-        return row
-
-    result = await mcp_registry.invoke(
-        "infra",
-        "airflow_get_run_status",
-        {
-            "dag_id": dag_id,
-            "dag_run_id": dag_run_id,
-        },
-        user=user,
+    return await _refresh_dag_run_status_impl(
+        row,
+        user,
+        mcp_invoke=mcp_registry.invoke,
+        get_db_pool=_get_db_pool,
+        build_security_context=build_security_context,
+        normalize_airflow_state=_normalize_airflow_state,
+        parse_iso_datetime=_parse_iso_datetime,
+        duration_seconds=_duration_seconds,
+        logger_debug=logger.debug,
     )
-    if result.get("error"):
-        return row
-
-    new_status = _normalize_airflow_state(result.get("state"))
-    row["status"] = new_status
-    row["started_at"] = _parse_iso_datetime(result.get("start_date")) or row.get(
-        "started_at"
-    )
-    row["finished_at"] = _parse_iso_datetime(result.get("end_date")) or row.get(
-        "finished_at"
-    )
-    row["duration_seconds"] = _duration_seconds(
-        row.get("started_at"), row.get("finished_at")
-    )
-
-    try:
-        pool = await _get_db_pool()
-        ctx = build_security_context(user)
-        tenant_id = row.get("tenant_id") or ctx.get("tenant_id")
-        workspace_id = row.get("workspace_id") or ctx.get("workspace_id")
-        if tenant_id and workspace_id:
-            async with pool.acquire() as conn:
-                async with conn.transaction():
-                    await conn.execute(
-                        "SELECT set_config('app.tenant_id', $1, true), "
-                        "set_config('app.workspace_id', $2, true)",
-                        tenant_id,
-                        workspace_id,
-                    )
-                    await conn.execute(
-                        """
-                        UPDATE pipeline_runs
-                           SET status=$2,
-                               started_at=COALESCE($3::timestamptz, started_at),
-                               finished_at=COALESCE($4::timestamptz, finished_at),
-                               duration_seconds=COALESCE($5::numeric, duration_seconds)
-                         WHERE run_id=$1
-                        """,
-                        row.get("run_id"),
-                        new_status,
-                        row.get("started_at"),
-                        row.get("finished_at"),
-                        row.get("duration_seconds"),
-                    )
-        else:
-            await pool.execute(
-                """
-                UPDATE pipeline_runs
-                   SET status=$2,
-                       started_at=COALESCE($3::timestamptz, started_at),
-                       finished_at=COALESCE($4::timestamptz, finished_at),
-                       duration_seconds=COALESCE($5::numeric, duration_seconds)
-                 WHERE run_id=$1
-                """,
-                row.get("run_id"),
-                new_status,
-                row.get("started_at"),
-                row.get("finished_at"),
-                row.get("duration_seconds"),
-            )
-    except Exception:
-        logger.debug(
-            "Failed to persist updated run status for %s",
-            row.get("run_id"),
-            exc_info=True,
-        )
-    return row
 
 
 RATE_LIMIT_WINDOW_SECONDS = _request_rate_limits.RATE_LIMIT_WINDOW_SECONDS
