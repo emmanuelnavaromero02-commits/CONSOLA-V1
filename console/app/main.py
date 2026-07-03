@@ -18,12 +18,11 @@ import secrets
 import sys
 import time
 import uuid
-import ipaddress
 from copy import deepcopy
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +81,17 @@ from app.domains.data_platform.source_visibility import (
     user_allowed_cartridges as _user_allowed_cartridges,
 )
 from app.services.db_scope import scoped_db_for_user
+from app.services.service_urls import (
+    app_env as _service_app_env,
+    env_float as _service_env_float,
+    env_int as _service_env_int,
+    is_private_public_url as _service_is_private_public_url,
+    is_production_env as _service_is_production_env,
+    public_url as _service_public_url,
+    running_in_container as _service_running_in_container,
+    service_url as _service_url_value,
+    vault_url as _service_vault_url,
+)
 from fastapi import (
     Body,
     FastAPI,
@@ -110,17 +120,11 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
+    return _service_env_float(name, default)
 
 
 def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
+    return _service_env_int(name, default)
 
 
 PIPELINE_DAG_STATUS_TIMEOUT_SEC = _env_float("PIPELINE_DAG_STATUS_TIMEOUT_SEC", 1.5)
@@ -131,11 +135,11 @@ PIPELINE_DATASETS_TIMEOUT_SEC = _env_float("PIPELINE_DATASETS_TIMEOUT_SEC", 4.0)
 
 
 def _app_env() -> str:
-    return os.environ.get("APP_ENV", "production").strip().lower()
+    return _service_app_env()
 
 
 def _is_production_env() -> bool:
-    return _app_env() in {"production", "prod"}
+    return _service_is_production_env()
 
 
 def _public_url(
@@ -144,61 +148,27 @@ def _public_url(
     fallback_env: str | None = None,
     development_default: str = "",
 ) -> str:
-    raw = os.environ.get(env_name)
-    if not raw and fallback_env:
-        raw = os.environ.get(fallback_env)
-    if raw:
-        value = raw.rstrip("/")
-        if _is_production_env() and _is_private_public_url(value):
-            logger.warning(
-                "%s points at a private/local address in production; omitting public URL",
-                env_name,
-            )
-            return ""
-        return value
-    if _is_production_env():
-        logger.warning(
-            "%s is not configured in production; omitting localhost fallback", env_name
-        )
-        return ""
-    return development_default.rstrip("/")
+    return _service_public_url(
+        env_name,
+        fallback_env=fallback_env,
+        development_default=development_default,
+    )
 
 
 def _is_private_public_url(value: str) -> bool:
-    try:
-        host = urlparse(value).hostname or ""
-    except Exception:
-        return False
-    if not host:
-        return False
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return bool(ip.is_private or ip.is_loopback or ip.is_link_local)
+    return _service_is_private_public_url(value)
 
 
 def _running_in_container() -> bool:
-    return Path("/.dockerenv").exists() or bool(
-        os.environ.get("KUBERNETES_SERVICE_HOST")
-    )
+    return _service_running_in_container()
 
 
 def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
-    raw = os.environ.get(env_name)
-    if raw:
-        return raw.rstrip("/")
-    return (
-        docker_default.rstrip("/")
-        if _running_in_container()
-        else local_default.rstrip("/")
-    )
+    return _service_url_value(env_name, docker_default, local_default)
 
 
 def _vault_url() -> str:
-    return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
+    return _service_vault_url()
 
 
 from app.services import (

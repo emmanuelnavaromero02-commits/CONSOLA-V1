@@ -51,6 +51,12 @@ PY_RUNTIME_ROOTS = (
     "infra/airflow/",
 )
 
+CONSOLE_SERVICE_RELEASE_EXCLUDE = (
+    r"^console/app/services/operations_service\.py$",
+    r"^console/app/services/service_urls\.py$",
+    r"^console/app/services/vault_utils\.py$",
+)
+
 
 def _run(args: list[str]) -> str:
     return subprocess.check_output(args, text=True).strip()
@@ -89,6 +95,10 @@ def _changed_files(base: str, head: str) -> list[str]:
 
 def _any(files: list[str], *patterns: str) -> bool:
     return any(any(re.search(pattern, path) for pattern in patterns) for path in files)
+
+
+def _matches(path: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(pattern, path) for pattern in patterns)
 
 
 def _all_true_for_schedule(flags: dict[str, bool]) -> None:
@@ -236,8 +246,13 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
     root_test_targets = _root_test_targets(files)
     cartridge_test_targets = _cartridge_test_targets(files)
 
+    full_stack_files = [
+        path
+        for path in files
+        if not _matches(path, CONSOLE_SERVICE_RELEASE_EXCLUDE)
+    ]
     release_full_stack = compose or _any(
-        files,
+        full_stack_files,
         r"^console/Dockerfile$",
         r"^console/app/(dependencies\.py|security\.py|config/|middleware/|services/)",
         r"^refinement/(app|Dockerfile)",
