@@ -322,6 +322,8 @@ from app.domains.pipeline.extract_config import (
 )
 from app.domains.studio.access import (
     cartridge_visible_for_context as _cartridge_visible_for_context,
+    has_studio_ops_write_role as _has_studio_ops_write_role_impl,
+    studio_ops_role_name as _studio_ops_role_name_impl,
 )
 from app.domains.studio.cartridge_probe import (
     probe_microservice as _probe_microservice_impl,
@@ -7404,11 +7406,14 @@ STUDIO_OPS_WRITE_TOOLS = {"rename_entity", "delete_entity", "update_entity"}
 
 
 def _role_name(user: dict) -> str:
-    return user.get("workspace_role") or user.get("role") or ""
+    return _studio_ops_role_name_impl(user)
 
 
 def _require_studio_ops_write_role(user: dict) -> None:
-    if str(user.get("role") or "").lower() not in {"owner", "super_admin", ROLE_ADMIN}:
+    if not _has_studio_ops_write_role_impl(
+        user,
+        write_roles={"owner", "super_admin", ROLE_ADMIN},
+    ):
         raise HTTPException(403, "global admin role required")
 
 
