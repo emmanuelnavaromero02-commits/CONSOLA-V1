@@ -125,3 +125,95 @@ def me_access_payload(
             workspace_role_resolved=workspace_role_resolved,
         ),
     }
+
+
+async def fetch_cartridge_access(
+    user: Mapping[str, Any],
+    *,
+    pool_factory: Any,
+    logger: Any | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    tenant_id = user.get("tenant_id") or user.get("active_tenant_id")
+    workspace_id = user.get("workspace_id") or user.get("active_workspace_id")
+    user_id = user.get("id")
+    cartridges_allowed: list[dict[str, Any]] = []
+    cartridges_denied: list[dict[str, Any]] = []
+
+    try:
+        pool = await pool_factory()
+        async with pool.acquire() as conn:  # noqa: SIM117 — isolated fallbacks per query
+            try:
+                allowed_rows = await conn.fetch(
+                    """
+                    SELECT ci.cartridge_id, ci.status,
+                           COALESCE(p.name, ci.cartridge_id) AS product_name
+                      FROM cartridge_installations ci
+                      LEFT JOIN marketplace_products p ON p.cartridge_id = ci.cartridge_id
+                     WHERE ci.tenant_id = $1
+                       AND ci.workspace_id = $2
+                       AND ci.status IN ('ready', 'active')
+                       AND NOT EXISTS (
+                         SELECT 1
+                           FROM user_cartridge_overrides uco
+                          WHERE uco.tenant_id = ci.tenant_id
+                            AND uco.workspace_id = ci.workspace_id
+                            AND uco.cartridge_id = ci.cartridge_id
+                            AND uco.user_id = $3
+                            AND uco.mode = 'deny'
+                       )
+                    ORDER BY product_name
+                    """,
+                    tenant_id,
+                    workspace_id,
+                    user_id,
+                )
+                cartridges_allowed = [
+                    {
+                        "cartridge_id": row["cartridge_id"],
+                        "product_name": row["product_name"],
+                        "status": row["status"],
+                    }
+                    for row in allowed_rows
+                ]
+            except Exception:
+                cartridges_allowed = []
+
+            try:
+                denied_rows = await conn.fetch(
+                    """
+                    SELECT uco.cartridge_id, uco.mode,
+                           ci.status AS installation_status,
+                           COALESCE(p.name, uco.cartridge_id) AS product_name
+                      FROM user_cartridge_overrides uco
+                      LEFT JOIN cartridge_installations ci
+                        ON ci.tenant_id = uco.tenant_id
+                       AND ci.workspace_id = uco.workspace_id
+                       AND ci.cartridge_id = uco.cartridge_id
+                      LEFT JOIN marketplace_products p
+                        ON p.cartridge_id = uco.cartridge_id
+                     WHERE uco.tenant_id = $1
+                       AND uco.workspace_id = $2
+                       AND uco.user_id = $3
+                       AND uco.mode = 'deny'
+                    ORDER BY product_name
+                    """,
+                    tenant_id,
+                    workspace_id,
+                    user_id,
+                )
+                cartridges_denied = [
+                    {
+                        "cartridge_id": row["cartridge_id"],
+                        "product_name": row["product_name"],
+                        "reason": "user_deny",
+                        "installation_status": row["installation_status"],
+                    }
+                    for row in denied_rows
+                ]
+            except Exception:
+                cartridges_denied = []
+    except Exception:
+        if logger is not None:
+            logger.warning("api_me_access: marketplace pool unavailable", exc_info=True)
+
+    return cartridges_allowed, cartridges_denied

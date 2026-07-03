@@ -104,6 +104,7 @@ from app.domains.iam.roles import (
     workspace_scope_db_unavailable as _workspace_scope_db_unavailable_impl,
 )
 from app.domains.iam.access_payload import (
+    fetch_cartridge_access as _fetch_cartridge_access,
     me_access_payload as _me_access_payload,
 )
 from app.domains.data_platform.catalog_payloads import (
@@ -1895,88 +1896,11 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
     role_canonical = _perms.canonical_role(user.get("role"))
     workspace_role_resolved = _perms.workspace_role(user) or None
 
-    cartridges_allowed: list[str] = []
-    cartridges_denied: list[dict[str, str]] = []
-    try:
-        p = await cartridge_service.pool()
-        async with p.acquire() as conn:  # noqa: SIM117 — nested try/except is intentional
-            # Cartridges visible to this caller in their workspace.
-            try:
-                allowed_rows = await conn.fetch(
-                    """
-                    SELECT ci.cartridge_id, ci.status,
-                           COALESCE(p.name, ci.cartridge_id) AS product_name
-                      FROM cartridge_installations ci
-                      LEFT JOIN marketplace_products p ON p.cartridge_id = ci.cartridge_id
-                     WHERE ci.tenant_id = $1
-                       AND ci.workspace_id = $2
-                       AND ci.status IN ('ready', 'active')
-                       AND NOT EXISTS (
-                         SELECT 1
-                           FROM user_cartridge_overrides uco
-                          WHERE uco.tenant_id = ci.tenant_id
-                            AND uco.workspace_id = ci.workspace_id
-                            AND uco.cartridge_id = ci.cartridge_id
-                            AND uco.user_id = $3
-                            AND uco.mode = 'deny'
-                       )
-                    ORDER BY product_name
-                    """,
-                    user.get("tenant_id") or user.get("active_tenant_id"),
-                    user.get("workspace_id") or user.get("active_workspace_id"),
-                    user.get("id"),
-                )
-                cartridges_allowed = [
-                    {
-                        "cartridge_id": r["cartridge_id"],
-                        "product_name": r["product_name"],
-                        "status": r["status"],
-                    }
-                    for r in allowed_rows
-                ]
-            except Exception:  # noqa: BLE001
-                # Marketplace migrations may not be applied in every env.
-                cartridges_allowed = []
-            try:
-                denied_rows = await conn.fetch(
-                    """
-                    SELECT uco.cartridge_id, uco.mode,
-                           ci.status AS installation_status,
-                           COALESCE(p.name, uco.cartridge_id) AS product_name
-                      FROM user_cartridge_overrides uco
-                      LEFT JOIN cartridge_installations ci
-                        ON ci.tenant_id = uco.tenant_id
-                       AND ci.workspace_id = uco.workspace_id
-                       AND ci.cartridge_id = uco.cartridge_id
-                      LEFT JOIN marketplace_products p
-                        ON p.cartridge_id = uco.cartridge_id
-                     WHERE uco.tenant_id = $1
-                       AND uco.workspace_id = $2
-                       AND uco.user_id = $3
-                       AND uco.mode = 'deny'
-                    ORDER BY product_name
-                    """,
-                    user.get("tenant_id") or user.get("active_tenant_id"),
-                    user.get("workspace_id") or user.get("active_workspace_id"),
-                    user.get("id"),
-                )
-                cartridges_denied = [
-                    {
-                        "cartridge_id": r["cartridge_id"],
-                        "product_name": r["product_name"],
-                        "reason": "user_deny",
-                        "installation_status": r["installation_status"],
-                    }
-                    for r in denied_rows
-                ]
-            except Exception:  # noqa: BLE001
-                cartridges_denied = []
-    except Exception:  # noqa: BLE001
-        # If the marketplace pool is unavailable we still return the
-        # identity-level info so the page can render in restricted mode.
-        # Log it: silent fallback is intentional for ops resilience but
-        # we must not mask repeated failures from the team.
-        logger.warning("api_me_access: marketplace pool unavailable", exc_info=True)
+    cartridges_allowed, cartridges_denied = await _fetch_cartridge_access(
+        user,
+        pool_factory=cartridge_service.pool,
+        logger=logger,
+    )
 
     # The front-end uses these flags to decide what to render. They are
     # display hints only; every action endpoint enforces its own gate.
