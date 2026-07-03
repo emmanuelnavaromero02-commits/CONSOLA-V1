@@ -321,6 +321,9 @@ from app.domains.pipeline.sync_state import (
 from app.domains.pipeline.concurrency import (
     gather_by_entity as _pipeline_gather_by_entity,
 )
+from app.domains.pipeline.agentops_refresh import (
+    run_sync_agentops_monitors as _run_sync_agentops_monitors_impl,
+)
 from app.domains.pipeline.airflow_trigger import (
     trigger_airflow_extract_dag as _trigger_airflow_extract_dag_impl,
 )
@@ -4350,135 +4353,19 @@ async def _run_sync_agentops_monitors(
     sync_run_id: str,
     user: dict | None,
 ) -> dict[str, Any]:
-    from datetime import datetime as _dt, timezone as _tz
-
-    checked_at_dt = _dt.now(_tz.utc)
-    checked_at = checked_at_dt.isoformat()
-    sync_fire_at = _dt(1970, 1, 1, tzinfo=_tz.utc)
-    schedule_key = _sync_agentops.sync_agentops_schedule_key(sync_run_id)
-    if cartridge == "sap_successfactors":
-        await _ensure_successfactors_talent_monitor(user)
-    agents = await _agents.list_agents(
-        cartridge_id=cartridge,
-        include_inactive=False,
-        user_context=user,
-    )
-    candidates = _sync_agentops_monitor_candidates(agents)
-    if not candidates:
-        return _sync_agentops.no_monitor_candidates_payload(checked_at)
-
-    results: list[dict[str, Any]] = []
-    completed = 0
-    failed = 0
-    for agent_row in candidates[:12]:
-        agent_id = str(agent_row.get("id") or "").strip()
-        agent_slug = str(agent_row.get("slug") or agent_id)
-        if not agent_id:
-            failed += 1
-            results.append(_sync_agentops.missing_agent_id_result(agent_slug))
-            continue
-        try:
-            agent = await _agent_runtime.load_agent(agent_id, user_context=user)
-            if not agent:
-                raise RuntimeError("agent not found in scoped runtime")
-            if not (str(agent.tenant_id or "").strip() and str(agent.workspace_id or "").strip()):
-                raise RuntimeError("monitor agent requires tenant/workspace scope")
-            reservation = await _agent_scheduler.reserve_scheduled_run(
-                agent_id=str(agent.id),
-                tenant_id=str(agent.tenant_id),
-                workspace_id=str(agent.workspace_id),
-                scheduled_fire_at=sync_fire_at,
-                schedule_key=schedule_key,
-                airflow_dag_run_id=sync_run_id,
-                metadata={
-                    "agent_slug": agent.slug,
-                    "cartridge_id": agent.cartridge_id,
-                    "sync_run_id": sync_run_id,
-                    "checked_at": checked_at,
-                    "source": "sync-now",
-                },
-            )
-            if reservation.get("duplicate"):
-                status = str(reservation.get("status") or "unknown")
-                completed_delta, failed_delta = _sync_agentops.duplicate_monitor_counters(status)
-                completed += completed_delta
-                failed += failed_delta
-                results.append(
-                    _sync_agentops.duplicate_monitor_result(
-                        agent_id=agent_id,
-                        agent_slug=agent_slug,
-                        reservation=reservation,
-                    )
-                )
-                continue
-            message = (
-                "Ejecuta el monitor operativo posterior a sincronizacion para "
-                f"{cartridge}. Usa datos reales recien extraidos; no simules."
-            )
-            try:
-                result = await _agent_runtime.run_scheduled_monitor(
-                    agent,
-                    message,
-                    scheduled_fire_at=checked_at,
-                )
-            except Exception as exc:
-                await _agent_scheduler.finish_scheduled_run(
-                    schedule_run_id=reservation.get("id"),
-                    agent_run_id=None,
-                    status="error",
-                    tenant_id=str(agent.tenant_id),
-                    workspace_id=str(agent.workspace_id),
-                    error_message=f"{type(exc).__name__}: {exc}",
-                    metadata={"sync_run_id": sync_run_id, "checked_at": checked_at},
-                )
-                raise
-            await _agent_scheduler.finish_scheduled_run(
-                schedule_run_id=reservation.get("id"),
-                agent_run_id=result.get("run_id") if isinstance(result, dict) else None,
-                status="ok",
-                tenant_id=str(agent.tenant_id),
-                workspace_id=str(agent.workspace_id),
-                metadata={
-                    "sync_run_id": sync_run_id,
-                    "checked_at": checked_at,
-                    "deterministic_monitor": bool(
-                        isinstance(result, dict) and result.get("deterministic_monitor")
-                    ),
-                },
-            )
-            completed += 1
-            results.append(
-                _sync_agentops.scheduled_monitor_success_result(
-                    agent_id=agent_id,
-                    agent_slug=agent_slug,
-                    result=result if isinstance(result, dict) else None,
-                    reservation=reservation,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            failed += 1
-            logger.warning(
-                "sync AgentOps monitor failed cartridge=%s agent=%s: %s",
-                cartridge,
-                agent_slug,
-                exc,
-            )
-            results.append(
-                _sync_agentops.scheduled_monitor_failure_result(
-                    agent_id=agent_id,
-                    agent_slug=agent_slug,
-                    exc=exc,
-                )
-            )
-
-    total = len(candidates[:12])
-    return _sync_agentops.sync_agentops_summary(
-        checked_at=checked_at,
+    return await _run_sync_agentops_monitors_impl(
+        cartridge=cartridge,
         sync_run_id=sync_run_id,
-        total=total,
-        completed=completed,
-        failed=failed,
-        results=results,
+        user=user,
+        ensure_successfactors_talent_monitor=_ensure_successfactors_talent_monitor,
+        list_agents=_agents.list_agents,
+        load_agent=_agent_runtime.load_agent,
+        reserve_scheduled_run=_agent_scheduler.reserve_scheduled_run,
+        run_scheduled_monitor=_agent_runtime.run_scheduled_monitor,
+        finish_scheduled_run=_agent_scheduler.finish_scheduled_run,
+        sync_agentops_monitor_candidates=_sync_agentops_monitor_candidates,
+        sync_agentops=_sync_agentops,
+        logger_warning=logger.warning,
     )
 
 
