@@ -6378,77 +6378,24 @@ async def _trigger_sync_aggregate_extract_all(
 
 
 def _sync_public_payload(row: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    steps = (
-        extra.get("steps")
-        if isinstance(extra.get("steps"), list)
-        else _initial_sync_steps()
+    return _sync_progress.public_sync_payload(
+        row,
+        extra,
+        terminal_statuses=_SYNC_TERMINAL_STATUSES,
+        normalizer=_normalize_sync_step_payload,
+        initial_steps_factory=_initial_sync_steps,
     )
-    steps = [
-        _normalize_sync_step_payload(step)
-        for step in steps
-        if isinstance(step, dict)
-    ]
-    status = str(row.get("status") or extra.get("status") or "running")
-    step_count = len(steps)
-    progress = (
-        round(
-            sum(
-                max(0, min(int(step.get("percent") or 0), 100))
-                for step in steps
-                if isinstance(step, dict)
-            )
-            / max(step_count, 1)
-        )
-        if step_count
-        else 0
-    )
-    return {
-        "run_id": row.get("run_id"),
-        "cartridge_id": row.get("cartridge_id"),
-        "status": status,
-        "active": status.lower() not in _SYNC_TERMINAL_STATUSES,
-        "mode": row.get("mode") or extra.get("mode") or "incremental",
-        "target": extra.get("target") or "all",
-        "progress_percent": max(0, min(progress, 100)),
-        "steps": steps,
-        "triggered_entities": extra.get("triggered_entities") or [],
-        "errors": extra.get("errors") or [],
-        "control_room_ready": bool(extra.get("control_room_ready")),
-        "control_room_snapshot": extra.get("control_room_snapshot") or {},
-        "agentops_refresh": extra.get("agentops_refresh") or {},
-        "started_at": row.get("started_at").isoformat()
-        if row.get("started_at")
-        else None,
-        "finished_at": row.get("finished_at").isoformat()
-        if row.get("finished_at")
-        else None,
-        "error_message": row.get("error_message"),
-    }
 
 
 def _inactive_sync_run_payload(
     *, cartridge: str, mode: str, target: str, conn_id: str | None = None
 ) -> dict[str, Any]:
-    return {
-        "run_id": None,
-        "cartridge_id": cartridge,
-        "status": "skipped",
-        "active": False,
-        "mode": mode,
-        "target": target,
-        "progress_percent": 0,
-        "steps": [],
-        "triggered_entities": [],
-        "errors": [],
-        "control_room_ready": False,
-        "control_room_snapshot": {},
-        "agentops_refresh": {},
-        "started_at": None,
-        "finished_at": None,
-        "error_message": None,
-        "reason": "no_active_sync_run",
-        "conn_id": conn_id,
-    }
+    return _sync_progress.inactive_sync_run_payload(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+    )
 
 
 async def _ensure_sync_packaged_datasets(
