@@ -187,3 +187,18 @@ def test_console_db_pool_helper_refactor_does_not_trigger_full_stack_release_gat
     assert flags["e2e"] is True
     assert flags["release_full_stack"] is False
     assert flags["root_test_targets"] == "tests/test_db_pool.py"
+
+
+def test_console_startup_readiness_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/startup_readiness.py",
+        "console/app/main.py",
+        "tests/test_startup_readiness.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_startup_readiness.py"

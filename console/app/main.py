@@ -140,6 +140,12 @@ from app.services.db_pool import (
 )
 from app.services.mcp_payloads import mcp_payload as _mcp_payload
 from app.services.rate_limiter import get_rate_limiter
+from app.services.startup_readiness import (
+    record_startup_failure as _record_startup_failure,
+    reset_startup_readiness_state as _reset_startup_readiness_state,
+    run_startup_seed as _run_startup_seed,
+    startup_readiness_status as _startup_readiness_status,
+)
 from app.services.status_pages import (
     functional_status_page as _functional_status_page,
     internal_error_request_id as _internal_error_request_id,
@@ -309,67 +315,6 @@ async def _periodic_health_check():
         except Exception:
             logger.debug("Periodic health check failed", exc_info=True)
         await asyncio.sleep(60)
-
-
-def _reset_startup_readiness_state(app: FastAPI) -> None:
-    app.state.startup_ok = True
-    app.state.startup_errors = []
-
-
-def _record_startup_failure(
-    app: FastAPI,
-    component: str,
-    exc: Exception,
-    *,
-    critical: bool = True,
-) -> None:
-    raw_error = _redact(f"{type(exc).__name__}: {exc}") or type(exc).__name__
-    entry = {
-        "component": component,
-        "critical": critical,
-        "error": str(raw_error)[:300],
-    }
-    errors = list(getattr(app.state, "startup_errors", []) or [])
-    errors.append(entry)
-    app.state.startup_errors = errors
-    if critical:
-        app.state.startup_ok = False
-
-
-async def _run_startup_seed(
-    app: FastAPI,
-    component: str,
-    runner,
-    *,
-    critical: bool = True,
-) -> None:
-    try:
-        await runner()
-    except Exception as exc:
-        _record_startup_failure(app, component, exc, critical=critical)
-        level = logger.error if critical else logger.warning
-        label = "critical" if critical else "non-fatal"
-        level("[startup] %s failed (%s): %s", component, label, exc, exc_info=True)
-
-
-def _startup_readiness_status(app: FastAPI) -> dict:
-    errors = list(getattr(app.state, "startup_errors", []) or [])
-    critical_errors: list[dict] = []
-    for error in errors:
-        if isinstance(error, dict):
-            if error.get("critical", True):
-                critical_errors.append(error)
-        else:
-            critical_errors.append({"component": "startup", "critical": True})
-    if not bool(getattr(app.state, "startup_ok", True)) or critical_errors:
-        return {
-            "status": "down",
-            "critical_failures": len(critical_errors) or 1,
-            "components": [
-                str(error.get("component", "startup")) for error in critical_errors
-            ],
-        }
-    return {"status": "up", "critical_failures": 0}
 
 
 @asynccontextmanager
