@@ -144,6 +144,7 @@ from app.domains.pipeline.run_state import (
     parse_iso_datetime as _parse_iso_datetime,
     pipeline_jobs_by_entity as _pipeline_jobs_by_entity,
     pipeline_entity_row as _pipeline_entity_row,
+    pipeline_entity_run_payload as _pipeline_entity_run_payload,
     pipeline_response_payload as _pipeline_response_payload,
     pipeline_run_extra as _pipeline_run_extra,
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
@@ -4749,46 +4750,7 @@ def _sanitize_pipeline_run_for_user(row: dict, user: dict | None) -> dict:
 
 
 def _format_pipeline_entity_run(row: dict, user: dict | None = None) -> dict:
-    row = _sanitize_pipeline_run_for_user(row, user)
-    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
-    extra = _pipeline_run_extra(row)
-    classification = extra.get("classification") if isinstance(extra.get("classification"), dict) else {}
-    status = _normalize_airflow_state(row.get("status"))
-    if classification.get("code") in {
-        "SUCCESSFACTORS_METADATA_BLOCKED",
-        "SUCCESSFACTORS_PERMISSION",
-    }:
-        status = "partial"
-    error = (
-        row.get("error_message")
-        or classification.get("error")
-        or classification.get("reason")
-    )
-    payload = {
-        "run_id": row.get("run_id"),
-        "dag_id": row.get("dag_id"),
-        "dag_run_id": dag_run_id,
-        "status": status,
-        "mode": row.get("mode"),
-        "triggered_at": str(row.get("started_at")) if row.get("started_at") else None,
-        "started_at": str(row.get("started_at")) if row.get("started_at") else None,
-        "finished_at": str(row.get("finished_at")) if row.get("finished_at") else None,
-        "duration_sec": float(row.get("duration_seconds"))
-        if row.get("duration_seconds") is not None
-        else None,
-        "error": error,
-    }
-    if classification:
-        payload["classification"] = classification
-    if row.get("record_count") is not None:
-        payload["record_count"] = row.get("record_count")
-    if row.get("bytes_written") is not None:
-        payload["bytes_written"] = row.get("bytes_written")
-    if row.get("storage_uri"):
-        payload["storage_uri"] = row.get("storage_uri")
-    if row.get("watermark_updated_to"):
-        payload["watermark_updated_to"] = row.get("watermark_updated_to")
-    return payload
+    return _pipeline_entity_run_payload(_sanitize_pipeline_run_for_user(row, user))
 
 
 @app.get(

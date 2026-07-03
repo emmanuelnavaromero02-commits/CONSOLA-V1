@@ -470,3 +470,49 @@ def test_pipeline_response_payload_orders_rows_and_metadata():
     }
     assert payload["partial"] is True
     assert payload["pending_entities"] == ["Fresh", "Never"]
+
+
+def test_pipeline_entity_run_payload_normalizes_blocked_successfactors_runs():
+    payload = run_state.pipeline_entity_run_payload(
+        {
+            "run_id": "run-1",
+            "dag_id": "sap_successfactors_extract",
+            "airflow_dag_run_id": "dag-run-1",
+            "status": "failed",
+            "mode": "incremental",
+            "started_at": "2026-07-03T10:00:00+00:00",
+            "finished_at": "2026-07-03T10:02:00+00:00",
+            "duration_seconds": 120,
+            "record_count": 0,
+            "bytes_written": 12,
+            "storage_uri": "s3://bucket/raw/sap/User/date=2026-07-03/data.parquet",
+            "watermark_updated_to": "2026-07-03T10:00:00+00:00",
+            "extra": {
+                "classification": {
+                    "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+                    "reason": "entity_not_exposed_in_sap",
+                }
+            },
+        }
+    )
+
+    assert payload == {
+        "run_id": "run-1",
+        "dag_id": "sap_successfactors_extract",
+        "dag_run_id": "dag-run-1",
+        "status": "partial",
+        "mode": "incremental",
+        "triggered_at": "2026-07-03T10:00:00+00:00",
+        "started_at": "2026-07-03T10:00:00+00:00",
+        "finished_at": "2026-07-03T10:02:00+00:00",
+        "duration_sec": 120.0,
+        "error": "entity_not_exposed_in_sap",
+        "classification": {
+            "code": "SUCCESSFACTORS_METADATA_BLOCKED",
+            "reason": "entity_not_exposed_in_sap",
+        },
+        "record_count": 0,
+        "bytes_written": 12,
+        "storage_uri": "s3://bucket/raw/sap/User/date=2026-07-03/data.parquet",
+        "watermark_updated_to": "2026-07-03T10:00:00+00:00",
+    }
