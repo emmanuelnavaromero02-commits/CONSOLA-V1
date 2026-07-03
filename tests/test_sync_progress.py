@@ -534,3 +534,54 @@ def test_sync_agents_intelligence_step_update_covers_common_states():
     assert success["detail"] == "1/1 monitores ejecutados con AgentOps."
     assert failed["status"] == "failed"
     assert failed["detail"] == "runner unavailable"
+
+
+def test_sync_control_room_snapshot_and_step_update_use_real_counts():
+    snapshot = sync_progress.sync_control_room_snapshot(
+        {
+            "meta": {"source_count": 21, "item_count": 92},
+            "summary": {"total_items": 92, "data_ready_sources": 7},
+        },
+        {"status": "partial", "signals": 12},
+    )
+    partial = sync_progress.sync_control_room_step_update(
+        control_room_snapshot=snapshot,
+        control_room_ready=False,
+        control_room_publish_failed=False,
+        gold_ready=27,
+    )
+    ready = sync_progress.sync_control_room_step_update(
+        control_room_snapshot=snapshot,
+        control_room_ready=True,
+        control_room_publish_failed=False,
+        gold_ready=28,
+    )
+
+    assert snapshot["source_count"] == 21
+    assert snapshot["gold_refresh_signals"] == 12
+    assert partial["status"] == "partial"
+    assert partial["completed"] == 7
+    assert partial["detail"] == (
+        "Control Room materializado (21 fuentes, 92 items); Gold parcial o incompleto."
+    )
+    assert ready["status"] == "success"
+    assert ready["percent"] == 100
+
+
+def test_sync_control_room_step_update_covers_waiting_generic_and_errors():
+    failed_publish = sync_progress.sync_control_room_step_update(
+        control_room_snapshot={"source_count": 1, "item_count": 1},
+        control_room_ready=False,
+        control_room_publish_failed=True,
+        gold_ready=1,
+    )
+    waiting = sync_progress.sync_control_room_waiting_step_update(running_children=True)
+    skipped = sync_progress.sync_control_room_generic_step_update(gold_ready=0)
+    error = sync_progress.sync_control_room_error_step_update(RuntimeError("boom"))
+
+    assert failed_publish["detail"] == (
+        "Gold materializado, pero la publicación de señales falló."
+    )
+    assert waiting["status"] == "queued"
+    assert skipped["status"] == "skipped"
+    assert error["error"] == "boom"

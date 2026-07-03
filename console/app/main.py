@@ -7131,118 +7131,41 @@ async def _build_sync_run_status(
             from datetime import datetime as _dt, timezone as _tz
 
             control_room_checked_at = _dt.now(_tz.utc).isoformat()
-            dashboard_meta = (
-                dashboard_payload.get("meta")
-                if isinstance(dashboard_payload, dict)
-                else {}
+            control_room_snapshot = _sync_progress.sync_control_room_snapshot(
+                dashboard_payload,
+                control_room_gold_refresh,
             )
-            dashboard_summary = (
-                dashboard_payload.get("summary")
-                if isinstance(dashboard_payload, dict)
-                else {}
-            )
-            control_room_snapshot = {
-                "source_count": int((dashboard_meta or {}).get("source_count") or 0),
-                "item_count": int((dashboard_meta or {}).get("item_count") or 0),
-                "total_items": int((dashboard_summary or {}).get("total_items") or 0),
-                "data_ready_sources": int(
-                    (dashboard_summary or {}).get("data_ready_sources") or 0
-                ),
-                "gold_refresh_signals": int(
-                    control_room_gold_refresh.get("signals") or 0
-                ),
-                "gold_refresh_status": str(
-                    control_room_gold_refresh.get("status") or ""
-                ),
-            }
             control_room_publish_failed = (
                 str(control_room_gold_refresh.get("status") or "").lower() == "failed"
             )
             control_room_ready = bool(
                 gold_ready and gold_kpis and talent_kpis and not control_room_publish_failed
             )
-            control_room_total = max(
-                control_room_snapshot["source_count"]
-                or control_room_snapshot["item_count"],
-                1,
+            updates["control_room"] = _sync_progress.sync_control_room_step_update(
+                control_room_snapshot=control_room_snapshot,
+                control_room_ready=control_room_ready,
+                control_room_publish_failed=control_room_publish_failed,
+                gold_ready=gold_ready,
             )
-            if control_room_ready:
-                control_room_completed = control_room_total
-                control_room_percent = 100
-            else:
-                control_room_completed = (
-                    control_room_snapshot["data_ready_sources"]
-                    or (
-                        control_room_snapshot["source_count"]
-                        if control_room_snapshot["item_count"]
-                        else 0
-                    )
-                )
-                control_room_completed = min(control_room_completed, control_room_total)
-                control_room_percent = min(
-                    95,
-                    round((control_room_completed / control_room_total) * 100),
-                )
-            updates["control_room"] = {
-                "label": "Control Room",
-                "status": "success" if control_room_ready else "partial",
-                "detail": (
-                    "KPIs Gold/Talent disponibles; Control Room materializado "
-                    f"({control_room_snapshot['source_count']} fuentes, "
-                    f"{control_room_snapshot['item_count']} items)."
-                )
-                if control_room_ready
-                else (
-                    "Gold materializado, pero la publicación de señales falló."
-                    if control_room_publish_failed
-                    else
-                    "Control Room materializado "
-                    f"({control_room_snapshot['source_count']} fuentes, "
-                    f"{control_room_snapshot['item_count']} items); "
-                    "Gold parcial o incompleto."
-                    if gold_ready
-                    else "Control Room materializado con fuentes Bronze/Silver; esperando Gold."
-                ),
-                "completed": control_room_completed,
-                "total": control_room_total,
-                "percent": control_room_percent,
-                "metrics": control_room_snapshot,
-            }
         except Exception as exc:
             from datetime import datetime as _dt, timezone as _tz
 
             control_room_checked_at = _dt.now(_tz.utc).isoformat()
-            updates["control_room"] = {
-                "label": "Control Room",
-                "status": "partial",
-                "detail": "Gold existe, pero Control Room aún no respondió completo.",
-                "error": str(exc)[:300],
-                "completed": 0,
-                "total": 1,
-            }
+            updates["control_room"] = _sync_progress.sync_control_room_error_step_update(
+                exc
+            )
     elif cartridge == "sap_successfactors":
         from datetime import datetime as _dt, timezone as _tz
 
         control_room_checked_at = _dt.now(_tz.utc).isoformat()
-        updates["control_room"] = {
-            "label": "Control Room",
-            "status": "queued" if running_children else "partial",
-            "detail": "Esperando Gold de SuccessFactors.",
-            "completed": 0,
-            "total": 1,
-        }
+        updates["control_room"] = _sync_progress.sync_control_room_waiting_step_update(
+            running_children=running_children
+        )
     else:
         control_room_ready = bool(gold_ready)
-        updates["control_room"] = {
-            "label": "Control Room",
-            "status": "success" if gold_ready else "skipped",
-            "detail": "Control Room específico no aplica para este cartucho."
-            if not gold_ready
-            else "Gold disponible para consumo.",
-            "completed": 1 if gold_ready else 0,
-            "total": 1,
-            "percent": 100 if gold_ready else 0,
-        }
+        updates["control_room"] = _sync_progress.sync_control_room_generic_step_update(
+            gold_ready=gold_ready
+        )
 
     agentops_refresh = (
         dict(extra.get("agentops_refresh"))

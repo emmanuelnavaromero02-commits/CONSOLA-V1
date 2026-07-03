@@ -549,6 +549,109 @@ def sync_silver_gold_step_update(
     return None
 
 
+def sync_control_room_snapshot(
+    dashboard_payload: dict[str, Any] | Any,
+    control_room_gold_refresh: dict[str, Any],
+) -> dict[str, Any]:
+    dashboard_meta = (
+        dashboard_payload.get("meta") if isinstance(dashboard_payload, dict) else {}
+    )
+    dashboard_summary = (
+        dashboard_payload.get("summary") if isinstance(dashboard_payload, dict) else {}
+    )
+    return {
+        "source_count": int((dashboard_meta or {}).get("source_count") or 0),
+        "item_count": int((dashboard_meta or {}).get("item_count") or 0),
+        "total_items": int((dashboard_summary or {}).get("total_items") or 0),
+        "data_ready_sources": int(
+            (dashboard_summary or {}).get("data_ready_sources") or 0
+        ),
+        "gold_refresh_signals": int(control_room_gold_refresh.get("signals") or 0),
+        "gold_refresh_status": str(control_room_gold_refresh.get("status") or ""),
+    }
+
+
+def sync_control_room_step_update(
+    *,
+    control_room_snapshot: dict[str, Any],
+    control_room_ready: bool,
+    control_room_publish_failed: bool,
+    gold_ready: int,
+) -> dict[str, Any]:
+    source_count = int(control_room_snapshot.get("source_count") or 0)
+    item_count = int(control_room_snapshot.get("item_count") or 0)
+    total = max(source_count or item_count, 1)
+    if control_room_ready:
+        completed = total
+        percent = 100
+    else:
+        completed = int(control_room_snapshot.get("data_ready_sources") or 0) or (
+            source_count if item_count else 0
+        )
+        completed = min(completed, total)
+        percent = min(95, round((completed / total) * 100))
+
+    if control_room_ready:
+        detail = (
+            "KPIs Gold/Talent disponibles; Control Room materializado "
+            f"({source_count} fuentes, {item_count} items)."
+        )
+    elif control_room_publish_failed:
+        detail = "Gold materializado, pero la publicación de señales falló."
+    elif gold_ready:
+        detail = (
+            "Control Room materializado "
+            f"({source_count} fuentes, {item_count} items); "
+            "Gold parcial o incompleto."
+        )
+    else:
+        detail = "Control Room materializado con fuentes Bronze/Silver; esperando Gold."
+
+    return {
+        "label": "Control Room",
+        "status": "success" if control_room_ready else "partial",
+        "detail": detail,
+        "completed": completed,
+        "total": total,
+        "percent": percent,
+        "metrics": control_room_snapshot,
+    }
+
+
+def sync_control_room_error_step_update(error: Exception) -> dict[str, Any]:
+    return {
+        "label": "Control Room",
+        "status": "partial",
+        "detail": "Gold existe, pero Control Room aún no respondió completo.",
+        "error": str(error)[:300],
+        "completed": 0,
+        "total": 1,
+    }
+
+
+def sync_control_room_waiting_step_update(*, running_children: bool) -> dict[str, Any]:
+    return {
+        "label": "Control Room",
+        "status": "queued" if running_children else "partial",
+        "detail": "Esperando Gold de SuccessFactors.",
+        "completed": 0,
+        "total": 1,
+    }
+
+
+def sync_control_room_generic_step_update(*, gold_ready: int) -> dict[str, Any]:
+    return {
+        "label": "Control Room",
+        "status": "success" if gold_ready else "skipped",
+        "detail": "Control Room específico no aplica para este cartucho."
+        if not gold_ready
+        else "Gold disponible para consumo.",
+        "completed": 1 if gold_ready else 0,
+        "total": 1,
+        "percent": 100 if gold_ready else 0,
+    }
+
+
 def sync_agents_intelligence_step_update(
     *,
     applies: bool,
