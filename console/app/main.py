@@ -103,6 +103,7 @@ from app.services.service_urls import (
     service_url as _service_url_value,
     vault_url as _service_vault_url,
 )
+from app.services import security_headers as _security_headers
 from app.services.status_pages import (
     functional_status_page as _functional_status_page,
     internal_error_request_id as _internal_error_request_id,
@@ -132,6 +133,20 @@ from fastapi.staticfiles import StaticFiles
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+SECURITY_HEADERS = _security_headers.SECURITY_HEADERS
+VIEWER_SECURITY_HEADERS = _security_headers.VIEWER_SECURITY_HEADERS
+APP_EMBED_SECURITY_HEADERS = _security_headers.APP_EMBED_SECURITY_HEADERS
+STRICT_AUTH_SECURITY_HEADERS = _security_headers.STRICT_AUTH_SECURITY_HEADERS
+CONTROL_ROOM_SECURITY_HEADERS = _security_headers.CONTROL_ROOM_SECURITY_HEADERS
+_STRICT_CSP_PATHS = _security_headers.STRICT_CSP_PATHS
+APP_THEME_SHIM = _security_headers.APP_THEME_SHIM
+APP_THEME_SCRIPT = _security_headers.APP_THEME_SCRIPT
+_is_viewer_path = _security_headers.is_viewer_path
+_is_app_embed_path = _security_headers.is_app_embed_path
+_is_control_room_path = _security_headers.is_control_room_path
+_apply_security_headers = _security_headers.apply_security_headers
+_inject_published_app_theme = _security_headers.inject_published_app_theme
 
 
 def _env_float(name: str, default: float) -> float:
@@ -1426,172 +1441,6 @@ async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
     return row
 
 
-# NOTE: script-src is intentionally strict on shell/auth/control-room paths.
-# style-src still has a documented inline-style exception for legacy static
-# <style> blocks until those styles move to external assets or hashes.
-SECURITY_HEADERS = {
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Referrer-Policy": "same-origin",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-    "Permissions-Policy": (
-        "camera=(), microphone=(), geolocation=(), payment=(), "
-        "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
-    ),
-    # Sprint v1.11 phase 3: every root HTML now ships its JS as an
-    # external file (login.js, me.js, monitor.js, decisions.js, rag.js,
-    # iam.js, security.js, apps_gallery.js, etc.). Phase 1 and phase 2
-    # already cleaned the auth forms and the viewers. With all three
-    # phases shipped, the global CSP can drop 'unsafe-inline' from
-    # script-src. style-src keeps 'unsafe-inline' for the per-page
-    # <style> blocks (separate refactor, not in scope).
-    "Content-Security-Policy": (
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
-    ),
-}
-VIEWER_SECURITY_HEADERS = {
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "same-origin",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-    "Permissions-Policy": (
-        "camera=(), microphone=(), geolocation=(), payment=(), "
-        "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
-    ),
-    # Sprint v1.11 phase 2: viewers no longer carry inline <script> blocks
-    # or inline on* handlers (every one was extracted into
-    # /static/js/viewers/<name>.js). Drop 'unsafe-inline' from script-src;
-    # style-src keeps it because the per-page <style> blocks aren't a
-    # practical XSS vector and removing them is a separate refactor.
-    "Content-Security-Policy": (
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'self'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
-    ),
-}
-APP_EMBED_SECURITY_HEADERS = {
-    **VIEWER_SECURITY_HEADERS,
-    "X-Frame-Options": "SAMEORIGIN",
-    "Content-Security-Policy": (
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "frame-src 'self'; "
-        "frame-ancestors 'self'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
-    ),
-}
-# Sprint v1.11 — strict CSP for the auth-form pages. Their HTML no longer
-# has inline <script> blocks or inline event handlers, so we can drop
-# 'unsafe-inline' from script-src on these paths. style-src keeps
-# 'unsafe-inline' because the <style> blocks inside those HTMLs aren't a
-# practical XSS vector and removing them is a separate refactor.
-STRICT_AUTH_SECURITY_HEADERS = {
-    **SECURITY_HEADERS,
-    "Content-Security-Policy": (
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
-    ),
-}
-CONTROL_ROOM_SECURITY_HEADERS = {
-    **SECURITY_HEADERS,
-    "Content-Security-Policy": (
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
-    ),
-}
-_STRICT_CSP_PATHS = frozenset(
-    {
-        "/login",
-        "/me",
-        "/forgot-password",
-        "/reset-password",
-        "/activate",
-    }
-)
-
-APP_THEME_SHIM = """
-<style id="omega-app-theme-shim">
-:root,
-:root[data-theme="light"] {
-  --bg: #f5f7fa;
-  --bg2: #ffffff;
-  --bg3: #eef2f7;
-  --border: #d8dee8;
-  --text: #0f172a;
-  --text1: #0f172a;
-  --text2: #334155;
-  --text3: #64748b;
-  --green: #117a3d;
-  --blue: #0a6ed1;
-  --cyan: #0a6ed1;
-  --amber: #b06d00;
-  --red: #b3261e;
-  --purple: #6d5bd0;
-  --primary: #0a6ed1;
-  --primary-hover: #085caf;
-  --primary-soft: rgba(10, 110, 209, 0.10);
-  --success-soft: rgba(17, 122, 61, 0.10);
-  --warning-soft: rgba(176, 109, 0, 0.12);
-  --danger-soft: rgba(179, 38, 30, 0.08);
-  --info-soft: rgba(10, 110, 209, 0.10);
-  --on-primary: #ffffff;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-:root[data-theme="dark"] {
-  --bg: #0f1822;
-  --bg2: #182331;
-  --bg3: #1f2c3d;
-  --border: rgba(226, 232, 240, 0.14);
-  --text: #e6edf6;
-  --text1: #e6edf6;
-  --text2: #c5cfdc;
-  --text3: #8a96a8;
-  --green: #4cb27b;
-  --blue: #4ea3e0;
-  --cyan: #4ea3e0;
-  --amber: #d4a042;
-  --red: #e0716b;
-  --purple: #b8a7f5;
-  --primary: #4ea3e0;
-  --primary-hover: #74b8e8;
-  --primary-soft: rgba(78, 163, 224, 0.16);
-  --success-soft: rgba(76, 178, 123, 0.16);
-  --warning-soft: rgba(212, 160, 66, 0.18);
-  --danger-soft: rgba(224, 113, 107, 0.14);
-  --info-soft: rgba(78, 163, 224, 0.16);
-  --on-primary: #0f172a;
-}
-</style>
-"""
-APP_THEME_SCRIPT = '<script src="/static/js/theme-switch.js" defer></script>'
-
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMITS = {
     "/auth/login": (8, RATE_LIMIT_WINDOW_SECONDS),
@@ -1721,62 +1570,6 @@ def _rate_limit_disabled() -> bool:
         return True
     app_env = os.environ.get("APP_ENV", "production").strip().lower()
     return app_env in {"test", "testing"}
-
-
-def _is_viewer_path(path: str) -> bool:
-    return path == "/viewer" or path.startswith("/viewer/")
-
-
-def _is_app_embed_path(path: str) -> bool:
-    return path.startswith("/apps/") and path.endswith("/embed")
-
-
-def _is_control_room_path(path: str) -> bool:
-    return path == "/control-room" or path.startswith("/control-room/")
-
-
-def _apply_security_headers(response: Response, path: str = "") -> Response:
-    # Sprint v1.11: prefer the strict-auth headers for the five auth-form
-    # pages; viewers keep their iframe-friendly headers; everything else
-    # gets the default SECURITY_HEADERS. The dispatch is path-based — the
-    # auth POST endpoints (/auth/login etc.) live under /auth/ and fall
-    # through to the default set, which is fine because their responses
-    # are JSON, not HTML.
-    if _is_app_embed_path(path):
-        headers = APP_EMBED_SECURITY_HEADERS
-    elif _is_control_room_path(path):
-        headers = CONTROL_ROOM_SECURITY_HEADERS
-    elif path in _STRICT_CSP_PATHS:
-        headers = STRICT_AUTH_SECURITY_HEADERS
-    elif _is_viewer_path(path):
-        headers = VIEWER_SECURITY_HEADERS
-    else:
-        headers = SECURITY_HEADERS
-    if _is_viewer_path(path):
-        if "X-Frame-Options" in response.headers:
-            del response.headers["X-Frame-Options"]
-    for name, value in headers.items():
-        response.headers.setdefault(name, value)
-    return response
-
-
-def _inject_published_app_theme(html: str) -> str:
-    patched = html
-    if "omega-app-theme-shim" not in patched:
-        lower = patched.lower()
-        idx = lower.rfind("</head>")
-        if idx >= 0:
-            patched = patched[:idx] + APP_THEME_SHIM + patched[idx:]
-        else:
-            patched = APP_THEME_SHIM + patched
-    if "/static/js/theme-switch.js" not in patched:
-        lower = patched.lower()
-        idx = lower.rfind("</body>")
-        if idx >= 0:
-            patched = patched[:idx] + APP_THEME_SCRIPT + patched[idx:]
-        else:
-            patched += APP_THEME_SCRIPT
-    return patched
 
 
 @app.middleware("http")
