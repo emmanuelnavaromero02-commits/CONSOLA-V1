@@ -186,6 +186,10 @@ from app.domains.pipeline.run_state import (
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
     sanitize_pipeline_run_for_user as _sanitize_pipeline_run_for_user_impl,
 )
+from app.domains.pipeline.scope import (
+    pipeline_runs_read_conn as _pipeline_runs_read_conn_impl,
+    pipeline_runs_scope_predicate as _pipeline_runs_scope_predicate_impl,
+)
 from app.domains.pipeline.job_payloads import (
     is_pipeline_job_payload as _is_pipeline_job_payload,
     refresh_pipeline_job_payload as _refresh_pipeline_job_payload_impl,
@@ -891,36 +895,24 @@ async def _table_has_column(table: str, column: str, *, refresh: bool = False) -
 async def _pipeline_runs_scope_predicate(
     user: dict | None, start_index: int = 1, *, refresh_columns: bool = False
 ) -> tuple[str, list]:
-    ctx = build_security_context(user)
-    clauses: list[str] = []
-    values: list = []
-    idx = start_index
-    workspace_id = ctx.get("workspace_id")
-    tenant_id = ctx.get("tenant_id")
-    if workspace_id and await _table_has_column(
-        "pipeline_runs", "workspace_id", refresh=refresh_columns
-    ):
-        clauses.append(f"workspace_id=${idx}::uuid")
-        values.append(workspace_id)
-        idx += 1
-    if tenant_id and await _table_has_column(
-        "pipeline_runs", "tenant_id", refresh=refresh_columns
-    ):
-        clauses.append(f"tenant_id=${idx}::uuid")
-        values.append(tenant_id)
-    return (" AND " + " AND ".join(clauses) if clauses else ""), values
+    return await _pipeline_runs_scope_predicate_impl(
+        user,
+        start_index,
+        refresh_columns=refresh_columns,
+        build_security_context=build_security_context,
+        table_has_column=_table_has_column,
+    )
 
 
 @asynccontextmanager
 async def _pipeline_runs_read_conn(pool: Any, user: dict | None):
-    """Yield a connection scoped for pipeline_runs RLS when workspace context exists."""
-
-    ctx = build_security_context(user)
-    if ctx.get("workspace_id"):
-        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-            yield conn
-        return
-    yield pool
+    async with _pipeline_runs_read_conn_impl(
+        pool,
+        user,
+        build_security_context=build_security_context,
+        scoped_db_for_user=scoped_db_for_user,
+    ) as conn:
+        yield conn
 
 
 async def _record_dag_pipeline_trigger(
