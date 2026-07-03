@@ -313,6 +313,7 @@ from app.domains.pipeline.sync_state import (
     sync_extra_from_row as _sync_extra_from_row,
     sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
     sync_child_runtime_state as _sync_child_runtime_state,
+    sync_materialization_state as _sync_materialization_state,
     sync_now_lock_key as _sync_now_lock_key_impl,
     sync_now_run_id_from_request_id as _sync_now_run_id_from_request_id,
     sync_public_payload as _sync_public_payload,
@@ -4548,15 +4549,15 @@ async def _build_sync_run_status(
             {"entity": "__pipeline__", "status_code": 503, "error": str(exc)},
         ]
 
-    materialization = _sync_progress.sync_pipeline_materialization_summary(
+    materialization_state = _sync_materialization_state(
         pipeline_rows,
         gold_refresh_summary,
     )
-    bronze_ready = int(materialization["bronze_ready"])
-    silver_ready = int(materialization["silver_ready"])
-    gold_ready = int(materialization["gold_ready"])
-    gold_total = int(materialization["gold_total"])
-    gold_partial = bool(materialization["gold_partial"])
+    bronze_ready = materialization_state["bronze_ready"]
+    silver_ready = materialization_state["silver_ready"]
+    gold_ready = materialization_state["gold_ready"]
+    gold_total = materialization_state["gold_total"]
+    gold_partial = materialization_state["gold_partial"]
     control_room_gold_refresh = (
         dict(extra.get("control_room_gold_refresh"))
         if isinstance(extra.get("control_room_gold_refresh"), dict)

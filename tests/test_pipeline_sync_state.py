@@ -222,6 +222,26 @@ def test_sync_child_runtime_state_marks_stale_running_children_failed():
     ]
 
 
+def test_sync_materialization_state_casts_pipeline_counts():
+    state = sync_state.sync_materialization_state(
+        [
+            {
+                "bronze": {"status": "fresh"},
+                "silver": [{"status": "fresh"}, {"status": "missing"}],
+                "gold": [{"status": "fresh"}, {"status": "missing"}],
+            }
+        ],
+        {"status": "partial", "materialized": 3, "total": 4},
+    )
+
+    assert state["bronze_ready"] == 1
+    assert state["silver_ready"] == 1
+    assert state["gold_ready"] == 3
+    assert state["gold_total"] == 4
+    assert state["gold_partial"] is True
+    assert state["materialization"]["gold_ready"] == 3
+
+
 @pytest.mark.anyio
 async def test_fetch_active_sync_run_uses_scoped_lookup():
     class FakeConn:

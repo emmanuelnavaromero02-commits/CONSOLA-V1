@@ -434,6 +434,24 @@ def sync_child_runtime_state(
     }
 
 
+def sync_materialization_state(
+    pipeline_rows: list[dict[str, Any]],
+    gold_refresh_summary: dict[str, Any],
+) -> dict[str, Any]:
+    materialization = sync_progress.sync_pipeline_materialization_summary(
+        pipeline_rows,
+        gold_refresh_summary,
+    )
+    return {
+        "materialization": materialization,
+        "bronze_ready": int(materialization["bronze_ready"]),
+        "silver_ready": int(materialization["silver_ready"]),
+        "gold_ready": int(materialization["gold_ready"]),
+        "gold_total": int(materialization["gold_total"]),
+        "gold_partial": bool(materialization["gold_partial"]),
+    }
+
+
 def sync_status_from_steps(steps: list[dict[str, Any]]) -> str:
     return sync_progress.sync_status_from_steps(steps)
 
