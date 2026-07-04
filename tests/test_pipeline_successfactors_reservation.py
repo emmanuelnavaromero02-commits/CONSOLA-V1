@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from fastapi import HTTPException
+
 from app.domains.pipeline import successfactors_reservation as sf_reservation
 
 
@@ -112,3 +115,155 @@ def test_reservation_helpers_detect_conflicts_and_active_runs():
         "active": 2,
         "limit": 2,
     }
+
+
+@pytest.mark.anyio
+async def test_reserve_entity_extract_slot_returns_none_for_other_cartridge():
+    async def fail_table_has_column(*_args, **_kwargs):
+        raise AssertionError("non SuccessFactors reservations should not touch storage")
+
+    result = await sf_reservation.reserve_entity_extract_slot(
+        cartridge="replicon",
+        entity="User",
+        dag_id="replicon_extract",
+        conf={},
+        user=None,
+        requested_dag_run_id=None,
+        expected_cartridge="sap_successfactors",
+        entity_dag_id="sap_successfactors_extract",
+        extract_all_dag_id="sap_successfactors_extract_all",
+        aggregate_entity="__extract_all__",
+        active_window_seconds=300,
+        max_active_entity_extracts=2,
+        build_security_context=lambda user: {},
+        table_has_column=fail_table_has_column,
+        airflow_run_id_fragment=lambda entity: entity,
+        active_extract_run_payload=None,
+        get_db_pool=None,
+        token="abc",
+    )
+
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_reserve_entity_extract_slot_requires_scope_when_columns_exist():
+    async def table_has_column(table, column, **kwargs):
+        assert table == "pipeline_runs"
+        assert kwargs == {"refresh": True}
+        return column in {"tenant_id", "workspace_id"}
+
+    with pytest.raises(HTTPException) as exc:
+        await sf_reservation.reserve_entity_extract_slot(
+            cartridge="sap_successfactors",
+            entity="User",
+            dag_id="sap_successfactors_extract",
+            conf={},
+            user=None,
+            requested_dag_run_id=None,
+            expected_cartridge="sap_successfactors",
+            entity_dag_id="sap_successfactors_extract",
+            extract_all_dag_id="sap_successfactors_extract_all",
+            aggregate_entity="__extract_all__",
+            active_window_seconds=300,
+            max_active_entity_extracts=2,
+            build_security_context=lambda user: {},
+            table_has_column=table_has_column,
+            airflow_run_id_fragment=lambda entity: entity,
+            active_extract_run_payload=None,
+            get_db_pool=None,
+            token="abc",
+        )
+
+    assert exc.value.status_code == 403
+    assert "tenant/workspace scope" in str(exc.value.detail)
+
+
+@pytest.mark.anyio
+async def test_reserve_entity_extract_slot_records_legacy_schema_reservation():
+    class FakeTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeAcquire:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def __init__(self):
+            self.fetch_calls = []
+            self.execute_calls = []
+
+        def transaction(self):
+            return FakeTransaction()
+
+        async def fetch(self, query, *args):
+            self.fetch_calls.append((query, args))
+            return []
+
+        async def execute(self, query, *args):
+            self.execute_calls.append((query, args))
+
+    class FakePool:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def acquire(self):
+            return FakeAcquire(self.conn)
+
+    conn = FakeConn()
+
+    async def table_has_column(*_args, **_kwargs):
+        return False
+
+    async def get_db_pool():
+        return FakePool(conn)
+
+    result = await sf_reservation.reserve_entity_extract_slot(
+        cartridge="sap_successfactors",
+        entity="User",
+        dag_id="sap_successfactors_extract",
+        conf={"mode": "full"},
+        user=None,
+        requested_dag_run_id=None,
+        expected_cartridge="sap_successfactors",
+        entity_dag_id="sap_successfactors_extract",
+        extract_all_dag_id="sap_successfactors_extract_all",
+        aggregate_entity="__extract_all__",
+        active_window_seconds=300,
+        max_active_entity_extracts=2,
+        build_security_context=lambda user: {},
+        table_has_column=table_has_column,
+        airflow_run_id_fragment=lambda entity: entity,
+        active_extract_run_payload=None,
+        get_db_pool=get_db_pool,
+        token="abc",
+    )
+
+    assert result == {
+        "dag_run_id": "console__sap_successfactors_extract__User__abc",
+        "reserved": True,
+    }
+    fetch_query, fetch_args = conn.fetch_calls[0]
+    assert "FROM pipeline_runs" in fetch_query
+    assert "tenant_id=$3" not in fetch_query
+    assert fetch_args == ("sap_successfactors", 300)
+    insert_query, insert_args = conn.execute_calls[-1]
+    assert "INSERT INTO pipeline_runs" in insert_query
+    assert insert_args[:6] == (
+        "console__sap_successfactors_extract__User__abc",
+        "sap_successfactors_extract",
+        "sap_successfactors",
+        "User",
+        "console__sap_successfactors_extract__User__abc",
+        "full",
+    )

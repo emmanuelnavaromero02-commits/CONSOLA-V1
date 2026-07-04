@@ -268,14 +268,7 @@ from app.domains.pipeline.recording import (
     record_dag_pipeline_trigger as _record_dag_pipeline_trigger_impl,
 )
 from app.domains.pipeline.successfactors_reservation import (
-    active_entity_limit_payload as _sf_active_entity_limit_payload,
-    active_entity_run as _sf_active_entity_run,
-    active_entity_run_count as _sf_active_entity_run_count,
-    active_scope_args as _sf_active_scope_args,
-    extract_all_conflict as _sf_extract_all_conflict,
-    reservation_applies as _sf_reservation_applies,
-    reservation_extra as _sf_reservation_extra,
-    reservation_run_id as _sf_reservation_run_id,
+    reserve_entity_extract_slot as _reserve_successfactors_entity_extract_slot_impl,
 )
 from app.domains.pipeline.sync_state import (
     SAP_SUCCESSFACTORS_CARTRIDGE as _SAP_SUCCESSFACTORS_CARTRIDGE,
@@ -3936,172 +3929,27 @@ async def _reserve_successfactors_entity_extract_slot(
     user: dict | None,
     requested_dag_run_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if not _sf_reservation_applies(
+    return await _reserve_successfactors_entity_extract_slot_impl(
         cartridge=cartridge,
+        entity=entity,
         dag_id=dag_id,
+        conf=conf,
+        user=user,
+        requested_dag_run_id=requested_dag_run_id,
         expected_cartridge=_SAP_SUCCESSFACTORS_CARTRIDGE,
         entity_dag_id=_SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
-    ):
-        return None
-
-    tenant_id = conf.get("tenant_id") or build_security_context(user).get("tenant_id")
-    workspace_id = conf.get("workspace_id") or build_security_context(user).get(
-        "workspace_id"
-    )
-    scope_columns_present = await _table_has_column(
-        "pipeline_runs", "tenant_id", refresh=True
-    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
-    if scope_columns_present and not (tenant_id and workspace_id):
-        raise HTTPException(403, "pipeline run tenant/workspace scope is required")
-
-    dag_run_id = _sf_reservation_run_id(
-        dag_id=dag_id,
-        requested_dag_run_id=requested_dag_run_id,
-        entity_fragment=_airflow_run_id_fragment(entity),
+        extract_all_dag_id=_SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID,
+        aggregate_entity=_SYNC_AGGREGATE_ENTITY,
+        active_window_seconds=_SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS,
+        max_active_entity_extracts=_SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS,
+        build_security_context=build_security_context,
+        table_has_column=_table_has_column,
+        airflow_run_id_fragment=_airflow_run_id_fragment,
+        active_extract_run_payload=_active_extract_run_payload,
+        get_db_pool=_get_db_pool,
         token=uuid.uuid4().hex,
+        logger_exception=logger.exception,
     )
-    extra = _sf_reservation_extra(conf)
-    pool = await _get_db_pool()
-    try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                if scope_columns_present:
-                    await conn.execute(
-                        "SELECT set_config('app.tenant_id', $1, true), "
-                        "set_config('app.workspace_id', $2, true)",
-                        tenant_id,
-                        workspace_id,
-                    )
-                await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
-                    _SAP_SUCCESSFACTORS_CARTRIDGE,
-                    f"{tenant_id or '*'}:{workspace_id or '*'}",
-                )
-                scope_sql, args = _sf_active_scope_args(
-                    cartridge=_SAP_SUCCESSFACTORS_CARTRIDGE,
-                    active_window_seconds=_SAP_SUCCESSFACTORS_ACTIVE_WINDOW_SECONDS,
-                    scope_columns_present=scope_columns_present,
-                    tenant_id=tenant_id,
-                    workspace_id=workspace_id,
-                )
-                rows = [
-                    dict(row)
-                    for row in await conn.fetch(
-                        f"""
-                        SELECT run_id, dag_id, entity, airflow_dag_run_id,
-                               status, mode, started_at, extra
-                          FROM pipeline_runs
-                         WHERE cartridge_id=$1
-                           AND status IN ('queued', 'running')
-                           AND started_at > NOW() - ($2::integer * INTERVAL '1 second')
-                           {scope_sql}
-                         ORDER BY started_at DESC
-                         LIMIT 50
-                        """,
-                        *args,
-                    )
-                ]
-
-                extract_all_conflict = _sf_extract_all_conflict(
-                    rows,
-                    extract_all_dag_id=_SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID,
-                    aggregate_entity=_SYNC_AGGREGATE_ENTITY,
-                )
-                if extract_all_conflict:
-                    raise HTTPException(429, detail=extract_all_conflict)
-
-                active_row = _sf_active_entity_run(
-                    rows,
-                    entity=entity,
-                    entity_dag_id=_SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
-                )
-                if active_row:
-                    return {
-                        "response": _active_extract_run_payload(
-                            row=active_row,
-                            cartridge=cartridge,
-                            entity=entity,
-                            dag_id=dag_id,
-                            conf=conf,
-                            reason="active_entity_run",
-                        )
-                    }
-
-                active_entity_runs = _sf_active_entity_run_count(
-                    rows,
-                    entity_dag_id=_SAP_SUCCESSFACTORS_ENTITY_DAG_ID,
-                )
-                if active_entity_runs >= _SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS:
-                    raise HTTPException(
-                        429,
-                        detail=_sf_active_entity_limit_payload(
-                            active=active_entity_runs,
-                            limit=_SAP_SUCCESSFACTORS_MAX_ACTIVE_ENTITY_EXTRACTS,
-                        ),
-                    )
-
-                if scope_columns_present:
-                    await conn.execute(
-                        """
-                        INSERT INTO pipeline_runs (
-                            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                            mode, status, started_at, extra, tenant_id, workspace_id
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, 'queued', NOW(), $7::jsonb, $8::uuid, $9::uuid)
-                        ON CONFLICT (run_id) DO UPDATE SET
-                            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                            mode = EXCLUDED.mode,
-                            status = EXCLUDED.status,
-                            tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
-                            workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                            extra = pipeline_runs.extra || EXCLUDED.extra
-                        """,
-                        dag_run_id,
-                        dag_id,
-                        cartridge,
-                        entity,
-                        dag_run_id,
-                        conf.get("mode") or "incremental",
-                        extra,
-                        tenant_id,
-                        workspace_id,
-                    )
-                else:
-                    await conn.execute(
-                        """
-                        INSERT INTO pipeline_runs (
-                            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                            mode, status, started_at, extra
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, 'queued', NOW(), $7::jsonb)
-                        ON CONFLICT (run_id) DO UPDATE SET
-                            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                            mode = EXCLUDED.mode,
-                            status = EXCLUDED.status,
-                            extra = pipeline_runs.extra || EXCLUDED.extra
-                        """,
-                        dag_run_id,
-                        dag_id,
-                        cartridge,
-                        entity,
-                        dag_run_id,
-                        conf.get("mode") or "incremental",
-                        extra,
-                    )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("SuccessFactors extraction backpressure check failed")
-        raise HTTPException(
-            503,
-            detail={
-                "reason": "backpressure_unavailable",
-                "message": "Could not reserve SAP SuccessFactors extraction slot.",
-                "error": str(exc),
-            },
-        ) from exc
-
-    return {"dag_run_id": dag_run_id, "reserved": True}
 
 
 async def _maybe_trigger_aggregate_extract_all(
