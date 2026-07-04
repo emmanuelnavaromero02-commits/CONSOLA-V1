@@ -428,6 +428,10 @@ from app.domains.pipeline.aggregate_trigger import (
 from app.domains.pipeline.packaged_datasets import (
     ensure_sync_packaged_datasets as _ensure_sync_packaged_datasets_impl,
 )
+from app.domains.pipeline.dag_templates_payloads import (
+    dag_template_code_payload as _dag_template_code_payload_impl,
+    dag_templates_payload as _dag_templates_payload_impl,
+)
 from app.domains.pipeline.airflow_trigger import (
     trigger_airflow_extract_dag as _trigger_airflow_extract_dag_impl,
 )
@@ -3009,7 +3013,7 @@ async def api_pipeline(
 async def api_dag_templates():
     from app.services import dag_templates
 
-    return {"templates": dag_templates.get_all()}
+    return _dag_templates_payload_impl(dag_templates_service=dag_templates)
 
 
 @app.get(
@@ -3020,10 +3024,12 @@ async def api_dag_template_code(
 ):
     from app.services import dag_templates
 
-    code = dag_templates.get_code(template_id, cartridge, entity)
-    if code is None:
-        raise HTTPException(404, f"Template '{template_id}' not found")
-    return {"id": template_id, "cartridge": cartridge, "entity": entity, "code": code}
+    return _dag_template_code_payload_impl(
+        template_id=template_id,
+        cartridge=cartridge,
+        entity=entity,
+        dag_templates_service=dag_templates,
+    )
 
 
 @app.get("/api/pipeline_runs", dependencies=[Depends(require_permission("pipelines.read"))])
