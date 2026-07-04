@@ -3,7 +3,11 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
-from app.services.control_room.talent_catalog import TALENT_BOX_DEFINITIONS
+from app.services.control_room.talent_catalog import (
+    TALENT_BOX_DEFINITIONS,
+    TALENT_LIVE_COMPONENT_IDS,
+    TALENT_METADATA_ENTITIES,
+)
 
 
 _RESERVED_GLOBALS = {
@@ -1181,80 +1185,23 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-def _sf_talent_metadata_entities() -> list[dict[str, Any]]:
+def _sf_talent_metadata_entities(
+    entities: list[dict[str, Any]] = TALENT_METADATA_ENTITIES,
+) -> list[dict[str, Any]]:
     return [
-        {
-            "id": "performance",
-            "kb": "KB-DESEMPENO",
-            "entity": "FormHeader/PerformanceReview",
-            "required_for": "performance_score",
-            "status": "blocked",
-            "blockers": ["PerformanceReview/FormHeader metadata pending", "GoalPlan scope pending"],
-        },
-        {
-            "id": "competency",
-            "kb": "KB-COMPETENCIAS",
-            "entity": "MDF competencies/skills",
-            "required_for": "competency_score",
-            "status": "blocked",
-            "blockers": ["Competency/skill MDF entity depends on tenant metadata"],
-        },
-        {
-            "id": "aspiration",
-            "kb": "KB-ASPIRACION",
-            "entity": "Career interest / aspiration",
-            "required_for": "aspiration_score",
-            "status": "blocked",
-            "blockers": ["Career interest entity depends on tenant metadata"],
-        },
-        {
-            "id": "roles",
-            "kb": "KB-ROLES",
-            "entity": "Position / FOJobCode",
-            "required_for": "role_requirements",
-            "status": "partial",
-            "blockers": ["Position requirements pending", "Required skills pending"],
-        },
-        {
-            "id": "recruiting",
-            "kb": "KB-RECLUTAMIENTO",
-            "entity": "JobApplication",
-            "required_for": "pipeline_signal",
-            "status": "partial",
-            "blockers": ["JobApplication scope pending"],
-        },
-        {
-            "id": "learning",
-            "kb": "KB-APRENDIZAJE",
-            "entity": "LearningItem/LearningAssignment/LearningHistory",
-            "required_for": "learning_certification_signal",
-            "status": "partial",
-            "blockers": ["Learning entities and certification expiry scope pending"],
-        },
-        {
-            "id": "succession",
-            "kb": "WB-TALENTO",
-            "entity": "Succession / calibration",
-            "required_for": "promotion_alignment",
-            "status": "partial",
-            "blockers": ["Succession and calibration entities pending"],
-        },
+        {**item, "blockers": list(item.get("blockers", []))}
+        for item in entities
     ]
-
-
-_SF_TALENT_LIVE_COMPONENT_IDS = {
-    "roles": "role_requirements",
-    "succession": "movement_events",
-}
 
 
 @_bind_to_core
 def _sf_talent_live_component_for(
     entity_id: str,
     live_components: dict[str, dict[str, Any]],
+    component_ids: dict[str, str] = TALENT_LIVE_COMPONENT_IDS,
 ) -> dict[str, Any]:
     return live_components.get(entity_id) or live_components.get(
-        _SF_TALENT_LIVE_COMPONENT_IDS.get(entity_id, "")
+        component_ids.get(entity_id, "")
     ) or {}
 
 

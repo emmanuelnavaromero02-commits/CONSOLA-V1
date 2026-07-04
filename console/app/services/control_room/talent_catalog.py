@@ -77,3 +77,72 @@ TALENT_BOX_DEFINITIONS: list[dict[str, Any]] = [
         "display_order": 9,
     },
 ]
+
+
+TALENT_METADATA_ENTITIES: list[dict[str, Any]] = [
+    {
+        "id": "performance",
+        "kb": "KB-DESEMPENO",
+        "entity": "FormHeader/PerformanceReview",
+        "required_for": "performance_score",
+        "status": "blocked",
+        "blockers": [
+            "PerformanceReview/FormHeader metadata pending",
+            "GoalPlan scope pending",
+        ],
+    },
+    {
+        "id": "competency",
+        "kb": "KB-COMPETENCIAS",
+        "entity": "MDF competencies/skills",
+        "required_for": "competency_score",
+        "status": "blocked",
+        "blockers": ["Competency/skill MDF entity depends on tenant metadata"],
+    },
+    {
+        "id": "aspiration",
+        "kb": "KB-ASPIRACION",
+        "entity": "Career interest / aspiration",
+        "required_for": "aspiration_score",
+        "status": "blocked",
+        "blockers": ["Career interest entity depends on tenant metadata"],
+    },
+    {
+        "id": "roles",
+        "kb": "KB-ROLES",
+        "entity": "Position / FOJobCode",
+        "required_for": "role_requirements",
+        "status": "partial",
+        "blockers": ["Position requirements pending", "Required skills pending"],
+    },
+    {
+        "id": "recruiting",
+        "kb": "KB-RECLUTAMIENTO",
+        "entity": "JobApplication",
+        "required_for": "pipeline_signal",
+        "status": "partial",
+        "blockers": ["JobApplication scope pending"],
+    },
+    {
+        "id": "learning",
+        "kb": "KB-APRENDIZAJE",
+        "entity": "LearningItem/LearningAssignment/LearningHistory",
+        "required_for": "learning_certification_signal",
+        "status": "partial",
+        "blockers": ["Learning entities and certification expiry scope pending"],
+    },
+    {
+        "id": "succession",
+        "kb": "WB-TALENTO",
+        "entity": "Succession / calibration",
+        "required_for": "promotion_alignment",
+        "status": "partial",
+        "blockers": ["Succession and calibration entities pending"],
+    },
+]
+
+
+TALENT_LIVE_COMPONENT_IDS = {
+    "roles": "role_requirements",
+    "succession": "movement_events",
+}
