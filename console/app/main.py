@@ -1405,10 +1405,12 @@ async def _middleware_authenticated_user(
     )
 
 
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    path = request.url.path
-
+async def _auth_preflight_response(
+    request: Request,
+    call_next,
+    *,
+    path: str,
+) -> Response | None:
     if _is_direct_static_html_request(path):
         return _apply_security_headers(
             JSONResponse({"detail": "not found"}, status_code=404), path
@@ -1435,6 +1437,16 @@ async def auth_middleware(request: Request, call_next):
     # the route re-checks the same token before executing the agent.
     if _is_agent_runner_request(request):
         return await call_next(request)
+
+    return None
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    response = await _auth_preflight_response(request, call_next, path=path)
+    if response is not None:
+        return response
 
     is_public = _is_auth_public_path(path)
     user, response = await _middleware_authenticated_user(
