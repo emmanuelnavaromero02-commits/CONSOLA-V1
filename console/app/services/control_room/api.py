@@ -4459,6 +4459,69 @@ def _dashboard_summary_payload(
 
 
 @_bind_to_core
+async def _dashboard_items_and_insights(
+    user: dict | None,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    active_cartridges: set[str],
+    *,
+    persist: bool,
+) -> dict[str, Any]:
+    lesson_rows = await _load_lesson_rows(user, limit=200)
+    lesson_summary = _lesson_insights(lesson_rows)
+    items = _attach_lessons_to_items(items, lesson_rows)
+    if persist:
+        await _cleanup_obsolete_source_state_items(user, sources, items)
+    items = await _dashboard_items_with_persisted(
+        user,
+        items,
+        active_cartridges,
+        persist=persist,
+    )
+    alerts_payload = _alert_payload(items)
+    return {
+        "items": items,
+        "lesson_summary": lesson_summary,
+        "alerts": alerts_payload["alerts"],
+        "alert_summary": alerts_payload["summary"],
+    }
+
+
+@_bind_to_core
+def _dashboard_meta_payload(
+    generated_at: datetime,
+    sources: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "generated_at": generated_at.isoformat(),
+        "refresh_interval_seconds": CONTROL_ROOM_REFRESH_INTERVAL_SECONDS,
+        "live_mode": "polling",
+        "source_count": len(sources),
+        "item_count": len(items),
+        # Runtime confidence: the UI surfaces the real version/env and
+        # distinguishes supervised execution from external ERP write-back.
+        "version": app_version(),
+        "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
+        "execution_mode": "supervised_execution",
+        "supervised_execution_enabled": True,
+        "external_writeback_enabled": _external_writeback_enabled(),
+        "write_back_enabled": _external_writeback_enabled(),
+    }
+
+
+@_bind_to_core
+def _dashboard_workspace_payload(
+    user: dict | None,
+    workspace_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
+        "workspace_id": workspace_id,
+    }
+
+
+@_bind_to_core
 async def dashboard(
     user: dict | None,
     *,
@@ -4481,20 +4544,14 @@ async def dashboard(
     financial = payload["financial"]
     thresholds = payload.get("thresholds") or []
     active_cartridges = _dashboard_active_cartridges(installations)
-    lesson_rows = await _load_lesson_rows(user, limit=200)
-    lesson_summary = _lesson_insights(lesson_rows)
-    items = _attach_lessons_to_items(items, lesson_rows)
-    if persist:
-        await _cleanup_obsolete_source_state_items(user, sources, items)
-    items = await _dashboard_items_with_persisted(
+    enriched = await _dashboard_items_and_insights(
         user,
         items,
+        sources,
         active_cartridges,
         persist=persist,
     )
-    alerts_payload = _alert_payload(items)
-    alerts = alerts_payload["alerts"]
-    alert_summary = alerts_payload["summary"]
+    items = enriched["items"]
 
     by_severity, by_cartridge, by_domain = _dashboard_item_counts(items)
 
@@ -4510,26 +4567,8 @@ async def dashboard(
     domains = _dashboard_domains_payload(modules_for_payload, items, sources)
 
     return {
-        "meta": {
-            "generated_at": generated_at.isoformat(),
-            "refresh_interval_seconds": CONTROL_ROOM_REFRESH_INTERVAL_SECONDS,
-            "live_mode": "polling",
-            "source_count": len(sources),
-            "item_count": len(items),
-            # Runtime confidence: the UI surfaces the real version/env and
-            # distinguishes supervised execution from external ERP write-back.
-            "version": app_version(),
-            "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
-            "execution_mode": "supervised_execution",
-            "supervised_execution_enabled": True,
-            "external_writeback_enabled": _external_writeback_enabled(),
-            "write_back_enabled": _external_writeback_enabled(),
-        },
-        "workspace": {
-            "tenant_id": (user or {}).get("active_tenant_id")
-            or (user or {}).get("tenant_id"),
-            "workspace_id": workspace_id,
-        },
+        "meta": _dashboard_meta_payload(generated_at, sources, items),
+        "workspace": _dashboard_workspace_payload(user, workspace_id),
         "period": generated_at.strftime("%B %Y"),
         "omega_steps": OMEGA_STEPS,
         "summary": _dashboard_summary_payload(
@@ -4542,13 +4581,13 @@ async def dashboard(
             open_decisions=open_decisions,
             financial=financial,
             thresholds=thresholds,
-            lesson_summary=lesson_summary,
-            alert_summary=alert_summary,
+            lesson_summary=enriched["lesson_summary"],
+            alert_summary=enriched["alert_summary"],
         ),
         "domains": domains,
         "cartridges": cartridges,
         "sources": sources,
-        "alerts": alerts,
+        "alerts": enriched["alerts"],
         "items": items,
     }
 
