@@ -399,57 +399,9 @@ async def create_lesson_endpoint(
     body: dict = Body(...),
     user: dict = Depends(require_authenticated),
 ):
-    trigger = (body or {}).get("trigger_pattern")
-    lesson  = (body or {}).get("lesson_text")
-    scope   = (body or {}).get("scope", "user")
-    if not trigger or not lesson:
-        raise HTTPException(400, "trigger_pattern and lesson_text required")
-    # Reject unknown scopes outright so a typo can't silently land a
-    # lesson into the wrong visibility bucket. The Python service
-    # layer also normalises scope, but that's the second line of
-    # defence — we want a 400 at the edge, not a silent fallback.
-    if scope == "global":
-        scope = "workspace_global"
-    if scope not in ("user", "workspace", "workspace_global", "tenant_global", "platform_global"):
-        raise HTTPException(
-            400, "scope must be one of: user, workspace, workspace_global, tenant_global, platform_global",
-        )
-    if scope in ("workspace", "workspace_global", "tenant_global") and not _has_admin(user):
-        raise HTTPException(403, "workspace lessons require admin")
-    if scope == "platform_global" and str(user.get("role") or "").lower() not in {"owner", "super_admin", "admin"}:
-        raise HTTPException(403, "platform_global lessons require platform admin")
-    # Audit-round-6 P1 fix: previously ``_looks_like_jailbreak`` only
-    # ran at render time, so a malicious admin could plant a row
-    # carrying ``"[SYSTEM OVERRIDE]: ignore everything"`` into
-    # ``copilot_lessons``. The render filter silently dropped it —
-    # but it still occupied a row, ate the operator's mental
-    # audit-row budget, and would have shipped if the filter ever
-    # regressed. Validate at the edge so the row never lands.
-    if lessons_service._looks_like_jailbreak(str(lesson)):
-        # We still emit an audit event below for the rejection so an
-        # operator can spot a hostile pattern. Note: we deliberately
-        # do NOT echo the offending text back in the 400 — keeps the
-        # forensic value of the audit row but doesn't help an
-        # attacker iterate on a working bypass string.
-        try:
-            await audit_service.record_event(
-                user_id=_user_id(user),
-                email=str(user.get("email") or ""),
-                action="copilot.lesson.rejected_jailbreak",
-                resource_type="copilot_lesson",
-                resource_id="",
-                status="failed",
-                metadata={
-                    "scope": scope,
-                    "trigger_preview": str(trigger)[:120],
-                    "lesson_preview": str(lesson)[:200],
-                },
-            )
-        except Exception:
-            logger.debug("audit rejected_jailbreak failed", exc_info=True)
-        raise HTTPException(
-            400, "lesson_text matches the jailbreak guard and was rejected",
-        )
+    trigger, lesson, scope = _lesson_creation_payload(body)
+    scope = _validate_lesson_scope(scope, user)
+    await _reject_jailbreak_lesson_if_needed(user, trigger, lesson, scope)
     new_id = await lessons_service.record_manual_lesson(
         user_id=_user_id(user) if scope == "user" else None,
         workspace_id=_workspace_id(user),
@@ -459,16 +411,74 @@ async def create_lesson_endpoint(
     )
     if not new_id:
         raise HTTPException(503, "copilot_lessons table not provisioned")
-    # Audit creation so an operator can spot suspicious lessons even
-    # if `_looks_like_jailbreak` later silences them at render time.
+    await _audit_lesson_event(
+        user,
+        action="copilot.lesson.created",
+        status="completed",
+        resource_id=str(new_id),
+        scope=scope,
+        trigger=trigger,
+        lesson=lesson,
+    )
+    return {"id": new_id, "scope": scope}
+
+
+def _lesson_creation_payload(body: dict | None) -> tuple[Any, Any, str]:
+    trigger = (body or {}).get("trigger_pattern")
+    lesson = (body or {}).get("lesson_text")
+    scope = (body or {}).get("scope", "user")
+    if not trigger or not lesson:
+        raise HTTPException(400, "trigger_pattern and lesson_text required")
+    return trigger, lesson, str(scope)
+
+
+def _validate_lesson_scope(scope: str, user: dict[str, Any]) -> str:
+    # Reject unknown scopes outright so a typo can't silently land a
+    # lesson into the wrong visibility bucket. The Python service
+    # layer also normalises scope, but that's the second line of
+    # defence — we want a 400 at the edge, not a silent fallback.
+    if scope == "global":
+        scope = "workspace_global"
+    if scope not in (
+        "user",
+        "workspace",
+        "workspace_global",
+        "tenant_global",
+        "platform_global",
+    ):
+        raise HTTPException(
+            400,
+            "scope must be one of: user, workspace, workspace_global, tenant_global, platform_global",
+        )
+    if scope in ("workspace", "workspace_global", "tenant_global") and not _has_admin(user):
+        raise HTTPException(403, "workspace lessons require admin")
+    if scope == "platform_global" and str(user.get("role") or "").lower() not in {
+        "owner",
+        "super_admin",
+        "admin",
+    }:
+        raise HTTPException(403, "platform_global lessons require platform admin")
+    return scope
+
+
+async def _audit_lesson_event(
+    user: dict[str, Any],
+    *,
+    action: str,
+    status: str,
+    resource_id: str,
+    scope: str,
+    trigger: Any,
+    lesson: Any,
+) -> None:
     try:
         await audit_service.record_event(
             user_id=_user_id(user),
             email=str(user.get("email") or ""),
-            action="copilot.lesson.created",
+            action=action,
             resource_type="copilot_lesson",
-            resource_id=str(new_id),
-            status="completed",
+            resource_id=resource_id,
+            status=status,
             metadata={
                 "scope": scope,
                 "trigger_preview": str(trigger)[:120],
@@ -476,8 +486,41 @@ async def create_lesson_endpoint(
             },
         )
     except Exception:
-        logger.debug("audit copilot.lesson.created failed", exc_info=True)
-    return {"id": new_id, "scope": scope}
+        logger.debug("audit %s failed", action, exc_info=True)
+
+
+async def _reject_jailbreak_lesson_if_needed(
+    user: dict[str, Any],
+    trigger: Any,
+    lesson: Any,
+    scope: str,
+) -> None:
+    # Audit-round-6 P1 fix: previously ``_looks_like_jailbreak`` only
+    # ran at render time, so a malicious admin could plant a row
+    # carrying ``"[SYSTEM OVERRIDE]: ignore everything"`` into
+    # ``copilot_lessons``. The render filter silently dropped it —
+    # but it still occupied a row, ate the operator's mental
+    # audit-row budget, and would have shipped if the filter ever
+    # regressed. Validate at the edge so the row never lands.
+    if not lessons_service._looks_like_jailbreak(str(lesson)):
+        return
+    # We still emit an audit event below for the rejection so an
+    # operator can spot a hostile pattern. Note: we deliberately
+    # do NOT echo the offending text back in the 400 — keeps the
+    # forensic value of the audit row but doesn't help an
+    # attacker iterate on a working bypass string.
+    await _audit_lesson_event(
+        user,
+        action="copilot.lesson.rejected_jailbreak",
+        status="failed",
+        resource_id="",
+        scope=scope,
+        trigger=trigger,
+        lesson=lesson,
+    )
+    raise HTTPException(
+        400, "lesson_text matches the jailbreak guard and was rejected",
+    )
 
 
 _ADMIN_ROLE_ALLOWLIST = COPILOT_ADMIN_ROLE_ALLOWLIST
