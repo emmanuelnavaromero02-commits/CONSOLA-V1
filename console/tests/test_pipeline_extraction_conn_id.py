@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from app.domains.pipeline.extract_config import (
     apply_user_scope_to_dag_conf,
+    build_mcp_extract_args,
     connection_id_from_vault_payload,
     dag_run_id_from_idempotency_key,
     entity_declared_in_static_catalog,
@@ -36,6 +37,21 @@ def test_build_dag_extract_conf_rejects_unsafe_conn_id():
             "incremental",
             {"conn_id": "../../femsa_sf"},
         )
+
+    assert exc.value.status_code == 400
+
+
+def test_build_mcp_extract_args_defaults_mode_and_accepts_connection_id():
+    assert build_mcp_extract_args("Customer", {"connection_id": "crm-main"}) == {
+        "entity": "Customer",
+        "mode": "incremental",
+        "conn_id": "crm-main",
+    }
+
+
+def test_build_mcp_extract_args_rejects_unsafe_connection_id():
+    with pytest.raises(HTTPException) as exc:
+        build_mcp_extract_args("Customer", {"connection_id": "bad/conn"})
 
     assert exc.value.status_code == 400
 

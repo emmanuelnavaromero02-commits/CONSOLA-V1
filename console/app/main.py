@@ -438,6 +438,7 @@ from app.domains.pipeline.airflow_trigger import (
 from app.domains.pipeline.extract_config import (
     apply_user_scope_to_dag_conf as _apply_user_scope_to_dag_conf_impl,
     build_dag_extract_conf as _build_dag_extract_conf_impl,
+    build_mcp_extract_args as _build_mcp_extract_args_impl,
     connection_id_from_vault_payload as _connection_id_from_vault_payload_impl,
     dag_run_id_from_idempotency_key as _dag_run_id_from_idempotency_key_impl,
     entity_declared_in_static_catalog as _entity_declared_in_static_catalog_impl,
@@ -3247,16 +3248,7 @@ async def api_pipeline_extract(
             "conf": conf,
         }
 
-    mode = body.get("mode", "incremental")
-    args = {
-        "entity": entity,
-        "mode": mode,
-    }
-    conn_id = _normalize_pipeline_conn_id(
-        body.get("conn_id") or body.get("connection_id")
-    )
-    if conn_id:
-        args["conn_id"] = conn_id
+    args = _build_mcp_extract_args_impl(entity, body)
     result = await mcp_registry.invoke(cartridge, "extract", args, user=user)
     return result
 

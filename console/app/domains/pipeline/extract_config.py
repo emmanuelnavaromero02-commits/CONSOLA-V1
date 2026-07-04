@@ -40,6 +40,17 @@ def build_dag_extract_conf(
     return conf
 
 
+def build_mcp_extract_args(entity: str, body: dict[str, Any]) -> dict[str, Any]:
+    args: dict[str, Any] = {
+        "entity": entity,
+        "mode": body.get("mode", "incremental"),
+    }
+    conn_id = normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    if conn_id:
+        args["conn_id"] = conn_id
+    return args
+
+
 def connection_id_from_vault_payload(payload: Any) -> str | None:
     candidates: list[Any] = []
     if isinstance(payload, dict):
