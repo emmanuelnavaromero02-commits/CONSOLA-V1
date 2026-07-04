@@ -84,3 +84,100 @@ async def create_admin_user_payload(
         },
     )
     return target_user
+
+
+async def update_admin_user_payload(
+    *,
+    user_id: int,
+    body: dict,
+    admin_user: dict,
+    request_ip: str | None,
+    user_agent: str | None,
+    auth_service: Any,
+    audit_service: Any,
+    validate_password_or_400: Callable[[Any], str],
+    assignable_role: Callable[[str | None, dict | None], str],
+    is_global_iam_admin: Callable[[dict | None], bool],
+    assert_can_manage_target_user: Callable[[dict, int], Awaitable[None]],
+    set_workspace_role_for_user: Callable[[int, str, str], Awaitable[None]],
+    workspace_scope_db_unavailable: Callable[[BaseException], bool],
+) -> dict:
+    # Don't let an admin demote / disable themselves accidentally.
+    if user_id == admin_user["id"] and (
+        body.get("role") not in (None, admin_user.get("role"))
+        or body.get("is_active") is False
+    ):
+        raise HTTPException(400, "you cannot demote or disable your own account")
+    await assert_can_manage_target_user(admin_user, user_id)
+    before = await auth_service.get_user_by_id(user_id)
+    password = None
+    if "password" in body:
+        password = validate_password_or_400(body.get("password"))
+    password_changed = password is not None
+    role_update = body.get("role")
+    workspace_role = None
+    platform_role_update = None
+    if role_update:
+        requested_role = assignable_role(role_update, admin_user)
+        if is_global_iam_admin(admin_user):
+            platform_role_update = requested_role
+        else:
+            workspace_role = requested_role
+    target_user = await auth_service.update_user(
+        user_id,
+        name=body.get("name"),
+        role=platform_role_update,
+        is_active=body.get("is_active"),
+        password=password,
+        escalation_notify=body.get("escalation_notify")
+        if "escalation_notify" in body
+        else None,
+    )
+    if not target_user:
+        raise HTTPException(404, "user not found")
+    if workspace_role:
+        workspace_id = str(admin_user.get("active_workspace_id") or "")
+        if not workspace_id:
+            raise HTTPException(400, "active workspace is required")
+        try:
+            await set_workspace_role_for_user(user_id, workspace_id, workspace_role)
+        except (RuntimeError, AttributeError) as exc:
+            if not workspace_scope_db_unavailable(exc):
+                raise
+        target_user["workspace_role"] = workspace_role
+    action = "user.updated"
+    if before and before.get("role") != target_user.get("role"):
+        action = "user.role_changed"
+    elif before and before.get("is_active") and not target_user.get("is_active"):
+        action = "user.disabled"
+    elif before and not before.get("is_active") and target_user.get("is_active"):
+        action = "user.enabled"
+    await audit_service.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        action,
+        "user",
+        str(user_id),
+        ip=request_ip,
+        user_agent=user_agent,
+        metadata={
+            "role": target_user.get("role"),
+            "is_active": target_user.get("is_active"),
+            "password_changed": password_changed,
+        },
+    )
+    if password_changed:
+        # Password change is independently auditable: an admin overriding a
+        # user's credential is privileged enough to warrant its own row, even
+        # when bundled with other field updates in the same request.
+        await audit_service.record_event(
+            admin_user.get("id"),
+            admin_user.get("email"),
+            "user.password_changed",
+            "user",
+            str(user_id),
+            ip=request_ip,
+            user_agent=user_agent,
+            metadata={"target_email": target_user.get("email")},
+        )
+    return target_user

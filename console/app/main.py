@@ -106,6 +106,7 @@ from app.domains.admin.vpn_invites import (
 )
 from app.domains.admin.user_mutations import (
     create_admin_user_payload as _create_admin_user_payload_impl,
+    update_admin_user_payload as _update_admin_user_payload_impl,
 )
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.decisions.access import (
@@ -6557,85 +6558,21 @@ async def api_admin_users_update(
     request: Request,
     admin_user: dict = Depends(require_permission("iam.users.write")),
 ):
-    # Don't let an admin demote / disable themselves accidentally
-    if user_id == admin_user["id"] and (
-        body.get("role") not in (None, admin_user.get("role"))
-        or body.get("is_active") is False
-    ):
-        raise HTTPException(400, "you cannot demote or disable your own account")
-    await _assert_can_manage_target_user(admin_user, user_id)
-    before = await _auth.get_user_by_id(user_id)
-    password = None
-    if "password" in body:
-        password = _validate_password_or_400(body.get("password"))
-    password_changed = password is not None
-    role_update = body.get("role")
-    workspace_role = None
-    platform_role_update = None
-    if role_update:
-        requested_role = _assignable_role(role_update, admin_user)
-        if _is_global_iam_admin(admin_user):
-            platform_role_update = requested_role
-        else:
-            workspace_role = requested_role
-    target_user = await _auth.update_user(
-        user_id,
-        name=body.get("name"),
-        role=platform_role_update,
-        is_active=body.get("is_active"),
-        password=password,
-        escalation_notify=body.get("escalation_notify")
-        if "escalation_notify" in body
-        else None,
-    )
-    if not target_user:
-        raise HTTPException(404, "user not found")
-    if workspace_role:
-        workspace_id = str(admin_user.get("active_workspace_id") or "")
-        if not workspace_id:
-            raise HTTPException(400, "active workspace is required")
-        try:
-            await _set_workspace_role_for_user(user_id, workspace_id, workspace_role)
-        except (RuntimeError, AttributeError) as exc:
-            if not _workspace_scope_db_unavailable(exc):
-                raise
-        target_user["workspace_role"] = workspace_role
-    action = "user.updated"
-    if before and before.get("role") != target_user.get("role"):
-        action = "user.role_changed"
-    elif before and before.get("is_active") and not target_user.get("is_active"):
-        action = "user.disabled"
-    elif before and not before.get("is_active") and target_user.get("is_active"):
-        action = "user.enabled"
-    await _audit.record_event(
-        admin_user.get("id"),
-        admin_user.get("email"),
-        action,
-        "user",
-        str(user_id),
-        ip=_client_ip(request),
+    return await _update_admin_user_payload_impl(
+        user_id=user_id,
+        body=body,
+        admin_user=admin_user,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "role": target_user.get("role"),
-            "is_active": target_user.get("is_active"),
-            "password_changed": password_changed,
-        },
+        auth_service=_auth,
+        audit_service=_audit,
+        validate_password_or_400=_validate_password_or_400,
+        assignable_role=_assignable_role,
+        is_global_iam_admin=_is_global_iam_admin,
+        assert_can_manage_target_user=_assert_can_manage_target_user,
+        set_workspace_role_for_user=_set_workspace_role_for_user,
+        workspace_scope_db_unavailable=_workspace_scope_db_unavailable,
     )
-    if password_changed:
-        # Password change is independently auditable: an admin overriding a
-        # user's credential is privileged enough to warrant its own row, even
-        # when bundled with other field updates in the same request.
-        await _audit.record_event(
-            admin_user.get("id"),
-            admin_user.get("email"),
-            "user.password_changed",
-            "user",
-            str(user_id),
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
-            metadata={"target_email": target_user.get("email")},
-        )
-    return target_user
 
 
 @app.delete(
