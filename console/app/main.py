@@ -397,9 +397,11 @@ from app.domains.pipeline.sync_state import (
     sync_control_room_gold_refresh_terminal as _sync_control_room_gold_refresh_terminal,
     sync_entity_idempotency_key as _sync_entity_idempotency_key,
     sync_errors_retryable as _sync_errors_retryable,
+    sync_dataset_seed_failure_extra as _sync_dataset_seed_failure_extra,
     sync_dataset_seed_failure_step_updates as _sync_dataset_seed_failure_step_updates,
     sync_extract_all_error_message as _sync_extract_all_error_message,
     sync_extract_all_result_state as _sync_extract_all_result_state,
+    sync_extract_all_trigger_extra as _sync_extract_all_trigger_extra,
     sync_extract_all_trigger_step_updates as _sync_extract_all_trigger_step_updates,
     sync_extra_from_row as _sync_extra_from_row,
     sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
@@ -409,6 +411,7 @@ from app.domains.pipeline.sync_state import (
     sync_now_lock_key as _sync_now_lock_key_impl,
     sync_now_run_id_from_request_id as _sync_now_run_id_from_request_id,
     sync_public_payload as _sync_public_payload,
+    sync_running_extra as _sync_running_extra,
     sync_run_age_seconds as _sync_run_age_seconds,
     sync_run_needs_final_reconcile as _sync_run_needs_final_reconcile,
     sync_run_working_state as _sync_run_working_state,
@@ -3823,16 +3826,13 @@ async def api_cartridge_sync_now(
                 mode=mode,
                 status="running",
                 user=user,
-                extra={
-                    "mode": mode,
-                    "target": target,
-                    "conn_id": conn_id,
-                    "request_id": request_id,
-                    "steps": steps,
-                    "triggered_entities": [],
-                    "errors": [],
-                    "control_room_ready": False,
-                },
+                extra=_sync_running_extra(
+                    mode=mode,
+                    target=target,
+                    conn_id=conn_id,
+                    request_id=request_id,
+                    steps=steps,
+                ),
             )
         finally:
             await sync_lock_conn.execute(
@@ -3865,27 +3865,14 @@ async def api_cartridge_sync_now(
                 mode=mode,
                 status="failed",
                 user=user,
-                extra={
-                    "mode": mode,
-                    "target": target,
-                    "conn_id": conn_id,
-                    "request_id": request_id,
-                    "steps": steps,
-                    "triggered_entities": [],
-                    "errors": [
-                        {
-                            "entity": "__dataset_seed__",
-                            "error": message,
-                            "reason": "packaged_dataset_seed_failed",
-                        }
-                    ],
-                    "control_room_ready": False,
-                    "dataset_seed": {
-                        "status": "failed",
-                        "reason": "packaged_dataset_seed_failed",
-                        "error": message,
-                    },
-                },
+                extra=_sync_dataset_seed_failure_extra(
+                    mode=mode,
+                    target=target,
+                    conn_id=conn_id,
+                    request_id=request_id,
+                    steps=steps,
+                    message=message,
+                ),
                 error_message=message[:500],
             )
             row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
@@ -3937,19 +3924,17 @@ async def api_cartridge_sync_now(
         mode=mode,
         status=status,
         user=user,
-        extra={
-            "mode": mode,
-            "target": target,
-            "conn_id": conn_id,
-            "request_id": request_id,
-            "steps": steps,
-            "triggered_entities": triggered_entities,
-            "errors": errors,
-            "control_room_ready": False,
-            "extract_all_result": result,
-            "trigger_strategy": result.get("trigger_strategy") or "fanout",
-            "dataset_seed": dataset_seed,
-        },
+        extra=_sync_extract_all_trigger_extra(
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            request_id=request_id,
+            steps=steps,
+            triggered_entities=triggered_entities,
+            errors=errors,
+            result=result,
+            dataset_seed=dataset_seed,
+        ),
         error_message=_sync_extract_all_error_message(errors),
     )
     row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)

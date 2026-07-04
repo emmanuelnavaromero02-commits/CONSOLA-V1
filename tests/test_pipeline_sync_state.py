@@ -185,6 +185,74 @@ def test_sync_dataset_seed_failure_step_updates_fail_downstream_steps():
     assert updates["agents_intelligence"]["status"] == "failed"
 
 
+def test_sync_running_extra_uses_expected_contract():
+    extra = sync_state.sync_running_extra(
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        request_id="request-1",
+        steps=[{"id": "connection", "status": "running"}],
+    )
+
+    assert extra == {
+        "mode": "incremental",
+        "target": "all",
+        "conn_id": "femsa_sf",
+        "request_id": "request-1",
+        "steps": [{"id": "connection", "status": "running"}],
+        "triggered_entities": [],
+        "errors": [],
+        "control_room_ready": False,
+    }
+
+
+def test_sync_dataset_seed_failure_extra_keeps_error_and_dataset_seed():
+    extra = sync_state.sync_dataset_seed_failure_extra(
+        mode="full",
+        target="talent",
+        conn_id=None,
+        request_id=None,
+        steps=[{"id": "silver_gold", "status": "failed"}],
+        message="RuntimeError: seed exploded",
+    )
+
+    assert extra["mode"] == "full"
+    assert extra["target"] == "talent"
+    assert extra["triggered_entities"] == []
+    assert extra["control_room_ready"] is False
+    assert extra["errors"] == [
+        {
+            "entity": "__dataset_seed__",
+            "error": "RuntimeError: seed exploded",
+            "reason": "packaged_dataset_seed_failed",
+        }
+    ]
+    assert extra["dataset_seed"] == {
+        "status": "failed",
+        "reason": "packaged_dataset_seed_failed",
+        "error": "RuntimeError: seed exploded",
+    }
+
+
+def test_sync_extract_all_trigger_extra_defaults_trigger_strategy():
+    extra = sync_state.sync_extract_all_trigger_extra(
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        request_id="request-1",
+        steps=[{"id": "bronze", "status": "running"}],
+        triggered_entities=[{"entity": "__extract_all__"}],
+        errors=[],
+        result={"triggered": [{"entity": "__extract_all__"}]},
+        dataset_seed={"status": "success"},
+    )
+
+    assert extra["trigger_strategy"] == "fanout"
+    assert extra["triggered_entities"] == [{"entity": "__extract_all__"}]
+    assert extra["dataset_seed"] == {"status": "success"}
+    assert extra["extract_all_result"] == {"triggered": [{"entity": "__extract_all__"}]}
+
+
 def test_sync_extract_all_result_state_normalizes_shapes():
     state = sync_state.sync_extract_all_result_state(
         {"triggered": [{"entity": "EmpJob"}], "errors": "bad"}

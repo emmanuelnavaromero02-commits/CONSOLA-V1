@@ -376,6 +376,86 @@ def sync_dataset_seed_failure_step_updates(
     }
 
 
+def sync_running_extra(
+    *,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    steps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "target": target,
+        "conn_id": conn_id,
+        "request_id": request_id,
+        "steps": steps,
+        "triggered_entities": [],
+        "errors": [],
+        "control_room_ready": False,
+    }
+
+
+def sync_dataset_seed_failure_extra(
+    *,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    steps: list[dict[str, Any]],
+    message: str,
+) -> dict[str, Any]:
+    reason = "packaged_dataset_seed_failed"
+    return {
+        "mode": mode,
+        "target": target,
+        "conn_id": conn_id,
+        "request_id": request_id,
+        "steps": steps,
+        "triggered_entities": [],
+        "errors": [
+            {
+                "entity": "__dataset_seed__",
+                "error": message,
+                "reason": reason,
+            }
+        ],
+        "control_room_ready": False,
+        "dataset_seed": {
+            "status": "failed",
+            "reason": reason,
+            "error": message,
+        },
+    }
+
+
+def sync_extract_all_trigger_extra(
+    *,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    steps: list[dict[str, Any]],
+    triggered_entities: list[Any],
+    errors: list[dict[str, Any]],
+    result: dict[str, Any],
+    dataset_seed: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "target": target,
+        "conn_id": conn_id,
+        "request_id": request_id,
+        "steps": steps,
+        "triggered_entities": triggered_entities,
+        "errors": errors,
+        "control_room_ready": False,
+        "extract_all_result": result,
+        "trigger_strategy": result.get("trigger_strategy") or "fanout",
+        "dataset_seed": dataset_seed,
+    }
+
+
 def sync_extract_all_result_state(result: dict[str, Any]) -> dict[str, Any]:
     triggered_entities = (
         result.get("triggered") if isinstance(result.get("triggered"), list) else []
