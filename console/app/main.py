@@ -363,6 +363,11 @@ from app.domains.pipeline.extract_config import (
     normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
     resolve_pipeline_sync_conn_id as _resolve_pipeline_sync_conn_id_impl,
 )
+from app.domains.pipeline.run_history import (
+    list_pipeline_entity_runs as _list_pipeline_entity_runs_impl,
+    list_pipeline_runs as _list_pipeline_runs_impl,
+    pipeline_run_logs_payload as _pipeline_run_logs_payload_impl,
+)
 from app.domains.monitoring.invoke import (
     invoke_monitoring_tool as _invoke_monitoring_tool_impl,
 )
@@ -3256,45 +3261,19 @@ async def api_pipeline_runs(
     """Recent DAG run history from pipeline_runs table."""
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
-    try:
-        pool = await _get_db_pool()
-        if entity:
-            scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
-            async with _pipeline_runs_read_conn(pool, user) as conn:
-                rows = await conn.fetch(
-                    "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
-                    f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $3",
-                    cartridge,
-                    entity,
-                    limit,
-                    *scope_values,
-                )
-        else:
-            scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
-            async with _pipeline_runs_read_conn(pool, user) as conn:
-                rows = await conn.fetch(
-                    "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 "
-                    f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
-                    cartridge,
-                    limit,
-                    *scope_values,
-                )
-        response_rows = [_sanitize_pipeline_run_for_user(dict(r), user) for r in rows]
-        if entity:
-            refreshed_rows = []
-            for row in response_rows:
-                refreshed_rows.append(
-                    _sanitize_pipeline_run_for_user(
-                        await _refresh_dag_run_status(row, user),
-                        user,
-                    )
-                )
-            response_rows = refreshed_rows
-        return {"runs": response_rows}
-    except Exception:
-        _eid = uuid.uuid4().hex
-        logger.exception("pipeline runs query failed error_id=%s", _eid)
-        raise HTTPException(500, f"Internal server error. error_id={_eid}")
+    return await _list_pipeline_runs_impl(
+        cartridge=cartridge,
+        entity=entity,
+        limit=limit,
+        user=user,
+        get_db_pool=_get_db_pool,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        pipeline_runs_read_conn=_pipeline_runs_read_conn,
+        sanitize_pipeline_run_for_user=_sanitize_pipeline_run_for_user,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        error_id_factory=lambda: uuid.uuid4().hex,
+        logger_exception=logger.exception,
+    )
 
 
 def _sanitize_pipeline_run_for_user(row: dict, user: dict | None) -> dict:
@@ -3328,44 +3307,19 @@ async def api_pipeline_entity_runs(
             404, f"Entity '{entity}' not found for cartridge '{cartridge}'"
         )
 
-    safe_limit = max(1, min(int(limit or 20), 100))
-
-    try:
-        pool = await _get_db_pool()
-        scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
-        async with _pipeline_runs_read_conn(pool, user) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                       started_at, finished_at, duration_seconds,
-                       record_count, bytes_written, storage_uri, watermark_updated_to,
-                       error_message, extra
-                  FROM pipeline_runs
-                 WHERE cartridge_id=$1 AND entity=$2
-                   {scope_sql}
-                 ORDER BY started_at DESC NULLS LAST
-                 LIMIT $3
-                """,
-                cartridge,
-                entity,
-                safe_limit,
-                *scope_values,
-            )
-    except Exception:
-        _eid = uuid.uuid4().hex
-        logger.exception("entity runs query failed error_id=%s", _eid)
-        raise HTTPException(500, f"Internal server error. error_id={_eid}")
-
-    runs = []
-    for row in rows:
-        refreshed = await _refresh_dag_run_status(dict(row), user)
-        runs.append(_format_pipeline_entity_run(refreshed, user))
-
-    return {
-        "cartridge": cartridge,
-        "entity": entity,
-        "runs": runs,
-    }
+    return await _list_pipeline_entity_runs_impl(
+        cartridge=cartridge,
+        entity=entity,
+        limit=limit,
+        user=user,
+        get_db_pool=_get_db_pool,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        pipeline_runs_read_conn=_pipeline_runs_read_conn,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        format_pipeline_entity_run=_format_pipeline_entity_run,
+        error_id_factory=lambda: uuid.uuid4().hex,
+        logger_exception=logger.exception,
+    )
 
 
 @app.get(
@@ -3387,52 +3341,16 @@ async def api_pipeline_run_logs(
             404, f"Entity '{entity}' not found for cartridge '{cartridge}'"
         )
 
-    try:
-        pool = await _get_db_pool()
-        scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
-        async with _pipeline_runs_read_conn(pool, user) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
-                       started_at, finished_at, duration_seconds, error_message
-                  FROM pipeline_runs
-                 WHERE cartridge_id=$1
-                   AND entity=$2
-                   AND (run_id=$3 OR airflow_dag_run_id=$3)
-                   {scope_sql}
-                 ORDER BY started_at DESC NULLS LAST
-                 LIMIT 1
-                """,
-                cartridge,
-                entity,
-                dag_run_id,
-                *scope_values,
-            )
-    except Exception:
-        _eid = uuid.uuid4().hex
-        logger.exception("run logs query failed error_id=%s", _eid)
-        raise HTTPException(500, f"Internal server error. error_id={_eid}")
-
-    if not row:
-        raise HTTPException(
-            404,
-            {
-                "error": f"Run '{dag_run_id}' not found for {cartridge}/{entity}",
-                "attempted": {
-                    "dag_id": metadata.get("dag_id"),
-                    "dag_run_id": dag_run_id,
-                    "task_ids": [],
-                },
-            },
-        )
-
-    return await _build_pipeline_run_logs_payload_impl(
+    return await _pipeline_run_logs_payload_impl(
         cartridge=cartridge,
         entity=entity,
         dag_run_id=dag_run_id,
-        run_row=dict(row),
         metadata=metadata,
         user=user,
+        get_db_pool=_get_db_pool,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        pipeline_runs_read_conn=_pipeline_runs_read_conn,
+        build_pipeline_run_logs_payload=_build_pipeline_run_logs_payload_impl,
         refresh_dag_run_status=_refresh_dag_run_status,
         mcp_invoke=mcp_registry.invoke,
         normalize_airflow_state=_normalize_airflow_state,
