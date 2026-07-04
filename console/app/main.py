@@ -4095,6 +4095,38 @@ async def api_cartridge_sync_now(
     request_id = _normalize_sync_now_request_id(
         body.get("request_id") or body.get("idempotency_key")
     )
+    run_id, steps, reserved_response = await _reserve_sync_now_run_or_response(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        request_id=request_id,
+        user=user,
+    )
+    if reserved_response is not None:
+        return reserved_response
+
+    return await _continue_sync_now_after_reservation(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        request_id=request_id,
+        run_id=run_id,
+        steps=steps,
+        user=user,
+    )
+
+
+async def _reserve_sync_now_run_or_response(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    user: dict,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
     lock_key = _sync_now_lock_key(
         cartridge=cartridge,
         mode=mode,
@@ -4122,11 +4154,17 @@ async def api_cartridge_sync_now(
                             existing_row, existing_extra
                         )
                     ):
-                        return _sync_public_payload(
-                            existing_row, existing_extra
+                        return (
+                            run_id,
+                            [],
+                            _sync_public_payload(existing_row, existing_extra),
                         )
-                    return await _build_sync_run_status(
-                        cartridge=cartridge, row=existing_row, user=user
+                    return (
+                        run_id,
+                        [],
+                        await _build_sync_run_status(
+                            cartridge=cartridge, row=existing_row, user=user
+                        ),
                     )
 
             active_row = await _fetch_active_sync_run(
@@ -4144,7 +4182,7 @@ async def api_cartridge_sync_now(
                     str(active_status.get("status") or "").lower()
                     not in _SYNC_TERMINAL_STATUSES
                 ):
-                    return active_status
+                    return run_id, [], active_status
 
             steps = _merge_sync_steps(
                 _initial_sync_steps(),
@@ -4168,17 +4206,7 @@ async def api_cartridge_sync_now(
             await sync_lock_conn.execute(
                 "SELECT pg_advisory_unlock(hashtext($1))", lock_key
             )
-
-    return await _continue_sync_now_after_reservation(
-        cartridge=cartridge,
-        mode=mode,
-        target=target,
-        conn_id=conn_id,
-        request_id=request_id,
-        run_id=run_id,
-        steps=steps,
-        user=user,
-    )
+    return run_id, steps, None
 
 
 async def _continue_sync_now_after_reservation(
