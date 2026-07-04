@@ -6136,6 +6136,9 @@ async def api_semantic(
         cartridge,
         fallback="sap_successfactors",
     )
+    cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
+    if not cartridge:
+        return _empty_catalog_payload()
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
