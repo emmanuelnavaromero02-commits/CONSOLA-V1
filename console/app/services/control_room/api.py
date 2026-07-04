@@ -3112,15 +3112,10 @@ def _ratio(numerator: float, denominator: float) -> float | None:
 
 
 @_bind_to_core
-def _financial_metrics(
+def _financial_relevant_sources(
     sources: list[dict[str, Any]],
-    rows_by_dataset: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    pnl_rows = rows_by_dataset.get("pnl_mensual", [])
-    revenue_rows = rows_by_dataset.get("revenue_by_customer", [])
-    backlog_rows = rows_by_dataset.get("open_sales_orders", [])
-    purchase_rows = rows_by_dataset.get("purchase_spend_by_supplier", [])
-    relevant = {
+    return {
         source["dataset"]: {
             "status": source["status"],
             "count": int(source.get("count") or 0),
@@ -3137,19 +3132,9 @@ def _financial_metrics(
         }
     }
 
-    revenue_usd = _money_sum(pnl_rows, "revenue_usd")
-    billed_usd = _money_sum(pnl_rows, "facturacion_mes_usd")
-    wip_usd = _money_sum(pnl_rows, "wip_usd")
-    cost_usd = _money_sum(pnl_rows, "costo_total")
-    margin_usd = _money_sum(pnl_rows, "margen_bruto_usd")
-    sales_revenue = _money_sum(revenue_rows, "revenue")
-    backlog_value = _money_sum(backlog_rows, "open_value")
-    purchase_spend = _money_sum(purchase_rows, "total_spend")
-    open_orders = int(_money_sum(backlog_rows, "open_orders"))
-    oldest_backlog_days = int(
-        max((_num(row.get("oldest_age_days")) or 0 for row in backlog_rows), default=0)
-    )
 
+@_bind_to_core
+def _financial_risk_projects(pnl_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     risk_rows: list[dict[str, Any]] = []
     for row in pnl_rows:
         margin_pct = _num(row.get("margen_bruto_pct"))
@@ -3172,7 +3157,11 @@ def _financial_metrics(
             -abs(row["wip_usd"]),
         )
     )
+    return risk_rows[:6]
 
+
+@_bind_to_core
+def _financial_source_status(relevant: dict[str, Any]) -> str:
     available = any(
         source["status"] == "ok" and source.get("count", 0)
         for source in relevant.values()
@@ -3190,22 +3179,41 @@ def _financial_metrics(
         status = "empty"
     else:
         status = "not_installed"
+    return status
 
+
+@_bind_to_core
+def _financial_metrics(
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    pnl_rows = rows_by_dataset.get("pnl_mensual", [])
+    revenue_rows = rows_by_dataset.get("revenue_by_customer", [])
+    backlog_rows = rows_by_dataset.get("open_sales_orders", [])
+    purchase_rows = rows_by_dataset.get("purchase_spend_by_supplier", [])
+    relevant = _financial_relevant_sources(sources)
+    revenue_usd = _money_sum(pnl_rows, "revenue_usd")
+    margin_usd = _money_sum(pnl_rows, "margen_bruto_usd")
     return {
-        "status": status,
+        "status": _financial_source_status(relevant),
         "sources": relevant,
         "revenue_usd": revenue_usd,
-        "billed_usd": billed_usd,
-        "wip_usd": wip_usd,
-        "cost_usd": cost_usd,
+        "billed_usd": _money_sum(pnl_rows, "facturacion_mes_usd"),
+        "wip_usd": _money_sum(pnl_rows, "wip_usd"),
+        "cost_usd": _money_sum(pnl_rows, "costo_total"),
         "margin_usd": margin_usd,
         "margin_pct": _ratio(margin_usd, revenue_usd),
-        "sales_revenue": sales_revenue,
-        "backlog_value": backlog_value,
-        "open_orders": open_orders,
-        "oldest_backlog_days": oldest_backlog_days,
-        "purchase_spend": purchase_spend,
-        "risk_projects": risk_rows[:6],
+        "sales_revenue": _money_sum(revenue_rows, "revenue"),
+        "backlog_value": _money_sum(backlog_rows, "open_value"),
+        "open_orders": int(_money_sum(backlog_rows, "open_orders")),
+        "oldest_backlog_days": int(
+            max(
+                (_num(row.get("oldest_age_days")) or 0 for row in backlog_rows),
+                default=0,
+            )
+        ),
+        "purchase_spend": _money_sum(purchase_rows, "total_spend"),
+        "risk_projects": _financial_risk_projects(pnl_rows),
     }
 
 
