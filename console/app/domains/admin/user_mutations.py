@@ -285,3 +285,80 @@ async def invite_admin_user_payload(
         "email_sent": sent,
         "vpn": vpn_result,
     }
+
+
+async def reinvite_admin_user_payload(
+    *,
+    user_id: int,
+    body: dict | None,
+    admin_user: dict,
+    request_ip: str | None,
+    user_agent: str | None,
+    auth_service: Any,
+    audit_service: Any,
+    tokens_service: Any,
+    email_service: Any,
+    assert_can_manage_target_user: Callable[[dict, int], Awaitable[None]],
+    create_vpn_config_link: Callable[[int, str], Awaitable[dict]],
+    pack_vpn_conf: Callable[[str, str], tuple[bytes, str]],
+    safe_filename: Callable[[str], str],
+    activation_link: Callable[[str], str],
+    invite_ttl_hours: int,
+    vpn_ttl_hours: int,
+) -> dict:
+    target_user = await auth_service.get_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(404, "user not found")
+    await assert_can_manage_target_user(admin_user, user_id)
+    if target_user.get("is_active"):
+        raise HTTPException(400, "user already active; use password reset instead")
+    token, _ = await tokens_service.create(user_id, "invite")
+    activation_url = activation_link(token)
+    payload = body or {}
+    vpn_result: dict = {"issued": False}
+    if payload.get("with_vpn", True):
+        vpn_result = await create_vpn_config_link(user_id, target_user["email"])
+
+    attachments: list[tuple[str, bytes, str]] = []
+    vpn_password: str | None = None
+    if vpn_result.get("issued") and vpn_result.get("conf_text"):
+        zip_bytes, vpn_password = pack_vpn_conf(
+            vpn_result["conf_text"], target_user["email"]
+        )
+        attachments.append(
+            (f"{safe_filename(target_user['email'])}.zip", zip_bytes, "application/zip")
+        )
+
+    if vpn_result.get("issued"):
+        subject, html = email_service.render_invitation_with_vpn(
+            target_user.get("name"),
+            target_user["email"],
+            activation_url,
+            vpn_result["link"],
+            invite_ttl_hours,
+            vpn_ttl_hours,
+            vpn_password,
+        )
+        sent = await email_service.send_email(
+            target_user["email"], subject, html, attachments=attachments
+        )
+        vpn_result["email_sent"] = sent
+    else:
+        subject, html = email_service.render_invitation(
+            target_user.get("name"),
+            target_user["email"],
+            activation_url,
+            invite_ttl_hours,
+        )
+        sent = await email_service.send_email(target_user["email"], subject, html)
+    await audit_service.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "user.reinvited",
+        "user",
+        str(user_id),
+        ip=request_ip,
+        user_agent=user_agent,
+        metadata={"email_sent": sent, "vpn": vpn_result},
+    )
+    return {"reinvited": True, "email_sent": sent, "vpn": vpn_result}

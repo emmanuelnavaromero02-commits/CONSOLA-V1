@@ -107,6 +107,7 @@ from app.domains.admin.vpn_invites import (
 from app.domains.admin.user_mutations import (
     create_admin_user_payload as _create_admin_user_payload_impl,
     invite_admin_user_payload as _invite_admin_user_payload_impl,
+    reinvite_admin_user_payload as _reinvite_admin_user_payload_impl,
     update_admin_user_payload as _update_admin_user_payload_impl,
 )
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
@@ -6750,66 +6751,24 @@ async def api_admin_users_reinvite(
     admin_user: dict = Depends(require_permission("iam.users.write")),
 ):
     """Re-issue an invitation email (only for users that have not activated yet)."""
-    target_user = await _auth.get_user_by_id(user_id)
-    if not target_user:
-        raise HTTPException(404, "user not found")
-    await _assert_can_manage_target_user(admin_user, user_id)
-    if target_user.get("is_active"):
-        raise HTTPException(400, "user already active; use password reset instead")
-    tok, _ = await _tokens.create(user_id, "invite")
-    activation_link = _activation_link(tok)
-    payload = body or {}
-    vpn_result: dict = {"issued": False}
-    if payload.get("with_vpn", True):
-        vpn_result = await _create_vpn_config_link(user_id, target_user["email"])
-
-    attachments: list[tuple[str, bytes, str]] = []
-    vpn_password: str | None = None
-    if vpn_result.get("issued") and vpn_result.get("conf_text"):
-        zip_bytes, vpn_password = _pack_vpn_conf(
-            vpn_result["conf_text"], target_user["email"]
-        )
-        attachments.append(
-            (
-                f"{_safe_filename(target_user['email'])}.zip",
-                zip_bytes,
-                "application/zip",
-            )
-        )
-
-    if vpn_result.get("issued"):
-        subject, html = _email.render_invitation_with_vpn(
-            target_user.get("name"),
-            target_user["email"],
-            activation_link,
-            vpn_result["link"],
-            INVITE_TTL_HOURS,
-            VPN_TTL_HOURS,
-            vpn_password,
-        )
-        sent = await _email.send_email(
-            target_user["email"], subject, html, attachments=attachments
-        )
-        vpn_result["email_sent"] = sent
-    else:
-        subject, html = _email.render_invitation(
-            target_user.get("name"),
-            target_user["email"],
-            activation_link,
-            INVITE_TTL_HOURS,
-        )
-        sent = await _email.send_email(target_user["email"], subject, html)
-    await _audit.record_event(
-        admin_user.get("id"),
-        admin_user.get("email"),
-        "user.reinvited",
-        "user",
-        str(user_id),
-        ip=_client_ip(request),
+    return await _reinvite_admin_user_payload_impl(
+        user_id=user_id,
+        body=body,
+        admin_user=admin_user,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
-        metadata={"email_sent": sent, "vpn": vpn_result},
+        auth_service=_auth,
+        audit_service=_audit,
+        tokens_service=_tokens,
+        email_service=_email,
+        assert_can_manage_target_user=_assert_can_manage_target_user,
+        create_vpn_config_link=_create_vpn_config_link,
+        pack_vpn_conf=_pack_vpn_conf,
+        safe_filename=_safe_filename,
+        activation_link=_activation_link,
+        invite_ttl_hours=INVITE_TTL_HOURS,
+        vpn_ttl_hours=VPN_TTL_HOURS,
     )
-    return {"reinvited": True, "email_sent": sent, "vpn": vpn_result}
 
 
 @app.post(
