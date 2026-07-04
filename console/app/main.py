@@ -136,9 +136,11 @@ from app.domains.iam.roles import (
     session_workspace_ids as _session_workspace_ids_impl,
     workspace_scope_db_unavailable as _workspace_scope_db_unavailable_impl,
 )
+from app.domains.iam.access_request import (
+    me_access_response as _me_access_response_impl,
+)
 from app.domains.iam.access_payload import (
     fetch_cartridge_access as _fetch_cartridge_access,
-    me_access_payload as _me_access_payload,
 )
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
@@ -1868,29 +1870,15 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
     decide what to render and what to disable. The backend is still the
     source of truth — every action endpoint enforces its own permission.
     """
-    from app.services import permissions as _perms
-
-    effective = sorted(_perms.get_effective_permissions(user))
-    role_canonical = _perms.canonical_role(user.get("role"))
-    workspace_role_resolved = _perms.workspace_role(user) or None
-
-    cartridges_allowed, cartridges_denied = await _fetch_cartridge_access(
-        user,
-        pool_factory=cartridge_service.pool,
-        logger=logger,
-    )
-
     # The front-end uses these flags to decide what to render. They are
     # display hints only; every action endpoint enforces its own gate.
     # Source-level frontend contract marker:
     # "workspaces": switchable_workspaces
-    return _me_access_payload(
-        user,
-        effective_permissions=effective,
-        role_canonical=role_canonical,
-        workspace_role_resolved=workspace_role_resolved,
-        cartridges_allowed=cartridges_allowed,
-        cartridges_denied=cartridges_denied,
+    return await _me_access_response_impl(
+        user=user,
+        fetch_cartridge_access=_fetch_cartridge_access,
+        cartridge_pool_factory=cartridge_service.pool,
+        logger=logger,
     )
 
 
