@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Callable
 from urllib.parse import quote
 
 from app.domains.apps.payloads import DATASET_NAME_RE
@@ -230,3 +234,34 @@ def app_embed_csp(nonce: str) -> str:
         "base-uri 'self'; "
         "form-action 'self'"
     )
+
+
+def workspace_server_url(
+    *,
+    environ: Mapping[str, str] | None = None,
+    docker_env_exists: Callable[[], bool] | None = None,
+    is_production_env: Callable[[], bool] | None = None,
+    logger_warning: Callable[[str], None] | None = None,
+) -> str:
+    env = environ or os.environ
+    raw = env.get("WORKSPACE_INTERNAL_URL") or env.get("WORKSPACE_BACKEND_URL")
+    if raw:
+        return raw.rstrip("/")
+    public = env.get("WORKSPACE_PUBLIC_URL") or env.get("WORKSPACE_URL")
+    in_docker = (
+        docker_env_exists() if docker_env_exists else Path("/.dockerenv").exists()
+    )
+    if (
+        in_docker
+        and public
+        and re.match(r"^https?://(localhost|127\.0\.0\.1)(:|/|$)", public)
+    ):
+        return "http://workspace:8001"
+    if public:
+        return public.rstrip("/")
+    production = is_production_env() if is_production_env else False
+    if production:
+        if logger_warning:
+            logger_warning("WORKSPACE_INTERNAL_URL is not configured in production")
+        return ""
+    return "http://localhost:8001"

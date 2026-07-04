@@ -62,6 +62,7 @@ from app.domains.apps.embed import (
     app_embed_csp as _app_embed_csp,
     app_embed_wrapper_html as _app_embed_wrapper_html,
     datasets_from_app_html as _datasets_from_app_html,
+    workspace_server_url as _workspace_server_url_impl,
 )
 from app.domains.agentops.successfactors_talent_monitor import (
     SUCCESSFACTORS_TALENT_MONITOR_SLUG as _SUCCESSFACTORS_TALENT_MONITOR_SLUG,
@@ -2596,24 +2597,10 @@ async def api_lineage(
 
 
 def _workspace_server_url() -> str:
-    raw = os.environ.get("WORKSPACE_INTERNAL_URL") or os.environ.get(
-        "WORKSPACE_BACKEND_URL"
+    return _workspace_server_url_impl(
+        is_production_env=_is_production_env,
+        logger_warning=logger.warning,
     )
-    if raw:
-        return raw.rstrip("/")
-    public = os.environ.get("WORKSPACE_PUBLIC_URL") or os.environ.get("WORKSPACE_URL")
-    if (
-        Path("/.dockerenv").exists()
-        and public
-        and re.match(r"^https?://(localhost|127\.0\.0\.1)(:|/|$)", public)
-    ):
-        return "http://workspace:8001"
-    if public:
-        return public.rstrip("/")
-    if _is_production_env():
-        logger.warning("WORKSPACE_INTERNAL_URL is not configured in production")
-        return ""
-    return "http://localhost:8001"
 
 
 async def _proxy_workspace_app(
