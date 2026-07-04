@@ -46,6 +46,7 @@ from app.domains.apps.readiness import (
 )
 from app.domains.apps.service import (
     apps_payload_visible_and_ready as _apps_payload_visible_and_ready_impl,
+    delete_refinement_app_payload as _delete_refinement_app_payload_impl,
     refinement_app_html as _refinement_app_html_impl,
 )
 from app.domains.apps.scope import (
@@ -2877,16 +2878,14 @@ async def api_apps(
 )
 async def api_apps_delete(name: str, user: dict = Depends(require_permission("apps.write"))):
     """Delete a published analytic app by name."""
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload("delete_app", {"name": name}, user),
-        )
-    payload = r.json()
-    result = payload.get("result", payload)
-    if not result.get("deleted"):
-        raise HTTPException(404, result.get("error") or f"App '{name}' not found")
-    return result
+    return await _delete_refinement_app_payload_impl(
+        name=name,
+        user=user,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload=_mcp_payload,
+        refinement_url=REFINEMENT_URL,
+    )
 
 
 @app.get("/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))])

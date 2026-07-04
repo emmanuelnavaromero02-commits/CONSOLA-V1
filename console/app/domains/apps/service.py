@@ -98,3 +98,26 @@ async def refinement_app_html(
     if not html_text.strip():
         raise HTTPException(404, f"App '{name}' has no HTML content")
     return html_text, result
+
+
+async def delete_refinement_app_payload(
+    *,
+    name: str,
+    user: dict[str, Any],
+    http_client_factory: HttpClientFactory,
+    headers_factory: HeadersFactory,
+    mcp_payload: McpPayloadFactory,
+    refinement_url: str,
+) -> dict[str, Any]:
+    async with http_client_factory(
+        headers=headers_factory("REFINEMENT"), timeout=10
+    ) as client:
+        response = await client.post(
+            f"{refinement_url}/mcp/invoke",
+            json=mcp_payload("delete_app", {"name": name}, user),
+        )
+    payload = response.json()
+    result = payload.get("result", payload)
+    if not result.get("deleted"):
+        raise HTTPException(404, result.get("error") or f"App '{name}' not found")
+    return result

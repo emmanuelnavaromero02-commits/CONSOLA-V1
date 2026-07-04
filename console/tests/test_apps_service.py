@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from app.domains.apps.service import apps_payload_visible_and_ready, refinement_app_html
+from app.domains.apps.service import (
+    apps_payload_visible_and_ready,
+    delete_refinement_app_payload,
+    refinement_app_html,
+)
 
 
 def _payload():
@@ -202,3 +206,83 @@ async def test_refinement_app_html_maps_empty_payload_to_not_found():
 
     assert exc.value.status_code == 404
     assert "no HTML content" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_delete_refinement_app_payload_deletes_via_refinement():
+    captured = {}
+
+    class FakeResponse:
+        def json(self):
+            return {"result": {"deleted": True, "name": "talent_app"}}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    result = await delete_refinement_app_payload(
+        name="talent_app",
+        user={"id": 1},
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        mcp_payload=lambda tool, args, user: {
+            "tool": tool,
+            "args": args,
+            "user": user,
+        },
+        refinement_url="http://refinement",
+    )
+
+    assert result == {"deleted": True, "name": "talent_app"}
+    assert captured["client_kwargs"]["headers"] == {"x-service": "REFINEMENT"}
+    assert captured["url"] == "http://refinement/mcp/invoke"
+    assert captured["json"]["tool"] == "delete_app"
+    assert captured["json"]["args"] == {"name": "talent_app"}
+
+
+@pytest.mark.asyncio
+async def test_delete_refinement_app_payload_maps_missing_app_to_not_found():
+    class FakeResponse:
+        def json(self):
+            return {"error": "missing"}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    with pytest.raises(HTTPException) as exc:
+        await delete_refinement_app_payload(
+            name="missing_app",
+            user={"id": 1},
+            http_client_factory=FakeClient,
+            headers_factory=lambda _service: {},
+            mcp_payload=lambda tool, args, user: {
+                "tool": tool,
+                "args": args,
+                "user": user,
+            },
+            refinement_url="http://refinement",
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "missing"
