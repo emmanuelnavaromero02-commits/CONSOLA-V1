@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import asyncio
 import pytest
 
-from app.domains.system.lifespan import run_packaged_startup_seeds
+from app.domains.system.lifespan import (
+    cancel_background_tasks,
+    env_flag_enabled,
+    run_packaged_startup_seeds,
+)
 
 
 @pytest.mark.asyncio
@@ -41,3 +46,34 @@ async def test_run_packaged_startup_seeds_runs_components_through_readiness_wrap
     assert ran_components == ["seed_one", "seed_two"]
     assert seeded_pools == [pool, pool]
     assert pool_calls == 2
+
+
+def test_env_flag_enabled_parses_disabled_values():
+    assert env_flag_enabled(None) is True
+    assert env_flag_enabled(None, default=False) is False
+    assert env_flag_enabled("true") is True
+    assert env_flag_enabled("  yes ") is True
+    assert env_flag_enabled("0") is False
+    assert env_flag_enabled("false") is False
+    assert env_flag_enabled("NO") is False
+    assert env_flag_enabled("off") is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_cancels_and_awaits_tasks():
+    cancelled = []
+
+    async def worker():
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    task = asyncio.create_task(worker())
+    await asyncio.sleep(0)
+
+    await cancel_background_tasks(task, None)
+
+    assert task.cancelled()
+    assert cancelled == [True]

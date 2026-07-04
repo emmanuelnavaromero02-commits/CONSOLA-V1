@@ -315,6 +315,8 @@ from app.domains.system.runtime import (
 )
 from app.domains.system.readyz import build_readyz_checks as _build_readyz_checks_impl
 from app.domains.system.lifespan import (
+    cancel_background_tasks as _cancel_background_tasks,
+    env_flag_enabled as _env_flag_enabled,
     run_packaged_startup_seeds as _run_packaged_startup_seeds_impl,
 )
 from app.domains.pipeline.run_state import (
@@ -663,12 +665,7 @@ async def lifespan(app: FastAPI):
     )
     task = asyncio.create_task(_periodic_health_check())
     copilot_context_task: asyncio.Task | None = None
-    if os.environ.get("COPILOT_CONTEXT_SCHEDULER_ENABLED", "true").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }:
+    if _env_flag_enabled(os.environ.get("COPILOT_CONTEXT_SCHEDULER_ENABLED")):
         from app.services import copilot_context_service
 
         copilot_context_task = asyncio.create_task(
@@ -677,18 +674,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        task.cancel()
-        if copilot_context_task is not None:
-            copilot_context_task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        if copilot_context_task is not None:
-            try:
-                await copilot_context_task
-            except asyncio.CancelledError:
-                pass
+        await _cancel_background_tasks(task, copilot_context_task)
         await _auth.close_pool()
         await _tokens.close_pool()
         await job_service.close_pool()

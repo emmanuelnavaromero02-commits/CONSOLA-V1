@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
@@ -36,3 +37,20 @@ async def run_packaged_startup_seeds(
             await seed_func(pool)
 
         await run_startup_seed(app, component, _seed)
+
+
+def env_flag_enabled(value: str | None, *, default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+async def cancel_background_tasks(*tasks: Any) -> None:
+    live_tasks = [task for task in tasks if task is not None]
+    for task in live_tasks:
+        task.cancel()
+    for task in live_tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
