@@ -382,6 +382,7 @@ from app.domains.pipeline.sync_state import (
     fetch_sync_run as _fetch_sync_run_impl,
     inactive_sync_run_payload as _inactive_sync_run_payload,
     initial_sync_steps as _initial_sync_steps,
+    maybe_trigger_aggregate_extract_all as _maybe_trigger_aggregate_extract_all_impl,
     merge_sync_steps as _merge_sync_steps,
     normalize_sync_now_request_id as _normalize_sync_now_request_id,
     normalize_sync_step_payload as _normalize_sync_step_payload,
@@ -3309,30 +3310,17 @@ async def _reserve_successfactors_entity_extract_slot(
 async def _maybe_trigger_aggregate_extract_all(
     *, cartridge: str, body: dict[str, Any], user: dict | None
 ) -> dict[str, Any] | None:
-    if cartridge not in _SYNC_EXTRACT_ALL_DAGS:
-        return None
-    mode, target = _pipeline_extract_all_mode_target(body)
-    conn_id = await _resolve_pipeline_sync_conn_id(
-        cartridge, body.get("conn_id") or body.get("connection_id"), user
-    )
-    run_id = _pipeline_extract_all_run_id(
+    return await _maybe_trigger_aggregate_extract_all_impl(
         cartridge=cartridge,
-        mode=mode,
-        target=target,
-        conn_id=conn_id,
         body=body,
-    )
-    result = await _trigger_sync_aggregate_extract_all(
-        cartridge=cartridge,
-        mode=mode,
-        target=target,
-        conn_id=conn_id,
-        run_id=run_id,
         user=user,
+        sync_extract_all_dags=_SYNC_EXTRACT_ALL_DAGS,
+        pipeline_extract_all_mode_target_func=_pipeline_extract_all_mode_target,
+        resolve_pipeline_sync_conn_id_func=_resolve_pipeline_sync_conn_id,
+        pipeline_extract_all_run_id_func=_pipeline_extract_all_run_id,
+        trigger_sync_aggregate_extract_all_func=_trigger_sync_aggregate_extract_all,
+        pipeline_extract_all_public_response_func=_pipeline_extract_all_public_response,
     )
-    if result is None:
-        return None
-    return _pipeline_extract_all_public_response(result)
 
 
 def _sync_now_lock_key(

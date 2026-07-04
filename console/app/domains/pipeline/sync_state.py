@@ -765,6 +765,46 @@ async def run_sync_extract_all_with_retries(
     return {"result": result, "attempts": attempts}
 
 
+async def maybe_trigger_aggregate_extract_all(
+    *,
+    cartridge: str,
+    body: dict[str, Any],
+    user: dict[str, Any] | None,
+    sync_extract_all_dags: dict[str, str],
+    pipeline_extract_all_mode_target_func: Any,
+    resolve_pipeline_sync_conn_id_func: Any,
+    pipeline_extract_all_run_id_func: Any,
+    trigger_sync_aggregate_extract_all_func: Any,
+    pipeline_extract_all_public_response_func: Any,
+) -> dict[str, Any] | None:
+    if cartridge not in sync_extract_all_dags:
+        return None
+    mode, target = pipeline_extract_all_mode_target_func(body)
+    conn_id = await resolve_pipeline_sync_conn_id_func(
+        cartridge,
+        body.get("conn_id") or body.get("connection_id"),
+        user,
+    )
+    run_id = pipeline_extract_all_run_id_func(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        body=body,
+    )
+    result = await trigger_sync_aggregate_extract_all_func(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        user=user,
+    )
+    if result is None:
+        return None
+    return pipeline_extract_all_public_response_func(result)
+
+
 def sync_child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[str, Any]:
     return sync_progress.child_gold_refresh_summary(child_rows)
 

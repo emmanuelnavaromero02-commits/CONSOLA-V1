@@ -311,6 +311,75 @@ async def test_run_sync_extract_all_with_retries_falls_back_and_retries():
     )
 
 
+@pytest.mark.anyio
+async def test_maybe_trigger_aggregate_extract_all_returns_none_for_plain_cartridge():
+    async def should_not_call(*_args, **_kwargs):
+        raise AssertionError("plain cartridges must fall back to fanout")
+
+    result = await sync_state.maybe_trigger_aggregate_extract_all(
+        cartridge="replicon",
+        body={"mode": "incremental"},
+        user={"sub": "user-1"},
+        sync_extract_all_dags={"sap_successfactors": "sap_successfactors_extract_all"},
+        pipeline_extract_all_mode_target_func=lambda _body: ("incremental", "all"),
+        resolve_pipeline_sync_conn_id_func=should_not_call,
+        pipeline_extract_all_run_id_func=lambda **_kwargs: "run-1",
+        trigger_sync_aggregate_extract_all_func=should_not_call,
+        pipeline_extract_all_public_response_func=lambda payload: payload,
+    )
+
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_maybe_trigger_aggregate_extract_all_builds_and_wraps_result():
+    calls = {}
+
+    async def resolve_pipeline_sync_conn_id(cartridge, requested_conn_id, user):
+        calls["resolve"] = (cartridge, requested_conn_id, user)
+        return "vault_conn"
+
+    def pipeline_extract_all_run_id(**kwargs):
+        calls["run_id"] = kwargs
+        return "extract-all-run"
+
+    async def trigger_sync_aggregate_extract_all(**kwargs):
+        calls["trigger"] = kwargs
+        return {"triggered": [{"entity": "__extract_all__"}], "errors": []}
+
+    result = await sync_state.maybe_trigger_aggregate_extract_all(
+        cartridge="sap_successfactors",
+        body={"mode": "full", "target": "talent", "connection_id": "requested"},
+        user={"sub": "user-1"},
+        sync_extract_all_dags={"sap_successfactors": "sap_successfactors_extract_all"},
+        pipeline_extract_all_mode_target_func=lambda body: (body["mode"], body["target"]),
+        resolve_pipeline_sync_conn_id_func=resolve_pipeline_sync_conn_id,
+        pipeline_extract_all_run_id_func=pipeline_extract_all_run_id,
+        trigger_sync_aggregate_extract_all_func=trigger_sync_aggregate_extract_all,
+        pipeline_extract_all_public_response_func=lambda payload: {
+            "public": payload["triggered"]
+        },
+    )
+
+    assert result == {"public": [{"entity": "__extract_all__"}]}
+    assert calls["resolve"] == (
+        "sap_successfactors",
+        "requested",
+        {"sub": "user-1"},
+    )
+    assert calls["run_id"]["mode"] == "full"
+    assert calls["run_id"]["target"] == "talent"
+    assert calls["run_id"]["conn_id"] == "vault_conn"
+    assert calls["trigger"] == {
+        "cartridge": "sap_successfactors",
+        "mode": "full",
+        "target": "talent",
+        "conn_id": "vault_conn",
+        "run_id": "extract-all-run",
+        "user": {"sub": "user-1"},
+    }
+
+
 def test_sync_child_runtime_state_counts_progress_rows():
     runtime = sync_state.sync_child_runtime_state(
         row={"status": "running"},
