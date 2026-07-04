@@ -363,6 +363,9 @@ from app.domains.pipeline.extract_config import (
     normalize_pipeline_conn_id as _normalize_pipeline_conn_id_impl,
     resolve_pipeline_sync_conn_id as _resolve_pipeline_sync_conn_id_impl,
 )
+from app.domains.monitoring.invoke import (
+    invoke_monitoring_tool as _invoke_monitoring_tool_impl,
+)
 from app.domains.monitoring.tools import build_monitoring_tools
 from app.domains.studio.access import (
     cartridge_visible_for_context as _cartridge_visible_for_context,
@@ -6157,69 +6160,13 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_permission(
     # read job state and DAG metadata, which a session-less caller has
     # no business seeing. CSRF added because this is a state-shaped
     # POST and could be called from a cross-origin form otherwise.
-    tool = body.get("tool")
-    args = body.get("args") or {}
-    if not isinstance(args, dict):
-        raise HTTPException(400, "args must be an object")
     _require_effective_permission(user, "monitor.read")
-
-    if tool == "view_job":
-        job_id = args.get("job_id")
-        if not job_id:
-            raise HTTPException(400, "job_id is required")
-        job = await job_service.get_scoped(job_id, user=user)
-        entity = (job.get("args") or {}).get("entity", "")
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=job&id={quote(str(job_id), safe='')}",
-            "label": f"Ver job {job_id}" + (f" — {entity}" if entity else ""),
-            "status": job.get("status", "unknown"),
-            "message": job.get("message", ""),
-        }
-
-    if tool == "view_jobs":
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=jobs",
-            "label": "Ver todos los jobs",
-        }
-
-    if tool == "view_schema":
-        source = args.get("source")
-        if not source:
-            raise HTTPException(400, "source is required")
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=schema&source={quote(str(source), safe='')}",
-            "label": f"Ver schema de {source}",
-        }
-
-    if tool == "view_dataset":
-        name = args.get("name")
-        if not name:
-            raise HTTPException(400, "name is required")
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=dataset&name={quote(str(name), safe='')}",
-            "label": f"Ver dataset {name}",
-        }
-
-    if tool == "view_datasets":
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=datasets",
-            "label": "Ver todos los datasets",
-        }
-
-    if tool == "view_semantic":
-        cartridge = args.get("cartridge", "replicon")
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=semantic&cartridge={quote(str(cartridge), safe='')}",
-            "label": f"Ver modelo semantico de {cartridge}",
-        }
-
-    if tool == "view_pipeline":
-        return {
-            "url": f"{CONSOLE_URL}/viewer?type=pipeline",
-            "label": "Pipeline Monitor — Bronze → Silver → Gold",
-        }
-
-    raise HTTPException(400, f"Unknown tool: {tool}")
+    return await _invoke_monitoring_tool_impl(
+        body=body,
+        user=user,
+        job_service=job_service,
+        console_url=CONSOLE_URL,
+    )
 
 
 # ── DAG graph parser ──────────────────────────────────────────────────────────
