@@ -4604,6 +4604,60 @@ def _dashboard_threshold_summary(thresholds: list[dict[str, Any]], items: list[d
 
 
 @_bind_to_core
+def _dashboard_item_summary_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total_items": len(items),
+        "total_anomalies": sum(1 for item in items if item["kind"] == "anomaly"),
+        "control_items": sum(1 for item in items if item["kind"] != "anomaly"),
+    }
+
+
+@_bind_to_core
+def _dashboard_module_groups(
+    cartridges: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "data_ready_modules": [
+            row for row in cartridges if row["active"] and row.get("operationally_ready")
+        ],
+        "partial_modules": [
+            row
+            for row in cartridges
+            if row["active"] and row.get("data_readiness") == "partial"
+        ],
+        "stub_modules": [
+            row
+            for row in cartridges
+            if row["active"] and row.get("data_readiness") == "stub"
+        ],
+        "active_non_operational": [
+            row for row in cartridges if row["active"] and not row["operational"]
+        ],
+        "operational_cartridges": [
+            row for row in cartridges if row["active"] and row["operational"]
+        ],
+    }
+
+
+@_bind_to_core
+def _dashboard_source_states_payload(
+    sources: list[dict[str, Any]]
+) -> dict[str, int]:
+    return {
+        status: sum(1 for source in sources if source["status"] == status)
+        for status in [
+            "ok",
+            "empty",
+            "missing",
+            "unavailable",
+            "invalid_schema",
+            "blocked",
+            "no_permission",
+        ]
+    }
+
+
+@_bind_to_core
 def _dashboard_summary_payload(
     *,
     items: list[dict[str, Any]],
@@ -4619,26 +4673,10 @@ def _dashboard_summary_payload(
     alert_summary: dict[str, Any],
 ) -> dict[str, Any]:
     data_readiness = _readiness_counts(sources)
-    data_ready_modules = [
-        row for row in cartridges if row["active"] and row.get("operationally_ready")
-    ]
-    partial_modules = [
-        row
-        for row in cartridges
-        if row["active"] and row.get("data_readiness") == "partial"
-    ]
-    stub_modules = [
-        row
-        for row in cartridges
-        if row["active"] and row.get("data_readiness") == "stub"
-    ]
-    active_non_operational = [
-        row for row in cartridges if row["active"] and not row["operational"]
-    ]
+    modules = _dashboard_module_groups(cartridges)
+    active_non_operational = modules["active_non_operational"]
     return {
-        "total_items": len(items),
-        "total_anomalies": sum(1 for item in items if item["kind"] == "anomaly"),
-        "control_items": sum(1 for item in items if item["kind"] != "anomaly"),
+        **_dashboard_item_summary_counts(items),
         "by_severity": by_severity,
         "by_cartridge": by_cartridge,
         "by_domain": by_domain,
@@ -4648,26 +4686,13 @@ def _dashboard_summary_payload(
         "active_connectors": len({row["connector_id"] for row in active_non_operational}),
         "active_modules": len(active_non_operational),
         "active_cartridges": len(active_non_operational),
-        "operational_cartridges": len(
-            [row for row in cartridges if row["active"] and row["operational"]]
-        ),
-        "source_states": {
-            status: sum(1 for source in sources if source["status"] == status)
-            for status in [
-                "ok",
-                "empty",
-                "missing",
-                "unavailable",
-                "invalid_schema",
-                "blocked",
-                "no_permission",
-            ]
-        },
+        "operational_cartridges": len(modules["operational_cartridges"]),
+        "source_states": _dashboard_source_states_payload(sources),
         "data_readiness": data_readiness,
         "data_ready_sources": data_readiness.get("ready", 0),
-        "data_ready_modules": len(data_ready_modules),
-        "partial_modules": len(partial_modules),
-        "stub_modules": len(stub_modules),
+        "data_ready_modules": len(modules["data_ready_modules"]),
+        "partial_modules": len(modules["partial_modules"]),
+        "stub_modules": len(modules["stub_modules"]),
         "cycle_counts": _cycle_counts(items),
         "financial": financial,
         "thresholds": _dashboard_threshold_summary(thresholds, items),
