@@ -106,6 +106,7 @@ from app.domains.admin.vpn_invites import (
 )
 from app.domains.admin.user_mutations import (
     create_admin_user_payload as _create_admin_user_payload_impl,
+    invite_admin_user_payload as _invite_admin_user_payload_impl,
     update_admin_user_payload as _update_admin_user_payload_impl,
 )
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
@@ -6715,83 +6716,27 @@ async def api_admin_users_invite(
 ):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
-    email = _normalize_email_or_400(body.get("email"))
-    existing = await _auth.get_user_by_email(email)
-    if existing:
-        raise HTTPException(409, f"user with email {email} already exists")
-    role = _assignable_role(body.get("role"), admin_user)
-    workspace_id = (
-        body.get("workspace_id") or admin_user.get("active_workspace_id") or ""
-    ).strip() or None
-    if workspace_id:
-        await _assert_can_use_workspace(admin_user, workspace_id)
-    else:
-        raise HTTPException(400, "workspace_id is required")
-    target_user = await _auth.create_invited_user(
-        email=email,
-        name=body.get("name"),
-        role=role,
-        workspace_id=workspace_id,
-    )
-    tok, _ = await _tokens.create(target_user["id"], "invite")
-    activation_link = _activation_link(tok)
-
-    vpn_result: dict = {"issued": False}
-    if body.get("with_vpn", True):
-        vpn_result = await _create_vpn_config_link(target_user["id"], email)
-
-    attachments: list[tuple[str, bytes, str]] = []
-    vpn_password: str | None = None
-    if vpn_result.get("issued") and vpn_result.get("conf_text"):
-        zip_bytes, vpn_password = _pack_vpn_conf(vpn_result["conf_text"], email)
-        attachments.append(
-            (f"{_safe_filename(email)}.zip", zip_bytes, "application/zip")
-        )
-
-    try:
-        if vpn_result.get("issued"):
-            subject, html = _email.render_invitation_with_vpn(
-                target_user.get("name"),
-                email,
-                activation_link,
-                vpn_result["link"],
-                INVITE_TTL_HOURS,
-                VPN_TTL_HOURS,
-                vpn_password,
-            )
-            sent = await _email.send_email(
-                email, subject, html, attachments=attachments
-            )
-            vpn_result["email_sent"] = sent
-        else:
-            subject, html = _email.render_invitation(
-                target_user.get("name"), email, activation_link, INVITE_TTL_HOURS
-            )
-            sent = await _email.send_email(email, subject, html)
-        if not sent:
-            raise RuntimeError("invitation email send failed")
-    except Exception as exc:
-        await _rollback_failed_invite(int(target_user["id"]), vpn_result)
-        logger.exception(
-            "invitation email failed; rolled back user_id=%s", target_user["id"]
-        )
-        raise HTTPException(500, "Invitation email delivery failed") from exc
-    await _audit.record_event(
-        admin_user.get("id"),
-        admin_user.get("email"),
-        "user.invited",
-        "user",
-        str(target_user["id"]),
-        ip=_client_ip(request),
+    return await _invite_admin_user_payload_impl(
+        body=body,
+        admin_user=admin_user,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "role": role,
-            "workspace_id": workspace_id,
-            "email_sent": sent,
-            "vpn": vpn_result,
-        },
+        auth_service=_auth,
+        audit_service=_audit,
+        tokens_service=_tokens,
+        email_service=_email,
+        normalize_email_or_400=_normalize_email_or_400,
+        assignable_role=_assignable_role,
+        assert_can_use_workspace=_assert_can_use_workspace,
+        create_vpn_config_link=_create_vpn_config_link,
+        pack_vpn_conf=_pack_vpn_conf,
+        safe_filename=_safe_filename,
+        rollback_failed_invite=_rollback_failed_invite,
+        activation_link=_activation_link,
+        invite_ttl_hours=INVITE_TTL_HOURS,
+        vpn_ttl_hours=VPN_TTL_HOURS,
+        logger_exception=logger.exception,
     )
-    return {"invited": True, "user": target_user, "email_sent": sent, "vpn": vpn_result}
 
 
 @app.post(

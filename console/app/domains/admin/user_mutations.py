@@ -181,3 +181,107 @@ async def update_admin_user_payload(
             metadata={"target_email": target_user.get("email")},
         )
     return target_user
+
+
+async def invite_admin_user_payload(
+    *,
+    body: dict,
+    admin_user: dict,
+    request_ip: str | None,
+    user_agent: str | None,
+    auth_service: Any,
+    audit_service: Any,
+    tokens_service: Any,
+    email_service: Any,
+    normalize_email_or_400: Callable[[Any], str],
+    assignable_role: Callable[[str | None, dict | None], str],
+    assert_can_use_workspace: Callable[[dict, str | None], Awaitable[None]],
+    create_vpn_config_link: Callable[[int, str], Awaitable[dict]],
+    pack_vpn_conf: Callable[[str, str], tuple[bytes, str]],
+    safe_filename: Callable[[str], str],
+    rollback_failed_invite: Callable[[int, dict | None], Awaitable[None]],
+    activation_link: Callable[[str], str],
+    invite_ttl_hours: int,
+    vpn_ttl_hours: int,
+    logger_exception: Callable[..., None],
+) -> dict:
+    email = normalize_email_or_400(body.get("email"))
+    existing = await auth_service.get_user_by_email(email)
+    if existing:
+        raise HTTPException(409, f"user with email {email} already exists")
+    role = assignable_role(body.get("role"), admin_user)
+    workspace_id = (
+        body.get("workspace_id") or admin_user.get("active_workspace_id") or ""
+    ).strip() or None
+    if workspace_id:
+        await assert_can_use_workspace(admin_user, workspace_id)
+    else:
+        raise HTTPException(400, "workspace_id is required")
+    target_user = await auth_service.create_invited_user(
+        email=email,
+        name=body.get("name"),
+        role=role,
+        workspace_id=workspace_id,
+    )
+    token, _ = await tokens_service.create(target_user["id"], "invite")
+    activation_url = activation_link(token)
+
+    vpn_result: dict = {"issued": False}
+    if body.get("with_vpn", True):
+        vpn_result = await create_vpn_config_link(target_user["id"], email)
+
+    attachments: list[tuple[str, bytes, str]] = []
+    vpn_password: str | None = None
+    if vpn_result.get("issued") and vpn_result.get("conf_text"):
+        zip_bytes, vpn_password = pack_vpn_conf(vpn_result["conf_text"], email)
+        attachments.append((f"{safe_filename(email)}.zip", zip_bytes, "application/zip"))
+
+    try:
+        if vpn_result.get("issued"):
+            subject, html = email_service.render_invitation_with_vpn(
+                target_user.get("name"),
+                email,
+                activation_url,
+                vpn_result["link"],
+                invite_ttl_hours,
+                vpn_ttl_hours,
+                vpn_password,
+            )
+            sent = await email_service.send_email(
+                email, subject, html, attachments=attachments
+            )
+            vpn_result["email_sent"] = sent
+        else:
+            subject, html = email_service.render_invitation(
+                target_user.get("name"), email, activation_url, invite_ttl_hours
+            )
+            sent = await email_service.send_email(email, subject, html)
+        if not sent:
+            raise RuntimeError("invitation email send failed")
+    except Exception as exc:
+        await rollback_failed_invite(int(target_user["id"]), vpn_result)
+        logger_exception(
+            "invitation email failed; rolled back user_id=%s", target_user["id"]
+        )
+        raise HTTPException(500, "Invitation email delivery failed") from exc
+    await audit_service.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "user.invited",
+        "user",
+        str(target_user["id"]),
+        ip=request_ip,
+        user_agent=user_agent,
+        metadata={
+            "role": role,
+            "workspace_id": workspace_id,
+            "email_sent": sent,
+            "vpn": vpn_result,
+        },
+    )
+    return {
+        "invited": True,
+        "user": target_user,
+        "email_sent": sent,
+        "vpn": vpn_result,
+    }
