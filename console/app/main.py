@@ -114,6 +114,7 @@ from app.domains.admin.vpn_invites import (
 )
 from app.domains.admin.user_mutations import (
     create_admin_user_payload as _create_admin_user_payload_impl,
+    delete_admin_user_payload as _delete_admin_user_payload_impl,
     invite_admin_user_payload as _invite_admin_user_payload_impl,
     reinvite_admin_user_payload as _reinvite_admin_user_payload_impl,
     update_admin_user_payload as _update_admin_user_payload_impl,
@@ -6271,25 +6272,15 @@ async def api_admin_users_delete(
     request: Request,
     admin_user: dict = Depends(require_permission("iam.users.write")),
 ):
-    if user_id == admin_user["id"]:
-        raise HTTPException(400, "you cannot delete your own account")
-    await _assert_can_manage_target_user(admin_user, user_id)
-    try:
-        ok = await _auth.delete_user(user_id)
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    if not ok:
-        raise HTTPException(404, "user not found")
-    await _audit.record_event(
-        admin_user.get("id"),
-        admin_user.get("email"),
-        "user.deleted",
-        "user",
-        str(user_id),
-        ip=_client_ip(request),
+    return await _delete_admin_user_payload_impl(
+        user_id=user_id,
+        admin_user=admin_user,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
+        auth_service=_auth,
+        audit_service=_audit,
+        assert_can_manage_target_user=_assert_can_manage_target_user,
     )
-    return {"deleted": True, "id": user_id}
 
 
 def _vpn_configured() -> bool:

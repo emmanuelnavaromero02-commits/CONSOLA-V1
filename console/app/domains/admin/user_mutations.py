@@ -183,6 +183,37 @@ async def update_admin_user_payload(
     return target_user
 
 
+async def delete_admin_user_payload(
+    *,
+    user_id: int,
+    admin_user: dict,
+    request_ip: str | None,
+    user_agent: str | None,
+    auth_service: Any,
+    audit_service: Any,
+    assert_can_manage_target_user: Callable[[dict, int], Awaitable[None]],
+) -> dict:
+    if user_id == admin_user["id"]:
+        raise HTTPException(400, "you cannot delete your own account")
+    await assert_can_manage_target_user(admin_user, user_id)
+    try:
+        ok = await auth_service.delete_user(user_id)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not ok:
+        raise HTTPException(404, "user not found")
+    await audit_service.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "user.deleted",
+        "user",
+        str(user_id),
+        ip=request_ip,
+        user_agent=user_agent,
+    )
+    return {"deleted": True, "id": user_id}
+
+
 async def invite_admin_user_payload(
     *,
     body: dict,
