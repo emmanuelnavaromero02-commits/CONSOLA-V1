@@ -3700,44 +3700,47 @@ async def _run_sync_control_room_gold_refresh(
     )
 
 
+async def _sync_status_call_pipeline(
+    current_cartridge: str,
+    *,
+    user: dict | None,
+) -> dict[str, Any]:
+    return await _call_with_optional_user(api_pipeline, current_cartridge, user=user)
+
+
+async def _run_sync_agentops_status(**kwargs: Any) -> dict[str, Any]:
+    return await _run_sync_agentops_status_impl(
+        **kwargs,
+        run_sync_agentops_monitors=_run_sync_agentops_monitors,
+        sync_agentops_is_terminal=_sync_agentops_is_terminal,
+        logger_warning=logger.warning,
+    )
+
+
+def _sync_control_room_cache_invalidate(current_user: dict | None) -> None:
+    from app.routers.control_room import _control_room_cache_invalidate
+
+    _control_room_cache_invalidate(current_user)
+
+
 async def _build_sync_run_status(
     *,
     cartridge: str,
     row: dict[str, Any],
     user: dict | None,
 ) -> dict[str, Any]:
-    async def call_pipeline(
-        current_cartridge: str,
-        *,
-        user: dict | None,
-    ) -> dict[str, Any]:
-        return await _call_with_optional_user(api_pipeline, current_cartridge, user=user)
-
-    async def run_agentops_status(**kwargs: Any) -> dict[str, Any]:
-        return await _run_sync_agentops_status_impl(
-            **kwargs,
-            run_sync_agentops_monitors=_run_sync_agentops_monitors,
-            sync_agentops_is_terminal=_sync_agentops_is_terminal,
-            logger_warning=logger.warning,
-        )
-
-    def control_room_cache_invalidate(current_user: dict | None) -> None:
-        from app.routers.control_room import _control_room_cache_invalidate
-
-        _control_room_cache_invalidate(current_user)
-
     return await _build_sync_run_status_impl(
         cartridge=cartridge,
         row=row,
         user=user,
         sync_child_runs=_sync_child_runs,
-        call_pipeline=call_pipeline,
+        call_pipeline=_sync_status_call_pipeline,
         run_control_room_gold_refresh=_run_sync_control_room_gold_refresh,
         run_control_room_status=_run_sync_control_room_status_impl,
-        run_agentops_status=run_agentops_status,
+        run_agentops_status=_run_sync_agentops_status,
         upsert_sync_run=_upsert_sync_run,
         fetch_sync_run_func=_fetch_sync_run,
-        control_room_cache_invalidate=control_room_cache_invalidate,
+        control_room_cache_invalidate=_sync_control_room_cache_invalidate,
         logger_debug=logger.debug,
         stale_after_seconds=_SYNC_NOW_STALE_AFTER_SECONDS,
     )
