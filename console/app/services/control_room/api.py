@@ -2317,37 +2317,56 @@ def _normalize_replicon_timesheet(
 
 
 @_bind_to_core
-def _normalize_replicon_pnl(
-    source: ControlRoomSource,
-    row: dict[str, Any],
+def _replicon_pnl_thresholds(
     thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "margin_warning": _threshold_value(
+            thresholds,
+            "replicon",
+            "low_margin",
+            "margen_bruto_pct",
+            "warning_value",
+            20,
+        ),
+        "margin_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "low_margin",
+            "margen_bruto_pct",
+            "critical_value",
+            0,
+        ),
+        "wip_warning": _threshold_value(
+            thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000
+        ),
+        "wip_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "wip_variance",
+            "wip_usd",
+            "critical_value",
+            25000,
+        ),
+    }
+
+
+@_bind_to_core
+def _replicon_pnl_state(
+    margin: float | None,
+    wip: float,
+    threshold_values: dict[str, float],
 ) -> dict[str, Any] | None:
-    margin = _num(row.get("margen_bruto_pct"))
-    wip = _num(row.get("wip_usd")) or 0
-    margin_warning = _threshold_value(
-        thresholds, "replicon", "low_margin", "margen_bruto_pct", "warning_value", 20
+    margin_breached = (
+        margin is not None and margin < threshold_values["margin_warning"]
     )
-    margin_critical = _threshold_value(
-        thresholds, "replicon", "low_margin", "margen_bruto_pct", "critical_value", 0
-    )
-    wip_warning = _threshold_value(
-        thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000
-    )
-    wip_critical = _threshold_value(
-        thresholds, "replicon", "wip_variance", "wip_usd", "critical_value", 25000
-    )
-    margin_breached = margin is not None and margin < margin_warning
-    wip_breached = abs(wip) >= wip_warning
+    wip_breached = abs(wip) >= threshold_values["wip_warning"]
     if not margin_breached and not wip_breached:
         return None
-    proyecto = str(
-        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
-    ).strip()
-    manager = str(row.get("revenue_manager") or "Sin RM").strip()
-    if margin is not None and margin < margin_critical:
+    if margin is not None and margin < threshold_values["margin_critical"]:
         severity = "critical"
         threshold_state = "critical"
-    elif abs(wip) >= wip_critical:
+    elif abs(wip) >= threshold_values["wip_critical"]:
         severity = "critical"
         threshold_state = "critical"
     elif margin_breached:
@@ -2356,11 +2375,66 @@ def _normalize_replicon_pnl(
     else:
         severity = "medium"
         threshold_state = "warning"
-    item_type = "low_margin" if margin_breached else "wip_variance"
+    return {
+        "item_type": "low_margin" if margin_breached else "wip_variance",
+        "margin_breached": margin_breached,
+        "wip_breached": wip_breached,
+        "severity": severity,
+        "threshold_state": threshold_state,
+    }
+
+
+@_bind_to_core
+def _replicon_pnl_threshold_refs(
+    state: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    refs = []
+    if state["margin_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "low_margin",
+                "margen_bruto_pct",
+                warning_default=20,
+                critical_default=0,
+                currency="PCT",
+            )
+        )
+    if state["wip_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "wip_variance",
+                "wip_usd",
+                warning_default=5000,
+                critical_default=25000,
+            )
+        )
+    return refs
+
+
+@_bind_to_core
+def _normalize_replicon_pnl(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
+    margin = _num(row.get("margen_bruto_pct"))
+    wip = _num(row.get("wip_usd")) or 0
+    state = _replicon_pnl_state(margin, wip, _replicon_pnl_thresholds(thresholds))
+    if state is None:
+        return None
+    proyecto = str(
+        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
+    ).strip()
+    manager = str(row.get("revenue_manager") or "Sin RM").strip()
     item = _base_item(
         source,
-        {**row, "severity": severity},
-        item_type,
+        {**row, "severity": state["severity"]},
+        state["item_type"],
         proyecto,
         str(row.get("project_name") or proyecto),
     )
@@ -2374,31 +2448,11 @@ def _normalize_replicon_pnl(
             "details": {**item["details"], **row},
         }
     )
-    refs = []
-    if margin_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "low_margin",
-                "margen_bruto_pct",
-                warning_default=20,
-                critical_default=0,
-                currency="PCT",
-            )
-        )
-    if wip_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "wip_variance",
-                "wip_usd",
-                warning_default=5000,
-                critical_default=25000,
-            )
-        )
-    return _attach_thresholds(item, refs, threshold_state)
+    return _attach_thresholds(
+        item,
+        _replicon_pnl_threshold_refs(state, thresholds),
+        state["threshold_state"],
+    )
 
 
 @_bind_to_core
