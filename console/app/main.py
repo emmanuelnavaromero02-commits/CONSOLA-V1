@@ -90,6 +90,15 @@ from app.domains.accounts.lifecycle import (
     vpn_configured as _vpn_configured_impl,
     vpn_token_link as _vpn_token_link,
 )
+from app.domains.admin.users_scope import (
+    assert_can_manage_target_user as _assert_can_manage_target_user_impl,
+    assert_can_use_workspace as _assert_can_use_workspace_impl,
+    attach_workspace_summaries as _attach_workspace_summaries_impl,
+    target_user_workspace_ids as _target_user_workspace_ids_impl,
+    visible_user_ids_for_admin as _visible_user_ids_for_admin_impl,
+    workspace_rows_from_auth_stub as _workspace_rows_from_auth_stub_impl,
+    workspace_summaries_for_users as _workspace_summaries_for_users_impl,
+)
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
@@ -6405,129 +6414,42 @@ def _workspace_scope_db_unavailable(exc: BaseException) -> bool:
 
 async def _workspace_rows_from_auth_stub(user_id: int) -> list[dict]:
     """Compatibility path for unit-test auth doubles without DATABASE_URL."""
-    pool_factory = getattr(_auth, "pool", None)
-    if not callable(pool_factory):
-        return []
-    pool = await pool_factory()
-    rows = await pool.fetch(
-        "SELECT workspace_id::text AS workspace_id FROM user_workspace_roles WHERE user_id = $1",
-        user_id,
-    )
-    return [dict(row) for row in rows]
+    return await _workspace_rows_from_auth_stub_impl(user_id, auth=_auth)
 
 
 async def _target_user_workspace_ids(user_id: int) -> set[str]:
-    try:
-        pool = await _get_db_pool()
-    except (RuntimeError, AttributeError) as exc:
-        if not _workspace_scope_db_unavailable(exc):
-            raise
-        rows = await _workspace_rows_from_auth_stub(user_id)
-        return {str(row["workspace_id"]) for row in rows if row.get("workspace_id")}
-    rows = await pool.fetch(
-        "SELECT workspace_id::text AS workspace_id FROM user_workspace_roles WHERE user_id = $1",
+    return await _target_user_workspace_ids_impl(
         user_id,
+        get_db_pool=_get_db_pool,
+        auth=_auth,
+        workspace_scope_db_unavailable=_workspace_scope_db_unavailable,
     )
-    return {str(row["workspace_id"]) for row in rows if row["workspace_id"]}
 
 
 async def _workspace_summaries_for_users(user_ids: list[int]) -> dict[int, list[dict]]:
-    if not user_ids:
-        return {}
-    try:
-        pool = await _get_db_pool()
-    except (RuntimeError, AttributeError) as exc:
-        if not _workspace_scope_db_unavailable(exc):
-            raise
-        return {}
-    rows = await pool.fetch(
-        """
-        SELECT uwr.user_id::int AS user_id,
-               w.id::text AS workspace_id,
-               w.name AS workspace_name,
-               t.id::text AS tenant_id,
-               t.name AS tenant_name,
-               r.name AS workspace_role
-          FROM user_workspace_roles uwr
-          JOIN workspaces w ON w.id = uwr.workspace_id
-          JOIN tenants t ON t.id = w.tenant_id
-          JOIN roles r ON r.id = uwr.role_id
-         WHERE uwr.user_id = ANY($1::int[])
-         ORDER BY w.created_at ASC, w.name ASC, r.name ASC
-        """,
+    return await _workspace_summaries_for_users_impl(
         user_ids,
+        get_db_pool=_get_db_pool,
+        workspace_scope_db_unavailable=_workspace_scope_db_unavailable,
     )
-    result: dict[int, list[dict]] = {}
-    for row in rows:
-        result.setdefault(int(row["user_id"]), []).append(
-            {
-                "workspace_id": row["workspace_id"],
-                "workspace_name": row["workspace_name"],
-                "tenant_id": row["tenant_id"],
-                "tenant_name": row["tenant_name"],
-                "workspace_role": row["workspace_role"],
-            }
-        )
-    return result
 
 
 async def _attach_workspace_summaries(users: list[dict]) -> list[dict]:
-    ids = [int(u["id"]) for u in users if u.get("id") is not None]
-    summaries = await _workspace_summaries_for_users(ids)
-    enriched: list[dict] = []
-    for user in users:
-        item = dict(user)
-        if user.get("id") is not None:
-            item["workspaces"] = summaries.get(int(user["id"]), [])
-        else:
-            item["workspaces"] = []
-        enriched.append(item)
-    return enriched
+    return await _attach_workspace_summaries_impl(
+        users,
+        workspace_summaries=_workspace_summaries_for_users,
+    )
 
 
 async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> set[int]:
-    if _is_global_iam_admin(admin_user):
-        return {int(u["id"]) for u in users if u.get("id") is not None}
-    workspace_ids = sorted(_session_workspace_ids(admin_user))
-    if not workspace_ids:
-        return set()
-    user_by_id = {int(u["id"]): u for u in users if u.get("id") is not None}
-    try:
-        pool = await _get_db_pool()
-    except (RuntimeError, AttributeError) as exc:
-        if not _workspace_scope_db_unavailable(exc):
-            raise
-        visible: set[int] = set()
-        admin_id = admin_user.get("id")
-        for candidate in users:
-            candidate_id = candidate.get("id")
-            if candidate_id != admin_id and _is_global_iam_admin(candidate):
-                continue
-            candidate_workspaces = _session_workspace_ids(candidate)
-            if candidate_id == admin_id or candidate_workspaces.intersection(
-                workspace_ids
-            ):
-                visible.add(int(candidate_id))
-        return visible
-    rows = await pool.fetch(
-        """
-        SELECT DISTINCT user_id
-          FROM user_workspace_roles
-         WHERE workspace_id = ANY($1::uuid[])
-        """,
-        workspace_ids,
+    return await _visible_user_ids_for_admin_impl(
+        admin_user,
+        users,
+        get_db_pool=_get_db_pool,
+        workspace_scope_db_unavailable=_workspace_scope_db_unavailable,
+        is_global_iam_admin=_is_global_iam_admin,
+        session_workspace_ids=_session_workspace_ids,
     )
-    visible: set[int] = set()
-    for row in rows:
-        user_id = int(row["user_id"])
-        if user_id == admin_user.get("id"):
-            visible.add(user_id)
-            continue
-        candidate = user_by_id.get(user_id)
-        if candidate and _is_global_iam_admin(candidate):
-            continue
-        visible.add(user_id)
-    return visible
 
 
 async def _set_workspace_role_for_user(
@@ -6560,25 +6482,23 @@ async def _set_workspace_role_for_user(
 
 
 async def _assert_can_use_workspace(admin_user: dict, workspace_id: str | None) -> None:
-    if _is_global_iam_admin(admin_user):
-        return
-    memberships = _session_workspace_ids(admin_user)
-    if not workspace_id or workspace_id not in memberships:
-        raise HTTPException(403, "workspace access forbidden")
+    await _assert_can_use_workspace_impl(
+        admin_user,
+        workspace_id,
+        is_global_iam_admin=_is_global_iam_admin,
+        session_workspace_ids=_session_workspace_ids,
+    )
 
 
 async def _assert_can_manage_target_user(admin_user: dict, target_user_id: int) -> None:
-    if _is_global_iam_admin(admin_user):
-        return
-    memberships = _session_workspace_ids(admin_user)
-    if not memberships:
-        raise HTTPException(403, "workspace access forbidden")
-    target = await _auth.get_user_by_id(target_user_id)
-    if _is_global_iam_admin(target):
-        raise HTTPException(403, "workspace admins cannot manage platform admins")
-    target_workspaces = await _target_user_workspace_ids(target_user_id)
-    if not target_workspaces or memberships.isdisjoint(target_workspaces):
-        raise HTTPException(403, "workspace access forbidden")
+    await _assert_can_manage_target_user_impl(
+        admin_user,
+        target_user_id,
+        auth_get_user_by_id=_auth.get_user_by_id,
+        is_global_iam_admin=_is_global_iam_admin,
+        session_workspace_ids=_session_workspace_ids,
+        target_workspace_ids=_target_user_workspace_ids,
+    )
 
 
 @app.get("/api/admin/users")
