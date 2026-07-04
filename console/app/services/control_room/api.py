@@ -3330,37 +3330,79 @@ def _normalize_s4_backlog(
 
 
 @_bind_to_core
+def _s4_supplier_spend_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "warning_spend": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            "warning_value",
+            250000,
+        ),
+        "critical_spend": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            "critical_value",
+            750000,
+        ),
+    }
+
+
+@_bind_to_core
+def _s4_supplier_spend_state(
+    spend: float,
+    threshold_values: dict[str, float],
+) -> dict[str, Any] | None:
+    if spend < threshold_values["warning_spend"]:
+        return None
+    threshold_state = (
+        "critical" if spend >= threshold_values["critical_spend"] else "warning"
+    )
+    return {
+        "threshold_state": threshold_state,
+        "severity": "high" if threshold_state == "critical" else "medium",
+    }
+
+
+@_bind_to_core
+def _s4_supplier_spend_threshold_refs(
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _threshold_ref(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            warning_default=250000,
+            critical_default=750000,
+        )
+    ]
+
+
+@_bind_to_core
 def _normalize_s4_supplier_spend(
     source: ControlRoomSource,
     row: dict[str, Any],
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
     spend = _num(row.get("total_spend")) or 0
-    warning_spend = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "supplier_spend_concentration",
-        "total_spend",
-        "warning_value",
-        250000,
+    state = _s4_supplier_spend_state(
+        spend,
+        _s4_supplier_spend_thresholds(thresholds),
     )
-    critical_spend = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "supplier_spend_concentration",
-        "total_spend",
-        "critical_value",
-        750000,
-    )
-    if spend < warning_spend:
+    if state is None:
         return None
     supplier = str(row.get("supplier_code") or "Sin proveedor").strip()
     month = str(row.get("spend_month") or "").strip()
-    threshold_state = "critical" if spend >= critical_spend else "warning"
-    severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(
         source,
-        {**row, "severity": severity},
+        {**row, "severity": state["severity"]},
         "supplier_spend_concentration",
         f"{supplier}:{month}",
         supplier,
@@ -3377,17 +3419,8 @@ def _normalize_s4_supplier_spend(
     )
     return _attach_thresholds(
         item,
-        [
-            _threshold_ref(
-                thresholds,
-                "sap_s4hana",
-                "supplier_spend_concentration",
-                "total_spend",
-                warning_default=250000,
-                critical_default=750000,
-            )
-        ],
-        threshold_state,
+        _s4_supplier_spend_threshold_refs(thresholds),
+        state["threshold_state"],
     )
 
 
