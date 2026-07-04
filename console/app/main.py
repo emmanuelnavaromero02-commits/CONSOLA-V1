@@ -260,6 +260,9 @@ from app.domains.pipeline.run_logs import (
 from app.domains.pipeline.overview import (
     build_pipeline_overview as _build_pipeline_overview_impl,
 )
+from app.domains.pipeline.extract_all import (
+    fanout_pipeline_extract_all as _fanout_pipeline_extract_all_impl,
+)
 from app.domains.pipeline.scope import (
     pipeline_runs_read_conn as _pipeline_runs_read_conn_impl,
     pipeline_runs_scope_predicate as _pipeline_runs_scope_predicate_impl,
@@ -3634,86 +3637,17 @@ async def api_pipeline_extract_all(
     if aggregate_result is not None:
         return aggregate_result
 
-    pipeline = await _call_with_optional_user(api_pipeline, cartridge, user=user)
-    rows = pipeline.get("pipeline") or []
-    triggered: list[dict] = []
-    errors: list[dict] = []
-
-    for row in rows:
-        entity = row.get("entity")
-        if not entity:
-            continue
-        extract_body = dict(body)
-        scoped_idempotency_key = _sync_entity_idempotency_key(
-            body.get("idempotency_key") or body.get("request_id"),
-            entity,
-        )
-        if scoped_idempotency_key:
-            extract_body["idempotency_key"] = scoped_idempotency_key
-        try:
-            result = await _call_with_optional_user(
-                api_pipeline_extract, cartridge, entity, extract_body, user=user
-            )
-            triggered.append(
-                {
-                    "entity": entity,
-                    "job_id": result.get("job_id")
-                    or result.get("dag_run_id")
-                    or result.get("run_id"),
-                    "dag_run_id": result.get("dag_run_id") or result.get("run_id"),
-                    "dag_id": result.get("dag_id"),
-                    "state": result.get("state") or result.get("status"),
-                    "result": result,
-                }
-            )
-        except HTTPException as exc:
-            errors.append(
-                {
-                    "entity": entity,
-                    "status_code": exc.status_code,
-                    "error": str(exc.detail),
-                }
-            )
-        except Exception:
-            error_id = uuid.uuid4().hex
-            logger.exception(
-                "pipeline extract_all failed for %s.%s error_id=%s",
-                cartridge,
-                entity,
-                error_id,
-            )
-            errors.append(
-                {
-                    "entity": entity,
-                    "status_code": 500,
-                    "error": f"Internal server error. error_id={error_id}",
-                }
-            )
-
-    return {
-        "cartridge": cartridge,
-        "attempted": len(triggered) + len(errors),
-        "triggered": triggered,
-        "errors": errors,
-        "blocked": [
-            item for item in errors
-            if item.get("status_code") in {400, 403, 404}
-        ],
-        "failed": [
-            item for item in errors
-            if item.get("status_code") not in {400, 403, 404}
-        ],
-        "partial": [],
-        "skipped_explicit": [],
-        "summary": {
-            "triggered": len(triggered),
-            "errors": len(errors),
-            "blocked": sum(1 for item in errors if item.get("status_code") in {400, 403, 404}),
-            "failed": sum(1 for item in errors if item.get("status_code") not in {400, 403, 404}),
-        },
-        "count": len(triggered),
-        "error_count": len(errors),
-    }
+    return await _fanout_pipeline_extract_all_impl(
+        cartridge=cartridge,
+        body=body,
+        user=user,
+        api_pipeline=api_pipeline,
+        api_pipeline_extract=api_pipeline_extract,
+        call_with_optional_user=_call_with_optional_user,
+        sync_entity_idempotency_key=_sync_entity_idempotency_key,
+        error_id_factory=lambda: uuid.uuid4().hex,
+        logger_exception=logger.exception,
+    )
 
 
 _SYNC_NOW_STALE_AFTER_SECONDS = _env_float("SYNC_NOW_STALE_AFTER_SECONDS", 90 * 60)
