@@ -10,6 +10,7 @@ from app.domains.pipeline.extract_config import (
     apply_user_scope_to_dag_conf,
     build_mcp_extract_args,
     connection_id_from_vault_payload,
+    dag_extract_dag_id_from_metadata,
     dag_run_id_from_idempotency_key,
     entity_declared_in_static_catalog,
     is_transient_airflow_trigger_error,
@@ -52,6 +53,59 @@ def test_build_mcp_extract_args_defaults_mode_and_accepts_connection_id():
 def test_build_mcp_extract_args_rejects_unsafe_connection_id():
     with pytest.raises(HTTPException) as exc:
         build_mcp_extract_args("Customer", {"connection_id": "bad/conn"})
+
+    assert exc.value.status_code == 400
+
+
+def test_dag_extract_dag_id_from_metadata_returns_configured_dag_id():
+    assert (
+        dag_extract_dag_id_from_metadata(
+            cartridge="sap_successfactors",
+            entity="User",
+            metadata={"entity": "User", "enabled": True, "dag_id": "sf_extract"},
+            static_catalog_contains=lambda _cartridge, _entity: False,
+        )
+        == "sf_extract"
+    )
+
+
+def test_dag_extract_dag_id_from_metadata_reports_static_orphan():
+    with pytest.raises(HTTPException) as exc:
+        dag_extract_dag_id_from_metadata(
+            cartridge="sap_successfactors",
+            entity="PerPhone",
+            metadata={"entity": None, "enabled": True, "dag_id": "sf_extract"},
+            static_catalog_contains=lambda _cartridge, _entity: True,
+        )
+
+    assert exc.value.status_code == 400
+    assert "entity_config" in str(exc.value.detail)
+
+
+def test_dag_extract_dag_id_from_metadata_reports_missing_entity():
+    with pytest.raises(HTTPException) as exc:
+        dag_extract_dag_id_from_metadata(
+            cartridge="replicon",
+            entity="Missing",
+            metadata={"entity": None, "enabled": True, "dag_id": "replicon_extract"},
+            static_catalog_contains=lambda _cartridge, _entity: False,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_dag_extract_dag_id_from_metadata_reports_disabled_entity():
+    with pytest.raises(HTTPException) as exc:
+        dag_extract_dag_id_from_metadata(
+            cartridge="replicon",
+            entity="Department",
+            metadata={
+                "entity": "Department",
+                "enabled": False,
+                "dag_id": "replicon_extract",
+            },
+            static_catalog_contains=lambda _cartridge, _entity: False,
+        )
 
     assert exc.value.status_code == 400
 

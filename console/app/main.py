@@ -441,6 +441,7 @@ from app.domains.pipeline.extract_config import (
     build_dag_extract_conf as _build_dag_extract_conf_impl,
     build_mcp_extract_args as _build_mcp_extract_args_impl,
     connection_id_from_vault_payload as _connection_id_from_vault_payload_impl,
+    dag_extract_dag_id_from_metadata as _dag_extract_dag_id_from_metadata_impl,
     dag_run_id_from_idempotency_key as _dag_run_id_from_idempotency_key_impl,
     entity_declared_in_static_catalog as _entity_declared_in_static_catalog_impl,
     is_transient_airflow_trigger_error as _is_transient_airflow_trigger_error_impl,
@@ -3157,21 +3158,12 @@ async def api_pipeline_extract(
     body = body or {}
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if (metadata.get("pattern") or "").lower() == "dag-based":
-        if not metadata.get("entity"):
-            if _entity_declared_in_static_catalog(cartridge, entity):
-                raise HTTPException(
-                    400,
-                    f"Entity '{entity}' is declared in entities.yaml for cartridge '{cartridge}' "
-                    "but has no scoped entity_config entry; configure scope before extraction",
-                )
-            raise HTTPException(
-                404, f"Entity '{entity}' not found for cartridge '{cartridge}'"
-            )
-        if not metadata.get("enabled"):
-            raise HTTPException(400, f"Entity '{entity}' is disabled")
-        dag_id = metadata.get("dag_id")
-        if not dag_id:
-            raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
+        dag_id = _dag_extract_dag_id_from_metadata_impl(
+            cartridge=cartridge,
+            entity=entity,
+            metadata=metadata,
+            static_catalog_contains=_entity_declared_in_static_catalog,
+        )
 
         extract_conf = _build_dag_extract_conf(
             cartridge, entity, metadata.get("mode"), body

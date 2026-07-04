@@ -51,6 +51,31 @@ def build_mcp_extract_args(entity: str, body: dict[str, Any]) -> dict[str, Any]:
     return args
 
 
+def dag_extract_dag_id_from_metadata(
+    *,
+    cartridge: str,
+    entity: str,
+    metadata: dict[str, Any],
+    static_catalog_contains: Callable[[str, str], bool],
+) -> str:
+    if not metadata.get("entity"):
+        if static_catalog_contains(cartridge, entity):
+            raise HTTPException(
+                400,
+                f"Entity '{entity}' is declared in entities.yaml for cartridge '{cartridge}' "
+                "but has no scoped entity_config entry; configure scope before extraction",
+            )
+        raise HTTPException(
+            404, f"Entity '{entity}' not found for cartridge '{cartridge}'"
+        )
+    if not metadata.get("enabled"):
+        raise HTTPException(400, f"Entity '{entity}' is disabled")
+    dag_id = metadata.get("dag_id")
+    if not dag_id:
+        raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
+    return str(dag_id)
+
+
 def connection_id_from_vault_payload(payload: Any) -> str | None:
     candidates: list[Any] = []
     if isinstance(payload, dict):
