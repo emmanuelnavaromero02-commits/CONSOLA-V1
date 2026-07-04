@@ -4466,6 +4466,55 @@ async def _continue_sync_now_after_reservation(
     )
 
 
+async def _sync_packaged_dataset_seed_failure_response(
+    *,
+    exc: Exception,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    run_id: str,
+    steps: list[dict[str, Any]],
+    user: dict,
+) -> tuple[None, list[dict[str, Any]], dict[str, Any] | None]:
+    message = f"{type(exc).__name__}: {exc}"
+    logger.warning(
+        "sync packaged dataset seed failed cartridge=%s run_id=%s: %s",
+        cartridge,
+        run_id,
+        message,
+        exc_info=True,
+    )
+    steps = _merge_sync_steps(
+        steps,
+        _sync_dataset_seed_failure_step_updates(message),
+    )
+    await _upsert_sync_run(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status="failed",
+        user=user,
+        extra=_sync_dataset_seed_failure_extra(
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            request_id=request_id,
+            steps=steps,
+            message=message,
+        ),
+        error_message=message[:500],
+    )
+    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+    if row:
+        return None, steps, _sync_public_payload(row, _sync_extra_from_row(row))
+    raise HTTPException(
+        500,
+        "sync packaged dataset seed failed before Airflow trigger",
+    )
+
+
 async def _seed_sync_packaged_datasets_or_response(
     *,
     cartridge: str,
@@ -4486,40 +4535,16 @@ async def _seed_sync_packaged_datasets_or_response(
         )
         return dataset_seed, steps, None
     except Exception as exc:  # noqa: BLE001
-        message = f"{type(exc).__name__}: {exc}"
-        logger.warning(
-            "sync packaged dataset seed failed cartridge=%s run_id=%s: %s",
-            cartridge,
-            run_id,
-            message,
-            exc_info=True,
-        )
-        steps = _merge_sync_steps(
-            steps,
-            _sync_dataset_seed_failure_step_updates(message),
-        )
-        await _upsert_sync_run(
-            run_id=run_id,
+        return await _sync_packaged_dataset_seed_failure_response(
+            exc=exc,
             cartridge=cartridge,
             mode=mode,
-            status="failed",
+            target=target,
+            conn_id=conn_id,
+            request_id=request_id,
+            run_id=run_id,
+            steps=steps,
             user=user,
-            extra=_sync_dataset_seed_failure_extra(
-                mode=mode,
-                target=target,
-                conn_id=conn_id,
-                request_id=request_id,
-                steps=steps,
-                message=message,
-            ),
-            error_message=message[:500],
-        )
-        row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
-        if row:
-            return None, steps, _sync_public_payload(row, _sync_extra_from_row(row))
-        raise HTTPException(
-            500,
-            "sync packaged dataset seed failed before Airflow trigger",
         )
 
 
