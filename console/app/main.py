@@ -213,6 +213,7 @@ from app.domains.data_platform.rag_requests import (
     rag_answer_payload as _rag_answer_payload_impl,
     rag_ingest_payload as _rag_ingest_payload_impl,
     rag_reindex_payload as _rag_reindex_payload_impl,
+    rag_search_payload as _rag_search_payload_impl,
 )
 from app.domains.data_platform.semantic_requests import (
     semantic_enrich_payload as _semantic_enrich_payload_impl,
@@ -5399,25 +5400,15 @@ async def api_rag_delete_source(
     dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
 )
 async def api_rag_search(body: dict, user: dict = Depends(require_permission("datasets.read"))):
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
-        r = await c.post(
-            f"{_RAG_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "search_rag",
-                {
-                    "query": body.get("query"),
-                    "top_k": body.get("top_k", 5),
-                    "source_ids": body.get("source_ids"),
-                    "kinds": body.get("kinds"),
-                },
-                user,
-            ),
-        )
-        if r.status_code >= 400:
-            raise HTTPException(
-                r.status_code, _upstream_error_detail(r, "RAG search failed")
-            )
-        return r.json().get("result") or r.json()
+    return await _rag_search_payload_impl(
+        body=body,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        upstream_error_detail=_upstream_error_detail,
+    )
 
 
 @app.post(

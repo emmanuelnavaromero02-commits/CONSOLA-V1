@@ -69,23 +69,15 @@ async def api_rag_delete_source(source_id: int, user: dict = Depends(require_per
 @router.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_rag_search(body: dict, user: dict = Depends(require_permission("datasets.read"))):
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
-        r = await c.post(
-            f"{_RAG_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "search_rag",
-                {
-                    "query": body.get("query"),
-                    "top_k": body.get("top_k", 5),
-                    "source_ids": body.get("source_ids"),
-                    "kinds": body.get("kinds"),
-                },
-                user,
-            ),
-        )
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG search failed"))
-        return r.json().get("result") or r.json()
+    return await _rag_search_payload_impl(
+        body=body,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        upstream_error_detail=_upstream_error_detail,
+    )
 
 # /api/rag/reindex
 @router.post(

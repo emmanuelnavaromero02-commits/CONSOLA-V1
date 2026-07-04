@@ -74,6 +74,41 @@ async def rag_answer_payload(
     return {"answer": answer, "results": results}
 
 
+async def rag_search_payload(
+    *,
+    body: dict[str, Any],
+    user: dict[str, Any],
+    rag_url: str,
+    http_client_factory: Callable[..., Any],
+    headers_factory: Callable[[str], dict[str, str]],
+    mcp_payload_factory: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]],
+    upstream_error_detail: Callable[[Any, str], Any],
+) -> dict[str, Any]:
+    async with http_client_factory(
+        headers=headers_factory("MCP_INFRA"), timeout=60
+    ) as client:
+        response = await client.post(
+            f"{rag_url}/mcp/invoke",
+            json=mcp_payload_factory(
+                "search_rag",
+                {
+                    "query": body.get("query"),
+                    "top_k": body.get("top_k", 5),
+                    "source_ids": body.get("source_ids"),
+                    "kinds": body.get("kinds"),
+                },
+                user,
+            ),
+        )
+        if response.status_code >= 400:
+            raise HTTPException(
+                response.status_code,
+                upstream_error_detail(response, "RAG search failed"),
+            )
+        payload = response.json()
+        return payload.get("result") or payload
+
+
 async def rag_reindex_payload(
     *,
     body: dict[str, Any],

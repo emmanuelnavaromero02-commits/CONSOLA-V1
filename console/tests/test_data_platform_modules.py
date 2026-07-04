@@ -40,6 +40,7 @@ from app.domains.data_platform.rag_payloads import (
 from app.domains.data_platform.rag_requests import (
     rag_ingest_payload,
     rag_reindex_payload,
+    rag_search_payload,
 )
 from app.domains.data_platform.refinement_errors import (
     payload_error_detail,
@@ -490,6 +491,92 @@ def test_rag_synthesis_messages_build_cited_context():
     assert "ÚNICAMENTE el contexto provisto" in messages["system"]
     assert "[1] Fuente: dataset_a" in messages["user"]
     assert "Pregunta: Que pasa?" in messages["user"]
+
+
+@pytest.mark.asyncio
+async def test_rag_search_payload_preserves_mcp_shape():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"results": [{"source": "x"}]}}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    result = await rag_search_payload(
+        body={"query": "skills", "top_k": 7, "source_ids": [1], "kinds": ["schema"]},
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        mcp_payload_factory=lambda tool, args, user: {
+            "tool": tool,
+            "args": args,
+            "user": user,
+        },
+        upstream_error_detail=lambda _response, fallback: fallback,
+    )
+
+    assert result == {"results": [{"source": "x"}]}
+    assert captured["client_kwargs"]["headers"] == {"x-service": "MCP_INFRA"}
+    assert captured["url"] == "http://rag/mcp/invoke"
+    assert captured["json"]["tool"] == "search_rag"
+    assert captured["json"]["args"] == {
+        "query": "skills",
+        "top_k": 7,
+        "source_ids": [1],
+        "kinds": ["schema"],
+    }
+    assert captured["json"]["user"] == SCOPED_USER
+
+
+@pytest.mark.asyncio
+async def test_rag_search_payload_raises_safe_upstream_error():
+    class FakeResponse:
+        status_code = 502
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    with pytest.raises(HTTPException) as exc:
+        await rag_search_payload(
+            body={},
+            user=SCOPED_USER,
+            rag_url="http://rag",
+            http_client_factory=lambda **_kwargs: FakeClient(),
+            headers_factory=lambda _service: {},
+            mcp_payload_factory=lambda tool, args, user: {
+                "tool": tool,
+                "args": args,
+                "user": user,
+            },
+            upstream_error_detail=lambda _response, fallback: f"{fallback}: down",
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "RAG search failed: down"
 
 
 @pytest.mark.asyncio
