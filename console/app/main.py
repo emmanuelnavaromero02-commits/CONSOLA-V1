@@ -6637,13 +6637,41 @@ async def api_admin_users_send_reset(
     admin: dict = Depends(require_permission("iam.users.write")),
 ):
     """Email a password reset link and issue a one-time admin temporary password."""
+    target_user = await _load_active_reset_target_user(user_id)
+    await _assert_can_manage_target_user(admin, user_id)
+    temporary_password = _temporary_admin_reset_password()
+    await _replace_user_password_for_reset(user_id, temporary_password)
+    tok, _ = await _tokens.create(user_id, "reset")
+    sent = await _send_admin_reset_email(target_user, tok)
+    await _audit_admin_password_reset(
+        admin=admin,
+        user_id=user_id,
+        request=request,
+        sent=sent,
+    )
+    return {
+        "sent": sent,
+        "temporary_password": temporary_password,
+        "password_delivery": "one_time_response",
+    }
+
+
+def _temporary_admin_reset_password() -> str:
     import secrets as _secrets
 
+    return f"{_secrets.token_urlsafe(24)}Aa1!"
+
+
+async def _load_active_reset_target_user(user_id: int) -> dict:
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user or not target_user.get("is_active"):
         raise HTTPException(404, "user not found or inactive")
-    await _assert_can_manage_target_user(admin, user_id)
-    temporary_password = f"{_secrets.token_urlsafe(24)}Aa1!"
+    return target_user
+
+
+async def _replace_user_password_for_reset(
+    user_id: int, temporary_password: str
+) -> None:
     pool = await _auth.pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -6664,11 +6692,22 @@ async def api_admin_users_send_reset(
                 raise HTTPException(404, "user not found or inactive")
             await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
             await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-    tok, _ = await _tokens.create(user_id, "reset")
+
+
+async def _send_admin_reset_email(target_user: dict, tok: str) -> bool:
     subject, html = _email.render_password_reset(
         target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS
     )
-    sent = await _email.send_email(target_user["email"], subject, html)
+    return await _email.send_email(target_user["email"], subject, html)
+
+
+async def _audit_admin_password_reset(
+    *,
+    admin: dict,
+    user_id: int,
+    request: Request,
+    sent: bool,
+) -> None:
     await _audit.record_event(
         admin.get("id"),
         admin.get("email"),
@@ -6684,11 +6723,6 @@ async def api_admin_users_send_reset(
             "sessions_revoked": True,
         },
     )
-    return {
-        "sent": sent,
-        "temporary_password": temporary_password,
-        "password_delivery": "one_time_response",
-    }
 
 
 from app.routers import cartridges as cartridges_router
