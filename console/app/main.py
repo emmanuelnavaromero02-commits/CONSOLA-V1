@@ -4385,6 +4385,26 @@ async def _sync_now_status_or_diagnostics(
     return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
 
 
+async def _trigger_sync_extract_all_components(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    run_id: str,
+    user: dict,
+) -> tuple[dict[str, Any], int, list[Any], list[Any]]:
+    extract_attempt = await _trigger_sync_extract_all_attempt(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        user=user,
+    )
+    return _sync_extract_attempt_components(extract_attempt)
+
+
 async def _continue_sync_now_after_reservation(
     *,
     cartridge: str,
@@ -4409,16 +4429,15 @@ async def _continue_sync_now_after_reservation(
     if early_response is not None:
         return early_response
 
-    extract_attempt = await _trigger_sync_extract_all_attempt(
-        cartridge=cartridge,
-        mode=mode,
-        target=target,
-        conn_id=conn_id,
-        run_id=run_id,
-        user=user,
-    )
-    result, attempts, triggered_entities, errors = _sync_extract_attempt_components(
-        extract_attempt
+    result, attempts, triggered_entities, errors = (
+        await _trigger_sync_extract_all_components(
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            run_id=run_id,
+            user=user,
+        )
     )
 
     steps, upsert_debug = await _persist_sync_extract_trigger_result(
