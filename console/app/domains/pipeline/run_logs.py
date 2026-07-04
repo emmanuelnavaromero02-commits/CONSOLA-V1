@@ -1,11 +1,67 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+from fastapi import HTTPException
 
 
 RefreshDagRunStatus = Callable[[dict[str, Any], dict | None], Awaitable[dict[str, Any]]]
 McpInvoke = Callable[..., Awaitable[dict[str, Any]]]
+
+
+async def build_job_logs_payload(
+    *,
+    job_id: str,
+    limit: int,
+    user: dict[str, Any],
+    job_service: Any,
+    get_db_pool: Any,
+) -> dict[str, Any]:
+    scoped = await job_service.get_scoped(job_id, user=user)
+    if scoped.get("error"):
+        raise HTTPException(404, "job not found")
+    job_args = scoped.get("args") if isinstance(scoped.get("args"), dict) else {}
+    job_result = scoped.get("result") if isinstance(scoped.get("result"), dict) else {}
+    cartridge = str(
+        job_args.get("cartridge_id")
+        or job_args.get("cartridge")
+        or job_result.get("cartridge_id")
+        or job_result.get("cartridge")
+        or ""
+    ).strip()
+    if not cartridge:
+        raise HTTPException(
+            422, "job cartridge is unavailable; cannot resolve scoped logs"
+        )
+
+    pool = await get_db_pool()
+    rows = await pool.fetch(
+        "SELECT entity, level, message, detail, ts FROM run_logs "
+        "WHERE run_id=$1 AND cartridge=$2 ORDER BY ts ASC LIMIT $3",
+        job_id,
+        cartridge,
+        limit,
+    )
+    logs = []
+    for row in rows:
+        detail = row["detail"]
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        logs.append(
+            {
+                "ts": row["ts"].isoformat(),
+                "entity": row["entity"],
+                "level": row["level"],
+                "message": row["message"],
+                "detail": detail,
+            }
+        )
+    return {"logs": logs}
 
 
 async def build_pipeline_run_logs_payload(

@@ -256,6 +256,7 @@ from app.domains.pipeline.run_state import (
     sanitize_pipeline_run_for_user as _sanitize_pipeline_run_for_user_impl,
 )
 from app.domains.pipeline.run_logs import (
+    build_job_logs_payload as _build_job_logs_payload_impl,
     build_pipeline_run_logs_payload as _build_pipeline_run_logs_payload_impl,
 )
 from app.domains.pipeline.overview import (
@@ -2172,50 +2173,13 @@ async def api_job(job_id: str, user: dict = Depends(require_permission("monitor.
 async def api_job_logs(
     job_id: str, limit: int = 200, user: dict = Depends(require_permission("monitor.read"))
 ):
-    import json as _json
-
-    scoped = await job_service.get_scoped(job_id, user=user)
-    if scoped.get("error"):
-        raise HTTPException(404, "job not found")
-    job_args = scoped.get("args") if isinstance(scoped.get("args"), dict) else {}
-    job_result = scoped.get("result") if isinstance(scoped.get("result"), dict) else {}
-    cartridge = str(
-        job_args.get("cartridge_id")
-        or job_args.get("cartridge")
-        or job_result.get("cartridge_id")
-        or job_result.get("cartridge")
-        or ""
-    ).strip()
-    if not cartridge:
-        raise HTTPException(
-            422, "job cartridge is unavailable; cannot resolve scoped logs"
-        )
-    pool = await _get_db_pool()
-    rows = await pool.fetch(
-        "SELECT entity, level, message, detail, ts FROM run_logs "
-        "WHERE run_id=$1 AND cartridge=$2 ORDER BY ts ASC LIMIT $3",
-        job_id,
-        cartridge,
-        limit,
+    return await _build_job_logs_payload_impl(
+        job_id=job_id,
+        limit=limit,
+        user=user,
+        job_service=job_service,
+        get_db_pool=_get_db_pool,
     )
-    result = []
-    for row in rows:
-        detail = row["detail"]
-        if isinstance(detail, str):
-            try:
-                detail = _json.loads(detail)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        result.append(
-            {
-                "ts": row["ts"].isoformat(),
-                "entity": row["entity"],
-                "level": row["level"],
-                "message": row["message"],
-                "detail": detail,
-            }
-        )
-    return {"logs": result}
 
 
 @app.get("/api/tools/manifest", dependencies=[Depends(require_permission("agents.read"))])
