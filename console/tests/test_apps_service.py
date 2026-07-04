@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.domains.apps.service import (
     apps_payload_visible_and_ready,
     delete_refinement_app_payload,
+    load_refinement_apps_payload,
     refinement_app_html,
 )
 
@@ -116,6 +117,90 @@ async def test_apps_payload_visible_and_ready_scopes_requested_cartridge():
 
     assert requested == ["hubspot"]
     assert [app["name"] for app in result["apps"]] == ["hubspot_forecast"]
+
+
+@pytest.mark.asyncio
+async def test_load_refinement_apps_payload_lists_apps_from_refinement():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"apps": [{"name": "talent"}]}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    payload = await load_refinement_apps_payload(
+        user={"id": 1},
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        mcp_payload=lambda tool, args, user: {
+            "tool": tool,
+            "args": args,
+            "user": user,
+        },
+        refinement_url="http://refinement",
+        upstream_error_detail=lambda _response, fallback: fallback,
+    )
+
+    assert payload == {"apps": [{"name": "talent"}]}
+    assert captured["client_kwargs"]["headers"] == {"x-service": "REFINEMENT"}
+    assert captured["url"] == "http://refinement/mcp/invoke"
+    assert captured["json"]["tool"] == "list_apps"
+    assert captured["json"]["args"] == {}
+
+
+@pytest.mark.asyncio
+async def test_load_refinement_apps_payload_maps_upstream_error():
+    class FakeResponse:
+        status_code = 503
+
+        def json(self):
+            return {"error": "down"}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    with pytest.raises(HTTPException) as exc:
+        await load_refinement_apps_payload(
+            user={"id": 1},
+            http_client_factory=FakeClient,
+            headers_factory=lambda _service: {},
+            mcp_payload=lambda tool, args, user: {
+                "tool": tool,
+                "args": args,
+                "user": user,
+            },
+            refinement_url="http://refinement",
+            upstream_error_detail=lambda _response, fallback: f"{fallback}: down",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Apps service unavailable: down"
 
 
 @pytest.mark.asyncio

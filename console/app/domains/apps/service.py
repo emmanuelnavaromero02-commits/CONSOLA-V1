@@ -62,6 +62,31 @@ async def apps_payload_visible_and_ready(
     )
 
 
+async def load_refinement_apps_payload(
+    *,
+    user: dict[str, Any],
+    http_client_factory: HttpClientFactory,
+    headers_factory: HeadersFactory,
+    mcp_payload: McpPayloadFactory,
+    refinement_url: str,
+    upstream_error_detail: UpstreamErrorDetail,
+) -> Any:
+    async with http_client_factory(
+        headers=headers_factory("REFINEMENT"),
+        timeout=10,
+    ) as client:
+        response = await client.post(
+            f"{refinement_url}/mcp/invoke",
+            json=mcp_payload("list_apps", {}, user),
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            response.status_code,
+            upstream_error_detail(response, "Apps service unavailable"),
+        )
+    return response.json()
+
+
 async def refinement_app_html(
     *,
     name: str,

@@ -47,6 +47,7 @@ from app.domains.apps.readiness import (
 from app.domains.apps.service import (
     apps_payload_visible_and_ready as _apps_payload_visible_and_ready_impl,
     delete_refinement_app_payload as _delete_refinement_app_payload_impl,
+    load_refinement_apps_payload as _load_refinement_apps_payload_impl,
     refinement_app_html as _refinement_app_html_impl,
 )
 from app.domains.apps.scope import (
@@ -2807,17 +2808,14 @@ async def _apps_payload_visible_and_ready(
     cartridge: str | None = None,
 ) -> dict[str, Any]:
     async def _load_apps_payload(load_user: dict) -> Any:
-        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-            response = await c.post(
-                f"{REFINEMENT_URL}/mcp/invoke",
-                json=_mcp_payload("list_apps", {}, load_user),
-            )
-        if response.status_code >= 400:
-            raise HTTPException(
-                response.status_code,
-                _upstream_error_detail(response, "Apps service unavailable"),
-            )
-        return response.json()
+        return await _load_refinement_apps_payload_impl(
+            user=load_user,
+            http_client_factory=httpx.AsyncClient,
+            headers_factory=_hdr_for,
+            mcp_payload=_mcp_payload,
+            refinement_url=REFINEMENT_URL,
+            upstream_error_detail=_upstream_error_detail,
+        )
 
     return await _apps_payload_visible_and_ready_impl(
         user,
