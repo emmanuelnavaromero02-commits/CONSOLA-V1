@@ -46,6 +46,7 @@ from app.domains.apps.readiness import (
 )
 from app.domains.apps.service import (
     apps_payload_visible_and_ready as _apps_payload_visible_and_ready_impl,
+    refinement_app_html as _refinement_app_html_impl,
 )
 from app.domains.apps.scope import (
     active_scoped_connection_cartridges as _active_scoped_connection_cartridges_impl,
@@ -2657,27 +2658,16 @@ async def _workspace_app_content_for_embed(
 
 
 async def _refinement_app_html(name: str, user: dict | None) -> tuple[str, dict]:
-    _validate_dataset_name(name)
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload("get_app_html", {"name": name}, user or {}),
-        )
-    if r.status_code >= 400:
-        raise HTTPException(
-            r.status_code, _upstream_error_detail(r, "App content unavailable")
-        )
-    payload = r.json()
-    result = payload.get("result", payload) if isinstance(payload, dict) else {}
-    if not isinstance(result, dict) or result.get("error"):
-        raise HTTPException(
-            404,
-            str((result or {}).get("error") or f"App '{name}' not found"),
-        )
-    html_text = str(result.get("html") or "")
-    if not html_text.strip():
-        raise HTTPException(404, f"App '{name}' has no HTML content")
-    return html_text, result
+    return await _refinement_app_html_impl(
+        name=name,
+        user=user,
+        validate_dataset_name=_validate_dataset_name,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload=_mcp_payload,
+        refinement_url=REFINEMENT_URL,
+        upstream_error_detail=_upstream_error_detail,
+    )
 
 
 @app.get("/apps/{name}/embed", dependencies=[Depends(require_permission("apps.read"))])

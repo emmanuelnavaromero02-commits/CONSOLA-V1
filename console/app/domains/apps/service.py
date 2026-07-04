@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, AsyncContextManager
+
+from fastapi import HTTPException
 
 from app.domains.apps.payloads import (
     app_payload_cartridge_candidates,
@@ -16,6 +18,11 @@ LoadAppsPayload = Callable[[dict], Awaitable[Any]]
 RequireCartridgeVisible = Callable[[dict, str], None]
 ResolveCartridges = Callable[[dict | None, set[str]], Awaitable[set[str]]]
 GoldReadiness = Callable[[dict | None, Any], Awaitable[tuple[set[str] | None, str]]]
+HttpClientFactory = Callable[..., AsyncContextManager[Any]]
+HeadersFactory = Callable[[str], dict[str, str]]
+McpPayloadFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
+UpstreamErrorDetail = Callable[[Any, str], str]
+ValidateDatasetName = Callable[[str], None]
 
 
 async def apps_payload_visible_and_ready(
@@ -53,3 +60,41 @@ async def apps_payload_visible_and_ready(
         mode=readiness_mode,
         include_unready=include_unready,
     )
+
+
+async def refinement_app_html(
+    *,
+    name: str,
+    user: dict[str, Any] | None,
+    validate_dataset_name: ValidateDatasetName,
+    http_client_factory: HttpClientFactory,
+    headers_factory: HeadersFactory,
+    mcp_payload: McpPayloadFactory,
+    refinement_url: str,
+    upstream_error_detail: UpstreamErrorDetail,
+) -> tuple[str, dict[str, Any]]:
+    validate_dataset_name(name)
+    async with http_client_factory(
+        headers=headers_factory("REFINEMENT"),
+        timeout=10,
+    ) as client:
+        response = await client.post(
+            f"{refinement_url}/mcp/invoke",
+            json=mcp_payload("get_app_html", {"name": name}, user or {}),
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            response.status_code,
+            upstream_error_detail(response, "App content unavailable"),
+        )
+    payload = response.json()
+    result = payload.get("result", payload) if isinstance(payload, dict) else {}
+    if not isinstance(result, dict) or result.get("error"):
+        raise HTTPException(
+            404,
+            str((result or {}).get("error") or f"App '{name}' not found"),
+        )
+    html_text = str(result.get("html") or "")
+    if not html_text.strip():
+        raise HTTPException(404, f"App '{name}' has no HTML content")
+    return html_text, result

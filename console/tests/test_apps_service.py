@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 
-from app.domains.apps.service import apps_payload_visible_and_ready
+from app.domains.apps.service import apps_payload_visible_and_ready, refinement_app_html
 
 
 def _payload():
@@ -111,3 +112,93 @@ async def test_apps_payload_visible_and_ready_scopes_requested_cartridge():
 
     assert requested == ["hubspot"]
     assert [app["name"] for app in result["apps"]] == ["hubspot_forecast"]
+
+
+@pytest.mark.asyncio
+async def test_refinement_app_html_loads_html_from_refinement():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"html": "<main>ok</main>", "datasets": ["gold_ready"]}}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    html, app = await refinement_app_html(
+        name="talent_app",
+        user={"id": 1},
+        validate_dataset_name=lambda name: captured.setdefault("validated", name),
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        mcp_payload=lambda tool, args, user: {
+            "tool": tool,
+            "args": args,
+            "user": user,
+        },
+        refinement_url="http://refinement",
+        upstream_error_detail=lambda _response, fallback: fallback,
+    )
+
+    assert html == "<main>ok</main>"
+    assert app["datasets"] == ["gold_ready"]
+    assert captured["validated"] == "talent_app"
+    assert captured["client_kwargs"]["headers"] == {"x-service": "REFINEMENT"}
+    assert captured["url"] == "http://refinement/mcp/invoke"
+    assert captured["json"]["tool"] == "get_app_html"
+    assert captured["json"]["args"] == {"name": "talent_app"}
+
+
+@pytest.mark.asyncio
+async def test_refinement_app_html_maps_empty_payload_to_not_found():
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"html": ""}}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    with pytest.raises(HTTPException) as exc:
+        await refinement_app_html(
+            name="empty_app",
+            user={"id": 1},
+            validate_dataset_name=lambda _name: None,
+            http_client_factory=FakeClient,
+            headers_factory=lambda _service: {},
+            mcp_payload=lambda tool, args, user: {
+                "tool": tool,
+                "args": args,
+                "user": user,
+            },
+            refinement_url="http://refinement",
+            upstream_error_detail=lambda _response, fallback: fallback,
+        )
+
+    assert exc.value.status_code == 404
+    assert "no HTML content" in str(exc.value.detail)
