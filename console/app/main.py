@@ -144,6 +144,10 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
 )
+from app.domains.data_platform.bronze_physical import (
+    bronze_physical_snapshot as _bronze_physical_snapshot_impl,
+    count_bronze_parquet_rows as _count_bronze_parquet_rows_impl,
+)
 from app.domains.data_platform.data_api_payloads import (
     DataApiQueryValidationError as _DataApiQueryValidationError,
     data_api_columns_param as _data_api_columns_param,
@@ -892,74 +896,31 @@ def _minio_client():
 async def _count_bronze_parquet_rows(
     source: str, latest_date: str, user: dict | None
 ) -> int | None:
-    parquet_glob = _bronze_latest_s3_glob(source, latest_date, user)
-    sql = (
-        "SELECT COUNT(*) AS record_count "
-        f"FROM read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
+    return await _count_bronze_parquet_rows_impl(
+        source=source,
+        latest_date=latest_date,
+        user=user,
+        bronze_latest_s3_glob=_bronze_latest_s3_glob,
+        hdr_for=_hdr_for,
+        mcp_payload=_mcp_payload,
+        refinement_url=REFINEMENT_URL,
     )
-    async with httpx.AsyncClient(
-        headers=_hdr_for("REFINEMENT"),
-        timeout=60,
-    ) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "preview_transform", {"sql": sql, "limit": 1, "sources": [source]}, user
-            ),
-        )
-    if r.status_code != 200:
-        return None
-    data = r.json()
-    rows = data.get("data") or []
-    if not rows:
-        return None
-    row = rows[0]
-    value = row.get("record_count")
-    if value is None and row:
-        value = next(iter(row.values()))
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 async def _bronze_physical_snapshot(
     cartridge: str, entity: str, user: dict | None
 ) -> dict:
-    if not _safe_pipeline_name(cartridge) or not _safe_pipeline_name(entity):
-        return {}
-
-    source = f"raw/{cartridge}/{entity}"
-    ctx = build_security_context(user)
-    tenant = str(ctx.get("tenant_id") or "").strip()
-    workspace = str(ctx.get("workspace_id") or "").strip()
-    list_prefix = f"{source}/"
-    if tenant and workspace:
-        list_prefix = f"{source}/tenant_id={tenant}/workspace_id={workspace}/"
-    if not _explorer_path_allowed(list_prefix, user):
-        return {}
-    bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
-    try:
-
-        def _list_object_names() -> list[str]:
-            client = _minio_client()
-            return [
-                obj.object_name
-                for obj in client.list_objects(
-                    bucket, prefix=list_prefix, recursive=True
-                )
-            ]
-
-        object_names = await asyncio.to_thread(_list_object_names)
-        latest_date = _bronze_latest_date_from_objects(cartridge, entity, object_names)
-        if not latest_date:
-            return {}
-        return {
-            "latest_date": latest_date,
-            "record_count": await _count_bronze_parquet_rows(source, latest_date, user),
-        }
-    except Exception:
-        return {}
+    return await _bronze_physical_snapshot_impl(
+        cartridge=cartridge,
+        entity=entity,
+        user=user,
+        safe_pipeline_name=_safe_pipeline_name,
+        build_security_context=build_security_context,
+        explorer_path_allowed=_explorer_path_allowed,
+        minio_client=_minio_client,
+        bronze_latest_date_from_objects=_bronze_latest_date_from_objects,
+        count_rows=_count_bronze_parquet_rows,
+    )
 
 
 async def _table_has_column(table: str, column: str, *, refresh: bool = False) -> bool:
