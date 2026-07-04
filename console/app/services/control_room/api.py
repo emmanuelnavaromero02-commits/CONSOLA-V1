@@ -3919,6 +3919,126 @@ def _source_contract_is_visible(source: ControlRoomSource) -> bool:
 
 
 @_bind_to_core
+def _append_normalized_source_rows(
+    items: list[dict[str, Any]],
+    source: ControlRoomSource,
+    rows: list[dict[str, Any]],
+    thresholds: dict[str, dict[str, Any]],
+) -> None:
+    for row in rows:
+        item = _normalize_row(source, row, thresholds)
+        if item:
+            items.append(item)
+
+
+@_bind_to_core
+def _collect_inactive_module_sources(
+    *,
+    module: ControlRoomModule,
+    installation: dict[str, Any],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    include_source_state_items: bool,
+) -> None:
+    for source in module.sources:
+        source_status = _blocked_installation_source_status(
+            source,
+            installation,
+        )
+        _append_collected_source(
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            source=source,
+            source_status=source_status,
+            include_source_state_items=include_source_state_items,
+        )
+
+
+@_bind_to_core
+async def _collect_active_source(
+    *,
+    source: ControlRoomSource,
+    user: dict | None,
+    fetcher: DatasetFetcher,
+    limit_per_source: int,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    thresholds: dict[str, dict[str, Any]],
+    include_source_state_items: bool,
+) -> None:
+    if not _source_contract_is_visible(source):
+        _append_collected_source(
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            source=source,
+            source_status=_ready_placeholder_source_status(source),
+            include_source_state_items=include_source_state_items,
+        )
+        return
+    rows, source_status = await _fetch_source(
+        source,
+        user,
+        fetcher,
+        limit_per_source,
+    )
+    _append_collected_source(
+        items=items,
+        sources=sources,
+        rows_by_dataset=rows_by_dataset,
+        source=source,
+        source_status=source_status,
+        rows=rows,
+        include_source_state_items=include_source_state_items,
+    )
+    if source_status["status"] == "ok":
+        _append_normalized_source_rows(items, source, rows, thresholds)
+
+
+@_bind_to_core
+async def _collect_module_items(
+    *,
+    module: ControlRoomModule,
+    installation_by_cartridge: dict[str, dict[str, Any]],
+    active: set[str],
+    user: dict | None,
+    fetcher: DatasetFetcher,
+    limit_per_source: int,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    thresholds: dict[str, dict[str, Any]],
+    include_source_state_items: bool,
+) -> None:
+    installation = installation_by_cartridge.get(module.cartridge, {})
+    if module.cartridge not in active:
+        _collect_inactive_module_sources(
+            module=module,
+            installation=installation,
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            include_source_state_items=include_source_state_items,
+        )
+        return
+    for source in module.sources:
+        await _collect_active_source(
+            source=source,
+            user=user,
+            fetcher=fetcher,
+            limit_per_source=limit_per_source,
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            thresholds=thresholds,
+            include_source_state_items=include_source_state_items,
+        )
+
+
+@_bind_to_core
 async def _collect_items(
     user: dict | None,
     *,
@@ -3942,51 +4062,19 @@ async def _collect_items(
     )
     thresholds = _threshold_map(threshold_rows)
     for module in modules:
-        installation = installation_by_cartridge.get(module.cartridge, {})
-        if module.cartridge not in active:
-            for source in module.sources:
-                source_status = _blocked_installation_source_status(
-                    source,
-                    installation,
-                )
-                _append_collected_source(
-                    items=items,
-                    sources=sources,
-                    rows_by_dataset=rows_by_dataset,
-                    source=source,
-                    source_status=source_status,
-                    include_source_state_items=include_source_state_items,
-                )
-            continue
-        for source in module.sources:
-            if not _source_contract_is_visible(source):
-                _append_collected_source(
-                    items=items,
-                    sources=sources,
-                    rows_by_dataset=rows_by_dataset,
-                    source=source,
-                    source_status=_ready_placeholder_source_status(source),
-                    include_source_state_items=include_source_state_items,
-                )
-                continue
-            rows, source_status = await _fetch_source(
-                source, user, fetcher, limit_per_source
-            )
-            _append_collected_source(
-                items=items,
-                sources=sources,
-                rows_by_dataset=rows_by_dataset,
-                source=source,
-                source_status=source_status,
-                rows=rows,
-                include_source_state_items=include_source_state_items,
-            )
-            if source_status["status"] != "ok":
-                continue
-            for row in rows:
-                item = _normalize_row(source, row, thresholds)
-                if item:
-                    items.append(item)
+        await _collect_module_items(
+            module=module,
+            installation_by_cartridge=installation_by_cartridge,
+            active=active,
+            user=user,
+            fetcher=fetcher,
+            limit_per_source=limit_per_source,
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            thresholds=thresholds,
+            include_source_state_items=include_source_state_items,
+        )
 
     items = await _overlay_item_state(items, user, persist=persist)
     return {
