@@ -829,6 +829,80 @@ def _sf_talent_kpi_widgets(
 
 
 @_bind_to_core
+def _sf_talent_kpi_profile_payload() -> dict[str, Any]:
+    return {
+        "industry": "retail",
+        "company_profile": "femsa",
+        "wisdom_bit": "WB-TALENTO",
+        "decision_mode": "recommendation_only",
+        "compensation_enabled": False,
+        "write_back_enabled": False,
+    }
+
+
+@_bind_to_core
+def _sf_talent_kpi_readiness_payload(
+    metrics: dict[str, Any],
+    *,
+    latest_simulation: dict[str, Any],
+    blockers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "ready_min": 80,
+        "near_min": 60,
+        "profiled_employees": metrics["profiled_employees"],
+        "calculable_employees": metrics["readiness_calculable"],
+        "insufficient_data_employees": metrics["readiness_insufficient"],
+        "nine_box_available": metrics["nine_box_available"],
+        "roles_without_requirements": metrics["roles_without_requirements"],
+        "high_severity_signals": metrics["high_severity_signals"],
+        "learning_blockers": metrics["learning_blockers"],
+        "recruiting_blockers": metrics["recruiting_blockers"],
+        "skill_gap_count": metrics["skill_gap_count"],
+        "skill_coverage_pct": _sf_talent_public_value(metrics["skill_coverage_pct"]),
+        "operational_status": metrics["operational_status"],
+        "operational_label": metrics["operational_label"],
+        "readiness_status": metrics["readiness_status"],
+        "confidence": _sf_talent_public_value(metrics["confidence"]),
+        "source_mode": metrics["source_mode"],
+        "latest_analysis_status": latest_simulation.get("status"),
+        "status": "partial" if metrics["readiness_insufficient"] or blockers else "ready",
+    }
+
+
+@_bind_to_core
+def _sf_talent_operational_features_payload(
+    datasets: dict[str, str],
+    metrics: dict[str, Any],
+    operational_row: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "dataset": datasets["operational_features"],
+        "status": metrics["operational_status"],
+        "label": metrics["operational_label"],
+        "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
+    }
+
+
+@_bind_to_core
+def _sf_talent_analysis_inputs_payload(
+    datasets: dict[str, str],
+    results: dict[str, dict[str, Any]],
+    metrics: dict[str, Any],
+    simulation_row: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "dataset": datasets["simulation_inputs"],
+        "status": _sf_talent_status(
+            simulation_row.get("input_status") or results["simulation_inputs"]["status"]
+        ),
+        "label": str(simulation_row.get("user_status_label") or metrics["operational_label"]),
+        "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
+        "contract_version": simulation_row.get("analysis_contract_version"),
+    }
+
+
+@_bind_to_core
 async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
 
@@ -859,48 +933,23 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "profile": {
-            "industry": "retail",
-            "company_profile": "femsa",
-            "wisdom_bit": "WB-TALENTO",
-            "decision_mode": "recommendation_only",
-            "compensation_enabled": False,
-            "write_back_enabled": False,
-        },
-        "readiness": {
-            "ready_min": 80,
-            "near_min": 60,
-            "profiled_employees": metrics["profiled_employees"],
-            "calculable_employees": metrics["readiness_calculable"],
-            "insufficient_data_employees": metrics["readiness_insufficient"],
-            "nine_box_available": metrics["nine_box_available"],
-            "roles_without_requirements": metrics["roles_without_requirements"],
-            "high_severity_signals": metrics["high_severity_signals"],
-            "learning_blockers": metrics["learning_blockers"],
-            "recruiting_blockers": metrics["recruiting_blockers"],
-            "skill_gap_count": metrics["skill_gap_count"],
-            "skill_coverage_pct": _sf_talent_public_value(metrics["skill_coverage_pct"]),
-            "operational_status": metrics["operational_status"],
-            "operational_label": metrics["operational_label"],
-            "readiness_status": metrics["readiness_status"],
-            "confidence": _sf_talent_public_value(metrics["confidence"]),
-            "source_mode": metrics["source_mode"],
-            "latest_analysis_status": latest_simulation.get("status"),
-            "status": "partial" if metrics["readiness_insufficient"] or blockers else "ready",
-        },
-        "operational_features": {
-            "dataset": datasets["operational_features"],
-            "status": metrics["operational_status"],
-            "label": metrics["operational_label"],
-            "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
-        },
-        "analysis_inputs": {
-            "dataset": datasets["simulation_inputs"],
-            "status": _sf_talent_status(simulation_row.get("input_status") or results["simulation_inputs"]["status"]),
-            "label": str(simulation_row.get("user_status_label") or metrics["operational_label"]),
-            "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
-            "contract_version": simulation_row.get("analysis_contract_version"),
-        },
+        "profile": _sf_talent_kpi_profile_payload(),
+        "readiness": _sf_talent_kpi_readiness_payload(
+            metrics,
+            latest_simulation=latest_simulation,
+            blockers=blockers,
+        ),
+        "operational_features": _sf_talent_operational_features_payload(
+            datasets,
+            metrics,
+            operational_row,
+        ),
+        "analysis_inputs": _sf_talent_analysis_inputs_payload(
+            datasets,
+            results,
+            metrics,
+            simulation_row,
+        ),
         "latest_simulation": latest_simulation,
         "widgets": widgets,
         "signals": signals,
