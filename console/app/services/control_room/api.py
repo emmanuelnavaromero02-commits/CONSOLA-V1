@@ -391,6 +391,28 @@ def _sf_foundation_active_headcount(
 
 
 @_bind_to_core
+def _sf_foundation_widget(
+    widget_id: str,
+    title: str,
+    value: Any,
+    dataset: str,
+    rows: list[dict[str, Any]],
+    status: str,
+    error: Any,
+) -> dict[str, Any]:
+    return {
+        "id": widget_id,
+        "title": title,
+        "value": value,
+        "dataset": dataset,
+        "href": _sf_talent_dataset_href(dataset),
+        "rows": rows,
+        "status": status,
+        "error": error,
+    }
+
+
+@_bind_to_core
 def _sf_foundation_gold_widgets(
     datasets: dict[str, str],
     results: dict[str, dict[str, Any]],
@@ -402,56 +424,52 @@ def _sf_foundation_gold_widgets(
     department_rows = rows["headcount_by_department"]
     company_headcount_total = _sf_gold_headcount_total(company_rows)
     return [
-        {
-            "id": "sf_active_headcount",
-            "title": "Headcount total activo",
-            "value": _sf_foundation_active_headcount(employee_rows, company_rows),
-            "dataset": datasets["employee_360"],
-            "href": _sf_talent_dataset_href(datasets["employee_360"]),
-            "rows": _sf_gold_public_rows(employee_rows or [], 5),
-            "status": _sf_gold_combine_widget_status(
+        _sf_foundation_widget(
+            "sf_active_headcount",
+            "Headcount total activo",
+            _sf_foundation_active_headcount(employee_rows, company_rows),
+            datasets["employee_360"],
+            _sf_gold_public_rows(employee_rows or [], 5),
+            _sf_gold_combine_widget_status(
                 [results["employee_360"], results["headcount_by_company"]]
             ),
-            "error": _sf_gold_status_error(
+            _sf_gold_status_error(
                 [results["employee_360"], results["headcount_by_company"]]
             ),
-        },
-        {
-            "id": "sf_headcount_by_company",
-            "title": "Headcount por compania",
-            "value": company_headcount_total,
-            "dataset": datasets["headcount_by_company"],
-            "href": _sf_talent_dataset_href(datasets["headcount_by_company"]),
-            "rows": _sf_gold_top_headcount_rows(
+        ),
+        _sf_foundation_widget(
+            "sf_headcount_by_company",
+            "Headcount por compania",
+            company_headcount_total,
+            datasets["headcount_by_company"],
+            _sf_gold_top_headcount_rows(
                 company_rows or [], ("company_id", "company_name")
             ),
-            "status": results["headcount_by_company"]["status"],
-            "error": results["headcount_by_company"].get("error"),
-        },
-        {
-            "id": "sf_headcount_by_location",
-            "title": "Headcount por ubicacion",
-            "value": _sf_gold_headcount_total(location_rows),
-            "dataset": datasets["headcount_by_location"],
-            "href": _sf_talent_dataset_href(datasets["headcount_by_location"]),
-            "rows": _sf_gold_top_headcount_rows(
+            results["headcount_by_company"]["status"],
+            results["headcount_by_company"].get("error"),
+        ),
+        _sf_foundation_widget(
+            "sf_headcount_by_location",
+            "Headcount por ubicacion",
+            _sf_gold_headcount_total(location_rows),
+            datasets["headcount_by_location"],
+            _sf_gold_top_headcount_rows(
                 location_rows or [], ("location_id", "location_name")
             ),
-            "status": results["headcount_by_location"]["status"],
-            "error": results["headcount_by_location"].get("error"),
-        },
-        {
-            "id": "sf_headcount_by_department",
-            "title": "Headcount por departamento",
-            "value": _sf_gold_headcount_total(department_rows),
-            "dataset": datasets["headcount_by_department"],
-            "href": _sf_talent_dataset_href(datasets["headcount_by_department"]),
-            "rows": _sf_gold_top_headcount_rows(
+            results["headcount_by_location"]["status"],
+            results["headcount_by_location"].get("error"),
+        ),
+        _sf_foundation_widget(
+            "sf_headcount_by_department",
+            "Headcount por departamento",
+            _sf_gold_headcount_total(department_rows),
+            datasets["headcount_by_department"],
+            _sf_gold_top_headcount_rows(
                 department_rows or [], ("department_id", "department_name")
             ),
-            "status": results["headcount_by_department"]["status"],
-            "error": results["headcount_by_department"].get("error"),
-        },
+            results["headcount_by_department"]["status"],
+            results["headcount_by_department"].get("error"),
+        ),
     ]
 
 
