@@ -157,6 +157,39 @@ async def visible_user_ids_for_admin(
     return visible
 
 
+async def set_workspace_role_for_user(
+    user_id: int,
+    workspace_id: str,
+    role: str,
+    *,
+    get_db_pool: Callable[[], Awaitable[Any]],
+) -> None:
+    pool = await get_db_pool()
+    role_id = await pool.fetchval("SELECT id FROM roles WHERE name = $1", role)
+    if not role_id:
+        raise HTTPException(400, "invalid workspace role")
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                DELETE FROM user_workspace_roles
+                 WHERE user_id = $1
+                   AND workspace_id = $2::uuid
+                """,
+                user_id,
+                workspace_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
+                VALUES ($1, $2::uuid, $3)
+                """,
+                user_id,
+                workspace_id,
+                role_id,
+            )
+
+
 async def assert_can_use_workspace(
     admin_user: dict,
     workspace_id: str | None,
