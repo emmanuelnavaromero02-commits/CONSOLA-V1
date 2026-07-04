@@ -1382,6 +1382,29 @@ def _forced_password_change_middleware_response(
     return _apply_security_headers(RedirectResponse(url="/me"), path)
 
 
+async def _middleware_authenticated_user(
+    request: Request,
+    *,
+    path: str,
+    is_public: bool,
+) -> tuple[dict | None, Response | None]:
+    requested_workspace_id = requested_workspace_id_from_request(request)
+    user, response = await _session_user_for_middleware(
+        request,
+        requested_workspace_id=requested_workspace_id,
+        is_public=is_public,
+        path=path,
+    )
+    if response is not None or user:
+        return user, response
+    return await _bearer_user_for_middleware(
+        request,
+        requested_workspace_id=requested_workspace_id,
+        is_public=is_public,
+        path=path,
+    )
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -1414,26 +1437,13 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     is_public = _is_auth_public_path(path)
-    requested_workspace_id = requested_workspace_id_from_request(request)
-    user, response = await _session_user_for_middleware(
+    user, response = await _middleware_authenticated_user(
         request,
-        requested_workspace_id=requested_workspace_id,
-        is_public=is_public,
         path=path,
+        is_public=is_public,
     )
     if response is not None:
         return response
-
-    # Fall back to JWT bearer so require_permission() routes get request.state.user set.
-    if not user:
-        user, response = await _bearer_user_for_middleware(
-            request,
-            requested_workspace_id=requested_workspace_id,
-            is_public=is_public,
-            path=path,
-        )
-        if response is not None:
-            return response
 
     request.state.user = user
     try:
