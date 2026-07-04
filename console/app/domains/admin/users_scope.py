@@ -104,6 +104,22 @@ async def attach_workspace_summaries(
     return enriched
 
 
+async def list_admin_users_payload(
+    *,
+    admin_user: dict,
+    auth_list_users: Callable[..., Awaitable[list[dict]]],
+    is_global_iam_admin: Callable[[dict | None], bool],
+    visible_user_ids_for_admin: Callable[[dict, list[dict]], Awaitable[set[int]]],
+    attach_workspace_summaries: Callable[[list[dict]], Awaitable[list[dict]]],
+) -> dict:
+    users = await auth_list_users(active_only=False)
+    if is_global_iam_admin(admin_user):
+        return {"users": await attach_workspace_summaries(users)}
+    visible_ids = await visible_user_ids_for_admin(admin_user, users)
+    scoped_users = [u for u in users if u.get("id") in visible_ids]
+    return {"users": await attach_workspace_summaries(scoped_users)}
+
+
 async def visible_user_ids_for_admin(
     admin_user: dict,
     users: list[dict],

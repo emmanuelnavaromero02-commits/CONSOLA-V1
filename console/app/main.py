@@ -101,6 +101,7 @@ from app.domains.admin.users_scope import (
     assert_can_manage_target_user as _assert_can_manage_target_user_impl,
     assert_can_use_workspace as _assert_can_use_workspace_impl,
     attach_workspace_summaries as _attach_workspace_summaries_impl,
+    list_admin_users_payload as _list_admin_users_payload_impl,
     set_workspace_role_for_user as _set_workspace_role_for_user_impl,
     target_user_workspace_ids as _target_user_workspace_ids_impl,
     visible_user_ids_for_admin as _visible_user_ids_for_admin_impl,
@@ -6187,12 +6188,13 @@ async def _assert_can_manage_target_user(admin_user: dict, target_user_id: int) 
 async def api_admin_users_list(
     admin_user: dict = Depends(require_permission("iam.users.read")),
 ):
-    users = await _auth.list_users(active_only=False)
-    if _is_global_iam_admin(admin_user):
-        return {"users": await _attach_workspace_summaries(users)}
-    visible_ids = await _visible_user_ids_for_admin(admin_user, users)
-    scoped_users = [u for u in users if u.get("id") in visible_ids]
-    return {"users": await _attach_workspace_summaries(scoped_users)}
+    return await _list_admin_users_payload_impl(
+        admin_user=admin_user,
+        auth_list_users=_auth.list_users,
+        is_global_iam_admin=_is_global_iam_admin,
+        visible_user_ids_for_admin=_visible_user_ids_for_admin,
+        attach_workspace_summaries=_attach_workspace_summaries,
+    )
 
 
 @app.post(

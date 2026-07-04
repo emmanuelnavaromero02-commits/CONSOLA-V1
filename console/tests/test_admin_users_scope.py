@@ -3,7 +3,10 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-from app.domains.admin.users_scope import set_workspace_role_for_user
+from app.domains.admin.users_scope import (
+    list_admin_users_payload,
+    set_workspace_role_for_user,
+)
 
 
 class FakeTransaction:
@@ -90,3 +93,59 @@ def test_set_workspace_role_for_user_rejects_invalid_role():
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "invalid workspace role"
+
+
+def test_list_admin_users_payload_global_admin_gets_all_users():
+    users = [{"id": 1}, {"id": 2}]
+
+    async def auth_list_users(active_only=True):
+        assert active_only is False
+        return users
+
+    async def visible_user_ids_for_admin(_admin_user, _users):
+        raise AssertionError("global admin should not need scoped filtering")
+
+    async def attach_workspace_summaries(items):
+        return [{**item, "workspaces": []} for item in items]
+
+    result = asyncio.run(
+        list_admin_users_payload(
+            admin_user={"id": 1, "role": "admin"},
+            auth_list_users=auth_list_users,
+            is_global_iam_admin=lambda user: user.get("role") == "admin",
+            visible_user_ids_for_admin=visible_user_ids_for_admin,
+            attach_workspace_summaries=attach_workspace_summaries,
+        )
+    )
+
+    assert [user["id"] for user in result["users"]] == [1, 2]
+    assert result["users"][0]["workspaces"] == []
+
+
+def test_list_admin_users_payload_workspace_admin_gets_visible_users_only():
+    users = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    async def auth_list_users(active_only=True):
+        assert active_only is False
+        return users
+
+    async def visible_user_ids_for_admin(admin_user, listed_users):
+        assert admin_user["id"] == 1
+        assert listed_users == users
+        return {1, 3}
+
+    async def attach_workspace_summaries(items):
+        return [{**item, "workspaces": [{"workspace_id": "w1"}]} for item in items]
+
+    result = asyncio.run(
+        list_admin_users_payload(
+            admin_user={"id": 1, "role": "user"},
+            auth_list_users=auth_list_users,
+            is_global_iam_admin=lambda _user: False,
+            visible_user_ids_for_admin=visible_user_ids_for_admin,
+            attach_workspace_summaries=attach_workspace_summaries,
+        )
+    )
+
+    assert [user["id"] for user in result["users"]] == [1, 3]
+    assert all(user["workspaces"] == [{"workspace_id": "w1"}] for user in result["users"])
