@@ -193,6 +193,9 @@ from app.domains.data_platform.rag_payloads import (
 from app.domains.data_platform.rag_requests import (
     rag_answer_payload as _rag_answer_payload_impl,
 )
+from app.domains.data_platform.semantic_requests import (
+    semantic_enrich_payload as _semantic_enrich_payload_impl,
+)
 from app.domains.data_platform.scoped_reads import (
     BRONZE_LOGICAL_READ_PARQUET_CALL_RE as _BRONZE_LOGICAL_READ_PARQUET_CALL_RE,
     BRONZE_LOGICAL_READ_PARQUET_PATH_RE as _BRONZE_LOGICAL_READ_PARQUET_PATH_RE,
@@ -217,12 +220,6 @@ from app.domains.data_platform.scoped_reads import (
     scoped_read_cache_set as _scoped_read_cache_set,
     scoped_read_cache_ttl as _scoped_read_cache_ttl,
     workspace_scope_from_user as _workspace_scope_from_user,
-)
-from app.domains.data_platform.semantic_enrichment import (
-    semantic_enrichment_candidates as _semantic_enrichment_candidates,
-    semantic_enrichment_empty_response as _semantic_enrichment_empty_response,
-    semantic_enrichment_limit as _semantic_enrichment_limit,
-    semantic_enrichment_success_response as _semantic_enrichment_success_response,
 )
 from app.domains.data_platform.semantic_payloads import (
     semantic_manifest_response as _semantic_manifest_response,
@@ -5701,41 +5698,12 @@ async def api_semantic_enrich(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_permission("datasets.write")),
 ):
-    cartridge = await _scope_catalog_cartridge_arg(user, body.get("cartridge"))
-    if not cartridge:
-        raise HTTPException(404, "No active cartridge available for semantic enrichment")
-    limit = _semantic_enrichment_limit(body)
-
-    catalog = await _refinement_invoke(
-        "get_data_catalog",
-        {"cartridge": cartridge},
-        timeout=45,
+    return await _semantic_enrich_payload_impl(
+        body=body,
         user=user,
-    )
-    candidate_payload = _semantic_enrichment_candidates(
-        catalog,
-        cartridge=cartridge,
-        limit=limit,
-    )
-    entries = candidate_payload["entries"]
-    if not entries:
-        return _semantic_enrichment_empty_response(
-            cartridge=cartridge,
-            candidate_payload=candidate_payload,
-        )
-
-    result = await _refinement_invoke(
-        "upsert_catalog_entries",
-        {"entries": entries},
-        timeout=45,
-        user=user,
-    )
-    _raise_for_refinement_payload_error(result, "Semantic enrichment failed")
-    _scoped_read_cache_invalidate("catalog", user)
-    return _semantic_enrichment_success_response(
-        cartridge=cartridge,
-        candidate_payload=candidate_payload,
-        result=result,
+        scope_catalog_cartridge_arg=_scope_catalog_cartridge_arg,
+        refinement_invoke=_refinement_invoke,
+        scoped_read_cache_invalidate=_scoped_read_cache_invalidate,
     )
 
 
