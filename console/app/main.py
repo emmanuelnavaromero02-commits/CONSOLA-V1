@@ -3301,6 +3301,83 @@ def _pipeline_extract_triggered_response(
     }
 
 
+def _pipeline_extract_requested_dag_run_id(dag_id: str, body: dict) -> str | None:
+    return _dag_run_id_from_idempotency_key(
+        dag_id,
+        body.get("idempotency_key") or body.get("request_id"),
+    )
+
+
+def _pipeline_extract_reserved_response(slot: dict | None) -> dict | None:
+    if slot and slot.get("response"):
+        return slot["response"]
+    return None
+
+
+def _pipeline_extract_reserved_run_id(
+    slot: dict | None, requested_dag_run_id: str | None
+) -> str | None:
+    if slot and slot.get("dag_run_id"):
+        return slot["dag_run_id"]
+    return requested_dag_run_id
+
+
+async def _handle_pipeline_extract_trigger_error(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    requested_dag_run_id: str | None,
+    conf: dict,
+    metadata: dict,
+    slot: dict | None,
+    error: str,
+) -> None:
+    if slot and slot.get("reserved"):
+        await _record_pipeline_extract_failure(
+            cartridge=cartridge,
+            entity=entity,
+            dag_id=dag_id,
+            dag_run_id=requested_dag_run_id or "",
+            conf=conf,
+            metadata=metadata,
+            error=error,
+        )
+
+
+async def _trigger_pipeline_extract_dag_or_raise(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    requested_dag_run_id: str | None,
+    conf: dict,
+    metadata: dict,
+    slot: dict | None,
+    user: dict,
+) -> dict:
+    result = await _trigger_airflow_extract_dag(dag_id, conf, user, requested_dag_run_id)
+    if result.get("error"):
+        await _handle_pipeline_extract_trigger_error(
+            cartridge=cartridge,
+            entity=entity,
+            dag_id=dag_id,
+            requested_dag_run_id=requested_dag_run_id,
+            conf=conf,
+            metadata=metadata,
+            slot=slot,
+            error=result["error"],
+        )
+        raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
+    return result
+
+
+def _pipeline_extract_result_dag_run_id(
+    result: dict, requested_dag_run_id: str | None
+) -> str | None:
+    return result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
+
+
 async def _api_pipeline_extract_dag_based(
     *,
     cartridge: str,
@@ -3321,10 +3398,7 @@ async def _api_pipeline_extract_dag_based(
         metadata=metadata,
         user=user,
     )
-    requested_dag_run_id = _dag_run_id_from_idempotency_key(
-        dag_id,
-        body.get("idempotency_key") or body.get("request_id"),
-    )
+    requested_dag_run_id = _pipeline_extract_requested_dag_run_id(dag_id, body)
     slot = await _pipeline_extract_reserve_slot(
         cartridge=cartridge,
         entity=entity,
@@ -3333,24 +3407,21 @@ async def _api_pipeline_extract_dag_based(
         user=user,
         requested_dag_run_id=requested_dag_run_id,
     )
-    if slot and slot.get("response"):
-        return slot["response"]
-    if slot and slot.get("dag_run_id"):
-        requested_dag_run_id = slot["dag_run_id"]
-    result = await _trigger_airflow_extract_dag(dag_id, conf, user, requested_dag_run_id)
-    if result.get("error"):
-        if slot and slot.get("reserved"):
-            await _record_pipeline_extract_failure(
-                cartridge=cartridge,
-                entity=entity,
-                dag_id=dag_id,
-                dag_run_id=requested_dag_run_id or "",
-                conf=conf,
-                metadata=metadata,
-                error=result["error"],
-            )
-        raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
-    dag_run_id = result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
+    reserved_response = _pipeline_extract_reserved_response(slot)
+    if reserved_response is not None:
+        return reserved_response
+    requested_dag_run_id = _pipeline_extract_reserved_run_id(slot, requested_dag_run_id)
+    result = await _trigger_pipeline_extract_dag_or_raise(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        requested_dag_run_id=requested_dag_run_id,
+        conf=conf,
+        metadata=metadata,
+        slot=slot,
+        user=user,
+    )
+    dag_run_id = _pipeline_extract_result_dag_run_id(result, requested_dag_run_id)
     await _record_pipeline_extract_success(
         cartridge=cartridge,
         entity=entity,
