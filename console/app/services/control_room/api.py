@@ -1394,12 +1394,8 @@ async def _sf_talent_live_metadata_readiness(user: dict | None) -> dict[str, Any
 
 
 @_bind_to_core
-async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
-    dataset = "sap_successfactors_talent_9box_operational"
-    result = await _sf_talent_gold_result(dataset, user, 100)
-    rows = result["rows"]
+def _sf_talent_9box_cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows_by_box = {str(row.get("box_key") or ""): row for row in rows}
-
     cells: list[dict[str, Any]] = []
     for definition in _sf_talent_box_definitions():
         row = rows_by_box.get(definition["box_id"], {})
@@ -1424,10 +1420,26 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
                 "href": f"/control-room/talent?box={definition['box_id']}",
             }
         )
+    return cells
 
-    total_employees = sum(_sf_talent_int(cell["employee_count"]) for cell in cells)
-    total_ready = sum(_sf_talent_int(cell["ready_count"]) for cell in cells)
-    total_reference = sum(_sf_talent_int(cell.get("reference_count")) for cell in cells)
+
+@_bind_to_core
+def _sf_talent_9box_totals(cells: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "employees": sum(_sf_talent_int(cell["employee_count"]) for cell in cells),
+        "ready": sum(_sf_talent_int(cell["ready_count"]) for cell in cells),
+        "reference": sum(_sf_talent_int(cell.get("reference_count")) for cell in cells),
+        "blocked": sum(_sf_talent_int(cell["blocked_count"]) for cell in cells),
+        "cells": len(cells),
+    }
+
+
+@_bind_to_core
+def _sf_talent_9box_blockers(
+    result: dict[str, Any],
+    *,
+    total_ready: int,
+) -> list[dict[str, Any]]:
     blockers = _sf_talent_blockers_from_results([result])
     if total_ready == 0:
         blockers.append(
@@ -1439,6 +1451,16 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
                 "items": ["KB-COMPETENCIAS", "KB-DESEMPENO", "KB-ASPIRACION"],
             }
         )
+    return blockers
+
+
+@_bind_to_core
+async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
+    dataset = "sap_successfactors_talent_9box_operational"
+    result = await _sf_talent_gold_result(dataset, user, 100)
+    cells = _sf_talent_9box_cells(result["rows"])
+    totals = _sf_talent_9box_totals(cells)
+    blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1447,14 +1469,8 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "dataset": dataset,
-        "status": "ready" if total_ready else result["status"] if result["status"] != "ready" else "blocked",
-        "totals": {
-            "employees": total_employees,
-            "ready": total_ready,
-            "reference": total_reference,
-            "blocked": sum(_sf_talent_int(cell["blocked_count"]) for cell in cells),
-            "cells": len(cells),
-        },
+        "status": "ready" if totals["ready"] else result["status"] if result["status"] != "ready" else "blocked",
+        "totals": totals,
         "cells": cells,
         "blockers": blockers,
         "privacy": {
