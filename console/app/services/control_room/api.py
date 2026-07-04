@@ -2652,6 +2652,104 @@ def _sf_talent_signal_impact(affected_count: int) -> str:
 
 
 @_bind_to_core
+def _sf_talent_signal_baseline(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "method": "gold_readiness_count_v1",
+        "actual_value": context["affected_count"],
+        "expected_value": 0,
+        "sample_count": context["source_row_count"],
+        "confidence": context["confidence"],
+        "readiness_status": context["readiness_status"],
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_summary(
+    source: ControlRoomSource,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "signal_id": context["signal_id"],
+        "metric_name": context["signal_id"],
+        "signal_type": context["signal_type"],
+        "signal_subtype": "recommendation_only",
+        "source_system": "sap_successfactors",
+        "source_dataset": source.dataset,
+        "severity": context["severity"],
+        "summary": context["title"],
+        "affected_count": context["affected_count"],
+        "recommendation": context["recommendation"],
+        "generated_at": context["generated_at"],
+        "deviation_pct": context["deviation_pct"],
+        "confidence": context["confidence"],
+        "sample_count": context["source_row_count"],
+        "readiness_status": context["readiness_status"],
+        "recommendation_only": True,
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_hypotheses(
+    context: dict[str, Any],
+    *,
+    blocked: bool,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "title": (
+                "Datos Talent listos para revision supervisada"
+                if not blocked
+                else "Evidencia Talent insuficiente"
+            ),
+            "rationale": (
+                f"La senal se basa en {context['source_row_count']} fila(s) Gold internas; "
+                "no incluye PII, compensacion ni write-back."
+            ),
+            "confidence": context["confidence"],
+        }
+    ]
+
+
+@_bind_to_core
+def _sf_talent_signal_options(
+    context: dict[str, Any],
+    *,
+    priority_score: int,
+    blocked: bool,
+) -> list[dict[str, Any]]:
+    score_explanation = (
+        "; ".join(context["blockers"]) or "Completar metadata y materializacion Talent."
+        if blocked
+        else context["recommendation"]
+    )
+    return [
+        {
+            "option_id": "review_talent_signal",
+            "label": "Remediar datos Talent" if blocked else "Revisar senal de Talento",
+            "action_kind": "prepare_successfactors_review",
+            "impact_expected": context["affected_count"],
+            "time_cost": 1,
+            "risk": 1,
+            "score": priority_score,
+            "score_explanation": score_explanation,
+            "selected": True,
+            "recommendation_only": True,
+        },
+        {
+            "option_id": "monitor_talent_signal",
+            "label": "Monitorear sin cambio inmediato",
+            "action_kind": "monitor_only",
+            "impact_expected": 0,
+            "time_cost": 0.5,
+            "risk": 2,
+            "score": max(0, priority_score - 20),
+            "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
+            "recommendation_only": True,
+        },
+    ]
+
+
+@_bind_to_core
 def _sf_talent_signal_intelligence(
     *,
     source: ControlRoomSource,
@@ -2660,98 +2758,27 @@ def _sf_talent_signal_intelligence(
     priority_score: int,
 ) -> dict[str, Any]:
     readiness_status = context["readiness_status"]
-    blockers = context["blockers"]
-    confidence = context["confidence"]
-    affected_count = context["affected_count"]
-    source_row_count = context["source_row_count"]
-    recommendation = context["recommendation"]
-    signal_id = context["signal_id"]
-    signal_type = context["signal_type"]
-    title = context["title"]
-    generated_at = context["generated_at"]
-    materialized_at = context["materialized_at"]
     blocked = readiness_status in {"blocked", "insufficient_data"}
     return {
-        "baseline": {
-            "method": "gold_readiness_count_v1",
-            "actual_value": affected_count,
-            "expected_value": 0,
-            "sample_count": source_row_count,
-            "confidence": confidence,
-            "readiness_status": readiness_status,
-        },
-        "signal": {
-            "signal_id": signal_id,
-            "metric_name": signal_id,
-            "signal_type": signal_type,
-            "signal_subtype": "recommendation_only",
-            "source_system": "sap_successfactors",
-            "source_dataset": source.dataset,
-            "severity": context["severity"],
-            "summary": title,
-            "affected_count": affected_count,
-            "recommendation": recommendation,
-            "generated_at": generated_at,
-            "deviation_pct": context["deviation_pct"],
-            "confidence": confidence,
-            "sample_count": source_row_count,
-            "readiness_status": readiness_status,
-            "recommendation_only": True,
-        },
+        "baseline": _sf_talent_signal_baseline(context),
+        "signal": _sf_talent_signal_summary(source, context),
         "evidence_pack": _sf_talent_signal_evidence_pack(
             source=source,
-            signal_id=signal_id,
-            title=title,
-            affected_count=affected_count,
-            source_row_count=source_row_count,
+            signal_id=context["signal_id"],
+            title=context["title"],
+            affected_count=context["affected_count"],
+            source_row_count=context["source_row_count"],
             readiness_status=readiness_status,
-            generated_at=generated_at,
-            materialized_at=materialized_at,
-            blockers=blockers,
+            generated_at=context["generated_at"],
+            materialized_at=context["materialized_at"],
+            blockers=context["blockers"],
         ),
-        "hypotheses": [
-            {
-                "title": (
-                    "Datos Talent listos para revision supervisada"
-                    if not blocked
-                    else "Evidencia Talent insuficiente"
-                ),
-                "rationale": (
-                    f"La senal se basa en {source_row_count} fila(s) Gold internas; "
-                    "no incluye PII, compensacion ni write-back."
-                ),
-                "confidence": confidence,
-            }
-        ],
-        "options": [
-            {
-                "option_id": "review_talent_signal",
-                "label": "Remediar datos Talent" if blocked else "Revisar senal de Talento",
-                "action_kind": "prepare_successfactors_review",
-                "impact_expected": affected_count,
-                "time_cost": 1,
-                "risk": 1,
-                "score": priority_score,
-                "score_explanation": (
-                    "; ".join(blockers) or "Completar metadata y materializacion Talent."
-                    if blocked
-                    else recommendation
-                ),
-                "selected": True,
-                "recommendation_only": True,
-            },
-            {
-                "option_id": "monitor_talent_signal",
-                "label": "Monitorear sin cambio inmediato",
-                "action_kind": "monitor_only",
-                "impact_expected": 0,
-                "time_cost": 0.5,
-                "risk": 2,
-                "score": max(0, priority_score - 20),
-                "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
-                "recommendation_only": True,
-            },
-        ],
+        "hypotheses": _sf_talent_signal_hypotheses(context, blocked=blocked),
+        "options": _sf_talent_signal_options(
+            context,
+            priority_score=priority_score,
+            blocked=blocked,
+        ),
     }
 
 
