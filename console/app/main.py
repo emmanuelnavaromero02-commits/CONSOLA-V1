@@ -154,6 +154,9 @@ from app.domains.data_platform.bronze_physical import (
     bronze_physical_snapshot as _bronze_physical_snapshot_impl,
     count_bronze_parquet_rows as _count_bronze_parquet_rows_impl,
 )
+from app.domains.data_platform.bronze_query import (
+    bronze_query_payload as _bronze_query_payload_impl,
+)
 from app.domains.data_platform.data_api_payloads import (
     DataApiQueryValidationError as _DataApiQueryValidationError,
     data_api_columns_param as _data_api_columns_param,
@@ -2283,33 +2286,19 @@ async def api_bronze_query(
     # Restricted to datasets.write because this endpoint accepts arbitrary SQL.
     # Read-only roles (viewer) must use the dataset-scoped endpoints below,
     # which build SQL server-side instead of trusting client input.
-    sql = body.get("sql", "").strip()
-    limit = min(int(body.get("limit", 200)), 2000)
-    if not sql:
-        raise HTTPException(400, "sql is required")
-    sources = _merge_declared_and_inferred_bronze_sources(body.get("sources"), sql)
-    sql = _rewrite_bronze_logical_paths(sql, user)
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "preview_transform",
-                {
-                    "sql": sql,
-                    "limit": limit,
-                    "sources": sources,
-                    "user_context": _rls_user_context(user),
-                },
-                user,
-            ),
-        )
-    if r.status_code >= 400:
-        raise HTTPException(
-            r.status_code, _upstream_error_detail(r, "Refinement query failed")
-        )
-    result = r.json()
-    _raise_for_refinement_payload_error(result, "Refinement query failed")
-    return result
+    return await _bronze_query_payload_impl(
+        body=body,
+        user=user,
+        merge_sources=_merge_declared_and_inferred_bronze_sources,
+        rewrite_paths=_rewrite_bronze_logical_paths,
+        rls_user_context=_rls_user_context,
+        headers_factory=_hdr_for,
+        mcp_payload=_mcp_payload,
+        refinement_url=REFINEMENT_URL,
+        upstream_error_detail=_upstream_error_detail,
+        raise_for_refinement_payload_error=_raise_for_refinement_payload_error,
+        http_client_factory=httpx.AsyncClient,
+    )
 
 
 @app.delete(

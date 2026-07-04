@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.domains.data_platform.bronze_query import bronze_query_payload
 from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key,
     catalog_query_args,
@@ -217,6 +218,53 @@ def test_catalog_payload_helpers_build_stable_filter_args():
         "datasets": ["employee_profile", "talent_9box"],
     }
     assert catalog_cache_key({"b": 1, "a": 2}) == '{"a": 2, "b": 1}'
+
+
+@pytest.mark.asyncio
+async def test_bronze_query_payload_uses_rewritten_sql_and_rls_context():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"rows": [{"id": 1}]}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    result = await bronze_query_payload(
+        body={"sql": "select * from raw_table", "sources": []},
+        user=SCOPED_USER,
+        merge_sources=lambda sources, _sql: list(sources or []) + ["raw/acme/User"],
+        rewrite_paths=lambda sql, _user: sql.replace("raw_table", "scoped_s3_path"),
+        rls_user_context=lambda user: {"tenant_id": user["tenant_id"]},
+        headers_factory=lambda service: {"x-service": service},
+        mcp_payload=lambda tool, args, user: {"tool": tool, "args": args, "user": user},
+        refinement_url="http://refinement",
+        upstream_error_detail=lambda _response, fallback: fallback,
+        raise_for_refinement_payload_error=lambda _payload, _fallback: None,
+        http_client_factory=FakeClient,
+    )
+
+    assert result == {"rows": [{"id": 1}]}
+    assert captured["client_kwargs"]["headers"] == {"x-service": "REFINEMENT"}
+    assert captured["json"]["tool"] == "preview_transform"
+    assert captured["json"]["args"]["sql"] == "select * from scoped_s3_path"
+    assert captured["json"]["args"]["sources"] == ["raw/acme/User"]
+    assert captured["json"]["args"]["user_context"] == {"tenant_id": "tenant-a"}
 
 
 def test_refinement_error_helpers_classify_payload_errors():
