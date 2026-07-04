@@ -2120,84 +2120,109 @@ def _normalize_standard_anomaly(
 
 
 @_bind_to_core
+def _replicon_allocation_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "over_warning": _threshold_value(
+            thresholds,
+            "replicon",
+            "over_allocation",
+            "pct_asignacion",
+            "warning_value",
+            110,
+        ),
+        "over_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "over_allocation",
+            "pct_asignacion",
+            "critical_value",
+            130,
+        ),
+        "under_warning": _threshold_value(
+            thresholds,
+            "replicon",
+            "under_allocation",
+            "pct_asignacion",
+            "warning_value",
+            40,
+        ),
+        "under_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "under_allocation",
+            "pct_asignacion",
+            "critical_value",
+            20,
+        ),
+    }
+
+
+@_bind_to_core
+def _replicon_allocation_state(
+    pct: float | None,
+    threshold_values: dict[str, float],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
+    over_warning = threshold_values["over_warning"]
+    under_warning = threshold_values["under_warning"]
+    if pct is None or under_warning <= pct <= over_warning:
+        return None
+    if pct > over_warning:
+        item_type = "over_allocation"
+        threshold_state = (
+            "critical" if pct >= threshold_values["over_critical"] else "warning"
+        )
+        warning_default = 110
+        critical_default = 130
+    else:
+        item_type = "under_allocation"
+        threshold_state = (
+            "critical" if pct <= threshold_values["under_critical"] else "warning"
+        )
+        warning_default = 40
+        critical_default = 20
+    return {
+        "item_type": item_type,
+        "threshold_state": threshold_state,
+        "severity": "high" if threshold_state == "critical" else "medium",
+        "threshold_refs": [
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                item_type,
+                "pct_asignacion",
+                warning_default=warning_default,
+                critical_default=critical_default,
+                currency="PCT",
+            )
+        ],
+    }
+
+
+@_bind_to_core
 def _normalize_replicon_allocation(
     source: ControlRoomSource,
     row: dict[str, Any],
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
     pct = _num(row.get("pct_asignacion"))
-    over_warning = _threshold_value(
+    allocation_state = _replicon_allocation_state(
+        pct,
+        _replicon_allocation_thresholds(thresholds),
         thresholds,
-        "replicon",
-        "over_allocation",
-        "pct_asignacion",
-        "warning_value",
-        110,
     )
-    over_critical = _threshold_value(
-        thresholds,
-        "replicon",
-        "over_allocation",
-        "pct_asignacion",
-        "critical_value",
-        130,
-    )
-    under_warning = _threshold_value(
-        thresholds,
-        "replicon",
-        "under_allocation",
-        "pct_asignacion",
-        "warning_value",
-        40,
-    )
-    under_critical = _threshold_value(
-        thresholds,
-        "replicon",
-        "under_allocation",
-        "pct_asignacion",
-        "critical_value",
-        20,
-    )
-    if pct is None or under_warning <= pct <= over_warning:
+    if allocation_state is None or pct is None:
         return None
     consultor = str(row.get("consultor") or "Sin consultor").strip()
     proyecto = str(
         row.get("proyecto") or row.get("project_name") or "Sin proyecto"
     ).strip()
-    item_type = "over_allocation" if pct > 110 else "under_allocation"
-    if pct > over_warning:
-        item_type = "over_allocation"
-        threshold_state = "critical" if pct >= over_critical else "warning"
-        severity = "high" if threshold_state == "critical" else "medium"
-        threshold_refs = [
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "over_allocation",
-                "pct_asignacion",
-                warning_default=110,
-                critical_default=130,
-                currency="PCT",
-            )
-        ]
-    else:
-        item_type = "under_allocation"
-        threshold_state = "critical" if pct <= under_critical else "warning"
-        severity = "high" if threshold_state == "critical" else "medium"
-        threshold_refs = [
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "under_allocation",
-                "pct_asignacion",
-                warning_default=40,
-                critical_default=20,
-                currency="PCT",
-            )
-        ]
+    item_type = allocation_state["item_type"]
     item = _base_item(
         source,
-        {**row, "severity": severity},
+        {**row, "severity": allocation_state["severity"]},
         item_type,
         f"{consultor}:{proyecto}",
         consultor,
@@ -2213,7 +2238,11 @@ def _normalize_replicon_allocation(
             "details": {**item["details"], **row},
         }
     )
-    return _attach_thresholds(item, threshold_refs, threshold_state)
+    return _attach_thresholds(
+        item,
+        allocation_state["threshold_refs"],
+        allocation_state["threshold_state"],
+    )
 
 
 @_bind_to_core
