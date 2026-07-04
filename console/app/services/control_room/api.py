@@ -5354,15 +5354,14 @@ async def _agentops_table_presence(conn: Any) -> dict[str, bool]:
 
 
 @_bind_to_core
-async def _agentops_base_rows(
+async def _agentops_agent_rows(
     conn: Any,
     *,
     workspace_id: str,
     tenant_id: str | None,
     allowed_param: list[str] | None,
-    limit: int,
-) -> dict[str, Any]:
-    agents = await conn.fetch(
+) -> list[Any]:
+    return await conn.fetch(
         """
         SELECT id::text AS id, cartridge_id, slug, name, is_active,
                allowed_tools, extra, updated_at
@@ -5377,7 +5376,17 @@ async def _agentops_base_rows(
         tenant_id,
         allowed_param,
     )
-    runs = await conn.fetch(
+
+
+@_bind_to_core
+async def _agentops_run_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> list[Any]:
+    return await conn.fetch(
         """
         SELECT r.id, r.agent_id::text AS agent_id, r.started_at, r.finished_at,
                r.status, r.tool_calls, r.error_message,
@@ -5393,7 +5402,16 @@ async def _agentops_base_rows(
         limit,
         allowed_param,
     )
-    alert_rows = await conn.fetch(
+
+
+@_bind_to_core
+async def _agentops_alert_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+) -> list[Any]:
+    return await conn.fetch(
         """
         SELECT metadata->>'agent_id' AS agent_id,
                COUNT(*)::int AS total,
@@ -5408,7 +5426,16 @@ async def _agentops_base_rows(
         workspace_id,
         allowed_param,
     )
-    origin_rows = await conn.fetch(
+
+
+@_bind_to_core
+async def _agentops_origin_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+) -> list[Any]:
+    return await conn.fetch(
         """
         SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
                COUNT(*)::int AS total
@@ -5422,11 +5449,40 @@ async def _agentops_base_rows(
         workspace_id,
         allowed_param,
     )
+
+
+@_bind_to_core
+async def _agentops_base_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    tenant_id: str | None,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> dict[str, Any]:
     return {
-        "agents": agents,
-        "runs": runs,
-        "alert_rows": alert_rows,
-        "origin_rows": origin_rows,
+        "agents": await _agentops_agent_rows(
+            conn,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            allowed_param=allowed_param,
+        ),
+        "runs": await _agentops_run_rows(
+            conn,
+            workspace_id=workspace_id,
+            allowed_param=allowed_param,
+            limit=limit,
+        ),
+        "alert_rows": await _agentops_alert_rows(
+            conn,
+            workspace_id=workspace_id,
+            allowed_param=allowed_param,
+        ),
+        "origin_rows": await _agentops_origin_rows(
+            conn,
+            workspace_id=workspace_id,
+            allowed_param=allowed_param,
+        ),
     }
 
 
