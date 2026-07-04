@@ -5194,6 +5194,48 @@ def _agentops_engines_payload(
 
 
 @_bind_to_core
+def _agentops_runtime_metrics(
+    raw: dict[str, Any],
+    *,
+    run_payloads: list[dict[str, Any]],
+    alerts_by_agent: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    calibration_row = dict(raw["calibration_rows"][0]) if raw["calibration_rows"] else {}
+    orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
+    return {
+        "failed_recent": sum(1 for run in run_payloads if str(run.get("status")) == "error"),
+        "open_alerts": sum(row.get("open", 0) for row in alerts_by_agent.values()),
+        "total_alerts": sum(row.get("total", 0) for row in alerts_by_agent.values()),
+        "monte_carlo_total": sum(int(row["total"] or 0) for row in raw["monte_carlo_rows"]),
+        "monte_carlo_latest": max(
+            (row["latest_at"] for row in raw["monte_carlo_rows"] if row["latest_at"]),
+            default=None,
+        ),
+        "calibration_total": int(calibration_row.get("total") or 0),
+        "calibration_samples": int(calibration_row.get("sample_count") or 0),
+        "calibration_latest": calibration_row.get("latest_at"),
+        "orchestration_total": int(orchestration_row.get("total") or 0),
+        "orchestration_latest": orchestration_row.get("latest_at"),
+    }
+
+
+@_bind_to_core
+def _agentops_tools_used_payload(tool_usage: dict[str, int]) -> list[dict[str, Any]]:
+    return [
+        {"tool": tool, "count": count}
+        for tool, count in sorted(tool_usage.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+@_bind_to_core
+def _agentops_origins_payload(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    return [
+        {"origin": str(row["origin"] or "unknown"), "count": int(row["total"] or 0)}
+        for row in rows
+    ]
+
+
+@_bind_to_core
 async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     """Persisted AgentOps snapshot for Control Room.
 
@@ -5207,6 +5249,9 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     # Source-hardening markers retained after helper extraction:
     # _agentops_tool_is_operational(tool); _agentops_tool_label(tool);
     # _agentops_monitor_engines(monitor); "configured_engines": configured_engines
+    # "monte_carlo_simulations"; "bayesian_calibration_states";
+    # "bayesian_calibration_samples"; "decision_orchestrations";
+    # "engines": engines_payload
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
 
@@ -5357,32 +5402,22 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
         runs_by_agent=runs_by_agent,
     )
 
-    failed_recent = sum(1 for run in run_payloads if str(run.get("status")) == "error")
-    open_alerts = sum(row.get("open", 0) for row in alerts_by_agent.values())
-    total_alerts = sum(row.get("total", 0) for row in alerts_by_agent.values())
-    monte_carlo_total = sum(int(row["total"] or 0) for row in raw["monte_carlo_rows"])
-    monte_carlo_latest = max(
-        (row["latest_at"] for row in raw["monte_carlo_rows"] if row["latest_at"]),
-        default=None,
+    runtime = _agentops_runtime_metrics(
+        raw,
+        run_payloads=run_payloads,
+        alerts_by_agent=alerts_by_agent,
     )
-    calibration_row = dict(raw["calibration_rows"][0]) if raw["calibration_rows"] else {}
-    calibration_total = int(calibration_row.get("total") or 0)
-    calibration_samples = int(calibration_row.get("sample_count") or 0)
-    calibration_latest = calibration_row.get("latest_at")
-    orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
-    orchestration_total = int(orchestration_row.get("total") or 0)
-    orchestration_latest = orchestration_row.get("latest_at")
     engines_payload = _agentops_engines_payload(
         configured_engine_counts=configured_engine_counts,
         monitor_count=monitor_count,
         agents_payload=agents_payload,
-        monte_carlo_total=monte_carlo_total,
-        monte_carlo_latest=monte_carlo_latest,
-        calibration_total=calibration_total,
-        calibration_samples=calibration_samples,
-        calibration_latest=calibration_latest,
-        orchestration_total=orchestration_total,
-        orchestration_latest=orchestration_latest,
+        monte_carlo_total=runtime["monte_carlo_total"],
+        monte_carlo_latest=runtime["monte_carlo_latest"],
+        calibration_total=runtime["calibration_total"],
+        calibration_samples=runtime["calibration_samples"],
+        calibration_latest=runtime["calibration_latest"],
+        orchestration_total=runtime["orchestration_total"],
+        orchestration_latest=runtime["orchestration_latest"],
         execution_counts=_agentops_execution_counts(raw["execution_rows"]),
     )
     return {
@@ -5394,26 +5429,20 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
             "active_agents": active_count,
             "monitor_agents": monitor_count,
             "recent_runs": len(run_payloads),
-            "failed_recent_runs": failed_recent,
-            "open_agent_alerts": open_alerts,
-            "agent_alerts_total": total_alerts,
+            "failed_recent_runs": runtime["failed_recent"],
+            "open_agent_alerts": runtime["open_alerts"],
+            "agent_alerts_total": runtime["total_alerts"],
             "configured_engines": sum(configured_engine_counts.values()),
-            "monte_carlo_simulations": monte_carlo_total,
-            "bayesian_calibration_states": calibration_total,
-            "bayesian_calibration_samples": calibration_samples,
-            "decision_orchestrations": orchestration_total,
+            "monte_carlo_simulations": runtime["monte_carlo_total"],
+            "bayesian_calibration_states": runtime["calibration_total"],
+            "bayesian_calibration_samples": runtime["calibration_samples"],
+            "decision_orchestrations": runtime["orchestration_total"],
         },
         "agents": agents_payload,
         "recent_runs": run_payloads,
         "engines": engines_payload,
-        "tools_used": [
-            {"tool": tool, "count": count}
-            for tool, count in sorted(tool_usage.items(), key=lambda item: (-item[1], item[0]))
-        ],
-        "origins": [
-            {"origin": str(row["origin"] or "unknown"), "count": int(row["total"] or 0)}
-            for row in raw["origin_rows"]
-        ],
+        "tools_used": _agentops_tools_used_payload(tool_usage),
+        "origins": _agentops_origins_payload(raw["origin_rows"]),
     }
 
 
