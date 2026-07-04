@@ -110,6 +110,9 @@ from app.domains.admin.user_mutations import (
     reinvite_admin_user_payload as _reinvite_admin_user_payload_impl,
     update_admin_user_payload as _update_admin_user_payload_impl,
 )
+from app.domains.studio.chat_stream import (
+    studio_chat_stream_response as _studio_chat_stream_response_impl,
+)
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
@@ -4714,55 +4717,14 @@ async def studio_chat(body: dict, user: dict = Depends(require_permission("studi
 async def studio_chat_stream(body: dict, user: dict = Depends(require_permission("studio.write"))):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
-    cartridge_id = body.get("cartridge_id")
-    manifest = (
-        await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
-    )
-    message = (body.get("message") or "").strip()
-    history = body.get("history") or []
-    step = body.get("step", 1)
-    if not message:
-        raise HTTPException(400, "message is required")
-
-    queue: asyncio.Queue = asyncio.Queue()
-
-    async def on_event(evt: dict):
-        await queue.put(evt)
-
-    async def run():
-        try:
-            result = await studio_assistant.chat(
-                message=message,
-                history=history,
-                step=step,
-                manifest=manifest,
-                on_event=on_event,
-                actor_role=user.get("role"),
-                actor_user=user,
-            )
-            await queue.put({"type": "done", **result})
-        except Exception:
-            _eid = uuid.uuid4().hex
-            logger.exception("studio assistant chat failed error_id=%s", _eid)
-            await queue.put(
-                {"type": "error", "message": f"Internal server error. error_id={_eid}"}
-            )
-
-    asyncio.create_task(run())
-
-    async def event_stream():
-        yield "event: open\ndata: {}\n\n"
-        while True:
-            evt = await queue.get()
-            etype = evt.get("type", "message")
-            yield f"event: {etype}\ndata: {json.dumps(evt, default=str)}\n\n"
-            if etype in ("done", "error"):
-                break
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    return await _studio_chat_stream_response_impl(
+        body=body,
+        user=user,
+        cartridge_service=cartridge_service,
+        studio_assistant=studio_assistant,
+        uuid_factory=uuid.uuid4,
+        logger_exception=logger.exception,
+        streaming_response_factory=StreamingResponse,
     )
 
 
