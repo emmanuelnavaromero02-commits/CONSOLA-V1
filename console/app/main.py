@@ -4169,63 +4169,174 @@ async def api_cartridge_sync_now(
                 "SELECT pg_advisory_unlock(hashtext($1))", lock_key
             )
 
-    dataset_seed: dict[str, Any] | None = None
-    if cartridge == "sap_successfactors":
-        try:
-            dataset_seed = await _ensure_sync_packaged_datasets(
-                cartridge=cartridge,
-                user=user,
-            )
-        except Exception as exc:  # noqa: BLE001
-            message = f"{type(exc).__name__}: {exc}"
-            logger.warning(
-                "sync packaged dataset seed failed cartridge=%s run_id=%s: %s",
-                cartridge,
-                run_id,
-                message,
-                exc_info=True,
-            )
-            steps = _merge_sync_steps(
-                steps,
-                _sync_dataset_seed_failure_step_updates(message),
-            )
-            await _upsert_sync_run(
-                run_id=run_id,
-                cartridge=cartridge,
-                mode=mode,
-                status="failed",
-                user=user,
-                extra=_sync_dataset_seed_failure_extra(
-                    mode=mode,
-                    target=target,
-                    conn_id=conn_id,
-                    request_id=request_id,
-                    steps=steps,
-                    message=message,
-                ),
-                error_message=message[:500],
-            )
-            row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
-            if row:
-                return _sync_public_payload(row, _sync_extra_from_row(row))
-            raise HTTPException(
-                500,
-                "sync packaged dataset seed failed before Airflow trigger",
-            )
+    return await _continue_sync_now_after_reservation(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        request_id=request_id,
+        run_id=run_id,
+        steps=steps,
+        user=user,
+    )
 
-    extract_body = {
-        "mode": mode,
-        "target": target,
-        "idempotency_key": run_id,
-        **({"conn_id": conn_id} if conn_id else {}),
-    }
-    extract_attempt = await _run_sync_extract_all_with_retries(
+
+async def _continue_sync_now_after_reservation(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    run_id: str,
+    steps: list[dict[str, Any]],
+    user: dict,
+) -> dict[str, Any]:
+    dataset_seed, steps, early_response = await _seed_sync_packaged_datasets_or_response(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        request_id=request_id,
+        run_id=run_id,
+        steps=steps,
+        user=user,
+    )
+    if early_response is not None:
+        return early_response
+
+    extract_attempt = await _trigger_sync_extract_all_attempt(
         cartridge=cartridge,
         mode=mode,
         target=target,
         conn_id=conn_id,
         run_id=run_id,
-        extract_body=extract_body,
+        user=user,
+    )
+    result = extract_attempt["result"]
+    attempts = extract_attempt["attempts"]
+    extract_state = _sync_extract_all_result_state(result)
+    triggered_entities = extract_state["triggered_entities"]
+    errors = extract_state["errors"]
+
+    steps, upsert_debug = await _persist_sync_extract_trigger_result(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        request_id=request_id,
+        steps=steps,
+        triggered_entities=triggered_entities,
+        errors=errors,
+        attempts=attempts,
+        result=result,
+        dataset_seed=dataset_seed,
+        user=user,
+    )
+    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+    if not row:
+        await _raise_missing_sync_run_diagnostics(
+            run_id=run_id,
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            user=user,
+            upsert_debug=upsert_debug,
+        )
+    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+
+
+async def _seed_sync_packaged_datasets_or_response(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    run_id: str,
+    steps: list[dict[str, Any]],
+    user: dict,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any] | None]:
+    if cartridge != "sap_successfactors":
+        return None, steps, None
+    try:
+        dataset_seed = await _ensure_sync_packaged_datasets(
+            cartridge=cartridge,
+            user=user,
+        )
+        return dataset_seed, steps, None
+    except Exception as exc:  # noqa: BLE001
+        message = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "sync packaged dataset seed failed cartridge=%s run_id=%s: %s",
+            cartridge,
+            run_id,
+            message,
+            exc_info=True,
+        )
+        steps = _merge_sync_steps(
+            steps,
+            _sync_dataset_seed_failure_step_updates(message),
+        )
+        await _upsert_sync_run(
+            run_id=run_id,
+            cartridge=cartridge,
+            mode=mode,
+            status="failed",
+            user=user,
+            extra=_sync_dataset_seed_failure_extra(
+                mode=mode,
+                target=target,
+                conn_id=conn_id,
+                request_id=request_id,
+                steps=steps,
+                message=message,
+            ),
+            error_message=message[:500],
+        )
+        row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+        if row:
+            return None, steps, _sync_public_payload(row, _sync_extra_from_row(row))
+        raise HTTPException(
+            500,
+            "sync packaged dataset seed failed before Airflow trigger",
+        )
+
+
+def _sync_extract_all_trigger_body(
+    *, mode: str, target: str, run_id: str, conn_id: str | None
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "target": target,
+        "idempotency_key": run_id,
+        **({"conn_id": conn_id} if conn_id else {}),
+    }
+
+
+async def _trigger_sync_extract_all_attempt(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    run_id: str,
+    user: dict,
+) -> dict[str, Any]:
+    return await _run_sync_extract_all_with_retries(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        extract_body=_sync_extract_all_trigger_body(
+            mode=mode,
+            target=target,
+            run_id=run_id,
+            conn_id=conn_id,
+        ),
         user=user,
         trigger_sync_aggregate_extract_all=_trigger_sync_aggregate_extract_all,
         call_with_optional_user=_call_with_optional_user,
@@ -4233,12 +4344,24 @@ async def api_cartridge_sync_now(
         retryable_errors=_sync_errors_retryable,
         sleep=asyncio.sleep,
     )
-    result = extract_attempt["result"]
-    attempts = extract_attempt["attempts"]
 
-    extract_state = _sync_extract_all_result_state(result)
-    triggered_entities = extract_state["triggered_entities"]
-    errors = extract_state["errors"]
+
+async def _persist_sync_extract_trigger_result(
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    steps: list[dict[str, Any]],
+    triggered_entities: int,
+    errors: list[Any],
+    attempts: int,
+    result: dict[str, Any],
+    dataset_seed: dict[str, Any] | None,
+    user: dict,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     steps = _merge_sync_steps(
         steps,
         _sync_extract_all_trigger_step_updates(
@@ -4267,27 +4390,37 @@ async def api_cartridge_sync_now(
         ),
         error_message=_sync_extract_all_error_message(errors),
     )
-    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
-    if not row:
-        ctx = build_security_context(user)
-        scope_sql, scope_values = await _pipeline_runs_scope_predicate(
-            user, 3, refresh_columns=True
-        )
-        diagnostics = {
-            "run_id": run_id,
-            "cartridge": cartridge,
-            "mode": mode,
-            "target": target,
-            "conn_id_present": bool(conn_id),
-            "scope_predicate_present": bool(scope_sql),
-            "scope_value_count": len(scope_values),
-            "tenant_id_present": bool(ctx.get("tenant_id")),
-            "workspace_id_present": bool(ctx.get("workspace_id")),
-            **upsert_debug,
-        }
-        logger.error("sync_now_run_missing diagnostics=%s", diagnostics)
-        raise HTTPException(500, "sync run was not recorded; scope diagnostics logged")
-    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+    return steps, upsert_debug
+
+
+async def _raise_missing_sync_run_diagnostics(
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    user: dict,
+    upsert_debug: dict[str, Any],
+) -> None:
+    ctx = build_security_context(user)
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(
+        user, 3, refresh_columns=True
+    )
+    diagnostics = {
+        "run_id": run_id,
+        "cartridge": cartridge,
+        "mode": mode,
+        "target": target,
+        "conn_id_present": bool(conn_id),
+        "scope_predicate_present": bool(scope_sql),
+        "scope_value_count": len(scope_values),
+        "tenant_id_present": bool(ctx.get("tenant_id")),
+        "workspace_id_present": bool(ctx.get("workspace_id")),
+        **upsert_debug,
+    }
+    logger.error("sync_now_run_missing diagnostics=%s", diagnostics)
+    raise HTTPException(500, "sync run was not recorded; scope diagnostics logged")
 
 
 @app.get(
