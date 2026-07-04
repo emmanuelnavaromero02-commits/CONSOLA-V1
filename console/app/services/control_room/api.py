@@ -3543,15 +3543,16 @@ async def _cleanup_obsolete_source_state_items(
 
 
 @_bind_to_core
-async def _collect_items(
+async def _collect_module_inventory(
     user: dict | None,
     *,
-    fetcher: DatasetFetcher = query_dataset_rows,
-    limit_per_source: int = 1000,
-    include_source_state_items: bool = False,
-    persist: bool = False,
-    use_catalog: bool = True,
-) -> dict[str, Any]:
+    use_catalog: bool,
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+    set[str],
+    list[ControlRoomModule],
+]:
     if use_catalog:
         installations = await _installed_cartridges(user)
     else:
@@ -3571,14 +3572,99 @@ async def _collect_items(
         for row in installations
         if str(row.get("cartridge_id") or "").strip()
     }
-    installed = set(installation_by_cartridge)
     active = {
         cartridge_id
         for cartridge_id, row in installation_by_cartridge.items()
         if str(row.get("installation_status") or "ready")
         in ACTIVE_INSTALLATION_STATUSES
     }
-    modules = [module for module in MODULES if module.cartridge in installed]
+    modules = [
+        module
+        for module in MODULES
+        if module.cartridge in set(installation_by_cartridge)
+    ]
+    return installations, installation_by_cartridge, active, modules
+
+
+@_bind_to_core
+def _append_collected_source(
+    *,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    source: ControlRoomSource,
+    source_status: dict[str, Any],
+    rows: list[dict[str, Any]] | None = None,
+    include_source_state_items: bool,
+) -> None:
+    rows_by_dataset[source.dataset] = (
+        rows or [] if source_status["status"] == "ok" else []
+    )
+    sources.append(source_status)
+    if not include_source_state_items:
+        return
+    source_item = _source_state_item(
+        source,
+        source_status["status"],
+        source_status.get("error"),
+        source_status.get("data_readiness"),
+        source_status.get("readiness_reason"),
+        source_status.get("readiness_blockers"),
+    )
+    if source_item:
+        items.append(source_item)
+
+
+@_bind_to_core
+def _blocked_installation_source_status(
+    source: ControlRoomSource,
+    installation: dict[str, Any],
+) -> dict[str, Any]:
+    return _source_status_payload(
+        source,
+        "blocked",
+        count=0,
+        checked_at=datetime.now(UTC).isoformat(),
+        error=str(
+            installation.get("error_message")
+            or installation.get("current_step")
+            or ""
+        ),
+    )
+
+
+@_bind_to_core
+def _ready_placeholder_source_status(source: ControlRoomSource) -> dict[str, Any]:
+    return _source_status_payload(
+        source,
+        "ok",
+        count=0,
+        checked_at=datetime.now(UTC).isoformat(),
+    )
+
+
+@_bind_to_core
+def _source_contract_is_visible(source: ControlRoomSource) -> bool:
+    return (
+        _show_known_non_ready_sources()
+        or _source_has_ready_contract(source)
+        or _source_should_fetch_partial_contract(source)
+    )
+
+
+@_bind_to_core
+async def _collect_items(
+    user: dict | None,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+    limit_per_source: int = 1000,
+    include_source_state_items: bool = False,
+    persist: bool = False,
+    use_catalog: bool = True,
+) -> dict[str, Any]:
+    installations, installation_by_cartridge, active, modules = (
+        await _collect_module_inventory(user, use_catalog=use_catalog)
+    )
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
@@ -3593,75 +3679,42 @@ async def _collect_items(
         installation = installation_by_cartridge.get(module.cartridge, {})
         if module.cartridge not in active:
             for source in module.sources:
-                source_status = _source_status_payload(
+                source_status = _blocked_installation_source_status(
                     source,
-                    "blocked",
-                    count=0,
-                    checked_at=datetime.now(UTC).isoformat(),
-                    error=str(
-                        installation.get("error_message")
-                        or installation.get("current_step")
-                        or ""
-                    ),
+                    installation,
                 )
-                rows_by_dataset[source.dataset] = []
-                sources.append(source_status)
-                if include_source_state_items:
-                    source_item = _source_state_item(
-                        source,
-                        "blocked",
-                        source_status.get("error"),
-                        source_status.get("data_readiness"),
-                        source_status.get("readiness_reason"),
-                        source_status.get("readiness_blockers"),
-                    )
-                    if source_item:
-                        items.append(source_item)
+                _append_collected_source(
+                    items=items,
+                    sources=sources,
+                    rows_by_dataset=rows_by_dataset,
+                    source=source,
+                    source_status=source_status,
+                    include_source_state_items=include_source_state_items,
+                )
             continue
         for source in module.sources:
-            if (
-                not _show_known_non_ready_sources()
-                and not _source_has_ready_contract(source)
-                and not _source_should_fetch_partial_contract(source)
-            ):
-                source_status = _source_status_payload(
-                    source,
-                    "ok",
-                    count=0,
-                    checked_at=datetime.now(UTC).isoformat(),
+            if not _source_contract_is_visible(source):
+                _append_collected_source(
+                    items=items,
+                    sources=sources,
+                    rows_by_dataset=rows_by_dataset,
+                    source=source,
+                    source_status=_ready_placeholder_source_status(source),
+                    include_source_state_items=include_source_state_items,
                 )
-                rows_by_dataset[source.dataset] = []
-                sources.append(source_status)
-                if include_source_state_items:
-                    source_item = _source_state_item(
-                        source,
-                        source_status["status"],
-                        source_status.get("error"),
-                        source_status.get("data_readiness"),
-                        source_status.get("readiness_reason"),
-                        source_status.get("readiness_blockers"),
-                    )
-                    if source_item:
-                        items.append(source_item)
                 continue
             rows, source_status = await _fetch_source(
                 source, user, fetcher, limit_per_source
             )
-            rows_by_dataset[source.dataset] = (
-                rows if source_status["status"] == "ok" else []
+            _append_collected_source(
+                items=items,
+                sources=sources,
+                rows_by_dataset=rows_by_dataset,
+                source=source,
+                source_status=source_status,
+                rows=rows,
+                include_source_state_items=include_source_state_items,
             )
-            sources.append(source_status)
-            if include_source_state_items:
-                source_item = _source_state_item(
-                    source,
-                    source_status["status"],
-                    source_status.get("error"),
-                    source_status.get("data_readiness"),
-                    source_status.get("readiness_reason"),
-                    source_status.get("readiness_blockers"),
-                )
-                if source_item:
-                    items.append(source_item)
             if source_status["status"] != "ok":
                 continue
             for row in rows:
