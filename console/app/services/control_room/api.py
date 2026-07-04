@@ -5236,6 +5236,57 @@ def _agentops_origins_payload(rows: Iterable[Any]) -> list[dict[str, Any]]:
 
 
 @_bind_to_core
+def _agentops_summary_payload(
+    *,
+    agents_payload: list[dict[str, Any]],
+    active_count: int,
+    monitor_count: int,
+    run_payloads: list[dict[str, Any]],
+    runtime: dict[str, Any],
+    configured_engine_counts: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "agents_total": len(agents_payload),
+        "active_agents": active_count,
+        "monitor_agents": monitor_count,
+        "recent_runs": len(run_payloads),
+        "failed_recent_runs": runtime["failed_recent"],
+        "open_agent_alerts": runtime["open_alerts"],
+        "agent_alerts_total": runtime["total_alerts"],
+        "configured_engines": sum(configured_engine_counts.values()),
+        "monte_carlo_simulations": runtime["monte_carlo_total"],
+        "bayesian_calibration_states": runtime["calibration_total"],
+        "bayesian_calibration_samples": runtime["calibration_samples"],
+        "decision_orchestrations": runtime["orchestration_total"],
+    }
+
+
+@_bind_to_core
+def _agentops_snapshot_payload(
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    agents_payload: list[dict[str, Any]],
+    run_payloads: list[dict[str, Any]],
+    engines_payload: list[dict[str, Any]],
+    summary: dict[str, Any],
+    tool_usage: dict[str, int],
+    origin_rows: Iterable[Any],
+) -> dict[str, Any]:
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "tenant": tenant_id,
+        "active_workspace": workspace_id,
+        "summary": summary,
+        "agents": agents_payload,
+        "recent_runs": run_payloads,
+        "engines": engines_payload,
+        "tools_used": _agentops_tools_used_payload(tool_usage),
+        "origins": _agentops_origins_payload(origin_rows),
+    }
+
+
+@_bind_to_core
 async def _agentops_table_presence(conn: Any) -> dict[str, bool]:
     table_exists: dict[str, bool] = {}
     for table in (
@@ -5482,30 +5533,24 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
         orchestration_latest=runtime["orchestration_latest"],
         execution_counts=_agentops_execution_counts(raw["execution_rows"]),
     )
-    return {
-        "generated_at": datetime.now(UTC).isoformat(),
-        "tenant": tenant_id,
-        "active_workspace": workspace_id,
-        "summary": {
-            "agents_total": len(agents_payload),
-            "active_agents": active_count,
-            "monitor_agents": monitor_count,
-            "recent_runs": len(run_payloads),
-            "failed_recent_runs": runtime["failed_recent"],
-            "open_agent_alerts": runtime["open_alerts"],
-            "agent_alerts_total": runtime["total_alerts"],
-            "configured_engines": sum(configured_engine_counts.values()),
-            "monte_carlo_simulations": runtime["monte_carlo_total"],
-            "bayesian_calibration_states": runtime["calibration_total"],
-            "bayesian_calibration_samples": runtime["calibration_samples"],
-            "decision_orchestrations": runtime["orchestration_total"],
-        },
-        "agents": agents_payload,
-        "recent_runs": run_payloads,
-        "engines": engines_payload,
-        "tools_used": _agentops_tools_used_payload(tool_usage),
-        "origins": _agentops_origins_payload(raw["origin_rows"]),
-    }
+    summary = _agentops_summary_payload(
+        agents_payload=agents_payload,
+        active_count=active_count,
+        monitor_count=monitor_count,
+        run_payloads=run_payloads,
+        runtime=runtime,
+        configured_engine_counts=configured_engine_counts,
+    )
+    return _agentops_snapshot_payload(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        agents_payload=agents_payload,
+        run_payloads=run_payloads,
+        engines_payload=engines_payload,
+        summary=summary,
+        tool_usage=tool_usage,
+        origin_rows=raw["origin_rows"],
+    )
 
 
 @_bind_to_core
