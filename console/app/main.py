@@ -207,6 +207,9 @@ from app.domains.data_platform.refinement_errors import (
     raise_for_refinement_payload_error as _raise_for_refinement_payload_error,
     upstream_error_detail as _upstream_error_detail,
 )
+from app.domains.data_platform.refinement_invoke import (
+    refinement_invoke as _refinement_invoke_impl,
+)
 from app.domains.data_platform.schema_payloads import (
     bronze_schema_payload as _bronze_schema_payload,
     dataset_detail_columns as _dataset_detail_columns,
@@ -5544,31 +5547,17 @@ async def api_catalog_relationship(
 async def _refinement_invoke(
     tool: str, args: dict, *, timeout: int = 30, user: dict | None = None
 ):
-    import httpx
-
-    refinement_url = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-    try:
-        async with httpx.AsyncClient(
-            headers=_hdr_for("REFINEMENT"), timeout=timeout
-        ) as client:
-            r = await client.post(
-                f"{refinement_url}/mcp/invoke",
-                json=_mcp_payload(tool, args, user),
-            )
-            if r.status_code >= 400:
-                raise HTTPException(
-                    r.status_code,
-                    _upstream_error_detail(r, "Refinement request failed"),
-                )
-            payload = r.json()
-            _raise_for_refinement_payload_error(payload, "Refinement request failed")
-            return payload
-    except httpx.TimeoutException as exc:
-        raise HTTPException(503, f"Refinement timed out while running {tool}") from exc
-    except httpx.TransportError as exc:
-        raise HTTPException(
-            503, f"Refinement unavailable while running {tool}: {type(exc).__name__}"
-        ) from exc
+    return await _refinement_invoke_impl(
+        tool,
+        args,
+        timeout=timeout,
+        user=user,
+        httpx_module=httpx,
+        hdr_for=_hdr_for,
+        mcp_payload=_mcp_payload,
+        upstream_error_detail=_upstream_error_detail,
+        raise_for_refinement_payload_error=_raise_for_refinement_payload_error,
+    )
 
 
 # ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────
