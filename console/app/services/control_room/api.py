@@ -5519,38 +5519,12 @@ async def _agentops_load_snapshot(
 
 
 @_bind_to_core
-async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
-    """Persisted AgentOps snapshot for Control Room.
-
-    This intentionally reads only agents, agent_runs and persisted
-    control_room_items; it never starts agents or simulations from the
-    dashboard polling path.
-    """
-    tenant_id, workspace_id = _workspace_scope(user)
-    pool = await auth.pool()
-    limit = max(1, min(int(limit or 12), 50))
-    # Source-hardening markers retained after helper extraction:
-    # _agentops_tool_is_operational(tool); _agentops_tool_label(tool);
-    # _agentops_monitor_engines(monitor); "configured_engines": configured_engines
-    # "monte_carlo_simulations"; "bayesian_calibration_states";
-    # "bayesian_calibration_samples"; "decision_orchestrations";
-    # "engines": engines_payload
-    # "a.cartridge_id = ANY($3::text[])"; "cartridge_id = ANY($3::text[])";
-    # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
-    allowed_cartridges = _allowed_from_user(user)
-    allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
-
-    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
-        return await _agentops_load_snapshot(
-            conn,
-            tenant_id=_tenant_id,
-            workspace_id=_workspace_id,
-            allowed_param=allowed_param,
-            limit=limit,
-        )
-
-    raw = await run_with_db_scope(pool, user or {}, _load)
-
+def _agentops_payload_from_raw(
+    raw: dict[str, Any],
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+) -> dict[str, Any]:
     alerts_by_agent = _agentops_alerts_by_agent(raw["alert_rows"])
     runs_by_agent, tool_usage, run_payloads = _agentops_runs_payload(raw["runs"])
     (
@@ -5563,7 +5537,6 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
         alerts_by_agent=alerts_by_agent,
         runs_by_agent=runs_by_agent,
     )
-
     runtime = _agentops_runtime_metrics(
         raw,
         run_payloads=run_payloads,
@@ -5599,6 +5572,45 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
         summary=summary,
         tool_usage=tool_usage,
         origin_rows=raw["origin_rows"],
+    )
+
+
+@_bind_to_core
+async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
+    """Persisted AgentOps snapshot for Control Room.
+
+    This intentionally reads only agents, agent_runs and persisted
+    control_room_items; it never starts agents or simulations from the
+    dashboard polling path.
+    """
+    tenant_id, workspace_id = _workspace_scope(user)
+    pool = await auth.pool()
+    limit = max(1, min(int(limit or 12), 50))
+    # Source-hardening markers retained after helper extraction:
+    # _agentops_tool_is_operational(tool); _agentops_tool_label(tool);
+    # _agentops_monitor_engines(monitor); "configured_engines": configured_engines
+    # "monte_carlo_simulations"; "bayesian_calibration_states";
+    # "bayesian_calibration_samples"; "decision_orchestrations";
+    # "engines": engines_payload
+    # "a.cartridge_id = ANY($3::text[])"; "cartridge_id = ANY($3::text[])";
+    # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
+    allowed_cartridges = _allowed_from_user(user)
+    allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
+
+    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
+        return await _agentops_load_snapshot(
+            conn,
+            tenant_id=_tenant_id,
+            workspace_id=_workspace_id,
+            allowed_param=allowed_param,
+            limit=limit,
+        )
+
+    raw = await run_with_db_scope(pool, user or {}, _load)
+    return _agentops_payload_from_raw(
+        raw,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
     )
 
 
