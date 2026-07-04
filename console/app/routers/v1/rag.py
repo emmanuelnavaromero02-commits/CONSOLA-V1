@@ -130,56 +130,18 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_permission("datas
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
 
-    query = (body.get("query") or "").strip()
-    if not query:
-        raise HTTPException(400, "Missing 'query'")
-    top_k       = int(body.get("top_k") or 5)
-    source_ids  = body.get("source_ids") or None
-    kinds       = body.get("kinds") or None
-
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
-        r = await c.post(
-            f"{_RAG_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "search_rag",
-                {"query": query, "top_k": top_k, "source_ids": source_ids, "kinds": kinds},
-                user,
-            ),
-        )
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG search failed"))
-        results = ((r.json().get("result") or {}).get("results") or [])
-
-    if not results:
-        return {"answer": "No encontré información relacionada en las fuentes ingeridas.", "results": []}
-
-    ctx_blocks = []
-    for i, h in enumerate(results, start=1):
-        src  = h.get("source_name") or "?"
-        body_text = h.get("context") or h.get("child_content") or ""
-        ctx_blocks.append(f"[{i}] Fuente: {src}\n{body_text}")
-    context = "\n\n---\n\n".join(ctx_blocks)
-
-    system = (
-        "Eres un asistente que responde preguntas usando ÚNICAMENTE el contexto provisto. "
-        "Si la respuesta no está en el contexto, di explícitamente que no la encuentras. "
-        "Cita las fuentes usando el formato [n] al final de cada afirmación. "
-        "Sé conciso y responde en el idioma de la pregunta."
+    return await _rag_answer_payload_impl(
+        body=body,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        upstream_error_detail=_upstream_error_detail,
+        llm_client=_llm,
+        uuid_factory=uuid.uuid4,
+        logger_exception=logger.exception,
+        rag_search_arguments=_rag_search_arguments,
+        rag_empty_answer=_rag_empty_answer,
+        rag_synthesis_messages=_rag_synthesis_messages,
     )
-    user_msg = f"Contexto:\n\n{context}\n\nPregunta: {query}"
-
-    try:
-        _llm._ensure_provider_configured("anthropic")
-        resp = await _llm._anthropic_client().messages.create(
-            model=_llm._resolve_chat_model(None),
-            max_tokens=1024,
-            system=system,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        answer = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "").strip() or "(sin respuesta)"
-    except Exception:
-        _eid = uuid.uuid4().hex
-        logger.exception("LLM synthesis failed error_id=%s", _eid)
-        raise HTTPException(500, f"Internal server error. error_id={_eid}")
-
-    return {"answer": answer, "results": results}
