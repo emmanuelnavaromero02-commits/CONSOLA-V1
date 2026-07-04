@@ -80,6 +80,9 @@ from app.domains.agentops.invocation import (
     agent_schedule_due as _agent_schedule_due_impl,
     parse_agent_scheduled_fire_at as _parse_agent_scheduled_fire_at_impl,
 )
+from app.domains.agentops.streaming import (
+    agent_invoke_stream_response as _agent_invoke_stream_response_impl,
+)
 from app.domains.accounts.lifecycle import (
     normalize_email_or_400 as _normalize_email_or_400_impl,
     pack_vpn_conf as _pack_vpn_conf_impl,
@@ -5103,49 +5106,14 @@ async def api_agents_invoke_stream(
     user: dict = Depends(require_permission("agents.execute")),
 ):
     """Server-Sent Events stream of tool_use / tool_result / text events."""
-    visible = await _agents.get_agent(agent_id, user_context=user)
-    if not visible:
-        raise HTTPException(404, "agent not found")
-    agent = await _agent_runtime.load_agent(agent_id, user_context=user)
-    if not agent:
-        raise HTTPException(404, "agent not found")
-    message = (body.get("message") or "").strip()
-    if not message:
-        raise HTTPException(400, "message is required")
-    history = body.get("history") or []
-
-    queue: asyncio.Queue = asyncio.Queue()
-
-    async def on_event(ev: dict):
-        await queue.put(ev)
-
-    async def runner():
-        try:
-            result = await _agent_runtime.run(
-                agent, message, history=history, user=user, on_event=on_event
-            )
-            await queue.put({"type": "done", "run_id": result.get("run_id")})
-        except Exception as exc:  # noqa: BLE001
-            await queue.put(
-                {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
-            )
-        finally:
-            await queue.put(None)
-
-    task = asyncio.create_task(runner())
-
-    async def gen():
-        try:
-            while True:
-                ev = await queue.get()
-                if ev is None:
-                    break
-                yield f"data: {json.dumps(ev)}\n\n"
-        finally:
-            if not task.done():
-                task.cancel()
-
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return await _agent_invoke_stream_response_impl(
+        agent_id=agent_id,
+        body=body,
+        user=user,
+        agents_service=_agents,
+        agent_runtime=_agent_runtime,
+        streaming_response_factory=StreamingResponse,
+    )
 
 
 @app.get(
