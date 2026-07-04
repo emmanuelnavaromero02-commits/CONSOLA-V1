@@ -332,6 +332,124 @@ def merge_sync_steps(
     )
 
 
+def sync_start_step_updates() -> dict[str, dict[str, Any]]:
+    return {
+        "connection": {
+            "label": "Conexión",
+            "status": "running",
+            "detail": "Validando scope y conexión del cartucho.",
+        }
+    }
+
+
+def sync_dataset_seed_failure_step_updates(
+    message: str,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "connection": {
+            "label": "Conexión",
+            "status": "success",
+            "detail": "Scope y conexión aceptados por el pipeline.",
+        },
+        "silver_gold": {
+            "label": "Silver/Gold",
+            "status": "failed",
+            "detail": "No se pudieron preparar los refinamientos del workspace.",
+            "error": message[:300],
+            "completed": 0,
+            "total": 1,
+        },
+        "control_room": {
+            "label": "Control Room",
+            "status": "failed",
+            "detail": "Sin Silver/Gold preparados no se puede refrescar Control Room.",
+            "completed": 0,
+            "total": 1,
+        },
+        "agents_intelligence": {
+            "label": "Agentes/IA",
+            "status": "failed",
+            "detail": "Sin materialización no se ejecutan monitores.",
+            "completed": 0,
+            "total": 1,
+        },
+    }
+
+
+def sync_extract_all_result_state(result: dict[str, Any]) -> dict[str, Any]:
+    triggered_entities = (
+        result.get("triggered") if isinstance(result.get("triggered"), list) else []
+    )
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    bronze_status = (
+        "running" if triggered_entities else "failed" if errors else "partial"
+    )
+    return {
+        "triggered_entities": triggered_entities,
+        "errors": errors,
+        "bronze_status": bronze_status,
+    }
+
+
+def sync_extract_all_trigger_step_updates(
+    *,
+    triggered_entities: list[Any],
+    errors: list[dict[str, Any]],
+    attempts: int,
+) -> dict[str, dict[str, Any]]:
+    bronze_status = (
+        "running" if triggered_entities else "failed" if errors else "partial"
+    )
+    return {
+        "connection": {
+            "label": "Conexión",
+            "status": "success" if triggered_entities or not errors else "partial",
+            "detail": "El pipeline aceptó la sincronización."
+            if triggered_entities
+            else "El pipeline respondió sin entidades disparadas.",
+            "attempts": attempts,
+        },
+        "bronze": {
+            "label": "Bronze",
+            "status": bronze_status,
+            "detail": f"{len(triggered_entities)} entidades disparadas; {len(errors)} errores iniciales.",
+            "attempts": attempts,
+        },
+        "silver_gold": {
+            "label": "Silver/Gold",
+            "status": "queued" if triggered_entities else "failed",
+            "detail": "Airflow encadenará materialización downstream."
+            if triggered_entities
+            else "No hay extracción base para materializar.",
+        },
+        "control_room": {
+            "label": "Control Room",
+            "status": "queued" if triggered_entities else "failed",
+            "detail": "Esperando Gold para refrescar señales."
+            if triggered_entities
+            else "No hay Gold nuevo disponible.",
+            "completed": 0,
+            "total": 1,
+        },
+        "agents_intelligence": {
+            "label": "Agentes/IA",
+            "status": "queued" if triggered_entities else "failed",
+            "detail": "Se ejecutarán monitores reales al terminar Control Room."
+            if triggered_entities
+            else "No hay datos base para ejecutar monitores.",
+            "completed": 0,
+            "total": 1,
+        },
+    }
+
+
+def sync_extract_all_error_message(errors: list[dict[str, Any]]) -> str | None:
+    message = "; ".join(
+        str(item.get("error") or "") for item in errors[:3] if isinstance(item, dict)
+    )
+    return message or None
+
+
 def sync_run_working_state(row: dict[str, Any]) -> dict[str, Any]:
     extra = sync_extra_from_row(row)
     steps = (

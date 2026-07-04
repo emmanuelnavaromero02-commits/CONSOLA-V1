@@ -310,6 +310,10 @@ from app.domains.pipeline.sync_state import (
     sync_control_room_gold_refresh_terminal as _sync_control_room_gold_refresh_terminal,
     sync_entity_idempotency_key as _sync_entity_idempotency_key,
     sync_errors_retryable as _sync_errors_retryable,
+    sync_dataset_seed_failure_step_updates as _sync_dataset_seed_failure_step_updates,
+    sync_extract_all_error_message as _sync_extract_all_error_message,
+    sync_extract_all_result_state as _sync_extract_all_result_state,
+    sync_extract_all_trigger_step_updates as _sync_extract_all_trigger_step_updates,
     sync_extra_from_row as _sync_extra_from_row,
     sync_gold_refresh_dataset_names as _sync_gold_refresh_dataset_names,
     sync_child_runtime_state as _sync_child_runtime_state,
@@ -321,6 +325,7 @@ from app.domains.pipeline.sync_state import (
     sync_run_age_seconds as _sync_run_age_seconds,
     sync_run_needs_final_reconcile as _sync_run_needs_final_reconcile,
     sync_run_working_state as _sync_run_working_state,
+    sync_start_step_updates as _sync_start_step_updates,
     sync_status_from_steps as _sync_status_from_steps,
     sync_step_entity_summary as _sync_step_entity_summary,
 )
@@ -4734,13 +4739,7 @@ async def api_cartridge_sync_now(
 
             steps = _merge_sync_steps(
                 _initial_sync_steps(),
-                {
-                    "connection": {
-                        "label": "Conexión",
-                        "status": "running",
-                        "detail": "Validando scope y conexión del cartucho.",
-                    }
-                },
+                _sync_start_step_updates(),
             )
             await _upsert_sync_run(
                 run_id=run_id,
@@ -4782,35 +4781,7 @@ async def api_cartridge_sync_now(
             )
             steps = _merge_sync_steps(
                 steps,
-                {
-                    "connection": {
-                        "label": "Conexión",
-                        "status": "success",
-                        "detail": "Scope y conexión aceptados por el pipeline.",
-                    },
-                    "silver_gold": {
-                        "label": "Silver/Gold",
-                        "status": "failed",
-                        "detail": "No se pudieron preparar los refinamientos del workspace.",
-                        "error": message[:300],
-                        "completed": 0,
-                        "total": 1,
-                    },
-                    "control_room": {
-                        "label": "Control Room",
-                        "status": "failed",
-                        "detail": "Sin Silver/Gold preparados no se puede refrescar Control Room.",
-                        "completed": 0,
-                        "total": 1,
-                    },
-                    "agents_intelligence": {
-                        "label": "Agentes/IA",
-                        "status": "failed",
-                        "detail": "Sin materialización no se ejecutan monitores.",
-                        "completed": 0,
-                        "total": 1,
-                    },
-                },
+                _sync_dataset_seed_failure_step_updates(message),
             )
             await _upsert_sync_run(
                 run_id=run_id,
@@ -4882,56 +4853,16 @@ async def api_cartridge_sync_now(
             break
         await asyncio.sleep(2 * attempt)
 
-    triggered_entities = (
-        result.get("triggered") if isinstance(result.get("triggered"), list) else []
-    )
-    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-    bronze_status = (
-        "running" if triggered_entities else "failed" if errors else "partial"
-    )
+    extract_state = _sync_extract_all_result_state(result)
+    triggered_entities = extract_state["triggered_entities"]
+    errors = extract_state["errors"]
     steps = _merge_sync_steps(
         steps,
-        {
-            "connection": {
-                "label": "Conexión",
-                "status": "success" if triggered_entities or not errors else "partial",
-                "detail": "El pipeline aceptó la sincronización."
-                if triggered_entities
-                else "El pipeline respondió sin entidades disparadas.",
-                "attempts": attempts,
-            },
-            "bronze": {
-                "label": "Bronze",
-                "status": bronze_status,
-                "detail": f"{len(triggered_entities)} entidades disparadas; {len(errors)} errores iniciales.",
-                "attempts": attempts,
-            },
-            "silver_gold": {
-                "label": "Silver/Gold",
-                "status": "queued" if triggered_entities else "failed",
-                "detail": "Airflow encadenará materialización downstream."
-                if triggered_entities
-                else "No hay extracción base para materializar.",
-            },
-            "control_room": {
-                "label": "Control Room",
-                "status": "queued" if triggered_entities else "failed",
-                "detail": "Esperando Gold para refrescar señales."
-                if triggered_entities
-                else "No hay Gold nuevo disponible.",
-                "completed": 0,
-                "total": 1,
-            },
-            "agents_intelligence": {
-                "label": "Agentes/IA",
-                "status": "queued" if triggered_entities else "failed",
-                "detail": "Se ejecutarán monitores reales al terminar Control Room."
-                if triggered_entities
-                else "No hay datos base para ejecutar monitores.",
-                "completed": 0,
-                "total": 1,
-            },
-        },
+        _sync_extract_all_trigger_step_updates(
+            triggered_entities=triggered_entities,
+            errors=errors,
+            attempts=attempts,
+        ),
     )
     status = _sync_status_from_steps(steps)
     upsert_debug = await _upsert_sync_run(
@@ -4953,12 +4884,7 @@ async def api_cartridge_sync_now(
             "trigger_strategy": result.get("trigger_strategy") or "fanout",
             "dataset_seed": dataset_seed,
         },
-        error_message="; ".join(
-            str(item.get("error") or "")
-            for item in errors[:3]
-            if isinstance(item, dict)
-        )
-        or None,
+        error_message=_sync_extract_all_error_message(errors),
     )
     row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
     if not row:

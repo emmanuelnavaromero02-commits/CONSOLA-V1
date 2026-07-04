@@ -164,6 +164,63 @@ def test_sync_run_working_state_defaults_invalid_extra_shapes():
     assert working_state["child_run_ids"] == []
 
 
+def test_sync_start_step_updates_marks_connection_running():
+    steps = sync_state.merge_sync_steps(
+        sync_state.initial_sync_steps(),
+        sync_state.sync_start_step_updates(),
+    )
+
+    connection = next(step for step in steps if step["id"] == "connection")
+    assert connection["status"] == "running"
+    assert connection["detail"] == "Validando scope y conexión del cartucho."
+
+
+def test_sync_dataset_seed_failure_step_updates_fail_downstream_steps():
+    updates = sync_state.sync_dataset_seed_failure_step_updates("seed exploded")
+
+    assert updates["connection"]["status"] == "success"
+    assert updates["silver_gold"]["status"] == "failed"
+    assert updates["silver_gold"]["error"] == "seed exploded"
+    assert updates["control_room"]["status"] == "failed"
+    assert updates["agents_intelligence"]["status"] == "failed"
+
+
+def test_sync_extract_all_result_state_normalizes_shapes():
+    state = sync_state.sync_extract_all_result_state(
+        {"triggered": [{"entity": "EmpJob"}], "errors": "bad"}
+    )
+
+    assert state["triggered_entities"] == [{"entity": "EmpJob"}]
+    assert state["errors"] == []
+    assert state["bronze_status"] == "running"
+
+
+def test_sync_extract_all_trigger_step_updates_explain_empty_trigger():
+    updates = sync_state.sync_extract_all_trigger_step_updates(
+        triggered_entities=[],
+        errors=[{"entity": "EmpJob", "error": "offline"}],
+        attempts=3,
+    )
+
+    assert updates["connection"]["status"] == "partial"
+    assert updates["connection"]["attempts"] == 3
+    assert updates["bronze"]["status"] == "failed"
+    assert updates["silver_gold"]["status"] == "failed"
+    assert updates["control_room"]["status"] == "failed"
+    assert updates["agents_intelligence"]["status"] == "failed"
+
+
+def test_sync_extract_all_error_message_uses_first_three_errors():
+    assert sync_state.sync_extract_all_error_message(
+        [
+            {"error": "one"},
+            {"error": "two"},
+            {"error": "three"},
+            {"error": "four"},
+        ]
+    ) == "one; two; three"
+
+
 def test_sync_child_runtime_state_counts_progress_rows():
     runtime = sync_state.sync_child_runtime_state(
         row={"status": "running"},
