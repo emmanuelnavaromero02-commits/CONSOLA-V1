@@ -3578,6 +3578,265 @@ def _domain_payload(
 
 
 @_bind_to_core
+def _dashboard_active_cartridges(installations: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(row.get("cartridge_id") or "").strip()
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+        and str(row.get("installation_status") or "ready").strip().lower()
+        in ACTIVE_INSTALLATION_STATUSES
+    }
+
+
+@_bind_to_core
+async def _dashboard_items_with_persisted(
+    user: dict | None,
+    items: list[dict[str, Any]],
+    active_cartridges: set[str],
+    *,
+    persist: bool,
+) -> list[dict[str, Any]]:
+    if not persist:
+        return items
+    known_ids = {str(item.get("id")) for item in items}
+    for item in await _persisted_intelligence_items(user):
+        item_cartridge = str(item.get("cartridge") or "").strip()
+        if item_cartridge != "platform" and item_cartridge not in active_cartridges:
+            continue
+        if str(item.get("id")) not in known_ids:
+            items.append(item)
+            known_ids.add(str(item.get("id")))
+    return items
+
+
+@_bind_to_core
+def _dashboard_item_counts(
+    items: Iterable[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    by_severity = _severity_counts(items)
+    by_cartridge: dict[str, int] = {}
+    by_domain: dict[str, int] = {}
+    for item in items:
+        by_cartridge[item["cartridge"]] = by_cartridge.get(item["cartridge"], 0) + 1
+        by_domain[item["domain"]] = by_domain.get(item["domain"], 0) + 1
+    return by_severity, by_cartridge, by_domain
+
+
+@_bind_to_core
+async def _dashboard_open_decisions(user: dict | None, workspace_id: str) -> int:
+    pool = await auth.pool()
+    try:
+        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
+            return int(
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                    workspace_id,
+                )
+                or 0
+            )
+
+        return await _run_with_db_scope(pool, user or {}, _count_decisions)
+    except Exception:
+        return 0
+
+
+@_bind_to_core
+def _dashboard_modules_for_payload(
+    modules: list[ControlRoomModule],
+    sources: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+) -> list[ControlRoomModule]:
+    visible_module_ids = {
+        str(source.get("module_id") or "").strip()
+        for source in sources
+        if str(source.get("module_id") or "").strip()
+    } | {
+        str(item.get("module_id") or item.get("cartridge") or "").strip()
+        for item in items
+        if str(item.get("module_id") or item.get("cartridge") or "").strip()
+    }
+    if _show_known_non_ready_sources():
+        return modules
+    return [module for module in modules if module.visible_id in visible_module_ids]
+
+
+@_bind_to_core
+def _dashboard_cartridges_payload(
+    modules: list[ControlRoomModule],
+    installations: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    installation_by_cartridge = {
+        str(row.get("cartridge_id")): row
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+    }
+    cartridges = []
+    for module in modules:
+        row = installation_by_cartridge.get(module.cartridge, {})
+        module_items = [
+            item
+            for item in items
+            if item.get("module_id", item.get("cartridge")) == module.visible_id
+        ]
+        module_sources = [
+            source for source in sources if source.get("module_id") == module.visible_id
+        ]
+        source_status = _source_rollup_status(module_sources)
+        data_readiness = _module_data_readiness(module_sources)
+        installation_status = str(row.get("installation_status") or "ready")
+        cartridges.append(
+            {
+                "id": module.visible_id,
+                "connector_id": module.cartridge,
+                "connector_label": row.get("label") or module.cartridge,
+                "label": module.label,
+                "domain": module.domain,
+                "accent": module.accent,
+                "description": module.description,
+                "status": installation_status,
+                "current_step": row.get("current_step"),
+                "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
+                "operational": bool(module.operational),
+                "item_count": len(module_items),
+                "critical_count": sum(
+                    1 for item in module_items if item["severity"] == "critical"
+                ),
+                "source_status": source_status,
+                "data_readiness": data_readiness,
+                "operationally_ready": data_readiness == "ready",
+                "datasets": module_sources,
+            }
+        )
+    return cartridges
+
+
+@_bind_to_core
+def _dashboard_domains_payload(
+    modules: list[ControlRoomModule],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    domain_labels = list(DOMAIN_ORDER)
+    for module in modules:
+        if module.domain not in domain_labels:
+            domain_labels.append(module.domain)
+        for source in module.sources:
+            if source.domain not in domain_labels:
+                domain_labels.append(source.domain)
+    domains = [
+        _domain_payload(domain, modules, items, sources)
+        for domain in domain_labels
+    ]
+    if _show_known_non_ready_sources():
+        return domains
+    return [
+        domain
+        for domain in domains
+        if domain.get("modules") or int(domain.get("item_count") or 0) > 0
+    ]
+
+
+@_bind_to_core
+def _dashboard_threshold_summary(thresholds: list[dict[str, Any]], items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "active": sum(1 for row in thresholds if row.get("enabled", True)),
+        "total": len(thresholds),
+        "by_cartridge": {
+            cartridge_id: sum(
+                1
+                for row in thresholds
+                if row.get("cartridge_id") == cartridge_id
+            )
+            for cartridge_id in sorted(
+                {
+                    str(row.get("cartridge_id") or "").strip()
+                    for row in thresholds
+                    if str(row.get("cartridge_id") or "").strip()
+                }
+            )
+        },
+        "items_with_thresholds": sum(
+            1 for item in items if item.get("thresholds_applied")
+        ),
+    }
+
+
+@_bind_to_core
+def _dashboard_summary_payload(
+    *,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    cartridges: list[dict[str, Any]],
+    by_severity: dict[str, int],
+    by_cartridge: dict[str, int],
+    by_domain: dict[str, int],
+    open_decisions: int,
+    financial: dict[str, Any],
+    thresholds: list[dict[str, Any]],
+    lesson_summary: dict[str, Any],
+    alert_summary: dict[str, Any],
+) -> dict[str, Any]:
+    data_readiness = _readiness_counts(sources)
+    data_ready_modules = [
+        row for row in cartridges if row["active"] and row.get("operationally_ready")
+    ]
+    partial_modules = [
+        row
+        for row in cartridges
+        if row["active"] and row.get("data_readiness") == "partial"
+    ]
+    stub_modules = [
+        row
+        for row in cartridges
+        if row["active"] and row.get("data_readiness") == "stub"
+    ]
+    active_non_operational = [
+        row for row in cartridges if row["active"] and not row["operational"]
+    ]
+    return {
+        "total_items": len(items),
+        "total_anomalies": sum(1 for item in items if item["kind"] == "anomaly"),
+        "control_items": sum(1 for item in items if item["kind"] != "anomaly"),
+        "by_severity": by_severity,
+        "by_cartridge": by_cartridge,
+        "by_domain": by_domain,
+        "critical": by_severity.get("critical", 0),
+        "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
+        "open_decisions": open_decisions,
+        "active_connectors": len({row["connector_id"] for row in active_non_operational}),
+        "active_modules": len(active_non_operational),
+        "active_cartridges": len(active_non_operational),
+        "operational_cartridges": len(
+            [row for row in cartridges if row["active"] and row["operational"]]
+        ),
+        "source_states": {
+            status: sum(1 for source in sources if source["status"] == status)
+            for status in [
+                "ok",
+                "empty",
+                "missing",
+                "unavailable",
+                "invalid_schema",
+                "blocked",
+                "no_permission",
+            ]
+        },
+        "data_readiness": data_readiness,
+        "data_ready_sources": data_readiness.get("ready", 0),
+        "data_ready_modules": len(data_ready_modules),
+        "partial_modules": len(partial_modules),
+        "stub_modules": len(stub_modules),
+        "cycle_counts": _cycle_counts(items),
+        "financial": financial,
+        "thresholds": _dashboard_threshold_summary(thresholds, items),
+        "lessons": lesson_summary,
+        "alerts": alert_summary,
+    }
+
+
+@_bind_to_core
 async def dashboard(
     user: dict | None,
     *,
@@ -3599,144 +3858,34 @@ async def dashboard(
     installations = payload["installations"]
     financial = payload["financial"]
     thresholds = payload.get("thresholds") or []
-    active_cartridges = {
-        str(row.get("cartridge_id") or "").strip()
-        for row in installations
-        if str(row.get("cartridge_id") or "").strip()
-        and str(row.get("installation_status") or "ready").strip().lower()
-        in ACTIVE_INSTALLATION_STATUSES
-    }
+    active_cartridges = _dashboard_active_cartridges(installations)
     lesson_rows = await _load_lesson_rows(user, limit=200)
     lesson_summary = _lesson_insights(lesson_rows)
     items = _attach_lessons_to_items(items, lesson_rows)
     if persist:
         await _cleanup_obsolete_source_state_items(user, sources, items)
-    if persist:
-        known_ids = {str(item.get("id")) for item in items}
-        for item in await _persisted_intelligence_items(user):
-            item_cartridge = str(item.get("cartridge") or "").strip()
-            if item_cartridge != "platform" and item_cartridge not in active_cartridges:
-                continue
-            if str(item.get("id")) not in known_ids:
-                items.append(item)
-                known_ids.add(str(item.get("id")))
+    items = await _dashboard_items_with_persisted(
+        user,
+        items,
+        active_cartridges,
+        persist=persist,
+    )
     alerts_payload = _alert_payload(items)
     alerts = alerts_payload["alerts"]
     alert_summary = alerts_payload["summary"]
 
-    by_severity = _severity_counts(items)
-    by_cartridge: dict[str, int] = {}
-    by_domain: dict[str, int] = {}
-    for item in items:
-        by_cartridge[item["cartridge"]] = by_cartridge.get(item["cartridge"], 0) + 1
-        by_domain[item["domain"]] = by_domain.get(item["domain"], 0) + 1
+    by_severity, by_cartridge, by_domain = _dashboard_item_counts(items)
 
-    pool = await auth.pool()
     workspace_id = _workspace_id(user)
-    open_decisions = 0
-    try:
-        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
-            return int(
-                await conn.fetchval(
-                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-                    workspace_id,
-                )
-                or 0
-            )
-
-        open_decisions = await _run_with_db_scope(pool, user or {}, _count_decisions)
-    except Exception:
-        open_decisions = 0
-
-    installation_by_cartridge = {
-        str(row.get("cartridge_id")): row
-        for row in installations
-        if str(row.get("cartridge_id") or "").strip()
-    }
-    visible_module_ids = {
-        str(source.get("module_id") or "").strip()
-        for source in sources
-        if str(source.get("module_id") or "").strip()
-    } | {
-        str(item.get("module_id") or item.get("cartridge") or "").strip()
-        for item in items
-        if str(item.get("module_id") or item.get("cartridge") or "").strip()
-    }
-    modules_for_payload = (
-        modules
-        if _show_known_non_ready_sources()
-        else [module for module in modules if module.visible_id in visible_module_ids]
+    open_decisions = await _dashboard_open_decisions(user, workspace_id)
+    modules_for_payload = _dashboard_modules_for_payload(modules, sources, items)
+    cartridges = _dashboard_cartridges_payload(
+        modules_for_payload,
+        installations,
+        items,
+        sources,
     )
-    cartridges = []
-    for module in modules_for_payload:
-        row = installation_by_cartridge.get(module.cartridge, {})
-        cartridge_id = module.visible_id
-        module_items = [
-            item
-            for item in items
-            if item.get("module_id", item.get("cartridge")) == module.visible_id
-        ]
-        module_sources = [
-            source for source in sources if source.get("module_id") == module.visible_id
-        ]
-        source_status = _source_rollup_status(module_sources)
-        data_readiness = _module_data_readiness(module_sources)
-        installation_status = str(row.get("installation_status") or "ready")
-        cartridges.append(
-            {
-                "id": cartridge_id,
-                "connector_id": module.cartridge,
-                "connector_label": row.get("label") or module.cartridge,
-                "label": module.label,
-                "domain": module.domain,
-                "accent": module.accent,
-                "description": module.description,
-                "status": installation_status,
-                "current_step": row.get("current_step"),
-                "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
-                "operational": bool(module.operational),
-                "item_count": len(module_items),
-                "critical_count": sum(
-                    1 for item in module_items if item["severity"] == "critical"
-                ),
-                "source_status": source_status,
-                "data_readiness": data_readiness,
-                "operationally_ready": data_readiness == "ready",
-                "datasets": module_sources,
-            }
-        )
-
-    domain_labels = list(DOMAIN_ORDER)
-    for module in modules_for_payload:
-        if module.domain not in domain_labels:
-            domain_labels.append(module.domain)
-        for source in module.sources:
-            if source.domain not in domain_labels:
-                domain_labels.append(source.domain)
-    domains = [
-        _domain_payload(domain, modules_for_payload, items, sources)
-        for domain in domain_labels
-    ]
-    if not _show_known_non_ready_sources():
-        domains = [
-            domain
-            for domain in domains
-            if domain.get("modules") or int(domain.get("item_count") or 0) > 0
-        ]
-    data_readiness = _readiness_counts(sources)
-    data_ready_modules = [
-        row for row in cartridges if row["active"] and row.get("operationally_ready")
-    ]
-    partial_modules = [
-        row
-        for row in cartridges
-        if row["active"] and row.get("data_readiness") == "partial"
-    ]
-    stub_modules = [
-        row
-        for row in cartridges
-        if row["active"] and row.get("data_readiness") == "stub"
-    ]
+    domains = _dashboard_domains_payload(modules_for_payload, items, sources)
 
     return {
         "meta": {
@@ -3761,75 +3910,19 @@ async def dashboard(
         },
         "period": generated_at.strftime("%B %Y"),
         "omega_steps": OMEGA_STEPS,
-        "summary": {
-            "total_items": len(items),
-            "total_anomalies": sum(1 for item in items if item["kind"] == "anomaly"),
-            "control_items": sum(1 for item in items if item["kind"] != "anomaly"),
-            "by_severity": by_severity,
-            "by_cartridge": by_cartridge,
-            "by_domain": by_domain,
-            "critical": by_severity.get("critical", 0),
-            "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
-            "open_decisions": open_decisions,
-            "active_connectors": len(
-                {
-                    row["connector_id"]
-                    for row in cartridges
-                    if row["active"] and not row["operational"]
-                }
-            ),
-            "active_modules": len(
-                [row for row in cartridges if row["active"] and not row["operational"]]
-            ),
-            "active_cartridges": len(
-                [row for row in cartridges if row["active"] and not row["operational"]]
-            ),
-            "operational_cartridges": len(
-                [row for row in cartridges if row["active"] and row["operational"]]
-            ),
-            "source_states": {
-                status: sum(1 for source in sources if source["status"] == status)
-                for status in [
-                    "ok",
-                    "empty",
-                    "missing",
-                    "unavailable",
-                    "invalid_schema",
-                    "blocked",
-                    "no_permission",
-                ]
-            },
-            "data_readiness": data_readiness,
-            "data_ready_sources": data_readiness.get("ready", 0),
-            "data_ready_modules": len(data_ready_modules),
-            "partial_modules": len(partial_modules),
-            "stub_modules": len(stub_modules),
-            "cycle_counts": _cycle_counts(items),
-            "financial": financial,
-            "thresholds": {
-                "active": sum(1 for row in thresholds if row.get("enabled", True)),
-                "total": len(thresholds),
-                "by_cartridge": {
-                    cartridge_id: sum(
-                        1
-                        for row in thresholds
-                        if row.get("cartridge_id") == cartridge_id
-                    )
-                    for cartridge_id in sorted(
-                        {
-                            str(row.get("cartridge_id") or "").strip()
-                            for row in thresholds
-                            if str(row.get("cartridge_id") or "").strip()
-                        }
-                    )
-                },
-                "items_with_thresholds": sum(
-                    1 for item in items if item.get("thresholds_applied")
-                ),
-            },
-            "lessons": lesson_summary,
-            "alerts": alert_summary,
-        },
+        "summary": _dashboard_summary_payload(
+            items=items,
+            sources=sources,
+            cartridges=cartridges,
+            by_severity=by_severity,
+            by_cartridge=by_cartridge,
+            by_domain=by_domain,
+            open_decisions=open_decisions,
+            financial=financial,
+            thresholds=thresholds,
+            lesson_summary=lesson_summary,
+            alert_summary=alert_summary,
+        ),
         "domains": domains,
         "cartridges": cartridges,
         "sources": sources,
