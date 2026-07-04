@@ -7,6 +7,33 @@ from typing import Any
 from fastapi import HTTPException
 
 
+async def invoke_agent_payload(
+    *,
+    agent_id: str,
+    body: dict,
+    user: dict,
+    agents_service: Any,
+    agent_runtime: Any,
+    background_requested: Any,
+    start_background: Any,
+    background_response: Any,
+) -> dict:
+    visible = await agents_service.get_agent(agent_id, user_context=user)
+    if not visible:
+        raise HTTPException(404, "agent not found")
+    agent = await agent_runtime.load_agent(agent_id, user_context=user)
+    if not agent:
+        raise HTTPException(404, "agent not found")
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+    history = body.get("history") or []
+    if background_requested(body):
+        start_background(agent, message, history, user)
+        return background_response(agent)
+    return await agent_runtime.run(agent, message, history=history, user=user)
+
+
 def agent_invoke_background_requested(body: dict) -> bool:
     if not isinstance(body, dict):
         return False

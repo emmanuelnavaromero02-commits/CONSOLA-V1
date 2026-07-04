@@ -81,6 +81,7 @@ from app.domains.agentops.invocation import (
     agent_invoke_background_requested as _agent_invoke_background_requested_impl,
     agent_invoke_background_response as _agent_invoke_background_response_impl,
     agent_schedule_due as _agent_schedule_due_impl,
+    invoke_agent_payload as _invoke_agent_payload_impl,
     parse_agent_scheduled_fire_at as _parse_agent_scheduled_fire_at_impl,
 )
 from app.domains.agentops.streaming import (
@@ -4779,21 +4780,16 @@ async def api_agents_invoke(
     body: dict,
     user: dict = Depends(require_permission("agents.execute")),
 ):
-    visible = await _agents.get_agent(agent_id, user_context=user)
-    if not visible:
-        raise HTTPException(404, "agent not found")
-    agent = await _agent_runtime.load_agent(agent_id, user_context=user)
-    if not agent:
-        raise HTTPException(404, "agent not found")
-    message = (body.get("message") or "").strip()
-    if not message:
-        raise HTTPException(400, "message is required")
-    history = body.get("history") or []
-    if _agent_invoke_background_requested(body):
-        _start_agent_invoke_background(agent, message, history, user)
-        return _agent_invoke_background_response(agent)
-    result = await _agent_runtime.run(agent, message, history=history, user=user)
-    return result
+    return await _invoke_agent_payload_impl(
+        agent_id=agent_id,
+        body=body,
+        user=user,
+        agents_service=_agents,
+        agent_runtime=_agent_runtime,
+        background_requested=_agent_invoke_background_requested,
+        start_background=_start_agent_invoke_background,
+        background_response=_agent_invoke_background_response,
+    )
 
 
 _AGENT_RUNNER_TOKEN = os.environ.get("AGENT_RUNNER_TOKEN", "")
