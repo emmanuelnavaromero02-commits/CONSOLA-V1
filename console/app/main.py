@@ -198,6 +198,9 @@ from app.domains.data_platform.schema_payloads import (
     schema_payload_warnings as _schema_payload_warnings,
     schema_status as _schema_status,
 )
+from app.domains.data_platform.schema_requests import (
+    schema_response_payload as _schema_response_payload_impl,
+)
 from app.domains.data_platform.rag_payloads import (
     rag_empty_answer as _rag_empty_answer,
     rag_search_arguments as _rag_search_arguments,
@@ -2184,52 +2187,20 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
     _require_technical_source_access(user, source)
 
     async def load_schema() -> dict:
-        if _gold_dataset_from_source(source):
-            try:
-                return await _gold_schema_payload(source, user)
-            except Exception as exc:
-                error = _schema_error("gold", exc)
-                return _gold_schema_error_payload(source, error)
-
-        errors: list[dict] = []
-        try:
-            partitions = await _refinement_invoke(
-                "get_source_partitions",
-                {"source": source},
-                timeout=30,
-                user=user,
-            )
-        except Exception as exc:
-            error = _schema_error("partitions", exc)
-            errors.append(error)
-            partitions = _empty_partitions(source, "error", error["message"])
-
-        try:
-            preview = await _refinement_invoke(
-                "preview_source",
-                {"source": source, "limit": 5},
-                timeout=30,
-                user=user,
-            )
-        except Exception as exc:
-            error = _schema_error("preview", exc)
-            errors.append(error)
-            preview = _empty_preview(source, "error", error["message"])
-
-        errors.extend(_schema_payload_warnings("partitions", partitions))
-        errors.extend(_schema_payload_warnings("preview", preview))
-        if not _preview_has_columns(preview):
-            errors.append(
-                {
-                    "stage": "preview",
-                    "status_code": 200,
-                    "reason": "empty_schema",
-                    "message": "sin columnas inferidas",
-                    "detail": "La fuente no devolvió columnas inferidas desde el parquet.",
-                }
-            )
-
-        return _bronze_schema_payload(source, partitions, preview, errors)
+        return await _schema_response_payload_impl(
+            source=source,
+            user=user,
+            gold_dataset_from_source=_gold_dataset_from_source,
+            gold_schema_payload=_gold_schema_payload,
+            refinement_invoke=_refinement_invoke,
+            schema_error=_schema_error,
+            gold_schema_error_payload=_gold_schema_error_payload,
+            empty_partitions=_empty_partitions,
+            empty_preview=_empty_preview,
+            schema_payload_warnings=_schema_payload_warnings,
+            preview_has_columns=_preview_has_columns,
+            bronze_schema_payload=_bronze_schema_payload,
+        )
 
     return await _scoped_read_cache_get_or_set("schema", user, (source,), load_schema)
 

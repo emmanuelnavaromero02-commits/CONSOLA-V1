@@ -1,3 +1,4 @@
+import pytest
 from fastapi import HTTPException
 
 from app.domains.data_platform.catalog_payloads import (
@@ -22,10 +23,13 @@ from app.domains.data_platform.schema_payloads import (
     empty_preview,
     gold_schema_error_payload,
     normalize_dataset_detail,
+    preview_has_columns,
     schema_error,
     schema_message,
+    schema_payload_warnings,
     schema_status,
 )
+from app.domains.data_platform.schema_requests import schema_response_payload
 from app.domains.data_platform.rag_payloads import (
     rag_context_from_results,
     rag_empty_answer,
@@ -110,6 +114,62 @@ def test_schema_response_payloads_keep_safe_statuses():
     assert bronze_payload["source_kind"] == "bronze"
     assert bronze_payload["status"] == "error"
     assert bronze_payload["errors"] == [error]
+
+
+@pytest.mark.asyncio
+async def test_schema_response_payload_handles_missing_bronze_source():
+    async def refinement_invoke(_tool, _args, **_kwargs):
+        raise HTTPException(404, "No files found")
+
+    async def gold_schema_payload(_source, _user):
+        raise AssertionError("gold schema should not be called")
+
+    payload = await schema_response_payload(
+        source="raw/acme/User",
+        user=SCOPED_USER,
+        gold_dataset_from_source=lambda _source: None,
+        gold_schema_payload=gold_schema_payload,
+        refinement_invoke=refinement_invoke,
+        schema_error=schema_error,
+        gold_schema_error_payload=gold_schema_error_payload,
+        empty_partitions=empty_partitions,
+        empty_preview=empty_preview,
+        schema_payload_warnings=schema_payload_warnings,
+        preview_has_columns=preview_has_columns,
+        bronze_schema_payload=bronze_schema_payload,
+    )
+
+    assert payload["status"] == "error"
+    assert payload["message"] == "sin parquet materializado"
+    assert payload["preview"]["columns"] == []
+
+
+@pytest.mark.asyncio
+async def test_schema_response_payload_handles_missing_gold_source():
+    async def refinement_invoke(_tool, _args, **_kwargs):
+        raise AssertionError("bronze refinement should not be called")
+
+    async def gold_schema_payload(_source, _user):
+        raise HTTPException(404, "Dataset no materializado")
+
+    payload = await schema_response_payload(
+        source="gold/acme/employees",
+        user=SCOPED_USER,
+        gold_dataset_from_source=lambda _source: "employees",
+        gold_schema_payload=gold_schema_payload,
+        refinement_invoke=refinement_invoke,
+        schema_error=schema_error,
+        gold_schema_error_payload=gold_schema_error_payload,
+        empty_partitions=empty_partitions,
+        empty_preview=empty_preview,
+        schema_payload_warnings=schema_payload_warnings,
+        preview_has_columns=preview_has_columns,
+        bronze_schema_payload=bronze_schema_payload,
+    )
+
+    assert payload["source_kind"] == "gold"
+    assert payload["status"] == "error"
+    assert payload["message"] == "sin parquet materializado"
 
 
 def test_dataset_detail_columns_normalizes_multiple_shapes():
