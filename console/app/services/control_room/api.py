@@ -2380,16 +2380,18 @@ def _normalize_replicon_allocation(
 
 
 @_bind_to_core
-def _normalize_replicon_timesheet(
-    source: ControlRoomSource,
-    row: dict[str, Any],
-    thresholds: ThresholdMap | None = None,
-) -> dict[str, Any] | None:
+def _replicon_timesheet_ratio(row: dict[str, Any]) -> tuple[float, float, float] | None:
     total = _num(row.get("horas_total")) or _num(row.get("horas_totales")) or 0
     no_billable = _num(row.get("horas_no_facturables")) or 0
     if total <= 0:
         return None
-    ratio = no_billable / total
+    return total, no_billable, no_billable / total
+
+
+@_bind_to_core
+def _replicon_timesheet_threshold_ratios(
+    thresholds: ThresholdMap | None = None,
+) -> tuple[float, float]:
     warning_ratio = _threshold_value(
         thresholds,
         "replicon",
@@ -2406,12 +2408,55 @@ def _normalize_replicon_timesheet(
         "critical_value",
         0.55,
     )
+    return warning_ratio, critical_ratio
+
+
+@_bind_to_core
+def _replicon_timesheet_context(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "consultor": str(row.get("consultor") or "Sin consultor").strip(),
+        "proyecto": str(
+            row.get("proyecto") or row.get("project_name") or "Sin proyecto"
+        ).strip(),
+        "period_text": f" en {row.get('semana') or row.get('mes')}"
+        if (row.get("semana") or row.get("mes"))
+        else "",
+    }
+
+
+@_bind_to_core
+def _replicon_timesheet_threshold_ref(
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _threshold_ref(
+            thresholds,
+            "replicon",
+            "non_billable_ratio",
+            "horas_no_facturables_ratio",
+            warning_default=0.35,
+            critical_default=0.55,
+            currency="PCT",
+        )
+    ]
+
+
+@_bind_to_core
+def _normalize_replicon_timesheet(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
+    ratio_tuple = _replicon_timesheet_ratio(row)
+    if ratio_tuple is None:
+        return None
+    _total, _no_billable, ratio = ratio_tuple
+    warning_ratio, critical_ratio = _replicon_timesheet_threshold_ratios(thresholds)
     if ratio < warning_ratio:
         return None
-    consultor = str(row.get("consultor") or "Sin consultor").strip()
-    proyecto = str(
-        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
-    ).strip()
+    context = _replicon_timesheet_context(row)
+    consultor = context["consultor"]
+    proyecto = context["proyecto"]
     threshold_state = "critical" if ratio >= critical_ratio else "warning"
     severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(
@@ -2421,12 +2466,10 @@ def _normalize_replicon_timesheet(
         f"{consultor}:{proyecto}",
         consultor,
     )
-    period = row.get("semana") or row.get("mes")
-    period_text = f" en {period}" if period else ""
     item.update(
         {
             "title": "Horas no facturables fuera de rango",
-            "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{period_text}.",
+            "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{context['period_text']}.",
             "recommendation": "Validar causa con PM/RM, reclasificar si procede y ajustar forecast de margen.",
             "root_cause": "Registro de tiempo no facturable alto frente al total reportado.",
             "impact": "Puede erosionar margen y ocultar demanda no planificada.",
@@ -2435,17 +2478,7 @@ def _normalize_replicon_timesheet(
     )
     return _attach_thresholds(
         item,
-        [
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "non_billable_ratio",
-                "horas_no_facturables_ratio",
-                warning_default=0.35,
-                critical_default=0.55,
-                currency="PCT",
-            )
-        ],
+        _replicon_timesheet_threshold_ref(thresholds),
         threshold_state,
     )
 
