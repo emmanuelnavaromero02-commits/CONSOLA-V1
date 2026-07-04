@@ -4347,6 +4347,44 @@ async def _record_sync_now_start(
     return steps
 
 
+def _sync_extract_attempt_components(
+    extract_attempt: dict[str, Any],
+) -> tuple[dict[str, Any], int, list[Any], list[Any]]:
+    result = extract_attempt["result"]
+    attempts = int(extract_attempt["attempts"])
+    extract_state = _sync_extract_all_result_state(result)
+    return (
+        result,
+        attempts,
+        list(extract_state["triggered_entities"]),
+        list(extract_state["errors"]),
+    )
+
+
+async def _sync_now_status_or_diagnostics(
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    user: dict,
+    upsert_debug: dict[str, Any],
+) -> dict[str, Any]:
+    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+    if not row:
+        await _raise_missing_sync_run_diagnostics(
+            run_id=run_id,
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            user=user,
+            upsert_debug=upsert_debug,
+        )
+    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+
+
 async def _continue_sync_now_after_reservation(
     *,
     cartridge: str,
@@ -4379,11 +4417,9 @@ async def _continue_sync_now_after_reservation(
         run_id=run_id,
         user=user,
     )
-    result = extract_attempt["result"]
-    attempts = extract_attempt["attempts"]
-    extract_state = _sync_extract_all_result_state(result)
-    triggered_entities = extract_state["triggered_entities"]
-    errors = extract_state["errors"]
+    result, attempts, triggered_entities, errors = _sync_extract_attempt_components(
+        extract_attempt
+    )
 
     steps, upsert_debug = await _persist_sync_extract_trigger_result(
         run_id=run_id,
@@ -4400,18 +4436,15 @@ async def _continue_sync_now_after_reservation(
         dataset_seed=dataset_seed,
         user=user,
     )
-    row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
-    if not row:
-        await _raise_missing_sync_run_diagnostics(
-            run_id=run_id,
-            cartridge=cartridge,
-            mode=mode,
-            target=target,
-            conn_id=conn_id,
-            user=user,
-            upsert_debug=upsert_debug,
-        )
-    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+    return await _sync_now_status_or_diagnostics(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        user=user,
+        upsert_debug=upsert_debug,
+    )
 
 
 async def _seed_sync_packaged_datasets_or_response(
@@ -4521,7 +4554,7 @@ async def _persist_sync_extract_trigger_result(
     conn_id: str | None,
     request_id: str | None,
     steps: list[dict[str, Any]],
-    triggered_entities: int,
+    triggered_entities: list[Any],
     errors: list[Any],
     attempts: int,
     result: dict[str, Any],
