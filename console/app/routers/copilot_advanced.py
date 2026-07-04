@@ -783,13 +783,37 @@ async def ask_with_context_endpoint(
     The page_context is injected into the system prompt so the LLM
     knows which dashboard / item / row the question is about.
     """
+    question, page_context = _ask_request_payload(body)
+    prompt_context = await _ask_prompt_context(page_context, user)
+    base_prompt = copilot_service.SYSTEM_PROMPT + _render_page_context(prompt_context)
+    uid = _user_id(user)
+    ws = _workspace_id(user)
+    final_prompt = await _ask_final_prompt(
+        user=user,
+        user_id=uid,
+        workspace_id=ws,
+        base_prompt=base_prompt,
+        intent_hint=_ask_intent_hint(page_context, question),
+    )
+    answer = await _ask_llm_answer(final_prompt, question, user)
+    return {
+        "answer": (answer or "").strip(),
+        "context_used": page_context,
+    }
+
+
+def _ask_request_payload(body: dict | None) -> tuple[str, dict[str, Any]]:
     question = (body or {}).get("question") or (body or {}).get("text")
     if not question or not str(question).strip():
         raise HTTPException(400, "question is required")
     page_context = _sanitise_page_context((body or {}).get("page_context"))
+    return str(question), page_context
 
-    uid = _user_id(user)
-    ws  = _workspace_id(user)
+
+async def _ask_prompt_context(
+    page_context: dict[str, Any],
+    user: dict[str, Any],
+) -> dict[str, Any]:
     prompt_context = dict(page_context)
     live_context = await _control_room_live_context_for_prompt(page_context, user)
     if live_context:
@@ -797,36 +821,54 @@ async def ask_with_context_endpoint(
     console_context = await copilot_context_service.prompt_context_for_user(user)
     if console_context:
         prompt_context["live_console_snapshot"] = console_context
-    base_prompt = copilot_service.SYSTEM_PROMPT + _render_page_context(prompt_context)
+    return prompt_context
 
+
+def _ask_intent_hint(page_context: dict[str, Any], question: str) -> str:
     intent_hint = page_context.get("route") or page_context.get("title") or ""
     if intent_hint:
-        intent_hint = f"{intent_hint} {question}"
-    else:
-        intent_hint = str(question)
+        return f"{intent_hint} {question}"
+    return str(question)
 
+
+async def _ask_final_prompt(
+    *,
+    user: dict[str, Any],
+    user_id: str,
+    workspace_id: str,
+    base_prompt: str,
+    intent_hint: str,
+) -> str:
     try:
         with_memory = await memory_service.build_system_prompt_with_memory(
-            uid, base_prompt, user_context=user,
+            user_id,
+            base_prompt,
+            user_context=user,
         )
     except Exception:
         logger.warning("memory injection failed; continuing", exc_info=True)
         with_memory = base_prompt
 
     try:
-        final_prompt = await lessons_service.build_system_prompt_with_lessons(
-            user_id=uid,
-            workspace_id=ws,
+        return await lessons_service.build_system_prompt_with_lessons(
+            user_id=user_id,
+            workspace_id=workspace_id,
             base_prompt=with_memory,
             intent_hint=intent_hint,
         )
     except Exception:
         logger.warning("lessons injection failed; continuing", exc_info=True)
-        final_prompt = with_memory
+        return with_memory
 
+
+async def _ask_llm_answer(
+    final_prompt: str,
+    question: str,
+    user: dict[str, Any],
+) -> str:
     messages = [{"role": "user", "content": str(question)[:_QUESTION_MAX_LEN]}]
     try:
-        answer = await _llm_text_call(final_prompt, messages, user_context=user)
+        return await _llm_text_call(final_prompt, messages, user_context=user)
     except RuntimeError as exc:
         # ``_llm_text_call`` raises ``RuntimeError("llm_call_timeout")``
         # or ``RuntimeError("llm_call_failed")``. Map both to sanitised
@@ -839,7 +881,3 @@ async def ask_with_context_endpoint(
     except Exception as exc:
         logger.warning("ask-with-context unexpected failure: %.200s", exc)
         raise HTTPException(502, "llm call failed")
-    return {
-        "answer": (answer or "").strip(),
-        "context_used": page_context,
-    }
