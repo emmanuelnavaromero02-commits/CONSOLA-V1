@@ -441,7 +441,6 @@ from app.domains.pipeline.extract_config import (
     apply_user_scope_to_dag_conf as _apply_user_scope_to_dag_conf_impl,
     build_dag_extract_conf as _build_dag_extract_conf_impl,
     build_mcp_extract_args as _build_mcp_extract_args_impl,
-    connection_id_from_vault_payload as _connection_id_from_vault_payload_impl,
     dag_extract_dag_id_from_metadata as _dag_extract_dag_id_from_metadata_impl,
     dag_run_id_from_idempotency_key as _dag_run_id_from_idempotency_key_impl,
     entity_declared_in_static_catalog as _entity_declared_in_static_catalog_impl,
@@ -4116,8 +4115,35 @@ def _normalize_pipeline_conn_id(conn_id: object | None) -> str | None:
     return _normalize_pipeline_conn_id_impl(conn_id)
 
 
-def _connection_id_from_vault_payload(payload: Any) -> str | None:
-    return _connection_id_from_vault_payload_impl(payload)
+async def _load_pipeline_vault_payload(
+    cartridge_id: str, current_user: dict | None
+) -> Any:
+    async with httpx.AsyncClient(
+        headers=_vault_headers_for_user(current_user or {}), timeout=5
+    ) as c:
+        r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge_id, safe='')}")
+    if r.status_code not in (404, 204):
+        r.raise_for_status()
+        return r.json()
+    return None
+
+
+async def _load_pipeline_entity_config_conn_id(cartridge_id: str) -> Any:
+    pool = await _get_db_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT connection_id
+          FROM entity_config
+         WHERE cartridge_id = $1
+           AND enabled IS TRUE
+           AND NULLIF(BTRIM(COALESCE(connection_id, '')), '') IS NOT NULL
+         GROUP BY connection_id
+         ORDER BY COUNT(*) DESC, connection_id ASC
+        LIMIT 1
+        """,
+        cartridge_id,
+    )
+    return row["connection_id"] if row else None
 
 
 async def _resolve_pipeline_sync_conn_id(
@@ -4125,43 +4151,12 @@ async def _resolve_pipeline_sync_conn_id(
     requested_conn_id: object | None,
     user: dict | None,
 ) -> str | None:
-    async def _load_vault_payload(
-        cartridge_id: str, current_user: dict | None
-    ) -> Any:
-        async with httpx.AsyncClient(
-            headers=_vault_headers_for_user(current_user or {}), timeout=5
-        ) as c:
-            r = await c.get(
-                f"{_VAULT_URL}/connections/{quote(cartridge_id, safe='')}"
-            )
-        if r.status_code not in (404, 204):
-            r.raise_for_status()
-            return r.json()
-        return None
-
-    async def _load_entity_config_conn_id(cartridge_id: str) -> Any:
-        pool = await _get_db_pool()
-        row = await pool.fetchrow(
-            """
-            SELECT connection_id
-              FROM entity_config
-             WHERE cartridge_id = $1
-               AND enabled IS TRUE
-               AND NULLIF(BTRIM(COALESCE(connection_id, '')), '') IS NOT NULL
-             GROUP BY connection_id
-             ORDER BY COUNT(*) DESC, connection_id ASC
-            LIMIT 1
-            """,
-            cartridge_id,
-        )
-        return row["connection_id"] if row else None
-
     return await _resolve_pipeline_sync_conn_id_impl(
         cartridge,
         requested_conn_id,
         user,
-        vault_payload_loader=_load_vault_payload,
-        entity_config_conn_loader=_load_entity_config_conn_id,
+        vault_payload_loader=_load_pipeline_vault_payload,
+        entity_config_conn_loader=_load_pipeline_entity_config_conn_id,
         logger_debug=logger.debug,
     )
 
