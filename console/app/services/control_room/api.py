@@ -2947,6 +2947,102 @@ def _normalize_s4_revenue(
 
 
 @_bind_to_core
+def _s4_backlog_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "age_warning": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "oldest_age_days",
+            "warning_value",
+            45,
+        ),
+        "age_critical": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "oldest_age_days",
+            "critical_value",
+            90,
+        ),
+        "value_warning": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "open_value",
+            "warning_value",
+            50000,
+        ),
+        "value_critical": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "open_value",
+            "critical_value",
+            250000,
+        ),
+    }
+
+
+@_bind_to_core
+def _s4_backlog_state(
+    age: float,
+    open_value: float,
+    threshold_values: dict[str, float],
+) -> dict[str, Any] | None:
+    age_breached = age >= threshold_values["age_warning"]
+    value_breached = open_value >= threshold_values["value_warning"]
+    if not age_breached and not value_breached:
+        return None
+    threshold_state = (
+        "critical"
+        if age >= threshold_values["age_critical"]
+        or open_value >= threshold_values["value_critical"]
+        else "warning"
+    )
+    return {
+        "age_breached": age_breached,
+        "value_breached": value_breached,
+        "threshold_state": threshold_state,
+        "severity": "critical" if threshold_state == "critical" else "high",
+    }
+
+
+@_bind_to_core
+def _s4_backlog_threshold_refs(
+    state: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    refs = []
+    if state["age_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "aged_sales_backlog",
+                "oldest_age_days",
+                warning_default=45,
+                critical_default=90,
+                currency="DAYS",
+            )
+        )
+    if state["value_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "aged_sales_backlog",
+                "open_value",
+                warning_default=50000,
+                critical_default=250000,
+            )
+        )
+    return refs
+
+
+@_bind_to_core
 def _normalize_s4_backlog(
     source: ControlRoomSource,
     row: dict[str, Any],
@@ -2954,50 +3050,13 @@ def _normalize_s4_backlog(
 ) -> dict[str, Any] | None:
     age = _num(row.get("oldest_age_days")) or 0
     open_value = _num(row.get("open_value")) or 0
-    age_warning = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "oldest_age_days",
-        "warning_value",
-        45,
-    )
-    age_critical = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "oldest_age_days",
-        "critical_value",
-        90,
-    )
-    value_warning = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "open_value",
-        "warning_value",
-        50000,
-    )
-    value_critical = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "open_value",
-        "critical_value",
-        250000,
-    )
-    age_breached = age >= age_warning
-    value_breached = open_value >= value_warning
-    if not age_breached and not value_breached:
+    state = _s4_backlog_state(age, open_value, _s4_backlog_thresholds(thresholds))
+    if state is None:
         return None
     customer = str(row.get("customer_code") or "Sin cliente").strip()
-    threshold_state = (
-        "critical" if age >= age_critical or open_value >= value_critical else "warning"
-    )
-    severity = "critical" if threshold_state == "critical" else "high"
     item = _base_item(
         source,
-        {**row, "severity": severity},
+        {**row, "severity": state["severity"]},
         "aged_sales_backlog",
         customer,
         customer,
@@ -3012,31 +3071,11 @@ def _normalize_s4_backlog(
             "details": {**item["details"], **row},
         }
     )
-    refs = []
-    if age_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "sap_s4hana",
-                "aged_sales_backlog",
-                "oldest_age_days",
-                warning_default=45,
-                critical_default=90,
-                currency="DAYS",
-            )
-        )
-    if value_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "sap_s4hana",
-                "aged_sales_backlog",
-                "open_value",
-                warning_default=50000,
-                critical_default=250000,
-            )
-        )
-    return _attach_thresholds(item, refs, threshold_state)
+    return _attach_thresholds(
+        item,
+        _s4_backlog_threshold_refs(state, thresholds),
+        state["threshold_state"],
+    )
 
 
 @_bind_to_core
