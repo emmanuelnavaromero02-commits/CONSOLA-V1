@@ -2513,8 +2513,7 @@ def _sf_talent_math_provenance(
 
 
 @_bind_to_core
-def _normalize_successfactors_talent_signal(
-    source: ControlRoomSource,
+def _sf_talent_signal_context(
     row: dict[str, Any],
 ) -> dict[str, Any] | None:
     signal_id = str(row.get("signal_id") or "").strip()
@@ -2544,6 +2543,192 @@ def _normalize_successfactors_talent_signal(
         source_row_count=source_row_count,
         affected_count=affected_count,
     )
+    return {
+        "signal_id": signal_id,
+        "signal_type": signal_type,
+        "title": title,
+        "recommendation": recommendation,
+        "affected_count": affected_count,
+        "generated_at": generated_at,
+        "materialized_at": materialized_at,
+        "source_row_count": source_row_count,
+        "readiness_status": readiness_status,
+        "blockers": blockers,
+        "confidence": confidence,
+        "deviation_pct": 1.0 if affected_count > 0 else 0.0,
+        "severity": _severity(row.get("severity")),
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_priority(context: dict[str, Any], source: ControlRoomSource) -> dict[str, Any]:
+    severity = context["severity"]
+    affected_count = context["affected_count"]
+    priority_score = min(
+        100,
+        SEVERITY_WEIGHT[severity] * 18 + min(24, affected_count // 25) + 20,
+    )
+    return {
+        "score": priority_score,
+        "band": "critical"
+        if priority_score >= 90
+        else "high"
+        if priority_score >= 75
+        else "medium"
+        if priority_score >= 55
+        else "low",
+        "drivers": [
+            {
+                "label": "Severidad",
+                "value": severity,
+                "points": SEVERITY_WEIGHT[severity] * 18,
+            },
+            {
+                "label": "Afectados",
+                "value": affected_count,
+                "points": min(24, affected_count // 25),
+            },
+            {
+                "label": "Fuente Gold",
+                "value": source.dataset,
+                "points": 20,
+            },
+        ],
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_root_cause(readiness_status: str) -> str:
+    if readiness_status in {"ready", "gold_ready", "materialized", "partial"}:
+        return "Senal Gold de WisdomBit Talento generada desde SuccessFactors."
+    return "Datos Talent insuficientes para explicar la senal con evidencia completa."
+
+
+@_bind_to_core
+def _sf_talent_signal_impact(affected_count: int) -> str:
+    if affected_count:
+        return f"{affected_count} registros de Talento requieren revision supervisada."
+    return "Talento requiere validacion de metadata/materializacion antes de decidir."
+
+
+@_bind_to_core
+def _sf_talent_signal_intelligence(
+    *,
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    context: dict[str, Any],
+    priority_score: int,
+) -> dict[str, Any]:
+    readiness_status = context["readiness_status"]
+    blockers = context["blockers"]
+    confidence = context["confidence"]
+    affected_count = context["affected_count"]
+    source_row_count = context["source_row_count"]
+    recommendation = context["recommendation"]
+    signal_id = context["signal_id"]
+    signal_type = context["signal_type"]
+    title = context["title"]
+    generated_at = context["generated_at"]
+    materialized_at = context["materialized_at"]
+    blocked = readiness_status in {"blocked", "insufficient_data"}
+    return {
+        "baseline": {
+            "method": "gold_readiness_count_v1",
+            "actual_value": affected_count,
+            "expected_value": 0,
+            "sample_count": source_row_count,
+            "confidence": confidence,
+            "readiness_status": readiness_status,
+        },
+        "signal": {
+            "signal_id": signal_id,
+            "metric_name": signal_id,
+            "signal_type": signal_type,
+            "signal_subtype": "recommendation_only",
+            "source_system": "sap_successfactors",
+            "source_dataset": source.dataset,
+            "severity": context["severity"],
+            "summary": title,
+            "affected_count": affected_count,
+            "recommendation": recommendation,
+            "generated_at": generated_at,
+            "deviation_pct": context["deviation_pct"],
+            "confidence": confidence,
+            "sample_count": source_row_count,
+            "readiness_status": readiness_status,
+            "recommendation_only": True,
+        },
+        "evidence_pack": _sf_talent_signal_evidence_pack(
+            source=source,
+            signal_id=signal_id,
+            title=title,
+            affected_count=affected_count,
+            source_row_count=source_row_count,
+            readiness_status=readiness_status,
+            generated_at=generated_at,
+            materialized_at=materialized_at,
+            blockers=blockers,
+        ),
+        "hypotheses": [
+            {
+                "title": (
+                    "Datos Talent listos para revision supervisada"
+                    if not blocked
+                    else "Evidencia Talent insuficiente"
+                ),
+                "rationale": (
+                    f"La senal se basa en {source_row_count} fila(s) Gold internas; "
+                    "no incluye PII, compensacion ni write-back."
+                ),
+                "confidence": confidence,
+            }
+        ],
+        "options": [
+            {
+                "option_id": "review_talent_signal",
+                "label": "Remediar datos Talent" if blocked else "Revisar senal de Talento",
+                "action_kind": "prepare_successfactors_review",
+                "impact_expected": affected_count,
+                "time_cost": 1,
+                "risk": 1,
+                "score": priority_score,
+                "score_explanation": (
+                    "; ".join(blockers) or "Completar metadata y materializacion Talent."
+                    if blocked
+                    else recommendation
+                ),
+                "selected": True,
+                "recommendation_only": True,
+            },
+            {
+                "option_id": "monitor_talent_signal",
+                "label": "Monitorear sin cambio inmediato",
+                "action_kind": "monitor_only",
+                "impact_expected": 0,
+                "time_cost": 0.5,
+                "risk": 2,
+                "score": max(0, priority_score - 20),
+                "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
+                "recommendation_only": True,
+            },
+        ],
+    }
+
+
+@_bind_to_core
+def _normalize_successfactors_talent_signal(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    context = _sf_talent_signal_context(row)
+    if not context:
+        return None
+    signal_id = context["signal_id"]
+    generated_at = context["generated_at"]
+    readiness_status = context["readiness_status"]
+    affected_count = context["affected_count"]
+    source_row_count = context["source_row_count"]
+    confidence = context["confidence"]
     math_provenance = _sf_talent_math_provenance(
         signal_id=signal_id,
         affected_count=affected_count,
@@ -2551,41 +2736,29 @@ def _normalize_successfactors_talent_signal(
         readiness_status=readiness_status,
         confidence=confidence,
     )
-    deviation_pct = 1.0 if affected_count > 0 else 0.0
-    severity = _severity(row.get("severity"))
+    priority = _sf_talent_signal_priority(context, source)
+    priority_score = priority["score"]
     item = _base_item(
         source,
-        {"severity": severity, "generated_at": generated_at},
-        signal_type,
+        {"severity": context["severity"], "generated_at": generated_at},
+        context["signal_type"],
         signal_id,
-        title,
-    )
-    priority_score = min(
-        100,
-        SEVERITY_WEIGHT[severity] * 18 + min(24, affected_count // 25) + 20,
+        context["title"],
     )
     item.update(
         {
-            "title": title,
-            "description": recommendation,
-            "recommendation": recommendation,
-            "root_cause": (
-                "Senal Gold de WisdomBit Talento generada desde SuccessFactors."
-                if readiness_status in {"ready", "gold_ready", "materialized", "partial"}
-                else "Datos Talent insuficientes para explicar la senal con evidencia completa."
-            ),
-            "impact": (
-                f"{affected_count} registros de Talento requieren revision supervisada."
-                if affected_count
-                else "Talento requiere validacion de metadata/materializacion antes de decidir."
-            ),
+            "title": context["title"],
+            "description": context["recommendation"],
+            "recommendation": context["recommendation"],
+            "root_cause": _sf_talent_signal_root_cause(readiness_status),
+            "impact": _sf_talent_signal_impact(affected_count),
             "details": {
                 **_sf_talent_signal_details(row),
                 "source_dataset": source.dataset,
                 "source_row_count": source_row_count,
-                "materialized_at": materialized_at,
+                "materialized_at": context["materialized_at"],
                 "readiness_status": readiness_status,
-                "blockers": blockers,
+                "blockers": context["blockers"],
                 "recommendation_only": True,
             },
             "detected_at": generated_at,
@@ -2599,119 +2772,13 @@ def _normalize_successfactors_talent_signal(
             "control_origin": "sap_successfactors_talent_signal",
             "advisory": True,
             "recommendation_only": True,
-            "priority": {
-                "score": priority_score,
-                "band": "critical"
-                if priority_score >= 90
-                else "high"
-                if priority_score >= 75
-                else "medium"
-                if priority_score >= 55
-                else "low",
-                "drivers": [
-                    {
-                        "label": "Severidad",
-                        "value": severity,
-                        "points": SEVERITY_WEIGHT[severity] * 18,
-                    },
-                    {
-                        "label": "Afectados",
-                        "value": affected_count,
-                        "points": min(24, affected_count // 25),
-                    },
-                    {
-                        "label": "Fuente Gold",
-                        "value": source.dataset,
-                        "points": 20,
-                    },
-                ],
-            },
-            "intelligence": {
-                "baseline": {
-                    "method": "gold_readiness_count_v1",
-                    "actual_value": affected_count,
-                    "expected_value": 0,
-                    "sample_count": source_row_count,
-                    "confidence": confidence,
-                    "readiness_status": readiness_status,
-                },
-                "signal": {
-                    "signal_id": signal_id,
-                    "metric_name": signal_id,
-                    "signal_type": signal_type,
-                    "signal_subtype": "recommendation_only",
-                    "source_system": "sap_successfactors",
-                    "source_dataset": source.dataset,
-                    "severity": severity,
-                    "summary": title,
-                    "affected_count": affected_count,
-                    "recommendation": recommendation,
-                    "generated_at": generated_at,
-                    "deviation_pct": deviation_pct,
-                    "confidence": confidence,
-                    "sample_count": source_row_count,
-                    "readiness_status": readiness_status,
-                    "recommendation_only": True,
-                },
-                "evidence_pack": _sf_talent_signal_evidence_pack(
-                    source=source,
-                    signal_id=signal_id,
-                    title=title,
-                    affected_count=affected_count,
-                    source_row_count=source_row_count,
-                    readiness_status=readiness_status,
-                    generated_at=generated_at,
-                    materialized_at=materialized_at,
-                    blockers=blockers,
-                ),
-                "hypotheses": [
-                    {
-                        "title": (
-                            "Datos Talent listos para revision supervisada"
-                            if readiness_status in {"ready", "gold_ready", "materialized", "partial"}
-                            else "Evidencia Talent insuficiente"
-                        ),
-                        "rationale": (
-                            f"La senal se basa en {source_row_count} fila(s) Gold internas; "
-                            "no incluye PII, compensacion ni write-back."
-                        ),
-                        "confidence": confidence,
-                    }
-                ],
-                "options": [
-                    {
-                        "option_id": "review_talent_signal",
-                        "label": (
-                            "Revisar senal de Talento"
-                            if readiness_status not in {"blocked", "insufficient_data"}
-                            else "Remediar datos Talent"
-                        ),
-                        "action_kind": "prepare_successfactors_review",
-                        "impact_expected": affected_count,
-                        "time_cost": 1,
-                        "risk": 1,
-                        "score": priority_score,
-                        "score_explanation": (
-                            recommendation
-                            if readiness_status not in {"blocked", "insufficient_data"}
-                            else "; ".join(blockers) or "Completar metadata y materializacion Talent."
-                        ),
-                        "selected": True,
-                        "recommendation_only": True,
-                    },
-                    {
-                        "option_id": "monitor_talent_signal",
-                        "label": "Monitorear sin cambio inmediato",
-                        "action_kind": "monitor_only",
-                        "impact_expected": 0,
-                        "time_cost": 0.5,
-                        "risk": 2,
-                        "score": max(0, priority_score - 20),
-                        "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
-                        "recommendation_only": True,
-                    },
-                ],
-            },
+            "priority": priority,
+            "intelligence": _sf_talent_signal_intelligence(
+                source=source,
+                row=row,
+                context=context,
+                priority_score=priority_score,
+            ),
             "monte_carlo": math_provenance["monte_carlo"],
             "bayesian_calibration": math_provenance["bayesian_calibration"],
             "math_provenance": math_provenance,
