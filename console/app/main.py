@@ -3459,6 +3459,36 @@ def _pipeline_extract_result_dag_run_id(
     return result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
 
 
+async def _pipeline_extract_success_response(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    requested_dag_run_id: str | None,
+    conf: dict,
+    metadata: dict,
+    result: dict,
+) -> dict:
+    dag_run_id = _pipeline_extract_result_dag_run_id(result, requested_dag_run_id)
+    await _record_pipeline_extract_success(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        conf=conf,
+        metadata=metadata,
+        result=result,
+    )
+    return _pipeline_extract_triggered_response(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        result=result,
+        conf=conf,
+    )
+
+
 async def _api_pipeline_extract_dag_based(
     *,
     cartridge: str,
@@ -3502,23 +3532,14 @@ async def _api_pipeline_extract_dag_based(
         slot=slot,
         user=user,
     )
-    dag_run_id = _pipeline_extract_result_dag_run_id(result, requested_dag_run_id)
-    await _record_pipeline_extract_success(
+    return await _pipeline_extract_success_response(
         cartridge=cartridge,
         entity=entity,
         dag_id=dag_id,
-        dag_run_id=dag_run_id,
+        requested_dag_run_id=requested_dag_run_id,
         conf=conf,
         metadata=metadata,
         result=result,
-    )
-    return _pipeline_extract_triggered_response(
-        cartridge=cartridge,
-        entity=entity,
-        dag_id=dag_id,
-        dag_run_id=dag_run_id,
-        result=result,
-        conf=conf,
     )
 
 
