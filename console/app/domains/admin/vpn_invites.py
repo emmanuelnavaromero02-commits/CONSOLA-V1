@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from fastapi import HTTPException
+
 
 async def create_vpn_config_link(
     user_id: int,
@@ -75,6 +77,41 @@ async def issue_vpn_for_user(
         "email_sent": sent,
         "wg_client_id": result["wg_client_id"],
     }
+
+
+async def reissue_vpn_for_user_payload(
+    *,
+    user_id: int,
+    admin_user: dict[str, Any],
+    request_ip: str | None,
+    user_agent: str | None,
+    auth_service: Any,
+    audit_service: Any,
+    assert_can_manage_target_user: Callable[[dict[str, Any], int], Awaitable[None]],
+    issue_vpn_for_user: Callable[[int, str, str | None], Awaitable[dict]],
+) -> dict:
+    target_user = await auth_service.get_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(404, "user not found")
+
+    await assert_can_manage_target_user(admin_user, user_id)
+    result = await issue_vpn_for_user(
+        user_id, target_user["email"], target_user.get("name")
+    )
+    await audit_service.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "vpn.reissued",
+        "user",
+        str(user_id),
+        ip=request_ip,
+        user_agent=user_agent,
+        metadata={
+            "issued": bool(result.get("issued")),
+            "email_sent": result.get("email_sent"),
+        },
+    )
+    return {"reissued": result.get("issued", False), **result}
 
 
 async def rollback_failed_invite(

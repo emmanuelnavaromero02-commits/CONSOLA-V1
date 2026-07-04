@@ -108,6 +108,7 @@ from app.domains.admin.users_scope import (
 from app.domains.admin.vpn_invites import (
     create_vpn_config_link as _create_vpn_config_link_impl,
     issue_vpn_for_user as _issue_vpn_for_user_impl,
+    reissue_vpn_for_user_payload as _reissue_vpn_for_user_payload_impl,
     rollback_failed_invite as _rollback_failed_invite_impl,
 )
 from app.domains.admin.user_mutations import (
@@ -6384,27 +6385,16 @@ async def api_admin_users_vpn_reissue(
     request: Request,
     admin_user: dict = Depends(require_permission("iam.users.write")),
 ):
-    target_user = await _auth.get_user_by_id(user_id)
-    if not target_user:
-        raise HTTPException(404, "user not found")
-    await _assert_can_manage_target_user(admin_user, user_id)
-    res = await _issue_vpn_for_user(
-        user_id, target_user["email"], target_user.get("name")
-    )
-    await _audit.record_event(
-        admin_user.get("id"),
-        admin_user.get("email"),
-        "vpn.reissued",
-        "user",
-        str(user_id),
-        ip=_client_ip(request),
+    return await _reissue_vpn_for_user_payload_impl(
+        user_id=user_id,
+        admin_user=admin_user,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "issued": bool(res.get("issued")),
-            "email_sent": res.get("email_sent"),
-        },
+        auth_service=_auth,
+        audit_service=_audit,
+        assert_can_manage_target_user=_assert_can_manage_target_user,
+        issue_vpn_for_user=_issue_vpn_for_user,
     )
-    return {"reissued": res.get("issued", False), **res}
 
 
 @app.post(
