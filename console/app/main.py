@@ -3165,89 +3165,209 @@ async def api_pipeline_extract(
     body = body or {}
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if (metadata.get("pattern") or "").lower() == "dag-based":
-        dag_id = _dag_extract_dag_id_from_metadata_impl(
+        return await _api_pipeline_extract_dag_based(
             cartridge=cartridge,
             entity=entity,
+            body=body,
             metadata=metadata,
-            static_catalog_contains=_entity_declared_in_static_catalog,
-        )
-
-        extract_conf = _build_dag_extract_conf(
-            cartridge, entity, metadata.get("mode"), body
-        )
-        if not extract_conf.get("conn_id") and metadata.get("connection_id"):
-            extract_conf["conn_id"] = _normalize_pipeline_conn_id(
-                metadata.get("connection_id")
-            )
-        if cartridge == "sap_successfactors" and not extract_conf.get("conn_id"):
-            raise HTTPException(
-                400,
-                f"SAP SuccessFactors entity '{entity}' requires entity_config.connection_id "
-                "or request conn_id/connection_id before triggering Airflow",
-            )
-        conf = _apply_user_scope_to_dag_conf(extract_conf, user)
-        requested_dag_run_id = _dag_run_id_from_idempotency_key(
-            dag_id,
-            body.get("idempotency_key") or body.get("request_id"),
-        )
-        slot = await _reserve_successfactors_entity_extract_slot(
-            cartridge=cartridge,
-            entity=entity,
-            dag_id=dag_id,
-            conf=conf,
             user=user,
-            requested_dag_run_id=requested_dag_run_id,
         )
-        if slot and slot.get("response"):
-            return slot["response"]
-        if slot and slot.get("dag_run_id"):
-            requested_dag_run_id = slot["dag_run_id"]
-        result = await _trigger_airflow_extract_dag(
-            dag_id, conf, user, requested_dag_run_id
-        )
-        if result.get("error"):
-            if slot and slot.get("reserved"):
-                await _record_dag_pipeline_trigger(
-                    cartridge=cartridge,
-                    entity=entity,
-                    dag_id=dag_id,
-                    dag_run_id=requested_dag_run_id or "",
-                    mode=conf.get("mode", metadata.get("mode") or "incremental"),
-                    status="failed",
-                    conf={**conf, "trigger_error": result["error"]},
-                    tenant_id=conf.get("tenant_id"),
-                    workspace_id=conf.get("workspace_id"),
-                )
-            raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
-        dag_run_id = (
-            result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
-        )
-        await _record_dag_pipeline_trigger(
-            cartridge=cartridge,
-            entity=entity,
-            dag_id=dag_id,
-            dag_run_id=dag_run_id,
-            mode=conf.get("mode", metadata.get("mode") or "incremental"),
-            status=result.get("state") or "queued",
-            conf=conf,
-            tenant_id=conf.get("tenant_id"),
-            workspace_id=conf.get("workspace_id"),
-        )
-        return {
-            "triggered": True,
-            "cartridge": cartridge,
-            "entity": entity,
-            "dag_id": dag_id,
-            "job_id": dag_run_id,
-            "run_id": dag_run_id,
-            "dag_run_id": dag_run_id,
-            "state": result.get("state"),
-            "conf": conf,
-        }
 
     args = _build_mcp_extract_args_impl(entity, body)
     result = await mcp_registry.invoke(cartridge, "extract", args, user=user)
     return result
+
+
+def _pipeline_extract_dag_id(
+    *,
+    cartridge: str,
+    entity: str,
+    metadata: dict,
+) -> str:
+    return _dag_extract_dag_id_from_metadata_impl(
+        cartridge=cartridge,
+        entity=entity,
+        metadata=metadata,
+        static_catalog_contains=_entity_declared_in_static_catalog,
+    )
+
+
+def _pipeline_extract_dag_conf(
+    *,
+    cartridge: str,
+    entity: str,
+    body: dict,
+    metadata: dict,
+    user: dict,
+) -> dict:
+    extract_conf = _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body)
+    if not extract_conf.get("conn_id") and metadata.get("connection_id"):
+        extract_conf["conn_id"] = _normalize_pipeline_conn_id(
+            metadata.get("connection_id")
+        )
+    if cartridge == "sap_successfactors" and not extract_conf.get("conn_id"):
+        raise HTTPException(
+            400,
+            f"SAP SuccessFactors entity '{entity}' requires entity_config.connection_id "
+            "or request conn_id/connection_id before triggering Airflow",
+        )
+    return _apply_user_scope_to_dag_conf(extract_conf, user)
+
+
+async def _pipeline_extract_reserve_slot(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    conf: dict,
+    user: dict,
+    requested_dag_run_id: str | None,
+) -> dict | None:
+    return await _reserve_successfactors_entity_extract_slot(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        conf=conf,
+        user=user,
+        requested_dag_run_id=requested_dag_run_id,
+    )
+
+
+async def _record_pipeline_extract_failure(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    dag_run_id: str,
+    conf: dict,
+    metadata: dict,
+    error: str,
+) -> None:
+    await _record_dag_pipeline_trigger(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        mode=conf.get("mode", metadata.get("mode") or "incremental"),
+        status="failed",
+        conf={**conf, "trigger_error": error},
+        tenant_id=conf.get("tenant_id"),
+        workspace_id=conf.get("workspace_id"),
+    )
+
+
+async def _record_pipeline_extract_success(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    dag_run_id: str,
+    conf: dict,
+    metadata: dict,
+    result: dict,
+) -> None:
+    await _record_dag_pipeline_trigger(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        mode=conf.get("mode", metadata.get("mode") or "incremental"),
+        status=result.get("state") or "queued",
+        conf=conf,
+        tenant_id=conf.get("tenant_id"),
+        workspace_id=conf.get("workspace_id"),
+    )
+
+
+def _pipeline_extract_triggered_response(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    dag_run_id: str,
+    result: dict,
+    conf: dict,
+) -> dict:
+    return {
+        "triggered": True,
+        "cartridge": cartridge,
+        "entity": entity,
+        "dag_id": dag_id,
+        "job_id": dag_run_id,
+        "run_id": dag_run_id,
+        "dag_run_id": dag_run_id,
+        "state": result.get("state"),
+        "conf": conf,
+    }
+
+
+async def _api_pipeline_extract_dag_based(
+    *,
+    cartridge: str,
+    entity: str,
+    body: dict,
+    metadata: dict,
+    user: dict,
+) -> dict:
+    dag_id = _pipeline_extract_dag_id(
+        cartridge=cartridge,
+        entity=entity,
+        metadata=metadata,
+    )
+    conf = _pipeline_extract_dag_conf(
+        cartridge=cartridge,
+        entity=entity,
+        body=body,
+        metadata=metadata,
+        user=user,
+    )
+    requested_dag_run_id = _dag_run_id_from_idempotency_key(
+        dag_id,
+        body.get("idempotency_key") or body.get("request_id"),
+    )
+    slot = await _pipeline_extract_reserve_slot(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        conf=conf,
+        user=user,
+        requested_dag_run_id=requested_dag_run_id,
+    )
+    if slot and slot.get("response"):
+        return slot["response"]
+    if slot and slot.get("dag_run_id"):
+        requested_dag_run_id = slot["dag_run_id"]
+    result = await _trigger_airflow_extract_dag(dag_id, conf, user, requested_dag_run_id)
+    if result.get("error"):
+        if slot and slot.get("reserved"):
+            await _record_pipeline_extract_failure(
+                cartridge=cartridge,
+                entity=entity,
+                dag_id=dag_id,
+                dag_run_id=requested_dag_run_id or "",
+                conf=conf,
+                metadata=metadata,
+                error=result["error"],
+            )
+        raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
+    dag_run_id = result.get("dag_run_id") or result.get("run_id") or requested_dag_run_id
+    await _record_pipeline_extract_success(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        conf=conf,
+        metadata=metadata,
+        result=result,
+    )
+    return _pipeline_extract_triggered_response(
+        cartridge=cartridge,
+        entity=entity,
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        result=result,
+        conf=conf,
+    )
 
 
 @app.post(
