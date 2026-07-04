@@ -257,6 +257,9 @@ from app.domains.pipeline.run_state import (
 from app.domains.pipeline.run_logs import (
     build_pipeline_run_logs_payload as _build_pipeline_run_logs_payload_impl,
 )
+from app.domains.pipeline.overview import (
+    build_pipeline_overview as _build_pipeline_overview_impl,
+)
 from app.domains.pipeline.scope import (
     pipeline_runs_read_conn as _pipeline_runs_read_conn_impl,
     pipeline_runs_scope_predicate as _pipeline_runs_scope_predicate_impl,
@@ -3242,147 +3245,35 @@ async def api_pipeline(
         fallback="sap_successfactors",
     )
 
-    # 1. Entities
     from app.services import cartridge_service as _cs
 
-    entity_list: list[dict] = []
-    manifest = await _cs.get_cartridge(cartridge)
-    if manifest:
-        for e in manifest.get("entities") or []:
-            entity_list.append(
-                {
-                    "entity": e.get("id") or e.get("entity") or "",
-                    "mode": e.get("mode", "full"),
-                    "watermark_field": e.get("watermark_field"),
-                    "description": e.get("description", ""),
-                }
-            )
-    if not entity_list:
-        entities_raw = await mcp_registry.invoke(
-            cartridge, "list_entities", {}, user=user
-        )
-        if isinstance(entities_raw, dict):
-            entity_list = entities_raw.get("entities", entities_raw.get("result", []))
-        elif isinstance(entities_raw, list):
-            entity_list = entities_raw
-
-    partial_reasons: dict[str, set[str]] = {}
-
-    def _mark_partial(entity: str, reason: str) -> None:
-        if entity:
-            partial_reasons.setdefault(entity, set()).add(reason)
-
-    # 2a. pipeline_runs — most recent run per entity (written by Airflow DAGs)
-    dag_runs_by_entity: dict[str, dict] = {}
-    try:
-        _pool = await _get_db_pool()
-        scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 2)
-        async with _pipeline_runs_read_conn(_pool, user) as conn:
-            rows_pg = await conn.fetch(
-                f"""SELECT DISTINCT ON (entity)
-                       run_id, dag_id, entity, airflow_dag_run_id,
-                       status, mode,
-                       started_at, finished_at,
-                       record_count, bytes_written, storage_uri,
-                       duration_seconds, watermark_updated_to, error_message, extra
-                   FROM pipeline_runs
-                   WHERE cartridge_id = $1
-                     {scope_sql}
-                   ORDER BY entity, started_at DESC""",
-                cartridge,
-                *scope_values,
-            )
-        raw_runs_by_entity = {row["entity"]: dict(row) for row in rows_pg}
-        refreshed, pending, failed = await _pipeline_gather_by_entity(
-            {
-                entity: _refresh_dag_run_status(dict(row), user)
-                for entity, row in raw_runs_by_entity.items()
-            },
-            PIPELINE_DAG_STATUS_TIMEOUT_SEC,
-        )
-        for entity, row in raw_runs_by_entity.items():
-            dag_runs_by_entity[entity] = refreshed.get(entity) or row
-        for entity in pending | failed:
-            _mark_partial(entity, "airflow_status_refresh")
-    except Exception:
-        logger.debug("Could not load pipeline_runs for %s", cartridge, exc_info=True)
-
-    # 2b. jobs table — internal queue (legacy / console-triggered runs)
-    all_jobs = await _call_with_optional_user(job_service.list_recent, 100, user=user)
-    jobs_by_entity = _pipeline_jobs_by_entity(all_jobs)
-
-    # 3. Silver datasets from refinement
-    try:
-        all_datasets = (
-            await _refinement_invoke(
-                "list_datasets", {}, timeout=PIPELINE_DATASETS_TIMEOUT_SEC, user=user
-            )
-        ).get("datasets", [])
-    except Exception:
-        all_datasets = []
-        # Some in-process tests replace ``httpx.AsyncClient`` with a minimal
-        # get-only fake that predates the MCP invoke path. Keep that legacy
-        # compatibility path working without changing production behavior.
-        if not hasattr(httpx.AsyncClient, "post"):
-            try:
-                async with httpx.AsyncClient(
-                    headers=_hdr_for("REFINEMENT"), timeout=15
-                ) as c:
-                    r = await c.get(f"{REFINEMENT_URL}/datasets")
-                if getattr(r, "status_code", 500) == 200:
-                    all_datasets = (r.json() or {}).get("datasets", [])
-            except Exception:
-                all_datasets = []
-
-    silver_ds = [d for d in all_datasets if d.get("layer") == "silver"]
-    gold_ds = [d for d in all_datasets if d.get("layer") == "gold"]
-    silver_by_source = _pipeline_silver_datasets_by_source(silver_ds)
-
-    snapshot_work: dict[str, Any] = {}
-    for e in entity_list:
-        entity = e.get("entity") or e.get("name") or ""
-        if not entity:
-            continue
-        dag_run = dag_runs_by_entity.get(entity)
-        last_job = jobs_by_entity.get(entity)
-        bronze_date, bronze_count = _pipeline_bronze_date_count(dag_run, last_job)
-        if not bronze_date or bronze_count is None:
-            snapshot_work[entity] = _call_with_optional_user(
-                _bronze_physical_snapshot,
-                cartridge,
-                entity,
-                user=user,
-            )
-
-    (
-        physical_bronze_by_entity,
-        snapshot_pending,
-        snapshot_failed,
-    ) = await _pipeline_gather_by_entity(
-        snapshot_work,
-        PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC,
+    return await _build_pipeline_overview_impl(
+        cartridge=cartridge,
+        user=user,
+        get_cartridge=_cs.get_cartridge,
+        mcp_invoke=mcp_registry.invoke,
+        get_db_pool=_get_db_pool,
+        pipeline_runs_scope_predicate=_pipeline_runs_scope_predicate,
+        pipeline_runs_read_conn=_pipeline_runs_read_conn,
+        pipeline_gather_by_entity=_pipeline_gather_by_entity,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        call_with_optional_user=_call_with_optional_user,
+        job_list_recent=job_service.list_recent,
+        refinement_invoke=_refinement_invoke,
+        bronze_physical_snapshot=_bronze_physical_snapshot,
+        pipeline_jobs_by_entity=_pipeline_jobs_by_entity,
+        pipeline_bronze_date_count=_pipeline_bronze_date_count,
+        pipeline_silver_datasets_by_source=_pipeline_silver_datasets_by_source,
+        pipeline_entity_row=_pipeline_entity_row,
+        pipeline_response_payload=_pipeline_response_payload,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        refinement_url=REFINEMENT_URL,
+        dag_status_timeout_sec=PIPELINE_DAG_STATUS_TIMEOUT_SEC,
+        datasets_timeout_sec=PIPELINE_DATASETS_TIMEOUT_SEC,
+        bronze_snapshot_timeout_sec=PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC,
+        logger_debug=logger.debug,
     )
-    for entity in snapshot_pending | snapshot_failed:
-        _mark_partial(entity, "bronze_snapshot")
-
-    # 4. Assemble pipeline rows
-    rows = []
-    for e in entity_list:
-        entity = e.get("entity") or e.get("name") or ""
-        rows.append(
-            _pipeline_entity_row(
-                entity_config=e,
-                cartridge=cartridge,
-                dag_run=dag_runs_by_entity.get(entity),
-                last_job=jobs_by_entity.get(entity),
-                physical_bronze=physical_bronze_by_entity.get(entity),
-                partial_reasons=partial_reasons.get(entity),
-                silver_by_source=silver_by_source,
-                gold_datasets=gold_ds,
-            )
-        )
-
-    return _pipeline_response_payload(rows, partial_reasons)
 
 
 @app.get("/api/dag_templates", dependencies=[Depends(require_permission("pipelines.read"))])
