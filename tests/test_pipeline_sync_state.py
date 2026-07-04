@@ -221,6 +221,96 @@ def test_sync_extract_all_error_message_uses_first_three_errors():
     ) == "one; two; three"
 
 
+@pytest.mark.anyio
+async def test_run_sync_extract_all_with_retries_uses_aggregate_result_first():
+    aggregate_calls = []
+    fallback_calls = []
+
+    async def trigger_sync_aggregate_extract_all(**kwargs):
+        aggregate_calls.append(kwargs)
+        return {"triggered": [{"entity": "__extract_all__"}], "errors": []}
+
+    async def call_with_optional_user(*args, **kwargs):
+        fallback_calls.append((args, kwargs))
+        return {"triggered": [], "errors": []}
+
+    result = await sync_state.run_sync_extract_all_with_retries(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id="femsa_sf",
+        run_id="sync-1",
+        extract_body={"idempotency_key": "sync-1"},
+        user={"sub": "user-1"},
+        trigger_sync_aggregate_extract_all=trigger_sync_aggregate_extract_all,
+        call_with_optional_user=call_with_optional_user,
+        api_pipeline_extract_all=object(),
+        sleep=None,
+    )
+
+    assert result == {
+        "result": {"triggered": [{"entity": "__extract_all__"}], "errors": []},
+        "attempts": 1,
+    }
+    assert aggregate_calls == [
+        {
+            "cartridge": "sap_successfactors",
+            "mode": "incremental",
+            "target": "all",
+            "conn_id": "femsa_sf",
+            "run_id": "sync-1",
+            "user": {"sub": "user-1"},
+        }
+    ]
+    assert fallback_calls == []
+
+
+@pytest.mark.anyio
+async def test_run_sync_extract_all_with_retries_falls_back_and_retries():
+    fallback_results = [
+        {"triggered": [], "errors": [{"error": "airflow unavailable"}]},
+        {"triggered": [{"entity": "EmpJob"}], "errors": []},
+    ]
+    fallback_calls = []
+    sleeps = []
+
+    async def trigger_sync_aggregate_extract_all(**_kwargs):
+        return None
+
+    async def call_with_optional_user(*args, **kwargs):
+        fallback_calls.append((args, kwargs))
+        return fallback_results.pop(0)
+
+    async def sleep(delay):
+        sleeps.append(delay)
+
+    result = await sync_state.run_sync_extract_all_with_retries(
+        cartridge="sap_successfactors",
+        mode="incremental",
+        target="all",
+        conn_id=None,
+        run_id="sync-2",
+        extract_body={"idempotency_key": "sync-2"},
+        user={"sub": "user-1"},
+        trigger_sync_aggregate_extract_all=trigger_sync_aggregate_extract_all,
+        call_with_optional_user=call_with_optional_user,
+        api_pipeline_extract_all="api",
+        retryable_errors=lambda errors: bool(errors),
+        sleep=sleep,
+    )
+
+    assert result == {
+        "result": {"triggered": [{"entity": "EmpJob"}], "errors": []},
+        "attempts": 2,
+    }
+    assert sleeps == [2]
+    assert len(fallback_calls) == 2
+    assert fallback_calls[0] == (
+        ("api", "sap_successfactors", {"idempotency_key": "sync-2"}),
+        {"user": {"sub": "user-1"}},
+    )
+
+
 def test_sync_child_runtime_state_counts_progress_rows():
     runtime = sync_state.sync_child_runtime_state(
         row={"status": "running"},

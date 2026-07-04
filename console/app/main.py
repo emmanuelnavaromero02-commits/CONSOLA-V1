@@ -386,6 +386,7 @@ from app.domains.pipeline.sync_state import (
     pipeline_extract_all_mode_target as _pipeline_extract_all_mode_target,
     pipeline_extract_all_public_response as _pipeline_extract_all_public_response,
     pipeline_extract_all_run_id as _pipeline_extract_all_run_id,
+    run_sync_extract_all_with_retries as _run_sync_extract_all_with_retries,
     sync_child_gold_refresh_summary as _sync_child_gold_refresh_summary,
     sync_child_reason as _sync_child_reason,
     sync_clean_mode as _sync_clean_mode,
@@ -3928,32 +3929,22 @@ async def api_cartridge_sync_now(
         "idempotency_key": run_id,
         **({"conn_id": conn_id} if conn_id else {}),
     }
-    result: dict[str, Any] = {}
-    attempts = 0
-    for attempt in range(1, 4):
-        attempts = attempt
-        aggregate_result = await _trigger_sync_aggregate_extract_all(
-            cartridge=cartridge,
-            mode=mode,
-            target=target,
-            conn_id=conn_id,
-            run_id=run_id,
-            user=user,
-        )
-        result = (
-            aggregate_result
-            if aggregate_result is not None
-            else await _call_with_optional_user(
-                api_pipeline_extract_all, cartridge, extract_body, user=user
-            )
-        )
-        errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-        triggered = (
-            result.get("triggered") if isinstance(result.get("triggered"), list) else []
-        )
-        if triggered or not _sync_errors_retryable(errors) or attempt == 3:
-            break
-        await asyncio.sleep(2 * attempt)
+    extract_attempt = await _run_sync_extract_all_with_retries(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        extract_body=extract_body,
+        user=user,
+        trigger_sync_aggregate_extract_all=_trigger_sync_aggregate_extract_all,
+        call_with_optional_user=_call_with_optional_user,
+        api_pipeline_extract_all=api_pipeline_extract_all,
+        retryable_errors=_sync_errors_retryable,
+        sleep=asyncio.sleep,
+    )
+    result = extract_attempt["result"]
+    attempts = extract_attempt["attempts"]
 
     extract_state = _sync_extract_all_result_state(result)
     triggered_entities = extract_state["triggered_entities"]

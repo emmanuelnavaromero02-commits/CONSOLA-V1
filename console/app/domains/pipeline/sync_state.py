@@ -716,6 +716,55 @@ def sync_errors_retryable(errors: list[dict[str, Any]]) -> bool:
     return sync_progress.sync_errors_retryable(errors)
 
 
+async def run_sync_extract_all_with_retries(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    run_id: str,
+    extract_body: dict[str, Any],
+    user: dict[str, Any],
+    trigger_sync_aggregate_extract_all: Any,
+    call_with_optional_user: Any,
+    api_pipeline_extract_all: Any,
+    retryable_errors: Any = sync_errors_retryable,
+    sleep: Any | None = None,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    attempts = 0
+    for attempt in range(1, max_attempts + 1):
+        attempts = attempt
+        aggregate_result = await trigger_sync_aggregate_extract_all(
+            cartridge=cartridge,
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            run_id=run_id,
+            user=user,
+        )
+        result = (
+            aggregate_result
+            if aggregate_result is not None
+            else await call_with_optional_user(
+                api_pipeline_extract_all,
+                cartridge,
+                extract_body,
+                user=user,
+            )
+        )
+        errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+        triggered = (
+            result.get("triggered") if isinstance(result.get("triggered"), list) else []
+        )
+        if triggered or not retryable_errors(errors) or attempt == max_attempts:
+            break
+        if sleep is not None:
+            await sleep(2 * attempt)
+    return {"result": result, "attempts": attempts}
+
+
 def sync_child_gold_refresh_summary(child_rows: list[dict[str, Any]]) -> dict[str, Any]:
     return sync_progress.child_gold_refresh_summary(child_rows)
 
