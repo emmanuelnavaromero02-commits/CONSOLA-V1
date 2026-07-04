@@ -3541,6 +3541,103 @@ async def _run_sync_agentops_monitors(
     )
 
 
+async def _execute_scoped_sync_run_upsert(
+    pool: Any,
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    status: str,
+    finished: bool,
+    error_message: str | None,
+    extra_json: str,
+    tenant_id: str,
+    workspace_id: str,
+) -> str:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), "
+                "set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
+            )
+            return await conn.execute(
+                """
+                INSERT INTO pipeline_runs (
+                    run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                    mode, status, started_at, finished_at, error_message,
+                    extra, tenant_id, workspace_id
+                )
+                VALUES (
+                    $1, $2, $3, $4, $1, $5, $6, NOW(),
+                    CASE WHEN $7 THEN NOW() ELSE NULL END,
+                    $8, $9::jsonb, $10::uuid, $11::uuid
+                )
+                ON CONFLICT (run_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    mode = EXCLUDED.mode,
+                    finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
+                    error_message = EXCLUDED.error_message,
+                    tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
+                    workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
+                    extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+                """,
+                run_id,
+                _SYNC_NOW_DAG_ID,
+                cartridge,
+                _SYNC_NOW_ENTITY,
+                mode,
+                status,
+                finished,
+                error_message,
+                extra_json,
+                tenant_id,
+                workspace_id,
+            )
+
+
+async def _execute_unscoped_sync_run_upsert(
+    pool: Any,
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    status: str,
+    finished: bool,
+    error_message: str | None,
+    extra_json: str,
+) -> str:
+    return await pool.execute(
+        """
+        INSERT INTO pipeline_runs (
+            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+            mode, status, started_at, finished_at, error_message, extra
+        )
+        VALUES (
+            $1, $2, $3, $4, $1, $5, $6, NOW(),
+            CASE WHEN $7 THEN NOW() ELSE NULL END,
+            $8, $9::jsonb
+        )
+        ON CONFLICT (run_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            mode = EXCLUDED.mode,
+            finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
+            error_message = EXCLUDED.error_message,
+            extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
+        """,
+        run_id,
+        _SYNC_NOW_DAG_ID,
+        cartridge,
+        _SYNC_NOW_ENTITY,
+        mode,
+        status,
+        finished,
+        error_message,
+        extra_json,
+    )
+
+
 async def _upsert_sync_run(
     *,
     run_id: str,
@@ -3567,78 +3664,29 @@ async def _upsert_sync_run(
     has_scope = bool(tenant_id and workspace_id and scope_columns_present)
     finished = status in _SYNC_TERMINAL_STATUSES
     extra_json = json.dumps(extra)
-    command_status = ""
-
     if has_scope:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT set_config('app.tenant_id', $1, true), "
-                    "set_config('app.workspace_id', $2, true)",
-                    tenant_id,
-                    workspace_id,
-                )
-                command_status = await conn.execute(
-                    """
-                    INSERT INTO pipeline_runs (
-                        run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                        mode, status, started_at, finished_at, error_message,
-                        extra, tenant_id, workspace_id
-                    )
-                    VALUES (
-                        $1, $2, $3, $4, $1, $5, $6, NOW(),
-                        CASE WHEN $7 THEN NOW() ELSE NULL END,
-                        $8, $9::jsonb, $10::uuid, $11::uuid
-                    )
-                    ON CONFLICT (run_id) DO UPDATE SET
-                        status = EXCLUDED.status,
-                        mode = EXCLUDED.mode,
-                        finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
-                        error_message = EXCLUDED.error_message,
-                        tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
-                        workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
-                        extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
-                    """,
-                    run_id,
-                    _SYNC_NOW_DAG_ID,
-                    cartridge,
-                    _SYNC_NOW_ENTITY,
-                    mode,
-                    status,
-                    finished,
-                    error_message,
-                    extra_json,
-                    tenant_id,
-                    workspace_id,
-                )
+        command_status = await _execute_scoped_sync_run_upsert(
+            pool,
+            run_id=run_id,
+            cartridge=cartridge,
+            mode=mode,
+            status=status,
+            finished=finished,
+            error_message=error_message,
+            extra_json=extra_json,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
     else:
-        command_status = await pool.execute(
-            """
-            INSERT INTO pipeline_runs (
-                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                mode, status, started_at, finished_at, error_message, extra
-            )
-            VALUES (
-                $1, $2, $3, $4, $1, $5, $6, NOW(),
-                CASE WHEN $7 THEN NOW() ELSE NULL END,
-                $8, $9::jsonb
-            )
-            ON CONFLICT (run_id) DO UPDATE SET
-                status = EXCLUDED.status,
-                mode = EXCLUDED.mode,
-                finished_at = COALESCE(EXCLUDED.finished_at, pipeline_runs.finished_at),
-                error_message = EXCLUDED.error_message,
-                extra = COALESCE(pipeline_runs.extra, '{}'::jsonb) || EXCLUDED.extra
-            """,
-            run_id,
-            _SYNC_NOW_DAG_ID,
-            cartridge,
-            _SYNC_NOW_ENTITY,
-            mode,
-            status,
-            finished,
-            error_message,
-            extra_json,
+        command_status = await _execute_unscoped_sync_run_upsert(
+            pool,
+            run_id=run_id,
+            cartridge=cartridge,
+            mode=mode,
+            status=status,
+            finished=finished,
+            error_message=error_message,
+            extra_json=extra_json,
         )
     return {
         "command_status": command_status,
