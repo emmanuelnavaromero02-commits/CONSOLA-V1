@@ -5487,15 +5487,14 @@ async def _agentops_base_rows(
 
 
 @_bind_to_core
-async def _agentops_intelligence_rows(
+async def _agentops_monte_carlo_rows(
     conn: Any,
     *,
     workspace_id: str,
     table_exists: dict[str, bool],
-) -> dict[str, Any]:
-    monte_carlo_rows = []
+) -> list[Any]:
     if table_exists["monte_carlo_simulations"]:
-        monte_carlo_rows = await conn.fetch(
+        return await conn.fetch(
             """
             SELECT source_type,
                    COUNT(*)::int AS total,
@@ -5506,9 +5505,18 @@ async def _agentops_intelligence_rows(
             """,
             workspace_id,
         )
-    calibration_rows = []
+    return []
+
+
+@_bind_to_core
+async def _agentops_calibration_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
     if table_exists["calibration_states"]:
-        calibration_rows = await conn.fetch(
+        return await conn.fetch(
             """
             SELECT COUNT(*)::int AS total,
                    COALESCE(SUM(sample_count), 0)::int AS sample_count,
@@ -5518,9 +5526,18 @@ async def _agentops_intelligence_rows(
             """,
             workspace_id,
         )
-    orchestration_rows = []
+    return []
+
+
+@_bind_to_core
+async def _agentops_orchestration_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
     if table_exists["decision_orchestration_runs"]:
-        orchestration_rows = await conn.fetch(
+        return await conn.fetch(
             """
             SELECT COUNT(*)::int AS total,
                    MAX(updated_at) AS latest_at
@@ -5529,9 +5546,18 @@ async def _agentops_intelligence_rows(
             """,
             workspace_id,
         )
-    execution_rows = []
+    return []
+
+
+@_bind_to_core
+async def _agentops_execution_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
     if table_exists["decision_orchestration_executions"]:
-        execution_rows = await conn.fetch(
+        return await conn.fetch(
             """
             SELECT engine_name,
                    execution_status,
@@ -5543,11 +5569,37 @@ async def _agentops_intelligence_rows(
             """,
             workspace_id,
         )
+    return []
+
+
+@_bind_to_core
+async def _agentops_intelligence_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> dict[str, Any]:
     return {
-        "monte_carlo_rows": monte_carlo_rows,
-        "calibration_rows": calibration_rows,
-        "orchestration_rows": orchestration_rows,
-        "execution_rows": execution_rows,
+        "monte_carlo_rows": await _agentops_monte_carlo_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+        "calibration_rows": await _agentops_calibration_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+        "orchestration_rows": await _agentops_orchestration_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+        "execution_rows": await _agentops_execution_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
     }
 
 
