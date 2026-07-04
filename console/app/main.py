@@ -104,6 +104,9 @@ from app.domains.admin.vpn_invites import (
     issue_vpn_for_user as _issue_vpn_for_user_impl,
     rollback_failed_invite as _rollback_failed_invite_impl,
 )
+from app.domains.admin.user_mutations import (
+    create_admin_user_payload as _create_admin_user_payload_impl,
+)
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
@@ -6527,63 +6530,21 @@ async def api_admin_users_create(
     request: Request,
     admin_user: dict = Depends(require_permission("iam.users.write")),
 ):
-    email_raw = body.get("email")
-    pw = body.get("password") or ""
-    if not email_raw or not pw:
-        raise HTTPException(400, "email and password are required")
-    email = _normalize_email_or_400(email_raw)
-    pw = _validate_password_or_400(pw)
-    if await _auth.get_user_by_email(email):
-        raise HTTPException(409, f"user with email {email} already exists")
-    requested_role = _assignable_role(body.get("role"), admin_user)
-    platform_role = requested_role if _is_global_iam_admin(admin_user) else "user"
-    workspace_role = requested_role if not _is_global_iam_admin(admin_user) else None
-    workspace_id = (
-        body.get("workspace_id") or admin_user.get("active_workspace_id") or ""
-    ).strip() or None
-    if not workspace_id:
-        raise HTTPException(400, "workspace_id is required")
-    await _assert_can_use_workspace(admin_user, workspace_id)
-    try:
-        create_user_kwargs = {
-            "email": email,
-            "password": pw,
-            "name": body.get("name"),
-            "role": platform_role,
-        }
-        # Test doubles from older auth contracts may not expose workspace_id;
-        # production auth.create_user does and assigns the membership in the
-        # same transaction after the route has validated workspace scope.
-        if "workspace_id" in inspect.signature(_auth.create_user).parameters:
-            create_user_kwargs["workspace_id"] = workspace_id
-        target_user = await _auth.create_user(**create_user_kwargs)
-        if workspace_role and target_user.get("id"):
-            try:
-                await _set_workspace_role_for_user(
-                    int(target_user["id"]), workspace_id, workspace_role
-                )
-            except (RuntimeError, AttributeError) as exc:
-                if not _workspace_scope_db_unavailable(exc):
-                    raise
-    except RuntimeError:
-        # create_user assigns workspace membership in the same transaction;
-        # let the global 500 handler log + sanitize internal details.
-        raise
-    await _audit.record_event(
-        admin_user.get("id"),
-        admin_user.get("email"),
-        "user.created",
-        "user",
-        str(target_user["id"]),
-        ip=_client_ip(request),
+    return await _create_admin_user_payload_impl(
+        body=body,
+        admin_user=admin_user,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "role": platform_role,
-            "workspace_role": workspace_role,
-            "workspace_id": workspace_id,
-        },
+        auth_service=_auth,
+        audit_service=_audit,
+        normalize_email_or_400=_normalize_email_or_400,
+        validate_password_or_400=_validate_password_or_400,
+        assignable_role=_assignable_role,
+        is_global_iam_admin=_is_global_iam_admin,
+        assert_can_use_workspace=_assert_can_use_workspace,
+        set_workspace_role_for_user=_set_workspace_role_for_user,
+        workspace_scope_db_unavailable=_workspace_scope_db_unavailable,
     )
-    return target_user
 
 
 @app.patch(
