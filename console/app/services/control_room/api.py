@@ -324,43 +324,57 @@ async def _sf_gold_result(
 
 
 @_bind_to_core
-async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
-    """Core SuccessFactors Gold widgets for the active tenant/workspace.
-
-    Reads go through the scoped Gold fetcher. A user outside the FEMSA
-    workspace simply receives empty widgets because native Gold RLS filters the
-    rows before they reach this code path.
-    """
-    sf_gold_datasets = {
+def _sf_foundation_gold_datasets() -> dict[str, str]:
+    return {
         "employee_360": "sap_successfactors_employee_360",
         "headcount_by_company": "sap_successfactors_headcount_by_company",
         "headcount_by_location": "sap_successfactors_headcount_by_location",
         "headcount_by_department": "sap_successfactors_headcount_by_department",
     }
 
-    employee_result = await _sf_gold_result(
-        sf_gold_datasets["employee_360"], user, 5000
-    )
-    company_result = await _sf_gold_result(
-        sf_gold_datasets["headcount_by_company"], user, 1000
-    )
-    location_result = await _sf_gold_result(
-        sf_gold_datasets["headcount_by_location"], user, 1000
-    )
-    department_result = await _sf_gold_result(
-        sf_gold_datasets["headcount_by_department"], user, 1000
-    )
 
-    employee_rows = _sf_gold_usable_rows(employee_result)
-    company_rows = _sf_gold_usable_rows(company_result)
-    location_rows = _sf_gold_usable_rows(location_result)
-    department_rows = _sf_gold_usable_rows(department_result)
+@_bind_to_core
+async def _sf_foundation_gold_results(
+    datasets: dict[str, str],
+    user: dict | None,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "employee_360": await _sf_gold_result(datasets["employee_360"], user, 5000),
+        "headcount_by_company": await _sf_gold_result(
+            datasets["headcount_by_company"], user, 1000
+        ),
+        "headcount_by_location": await _sf_gold_result(
+            datasets["headcount_by_location"], user, 1000
+        ),
+        "headcount_by_department": await _sf_gold_result(
+            datasets["headcount_by_department"], user, 1000
+        ),
+    }
 
-    company_headcount_total = (
-        None
-        if company_rows is None
-        else sum(int(row.get("headcount") or 0) for row in company_rows)
-    )
+
+@_bind_to_core
+def _sf_foundation_gold_rows(
+    results: dict[str, dict[str, Any]],
+) -> dict[str, list[dict[str, Any]] | None]:
+    return {
+        key: _sf_gold_usable_rows(result)
+        for key, result in results.items()
+    }
+
+
+@_bind_to_core
+def _sf_gold_headcount_total(rows: list[dict[str, Any]] | None) -> int | None:
+    if rows is None:
+        return None
+    return sum(int(row.get("headcount") or 0) for row in rows)
+
+
+@_bind_to_core
+def _sf_foundation_active_headcount(
+    employee_rows: list[dict[str, Any]] | None,
+    company_rows: list[dict[str, Any]] | None,
+) -> int | None:
+    company_headcount_total = _sf_gold_headcount_total(company_rows)
     employee_active_total = (
         None
         if employee_rows is None
@@ -372,67 +386,93 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
         active_headcount = employee_active_total
     else:
         active_headcount = company_headcount_total
-    generated_at = datetime.now(UTC).isoformat()
-    tenant_id, workspace_id = _workspace_scope(user)
+    return active_headcount
 
-    widgets = [
+
+@_bind_to_core
+def _sf_foundation_gold_widgets(
+    datasets: dict[str, str],
+    results: dict[str, dict[str, Any]],
+    rows: dict[str, list[dict[str, Any]] | None],
+) -> list[dict[str, Any]]:
+    employee_rows = rows["employee_360"]
+    company_rows = rows["headcount_by_company"]
+    location_rows = rows["headcount_by_location"]
+    department_rows = rows["headcount_by_department"]
+    company_headcount_total = _sf_gold_headcount_total(company_rows)
+    return [
         {
             "id": "sf_active_headcount",
             "title": "Headcount total activo",
-            "value": active_headcount,
-            "dataset": sf_gold_datasets["employee_360"],
-            "href": _sf_talent_dataset_href(sf_gold_datasets["employee_360"]),
+            "value": _sf_foundation_active_headcount(employee_rows, company_rows),
+            "dataset": datasets["employee_360"],
+            "href": _sf_talent_dataset_href(datasets["employee_360"]),
             "rows": _sf_gold_public_rows(employee_rows or [], 5),
-            "status": _sf_gold_combine_widget_status([employee_result, company_result]),
-            "error": _sf_gold_status_error([employee_result, company_result]),
+            "status": _sf_gold_combine_widget_status(
+                [results["employee_360"], results["headcount_by_company"]]
+            ),
+            "error": _sf_gold_status_error(
+                [results["employee_360"], results["headcount_by_company"]]
+            ),
         },
         {
             "id": "sf_headcount_by_company",
             "title": "Headcount por compania",
             "value": company_headcount_total,
-            "dataset": sf_gold_datasets["headcount_by_company"],
-            "href": _sf_talent_dataset_href(sf_gold_datasets["headcount_by_company"]),
+            "dataset": datasets["headcount_by_company"],
+            "href": _sf_talent_dataset_href(datasets["headcount_by_company"]),
             "rows": _sf_gold_top_headcount_rows(
                 company_rows or [], ("company_id", "company_name")
             ),
-            "status": company_result["status"],
-            "error": company_result.get("error"),
+            "status": results["headcount_by_company"]["status"],
+            "error": results["headcount_by_company"].get("error"),
         },
         {
             "id": "sf_headcount_by_location",
             "title": "Headcount por ubicacion",
-            "value": None
-            if location_rows is None
-            else sum(int(row.get("headcount") or 0) for row in location_rows),
-            "dataset": sf_gold_datasets["headcount_by_location"],
-            "href": _sf_talent_dataset_href(sf_gold_datasets["headcount_by_location"]),
+            "value": _sf_gold_headcount_total(location_rows),
+            "dataset": datasets["headcount_by_location"],
+            "href": _sf_talent_dataset_href(datasets["headcount_by_location"]),
             "rows": _sf_gold_top_headcount_rows(
                 location_rows or [], ("location_id", "location_name")
             ),
-            "status": location_result["status"],
-            "error": location_result.get("error"),
+            "status": results["headcount_by_location"]["status"],
+            "error": results["headcount_by_location"].get("error"),
         },
         {
             "id": "sf_headcount_by_department",
             "title": "Headcount por departamento",
-            "value": None
-            if department_rows is None
-            else sum(int(row.get("headcount") or 0) for row in department_rows),
-            "dataset": sf_gold_datasets["headcount_by_department"],
-            "href": _sf_talent_dataset_href(sf_gold_datasets["headcount_by_department"]),
+            "value": _sf_gold_headcount_total(department_rows),
+            "dataset": datasets["headcount_by_department"],
+            "href": _sf_talent_dataset_href(datasets["headcount_by_department"]),
             "rows": _sf_gold_top_headcount_rows(
                 department_rows or [], ("department_id", "department_name")
             ),
-            "status": department_result["status"],
-            "error": department_result.get("error"),
+            "status": results["headcount_by_department"]["status"],
+            "error": results["headcount_by_department"].get("error"),
         },
     ]
+
+
+@_bind_to_core
+async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
+    """Core SuccessFactors Gold widgets for the active tenant/workspace.
+
+    Reads go through the scoped Gold fetcher. A user outside the FEMSA
+    workspace simply receives empty widgets because native Gold RLS filters the
+    rows before they reach this code path.
+    """
+    datasets = _sf_foundation_gold_datasets()
+    results = await _sf_foundation_gold_results(datasets, user)
+    rows = _sf_foundation_gold_rows(results)
+    generated_at = datetime.now(UTC).isoformat()
+    tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": generated_at,
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "widgets": widgets,
+        "widgets": _sf_foundation_gold_widgets(datasets, results, rows),
     }
 
 
