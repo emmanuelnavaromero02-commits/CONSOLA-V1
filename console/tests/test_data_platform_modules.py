@@ -6,6 +6,7 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key,
     catalog_query_args,
 )
+from app.domains.data_platform.catalog_requests import catalog_get_payload
 from app.domains.data_platform.data_api_payloads import (
     DataApiQueryValidationError,
     data_api_columns_param,
@@ -225,6 +226,87 @@ def test_catalog_payload_helpers_build_stable_filter_args():
         "datasets": ["employee_profile", "talent_9box"],
     }
     assert catalog_cache_key({"b": 1, "a": 2}) == '{"a": 2, "b": 1}'
+
+
+@pytest.mark.asyncio
+async def test_catalog_get_payload_returns_empty_for_scoped_user_without_cartridge():
+    async def scope_catalog_cartridge_arg(_user, _cartridge):
+        return None
+
+    result = await catalog_get_payload(
+        layer="gold",
+        cartridge="",
+        tags="",
+        datasets="",
+        user=SCOPED_USER,
+        scope_catalog_cartridge_arg=scope_catalog_cartridge_arg,
+        user_allowed_cartridges=lambda _user: ["sap_successfactors"],
+        empty_catalog_payload=lambda: {"datasets": {}},
+        catalog_query_args=catalog_query_args,
+        catalog_cache_key=catalog_cache_key,
+        refinement_invoke=lambda *_args, **_kwargs: None,
+        raise_for_refinement_payload_error=lambda _payload, _fallback: None,
+        scoped_read_cache_get_or_set=lambda *_args, **_kwargs: None,
+    )
+
+    assert result == {"datasets": {}}
+
+
+@pytest.mark.asyncio
+async def test_catalog_get_payload_uses_scoped_cache_and_refinement():
+    captured = {}
+
+    async def scope_catalog_cartridge_arg(_user, cartridge):
+        assert cartridge == ""
+        return "sap_successfactors"
+
+    async def refinement_invoke(tool, args, **kwargs):
+        captured["tool"] = tool
+        captured["args"] = args
+        captured["user"] = kwargs["user"]
+        return {"datasets": ["gold_ready"]}
+
+    def raise_for_refinement_payload_error(payload, fallback):
+        captured["checked"] = (payload, fallback)
+
+    async def scoped_read_cache_get_or_set(scope, user, key, loader):
+        captured["cache"] = (scope, user, key)
+        return await loader()
+
+    result = await catalog_get_payload(
+        layer="gold",
+        cartridge="",
+        tags="talent, kpi",
+        datasets="employee_profile",
+        user=SCOPED_USER,
+        scope_catalog_cartridge_arg=scope_catalog_cartridge_arg,
+        user_allowed_cartridges=lambda _user: ["sap_successfactors"],
+        empty_catalog_payload=lambda: {"datasets": {}},
+        catalog_query_args=catalog_query_args,
+        catalog_cache_key=catalog_cache_key,
+        refinement_invoke=refinement_invoke,
+        raise_for_refinement_payload_error=raise_for_refinement_payload_error,
+        scoped_read_cache_get_or_set=scoped_read_cache_get_or_set,
+    )
+
+    assert result == {"datasets": ["gold_ready"]}
+    assert captured["args"] == {
+        "layer": "gold",
+        "cartridge": "sap_successfactors",
+        "tags": ["talent", "kpi"],
+        "datasets": ["employee_profile"],
+    }
+    assert captured["tool"] == "get_data_catalog"
+    assert captured["user"] == SCOPED_USER
+    assert captured["checked"] == ({"datasets": ["gold_ready"]}, "Refinement catalog failed")
+    assert captured["cache"] == (
+        "catalog",
+        SCOPED_USER,
+        (
+            '{"cartridge": "sap_successfactors", "datasets": ["employee_profile"], '
+            '"layer": "gold", "tags": ["talent", "kpi"]}',
+        ),
+    )
 
 
 @pytest.mark.asyncio

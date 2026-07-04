@@ -150,6 +150,9 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_cache_key as _catalog_cache_key,
     catalog_query_args as _catalog_query_args,
 )
+from app.domains.data_platform.catalog_requests import (
+    catalog_get_payload as _catalog_get_payload_impl,
+)
 from app.domains.data_platform.bronze_physical import (
     bronze_physical_snapshot as _bronze_physical_snapshot_impl,
     count_bronze_parquet_rows as _count_bronze_parquet_rows_impl,
@@ -5543,24 +5546,20 @@ async def api_catalog_get(
     datasets: str = "",
     user: dict = Depends(require_permission("datasets.read")),
 ):
-    cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
-    if not cartridge and _user_allowed_cartridges(user) is not None:
-        return _empty_catalog_payload()
-    args = _catalog_query_args(
+    return await _catalog_get_payload_impl(
         layer=layer,
         cartridge=cartridge,
         tags=tags,
         datasets=datasets,
-    )
-    cache_args = _catalog_cache_key(args)
-
-    async def load_catalog() -> Any:
-        result = await _refinement_invoke("get_data_catalog", args, user=user)
-        _raise_for_refinement_payload_error(result, "Refinement catalog failed")
-        return result
-
-    return await _scoped_read_cache_get_or_set(
-        "catalog", user, (cache_args,), load_catalog
+        user=user,
+        scope_catalog_cartridge_arg=_scope_catalog_cartridge_arg,
+        user_allowed_cartridges=_user_allowed_cartridges,
+        empty_catalog_payload=_empty_catalog_payload,
+        catalog_query_args=_catalog_query_args,
+        catalog_cache_key=_catalog_cache_key,
+        refinement_invoke=_refinement_invoke,
+        raise_for_refinement_payload_error=_raise_for_refinement_payload_error,
+        scoped_read_cache_get_or_set=_scoped_read_cache_get_or_set,
     )
 
 
