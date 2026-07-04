@@ -3186,6 +3186,260 @@ def _lessons_for_item(item: dict[str, Any]) -> list[str]:
 
 
 @_bind_to_core
+def _persisted_signal_intelligence(
+    metadata: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    intelligence = (
+        metadata.get("intelligence")
+        if isinstance(metadata.get("intelligence"), dict)
+        else {}
+    )
+    decision_intelligence = metadata.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = intelligence.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = {}
+    if decision_intelligence:
+        intelligence = {
+            **intelligence,
+            "decision_intelligence": decision_intelligence,
+        }
+    analysis_evidence = (
+        metadata.get("analysis_evidence")
+        if isinstance(metadata.get("analysis_evidence"), dict)
+        else {}
+    )
+    return intelligence, decision_intelligence, analysis_evidence
+
+
+@_bind_to_core
+def _persisted_item_identity_fields(
+    public_row: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    severity: str,
+    kind: str,
+    is_agent_alert: bool,
+) -> dict[str, Any]:
+    return {
+        "id": str(public_row.get("item_id") or ""),
+        "kind": kind,
+        "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
+        "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
+        "domain": public_row.get("domain") or "Operacion",
+        "module": metadata.get("module")
+        or metadata.get("agent_name")
+        or ("Agente monitor" if is_agent_alert else "Intelligence Engine"),
+        "cartridge": public_row.get("cartridge_id") or "platform",
+        "source_dataset": public_row.get("source_dataset") or "intelligence_signals",
+        "source_system": metadata.get("source_system")
+        or public_row.get("cartridge_id")
+        or "platform",
+        "dataset": metadata.get("dataset")
+        or public_row.get("source_dataset")
+        or "intelligence_signals",
+        "gold_table": metadata.get("gold_table"),
+        "freshness_at": metadata.get("freshness_at"),
+        "freshness_field": metadata.get("freshness_field"),
+        "data_status": metadata.get("data_status") or "gold_ready",
+        "evidence_pack_id": metadata.get("evidence_pack_id"),
+        "evidence_pack": metadata.get("evidence_pack")
+        if isinstance(metadata.get("evidence_pack"), dict)
+        else {},
+        "entity_kind": public_row.get("entity_kind") or "Entidad",
+        "entity_id": public_row.get("entity_id") or "",
+        "entity_label": public_row.get("entity_label")
+        or public_row.get("entity_id")
+        or "Entidad",
+        "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
+        "severity": severity,
+        "severity_weight": SEVERITY_WEIGHT[severity],
+        "detected_at": public_row.get("last_seen_at")
+        or public_row.get("first_seen_at")
+        or "",
+    }
+
+
+@_bind_to_core
+def _persisted_item_narrative_fields(
+    public_row: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    item_id: str,
+    is_agent_alert: bool,
+) -> dict[str, Any]:
+    escaped_item_id = item_id.replace("'", "''")
+    return {
+        "details": metadata.get("details")
+        if isinstance(metadata.get("details"), dict)
+        else {},
+        "title": public_row.get("title")
+        or ("Alerta de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
+        "description": metadata.get("description")
+        or public_row.get("title")
+        or (
+            "Alerta advisory de agente monitor"
+            if is_agent_alert
+            else "Senal de inteligencia operativa"
+        ),
+        "recommendation": metadata.get("recommendation")
+        or "Revisar evidencia y seleccionar una opcion supervisada.",
+        "root_cause": metadata.get("root_cause")
+        or (
+            "Hipotesis generada por agente monitor."
+            if is_agent_alert
+            else "Desviacion contra baseline."
+        ),
+        "impact": metadata.get("impact") or "Impacto operativo pendiente de validar.",
+        "sql": metadata.get("sql")
+        or (
+            f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'"
+            if is_agent_alert
+            else f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'"
+        ),
+    }
+
+
+@_bind_to_core
+def _persisted_item_state_fields(
+    public_row: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "decision_id": public_row.get("decision_id"),
+        "impact_estimate": public_row.get("impact_estimate"),
+        "impact_currency": public_row.get("impact_currency"),
+        "confidence": public_row.get("confidence"),
+        "priority_score": public_row.get("priority_score"),
+        "thresholds_applied": metadata.get("thresholds_applied") or [],
+        "threshold_state": metadata.get("threshold_state") or "default",
+        "control_origin": metadata.get("control_origin"),
+        "capabilities": metadata.get("capabilities")
+        if isinstance(metadata.get("capabilities"), dict)
+        else {},
+        "priority": metadata.get("priority")
+        if isinstance(metadata.get("priority"), dict)
+        else {},
+        "selected_option_id": public_row.get("selected_option_id")
+        or metadata.get("selected_option_id"),
+        "execution_status": public_row.get("execution_status")
+        or metadata.get("execution_status"),
+        "alert_state": metadata.get("alert_state")
+        if isinstance(metadata.get("alert_state"), dict)
+        else {},
+        "control_state": metadata.get("control_state")
+        if isinstance(metadata.get("control_state"), dict)
+        else {},
+        "lessons": metadata.get("lessons"),
+        "learned_rules": metadata.get("learned_rules"),
+        "lesson_applications": metadata.get("lesson_applications")
+        if isinstance(metadata.get("lesson_applications"), list)
+        else [],
+    }
+
+
+@_bind_to_core
+def _persisted_item_analysis_fields(
+    metadata: dict[str, Any],
+    *,
+    intelligence: dict[str, Any],
+    decision_intelligence: dict[str, Any],
+    analysis_evidence: dict[str, Any],
+    source: str,
+    occurrence_count: int,
+    is_agent_alert: bool,
+) -> dict[str, Any]:
+    return {
+        "math_provenance": metadata.get("math_provenance")
+        if isinstance(metadata.get("math_provenance"), dict)
+        else {},
+        "monte_carlo": metadata.get("monte_carlo")
+        if isinstance(metadata.get("monte_carlo"), dict)
+        else {},
+        "bayesian_calibration": metadata.get("bayesian_calibration")
+        if isinstance(metadata.get("bayesian_calibration"), dict)
+        else {},
+        "decision_intelligence": decision_intelligence,
+        "intelligence": intelligence,
+        "source": source,
+        "advisory": bool(metadata.get("advisory")) or is_agent_alert,
+        "agent_id": metadata.get("agent_id"),
+        "agent_run_id": metadata.get("agent_run_id"),
+        "analysis_type": metadata.get("analysis_type")
+        or analysis_evidence.get("analysis_type"),
+        "engine": metadata.get("origin")
+        or analysis_evidence.get("engine")
+        or metadata.get("engine"),
+        "engine_run_id": metadata.get("engine_run_id")
+        or analysis_evidence.get("engine_run_id"),
+        "analysis_evidence": analysis_evidence,
+        "deduped": occurrence_count > 1,
+        "occurrence_count": occurrence_count,
+        "hypothesis": metadata.get("hypothesis"),
+        "expected_outcome": metadata.get("expected_outcome"),
+    }
+
+
+@_bind_to_core
+def _persisted_item_timestamp_fields(public_row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "first_seen_at": public_row.get("first_seen_at"),
+        "last_seen_at": public_row.get("last_seen_at"),
+        "resolved_at": public_row.get("resolved_at"),
+        "dismissed_at": public_row.get("dismissed_at"),
+    }
+
+
+@_bind_to_core
+def _persisted_intelligence_payload(row: Any) -> dict[str, Any]:
+    public_row = _row_to_public(row)
+    metadata = _details(public_row.get("metadata"))
+    severity = _severity(public_row.get("severity"))
+    status = str(public_row.get("status") or "open")
+    if status not in ITEM_STATUSES:
+        status = "open"
+    kind = str(public_row.get("item_kind") or "intelligence_signal")
+    is_agent_alert = kind == "agent_alert"
+    source = str(
+        metadata.get("source") or ("agent" if is_agent_alert else "intelligence")
+    )
+    occurrence_count = int(metadata.get("occurrence_count") or 1)
+    intelligence, decision_intelligence, analysis_evidence = (
+        _persisted_signal_intelligence(metadata)
+    )
+    item_id = str(public_row.get("item_id") or "")
+    return {
+        **_persisted_item_identity_fields(
+            public_row,
+            metadata,
+            severity=severity,
+            kind=kind,
+            is_agent_alert=is_agent_alert,
+        ),
+        **_persisted_item_narrative_fields(
+            public_row,
+            metadata,
+            item_id=item_id,
+            is_agent_alert=is_agent_alert,
+        ),
+        **_persisted_item_state_fields(public_row, metadata, status=status),
+        **_persisted_item_analysis_fields(
+            metadata,
+            intelligence=intelligence,
+            decision_intelligence=decision_intelligence,
+            analysis_evidence=analysis_evidence,
+            source=source,
+            occurrence_count=occurrence_count,
+            is_agent_alert=is_agent_alert,
+        ),
+        **_persisted_item_timestamp_fields(public_row),
+    }
+
+
+@_bind_to_core
 async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any]]:
     try:
         tenant_id, workspace_id = _workspace_scope(user)
@@ -3227,162 +3481,7 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         rows = await _run_with_db_scope(pool, user or {}, _load)
     except Exception:
         return []
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        public_row = _row_to_public(row)
-        metadata = _details(public_row.get("metadata"))
-        severity = _severity(public_row.get("severity"))
-        status = str(public_row.get("status") or "open")
-        if status not in ITEM_STATUSES:
-            status = "open"
-        item_id = str(public_row.get("item_id") or "")
-        kind = str(public_row.get("item_kind") or "intelligence_signal")
-        is_agent_alert = kind == "agent_alert"
-        escaped_item_id = item_id.replace("'", "''")
-        source = str(metadata.get("source") or ("agent" if is_agent_alert else "intelligence"))
-        occurrence_count = int(metadata.get("occurrence_count") or 1)
-        intelligence = (
-            metadata.get("intelligence")
-            if isinstance(metadata.get("intelligence"), dict)
-            else {}
-        )
-        decision_intelligence = metadata.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = intelligence.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = {}
-        if decision_intelligence:
-            intelligence = {
-                **intelligence,
-                "decision_intelligence": decision_intelligence,
-            }
-        analysis_evidence = (
-            metadata.get("analysis_evidence")
-            if isinstance(metadata.get("analysis_evidence"), dict)
-            else {}
-        )
-        items.append(
-            {
-                "id": item_id,
-                "kind": kind,
-                "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
-                "workspace_id": public_row.get("workspace_id")
-                or metadata.get("workspace_id"),
-                "domain": public_row.get("domain") or "Operacion",
-                "module": metadata.get("module")
-                or metadata.get("agent_name")
-                or ("Agente monitor" if is_agent_alert else "Intelligence Engine"),
-                "cartridge": public_row.get("cartridge_id") or "platform",
-                "source_dataset": public_row.get("source_dataset")
-                or "intelligence_signals",
-                "source_system": metadata.get("source_system")
-                or public_row.get("cartridge_id")
-                or "platform",
-                "dataset": metadata.get("dataset")
-                or public_row.get("source_dataset")
-                or "intelligence_signals",
-                "gold_table": metadata.get("gold_table"),
-                "freshness_at": metadata.get("freshness_at"),
-                "freshness_field": metadata.get("freshness_field"),
-                "data_status": metadata.get("data_status") or "gold_ready",
-                "evidence_pack_id": metadata.get("evidence_pack_id"),
-                "evidence_pack": metadata.get("evidence_pack")
-                if isinstance(metadata.get("evidence_pack"), dict)
-                else {},
-                "entity_kind": public_row.get("entity_kind") or "Entidad",
-                "entity_id": public_row.get("entity_id") or "",
-                "entity_label": public_row.get("entity_label")
-                or public_row.get("entity_id")
-                or "Entidad",
-                "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
-                "severity": severity,
-                "severity_weight": SEVERITY_WEIGHT[severity],
-                "detected_at": public_row.get("last_seen_at")
-                or public_row.get("first_seen_at")
-                or "",
-                "details": metadata.get("details")
-                if isinstance(metadata.get("details"), dict)
-                else {},
-                "title": public_row.get("title")
-                or ("Alerta de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
-                "description": metadata.get("description")
-                or public_row.get("title")
-                or ("Alerta advisory de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
-                "recommendation": metadata.get("recommendation")
-                or "Revisar evidencia y seleccionar una opcion supervisada.",
-                "root_cause": metadata.get("root_cause")
-                or ("Hipotesis generada por agente monitor." if is_agent_alert else "Desviacion contra baseline."),
-                "impact": metadata.get("impact")
-                or "Impacto operativo pendiente de validar.",
-                "sql": metadata.get("sql")
-                or (
-                    f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'"
-                    if is_agent_alert
-                    else f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'"
-                ),
-                "status": status,
-                "decision_id": public_row.get("decision_id"),
-                "impact_estimate": public_row.get("impact_estimate"),
-                "impact_currency": public_row.get("impact_currency"),
-                "confidence": public_row.get("confidence"),
-                "priority_score": public_row.get("priority_score"),
-                "thresholds_applied": metadata.get("thresholds_applied") or [],
-                "threshold_state": metadata.get("threshold_state") or "default",
-                "control_origin": metadata.get("control_origin"),
-                "capabilities": metadata.get("capabilities")
-                if isinstance(metadata.get("capabilities"), dict)
-                else {},
-                "math_provenance": metadata.get("math_provenance")
-                if isinstance(metadata.get("math_provenance"), dict)
-                else {},
-                "monte_carlo": metadata.get("monte_carlo")
-                if isinstance(metadata.get("monte_carlo"), dict)
-                else {},
-                "bayesian_calibration": metadata.get("bayesian_calibration")
-                if isinstance(metadata.get("bayesian_calibration"), dict)
-                else {},
-                "priority": metadata.get("priority")
-                if isinstance(metadata.get("priority"), dict)
-                else {},
-                "selected_option_id": public_row.get("selected_option_id")
-                or metadata.get("selected_option_id"),
-                "execution_status": public_row.get("execution_status")
-                or metadata.get("execution_status"),
-                "alert_state": metadata.get("alert_state")
-                if isinstance(metadata.get("alert_state"), dict)
-                else {},
-                "control_state": metadata.get("control_state")
-                if isinstance(metadata.get("control_state"), dict)
-                else {},
-                "lessons": metadata.get("lessons"),
-                "learned_rules": metadata.get("learned_rules"),
-                "lesson_applications": metadata.get("lesson_applications")
-                if isinstance(metadata.get("lesson_applications"), list)
-                else [],
-                "decision_intelligence": decision_intelligence,
-                "intelligence": intelligence,
-                "source": source,
-                "advisory": bool(metadata.get("advisory")) or is_agent_alert,
-                "agent_id": metadata.get("agent_id"),
-                "agent_run_id": metadata.get("agent_run_id"),
-                "analysis_type": metadata.get("analysis_type")
-                or analysis_evidence.get("analysis_type"),
-                "engine": metadata.get("origin")
-                or analysis_evidence.get("engine")
-                or metadata.get("engine"),
-                "engine_run_id": metadata.get("engine_run_id")
-                or analysis_evidence.get("engine_run_id"),
-                "analysis_evidence": analysis_evidence,
-                "deduped": occurrence_count > 1,
-                "occurrence_count": occurrence_count,
-                "hypothesis": metadata.get("hypothesis"),
-                "expected_outcome": metadata.get("expected_outcome"),
-                "first_seen_at": public_row.get("first_seen_at"),
-                "last_seen_at": public_row.get("last_seen_at"),
-                "resolved_at": public_row.get("resolved_at"),
-                "dismissed_at": public_row.get("dismissed_at"),
-            }
-        )
+    items = [_persisted_intelligence_payload(row) for row in rows]
     return [_with_omega(item) for item in items]
 
 
