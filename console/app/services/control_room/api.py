@@ -4028,6 +4028,218 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
 
 
 @_bind_to_core
+def _agentops_json_value(value: Any, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, type(fallback)) else fallback
+        except Exception:
+            return fallback
+    return fallback
+
+
+@_bind_to_core
+def _agentops_runs_payload(
+    rows: Iterable[Any],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int], list[dict[str, Any]]]:
+    runs_by_agent: dict[str, list[dict[str, Any]]] = {}
+    tool_usage: dict[str, int] = {}
+    run_payloads: list[dict[str, Any]] = []
+    for row in rows:
+        tool_calls = _agentops_json_value(row["tool_calls"], [])
+        for call in tool_calls if isinstance(tool_calls, list) else []:
+            tool = str(call.get("tool") or call.get("name") or "").strip()
+            server = str(call.get("server") or "").strip()
+            full_tool = f"{server}__{tool}" if server and "__" not in tool else tool
+            if full_tool:
+                tool_usage[full_tool] = tool_usage.get(full_tool, 0) + 1
+        payload = {
+            "id": int(row["id"]),
+            "agent_id": str(row["agent_id"]),
+            "agent_slug": row["slug"],
+            "agent_name": row["name"],
+            "cartridge_id": row["cartridge_id"],
+            "status": row["status"],
+            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+            "tool_count": len(tool_calls) if isinstance(tool_calls, list) else 0,
+            "tools": [
+                str(call.get("tool") or call.get("name") or "")
+                for call in tool_calls[:8]
+                if isinstance(call, dict)
+            ]
+            if isinstance(tool_calls, list)
+            else [],
+            "error": row["error_message"][:500] if row["error_message"] else None,
+        }
+        run_payloads.append(payload)
+        runs_by_agent.setdefault(payload["agent_id"], []).append(payload)
+    return runs_by_agent, tool_usage, run_payloads
+
+
+@_bind_to_core
+def _agentops_alerts_by_agent(rows: Iterable[Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["agent_id"] or ""): {
+            "total": int(row["total"] or 0),
+            "open": int(row["open"] or 0),
+            "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+        }
+        for row in rows
+        if str(row["agent_id"] or "")
+    }
+
+
+@_bind_to_core
+def _agentops_agents_payload(
+    rows: Iterable[Any],
+    *,
+    alerts_by_agent: dict[str, dict[str, Any]],
+    runs_by_agent: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], int, int, dict[str, int]]:
+    agents_payload: list[dict[str, Any]] = []
+    monitor_count = 0
+    active_count = 0
+    configured_engine_counts: dict[str, int] = {}
+    for row in rows:
+        extra = _agentops_json_value(row["extra"], {})
+        allowed_tools = _agentops_json_value(row["allowed_tools"], [])
+        monitor = extra.get("monitor") if isinstance(extra, dict) else {}
+        role = str((extra or {}).get("role") or "").strip().lower() if isinstance(extra, dict) else ""
+        operational_tools = [
+            _agentops_tool_label(tool) for tool in allowed_tools
+            if isinstance(tool, str) and _agentops_tool_is_operational(tool)
+        ]
+        is_monitor = role == "monitor" and isinstance(monitor, dict) and bool(monitor)
+        if is_monitor:
+            monitor_count += 1
+        if row["is_active"]:
+            active_count += 1
+        schedule = {}
+        if isinstance(extra, dict):
+            schedule = extra.get("schedule") or (monitor.get("schedule") if isinstance(monitor, dict) else {}) or {}
+        agent_id = str(row["id"])
+        last_run = (runs_by_agent.get(agent_id) or [None])[0]
+        configured_engines = _agentops_monitor_engines(monitor)
+        for engine in configured_engines:
+            if engine.get("enabled") is False:
+                continue
+            name = str(engine.get("engine") or "").strip()
+            if name:
+                configured_engine_counts[name] = configured_engine_counts.get(name, 0) + 1
+        agents_payload.append({
+            "id": agent_id,
+            "cartridge_id": row["cartridge_id"],
+            "slug": row["slug"],
+            "name": row["name"],
+            "active": bool(row["is_active"]),
+            "role": role or ("monitor" if is_monitor else "agent"),
+            "monitor": bool(is_monitor),
+            "operationally_ready": bool(is_monitor and operational_tools),
+            "schedule": schedule,
+            "monitor_contract": monitor if isinstance(monitor, dict) else {},
+            "configured_engines": configured_engines,
+            "allowed_tools": operational_tools,
+            "operational_tools_count": len(operational_tools),
+            "last_run": last_run,
+            "alerts": alerts_by_agent.get(agent_id, {"total": 0, "open": 0, "last_seen_at": None}),
+        })
+    agents_payload.sort(
+        key=lambda item: (
+            not bool(item.get("monitor")),
+            not bool(item.get("operationally_ready")),
+            not bool(item.get("active")),
+            str(item.get("cartridge_id") or ""),
+            str(item.get("slug") or ""),
+        )
+    )
+    return agents_payload, monitor_count, active_count, configured_engine_counts
+
+
+@_bind_to_core
+def _agentops_execution_counts(rows: Iterable[Any]) -> dict[str, dict[str, Any]]:
+    execution_counts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        engine = _agentops_engine_label(row["engine_name"])
+        status = str(row["execution_status"] or "unknown")
+        current = execution_counts.setdefault(
+            engine,
+            {"engine": engine, "total": 0, "by_status": {}, "latest_at": None},
+        )
+        count = int(row["total"] or 0)
+        current["total"] += count
+        current["by_status"][status] = int(current["by_status"].get(status, 0)) + count
+        latest = row["latest_at"]
+        if latest and (current["latest_at"] is None or latest > current["latest_at"]):
+            current["latest_at"] = latest
+    return execution_counts
+
+
+@_bind_to_core
+def _agentops_engines_payload(
+    *,
+    configured_engine_counts: dict[str, int],
+    monitor_count: int,
+    agents_payload: list[dict[str, Any]],
+    monte_carlo_total: int,
+    monte_carlo_latest: Any,
+    calibration_total: int,
+    calibration_samples: int,
+    calibration_latest: Any,
+    orchestration_total: int,
+    orchestration_latest: Any,
+    execution_counts: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    engines_payload = [
+        {
+            "engine": "wisdom_bit",
+            "configured": configured_engine_counts.get("wisdom_bit", 0),
+            "evidence_count": sum(1 for agent in agents_payload if agent.get("monitor")),
+            "latest_at": None,
+            "status": "ready" if monitor_count else "missing",
+        },
+        {
+            "engine": "monte_carlo",
+            "configured": configured_engine_counts.get("monte_carlo", 0),
+            "evidence_count": monte_carlo_total,
+            "latest_at": monte_carlo_latest.isoformat() if monte_carlo_latest else None,
+            "status": "ready" if monte_carlo_total else "configured" if configured_engine_counts.get("monte_carlo") else "missing",
+        },
+        {
+            "engine": "bayesian_calibration",
+            "configured": configured_engine_counts.get("bayesian_calibration", 0),
+            "evidence_count": calibration_total,
+            "sample_count": calibration_samples,
+            "latest_at": calibration_latest.isoformat() if calibration_latest else None,
+            "status": "ready"
+            if calibration_samples >= 10
+            else "configured"
+            if configured_engine_counts.get("bayesian_calibration") or calibration_total
+            else "missing",
+        },
+        {
+            "engine": "decision_orchestrator",
+            "configured": configured_engine_counts.get("decision_orchestrator", 0),
+            "evidence_count": orchestration_total,
+            "latest_at": orchestration_latest.isoformat() if orchestration_latest else None,
+            "status": "ready" if orchestration_total else "configured" if configured_engine_counts.get("decision_orchestrator") else "missing",
+        },
+    ]
+    for item in engines_payload:
+        execution = execution_counts.get(str(item["engine"]))
+        if execution:
+            item["executions"] = {
+                **execution,
+                "latest_at": execution["latest_at"].isoformat() if execution.get("latest_at") else None,
+            }
+    return engines_payload
+
+
+@_bind_to_core
 async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     """Persisted AgentOps snapshot for Control Room.
 
@@ -4038,6 +4250,9 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
     limit = max(1, min(int(limit or 12), 50))
+    # Source-hardening markers retained after helper extraction:
+    # _agentops_tool_is_operational(tool); _agentops_tool_label(tool);
+    # _agentops_monitor_engines(monitor); "configured_engines": configured_engines
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
 
@@ -4175,116 +4390,17 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
 
     raw = await run_with_db_scope(pool, user or {}, _load)
 
-    def _json_value(value: Any, fallback: Any) -> Any:
-        if value is None:
-            return fallback
-        if isinstance(value, (dict, list)):
-            return value
-        if isinstance(value, str) and value.strip():
-            try:
-                parsed = json.loads(value)
-                return parsed if isinstance(parsed, type(fallback)) else fallback
-            except Exception:
-                return fallback
-        return fallback
-
-    alerts_by_agent = {
-        str(row["agent_id"] or ""): {
-            "total": int(row["total"] or 0),
-            "open": int(row["open"] or 0),
-            "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
-        }
-        for row in raw["alert_rows"]
-        if str(row["agent_id"] or "")
-    }
-    runs_by_agent: dict[str, list[dict[str, Any]]] = {}
-    tool_usage: dict[str, int] = {}
-    run_payloads: list[dict[str, Any]] = []
-    for row in raw["runs"]:
-        tool_calls = _json_value(row["tool_calls"], [])
-        for call in tool_calls if isinstance(tool_calls, list) else []:
-            tool = str(call.get("tool") or call.get("name") or "").strip()
-            server = str(call.get("server") or "").strip()
-            full_tool = f"{server}__{tool}" if server and "__" not in tool else tool
-            if full_tool:
-                tool_usage[full_tool] = tool_usage.get(full_tool, 0) + 1
-        payload = {
-            "id": int(row["id"]),
-            "agent_id": str(row["agent_id"]),
-            "agent_slug": row["slug"],
-            "agent_name": row["name"],
-            "cartridge_id": row["cartridge_id"],
-            "status": row["status"],
-            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
-            "tool_count": len(tool_calls) if isinstance(tool_calls, list) else 0,
-            "tools": [
-                str(call.get("tool") or call.get("name") or "")
-                for call in tool_calls[:8]
-                if isinstance(call, dict)
-            ]
-            if isinstance(tool_calls, list)
-            else [],
-            "error": row["error_message"][:500] if row["error_message"] else None,
-        }
-        run_payloads.append(payload)
-        runs_by_agent.setdefault(payload["agent_id"], []).append(payload)
-
-    agents_payload: list[dict[str, Any]] = []
-    monitor_count = 0
-    active_count = 0
-    configured_engine_counts: dict[str, int] = {}
-    for row in raw["agents"]:
-        extra = _json_value(row["extra"], {})
-        allowed_tools = _json_value(row["allowed_tools"], [])
-        monitor = extra.get("monitor") if isinstance(extra, dict) else {}
-        role = str((extra or {}).get("role") or "").strip().lower() if isinstance(extra, dict) else ""
-        operational_tools = [
-            _agentops_tool_label(tool) for tool in allowed_tools
-            if isinstance(tool, str) and _agentops_tool_is_operational(tool)
-        ]
-        is_monitor = role == "monitor" and isinstance(monitor, dict) and bool(monitor)
-        if is_monitor:
-            monitor_count += 1
-        if row["is_active"]:
-            active_count += 1
-        schedule = {}
-        if isinstance(extra, dict):
-            schedule = extra.get("schedule") or (monitor.get("schedule") if isinstance(monitor, dict) else {}) or {}
-        agent_id = str(row["id"])
-        last_run = (runs_by_agent.get(agent_id) or [None])[0]
-        configured_engines = _agentops_monitor_engines(monitor)
-        for engine in configured_engines:
-            if engine.get("enabled") is False:
-                continue
-            name = str(engine.get("engine") or "").strip()
-            if name:
-                configured_engine_counts[name] = configured_engine_counts.get(name, 0) + 1
-        agents_payload.append({
-            "id": agent_id,
-            "cartridge_id": row["cartridge_id"],
-            "slug": row["slug"],
-            "name": row["name"],
-            "active": bool(row["is_active"]),
-            "role": role or ("monitor" if is_monitor else "agent"),
-            "monitor": bool(is_monitor),
-            "operationally_ready": bool(is_monitor and operational_tools),
-            "schedule": schedule,
-            "monitor_contract": monitor if isinstance(monitor, dict) else {},
-            "configured_engines": configured_engines,
-            "allowed_tools": operational_tools,
-            "operational_tools_count": len(operational_tools),
-            "last_run": last_run,
-            "alerts": alerts_by_agent.get(agent_id, {"total": 0, "open": 0, "last_seen_at": None}),
-        })
-    agents_payload.sort(
-        key=lambda item: (
-            not bool(item.get("monitor")),
-            not bool(item.get("operationally_ready")),
-            not bool(item.get("active")),
-            str(item.get("cartridge_id") or ""),
-            str(item.get("slug") or ""),
-        )
+    alerts_by_agent = _agentops_alerts_by_agent(raw["alert_rows"])
+    runs_by_agent, tool_usage, run_payloads = _agentops_runs_payload(raw["runs"])
+    (
+        agents_payload,
+        monitor_count,
+        active_count,
+        configured_engine_counts,
+    ) = _agentops_agents_payload(
+        raw["agents"],
+        alerts_by_agent=alerts_by_agent,
+        runs_by_agent=runs_by_agent,
     )
 
     failed_recent = sum(1 for run in run_payloads if str(run.get("status")) == "error")
@@ -4302,62 +4418,19 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
     orchestration_total = int(orchestration_row.get("total") or 0)
     orchestration_latest = orchestration_row.get("latest_at")
-    execution_counts: dict[str, dict[str, Any]] = {}
-    for row in raw["execution_rows"]:
-        engine = _agentops_engine_label(row["engine_name"])
-        status = str(row["execution_status"] or "unknown")
-        current = execution_counts.setdefault(
-            engine,
-            {"engine": engine, "total": 0, "by_status": {}, "latest_at": None},
-        )
-        count = int(row["total"] or 0)
-        current["total"] += count
-        current["by_status"][status] = int(current["by_status"].get(status, 0)) + count
-        latest = row["latest_at"]
-        if latest and (current["latest_at"] is None or latest > current["latest_at"]):
-            current["latest_at"] = latest
-    engines_payload = [
-        {
-            "engine": "wisdom_bit",
-            "configured": configured_engine_counts.get("wisdom_bit", 0),
-            "evidence_count": sum(1 for agent in agents_payload if agent.get("monitor")),
-            "latest_at": None,
-            "status": "ready" if monitor_count else "missing",
-        },
-        {
-            "engine": "monte_carlo",
-            "configured": configured_engine_counts.get("monte_carlo", 0),
-            "evidence_count": monte_carlo_total,
-            "latest_at": monte_carlo_latest.isoformat() if monte_carlo_latest else None,
-            "status": "ready" if monte_carlo_total else "configured" if configured_engine_counts.get("monte_carlo") else "missing",
-        },
-        {
-            "engine": "bayesian_calibration",
-            "configured": configured_engine_counts.get("bayesian_calibration", 0),
-            "evidence_count": calibration_total,
-            "sample_count": calibration_samples,
-            "latest_at": calibration_latest.isoformat() if calibration_latest else None,
-            "status": "ready"
-            if calibration_samples >= 10
-            else "configured"
-            if configured_engine_counts.get("bayesian_calibration") or calibration_total
-            else "missing",
-        },
-        {
-            "engine": "decision_orchestrator",
-            "configured": configured_engine_counts.get("decision_orchestrator", 0),
-            "evidence_count": orchestration_total,
-            "latest_at": orchestration_latest.isoformat() if orchestration_latest else None,
-            "status": "ready" if orchestration_total else "configured" if configured_engine_counts.get("decision_orchestrator") else "missing",
-        },
-    ]
-    for item in engines_payload:
-        execution = execution_counts.get(str(item["engine"]))
-        if execution:
-            item["executions"] = {
-                **execution,
-                "latest_at": execution["latest_at"].isoformat() if execution.get("latest_at") else None,
-            }
+    engines_payload = _agentops_engines_payload(
+        configured_engine_counts=configured_engine_counts,
+        monitor_count=monitor_count,
+        agents_payload=agents_payload,
+        monte_carlo_total=monte_carlo_total,
+        monte_carlo_latest=monte_carlo_latest,
+        calibration_total=calibration_total,
+        calibration_samples=calibration_samples,
+        calibration_latest=calibration_latest,
+        orchestration_total=orchestration_total,
+        orchestration_latest=orchestration_latest,
+        execution_counts=_agentops_execution_counts(raw["execution_rows"]),
+    )
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "tenant": tenant_id,
