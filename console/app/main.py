@@ -295,6 +295,7 @@ from app.domains.pipeline.sync_state import (
     active_sync_run_lookup_parts as _active_sync_run_lookup_parts,
     active_extract_run_payload as _active_extract_run_payload,
     airflow_run_id_fragment as _airflow_run_id_fragment,
+    build_sync_run_status as _build_sync_run_status_impl,
     fetch_active_sync_run as _fetch_active_sync_run_impl,
     fetch_sync_child_runs as _fetch_sync_child_runs_impl,
     fetch_sync_run as _fetch_sync_run_impl,
@@ -4039,155 +4040,41 @@ async def _build_sync_run_status(
     row: dict[str, Any],
     user: dict | None,
 ) -> dict[str, Any]:
-    working_state = _sync_run_working_state(row)
-    extra = working_state["extra"]
-    steps = working_state["steps"]
-    triggered = working_state["triggered"]
-    errors = working_state["errors"]
-    child_run_ids = working_state["child_run_ids"]
-    child_rows = await _sync_child_runs(
-        cartridge=cartridge, run_ids=child_run_ids, user=user
-    )
-    child_runtime = _sync_child_runtime_state(
+    async def call_pipeline(
+        current_cartridge: str,
+        *,
+        user: dict | None,
+    ) -> dict[str, Any]:
+        return await _call_with_optional_user(api_pipeline, current_cartridge, user=user)
+
+    async def run_agentops_status(**kwargs: Any) -> dict[str, Any]:
+        return await _run_sync_agentops_status_impl(
+            **kwargs,
+            run_sync_agentops_monitors=_run_sync_agentops_monitors,
+            sync_agentops_is_terminal=_sync_agentops_is_terminal,
+            logger_warning=logger.warning,
+        )
+
+    def control_room_cache_invalidate(current_user: dict | None) -> None:
+        from app.routers.control_room import _control_room_cache_invalidate
+
+        _control_room_cache_invalidate(current_user)
+
+    return await _build_sync_run_status_impl(
+        cartridge=cartridge,
         row=row,
-        child_rows=child_rows,
-        child_run_ids=child_run_ids,
-        triggered=triggered,
-        errors=errors,
+        user=user,
+        sync_child_runs=_sync_child_runs,
+        call_pipeline=call_pipeline,
+        run_control_room_gold_refresh=_run_sync_control_room_gold_refresh,
+        run_control_room_status=_run_sync_control_room_status_impl,
+        run_agentops_status=run_agentops_status,
+        upsert_sync_run=_upsert_sync_run,
+        fetch_sync_run_func=_fetch_sync_run,
+        control_room_cache_invalidate=control_room_cache_invalidate,
+        logger_debug=logger.debug,
         stale_after_seconds=_SYNC_NOW_STALE_AFTER_SECONDS,
     )
-    gold_refresh_summary = child_runtime["gold_refresh_summary"]
-    aggregate_payload_ready = child_runtime["aggregate_payload_ready"]
-    entity_child_rows = child_runtime["entity_child_rows"]
-    aggregate_summary_pending = child_runtime["aggregate_summary_pending"]
-    running_children = child_runtime["running_children"]
-    entity_summary = child_runtime["entity_summary"]
-    errors = child_runtime["errors"]
-
-    try:
-        pipeline_payload = await _call_with_optional_user(
-            api_pipeline, cartridge, user=user
-        )
-        pipeline_rows = pipeline_payload.get("pipeline") or []
-    except Exception as exc:
-        pipeline_rows = []
-        errors = [
-            *errors,
-            {"entity": "__pipeline__", "status_code": 503, "error": str(exc)},
-        ]
-
-    materialization_state = _sync_materialization_state(
-        pipeline_rows,
-        gold_refresh_summary,
-    )
-    bronze_ready = materialization_state["bronze_ready"]
-    silver_ready = materialization_state["silver_ready"]
-    gold_ready = materialization_state["gold_ready"]
-    gold_total = materialization_state["gold_total"]
-    gold_partial = materialization_state["gold_partial"]
-    control_room_gold_refresh = (
-        dict(extra.get("control_room_gold_refresh"))
-        if isinstance(extra.get("control_room_gold_refresh"), dict)
-        else {}
-    )
-    if (
-        cartridge == "sap_successfactors"
-        and gold_ready
-        and not running_children
-        and not _sync_control_room_gold_refresh_terminal(control_room_gold_refresh)
-    ):
-        control_room_gold_refresh = await _run_sync_control_room_gold_refresh(
-            cartridge=cartridge,
-            row=row,
-            child_rows=child_rows,
-            gold_refresh_summary=gold_refresh_summary,
-            user=user,
-        )
-
-    updates: dict[str, dict[str, Any]] = _sync_core_step_updates(
-        triggered=triggered,
-        child_rows=child_rows,
-        child_runtime=child_runtime,
-        materialization_state=materialization_state,
-        errors=errors,
-    )
-
-    control_room_status = await _run_sync_control_room_status_impl(
-        cartridge=cartridge,
-        bronze_ready=bronze_ready,
-        silver_ready=silver_ready,
-        gold_ready=gold_ready,
-        running_children=running_children,
-        control_room_gold_refresh=control_room_gold_refresh,
-        user=user,
-    )
-    control_room_ready = bool(control_room_status["ready"])
-    control_room_checked_at = control_room_status["checked_at"]
-    control_room_snapshot = control_room_status["snapshot"]
-    updates["control_room"] = control_room_status["update"]
-
-    agentops_refresh = (
-        dict(extra.get("agentops_refresh"))
-        if isinstance(extra.get("agentops_refresh"), dict)
-        else {}
-    )
-    agentops_status = await _run_sync_agentops_status_impl(
-        cartridge=cartridge,
-        sync_run_id=str(row["run_id"]),
-        running_children=running_children,
-        bronze_ready=bronze_ready,
-        silver_ready=silver_ready,
-        gold_ready=gold_ready,
-        control_room_update=updates.get("control_room", {}),
-        agentops_refresh=agentops_refresh,
-        user=user,
-        run_sync_agentops_monitors=_run_sync_agentops_monitors,
-        sync_agentops_is_terminal=_sync_agentops_is_terminal,
-        logger_warning=logger.warning,
-    )
-    agentops_refresh = agentops_status["agentops_refresh"]
-    updates["agents_intelligence"] = agentops_status["update"]
-
-    steps = _merge_sync_steps(steps, updates)
-    status = _sync_status_from_steps(steps)
-    updated_extra = _sync_progress.sync_updated_extra(
-        steps=steps,
-        triggered=triggered,
-        errors=errors,
-        control_room_ready=control_room_ready,
-        control_room_checked_at=control_room_checked_at,
-        control_room_snapshot=control_room_snapshot,
-        agentops_refresh=agentops_refresh,
-        gold_refresh_summary=gold_refresh_summary,
-        control_room_gold_refresh=control_room_gold_refresh,
-        aggregate_payload_ready=aggregate_payload_ready,
-        aggregate_summary_pending=aggregate_summary_pending,
-        child_run_count=len(child_rows),
-        entity_child_run_count=len(entity_child_rows),
-        entity_summary=entity_summary,
-        previous_extra=extra,
-        row_mode=str(row.get("mode") or "") or None,
-    )
-    await _upsert_sync_run(
-        run_id=str(row["run_id"]),
-        cartridge=cartridge,
-        mode=str(row.get("mode") or updated_extra["mode"]),
-        status=status,
-        user=user,
-        extra=updated_extra,
-        error_message=_sync_progress.sync_run_error_message(errors),
-    )
-    if status in _SYNC_TERMINAL_STATUSES:
-        try:
-            from app.routers.control_room import _control_room_cache_invalidate
-
-            _control_room_cache_invalidate(user)
-        except Exception:
-            logger.debug("Could not invalidate Control Room cache after sync", exc_info=True)
-    refreshed = await _fetch_sync_run(
-        cartridge=cartridge, run_id=str(row["run_id"]), user=user
-    )
-    return _sync_public_payload(refreshed or row, {**extra, **updated_extra})
 
 
 @app.post(

@@ -726,3 +726,164 @@ def sync_gold_refresh_dataset_names(gold_refresh_summary: dict[str, Any]) -> lis
 
 def sync_control_room_gold_refresh_terminal(payload: Any) -> bool:
     return sync_progress.control_room_gold_refresh_terminal(payload)
+
+
+async def build_sync_run_status(
+    *,
+    cartridge: str,
+    row: dict[str, Any],
+    user: dict[str, Any] | None,
+    sync_child_runs: Any,
+    call_pipeline: Any,
+    run_control_room_gold_refresh: Any,
+    run_control_room_status: Any,
+    run_agentops_status: Any,
+    upsert_sync_run: Any,
+    fetch_sync_run_func: Any,
+    control_room_cache_invalidate: Any,
+    logger_debug: Any,
+    stale_after_seconds: int,
+) -> dict[str, Any]:
+    working_state = sync_run_working_state(row)
+    extra = working_state["extra"]
+    steps = working_state["steps"]
+    triggered = working_state["triggered"]
+    errors = working_state["errors"]
+    child_run_ids = working_state["child_run_ids"]
+    child_rows = await sync_child_runs(
+        cartridge=cartridge, run_ids=child_run_ids, user=user
+    )
+    child_runtime = sync_child_runtime_state(
+        row=row,
+        child_rows=child_rows,
+        child_run_ids=child_run_ids,
+        triggered=triggered,
+        errors=errors,
+        stale_after_seconds=stale_after_seconds,
+    )
+    gold_refresh_summary = child_runtime["gold_refresh_summary"]
+    aggregate_payload_ready = child_runtime["aggregate_payload_ready"]
+    entity_child_rows = child_runtime["entity_child_rows"]
+    aggregate_summary_pending = child_runtime["aggregate_summary_pending"]
+    running_children = child_runtime["running_children"]
+    entity_summary = child_runtime["entity_summary"]
+    errors = child_runtime["errors"]
+
+    try:
+        pipeline_payload = await call_pipeline(cartridge, user=user)
+        pipeline_rows = pipeline_payload.get("pipeline") or []
+    except Exception as exc:
+        pipeline_rows = []
+        errors = [
+            *errors,
+            {"entity": "__pipeline__", "status_code": 503, "error": str(exc)},
+        ]
+
+    materialization_state = sync_materialization_state(
+        pipeline_rows,
+        gold_refresh_summary,
+    )
+    bronze_ready = materialization_state["bronze_ready"]
+    silver_ready = materialization_state["silver_ready"]
+    gold_ready = materialization_state["gold_ready"]
+    control_room_gold_refresh = (
+        dict(extra.get("control_room_gold_refresh"))
+        if isinstance(extra.get("control_room_gold_refresh"), dict)
+        else {}
+    )
+    if (
+        cartridge == SAP_SUCCESSFACTORS_CARTRIDGE
+        and gold_ready
+        and not running_children
+        and not sync_control_room_gold_refresh_terminal(control_room_gold_refresh)
+    ):
+        control_room_gold_refresh = await run_control_room_gold_refresh(
+            cartridge=cartridge,
+            row=row,
+            child_rows=child_rows,
+            gold_refresh_summary=gold_refresh_summary,
+            user=user,
+        )
+
+    updates = sync_core_step_updates(
+        triggered=triggered,
+        child_rows=child_rows,
+        child_runtime=child_runtime,
+        materialization_state=materialization_state,
+        errors=errors,
+    )
+
+    control_room_status = await run_control_room_status(
+        cartridge=cartridge,
+        bronze_ready=bronze_ready,
+        silver_ready=silver_ready,
+        gold_ready=gold_ready,
+        running_children=running_children,
+        control_room_gold_refresh=control_room_gold_refresh,
+        user=user,
+    )
+    control_room_ready = bool(control_room_status["ready"])
+    control_room_checked_at = control_room_status["checked_at"]
+    control_room_snapshot = control_room_status["snapshot"]
+    updates["control_room"] = control_room_status["update"]
+
+    agentops_refresh = (
+        dict(extra.get("agentops_refresh"))
+        if isinstance(extra.get("agentops_refresh"), dict)
+        else {}
+    )
+    agentops_status = await run_agentops_status(
+        cartridge=cartridge,
+        sync_run_id=str(row["run_id"]),
+        running_children=running_children,
+        bronze_ready=bronze_ready,
+        silver_ready=silver_ready,
+        gold_ready=gold_ready,
+        control_room_update=updates.get("control_room", {}),
+        agentops_refresh=agentops_refresh,
+        user=user,
+    )
+    agentops_refresh = agentops_status["agentops_refresh"]
+    updates["agents_intelligence"] = agentops_status["update"]
+
+    steps = merge_sync_steps(steps, updates)
+    status = sync_status_from_steps(steps)
+    updated_extra = sync_progress.sync_updated_extra(
+        steps=steps,
+        triggered=triggered,
+        errors=errors,
+        control_room_ready=control_room_ready,
+        control_room_checked_at=control_room_checked_at,
+        control_room_snapshot=control_room_snapshot,
+        agentops_refresh=agentops_refresh,
+        gold_refresh_summary=gold_refresh_summary,
+        control_room_gold_refresh=control_room_gold_refresh,
+        aggregate_payload_ready=aggregate_payload_ready,
+        aggregate_summary_pending=aggregate_summary_pending,
+        child_run_count=len(child_rows),
+        entity_child_run_count=len(entity_child_rows),
+        entity_summary=entity_summary,
+        previous_extra=extra,
+        row_mode=str(row.get("mode") or "") or None,
+    )
+    await upsert_sync_run(
+        run_id=str(row["run_id"]),
+        cartridge=cartridge,
+        mode=str(row.get("mode") or updated_extra["mode"]),
+        status=status,
+        user=user,
+        extra=updated_extra,
+        error_message=sync_progress.sync_run_error_message(errors),
+    )
+    if status in SYNC_TERMINAL_STATUSES:
+        try:
+            control_room_cache_invalidate(user)
+        except Exception:
+            logger_debug(
+                "Could not invalidate Control Room cache after sync",
+                exc_info=True,
+            )
+    refreshed = await fetch_sync_run_func(
+        cartridge=cartridge, run_id=str(row["run_id"]), user=user
+    )
+    return sync_public_payload(refreshed or row, {**extra, **updated_extra})
