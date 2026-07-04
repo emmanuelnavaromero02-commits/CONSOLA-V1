@@ -756,6 +756,32 @@ def _sf_talent_role_samples(role_rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 @_bind_to_core
+def _sf_talent_widget(
+    widget_id: str,
+    title: str,
+    value: Any,
+    dataset: str,
+    status: str,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    widget = {
+        "id": widget_id,
+        "title": title,
+        "value": value,
+        "dataset": dataset,
+        "href": _sf_talent_dataset_href(dataset),
+        "status": status,
+    }
+    if rows is not None:
+        widget["rows"] = rows
+    if detail is not None:
+        widget["detail"] = detail
+    return widget
+
+
+@_bind_to_core
 def _sf_talent_kpi_widgets(
     datasets: dict[str, str],
     results: dict[str, dict[str, Any]],
@@ -766,66 +792,59 @@ def _sf_talent_kpi_widgets(
 ) -> list[dict[str, Any]]:
     readiness_insufficient = metrics["readiness_insufficient"]
     return [
-        {
-            "id": "sf_talent_profiled_employees",
-            "title": "Empleados perfil Talento",
-            "value": metrics["profiled_employees"],
-            "dataset": datasets["employee_profile"],
-            "href": _sf_talent_dataset_href(datasets["employee_profile"]),
-            "status": results["employee_profile"]["status"],
-        },
-        {
-            "id": "sf_talent_roles_profiled",
-            "title": "Roles derivados",
-            "value": metrics["roles_profiled"],
-            "dataset": datasets["role_profile"],
-            "href": _sf_talent_dataset_href(datasets["role_profile"]),
-            "status": results["role_profile"]["status"],
-            "rows": role_samples,
-        },
-        {
-            "id": "sf_talent_readiness_calculable",
-            "title": "Perfiles calculables",
-            "value": metrics["readiness_calculable"],
-            "dataset": datasets["readiness"],
-            "href": _sf_talent_dataset_href(datasets["readiness"]),
-            "status": "partial" if readiness_insufficient else results["readiness"]["status"],
-            "detail": f"{readiness_insufficient} en espera de datos",
-        },
-        {
-            "id": "sf_talent_9box_available",
-            "title": "Clasificacion disponible",
-            "value": metrics["nine_box_available"],
-            "dataset": datasets["nine_box"],
-            "href": _sf_talent_dataset_href(datasets["nine_box"]),
-            "status": "blocked"
+        _sf_talent_widget(
+            "sf_talent_profiled_employees",
+            "Empleados perfil Talento",
+            metrics["profiled_employees"],
+            datasets["employee_profile"],
+            results["employee_profile"]["status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_roles_profiled",
+            "Roles derivados",
+            metrics["roles_profiled"],
+            datasets["role_profile"],
+            results["role_profile"]["status"],
+            rows=role_samples,
+        ),
+        _sf_talent_widget(
+            "sf_talent_readiness_calculable",
+            "Perfiles calculables",
+            metrics["readiness_calculable"],
+            datasets["readiness"],
+            "partial" if readiness_insufficient else results["readiness"]["status"],
+            detail=f"{readiness_insufficient} en espera de datos",
+        ),
+        _sf_talent_widget(
+            "sf_talent_9box_available",
+            "Clasificacion disponible",
+            metrics["nine_box_available"],
+            datasets["nine_box"],
+            "blocked"
             if rows["nine_box_rows"] and metrics["nine_box_available"] == 0
             else results["nine_box"]["status"],
-        },
-        {
-            "id": "sf_talent_operational_features",
-            "title": "Analisis operativo",
-            "value": metrics["operational_label"],
-            "dataset": datasets["operational_features"],
-            "href": _sf_talent_dataset_href(datasets["operational_features"]),
-            "status": metrics["operational_status"],
-        },
-        {
-            "id": "sf_talent_mobility_observed",
-            "title": "Movilidad observada",
-            "value": metrics["mobility_observed"],
-            "dataset": datasets["mobility_history"],
-            "href": _sf_talent_dataset_href(datasets["mobility_history"]),
-            "status": results["mobility_history"]["status"],
-        },
-        {
-            "id": "sf_talent_active_signals",
-            "title": "Senales Talento",
-            "value": len(signals),
-            "dataset": datasets["signals"],
-            "href": _sf_talent_dataset_href(datasets["signals"]),
-            "status": results["signals"]["status"],
-        },
+        ),
+        _sf_talent_widget(
+            "sf_talent_operational_features",
+            "Analisis operativo",
+            metrics["operational_label"],
+            datasets["operational_features"],
+            metrics["operational_status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_mobility_observed",
+            "Movilidad observada",
+            metrics["mobility_observed"],
+            datasets["mobility_history"],
+            results["mobility_history"]["status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_active_signals",
+            "Senales Talento",
+            len(signals),
+            datasets["signals"],
+            results["signals"]["status"],
+        ),
     ]
 
 
