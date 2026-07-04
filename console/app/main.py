@@ -116,7 +116,11 @@ from app.domains.admin.user_mutations import (
 from app.domains.studio.chat_stream import (
     studio_chat_stream_response as _studio_chat_stream_response_impl,
 )
-from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
+from app.domains.copilot.llm_keys import (
+    llm_key_set_payload as _llm_key_set_payload_impl,
+    llm_key_status_payload as _llm_key_status_payload_impl,
+    llm_secret_keys as _llm_secret_keys_impl,
+)
 from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
     can_edit_decision as _dec_can_edit_impl,
@@ -1933,25 +1937,12 @@ async def api_copilot_llm_key_status(
     user: dict = Depends(require_permission("llm.keys.read")),
 ):
     vault_scope = _tenant_vault_scope(user, "llm")
-    try:
-        async with httpx.AsyncClient(
-            headers=_vault_headers_for_user(user), timeout=5
-        ) as c:
-            r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}")
-        if r.status_code in {404, 204}:
-            return {"provider": "anthropic", "configured": False, "scope": "llm"}
-        r.raise_for_status()
-        data = r.json() if r.content else {}
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(exc.response.status_code, "Vault request failed") from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(502, "Vault request failed") from exc
-    return {
-        "provider": "anthropic",
-        "configured": "anthropic_api_key"
-        in _llm_secret_keys(data if isinstance(data, dict) else {}),
-        "scope": "llm",
-    }
+    return await _llm_key_status_payload_impl(
+        vault_scope=vault_scope,
+        vault_url=_VAULT_URL,
+        vault_headers=_vault_headers_for_user(user),
+        http_client_factory=httpx.AsyncClient,
+    )
 
 
 @app.put(
@@ -1961,39 +1952,16 @@ async def api_copilot_llm_key_status(
 async def api_copilot_llm_key_set(
     body: dict, user: dict = Depends(require_permission("llm.keys.write"))
 ):
-    value = str(body.get("value") or "").strip()
-    if not value:
-        raise HTTPException(400, "value is required")
     vault_scope = _tenant_vault_scope(user, "llm")
-    try:
-        async with httpx.AsyncClient(
-            headers=_vault_headers_for_user(user), timeout=5
-        ) as c:
-            r = await c.put(
-                f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/anthropic_api_key",
-                json={"value": value},
-            )
-        r.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(exc.response.status_code, "Vault request failed") from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, "Vault request failed") from exc
-    await _audit.record_event(
-        user.get("id"),
-        user.get("email"),
-        "copilot.llm_key.upsert",
-        "vault_secret",
-        "llm/anthropic_api_key",
-        status="success",
-        metadata={
-            "provider": "anthropic",
-            "scope": "llm",
-            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
-            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
-        },
-        critical=True,
+    return await _llm_key_set_payload_impl(
+        body=body,
+        user=user,
+        vault_scope=vault_scope,
+        vault_url=_VAULT_URL,
+        vault_headers=_vault_headers_for_user(user),
+        audit_record_event=_audit.record_event,
+        http_client_factory=httpx.AsyncClient,
     )
-    return {"provider": "anthropic", "configured": True, "scope": "llm"}
 
 
 # ── Assistant ─────────────────────────────────────────────────────────────────
