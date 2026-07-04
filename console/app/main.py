@@ -238,6 +238,7 @@ from app.domains.system.runtime import (
     runtime_config_payload as _runtime_config_payload,
     system_info_payload as _system_info_payload,
 )
+from app.domains.system.readyz import build_readyz_checks as _build_readyz_checks_impl
 from app.domains.pipeline.run_state import (
     airflow_log_attempt as _airflow_log_attempt,
     airflow_log_task_ids as _airflow_log_task_ids,
@@ -1773,6 +1774,16 @@ async def _control_room_data_check(*, require_data: bool = False) -> dict:
     )
 
 
+async def _readyz_intelligence_readiness(
+    user: dict | None,
+    *,
+    require_data: bool,
+) -> dict:
+    from app.services.intelligence.readiness import intelligence_readiness
+
+    return await intelligence_readiness(user, require_data=require_data)
+
+
 @app.get("/readyz")
 async def readyz(request: Request):
     """Dependency-aware readiness probe.
@@ -1781,99 +1792,25 @@ async def readyz(request: Request):
     it verifies Postgres and core sibling services so deploy/proxy layers can
     keep traffic away from a half-started console.
     """
-    checks: dict[str, dict] = {}
-    checks["startup"] = _startup_readiness_status(request.app)
-    if checks["startup"].get("status") != "up":
-        body = {"ok": False, "service": "console"}
-        if getattr(request.state, "user", None):
-            body["checks"] = checks
-        return JSONResponse(
-            body,
-            status_code=503,
-        )
-
-    try:
-        pool = await _get_db_pool()
-        async with pool.acquire() as conn:
-            await conn.fetchval("SELECT 1")
-        checks["postgres"] = {"status": "up"}
-    except Exception as exc:
-        logger.warning("readiness probe failed for postgres", exc_info=True)
-        checks["postgres"] = {"status": "down", "error": type(exc).__name__}
-
-    deps = {
-        "refinement": (f"{REFINEMENT_URL.rstrip('/')}/healthz", "REFINEMENT"),
-        "mcp-infra": (
-            f"{os.environ.get('MCP_INFRA_URL', 'http://mcp-infra:8010').rstrip('/')}/healthz",
-            "MCP_INFRA",
-        ),
-        "vault": (f"{_vault_url()}/healthz", "VAULT"),
-    }
-    for name, (url, server) in deps.items():
-        checks[name] = await _dependency_health(name, url, server)
-
-    require_data = os.environ.get(
-        "CONTROL_ROOM_REQUIRE_DATA_READY", ""
-    ).strip().lower() in {"1", "true", "yes", "on"} or str(
-        request.query_params.get("require_data") or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
-    require_intelligence_param = (
-        str(request.query_params.get("require_intelligence") or "").strip().lower()
+    # Readiness source-contract markers: CONTROL_ROOM_REQUIRE_DATA_READY,
+    # require_data, require_intelligence, intelligence_opt_out_allowed,
+    # require_data=require_intelligence_data, _is_production_env().
+    checks, ok = await _build_readyz_checks_impl(
+        app=request.app,
+        query_params=request.query_params,
+        authenticated_user=getattr(request.state, "user", None),
+        environ=os.environ,
+        refinement_url=REFINEMENT_URL,
+        mcp_infra_url=os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010"),
+        vault_url=_vault_url,
+        startup_readiness_status=_startup_readiness_status,
+        get_db_pool=_get_db_pool,
+        dependency_health=_dependency_health,
+        control_room_data_check=_control_room_data_check,
+        intelligence_readiness=_readyz_intelligence_readiness,
+        is_production_env=_is_production_env,
+        warn=logger.warning,
     )
-    intelligence_opt_out_allowed = (
-        not _is_production_env()
-        and require_intelligence_param in {"0", "false", "no", "off"}
-    )
-    require_intelligence_data = (
-        os.environ.get("CONTROL_ROOM_REQUIRE_INTELLIGENCE_READY", "").strip().lower()
-        in {"1", "true", "yes", "on"}
-        or require_intelligence_param in {"1", "true", "yes", "on"}
-        or (require_data and _is_production_env() and not intelligence_opt_out_allowed)
-    )
-    if require_data:
-        checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
-    else:
-        checks["control_room_data"] = {
-            "status": "up",
-            "required": False,
-            "reason": "data_check_not_required",
-        }
-
-    if require_intelligence_data:
-        try:
-            from app.services.intelligence.readiness import intelligence_readiness
-
-            checks["intelligence_data"] = await intelligence_readiness(
-                getattr(request.state, "user", None),
-                require_data=require_intelligence_data,
-            )
-        except Exception as exc:
-            logger.warning("readiness probe failed for intelligence_data", exc_info=True)
-            checks["intelligence_data"] = {
-                "status": "degraded",
-                "required": require_intelligence_data,
-                "error": type(exc).__name__,
-            }
-    else:
-        checks["intelligence_data"] = {
-            "status": "up",
-            "required": False,
-            "reason": "data_check_not_required",
-        }
-
-    dependency_ok = all(
-        check.get("status") == "up"
-        for name, check in checks.items()
-        if name not in {"control_room_data", "intelligence_data"}
-    )
-    data_ok = (
-        checks["control_room_data"].get("status") == "up"
-        and (
-            checks["intelligence_data"].get("status") == "up"
-            or not require_intelligence_data
-        )
-    ) or not require_data
-    ok = dependency_ok and data_ok
     body = {"ok": ok, "service": "console"}
     if getattr(request.state, "user", None):
         body["checks"] = checks
