@@ -313,6 +313,9 @@ from app.domains.system.runtime import (
     system_info_payload as _system_info_payload,
 )
 from app.domains.system.readyz import build_readyz_checks as _build_readyz_checks_impl
+from app.domains.system.lifespan import (
+    run_packaged_startup_seeds as _run_packaged_startup_seeds_impl,
+)
 from app.domains.pipeline.run_state import (
     airflow_log_attempt as _airflow_log_attempt,
     airflow_log_task_ids as _airflow_log_task_ids,
@@ -642,38 +645,15 @@ async def lifespan(app: FastAPI):
     get_rate_limiter()
     await mcp_registry.startup()
 
-    async def _seed_dag_sources() -> None:
-        from app.services.seed_dag_sources import seed_missing_dag_sources
-
-        pool = await _get_db_pool()
-        await seed_missing_dag_sources(pool)
-
-    async def _seed_packaged_datasets() -> None:
-        from app.services.seed_packaged_datasets import seed_packaged_datasets
-
-        pool = await _get_db_pool()
-        await seed_packaged_datasets(pool)
-
-    async def _seed_packaged_hints() -> None:
-        from app.services.seed_packaged_hints import seed_packaged_hints
-
-        pool = await _get_db_pool()
-        await seed_packaged_hints(pool)
-
-    async def _seed_packaged_apps() -> None:
-        from app.services.seed_packaged_apps import seed_packaged_apps
-
-        pool = await _get_db_pool()
-        await seed_packaged_apps(pool)
-
     # Startup seeds reconcile packaged catalogs used by Studio, Control Room,
     # and cartridge surfaces. A failure no longer leaves Console apparently
     # ready: the process stays live, but /readyz returns 503 until the next
     # successful boot.
-    await _run_startup_seed(app, "seed_missing_dag_sources", _seed_dag_sources)
-    await _run_startup_seed(app, "seed_packaged_datasets", _seed_packaged_datasets)
-    await _run_startup_seed(app, "seed_packaged_hints", _seed_packaged_hints)
-    await _run_startup_seed(app, "seed_packaged_apps", _seed_packaged_apps)
+    await _run_packaged_startup_seeds_impl(
+        app,
+        get_db_pool=_get_db_pool,
+        run_startup_seed=_run_startup_seed,
+    )
     task = asyncio.create_task(_periodic_health_check())
     copilot_context_task: asyncio.Task | None = None
     if os.environ.get("COPILOT_CONTEXT_SCHEDULER_ENABLED", "true").strip().lower() not in {
