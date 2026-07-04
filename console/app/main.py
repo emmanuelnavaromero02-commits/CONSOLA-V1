@@ -1270,6 +1270,118 @@ async def _enrich_jwt_workspace_user(
     return enriched_user
 
 
+def _auth_middleware_error_response(detail: str, status_code: int, path: str) -> Response:
+    return _apply_security_headers(
+        JSONResponse({"detail": detail}, status_code=status_code),
+        path,
+    )
+
+
+def _is_auth_public_path(path: str) -> bool:
+    return path in _AUTH_PUBLIC_EXACT or any(
+        path.startswith(p) for p in _AUTH_PUBLIC_PREFIX
+    )
+
+
+async def _session_user_for_middleware(
+    request: Request,
+    *,
+    requested_workspace_id: str | None,
+    is_public: bool,
+    path: str,
+) -> tuple[dict | None, Response | None]:
+    token = request.cookies.get(_auth.COOKIE_NAME)
+    user = await _auth.get_session_user(token) if token else None
+    if not user or not (requested_workspace_id or not user.get("active_workspace_id")):
+        return user, None
+    try:
+        return await _enrich_session_workspace_user(user, requested_workspace_id), None
+    except HTTPException as exc:
+        return None, _auth_middleware_error_response(exc.detail, exc.status_code, path)
+    except Exception:
+        logger.exception("Session workspace enrichment failed")
+        if not is_public and _uses_rbac_dependency(path):
+            return None, _auth_middleware_error_response(
+                "workspace context unavailable",
+                403,
+                path,
+            )
+        return user, None
+
+
+async def _bearer_user_for_middleware(
+    request: Request,
+    *,
+    requested_workspace_id: str | None,
+    is_public: bool,
+    path: str,
+) -> tuple[dict | None, Response | None]:
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None, None
+    try:
+        # Sprint v1.10: async variant runs the Redis blacklist
+        # check; legacy decode kept for unit tests.
+        claims = await verify_access_token_async(auth_header[7:])
+        jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
+        if jwt_user and jwt_user.get("is_active"):
+            return await _enrich_jwt_workspace_user(
+                jwt_user, requested_workspace_id
+            ), None
+    except HTTPException as exc:
+        return None, _auth_middleware_error_response(exc.detail, exc.status_code, path)
+    except Exception:
+        logger.debug("Bearer JWT auth fallback failed", exc_info=True)
+        if not is_public and _uses_rbac_dependency(path):
+            return None, _auth_middleware_error_response(
+                "authentication required",
+                401,
+                path,
+            )
+    return None, None
+
+
+def _unauthenticated_middleware_response(
+    request: Request,
+    *,
+    path: str,
+    is_public: bool,
+    user: dict | None,
+) -> Response | None:
+    if user or is_public:
+        return None
+    if _uses_rbac_dependency(path):
+        return None
+    if _is_api_like(path, request.headers.get("accept", "")):
+        return _auth_middleware_error_response("authentication required", 401, path)
+    return _apply_security_headers(RedirectResponse(url=f"/login?next={path}"), path)
+
+
+def _forced_password_change_middleware_response(
+    request: Request,
+    *,
+    path: str,
+    is_public: bool,
+    user: dict | None,
+) -> Response | None:
+    if not user or not user.get("must_change_password") or is_public:
+        return None
+    if path in _AUTH_FORCED_CHANGE_ALLOW_EXACT:
+        return None
+    if _is_api_like(path, request.headers.get("accept", "")):
+        return _apply_security_headers(
+            JSONResponse(
+                {
+                    "detail": "password change required",
+                    "must_change_password": True,
+                },
+                status_code=403,
+            ),
+            path,
+        )
+    return _apply_security_headers(RedirectResponse(url="/me"), path)
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -1301,96 +1413,55 @@ async def auth_middleware(request: Request, call_next):
     if _is_agent_runner_request(request):
         return await call_next(request)
 
-    is_public = path in _AUTH_PUBLIC_EXACT or any(
-        path.startswith(p) for p in _AUTH_PUBLIC_PREFIX
-    )
-
+    is_public = _is_auth_public_path(path)
     requested_workspace_id = requested_workspace_id_from_request(request)
-    token = request.cookies.get(_auth.COOKIE_NAME)
-    user = await _auth.get_session_user(token) if token else None
-    if user and (requested_workspace_id or not user.get("active_workspace_id")):
-        try:
-            user = await _enrich_session_workspace_user(user, requested_workspace_id)
-        except HTTPException as exc:
-            return _apply_security_headers(
-                JSONResponse({"detail": exc.detail}, status_code=exc.status_code),
-                path,
-            )
-        except Exception:
-            logger.exception("Session workspace enrichment failed")
-            if not is_public and _uses_rbac_dependency(path):
-                return _apply_security_headers(
-                    JSONResponse(
-                        {"detail": "workspace context unavailable"}, status_code=403
-                    ),
-                    path,
-                )
+    user, response = await _session_user_for_middleware(
+        request,
+        requested_workspace_id=requested_workspace_id,
+        is_public=is_public,
+        path=path,
+    )
+    if response is not None:
+        return response
 
     # Fall back to JWT bearer so require_permission() routes get request.state.user set.
     if not user:
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            try:
-                # Sprint v1.10: async variant runs the Redis blacklist
-                # check; legacy decode kept for unit tests.
-                claims = await verify_access_token_async(auth_header[7:])
-                jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
-                if jwt_user and jwt_user.get("is_active"):
-                    jwt_user = await _enrich_jwt_workspace_user(
-                        jwt_user, requested_workspace_id
-                    )
-                    user = jwt_user
-            except HTTPException as exc:
-                return _apply_security_headers(
-                    JSONResponse({"detail": exc.detail}, status_code=exc.status_code),
-                    path,
-                )
-            except Exception:
-                logger.debug("Bearer JWT auth fallback failed", exc_info=True)
-                if not is_public and _uses_rbac_dependency(path):
-                    return _apply_security_headers(
-                        JSONResponse(
-                            {"detail": "authentication required"}, status_code=401
-                        ),
-                        path,
-                    )
+        user, response = await _bearer_user_for_middleware(
+            request,
+            requested_workspace_id=requested_workspace_id,
+            is_public=is_public,
+            path=path,
+        )
+        if response is not None:
+            return response
 
     request.state.user = user
     try:
         await _rate_limit_api_surface(request, path, user)
     except HTTPException as exc:
-        return _apply_security_headers(
-            JSONResponse({"detail": exc.detail}, status_code=exc.status_code), path
-        )
+        return _auth_middleware_error_response(exc.detail, exc.status_code, path)
 
     if not user and not is_public and _uses_rbac_dependency(path):
         return await call_next(request)
 
-    if not user and not is_public:
-        if _is_api_like(path, request.headers.get("accept", "")):
-            return _apply_security_headers(
-                JSONResponse({"detail": "authentication required"}, status_code=401),
-                path,
-            )
-        return _apply_security_headers(
-            RedirectResponse(url=f"/login?next={path}"), path
-        )
+    response = _unauthenticated_middleware_response(
+        request,
+        path=path,
+        is_public=is_public,
+        user=user,
+    )
+    if response is not None:
+        return response
 
     # Forced password change: confine the session to the change-password flow.
-    if user and user.get("must_change_password") and not is_public:
-        if path not in _AUTH_FORCED_CHANGE_ALLOW_EXACT:
-            if _is_api_like(path, request.headers.get("accept", "")):
-                return _apply_security_headers(
-                    JSONResponse(
-                        {
-                            "detail": "password change required",
-                            "must_change_password": True,
-                        },
-                        status_code=403,
-                    ),
-                    path,
-                )
-            return _apply_security_headers(RedirectResponse(url="/me"), path)
+    response = _forced_password_change_middleware_response(
+        request,
+        path=path,
+        is_public=is_public,
+        user=user,
+    )
+    if response is not None:
+        return response
 
     return await call_next(request)
 
