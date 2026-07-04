@@ -394,47 +394,19 @@ async def api_data(
 @_bind_to_main
 async def api_data_options(dataset: str, columns: str = "", user: dict = Depends(require_permission("datasets.read"))):
     """Return distinct values per column for building filter selectors."""
-    _validate_dataset_name(dataset)
-    cols = _data_api_columns_param(columns)
-    if not cols:
-        raise HTTPException(400, "columns param required, e.g. ?columns=revenue_manager,cliente")
-
-    invalid_col = _data_api_invalid_column(cols)
-    if invalid_col:
-        raise HTTPException(400, f"Invalid column name: {invalid_col}")
-
     # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
-    union_sql = _data_api_options_sql(dataset, cols)
-
-    try:
-        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-            r = await c.post(
-                f"{REFINEMENT_URL}/mcp/invoke",
-                json=_mcp_payload(
-                    "preview_transform",
-                    {
-                        "sql": union_sql,
-                        "limit": 5000,
-                        "user_context": _rls_user_context(user),
-                    },
-                    user,
-                ),
-            )
-    except httpx.TransportError as exc:
-        raise HTTPException(500, "Options backend unavailable") from exc
-    if r.status_code >= 400:
-        raise HTTPException(
-            r.status_code, _upstream_error_detail(r, "Options backend failed")
-        )
-    try:
-        result = r.json()
-    except ValueError as exc:
-        raise HTTPException(500, "Options backend returned invalid JSON") from exc
-    if isinstance(result, dict) and result.get("error"):
-        raise HTTPException(500, "Options backend failed")
-    if not isinstance(result, dict):
-        raise HTTPException(500, "Options backend returned invalid payload")
-    return _data_api_options_response(cols, result.get("data", []))
+    # It invokes preview_transform with _rls_user_context(user) through the shared helper.
+    return await _data_options_payload_impl(
+        dataset=dataset,
+        columns=columns,
+        user=user,
+        refinement_url=REFINEMENT_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        rls_user_context=_rls_user_context,
+        upstream_error_detail=_upstream_error_detail,
+    )
 
 # /api/data/{dataset}/query
 @router.post("/api/data/{dataset}/query", dependencies=[Depends(require_permission("datasets.read"))])
@@ -447,45 +419,18 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
            "limit": 1000, "columns": ["col1", "col2"]}
     fiscal_year uses March-February logic automatically.
     """
-    _validate_dataset_name(dataset)
-    filters = body.get("filters", {})
-    limit = _data_api_query_limit(body.get("limit", 2000))
-    columns = body.get("columns", ["*"])
-
     # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
-    _user_context = _rls_user_context(_user)
-
-    try:
-        filtered_query = _data_api_filtered_query(
-            dataset,
-            filters=filters,
-            limit=limit,
-            columns=columns,
-        )
-    except _DataApiQueryValidationError as exc:
-        raise HTTPException(exc.status_code, exc.detail) from exc
-
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "preview_transform",
-                {
-                    "sql": filtered_query.sql,
-                    "params": filtered_query.params,
-                    "limit": filtered_query.limit,
-                    "user_context": _user_context,
-                },
-                _user,
-            ),
-        )
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, "Query failed")
-    result = r.json()
-    if result.get("error"):
-        raise HTTPException(400, result["error"])
-    return result.get("data", [])
+    return await _filtered_data_query_payload_impl(
+        dataset=dataset,
+        body=body,
+        user=_user,
+        refinement_url=REFINEMENT_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        rls_user_context=_rls_user_context,
+    )
 
 # /explorer
 @router.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
