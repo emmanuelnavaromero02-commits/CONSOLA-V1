@@ -1202,6 +1202,74 @@ def _is_agent_runner_request(request: Request) -> bool:
     )
 
 
+async def _enrich_session_workspace_user(
+    user: dict,
+    requested_workspace_id: str | None,
+) -> dict:
+    workspaces = await _workspace_access_options(user)
+    if not workspaces:
+        return user
+    active_workspace = workspaces[0]
+    if requested_workspace_id:
+        active_workspace = next(
+            (
+                w
+                for w in workspaces
+                if w["workspace_id"] == requested_workspace_id
+            ),
+            None,
+        )
+        if not active_workspace:
+            raise HTTPException(403, "workspace access forbidden")
+    enriched_user = dict(user)
+    enriched_user.update(
+        {
+            "workspace_role": active_workspace["workspace_role"],
+            "active_workspace_id": active_workspace["workspace_id"],
+            "active_tenant_id": active_workspace["tenant_id"],
+            "workspaces": workspaces,
+            "allowed_cartridges": await _workspace_cartridges(
+                active_workspace["workspace_id"], user_id=user["id"]
+            ),
+        }
+    )
+    return enriched_user
+
+
+async def _enrich_jwt_workspace_user(
+    jwt_user: dict,
+    requested_workspace_id: str | None,
+) -> dict:
+    workspaces = await _workspace_access_options(jwt_user)
+    if not workspaces:
+        return jwt_user
+    active_workspace = workspaces[0]
+    if requested_workspace_id:
+        active_workspace = next(
+            (
+                w
+                for w in workspaces
+                if w["workspace_id"] == requested_workspace_id
+            ),
+            None,
+        )
+        if not active_workspace:
+            raise HTTPException(403, "workspace access forbidden")
+    enriched_user = dict(jwt_user)
+    enriched_user.update(
+        {
+            "workspace_role": active_workspace["workspace_role"],
+            "active_workspace_id": active_workspace["workspace_id"],
+            "active_tenant_id": active_workspace["tenant_id"],
+            "workspaces": workspaces,
+            "allowed_cartridges": await _workspace_cartridges(
+                active_workspace["workspace_id"], user_id=jwt_user["id"]
+            ),
+        }
+    )
+    return enriched_user
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -1242,38 +1310,12 @@ async def auth_middleware(request: Request, call_next):
     user = await _auth.get_session_user(token) if token else None
     if user and (requested_workspace_id or not user.get("active_workspace_id")):
         try:
-            workspaces = await _workspace_access_options(user)
-            if workspaces:
-                active_workspace = workspaces[0]
-                if requested_workspace_id:
-                    active_workspace = next(
-                        (
-                            w
-                            for w in workspaces
-                            if w["workspace_id"] == requested_workspace_id
-                        ),
-                        None,
-                    )
-                    if not active_workspace:
-                        return _apply_security_headers(
-                            JSONResponse(
-                                {"detail": "workspace access forbidden"},
-                                status_code=403,
-                            ),
-                            path,
-                        )
-                user = dict(user)
-                user.update(
-                    {
-                        "workspace_role": active_workspace["workspace_role"],
-                        "active_workspace_id": active_workspace["workspace_id"],
-                        "active_tenant_id": active_workspace["tenant_id"],
-                        "workspaces": workspaces,
-                        "allowed_cartridges": await _workspace_cartridges(
-                            active_workspace["workspace_id"], user_id=user["id"]
-                        ),
-                    }
-                )
+            user = await _enrich_session_workspace_user(user, requested_workspace_id)
+        except HTTPException as exc:
+            return _apply_security_headers(
+                JSONResponse({"detail": exc.detail}, status_code=exc.status_code),
+                path,
+            )
         except Exception:
             logger.exception("Session workspace enrichment failed")
             if not is_public and _uses_rbac_dependency(path):
@@ -1294,40 +1336,15 @@ async def auth_middleware(request: Request, call_next):
                 claims = await verify_access_token_async(auth_header[7:])
                 jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
                 if jwt_user and jwt_user.get("is_active"):
-                    workspaces = await _workspace_access_options(jwt_user)
-                    if workspaces:
-                        active_workspace = workspaces[0]
-                        if requested_workspace_id:
-                            active_workspace = next(
-                                (
-                                    w
-                                    for w in workspaces
-                                    if w["workspace_id"] == requested_workspace_id
-                                ),
-                                None,
-                            )
-                            if not active_workspace:
-                                return _apply_security_headers(
-                                    JSONResponse(
-                                        {"detail": "workspace access forbidden"},
-                                        status_code=403,
-                                    ),
-                                    path,
-                                )
-                        jwt_user = dict(jwt_user)
-                        jwt_user.update(
-                            {
-                                "workspace_role": active_workspace["workspace_role"],
-                                "active_workspace_id": active_workspace["workspace_id"],
-                                "active_tenant_id": active_workspace["tenant_id"],
-                                "workspaces": workspaces,
-                                "allowed_cartridges": await _workspace_cartridges(
-                                    active_workspace["workspace_id"],
-                                    user_id=jwt_user["id"],
-                                ),
-                            }
-                        )
+                    jwt_user = await _enrich_jwt_workspace_user(
+                        jwt_user, requested_workspace_id
+                    )
                     user = jwt_user
+            except HTTPException as exc:
+                return _apply_security_headers(
+                    JSONResponse({"detail": exc.detail}, status_code=exc.status_code),
+                    path,
+                )
             except Exception:
                 logger.debug("Bearer JWT auth fallback failed", exc_info=True)
                 if not is_public and _uses_rbac_dependency(path):
