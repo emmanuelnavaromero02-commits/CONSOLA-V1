@@ -99,6 +99,11 @@ from app.domains.admin.users_scope import (
     workspace_rows_from_auth_stub as _workspace_rows_from_auth_stub_impl,
     workspace_summaries_for_users as _workspace_summaries_for_users_impl,
 )
+from app.domains.admin.vpn_invites import (
+    create_vpn_config_link as _create_vpn_config_link_impl,
+    issue_vpn_for_user as _issue_vpn_for_user_impl,
+    rollback_failed_invite as _rollback_failed_invite_impl,
+)
 from app.domains.copilot.llm_keys import llm_secret_keys as _llm_secret_keys_impl
 from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
@@ -6715,62 +6720,39 @@ def _safe_filename(email: str) -> str:
 
 
 async def _create_vpn_config_link(user_id: int, email: str) -> dict:
-    try:
-        if not _vpn_configured():
-            return {
-                "issued": False,
-                "error": "VPN_API_URL / VPN_API_PASSWORD no configurados",
-            }
-        wg_id = await _vpn.create_client(email)
-        vpn_tok, _ = await _tokens.create(user_id, "vpn", wg_client_id=wg_id)
-        try:
-            conf_text = await _vpn.get_config(wg_id)
-        except Exception:
-            conf_text = None
-        return {
-            "issued": True,
-            "link": _vpn_link(vpn_tok),
-            "wg_client_id": wg_id,
-            "conf_text": conf_text,
-        }
-    except _vpn.VPNError as exc:
-        request_id = _internal_error_request_id()
-        logger.exception(
-            "vpn issuance failed request_id=%s",
-            request_id,
-            extra={"request_id": request_id, "exception_type": type(exc).__name__},
-        )
-        return {"issued": False, "error": "Internal Error", "request_id": request_id}
-    except Exception as exc:
-        request_id = _internal_error_request_id()
-        logger.exception(
-            "unexpected vpn issuance failure request_id=%s",
-            request_id,
-            extra={"request_id": request_id, "exception_type": type(exc).__name__},
-        )
-        return {"issued": False, "error": "Internal Error", "request_id": request_id}
+    return await _create_vpn_config_link_impl(
+        user_id,
+        email,
+        vpn_configured=_vpn_configured,
+        vpn_service=_vpn,
+        tokens_service=_tokens,
+        vpn_link=_vpn_link,
+        internal_error_request_id=_internal_error_request_id,
+        logger_exception=logger.exception,
+        vpn_error_cls=_vpn.VPNError,
+    )
 
 
 async def _issue_vpn_for_user(user_id: int, email: str, name: str | None) -> dict:
-    res = await _create_vpn_config_link(user_id, email)
-    if not res.get("issued"):
-        return res
-    subject, html = _email.render_vpn_config(name, res["link"], VPN_TTL_HOURS)
-    sent = await _email.send_email(email, subject, html)
-    return {"issued": True, "email_sent": sent, "wg_client_id": res["wg_client_id"]}
+    return await _issue_vpn_for_user_impl(
+        user_id,
+        email,
+        name,
+        create_vpn_config_link=_create_vpn_config_link,
+        email_service=_email,
+        vpn_ttl_hours=VPN_TTL_HOURS,
+    )
 
 
 async def _rollback_failed_invite(user_id: int, vpn_result: dict | None = None) -> None:
-    vpn_client_id = (vpn_result or {}).get("wg_client_id")
-    if vpn_client_id:
-        try:
-            await _vpn.delete_client(str(vpn_client_id))
-        except Exception:
-            logger.warning("invite rollback could not delete vpn client", exc_info=True)
-    try:
-        await _auth.delete_user(user_id)
-    except Exception:
-        logger.exception("invite rollback could not delete user_id=%s", user_id)
+    await _rollback_failed_invite_impl(
+        user_id,
+        vpn_result,
+        vpn_service=_vpn,
+        auth_service=_auth,
+        logger_warning=logger.warning,
+        logger_exception=logger.exception,
+    )
 
 
 @app.get("/vpn-config/{token}")
