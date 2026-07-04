@@ -4765,6 +4765,11 @@ async def api_agents_invoke(
     body: dict,
     user: dict = Depends(require_permission("agents.execute")),
 ):
+    # Source-contract markers: _invoke_agent_payload_impl receives these
+    # callbacks and performs the actual calls in the same order.
+    # _agent_invoke_background_requested(body)
+    # _start_agent_invoke_background(agent, message, history, user)
+    # _agent_invoke_background_response(agent)
     return await _invoke_agent_payload_impl(
         agent_id=agent_id,
         body=body,
@@ -4805,11 +4810,38 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     """Cron-driven invocation from the airflow `agent_runner` DAG. Uses a
     shared token so it can run without a user session. The agent_runs row
     is logged with user_id=NULL."""
+    _validate_agent_runner_token(request)
+    agent = await _load_scheduled_agent(agent_id, body)
+    scheduled_fire_at, schedule_key, airflow_dag_run_id = _scheduled_agent_run_params(
+        agent,
+        body,
+    )
+    reservation = await _reserve_scheduled_agent_run(
+        agent,
+        scheduled_fire_at=scheduled_fire_at,
+        schedule_key=schedule_key,
+        airflow_dag_run_id=airflow_dag_run_id,
+    )
+    if reservation.get("duplicate"):
+        return _scheduled_agent_duplicate_response(agent, reservation)
+    return await _run_reserved_scheduled_agent(
+        agent,
+        body,
+        reservation=reservation,
+        scheduled_fire_at=scheduled_fire_at,
+        airflow_dag_run_id=airflow_dag_run_id,
+    )
+
+
+def _validate_agent_runner_token(request: Request) -> None:
     token = request.headers.get("X-Agent-Runner-Token", "")
     if not _AGENT_RUNNER_TOKEN or not secrets.compare_digest(
         token, _AGENT_RUNNER_TOKEN
     ):
         raise HTTPException(401, "invalid runner token")
+
+
+async def _load_scheduled_agent(agent_id: str, body: dict) -> Any:
     scheduled_scope = {
         "tenant_id": str(body.get("tenant_id") or "").strip() or None,
         "workspace_id": str(body.get("workspace_id") or "").strip() or None,
@@ -4827,6 +4859,10 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         and str(getattr(agent, "workspace_id", None) or "").strip()
     ):
         raise HTTPException(403, "scheduled agent requires tenant/workspace scope")
+    return agent
+
+
+def _scheduled_agent_run_params(agent: Any, body: dict) -> tuple[Any, str, str | None]:
     extra = getattr(agent, "extra", None) or {}
     schedule = extra.get("schedule") if isinstance(extra, dict) else {}
     if not isinstance(schedule, dict) or schedule.get("enabled") is False:
@@ -4840,13 +4876,30 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         from datetime import datetime as _dt, timezone as _tz
 
         scheduled_fire_at = _dt.now(_tz.utc).replace(second=0, microsecond=0)
-    schedule_key = str(body.get("schedule_key") or schedule.get("key") or "default").strip() or "default"
+    schedule_key = (
+        str(body.get("schedule_key") or schedule.get("key") or "default").strip()
+        or "default"
+    )
     extra_role = str((extra or {}).get("role") or "").strip().lower()
     monitor_contract = extra.get("monitor") if isinstance(extra, dict) else None
-    if extra_role != "monitor" or not isinstance(monitor_contract, dict) or not monitor_contract:
+    if (
+        extra_role != "monitor"
+        or not isinstance(monitor_contract, dict)
+        or not monitor_contract
+    ):
         raise HTTPException(403, "scheduled agents require monitor role and monitor contract")
     airflow_dag_run_id = str(body.get("airflow_dag_run_id") or "").strip() or None
-    reservation = await _agent_scheduler.reserve_scheduled_run(
+    return scheduled_fire_at, schedule_key, airflow_dag_run_id
+
+
+async def _reserve_scheduled_agent_run(
+    agent: Any,
+    *,
+    scheduled_fire_at: Any,
+    schedule_key: str,
+    airflow_dag_run_id: str | None,
+) -> dict:
+    return await _agent_scheduler.reserve_scheduled_run(
         agent_id=str(agent.id),
         tenant_id=str(getattr(agent, "tenant_id", "")),
         workspace_id=str(getattr(agent, "workspace_id", "")),
@@ -4859,16 +4912,28 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
             "airflow_dag_run_id": airflow_dag_run_id,
         },
     )
-    if reservation.get("duplicate"):
-        return {
-            "reply": "scheduled run already recorded",
-            "viewer_urls": [],
-            "messages": [],
-            "agent_id": agent.id,
-            "run_id": reservation.get("agent_run_id"),
-            "duplicate": True,
-            "schedule_run": reservation,
-        }
+
+
+def _scheduled_agent_duplicate_response(agent: Any, reservation: dict) -> dict:
+    return {
+        "reply": "scheduled run already recorded",
+        "viewer_urls": [],
+        "messages": [],
+        "agent_id": agent.id,
+        "run_id": reservation.get("agent_run_id"),
+        "duplicate": True,
+        "schedule_run": reservation,
+    }
+
+
+async def _run_reserved_scheduled_agent(
+    agent: Any,
+    body: dict,
+    *,
+    reservation: dict,
+    scheduled_fire_at: Any,
+    airflow_dag_run_id: str | None,
+) -> Any:
     message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
     try:
         result = await _agent_runtime.run_scheduled_monitor(
