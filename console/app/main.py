@@ -119,6 +119,10 @@ from app.domains.admin.user_mutations import (
 from app.domains.studio.chat_stream import (
     studio_chat_stream_response as _studio_chat_stream_response_impl,
 )
+from app.domains.studio.entity_mutations import (
+    rename_studio_entity_payload as _rename_studio_entity_payload_impl,
+    update_studio_entity_payload as _update_studio_entity_payload_impl,
+)
 from app.domains.copilot.llm_keys import (
     llm_key_set_payload as _llm_key_set_payload_impl,
     llm_key_status_payload as _llm_key_status_payload_impl,
@@ -4271,26 +4275,12 @@ async def studio_rename_entity(
     user: dict = Depends(require_permission("studio.write")),
 ):
     _require_cartridge_visible(user, cartridge_id)
-    new_name = (body.get("new_name") or "").strip()
-    if not new_name:
-        raise HTTPException(400, "new_name is required")
-    if new_name == entity:
-        return {"renamed": False, "reason": "same name"}
-    # Verify old entity exists
-    manifest = await cartridge_service.get_cartridge(cartridge_id)
-    if not manifest:
-        raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
-    entities = [
-        e.get("entity") or e.get("id") for e in (manifest.get("entities") or [])
-    ]
-    if entity not in entities:
-        raise HTTPException(
-            404, f"Entity '{entity}' not found in cartridge '{cartridge_id}'"
-        )
-    if new_name in entities:
-        raise HTTPException(409, f"Entity '{new_name}' already exists")
-    await cartridge_service.rename_entity(cartridge_id, entity, new_name)
-    return {"renamed": True, "old_name": entity, "new_name": new_name}
+    return await _rename_studio_entity_payload_impl(
+        cartridge_id=cartridge_id,
+        entity=entity,
+        body=body,
+        cartridge_service=cartridge_service,
+    )
 
 
 @app.patch(
@@ -4308,23 +4298,12 @@ async def studio_update_entity(
 ):
     """Update entity_config fields."""
     _require_cartridge_visible(user, cartridge_id)
-    allowed = {
-        "display_name",
-        "mode",
-        "primary_key",
-        "dag_id",
-        "trigger_type",
-        "cron_expression",
-        "description",
-        "enabled",
-        "dag_params",
-        "connection_id",
-    }
-    updates = {k: v for k, v in body.items() if k in allowed}
-    if not updates:
-        raise HTTPException(400, "No valid fields to update")
-    await cartridge_service.upsert_entity(cartridge_id, entity, **updates)
-    return {"updated": True, "entity": entity, **updates}
+    return await _update_studio_entity_payload_impl(
+        cartridge_id=cartridge_id,
+        entity=entity,
+        body=body,
+        cartridge_service=cartridge_service,
+    )
 
 
 # ── Studio — Cartridge management ────────────────────────────────────────────
