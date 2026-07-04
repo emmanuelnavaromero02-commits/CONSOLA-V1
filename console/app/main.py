@@ -6096,6 +6096,79 @@ async def api_decisions_get(
     return out
 
 
+_DECISION_UPDATE_FIELDS = {
+    "title",
+    "description",
+    "commitment_date",
+    "kpis",
+    "status",
+    "outcome",
+    "closed_at",
+    "follow_up_decision_id",
+    "assignee_id",
+    "visibility",
+}
+
+
+def _decision_update_assignments(body: dict) -> tuple[list[str], list[Any]]:
+    sets: list[str] = []
+    params: list[Any] = []
+    for k, v in body.items():
+        if k not in _DECISION_UPDATE_FIELDS:
+            continue
+        if k == "kpis":
+            params.append(_json_dec.dumps(v))
+            sets.append(f"{k} = ${len(params)}::jsonb")
+            continue
+        if k == "commitment_date":
+            v = _coerce_date(v)
+        elif k == "closed_at":
+            v = _coerce_dt(v)
+        elif k == "visibility" and v not in ("private", "shared"):
+            continue
+        params.append(v)
+        sets.append(f"{k} = ${len(params)}")
+    if body.get("status") == "closed" and "closed_at" not in body:
+        sets.append("closed_at = COALESCE(closed_at, NOW())")
+    return sets, params
+
+
+def _decision_update_sql_and_params(
+    *,
+    sets: list[str],
+    params: list[Any],
+    decision_id: int,
+    existing: Any,
+) -> tuple[str, list[Any]]:
+    # Sprint v1.37: pin UPDATE to (id, workspace_id) — defense-in-depth
+    # against a future code path that loads ``existing`` from a
+    # different source. ``existing`` already came from
+    # ``_dec_load_with_visibility`` which itself filters by workspace,
+    # so ``existing["workspace_id"]`` is the active workspace by
+    # construction.
+    update_params = list(params)
+    update_params.append(decision_id)
+    decision_ref = f"${len(update_params)}"
+    update_params.append(existing["workspace_id"])
+    workspace_ref = f"${len(update_params)}"
+    sql = (
+        f"UPDATE decisions SET {', '.join(sets)} "
+        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
+    )
+    return sql, update_params
+
+
+async def _execute_decision_update(
+    *,
+    sql: str,
+    params: list[Any],
+    user: dict,
+) -> Any:
+    pool = await _dec_pool()
+    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
+        return await conn.fetchrow(sql, *params)
+
+
 @app.patch(
     "/api/decisions/{decision_id}",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
@@ -6113,55 +6186,20 @@ async def api_decisions_update(
             403, "you can only edit decisions you created or are assigned to"
         )
 
-    allowed = {
-        "title",
-        "description",
-        "commitment_date",
-        "kpis",
-        "status",
-        "outcome",
-        "closed_at",
-        "follow_up_decision_id",
-        "assignee_id",
-        "visibility",
-    }
-    sets, params = [], []
-    for k, v in body.items():
-        if k not in allowed:
-            continue
-        if k == "kpis":
-            params.append(_json_dec.dumps(v))
-            sets.append(f"{k} = ${len(params)}::jsonb")
-            continue
-        if k == "commitment_date":
-            v = _coerce_date(v)
-        elif k == "closed_at":
-            v = _coerce_dt(v)
-        elif k == "visibility" and v not in ("private", "shared"):
-            continue
-        params.append(v)
-        sets.append(f"{k} = ${len(params)}")
+    sets, params = _decision_update_assignments(body)
     if not sets:
         raise HTTPException(400, "no updatable fields supplied")
-    if body.get("status") == "closed" and "closed_at" not in body:
-        sets.append("closed_at = COALESCE(closed_at, NOW())")
-    # Sprint v1.37: pin UPDATE to (id, workspace_id) — defense-in-depth
-    # against a future code path that loads ``existing`` from a
-    # different source. ``existing`` already came from
-    # ``_dec_load_with_visibility`` which itself filters by workspace,
-    # so ``existing["workspace_id"]`` is the active workspace by
-    # construction.
-    params.append(decision_id)
-    decision_ref = f"${len(params)}"
-    params.append(existing["workspace_id"])
-    workspace_ref = f"${len(params)}"
-    sql = (
-        f"UPDATE decisions SET {', '.join(sets)} "
-        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
+    sql, params = _decision_update_sql_and_params(
+        sets=sets,
+        params=params,
+        decision_id=decision_id,
+        existing=existing,
     )
-    pool = await _dec_pool()
-    async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        row = await conn.fetchrow(sql, *params)
+    row = await _execute_decision_update(
+        sql=sql,
+        params=params,
+        user=user,
+    )
     if not row:
         # The visibility check passed but the row vanished between
         # SELECT and UPDATE (e.g. a concurrent delete, or the row was
