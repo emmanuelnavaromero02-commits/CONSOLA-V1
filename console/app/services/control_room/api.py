@@ -3846,6 +3846,143 @@ def _source_rollup_status(module_sources: list[dict[str, Any]]) -> str:
 
 
 @_bind_to_core
+def _domain_module_has_runtime(
+    module: ControlRoomModule,
+    domain: str,
+    domain_items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> bool:
+    module_has_sources = any(
+        source.get("module_id") == module.visible_id
+        and source.get("domain") == domain
+        for source in sources
+    )
+    module_has_items = any(
+        item.get("module_id", item.get("cartridge")) == module.visible_id
+        for item in domain_items
+    )
+    return module_has_sources or module_has_items
+
+
+@_bind_to_core
+def _domain_visible_modules(
+    domain: str,
+    modules: list[ControlRoomModule],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[ControlRoomModule]:
+    domain_items = [item for item in items if item["domain"] == domain]
+    visible_modules: list[ControlRoomModule] = []
+    for module in modules:
+        if module.domain != domain and not any(
+            source.domain == domain for source in module.sources
+        ):
+            continue
+        if (
+            _domain_module_has_runtime(module, domain, domain_items, sources)
+            or _show_known_non_ready_sources()
+        ):
+            visible_modules.append(module)
+    return visible_modules
+
+
+@_bind_to_core
+def _domain_module_sources(
+    module: ControlRoomModule,
+    domain: str,
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        source
+        for source in sources
+        if source.get("module_id") == module.visible_id
+        and source.get("domain") == domain
+    ]
+
+
+@_bind_to_core
+def _domain_module_items(
+    module: ControlRoomModule,
+    domain_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in domain_items
+        if item.get("module_id", item.get("cartridge")) == module.visible_id
+    ]
+
+
+@_bind_to_core
+def _domain_module_kpis(
+    module: ControlRoomModule,
+    domain: str,
+    module_sources: list[dict[str, Any]],
+    module_items: list[dict[str, Any]],
+    *,
+    data_readiness: str,
+    source_status: str,
+) -> list[dict[str, Any]]:
+    source_count = sum(int(source.get("count") or 0) for source in module_sources)
+    open_item_count = sum(
+        1 for item in module_items if item["status"] not in TERMINAL_ITEM_STATUSES
+    )
+    return [
+        {
+            "label": "Registros fuente",
+            "value": source_count,
+            "tone": "neutral",
+            "bad": data_readiness != "ready" and source_status != "no_sources",
+            "sql": " UNION ALL ".join(
+                f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
+                for source in module_sources
+            )
+            or "-- sin fuente materializada",
+        },
+        {
+            "label": "Items abiertos",
+            "value": open_item_count,
+            "tone": "attention",
+            "bad": open_item_count > 0,
+            "sql": f"SELECT * FROM control_room_items WHERE cartridge_id = '{module.cartridge}' AND domain = '{domain}' AND status NOT IN ('approved','dismissed','resolved')",
+        },
+    ]
+
+
+@_bind_to_core
+def _domain_module_payload(
+    module: ControlRoomModule,
+    domain: str,
+    domain_items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    module_sources = _domain_module_sources(module, domain, sources)
+    module_items = _domain_module_items(module, domain_items)
+    source_status = _source_rollup_status(module_sources)
+    data_readiness = _module_data_readiness(module_sources)
+    return {
+        "id": module.visible_id,
+        "connector_id": module.cartridge,
+        "label": module.label,
+        "domain": domain,
+        "accent": module.accent,
+        "description": module.description,
+        "item_count": len(module_items),
+        "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
+        "source_status": source_status,
+        "data_readiness": data_readiness,
+        "operationally_ready": data_readiness == "ready",
+        "kpis": _domain_module_kpis(
+            module,
+            domain,
+            module_sources,
+            module_items,
+            data_readiness=data_readiness,
+            source_status=source_status,
+        ),
+    }
+
+
+@_bind_to_core
 def _domain_payload(
     domain: str,
     modules: list[ControlRoomModule],
@@ -3853,84 +3990,11 @@ def _domain_payload(
     sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
     domain_items = [item for item in items if item["domain"] == domain]
-    domain_modules = []
-    for module in modules:
-        if module.domain != domain and not any(
-            source.domain == domain for source in module.sources
-        ):
-            continue
-        module_has_sources = any(
-            source.get("module_id") == module.visible_id
-            and source.get("domain") == domain
-            for source in sources
-        )
-        module_has_items = any(
-            item.get("module_id", item.get("cartridge")) == module.visible_id
-            for item in domain_items
-        )
-        if module_has_sources or module_has_items or _show_known_non_ready_sources():
-            domain_modules.append(module)
-    module_payload = []
-    for module in domain_modules:
-        module_sources = [
-            source
-            for source in sources
-            if source.get("module_id") == module.visible_id
-            and source.get("domain") == domain
-        ]
-        module_items = [
-            item
-            for item in domain_items
-            if item.get("module_id", item.get("cartridge")) == module.visible_id
-        ]
-        source_count = sum(int(source.get("count") or 0) for source in module_sources)
-        source_status = _source_rollup_status(module_sources)
-        data_readiness = _module_data_readiness(module_sources)
-        module_payload.append(
-            {
-                "id": module.visible_id,
-                "connector_id": module.cartridge,
-                "label": module.label,
-                "domain": domain,
-                "accent": module.accent,
-                "description": module.description,
-                "item_count": len(module_items),
-                "critical_count": sum(
-                    1 for item in module_items if item["severity"] == "critical"
-                ),
-                "source_status": source_status,
-                "data_readiness": data_readiness,
-                "operationally_ready": data_readiness == "ready",
-                "kpis": [
-                    {
-                        "label": "Registros fuente",
-                        "value": source_count,
-                        "tone": "neutral",
-                        "bad": data_readiness != "ready"
-                        and source_status != "no_sources",
-                        "sql": " UNION ALL ".join(
-                            f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
-                            for source in module_sources
-                        )
-                        or "-- sin fuente materializada",
-                    },
-                    {
-                        "label": "Items abiertos",
-                        "value": sum(
-                            1
-                            for item in module_items
-                            if item["status"] not in TERMINAL_ITEM_STATUSES
-                        ),
-                        "tone": "attention",
-                        "bad": any(
-                            item["status"] not in TERMINAL_ITEM_STATUSES
-                            for item in module_items
-                        ),
-                        "sql": f"SELECT * FROM control_room_items WHERE cartridge_id = '{module.cartridge}' AND domain = '{domain}' AND status NOT IN ('approved','dismissed','resolved')",
-                    },
-                ],
-            }
-        )
+    domain_modules = _domain_visible_modules(domain, modules, items, sources)
+    module_payload = [
+        _domain_module_payload(module, domain, domain_items, sources)
+        for module in domain_modules
+    ]
     return {
         "id": domain.lower().replace(" ", "_"),
         "label": domain,
