@@ -41,11 +41,13 @@ async def rag_page():
 @router.get("/api/rag/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permission("datasets.read"))):
-    async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
-        params = {"kinds": kinds} if kinds else None
-        r = await c.get(f"{_RAG_URL}/rag/sources", params=params)
-        r.raise_for_status()
-        return r.json()
+    return await _rag_sources_payload_impl(
+        kinds=kinds,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_for_user=_rag_headers_for_user,
+    )
 
 # /api/rag/sources/{source_id}
 @router.delete(
@@ -58,12 +60,13 @@ async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permissi
 )
 @_bind_to_main
 async def api_rag_delete_source(source_id: int, user: dict = Depends(require_permission("datasets.write"))):
-    async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
-        r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
-        if r.status_code == 404:
-            raise HTTPException(404, "Source not found")
-        r.raise_for_status()
-        return r.json()
+    return await _rag_delete_source_payload_impl(
+        source_id=source_id,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_for_user=_rag_headers_for_user,
+    )
 
 # /api/rag/search
 @router.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])

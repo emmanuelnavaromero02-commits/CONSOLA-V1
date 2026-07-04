@@ -74,6 +74,37 @@ async def rag_answer_payload(
     return {"answer": answer, "results": results}
 
 
+async def rag_sources_payload(
+    *,
+    kinds: str,
+    user: dict[str, Any],
+    rag_url: str,
+    http_client_factory: Callable[..., Any],
+    headers_for_user: Callable[[dict[str, Any]], dict[str, str]],
+) -> dict[str, Any]:
+    async with http_client_factory(headers=headers_for_user(user), timeout=10) as client:
+        params = {"kinds": kinds} if kinds else None
+        response = await client.get(f"{rag_url}/rag/sources", params=params)
+        response.raise_for_status()
+        return response.json()
+
+
+async def rag_delete_source_payload(
+    *,
+    source_id: int,
+    user: dict[str, Any],
+    rag_url: str,
+    http_client_factory: Callable[..., Any],
+    headers_for_user: Callable[[dict[str, Any]], dict[str, str]],
+) -> dict[str, Any]:
+    async with http_client_factory(headers=headers_for_user(user), timeout=10) as client:
+        response = await client.delete(f"{rag_url}/rag/sources/{source_id}")
+        if response.status_code == 404:
+            raise HTTPException(404, "Source not found")
+        response.raise_for_status()
+        return response.json()
+
+
 async def rag_search_payload(
     *,
     body: dict[str, Any],

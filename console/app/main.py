@@ -211,9 +211,11 @@ from app.domains.data_platform.rag_payloads import (
 )
 from app.domains.data_platform.rag_requests import (
     rag_answer_payload as _rag_answer_payload_impl,
+    rag_delete_source_payload as _rag_delete_source_payload_impl,
     rag_ingest_payload as _rag_ingest_payload_impl,
     rag_reindex_payload as _rag_reindex_payload_impl,
     rag_search_payload as _rag_search_payload_impl,
+    rag_sources_payload as _rag_sources_payload_impl,
 )
 from app.domains.data_platform.semantic_requests import (
     semantic_enrich_payload as _semantic_enrich_payload_impl,
@@ -5369,11 +5371,13 @@ def _rag_headers_for_user(user: dict) -> dict[str, str]:
 
 @app.get("/api/rag/sources", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permission("datasets.read"))):
-    async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
-        params = {"kinds": kinds} if kinds else None
-        r = await c.get(f"{_RAG_URL}/rag/sources", params=params)
-        r.raise_for_status()
-        return r.json()
+    return await _rag_sources_payload_impl(
+        kinds=kinds,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_for_user=_rag_headers_for_user,
+    )
 
 
 @app.delete(
@@ -5387,12 +5391,13 @@ async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permissi
 async def api_rag_delete_source(
     source_id: int, user: dict = Depends(require_permission("datasets.write"))
 ):
-    async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
-        r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
-        if r.status_code == 404:
-            raise HTTPException(404, "Source not found")
-        r.raise_for_status()
-        return r.json()
+    return await _rag_delete_source_payload_impl(
+        source_id=source_id,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_for_user=_rag_headers_for_user,
+    )
 
 
 @app.post(

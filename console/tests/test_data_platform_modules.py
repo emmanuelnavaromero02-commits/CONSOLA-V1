@@ -38,9 +38,11 @@ from app.domains.data_platform.rag_payloads import (
     rag_synthesis_messages,
 )
 from app.domains.data_platform.rag_requests import (
+    rag_delete_source_payload,
     rag_ingest_payload,
     rag_reindex_payload,
     rag_search_payload,
+    rag_sources_payload,
 )
 from app.domains.data_platform.refinement_errors import (
     payload_error_detail,
@@ -491,6 +493,122 @@ def test_rag_synthesis_messages_build_cited_context():
     assert "ÚNICAMENTE el contexto provisto" in messages["system"]
     assert "[1] Fuente: dataset_a" in messages["user"]
     assert "Pregunta: Que pasa?" in messages["user"]
+
+
+@pytest.mark.asyncio
+async def test_rag_sources_payload_uses_scoped_headers_and_filters():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"sources": [{"name": "manual"}]}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def get(self, url, params=None):
+            captured["url"] = url
+            captured["params"] = params
+            return FakeResponse()
+
+    result = await rag_sources_payload(
+        kinds="dataset",
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_for_user=lambda user: {"x-workspace": user["workspace_id"]},
+    )
+
+    assert result == {"sources": [{"name": "manual"}]}
+    assert captured["client_kwargs"]["headers"] == {"x-workspace": "workspace-a"}
+    assert captured["url"] == "http://rag/rag/sources"
+    assert captured["params"] == {"kinds": "dataset"}
+
+
+@pytest.mark.asyncio
+async def test_rag_delete_source_payload_handles_not_found():
+    class FakeResponse:
+        status_code = 404
+
+        def raise_for_status(self):
+            raise AssertionError("404 should be converted before raise_for_status")
+
+        def json(self):
+            return {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def delete(self, _url):
+            return FakeResponse()
+
+    with pytest.raises(HTTPException) as exc:
+        await rag_delete_source_payload(
+            source_id=123,
+            user=SCOPED_USER,
+            rag_url="http://rag",
+            http_client_factory=lambda **_kwargs: FakeClient(),
+            headers_for_user=lambda _user: {},
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Source not found"
+
+
+@pytest.mark.asyncio
+async def test_rag_delete_source_payload_returns_deleted_source():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"deleted": True}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def delete(self, url):
+            captured["url"] = url
+            return FakeResponse()
+
+    result = await rag_delete_source_payload(
+        source_id=123,
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_for_user=lambda user: {"x-tenant": user["tenant_id"]},
+    )
+
+    assert result == {"deleted": True}
+    assert captured["client_kwargs"]["headers"] == {"x-tenant": "tenant-a"}
+    assert captured["url"] == "http://rag/rag/sources/123"
 
 
 @pytest.mark.asyncio
