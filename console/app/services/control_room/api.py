@@ -507,14 +507,8 @@ async def _sf_talent_latest_simulation_result(user: dict | None) -> dict[str, An
 
 
 @_bind_to_core
-async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
-    """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
-
-    The endpoint intentionally returns aggregate coverage and blockers only.
-    C/P/A scores, salary values and individual PII are not exposed here.
-    """
-
-    datasets = {
+def _sf_talent_kpi_datasets() -> dict[str, str]:
+    return {
         "employee_profile": "sap_successfactors_talent_employee_profile",
         "role_profile": "sap_successfactors_talent_role_profile",
         "mobility_history": "sap_successfactors_talent_mobility_history",
@@ -525,33 +519,55 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         "simulation_inputs": "sap_successfactors_talent_simulation_inputs",
     }
 
-    profile_result = await _sf_talent_gold_result(datasets["employee_profile"], user, 5000)
-    role_result = await _sf_talent_gold_result(datasets["role_profile"], user, 1000)
-    mobility_result = await _sf_talent_gold_result(datasets["mobility_history"], user, 5000)
-    readiness_result = await _sf_talent_gold_result(datasets["readiness"], user, 5000)
-    nine_box_result = await _sf_talent_gold_result(datasets["nine_box"], user, 5000)
-    signals_result = await _sf_talent_gold_result(datasets["signals"], user, 100)
-    operational_result = await _sf_talent_gold_result(datasets["operational_features"], user, 1)
-    simulation_result = await _sf_talent_gold_result(datasets["simulation_inputs"], user, 1)
-    latest_simulation = await _sf_talent_latest_simulation_result(user)
 
-    profile_rows = profile_result["rows"]
-    role_rows = role_result["rows"]
-    mobility_rows = mobility_result["rows"]
-    readiness_rows = readiness_result["rows"]
-    nine_box_rows = nine_box_result["rows"]
-    signal_rows = signals_result["rows"]
-    operational_row = operational_result["rows"][0] if operational_result["rows"] else {}
-    simulation_row = simulation_result["rows"][0] if simulation_result["rows"] else {}
+@_bind_to_core
+async def _sf_talent_kpi_results(
+    datasets: dict[str, str],
+    user: dict | None,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "employee_profile": await _sf_talent_gold_result(datasets["employee_profile"], user, 5000),
+        "role_profile": await _sf_talent_gold_result(datasets["role_profile"], user, 1000),
+        "mobility_history": await _sf_talent_gold_result(datasets["mobility_history"], user, 5000),
+        "readiness": await _sf_talent_gold_result(datasets["readiness"], user, 5000),
+        "nine_box": await _sf_talent_gold_result(datasets["nine_box"], user, 5000),
+        "signals": await _sf_talent_gold_result(datasets["signals"], user, 100),
+        "operational_features": await _sf_talent_gold_result(datasets["operational_features"], user, 1),
+        "simulation_inputs": await _sf_talent_gold_result(datasets["simulation_inputs"], user, 1),
+    }
 
+
+@_bind_to_core
+def _sf_talent_kpi_rows(results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    operational_rows = results["operational_features"]["rows"]
+    simulation_rows = results["simulation_inputs"]["rows"]
+    return {
+        "profile_rows": results["employee_profile"]["rows"],
+        "role_rows": results["role_profile"]["rows"],
+        "mobility_rows": results["mobility_history"]["rows"],
+        "readiness_rows": results["readiness"]["rows"],
+        "nine_box_rows": results["nine_box"]["rows"],
+        "signal_rows": results["signals"]["rows"],
+        "operational_row": operational_rows[0] if operational_rows else {},
+        "simulation_row": simulation_rows[0] if simulation_rows else {},
+    }
+
+
+@_bind_to_core
+def _sf_talent_kpi_metrics(
+    rows: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    profile_rows = rows["profile_rows"]
+    role_rows = rows["role_rows"]
+    mobility_rows = rows["mobility_rows"]
+    readiness_rows = rows["readiness_rows"]
+    nine_box_rows = rows["nine_box_rows"]
+    operational_row = rows["operational_row"]
     profiled_employees = (
         _sf_talent_int(operational_row.get("profiled_count"))
         or _sf_talent_int(operational_row.get("profiled_employee_count"))
         or len(profile_rows)
-    )
-    roles_profiled = _sf_talent_int(operational_row.get("role_count")) or len(role_rows)
-    mobility_observed = _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
-        1 for row in mobility_rows if _sf_talent_int(row.get("movement_events")) > 0
     )
     readiness_calculable_rows = sum(
         1
@@ -561,43 +577,61 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     readiness_calculable = (
         _sf_talent_int(operational_row.get("calculable_count"))
         or _sf_talent_int(operational_row.get("calculable_employee_count"))
-        if operational_row
-        else readiness_calculable_rows
-    )
+    ) if operational_row else readiness_calculable_rows
     readiness_insufficient_rows = sum(
         1
         for row in readiness_rows
         if _sf_talent_status(row.get("readiness_status")) == "insufficient_data"
-    )
-    readiness_insufficient = (
-        _sf_talent_int(operational_row.get("readiness_pending_count"))
-        if operational_row
-        else readiness_insufficient_rows
     )
     nine_box_available_rows = sum(
         1
         for row in nine_box_rows
         if _sf_talent_status(row.get("box_status")) not in {"blocked", "insufficient_data", "missing"}
     )
-    nine_box_available = (
-        _sf_talent_int(operational_row.get("nine_box_classified_count"))
-        if operational_row
-        else nine_box_available_rows
-    )
-    roles_without_requirements = (
-        _sf_talent_int(operational_row.get("roles_without_requirements"))
-        or _sf_talent_int(operational_row.get("roles_without_requirements_count"))
-    )
-    high_severity_signals = _sf_talent_int(operational_row.get("high_severity_signal_count"))
-    learning_blockers = _sf_talent_int(operational_row.get("learning_blocker_count"))
-    recruiting_blockers = _sf_talent_int(operational_row.get("recruiting_blocker_count"))
-    skill_gap_count = _sf_talent_int(operational_row.get("skill_gap_count"))
-    skill_coverage_pct = operational_row.get("skill_coverage_pct")
-    operational_status = _sf_talent_status(operational_row.get("feature_status") or operational_result["status"])
-    readiness_status = _sf_talent_status(operational_row.get("readiness_status") or operational_status)
-    confidence = operational_row.get("confidence")
-    source_mode = _sf_talent_status(operational_row.get("source_mode") or "")
-    operational_label = str(operational_row.get("user_status_label") or "En espera de datos")
+    return {
+        "profiled_employees": profiled_employees,
+        "roles_profiled": _sf_talent_int(operational_row.get("role_count")) or len(role_rows),
+        "mobility_observed": _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
+            1 for row in mobility_rows if _sf_talent_int(row.get("movement_events")) > 0
+        ),
+        "readiness_calculable": readiness_calculable,
+        "readiness_insufficient": (
+            _sf_talent_int(operational_row.get("readiness_pending_count"))
+            if operational_row
+            else readiness_insufficient_rows
+        ),
+        "nine_box_available": (
+            _sf_talent_int(operational_row.get("nine_box_classified_count"))
+            if operational_row
+            else nine_box_available_rows
+        ),
+        "roles_without_requirements": (
+            _sf_talent_int(operational_row.get("roles_without_requirements"))
+            or _sf_talent_int(operational_row.get("roles_without_requirements_count"))
+        ),
+        "high_severity_signals": _sf_talent_int(operational_row.get("high_severity_signal_count")),
+        "learning_blockers": _sf_talent_int(operational_row.get("learning_blocker_count")),
+        "recruiting_blockers": _sf_talent_int(operational_row.get("recruiting_blocker_count")),
+        "skill_gap_count": _sf_talent_int(operational_row.get("skill_gap_count")),
+        "skill_coverage_pct": operational_row.get("skill_coverage_pct"),
+        "operational_status": _sf_talent_status(
+            operational_row.get("feature_status") or results["operational_features"]["status"]
+        ),
+        "confidence": operational_row.get("confidence"),
+        "source_mode": _sf_talent_status(operational_row.get("source_mode") or ""),
+        "operational_label": str(operational_row.get("user_status_label") or "En espera de datos"),
+    }
+
+
+@_bind_to_core
+def _sf_talent_kpi_blockers(
+    rows: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+    metrics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    profile_rows = rows["profile_rows"]
+    role_rows = rows["role_rows"]
+    operational_row = rows["operational_row"]
 
     profile_blockers = _sf_talent_extract_blockers(profile_rows) or [
         "Datos de competencias pendientes",
@@ -608,31 +642,26 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     operational_blockers = _sf_talent_extract_blockers([operational_row]) if operational_row else []
     system_errors = [
         str(result.get("error"))
-        for result in (
-            profile_result,
-            role_result,
-            mobility_result,
-            readiness_result,
-            nine_box_result,
-            signals_result,
-            operational_result,
-            simulation_result,
-        )
+        for result in results.values()
         if result.get("error")
     ]
 
     blockers = []
-    if not profiled_employees or readiness_insufficient or readiness_calculable == 0:
+    if (
+        not metrics["profiled_employees"]
+        or metrics["readiness_insufficient"]
+        or metrics["readiness_calculable"] == 0
+    ):
         blockers.append(
             {
                 "id": "talent_cpa_inputs_missing",
-                "status": "partial" if profiled_employees else "blocked",
+                "status": "partial" if metrics["profiled_employees"] else "blocked",
                 "title": "Datos de talento pendientes",
                 "detail": "Para clasificar talento se necesitan desempeno, competencias y aspiracion con datos suficientes.",
                 "items": operational_blockers or profile_blockers,
             }
         )
-    if roles_without_requirements or role_blockers:
+    if metrics["roles_without_requirements"] or role_blockers:
         blockers.append(
             {
                 "id": "talent_role_requirements_partial",
@@ -650,8 +679,12 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "detail": "Algunos golds de Talento no pudieron leerse en este workspace.",
             "items": system_errors,
         })
+    return blockers
 
-    signals = [
+
+@_bind_to_core
+def _sf_talent_signal_payloads(signal_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
         {
             "id": str(row.get("signal_id") or f"signal_{idx}"),
             "type": str(row.get("signal_type") or "priorizacion"),
@@ -664,7 +697,10 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         for idx, row in enumerate(signal_rows)
     ]
 
-    role_samples = sorted(
+
+@_bind_to_core
+def _sf_talent_role_samples(role_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
         [
             {
                 "label": str(row.get("role_name") or row.get("job_code") or "Sin rol"),
@@ -677,59 +713,69 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         key=lambda item: (-_sf_talent_int(item["headcount"]), str(item["label"])),
     )[:5]
 
-    generated_at = datetime.now(UTC).isoformat()
-    tenant_id, workspace_id = _workspace_scope(user)
 
-    widgets = [
+@_bind_to_core
+def _sf_talent_kpi_widgets(
+    datasets: dict[str, str],
+    results: dict[str, dict[str, Any]],
+    rows: dict[str, Any],
+    metrics: dict[str, Any],
+    signals: list[dict[str, Any]],
+    role_samples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    readiness_insufficient = metrics["readiness_insufficient"]
+    return [
         {
             "id": "sf_talent_profiled_employees",
             "title": "Empleados perfil Talento",
-            "value": profiled_employees,
+            "value": metrics["profiled_employees"],
             "dataset": datasets["employee_profile"],
             "href": _sf_talent_dataset_href(datasets["employee_profile"]),
-            "status": profile_result["status"],
+            "status": results["employee_profile"]["status"],
         },
         {
             "id": "sf_talent_roles_profiled",
             "title": "Roles derivados",
-            "value": roles_profiled,
+            "value": metrics["roles_profiled"],
             "dataset": datasets["role_profile"],
             "href": _sf_talent_dataset_href(datasets["role_profile"]),
-            "status": role_result["status"],
+            "status": results["role_profile"]["status"],
             "rows": role_samples,
         },
         {
             "id": "sf_talent_readiness_calculable",
             "title": "Perfiles calculables",
-            "value": readiness_calculable,
+            "value": metrics["readiness_calculable"],
             "dataset": datasets["readiness"],
             "href": _sf_talent_dataset_href(datasets["readiness"]),
-            "status": "partial" if readiness_insufficient else readiness_result["status"],
+            "status": "partial" if readiness_insufficient else results["readiness"]["status"],
             "detail": f"{readiness_insufficient} en espera de datos",
         },
         {
             "id": "sf_talent_9box_available",
             "title": "Clasificacion disponible",
-            "value": nine_box_available,
+            "value": metrics["nine_box_available"],
             "dataset": datasets["nine_box"],
             "href": _sf_talent_dataset_href(datasets["nine_box"]),
-            "status": "blocked" if nine_box_rows and nine_box_available == 0 else nine_box_result["status"],
+            "status": "blocked"
+            if rows["nine_box_rows"] and metrics["nine_box_available"] == 0
+            else results["nine_box"]["status"],
         },
         {
             "id": "sf_talent_operational_features",
             "title": "Analisis operativo",
-            "value": operational_label,
+            "value": metrics["operational_label"],
             "dataset": datasets["operational_features"],
             "href": _sf_talent_dataset_href(datasets["operational_features"]),
-            "status": operational_status,
+            "status": metrics["operational_status"],
         },
         {
             "id": "sf_talent_mobility_observed",
             "title": "Movilidad observada",
-            "value": mobility_observed,
+            "value": metrics["mobility_observed"],
             "dataset": datasets["mobility_history"],
             "href": _sf_talent_dataset_href(datasets["mobility_history"]),
-            "status": mobility_result["status"],
+            "status": results["mobility_history"]["status"],
         },
         {
             "id": "sf_talent_active_signals",
@@ -737,9 +783,36 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "value": len(signals),
             "dataset": datasets["signals"],
             "href": _sf_talent_dataset_href(datasets["signals"]),
-            "status": signals_result["status"],
+            "status": results["signals"]["status"],
         },
     ]
+
+
+@_bind_to_core
+async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
+    """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
+
+    The endpoint intentionally returns aggregate coverage and blockers only.
+    C/P/A scores, salary values and individual PII are not exposed here.
+    """
+
+    datasets = _sf_talent_kpi_datasets()
+    results = await _sf_talent_kpi_results(datasets, user)
+    latest_simulation = await _sf_talent_latest_simulation_result(user)
+    rows = _sf_talent_kpi_rows(results)
+    metrics = _sf_talent_kpi_metrics(rows, results)
+    metrics["readiness_status"] = _sf_talent_status(
+        rows["operational_row"].get("readiness_status") or metrics["operational_status"]
+    )
+    blockers = _sf_talent_kpi_blockers(rows, results, metrics)
+    signals = _sf_talent_signal_payloads(rows["signal_rows"])
+    role_samples = _sf_talent_role_samples(rows["role_rows"])
+    widgets = _sf_talent_kpi_widgets(datasets, results, rows, metrics, signals, role_samples)
+
+    generated_at = datetime.now(UTC).isoformat()
+    tenant_id, workspace_id = _workspace_scope(user)
+    operational_row = rows["operational_row"]
+    simulation_row = rows["simulation_row"]
 
     return {
         "generated_at": generated_at,
@@ -757,34 +830,34 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         "readiness": {
             "ready_min": 80,
             "near_min": 60,
-            "profiled_employees": profiled_employees,
-            "calculable_employees": readiness_calculable,
-            "insufficient_data_employees": readiness_insufficient,
-            "nine_box_available": nine_box_available,
-            "roles_without_requirements": roles_without_requirements,
-            "high_severity_signals": high_severity_signals,
-            "learning_blockers": learning_blockers,
-            "recruiting_blockers": recruiting_blockers,
-            "skill_gap_count": skill_gap_count,
-            "skill_coverage_pct": _sf_talent_public_value(skill_coverage_pct),
-            "operational_status": operational_status,
-            "operational_label": operational_label,
-            "readiness_status": readiness_status,
-            "confidence": _sf_talent_public_value(confidence),
-            "source_mode": source_mode,
+            "profiled_employees": metrics["profiled_employees"],
+            "calculable_employees": metrics["readiness_calculable"],
+            "insufficient_data_employees": metrics["readiness_insufficient"],
+            "nine_box_available": metrics["nine_box_available"],
+            "roles_without_requirements": metrics["roles_without_requirements"],
+            "high_severity_signals": metrics["high_severity_signals"],
+            "learning_blockers": metrics["learning_blockers"],
+            "recruiting_blockers": metrics["recruiting_blockers"],
+            "skill_gap_count": metrics["skill_gap_count"],
+            "skill_coverage_pct": _sf_talent_public_value(metrics["skill_coverage_pct"]),
+            "operational_status": metrics["operational_status"],
+            "operational_label": metrics["operational_label"],
+            "readiness_status": metrics["readiness_status"],
+            "confidence": _sf_talent_public_value(metrics["confidence"]),
+            "source_mode": metrics["source_mode"],
             "latest_analysis_status": latest_simulation.get("status"),
-            "status": "partial" if readiness_insufficient or blockers else "ready",
+            "status": "partial" if metrics["readiness_insufficient"] or blockers else "ready",
         },
         "operational_features": {
             "dataset": datasets["operational_features"],
-            "status": operational_status,
-            "label": operational_label,
+            "status": metrics["operational_status"],
+            "label": metrics["operational_label"],
             "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
         },
         "analysis_inputs": {
             "dataset": datasets["simulation_inputs"],
-            "status": _sf_talent_status(simulation_row.get("input_status") or simulation_result["status"]),
-            "label": str(simulation_row.get("user_status_label") or operational_label),
+            "status": _sf_talent_status(simulation_row.get("input_status") or results["simulation_inputs"]["status"]),
+            "label": str(simulation_row.get("user_status_label") or metrics["operational_label"]),
             "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
             "contract_version": simulation_row.get("analysis_contract_version"),
         },
