@@ -130,6 +130,9 @@ from app.domains.copilot.llm_keys import (
     llm_key_status_payload as _llm_key_status_payload_impl,
     llm_secret_keys as _llm_secret_keys_impl,
 )
+from app.domains.copilot.assistant_chat import (
+    assistant_chat_payload as _assistant_chat_payload_impl,
+)
 from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
     can_edit_decision as _dec_can_edit_impl,
@@ -1997,35 +2000,16 @@ async def api_copilot_llm_key_set(
     dependencies=[Depends(require_csrf), Depends(require_permission("copilot.use"))],
 )
 async def chat(body: dict, user: dict = Depends(require_permission("copilot.use"))):
-    try:
-        return await _call_with_optional_user(
-            assistant.chat,
-            body.get("message", ""),
-            body.get("history", []),
-            user=user,
-        )
-    except llm_client.LLMConfigurationError as exc:
-        message = (
-            "⚠️ El copiloto necesita una clave Anthropic para este workspace. "
-            "Ábrela en Tokens y guarda la clave API del tenant antes de usar el chat."
-        )
-        logger.info(
-            "assistant chat blocked by LLM configuration",
-            extra={"user_id": user.get("id"), "reason": str(exc)},
-        )
-        return {
-            "reply": message,
-            "viewer_urls": [],
-            "messages": [{"role": "assistant", "content": message}],
-        }
-    except llm_client.LLMProviderError as exc:
-        logger.warning(
-            "assistant chat provider error",
-            extra={"user_id": user.get("id"), "reason": str(exc)},
-        )
-        raise HTTPException(
-            status_code=502, detail=f"El proveedor LLM respondió con error. {exc}"
-        ) from exc
+    return await _assistant_chat_payload_impl(
+        body=body,
+        user=user,
+        assistant_chat=assistant.chat,
+        call_with_optional_user=_call_with_optional_user,
+        llm_configuration_error=llm_client.LLMConfigurationError,
+        llm_provider_error=llm_client.LLMProviderError,
+        logger_info=logger.info,
+        logger_warning=logger.warning,
+    )
 
 
 # ── Datasets proxy → refinement ───────────────────────────────────────────────
