@@ -7,6 +7,10 @@ from app.domains.data_platform.catalog_payloads import (
     catalog_query_args,
 )
 from app.domains.data_platform.catalog_requests import catalog_get_payload
+from app.domains.data_platform.catalog_requests import (
+    catalog_relationship_payload,
+    catalog_upsert_payload,
+)
 from app.domains.data_platform.data_api_payloads import (
     DataApiQueryValidationError,
     data_api_columns_param,
@@ -307,6 +311,70 @@ async def test_catalog_get_payload_uses_scoped_cache_and_refinement():
             '"layer": "gold", "tags": ["talent", "kpi"]}',
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_catalog_upsert_payload_invalidates_scoped_cache():
+    captured = {}
+
+    async def refinement_invoke(tool, args, **kwargs):
+        captured["tool"] = tool
+        captured["args"] = args
+        captured["user"] = kwargs["user"]
+        return {"updated": 1}
+
+    def raise_for_refinement_payload_error(payload, fallback):
+        captured["checked"] = (payload, fallback)
+
+    def scoped_read_cache_invalidate(scope, user):
+        captured["cache"] = (scope, user)
+
+    result = await catalog_upsert_payload(
+        body={"entries": [{"dataset": "gold_ready", "column_name": "employee_count"}]},
+        user=SCOPED_USER,
+        refinement_invoke=refinement_invoke,
+        raise_for_refinement_payload_error=raise_for_refinement_payload_error,
+        scoped_read_cache_invalidate=scoped_read_cache_invalidate,
+    )
+
+    assert result == {"updated": 1}
+    assert captured["tool"] == "upsert_catalog_entries"
+    assert captured["args"]["entries"][0]["dataset"] == "gold_ready"
+    assert captured["user"] == SCOPED_USER
+    assert captured["checked"] == ({"updated": 1}, "Refinement catalog update failed")
+    assert captured["cache"] == ("catalog", SCOPED_USER)
+
+
+@pytest.mark.asyncio
+async def test_catalog_relationship_payload_invalidates_scoped_cache():
+    captured = {}
+
+    async def refinement_invoke(tool, args, **kwargs):
+        captured["tool"] = tool
+        captured["args"] = args
+        captured["user"] = kwargs["user"]
+        return {"created": 1}
+
+    def raise_for_refinement_payload_error(payload, fallback):
+        captured["checked"] = (payload, fallback)
+
+    def scoped_read_cache_invalidate(scope, user):
+        captured["cache"] = (scope, user)
+
+    result = await catalog_relationship_payload(
+        body={"from_dataset": "gold_a", "to_dataset": "gold_b"},
+        user=SCOPED_USER,
+        refinement_invoke=refinement_invoke,
+        raise_for_refinement_payload_error=raise_for_refinement_payload_error,
+        scoped_read_cache_invalidate=scoped_read_cache_invalidate,
+    )
+
+    assert result == {"created": 1}
+    assert captured["tool"] == "register_relationship"
+    assert captured["args"]["to_dataset"] == "gold_b"
+    assert captured["user"] == SCOPED_USER
+    assert captured["checked"] == ({"created": 1}, "Refinement relationship update failed")
+    assert captured["cache"] == ("catalog", SCOPED_USER)
 
 
 @pytest.mark.asyncio

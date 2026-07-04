@@ -152,6 +152,8 @@ from app.domains.data_platform.catalog_payloads import (
 )
 from app.domains.data_platform.catalog_requests import (
     catalog_get_payload as _catalog_get_payload_impl,
+    catalog_relationship_payload as _catalog_relationship_payload_impl,
+    catalog_upsert_payload as _catalog_upsert_payload_impl,
 )
 from app.domains.data_platform.bronze_physical import (
     bronze_physical_snapshot as _bronze_physical_snapshot_impl,
@@ -5572,10 +5574,13 @@ async def api_catalog_get(
     ],
 )
 async def api_catalog_upsert(body: dict, user: dict = Depends(require_permission("datasets.write"))):
-    result = await _refinement_invoke("upsert_catalog_entries", body, user=user)
-    _raise_for_refinement_payload_error(result, "Refinement catalog update failed")
-    _scoped_read_cache_invalidate("catalog", user)
-    return result
+    return await _catalog_upsert_payload_impl(
+        body=body,
+        user=user,
+        refinement_invoke=_refinement_invoke,
+        raise_for_refinement_payload_error=_raise_for_refinement_payload_error,
+        scoped_read_cache_invalidate=_scoped_read_cache_invalidate,
+    )
 
 
 @app.post(
@@ -5589,10 +5594,13 @@ async def api_catalog_upsert(body: dict, user: dict = Depends(require_permission
 async def api_catalog_relationship(
     body: dict, user: dict = Depends(require_permission("datasets.write"))
 ):
-    result = await _refinement_invoke("register_relationship", body, user=user)
-    _raise_for_refinement_payload_error(result, "Refinement relationship update failed")
-    _scoped_read_cache_invalidate("catalog", user)
-    return result
+    return await _catalog_relationship_payload_impl(
+        body=body,
+        user=user,
+        refinement_invoke=_refinement_invoke,
+        raise_for_refinement_payload_error=_raise_for_refinement_payload_error,
+        scoped_read_cache_invalidate=_scoped_read_cache_invalidate,
+    )
 
 
 async def _refinement_invoke(

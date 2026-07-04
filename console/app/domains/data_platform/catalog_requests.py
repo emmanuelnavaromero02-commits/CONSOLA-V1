@@ -41,3 +41,31 @@ async def catalog_get_payload(
     return await scoped_read_cache_get_or_set(
         "catalog", user, (cache_args,), load_catalog
     )
+
+
+async def catalog_upsert_payload(
+    *,
+    body: dict[str, Any],
+    user: dict[str, Any],
+    refinement_invoke: Callable[..., Any],
+    raise_for_refinement_payload_error: Callable[[Any, str], None],
+    scoped_read_cache_invalidate: Callable[[str, dict[str, Any]], None],
+) -> Any:
+    result = await refinement_invoke("upsert_catalog_entries", body, user=user)
+    raise_for_refinement_payload_error(result, "Refinement catalog update failed")
+    scoped_read_cache_invalidate("catalog", user)
+    return result
+
+
+async def catalog_relationship_payload(
+    *,
+    body: dict[str, Any],
+    user: dict[str, Any],
+    refinement_invoke: Callable[..., Any],
+    raise_for_refinement_payload_error: Callable[[Any, str], None],
+    scoped_read_cache_invalidate: Callable[[str, dict[str, Any]], None],
+) -> Any:
+    result = await refinement_invoke("register_relationship", body, user=user)
+    raise_for_refinement_payload_error(result, "Refinement relationship update failed")
+    scoped_read_cache_invalidate("catalog", user)
+    return result
