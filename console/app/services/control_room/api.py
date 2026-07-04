@@ -216,6 +216,114 @@ async def query_dataset_rows(
 
 
 @_bind_to_core
+def _sf_gold_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {
+        "1",
+        "true",
+        "t",
+        "yes",
+        "y",
+        "activo",
+        "active",
+    }
+
+
+@_bind_to_core
+def _sf_gold_public_rows(
+    rows: list[dict[str, Any]], limit: int = 5
+) -> list[dict[str, Any]]:
+    return [
+        {str(key): _sf_talent_public_value(value) for key, value in row.items()}
+        for row in rows[:limit]
+    ]
+
+
+@_bind_to_core
+def _sf_gold_top_headcount_rows(
+    rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5
+) -> list[dict[str, Any]]:
+    id_key, name_key = label_keys
+    top: list[dict[str, Any]] = []
+    for row in rows:
+        label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
+        top.append(
+            {
+                "label": label,
+                "id": _sf_talent_public_value(row.get(id_key)),
+                "headcount": int(row.get("headcount") or 0),
+            }
+        )
+    return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[
+        :limit
+    ]
+
+
+@_bind_to_core
+def _sf_gold_status_error(results: list[dict[str, Any]]) -> str | None:
+    errors = [str(result.get("error")) for result in results if result.get("error")]
+    return "; ".join(errors) if errors else None
+
+
+@_bind_to_core
+def _sf_gold_usable_rows(result: dict[str, Any]) -> list[dict[str, Any]] | None:
+    status = str(result.get("status") or "")
+    if status in {"ready", "empty"}:
+        return result.get("rows") if isinstance(result.get("rows"), list) else []
+    return None
+
+
+@_bind_to_core
+def _sf_gold_combine_widget_status(results: list[dict[str, Any]]) -> str:
+    statuses = {str(result.get("status") or "unavailable") for result in results}
+    usable = any(status in {"ready", "empty"} for status in statuses)
+    if usable and any(
+        status in {"no_permission", "unavailable", "missing"} for status in statuses
+    ):
+        return "partial"
+    for status in ("no_permission", "unavailable", "missing", "empty", "ready"):
+        if status in statuses:
+            return status
+    return "unavailable"
+
+
+@_bind_to_core
+async def _sf_gold_result(
+    dataset: str, user: dict | None, limit: int
+) -> dict[str, Any]:
+    from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+
+    try:
+        rows = await query_gold_dataset_rows(dataset, user, limit)
+    except HTTPException as exc:
+        status = {
+            403: "no_permission",
+            404: "missing",
+            503: "unavailable",
+        }.get(exc.status_code, "unavailable")
+        return {
+            "rows": [],
+            "status": status,
+            "error": str(exc.detail or f"{dataset} unavailable"),
+        }
+    except Exception as exc:
+        return {
+            "rows": [],
+            "status": "unavailable",
+            "error": str(exc),
+        }
+    clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
+    return {
+        "rows": clean_rows,
+        "status": "empty" if not clean_rows else "ready",
+        "error": None,
+    }
+
+
+@_bind_to_core
 async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     """Core SuccessFactors Gold widgets for the active tenant/workspace.
 
@@ -223,8 +331,6 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     workspace simply receives empty widgets because native Gold RLS filters the
     rows before they reach this code path.
     """
-    from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
-
     sf_gold_datasets = {
         "employee_360": "sap_successfactors_employee_360",
         "headcount_by_company": "sap_successfactors_headcount_by_company",
@@ -232,120 +338,23 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
         "headcount_by_department": "sap_successfactors_headcount_by_department",
     }
 
-    def truthy(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return False
-        return str(value).strip().lower() in {
-            "1",
-            "true",
-            "t",
-            "yes",
-            "y",
-            "activo",
-            "active",
-        }
-
-    def public_value(value: Any) -> Any:
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if hasattr(value, "isoformat"):
-            return value.isoformat()
-        return str(value)
-
-    def public_rows(rows: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
-        return [
-            {str(key): public_value(value) for key, value in row.items()}
-            for row in rows[:limit]
-        ]
-
-    def dataset_href(dataset: str) -> str:
-        return (
-            "/data/catalog?layer=gold&cartridge=sap_successfactors"
-            f"&datasets={dataset}"
-        )
-
-    def top_headcount_rows(
-        rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5
-    ) -> list[dict[str, Any]]:
-        id_key, name_key = label_keys
-        top: list[dict[str, Any]] = []
-        for row in rows:
-            label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
-            top.append(
-                {
-                    "label": label,
-                    "id": public_value(row.get(id_key)),
-                    "headcount": int(row.get("headcount") or 0),
-                }
-            )
-        return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[
-            :limit
-        ]
-
-    def status_error(results: list[dict[str, Any]]) -> str | None:
-        errors = [str(result.get("error")) for result in results if result.get("error")]
-        return "; ".join(errors) if errors else None
-
-    def usable_rows(result: dict[str, Any]) -> list[dict[str, Any]] | None:
-        status = str(result.get("status") or "")
-        if status in {"ready", "empty"}:
-            return result.get("rows") if isinstance(result.get("rows"), list) else []
-        return None
-
-    def combine_widget_status(results: list[dict[str, Any]]) -> str:
-        statuses = {str(result.get("status") or "unavailable") for result in results}
-        usable = any(status in {"ready", "empty"} for status in statuses)
-        if usable and any(
-            status in {"no_permission", "unavailable", "missing"} for status in statuses
-        ):
-            return "partial"
-        for status in ("no_permission", "unavailable", "missing", "empty", "ready"):
-            if status in statuses:
-                return status
-        return "unavailable"
-
-    async def gold_result(dataset: str, limit: int) -> dict[str, Any]:
-        try:
-            rows = await query_gold_dataset_rows(dataset, user, limit)
-        except HTTPException as exc:
-            status = {
-                403: "no_permission",
-                404: "missing",
-                503: "unavailable",
-            }.get(exc.status_code, "unavailable")
-            return {
-                "rows": [],
-                "status": status,
-                "error": str(exc.detail or f"{dataset} unavailable"),
-            }
-        except Exception as exc:
-            return {
-                "rows": [],
-                "status": "unavailable",
-                "error": str(exc),
-            }
-        clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
-        return {
-            "rows": clean_rows,
-            "status": "empty" if not clean_rows else "ready",
-            "error": None,
-        }
-
-    employee_result = await gold_result(sf_gold_datasets["employee_360"], 5000)
-    company_result = await gold_result(sf_gold_datasets["headcount_by_company"], 1000)
-    location_result = await gold_result(sf_gold_datasets["headcount_by_location"], 1000)
-    department_result = await gold_result(
-        sf_gold_datasets["headcount_by_department"], 1000
+    employee_result = await _sf_gold_result(
+        sf_gold_datasets["employee_360"], user, 5000
+    )
+    company_result = await _sf_gold_result(
+        sf_gold_datasets["headcount_by_company"], user, 1000
+    )
+    location_result = await _sf_gold_result(
+        sf_gold_datasets["headcount_by_location"], user, 1000
+    )
+    department_result = await _sf_gold_result(
+        sf_gold_datasets["headcount_by_department"], user, 1000
     )
 
-    employee_rows = usable_rows(employee_result)
-    company_rows = usable_rows(company_result)
-    location_rows = usable_rows(location_result)
-    department_rows = usable_rows(department_result)
+    employee_rows = _sf_gold_usable_rows(employee_result)
+    company_rows = _sf_gold_usable_rows(company_result)
+    location_rows = _sf_gold_usable_rows(location_result)
+    department_rows = _sf_gold_usable_rows(department_result)
 
     company_headcount_total = (
         None
@@ -355,7 +364,7 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
     employee_active_total = (
         None
         if employee_rows is None
-        else sum(1 for row in employee_rows if truthy(row.get("is_active")))
+        else sum(1 for row in employee_rows if _sf_gold_truthy(row.get("is_active")))
     )
     if company_headcount_total and company_headcount_total > 0:
         active_headcount = company_headcount_total
@@ -372,18 +381,18 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Headcount total activo",
             "value": active_headcount,
             "dataset": sf_gold_datasets["employee_360"],
-            "href": dataset_href(sf_gold_datasets["employee_360"]),
-            "rows": public_rows(employee_rows or [], 5),
-            "status": combine_widget_status([employee_result, company_result]),
-            "error": status_error([employee_result, company_result]),
+            "href": _sf_talent_dataset_href(sf_gold_datasets["employee_360"]),
+            "rows": _sf_gold_public_rows(employee_rows or [], 5),
+            "status": _sf_gold_combine_widget_status([employee_result, company_result]),
+            "error": _sf_gold_status_error([employee_result, company_result]),
         },
         {
             "id": "sf_headcount_by_company",
             "title": "Headcount por compania",
             "value": company_headcount_total,
             "dataset": sf_gold_datasets["headcount_by_company"],
-            "href": dataset_href(sf_gold_datasets["headcount_by_company"]),
-            "rows": top_headcount_rows(
+            "href": _sf_talent_dataset_href(sf_gold_datasets["headcount_by_company"]),
+            "rows": _sf_gold_top_headcount_rows(
                 company_rows or [], ("company_id", "company_name")
             ),
             "status": company_result["status"],
@@ -396,8 +405,8 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             if location_rows is None
             else sum(int(row.get("headcount") or 0) for row in location_rows),
             "dataset": sf_gold_datasets["headcount_by_location"],
-            "href": dataset_href(sf_gold_datasets["headcount_by_location"]),
-            "rows": top_headcount_rows(
+            "href": _sf_talent_dataset_href(sf_gold_datasets["headcount_by_location"]),
+            "rows": _sf_gold_top_headcount_rows(
                 location_rows or [], ("location_id", "location_name")
             ),
             "status": location_result["status"],
@@ -410,8 +419,8 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             if department_rows is None
             else sum(int(row.get("headcount") or 0) for row in department_rows),
             "dataset": sf_gold_datasets["headcount_by_department"],
-            "href": dataset_href(sf_gold_datasets["headcount_by_department"]),
-            "rows": top_headcount_rows(
+            "href": _sf_talent_dataset_href(sf_gold_datasets["headcount_by_department"]),
+            "rows": _sf_gold_top_headcount_rows(
                 department_rows or [], ("department_id", "department_name")
             ),
             "status": department_result["status"],
@@ -424,6 +433,76 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "widgets": widgets,
+    }
+
+
+@_bind_to_core
+def _sf_talent_public_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+@_bind_to_core
+def _sf_talent_extract_blockers(rows: list[dict[str, Any]]) -> list[str]:
+    blockers: set[str] = set()
+    for row in rows:
+        blockers.update(_sf_talent_json_list(row.get("blockers")))
+    return sorted(blockers)
+
+
+@_bind_to_core
+async def _sf_talent_latest_simulation_result(user: dict | None) -> dict[str, Any]:
+    try:
+        pool = await auth.pool()
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
+            exists = bool(
+                await conn.fetchval(
+                    "SELECT to_regclass($1)",
+                    "public.monte_carlo_simulations",
+                )
+            )
+            if not exists:
+                return {"status": "waiting_for_data", "row": None}
+            row = await conn.fetchrow(
+                """
+                SELECT simulation_id,
+                       source_type,
+                       source_id,
+                       model_version,
+                       horizon_days,
+                       iterations,
+                       output_metric,
+                       breach_threshold,
+                       breach_direction,
+                       distribution_summary,
+                       sensitivity,
+                       evidence_refs,
+                       created_at,
+                       updated_at
+                  FROM monte_carlo_simulations
+                 WHERE workspace_id = $1::uuid
+                   AND source_type = 'wisdom_bit'
+                   AND source_id = 'WB-TALENTO'
+                 ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                workspace_id,
+            )
+    except Exception as exc:
+        return {"status": "unavailable", "error": str(exc), "row": None}
+    if not row:
+        return {"status": "waiting_for_data", "row": None}
+    return {
+        "status": "ready",
+        "row": {
+            key: _sf_talent_public_value(value)
+            for key, value in dict(row).items()
+        },
     }
 
 
@@ -446,129 +525,15 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         "simulation_inputs": "sap_successfactors_talent_simulation_inputs",
     }
 
-    def dataset_href(dataset: str) -> str:
-        return (
-            "/data/catalog?layer=gold&cartridge=sap_successfactors"
-            f"&datasets={dataset}"
-        )
-
-    def public_value(value: Any) -> Any:
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if hasattr(value, "isoformat"):
-            return value.isoformat()
-        return str(value)
-
-    def int_value(value: Any) -> int:
-        try:
-            return int(value or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    def clean_status(value: Any) -> str:
-        status = str(value or "unavailable").strip().lower()
-        return status or "unavailable"
-
-    def extract_blockers(rows: list[dict[str, Any]]) -> list[str]:
-        blockers: set[str] = set()
-        for row in rows:
-            raw = row.get("blockers")
-            parsed: Any = raw
-            if isinstance(raw, str) and raw.strip():
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    parsed = [raw]
-            if isinstance(parsed, list):
-                blockers.update(str(item).strip() for item in parsed if str(item).strip())
-            elif isinstance(parsed, str) and parsed.strip():
-                blockers.add(parsed.strip())
-        return sorted(blockers)
-
-    async def gold_result(dataset: str, limit: int) -> dict[str, Any]:
-        try:
-            rows = await query_dataset_rows(dataset, user, limit)
-        except HTTPException as exc:
-            status = {
-                403: "no_permission",
-                404: "missing",
-                503: "unavailable",
-            }.get(exc.status_code, "unavailable")
-            return {
-                "rows": [],
-                "status": status,
-                "error": str(exc.detail or f"{dataset} unavailable"),
-            }
-        except Exception as exc:
-            return {
-                "rows": [],
-                "status": "unavailable",
-                "error": str(exc),
-            }
-        clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
-        return {
-            "rows": clean_rows,
-            "status": "empty" if not clean_rows else "ready",
-            "error": None,
-        }
-
-    async def latest_simulation_result() -> dict[str, Any]:
-        try:
-            pool = await auth.pool()
-            async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
-                exists = bool(
-                    await conn.fetchval(
-                        "SELECT to_regclass($1)",
-                        "public.monte_carlo_simulations",
-                    )
-                )
-                if not exists:
-                    return {"status": "waiting_for_data", "row": None}
-                row = await conn.fetchrow(
-                    """
-                    SELECT simulation_id,
-                           source_type,
-                           source_id,
-                           model_version,
-                           horizon_days,
-                           iterations,
-                           output_metric,
-                           breach_threshold,
-                           breach_direction,
-                           distribution_summary,
-                           sensitivity,
-                           evidence_refs,
-                           created_at,
-                           updated_at
-                      FROM monte_carlo_simulations
-                     WHERE workspace_id = $1::uuid
-                       AND source_type = 'wisdom_bit'
-                       AND source_id = 'WB-TALENTO'
-                     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-                     LIMIT 1
-                    """,
-                    workspace_id,
-                )
-        except Exception as exc:
-            return {"status": "unavailable", "error": str(exc), "row": None}
-        if not row:
-            return {"status": "waiting_for_data", "row": None}
-        return {
-            "status": "ready",
-            "row": {key: public_value(value) for key, value in dict(row).items()},
-        }
-
-    profile_result = await gold_result(datasets["employee_profile"], 5000)
-    role_result = await gold_result(datasets["role_profile"], 1000)
-    mobility_result = await gold_result(datasets["mobility_history"], 5000)
-    readiness_result = await gold_result(datasets["readiness"], 5000)
-    nine_box_result = await gold_result(datasets["nine_box"], 5000)
-    signals_result = await gold_result(datasets["signals"], 100)
-    operational_result = await gold_result(datasets["operational_features"], 1)
-    simulation_result = await gold_result(datasets["simulation_inputs"], 1)
-    latest_simulation = await latest_simulation_result()
+    profile_result = await _sf_talent_gold_result(datasets["employee_profile"], user, 5000)
+    role_result = await _sf_talent_gold_result(datasets["role_profile"], user, 1000)
+    mobility_result = await _sf_talent_gold_result(datasets["mobility_history"], user, 5000)
+    readiness_result = await _sf_talent_gold_result(datasets["readiness"], user, 5000)
+    nine_box_result = await _sf_talent_gold_result(datasets["nine_box"], user, 5000)
+    signals_result = await _sf_talent_gold_result(datasets["signals"], user, 100)
+    operational_result = await _sf_talent_gold_result(datasets["operational_features"], user, 1)
+    simulation_result = await _sf_talent_gold_result(datasets["simulation_inputs"], user, 1)
+    latest_simulation = await _sf_talent_latest_simulation_result(user)
 
     profile_rows = profile_result["rows"]
     role_rows = role_result["rows"]
@@ -580,67 +545,67 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     simulation_row = simulation_result["rows"][0] if simulation_result["rows"] else {}
 
     profiled_employees = (
-        int_value(operational_row.get("profiled_count"))
-        or int_value(operational_row.get("profiled_employee_count"))
+        _sf_talent_int(operational_row.get("profiled_count"))
+        or _sf_talent_int(operational_row.get("profiled_employee_count"))
         or len(profile_rows)
     )
-    roles_profiled = int_value(operational_row.get("role_count")) or len(role_rows)
-    mobility_observed = int_value(operational_row.get("mobility_observed_count")) or sum(
-        1 for row in mobility_rows if int_value(row.get("movement_events")) > 0
+    roles_profiled = _sf_talent_int(operational_row.get("role_count")) or len(role_rows)
+    mobility_observed = _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
+        1 for row in mobility_rows if _sf_talent_int(row.get("movement_events")) > 0
     )
     readiness_calculable_rows = sum(
         1
         for row in readiness_rows
-        if clean_status(row.get("readiness_status")) not in {"insufficient_data", "blocked", "missing"}
+        if _sf_talent_status(row.get("readiness_status")) not in {"insufficient_data", "blocked", "missing"}
     )
     readiness_calculable = (
-        int_value(operational_row.get("calculable_count"))
-        or int_value(operational_row.get("calculable_employee_count"))
+        _sf_talent_int(operational_row.get("calculable_count"))
+        or _sf_talent_int(operational_row.get("calculable_employee_count"))
         if operational_row
         else readiness_calculable_rows
     )
     readiness_insufficient_rows = sum(
         1
         for row in readiness_rows
-        if clean_status(row.get("readiness_status")) == "insufficient_data"
+        if _sf_talent_status(row.get("readiness_status")) == "insufficient_data"
     )
     readiness_insufficient = (
-        int_value(operational_row.get("readiness_pending_count"))
+        _sf_talent_int(operational_row.get("readiness_pending_count"))
         if operational_row
         else readiness_insufficient_rows
     )
     nine_box_available_rows = sum(
         1
         for row in nine_box_rows
-        if clean_status(row.get("box_status")) not in {"blocked", "insufficient_data", "missing"}
+        if _sf_talent_status(row.get("box_status")) not in {"blocked", "insufficient_data", "missing"}
     )
     nine_box_available = (
-        int_value(operational_row.get("nine_box_classified_count"))
+        _sf_talent_int(operational_row.get("nine_box_classified_count"))
         if operational_row
         else nine_box_available_rows
     )
     roles_without_requirements = (
-        int_value(operational_row.get("roles_without_requirements"))
-        or int_value(operational_row.get("roles_without_requirements_count"))
+        _sf_talent_int(operational_row.get("roles_without_requirements"))
+        or _sf_talent_int(operational_row.get("roles_without_requirements_count"))
     )
-    high_severity_signals = int_value(operational_row.get("high_severity_signal_count"))
-    learning_blockers = int_value(operational_row.get("learning_blocker_count"))
-    recruiting_blockers = int_value(operational_row.get("recruiting_blocker_count"))
-    skill_gap_count = int_value(operational_row.get("skill_gap_count"))
+    high_severity_signals = _sf_talent_int(operational_row.get("high_severity_signal_count"))
+    learning_blockers = _sf_talent_int(operational_row.get("learning_blocker_count"))
+    recruiting_blockers = _sf_talent_int(operational_row.get("recruiting_blocker_count"))
+    skill_gap_count = _sf_talent_int(operational_row.get("skill_gap_count"))
     skill_coverage_pct = operational_row.get("skill_coverage_pct")
-    operational_status = clean_status(operational_row.get("feature_status") or operational_result["status"])
-    readiness_status = clean_status(operational_row.get("readiness_status") or operational_status)
+    operational_status = _sf_talent_status(operational_row.get("feature_status") or operational_result["status"])
+    readiness_status = _sf_talent_status(operational_row.get("readiness_status") or operational_status)
     confidence = operational_row.get("confidence")
-    source_mode = clean_status(operational_row.get("source_mode") or "")
+    source_mode = _sf_talent_status(operational_row.get("source_mode") or "")
     operational_label = str(operational_row.get("user_status_label") or "En espera de datos")
 
-    profile_blockers = extract_blockers(profile_rows) or [
+    profile_blockers = _sf_talent_extract_blockers(profile_rows) or [
         "Datos de competencias pendientes",
         "Datos de desempeno pendientes",
         "Datos de aspiracion pendientes",
     ]
-    role_blockers = extract_blockers(role_rows)
-    operational_blockers = extract_blockers([operational_row]) if operational_row else []
+    role_blockers = _sf_talent_extract_blockers(role_rows)
+    operational_blockers = _sf_talent_extract_blockers([operational_row]) if operational_row else []
     system_errors = [
         str(result.get("error"))
         for result in (
@@ -692,7 +657,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "type": str(row.get("signal_type") or "priorizacion"),
             "severity": str(row.get("severity") or "medium"),
             "title": str(row.get("title") or "Senal Talento"),
-            "affected_count": int_value(row.get("affected_count")),
+            "affected_count": _sf_talent_int(row.get("affected_count")),
             "recommendation": str(row.get("recommendation") or ""),
             "status": str(row.get("status") or "recommendation_only"),
         }
@@ -703,13 +668,13 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         [
             {
                 "label": str(row.get("role_name") or row.get("job_code") or "Sin rol"),
-                "job_code": public_value(row.get("job_code")),
-                "headcount": int_value(row.get("active_employee_count")),
+                "job_code": _sf_talent_public_value(row.get("job_code")),
+                "headcount": _sf_talent_int(row.get("active_employee_count")),
                 "status": str(row.get("role_profile_status") or "partial"),
             }
             for row in role_rows
         ],
-        key=lambda item: (-int_value(item["headcount"]), str(item["label"])),
+        key=lambda item: (-_sf_talent_int(item["headcount"]), str(item["label"])),
     )[:5]
 
     generated_at = datetime.now(UTC).isoformat()
@@ -721,7 +686,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Empleados perfil Talento",
             "value": profiled_employees,
             "dataset": datasets["employee_profile"],
-            "href": dataset_href(datasets["employee_profile"]),
+            "href": _sf_talent_dataset_href(datasets["employee_profile"]),
             "status": profile_result["status"],
         },
         {
@@ -729,7 +694,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Roles derivados",
             "value": roles_profiled,
             "dataset": datasets["role_profile"],
-            "href": dataset_href(datasets["role_profile"]),
+            "href": _sf_talent_dataset_href(datasets["role_profile"]),
             "status": role_result["status"],
             "rows": role_samples,
         },
@@ -738,7 +703,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Perfiles calculables",
             "value": readiness_calculable,
             "dataset": datasets["readiness"],
-            "href": dataset_href(datasets["readiness"]),
+            "href": _sf_talent_dataset_href(datasets["readiness"]),
             "status": "partial" if readiness_insufficient else readiness_result["status"],
             "detail": f"{readiness_insufficient} en espera de datos",
         },
@@ -747,7 +712,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Clasificacion disponible",
             "value": nine_box_available,
             "dataset": datasets["nine_box"],
-            "href": dataset_href(datasets["nine_box"]),
+            "href": _sf_talent_dataset_href(datasets["nine_box"]),
             "status": "blocked" if nine_box_rows and nine_box_available == 0 else nine_box_result["status"],
         },
         {
@@ -755,7 +720,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Analisis operativo",
             "value": operational_label,
             "dataset": datasets["operational_features"],
-            "href": dataset_href(datasets["operational_features"]),
+            "href": _sf_talent_dataset_href(datasets["operational_features"]),
             "status": operational_status,
         },
         {
@@ -763,7 +728,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Movilidad observada",
             "value": mobility_observed,
             "dataset": datasets["mobility_history"],
-            "href": dataset_href(datasets["mobility_history"]),
+            "href": _sf_talent_dataset_href(datasets["mobility_history"]),
             "status": mobility_result["status"],
         },
         {
@@ -771,7 +736,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "title": "Senales Talento",
             "value": len(signals),
             "dataset": datasets["signals"],
-            "href": dataset_href(datasets["signals"]),
+            "href": _sf_talent_dataset_href(datasets["signals"]),
             "status": signals_result["status"],
         },
     ]
@@ -801,11 +766,11 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "learning_blockers": learning_blockers,
             "recruiting_blockers": recruiting_blockers,
             "skill_gap_count": skill_gap_count,
-            "skill_coverage_pct": public_value(skill_coverage_pct),
+            "skill_coverage_pct": _sf_talent_public_value(skill_coverage_pct),
             "operational_status": operational_status,
             "operational_label": operational_label,
             "readiness_status": readiness_status,
-            "confidence": public_value(confidence),
+            "confidence": _sf_talent_public_value(confidence),
             "source_mode": source_mode,
             "latest_analysis_status": latest_simulation.get("status"),
             "status": "partial" if readiness_insufficient or blockers else "ready",
@@ -814,13 +779,13 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "dataset": datasets["operational_features"],
             "status": operational_status,
             "label": operational_label,
-            "row": {key: public_value(value) for key, value in operational_row.items()},
+            "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
         },
         "analysis_inputs": {
             "dataset": datasets["simulation_inputs"],
-            "status": clean_status(simulation_row.get("input_status") or simulation_result["status"]),
+            "status": _sf_talent_status(simulation_row.get("input_status") or simulation_result["status"]),
             "label": str(simulation_row.get("user_status_label") or operational_label),
-            "scenario_count": int_value(simulation_row.get("scenario_count")),
+            "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
             "contract_version": simulation_row.get("analysis_contract_version"),
         },
         "latest_simulation": latest_simulation,
