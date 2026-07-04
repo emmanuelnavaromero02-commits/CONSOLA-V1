@@ -4375,25 +4375,18 @@ _ITEM_SEVERITIES = ("critical", "high", "medium", "low")
 
 
 @_bind_to_core
-async def ops_summary(user: dict | None) -> dict[str, Any]:
-    """Lightweight operational summary for the active workspace.
-
-    Reads ONLY the persisted control-room tables with cheap COUNT/GROUP BY
-    queries — it never runs the heavy dataset-fetch path that ``dashboard``
-    does, so it is safe to poll. Workspace-scoped, no secrets. Useful to
-    answer "does this workspace have data, alert pressure, lessons and
-    action executions?" without rendering the whole cockpit.
-
-    Note: the live alert queue and source states are computed from datasets
-    in ``dashboard`` — here ``items_by_severity`` (open items) is the cheap,
-    persisted proxy for alert pressure.
-    """
-    import os as _os
-
-    tenant_id, workspace_id = _workspace_scope(user)
+async def _ops_summary_counts(
+    user: dict | None,
+    *,
+    workspace_id: str,
+) -> dict[str, Any]:
     pool = await auth.pool()
 
-    async def _load_counts(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
+    async def _load_counts(
+        conn: Any,
+        _tenant_id: str | None,
+        _workspace_id: str,
+    ) -> dict[str, Any]:
         status_rows = await conn.fetch(
             "SELECT status, COUNT(*) AS n FROM control_room_items "
             "WHERE workspace_id = $1 GROUP BY status",
@@ -4436,25 +4429,40 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
             "last_item_at": last_item_at,
         }
 
-    counts = await _run_with_db_scope(pool, user or {}, _load_counts)
-    status_rows = counts["status_rows"]
+    return await _run_with_db_scope(pool, user or {}, _load_counts)
+
+
+@_bind_to_core
+def _ops_summary_items_by_status(status_rows: Iterable[Any]) -> dict[str, int]:
     items_by_status = {s: 0 for s in _ITEM_STATUSES}
     for row in status_rows:
         items_by_status[str(row["status"])] = int(row["n"])
-    total_items = sum(items_by_status.values())
+    return items_by_status
 
-    severity_rows = counts["severity_rows"]
+
+@_bind_to_core
+def _ops_summary_open_by_severity(severity_rows: Iterable[Any]) -> dict[str, int]:
     open_by_severity = {s: 0 for s in _ITEM_SEVERITIES}
     for row in severity_rows:
         open_by_severity[str(row["severity"])] = int(row["n"])
+    return open_by_severity
 
+
+@_bind_to_core
+def _ops_summary_payload(
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    counts: dict[str, Any],
+) -> dict[str, Any]:
+    import os as _os
+
+    items_by_status = _ops_summary_items_by_status(counts["status_rows"])
+    total_items = sum(items_by_status.values())
+    open_by_severity = _ops_summary_open_by_severity(counts["severity_rows"])
     exec_rows = counts["exec_rows"]
     executions_by_status = {str(row["status"]): int(row["n"]) for row in exec_rows}
-
-    lessons_total = counts["lessons_total"]
-    thresholds_total = counts["thresholds_total"]
     last_item_at = counts["last_item_at"]
-
     app_env = _os.environ.get("APP_ENV", "production").strip().lower()
     writeback_enabled = _external_writeback_enabled()
     return {
@@ -4465,8 +4473,8 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
         "items": {"total": total_items, "by_status": items_by_status},
         "open_items_by_severity": open_by_severity,
         "action_executions": executions_by_status,
-        "lessons": lessons_total,
-        "thresholds_active": thresholds_total,
+        "lessons": counts["lessons_total"],
+        "thresholds_active": counts["thresholds_total"],
         "last_item_seen_at": last_item_at.isoformat() if last_item_at else None,
         "execution_mode": "supervised_execution",
         "supervised_execution_enabled": True,
@@ -4477,6 +4485,29 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
         "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower()
         in {"1", "true", "yes", "on"},
     }
+
+
+@_bind_to_core
+async def ops_summary(user: dict | None) -> dict[str, Any]:
+    """Lightweight operational summary for the active workspace.
+
+    Reads ONLY the persisted control-room tables with cheap COUNT/GROUP BY
+    queries — it never runs the heavy dataset-fetch path that ``dashboard``
+    does, so it is safe to poll. Workspace-scoped, no secrets. Useful to
+    answer "does this workspace have data, alert pressure, lessons and
+    action executions?" without rendering the whole cockpit.
+
+    Note: the live alert queue and source states are computed from datasets
+    in ``dashboard`` — here ``items_by_severity`` (open items) is the cheap,
+    persisted proxy for alert pressure.
+    """
+    tenant_id, workspace_id = _workspace_scope(user)
+    counts = await _ops_summary_counts(user, workspace_id=workspace_id)
+    return _ops_summary_payload(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        counts=counts,
+    )
 
 
 @_bind_to_core
