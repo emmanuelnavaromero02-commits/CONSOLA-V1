@@ -1502,24 +1502,34 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
 
 
 @_bind_to_core
-async def sap_successfactors_talent_metadata_readiness(
-    user: dict | None,
-) -> dict[str, Any]:
-    cpa = await _sf_talent_gold_result("sap_successfactors_talent_cpa_scores", user, 1000)
-    live = await _sf_talent_live_metadata_readiness(user)
-    cpa_rows = cpa["rows"]
-    ready_cpa = sum(1 for row in cpa_rows if _sf_talent_status(row.get("cpa_status")) == "ready")
+def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str, int]:
+    ready_cpa = sum(
+        1 for row in cpa_rows if _sf_talent_status(row.get("cpa_status")) == "ready"
+    )
     insufficient = sum(
         1
         for row in cpa_rows
         if _sf_talent_status(row.get("cpa_status")) in {"insufficient_data", "blocked"}
     )
-    entities = _sf_talent_metadata_entities()
-    live_components = {
+    return {"ready_cpa": ready_cpa, "insufficient": insufficient}
+
+
+@_bind_to_core
+def _sf_talent_live_components(live: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    return {
         str(component.get("id")): component
         for component in (live or {}).get("components", [])
         if isinstance(component, dict)
     }
+
+
+@_bind_to_core
+def _sf_talent_entities_for_readiness(
+    ready_cpa: int,
+    live: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    entities = _sf_talent_metadata_entities()
+    live_components = _sf_talent_live_components(live)
     if live_components:
         entities = [_sf_talent_merge_live_metadata(entity, live_components) for entity in entities]
     if ready_cpa:
@@ -1529,42 +1539,71 @@ async def sap_successfactors_talent_metadata_readiness(
             else entity
             for entity in entities
         ]
+    return entities
 
-    dataset_blockers = _sf_talent_blockers_from_results([cpa])
+
+@_bind_to_core
+def _sf_talent_live_readiness_summary(live: dict[str, Any] | None) -> dict[str, Any]:
     live_status = str((live or {}).get("status") or "unavailable")
-    live_summary = (live or {}).get("summary") if isinstance((live or {}).get("summary"), dict) else {}
-    live_required_ready = _sf_talent_int(live_summary.get("required_ready"))
-    live_required_total = _sf_talent_int(live_summary.get("required_total"))
-    live_blockers_raw = [
-        item for item in (live or {}).get("blockers", []) if isinstance(item, dict)
-    ]
-    live_blockers: list[dict[str, Any]] = []
+    raw_summary = (live or {}).get("summary")
+    live_summary = raw_summary if isinstance(raw_summary, dict) else {}
+    return {
+        "live_status": live_status,
+        "live_required_ready": _sf_talent_int(live_summary.get("required_ready")),
+        "live_required_total": _sf_talent_int(live_summary.get("required_total")),
+    }
+
+
+@_bind_to_core
+def _sf_talent_live_blocker_items(live: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return [item for item in (live or {}).get("blockers", []) if isinstance(item, dict)]
+
+
+@_bind_to_core
+def _sf_talent_live_readiness_blockers(
+    live: dict[str, Any] | None,
+    ready_cpa: int,
+    live_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    live_status = live_summary["live_status"]
+    live_required_ready = live_summary["live_required_ready"]
+    live_required_total = live_summary["live_required_total"]
+    live_blockers_raw = _sf_talent_live_blocker_items(live)
     if live_status == "unavailable":
-        live_blockers.append(
+        return [
             {
                 "id": "talent_metadata_preflight_unavailable",
                 "status": "unavailable",
                 "title": "Preflight SAP no disponible",
-                "detail": str((live or {}).get("error") or "No se pudo consultar metadata viva de SuccessFactors."),
-                "items": [str(item.get("reason") or item.get("component") or item) for item in live_blockers_raw] or ["cartridge_unavailable"],
+                "detail": str(
+                    (live or {}).get("error")
+                    or "No se pudo consultar metadata viva de SuccessFactors."
+                ),
+                "items": [
+                    str(item.get("reason") or item.get("component") or item)
+                    for item in live_blockers_raw
+                ]
+                or ["cartridge_unavailable"],
             }
-        )
-    elif live_required_total and live_required_ready < live_required_total:
-        live_blockers.append(
+        ]
+    if live_required_total and live_required_ready < live_required_total:
+        return [
             {
                 "id": "talent_metadata_cpa_inputs_missing",
                 "status": "blocked",
                 "title": "Metadata C/P/A incompleta",
                 "detail": "SuccessFactors todavia no expone todas las entidades/campos/permisos para competencia, desempeno y aspiracion.",
                 "items": [
-                    ", ".join(str(entity) for entity in item.get("entities_checked", []) if entity)
+                    ", ".join(
+                        str(entity) for entity in item.get("entities_checked", []) if entity
+                    )
                     or str(item.get("component") or item.get("reason") or "metadata")
                     for item in live_blockers_raw
                 ],
             }
-        )
-    elif live_required_total and ready_cpa == 0:
-        live_blockers.append(
+        ]
+    if live_required_total and ready_cpa == 0:
+        return [
             {
                 "id": "talent_cpa_materialization_pending",
                 "status": "partial",
@@ -1572,7 +1611,41 @@ async def sap_successfactors_talent_metadata_readiness(
                 "detail": "SAP expone las entidades requeridas; falta extraer/materializar los scores C/P/A para desbloquear 9-box real.",
                 "items": ["sap_successfactors_talent_cpa_scores"],
             }
-        )
+        ]
+    return []
+
+
+@_bind_to_core
+def _sf_talent_metadata_readiness_summary(
+    entities: list[dict[str, Any]],
+    counts: dict[str, int],
+    live_summary: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "cpa_ready_employees": counts["ready_cpa"],
+        "cpa_insufficient_employees": counts["insufficient"],
+        "entities": len(entities),
+        "blocked_entities": sum(1 for entity in entities if entity["status"] == "blocked"),
+        "live_required_ready": live_summary["live_required_ready"],
+        "live_required_total": live_summary["live_required_total"],
+        "live_status": live_summary["live_status"],
+    }
+
+
+@_bind_to_core
+async def sap_successfactors_talent_metadata_readiness(
+    user: dict | None,
+) -> dict[str, Any]:
+    cpa = await _sf_talent_gold_result("sap_successfactors_talent_cpa_scores", user, 1000)
+    live = await _sf_talent_live_metadata_readiness(user)
+    cpa_rows = cpa["rows"]
+    counts = _sf_talent_cpa_readiness_counts(cpa_rows)
+    entities = _sf_talent_entities_for_readiness(counts["ready_cpa"], live)
+    dataset_blockers = _sf_talent_blockers_from_results([cpa])
+    live_summary = _sf_talent_live_readiness_summary(live)
+    live_blockers = _sf_talent_live_readiness_blockers(
+        live, counts["ready_cpa"], live_summary
+    )
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1580,16 +1653,12 @@ async def sap_successfactors_talent_metadata_readiness(
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "status": "ready" if ready_cpa and insufficient == 0 else "partial",
-        "summary": {
-            "cpa_ready_employees": ready_cpa,
-            "cpa_insufficient_employees": insufficient,
-            "entities": len(entities),
-            "blocked_entities": sum(1 for entity in entities if entity["status"] == "blocked"),
-            "live_required_ready": live_required_ready,
-            "live_required_total": live_required_total,
-            "live_status": live_status,
-        },
+        "status": "ready" if counts["ready_cpa"] and counts["insufficient"] == 0 else "partial",
+        "summary": _sf_talent_metadata_readiness_summary(
+            entities,
+            counts,
+            live_summary,
+        ),
         "entities": entities,
         "blockers": dataset_blockers + live_blockers,
         "live_preflight": live or {
