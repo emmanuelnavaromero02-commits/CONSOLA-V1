@@ -4141,72 +4141,117 @@ async def _reserve_sync_now_run_or_response(
             run_id = _sync_now_run_id_from_request_id(
                 cartridge=cartridge, request_id=request_id, lock_key=lock_key
             )
-            if request_id:
-                existing_row = await _fetch_sync_run(
-                    cartridge=cartridge, run_id=run_id, user=user
-                )
-                if existing_row:
-                    existing_status = str(existing_row.get("status") or "").lower()
-                    existing_extra = _sync_extra_from_row(existing_row)
-                    if (
-                        existing_status in _SYNC_TERMINAL_STATUSES
-                        and not _sync_run_needs_final_reconcile(
-                            existing_row, existing_extra
-                        )
-                    ):
-                        return (
-                            run_id,
-                            [],
-                            _sync_public_payload(existing_row, existing_extra),
-                        )
-                    return (
-                        run_id,
-                        [],
-                        await _build_sync_run_status(
-                            cartridge=cartridge, row=existing_row, user=user
-                        ),
-                    )
-
-            active_row = await _fetch_active_sync_run(
+            existing_response = await _existing_sync_now_response(
+                cartridge=cartridge,
+                run_id=run_id,
+                request_id=request_id,
+                user=user,
+            )
+            if existing_response is not None:
+                return run_id, [], existing_response
+            active_response = await _active_sync_now_response(
                 cartridge=cartridge,
                 mode=mode,
                 target=target,
                 conn_id=conn_id,
                 user=user,
             )
-            if active_row:
-                active_status = await _build_sync_run_status(
-                    cartridge=cartridge, row=active_row, user=user
-                )
-                if (
-                    str(active_status.get("status") or "").lower()
-                    not in _SYNC_TERMINAL_STATUSES
-                ):
-                    return run_id, [], active_status
-
-            steps = _merge_sync_steps(
-                _initial_sync_steps(),
-                _sync_start_step_updates(),
-            )
-            await _upsert_sync_run(
+            if active_response is not None:
+                return run_id, [], active_response
+            steps = await _record_sync_now_start(
                 run_id=run_id,
                 cartridge=cartridge,
                 mode=mode,
-                status="running",
+                target=target,
+                conn_id=conn_id,
+                request_id=request_id,
                 user=user,
-                extra=_sync_running_extra(
-                    mode=mode,
-                    target=target,
-                    conn_id=conn_id,
-                    request_id=request_id,
-                    steps=steps,
-                ),
             )
         finally:
             await sync_lock_conn.execute(
                 "SELECT pg_advisory_unlock(hashtext($1))", lock_key
             )
     return run_id, steps, None
+
+
+async def _existing_sync_now_response(
+    *,
+    cartridge: str,
+    run_id: str,
+    request_id: str | None,
+    user: dict,
+) -> dict[str, Any] | None:
+    if not request_id:
+        return None
+    existing_row = await _fetch_sync_run(cartridge=cartridge, run_id=run_id, user=user)
+    if not existing_row:
+        return None
+    existing_status = str(existing_row.get("status") or "").lower()
+    existing_extra = _sync_extra_from_row(existing_row)
+    if (
+        existing_status in _SYNC_TERMINAL_STATUSES
+        and not _sync_run_needs_final_reconcile(existing_row, existing_extra)
+    ):
+        return _sync_public_payload(existing_row, existing_extra)
+    return await _build_sync_run_status(
+        cartridge=cartridge, row=existing_row, user=user
+    )
+
+
+async def _active_sync_now_response(
+    *,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    user: dict,
+) -> dict[str, Any] | None:
+    active_row = await _fetch_active_sync_run(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        user=user,
+    )
+    if not active_row:
+        return None
+    active_status = await _build_sync_run_status(
+        cartridge=cartridge, row=active_row, user=user
+    )
+    if str(active_status.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES:
+        return active_status
+    return None
+
+
+async def _record_sync_now_start(
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    target: str,
+    conn_id: str | None,
+    request_id: str | None,
+    user: dict,
+) -> list[dict[str, Any]]:
+    steps = _merge_sync_steps(
+        _initial_sync_steps(),
+        _sync_start_step_updates(),
+    )
+    await _upsert_sync_run(
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status="running",
+        user=user,
+        extra=_sync_running_extra(
+            mode=mode,
+            target=target,
+            conn_id=conn_id,
+            request_id=request_id,
+            steps=steps,
+        ),
+    )
+    return steps
 
 
 async def _continue_sync_now_after_reservation(
