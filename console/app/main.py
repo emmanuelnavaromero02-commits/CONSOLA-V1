@@ -3900,34 +3900,43 @@ async def _execute_unscoped_sync_run_upsert(
     )
 
 
-async def _upsert_sync_run(
+def _sync_run_scope_values(user: dict | None) -> tuple[str | None, str | None]:
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or "").strip() or None
+    workspace_id = str(ctx.get("workspace_id") or "").strip() or None
+    return tenant_id, workspace_id
+
+
+def _sync_run_requires_scope(
+    *,
+    cartridge: str,
+    scope_columns_present: bool,
+    tenant_id: str | None,
+    workspace_id: str | None,
+) -> bool:
+    return (
+        scope_columns_present
+        and cartridge != "platform"
+        and not (tenant_id and workspace_id)
+    )
+
+
+async def _execute_sync_run_upsert_for_scope(
+    pool: Any,
     *,
     run_id: str,
     cartridge: str,
     mode: str,
     status: str,
-    user: dict | None,
-    extra: dict[str, Any],
-    error_message: str | None = None,
-) -> dict[str, Any]:
-    pool = await _get_db_pool()
-    ctx = build_security_context(user)
-    tenant_id = str(ctx.get("tenant_id") or "").strip() or None
-    workspace_id = str(ctx.get("workspace_id") or "").strip() or None
-    scope_columns_present = await _table_has_column(
-        "pipeline_runs", "tenant_id", refresh=True
-    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
-    if (
-        scope_columns_present
-        and cartridge != "platform"
-        and not (tenant_id and workspace_id)
-    ):
-        raise HTTPException(403, "sync run tenant/workspace scope is required")
-    has_scope = bool(tenant_id and workspace_id and scope_columns_present)
+    has_scope: bool,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    error_message: str | None,
+    extra_json: str,
+) -> str:
     finished = status in _SYNC_TERMINAL_STATUSES
-    extra_json = json.dumps(extra)
-    if has_scope:
-        command_status = await _execute_scoped_sync_run_upsert(
+    if has_scope and tenant_id and workspace_id:
+        return await _execute_scoped_sync_run_upsert(
             pool,
             run_id=run_id,
             cartridge=cartridge,
@@ -3939,17 +3948,26 @@ async def _upsert_sync_run(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
         )
-    else:
-        command_status = await _execute_unscoped_sync_run_upsert(
-            pool,
-            run_id=run_id,
-            cartridge=cartridge,
-            mode=mode,
-            status=status,
-            finished=finished,
-            error_message=error_message,
-            extra_json=extra_json,
-        )
+    return await _execute_unscoped_sync_run_upsert(
+        pool,
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status=status,
+        finished=finished,
+        error_message=error_message,
+        extra_json=extra_json,
+    )
+
+
+def _sync_run_upsert_debug(
+    *,
+    command_status: str,
+    scope_columns_present: bool,
+    has_scope: bool,
+    tenant_id: str | None,
+    workspace_id: str | None,
+) -> dict[str, Any]:
     return {
         "command_status": command_status,
         "scope_columns_present": scope_columns_present,
@@ -3957,6 +3975,50 @@ async def _upsert_sync_run(
         "tenant_id_present": bool(tenant_id),
         "workspace_id_present": bool(workspace_id),
     }
+
+
+async def _upsert_sync_run(
+    *,
+    run_id: str,
+    cartridge: str,
+    mode: str,
+    status: str,
+    user: dict | None,
+    extra: dict[str, Any],
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    pool = await _get_db_pool()
+    tenant_id, workspace_id = _sync_run_scope_values(user)
+    scope_columns_present = await _table_has_column(
+        "pipeline_runs", "tenant_id", refresh=True
+    ) and await _table_has_column("pipeline_runs", "workspace_id", refresh=True)
+    if _sync_run_requires_scope(
+        cartridge=cartridge,
+        scope_columns_present=scope_columns_present,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    ):
+        raise HTTPException(403, "sync run tenant/workspace scope is required")
+    has_scope = bool(tenant_id and workspace_id and scope_columns_present)
+    command_status = await _execute_sync_run_upsert_for_scope(
+        pool,
+        run_id=run_id,
+        cartridge=cartridge,
+        mode=mode,
+        status=status,
+        has_scope=has_scope,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        error_message=error_message,
+        extra_json=json.dumps(extra),
+    )
+    return _sync_run_upsert_debug(
+        command_status=command_status,
+        scope_columns_present=scope_columns_present,
+        has_scope=has_scope,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
 
 
 async def _fetch_sync_run(
