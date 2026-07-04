@@ -5236,6 +5236,189 @@ def _agentops_origins_payload(rows: Iterable[Any]) -> list[dict[str, Any]]:
 
 
 @_bind_to_core
+async def _agentops_table_presence(conn: Any) -> dict[str, bool]:
+    table_exists: dict[str, bool] = {}
+    for table in (
+        "monte_carlo_simulations",
+        "calibration_states",
+        "decision_orchestration_runs",
+        "decision_orchestration_executions",
+    ):
+        table_exists[table] = bool(
+            await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
+        )
+    return table_exists
+
+
+@_bind_to_core
+async def _agentops_base_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    tenant_id: str | None,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> dict[str, Any]:
+    agents = await conn.fetch(
+        """
+        SELECT id::text AS id, cartridge_id, slug, name, is_active,
+               allowed_tools, extra, updated_at
+          FROM agents
+         WHERE (workspace_id = $1::uuid OR workspace_id IS NULL)
+           AND ($2::uuid IS NULL OR tenant_id = $2::uuid OR tenant_id IS NULL)
+           AND ($3::text[] IS NULL OR cartridge_id = ANY($3::text[]) OR cartridge_id = 'platform')
+         ORDER BY is_active DESC, updated_at DESC, cartridge_id, slug
+         LIMIT 100
+        """,
+        workspace_id,
+        tenant_id,
+        allowed_param,
+    )
+    runs = await conn.fetch(
+        """
+        SELECT r.id, r.agent_id::text AS agent_id, r.started_at, r.finished_at,
+               r.status, r.tool_calls, r.error_message,
+               a.slug, a.name, a.cartridge_id
+          FROM agent_runs r
+          JOIN agents a ON a.id = r.agent_id
+         WHERE (r.workspace_id = $1::uuid OR (r.workspace_id IS NULL AND a.workspace_id = $1::uuid))
+           AND ($3::text[] IS NULL OR a.cartridge_id = ANY($3::text[]) OR a.cartridge_id = 'platform')
+         ORDER BY r.started_at DESC
+         LIMIT $2
+        """,
+        workspace_id,
+        limit,
+        allowed_param,
+    )
+    alert_rows = await conn.fetch(
+        """
+        SELECT metadata->>'agent_id' AS agent_id,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+               MAX(last_seen_at) AS last_seen_at
+          FROM control_room_items
+         WHERE workspace_id = $1::uuid
+           AND item_kind = 'agent_alert'
+           AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
+         GROUP BY metadata->>'agent_id'
+        """,
+        workspace_id,
+        allowed_param,
+    )
+    origin_rows = await conn.fetch(
+        """
+        SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
+               COUNT(*)::int AS total
+          FROM control_room_items
+         WHERE workspace_id = $1::uuid
+           AND item_kind = 'agent_alert'
+           AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
+         GROUP BY 1
+         ORDER BY 2 DESC, 1
+        """,
+        workspace_id,
+        allowed_param,
+    )
+    return {
+        "agents": agents,
+        "runs": runs,
+        "alert_rows": alert_rows,
+        "origin_rows": origin_rows,
+    }
+
+
+@_bind_to_core
+async def _agentops_intelligence_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> dict[str, Any]:
+    monte_carlo_rows = []
+    if table_exists["monte_carlo_simulations"]:
+        monte_carlo_rows = await conn.fetch(
+            """
+            SELECT source_type,
+                   COUNT(*)::int AS total,
+                   MAX(updated_at) AS latest_at
+              FROM monte_carlo_simulations
+             WHERE workspace_id = $1::uuid
+             GROUP BY source_type
+            """,
+            workspace_id,
+        )
+    calibration_rows = []
+    if table_exists["calibration_states"]:
+        calibration_rows = await conn.fetch(
+            """
+            SELECT COUNT(*)::int AS total,
+                   COALESCE(SUM(sample_count), 0)::int AS sample_count,
+                   MAX(updated_at) AS latest_at
+              FROM calibration_states
+             WHERE workspace_id = $1::uuid
+            """,
+            workspace_id,
+        )
+    orchestration_rows = []
+    if table_exists["decision_orchestration_runs"]:
+        orchestration_rows = await conn.fetch(
+            """
+            SELECT COUNT(*)::int AS total,
+                   MAX(updated_at) AS latest_at
+              FROM decision_orchestration_runs
+             WHERE workspace_id = $1::uuid
+            """,
+            workspace_id,
+        )
+    execution_rows = []
+    if table_exists["decision_orchestration_executions"]:
+        execution_rows = await conn.fetch(
+            """
+            SELECT engine_name,
+                   execution_status,
+                   COUNT(*)::int AS total,
+                   MAX(updated_at) AS latest_at
+              FROM decision_orchestration_executions
+             WHERE workspace_id = $1::uuid
+             GROUP BY engine_name, execution_status
+            """,
+            workspace_id,
+        )
+    return {
+        "monte_carlo_rows": monte_carlo_rows,
+        "calibration_rows": calibration_rows,
+        "orchestration_rows": orchestration_rows,
+        "execution_rows": execution_rows,
+    }
+
+
+@_bind_to_core
+async def _agentops_load_snapshot(
+    conn: Any,
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> dict[str, Any]:
+    table_exists = await _agentops_table_presence(conn)
+    return {
+        **await _agentops_base_rows(
+            conn,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            allowed_param=allowed_param,
+            limit=limit,
+        ),
+        **await _agentops_intelligence_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+    }
+
+
+@_bind_to_core
 async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     """Persisted AgentOps snapshot for Control Room.
 
@@ -5252,140 +5435,19 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     # "monte_carlo_simulations"; "bayesian_calibration_states";
     # "bayesian_calibration_samples"; "decision_orchestrations";
     # "engines": engines_payload
+    # "a.cartridge_id = ANY($3::text[])"; "cartridge_id = ANY($3::text[])";
+    # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
 
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
-        agents = await conn.fetch(
-            """
-            SELECT id::text AS id, cartridge_id, slug, name, is_active,
-                   allowed_tools, extra, updated_at
-              FROM agents
-             WHERE (workspace_id = $1::uuid OR workspace_id IS NULL)
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid OR tenant_id IS NULL)
-               AND ($3::text[] IS NULL OR cartridge_id = ANY($3::text[]) OR cartridge_id = 'platform')
-             ORDER BY is_active DESC, updated_at DESC, cartridge_id, slug
-             LIMIT 100
-            """,
-            workspace_id,
-            tenant_id,
-            allowed_param,
+        return await _agentops_load_snapshot(
+            conn,
+            tenant_id=_tenant_id,
+            workspace_id=_workspace_id,
+            allowed_param=allowed_param,
+            limit=limit,
         )
-        runs = await conn.fetch(
-            """
-            SELECT r.id, r.agent_id::text AS agent_id, r.started_at, r.finished_at,
-                   r.status, r.tool_calls, r.error_message,
-                   a.slug, a.name, a.cartridge_id
-              FROM agent_runs r
-              JOIN agents a ON a.id = r.agent_id
-             WHERE (r.workspace_id = $1::uuid OR (r.workspace_id IS NULL AND a.workspace_id = $1::uuid))
-               AND ($3::text[] IS NULL OR a.cartridge_id = ANY($3::text[]) OR a.cartridge_id = 'platform')
-             ORDER BY r.started_at DESC
-             LIMIT $2
-            """,
-            workspace_id,
-            limit,
-            allowed_param,
-        )
-        alert_rows = await conn.fetch(
-            """
-            SELECT metadata->>'agent_id' AS agent_id,
-                   COUNT(*)::int AS total,
-                   COUNT(*) FILTER (WHERE status = 'open')::int AS open,
-                   MAX(last_seen_at) AS last_seen_at
-              FROM control_room_items
-             WHERE workspace_id = $1::uuid
-               AND item_kind = 'agent_alert'
-               AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
-             GROUP BY metadata->>'agent_id'
-            """,
-            workspace_id,
-            allowed_param,
-        )
-        origin_rows = await conn.fetch(
-            """
-            SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
-                   COUNT(*)::int AS total
-              FROM control_room_items
-             WHERE workspace_id = $1::uuid
-               AND item_kind = 'agent_alert'
-               AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
-             GROUP BY 1
-             ORDER BY 2 DESC, 1
-            """,
-            workspace_id,
-            allowed_param,
-        )
-        table_exists: dict[str, bool] = {}
-        for table in (
-            "monte_carlo_simulations",
-            "calibration_states",
-            "decision_orchestration_runs",
-            "decision_orchestration_executions",
-        ):
-            table_exists[table] = bool(
-                await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
-            )
-        monte_carlo_rows = []
-        if table_exists["monte_carlo_simulations"]:
-            monte_carlo_rows = await conn.fetch(
-                """
-                SELECT source_type,
-                       COUNT(*)::int AS total,
-                       MAX(updated_at) AS latest_at
-                  FROM monte_carlo_simulations
-                 WHERE workspace_id = $1::uuid
-                 GROUP BY source_type
-                """,
-                workspace_id,
-            )
-        calibration_rows = []
-        if table_exists["calibration_states"]:
-            calibration_rows = await conn.fetch(
-                """
-                SELECT COUNT(*)::int AS total,
-                       COALESCE(SUM(sample_count), 0)::int AS sample_count,
-                       MAX(updated_at) AS latest_at
-                  FROM calibration_states
-                 WHERE workspace_id = $1::uuid
-                """,
-                workspace_id,
-            )
-        orchestration_rows = []
-        if table_exists["decision_orchestration_runs"]:
-            orchestration_rows = await conn.fetch(
-                """
-                SELECT COUNT(*)::int AS total,
-                       MAX(updated_at) AS latest_at
-                  FROM decision_orchestration_runs
-                 WHERE workspace_id = $1::uuid
-                """,
-                workspace_id,
-            )
-        execution_rows = []
-        if table_exists["decision_orchestration_executions"]:
-            execution_rows = await conn.fetch(
-                """
-                SELECT engine_name,
-                       execution_status,
-                       COUNT(*)::int AS total,
-                       MAX(updated_at) AS latest_at
-                  FROM decision_orchestration_executions
-                 WHERE workspace_id = $1::uuid
-                 GROUP BY engine_name, execution_status
-                """,
-                workspace_id,
-            )
-        return {
-            "agents": agents,
-            "runs": runs,
-            "alert_rows": alert_rows,
-            "origin_rows": origin_rows,
-            "monte_carlo_rows": monte_carlo_rows,
-            "calibration_rows": calibration_rows,
-            "orchestration_rows": orchestration_rows,
-            "execution_rows": execution_rows,
-        }
 
     raw = await run_with_db_scope(pool, user or {}, _load)
 
