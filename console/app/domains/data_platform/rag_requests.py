@@ -72,3 +72,55 @@ async def rag_answer_payload(
         ) from exc
 
     return {"answer": answer, "results": results}
+
+
+async def rag_reindex_payload(
+    *,
+    body: dict[str, Any],
+    user: dict[str, Any],
+    rag_url: str,
+    http_client_factory: Callable[..., Any],
+    headers_factory: Callable[[str], dict[str, str]],
+    upstream_error_detail: Callable[[Any, str], Any],
+    refinement_invoke: Callable[..., Any],
+    require_cartridge_visible: Callable[[dict[str, Any], str], None],
+    build_security_context: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    payload = dict(body or {})
+    kind = str(payload.get("kind") or "").strip().lower()
+    requested_cartridge = str(payload.get("cartridge") or "").strip()
+    if requested_cartridge:
+        require_cartridge_visible(user, requested_cartridge)
+    if kind == "dataset" and requested_cartridge:
+        dataset_name = str(payload.get("name") or "").strip()
+        datasets_payload = await refinement_invoke("list_datasets", {}, user=user)
+        datasets = (
+            datasets_payload.get("datasets")
+            if isinstance(datasets_payload, dict)
+            else []
+        )
+        match = next(
+            (
+                dataset
+                for dataset in (datasets or [])
+                if str(dataset.get("name") or "") == dataset_name
+                and str(dataset.get("cartridge") or "") == requested_cartridge
+            ),
+            None,
+        )
+        if not match:
+            raise HTTPException(
+                404,
+                f"dataset '{dataset_name}' not found for cartridge '{requested_cartridge}'",
+            )
+    payload = {**payload, "security_context": build_security_context(user)}
+    async with http_client_factory(
+        headers=headers_factory("MCP_INFRA"), timeout=300
+    ) as client:
+        response = await client.post(f"{rag_url}/rag/reindex", json=payload)
+        if response.status_code >= 400:
+            raise HTTPException(
+                response.status_code,
+                upstream_error_detail(response, "RAG reindex failed"),
+            )
+        return response.json()

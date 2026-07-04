@@ -211,6 +211,7 @@ from app.domains.data_platform.rag_payloads import (
 )
 from app.domains.data_platform.rag_requests import (
     rag_answer_payload as _rag_answer_payload_impl,
+    rag_reindex_payload as _rag_reindex_payload_impl,
 )
 from app.domains.data_platform.semantic_requests import (
     semantic_enrich_payload as _semantic_enrich_payload_impl,
@@ -5427,36 +5428,17 @@ async def api_rag_search(body: dict, user: dict = Depends(require_permission("da
     ],
 )
 async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("datasets.write"))):
-    kind = str((body or {}).get("kind") or "").strip().lower()
-    requested_cartridge = str((body or {}).get("cartridge") or "").strip()
-    if requested_cartridge:
-        _require_cartridge_visible(user, requested_cartridge)
-    if kind == "dataset" and requested_cartridge:
-        dataset_name = str((body or {}).get("name") or "").strip()
-        datasets_payload = await _refinement_invoke("list_datasets", {}, user=user)
-        datasets = datasets_payload.get("datasets") if isinstance(datasets_payload, dict) else []
-        match = next(
-            (
-                ds
-                for ds in (datasets or [])
-                if str(ds.get("name") or "") == dataset_name
-                and str(ds.get("cartridge") or "") == requested_cartridge
-            ),
-            None,
-        )
-        if not match:
-            raise HTTPException(
-                404,
-                f"dataset '{dataset_name}' not found for cartridge '{requested_cartridge}'",
-            )
-    body = {**body, "security_context": build_security_context(user)}
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
-        r = await c.post(f"{_RAG_URL}/rag/reindex", json=body)
-        if r.status_code >= 400:
-            raise HTTPException(
-                r.status_code, _upstream_error_detail(r, "RAG reindex failed")
-            )
-        return r.json()
+    return await _rag_reindex_payload_impl(
+        body=body,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        upstream_error_detail=_upstream_error_detail,
+        refinement_invoke=_refinement_invoke,
+        require_cartridge_visible=_require_cartridge_visible,
+        build_security_context=build_security_context,
+    )
 
 
 @app.post(

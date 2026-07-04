@@ -37,6 +37,7 @@ from app.domains.data_platform.rag_payloads import (
     rag_search_arguments,
     rag_synthesis_messages,
 )
+from app.domains.data_platform.rag_requests import rag_reindex_payload
 from app.domains.data_platform.refinement_errors import (
     payload_error_detail,
     refinement_error_status,
@@ -486,6 +487,94 @@ def test_rag_synthesis_messages_build_cited_context():
     assert "ÚNICAMENTE el contexto provisto" in messages["system"]
     assert "[1] Fuente: dataset_a" in messages["user"]
     assert "Pregunta: Que pasa?" in messages["user"]
+
+
+@pytest.mark.asyncio
+async def test_rag_reindex_payload_validates_dataset_scope_and_adds_security_context():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    async def refinement_invoke(tool, args, **kwargs):
+        assert tool == "list_datasets"
+        assert args == {}
+        assert kwargs["user"] == SCOPED_USER
+        return {
+            "datasets": [
+                {"name": "employees", "cartridge": "sap_successfactors"}
+            ]
+        }
+
+    visible = []
+    result = await rag_reindex_payload(
+        body={
+            "kind": "dataset",
+            "cartridge": "sap_successfactors",
+            "name": "employees",
+        },
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        upstream_error_detail=lambda _response, fallback: fallback,
+        refinement_invoke=refinement_invoke,
+        require_cartridge_visible=lambda _user, cartridge: visible.append(cartridge),
+        build_security_context=lambda user: {"tenant_id": user["tenant_id"]},
+    )
+
+    assert result == {"ok": True}
+    assert visible == ["sap_successfactors"]
+    assert captured["client_kwargs"]["headers"] == {"x-service": "MCP_INFRA"}
+    assert captured["url"] == "http://rag/rag/reindex"
+    assert captured["json"]["security_context"] == {"tenant_id": "tenant-a"}
+
+
+@pytest.mark.asyncio
+async def test_rag_reindex_payload_rejects_dataset_outside_cartridge():
+    async def refinement_invoke(_tool, _args, **_kwargs):
+        return {
+            "datasets": [
+                {"name": "other", "cartridge": "sap_successfactors"}
+            ]
+        }
+
+    with pytest.raises(HTTPException) as exc:
+        await rag_reindex_payload(
+            body={
+                "kind": "dataset",
+                "cartridge": "sap_successfactors",
+                "name": "missing",
+            },
+            user=SCOPED_USER,
+            rag_url="http://rag",
+            http_client_factory=lambda **_kwargs: None,
+            headers_factory=lambda _service: {},
+            upstream_error_detail=lambda _response, fallback: fallback,
+            refinement_invoke=refinement_invoke,
+            require_cartridge_visible=lambda _user, _cartridge: None,
+            build_security_context=lambda _user: {},
+        )
+
+    assert exc.value.status_code == 404
 
 
 def test_technical_source_visibility_requires_active_scope():
