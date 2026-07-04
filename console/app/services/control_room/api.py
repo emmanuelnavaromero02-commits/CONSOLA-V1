@@ -613,6 +613,65 @@ def _sf_talent_kpi_rows(results: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 @_bind_to_core
+def _sf_talent_profiled_count(
+    operational_row: dict[str, Any],
+    profile_rows: list[dict[str, Any]],
+) -> int:
+    return (
+        _sf_talent_int(operational_row.get("profiled_count"))
+        or _sf_talent_int(operational_row.get("profiled_employee_count"))
+        or len(profile_rows)
+    )
+
+
+@_bind_to_core
+def _sf_talent_readiness_counts(
+    operational_row: dict[str, Any],
+    readiness_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    calculable_rows = sum(
+        1
+        for row in readiness_rows
+        if _sf_talent_status(row.get("readiness_status"))
+        not in {"insufficient_data", "blocked", "missing"}
+    )
+    insufficient_rows = sum(
+        1
+        for row in readiness_rows
+        if _sf_talent_status(row.get("readiness_status")) == "insufficient_data"
+    )
+    if not operational_row:
+        return {
+            "readiness_calculable": calculable_rows,
+            "readiness_insufficient": insufficient_rows,
+        }
+    return {
+        "readiness_calculable": (
+            _sf_talent_int(operational_row.get("calculable_count"))
+            or _sf_talent_int(operational_row.get("calculable_employee_count"))
+        ),
+        "readiness_insufficient": _sf_talent_int(
+            operational_row.get("readiness_pending_count")
+        ),
+    }
+
+
+@_bind_to_core
+def _sf_talent_nine_box_available_count(
+    operational_row: dict[str, Any],
+    nine_box_rows: list[dict[str, Any]],
+) -> int:
+    if operational_row:
+        return _sf_talent_int(operational_row.get("nine_box_classified_count"))
+    return sum(
+        1
+        for row in nine_box_rows
+        if _sf_talent_status(row.get("box_status"))
+        not in {"blocked", "insufficient_data", "missing"}
+    )
+
+
+@_bind_to_core
 def _sf_talent_kpi_metrics(
     rows: dict[str, Any],
     results: dict[str, dict[str, Any]],
@@ -623,46 +682,18 @@ def _sf_talent_kpi_metrics(
     readiness_rows = rows["readiness_rows"]
     nine_box_rows = rows["nine_box_rows"]
     operational_row = rows["operational_row"]
-    profiled_employees = (
-        _sf_talent_int(operational_row.get("profiled_count"))
-        or _sf_talent_int(operational_row.get("profiled_employee_count"))
-        or len(profile_rows)
-    )
-    readiness_calculable_rows = sum(
-        1
-        for row in readiness_rows
-        if _sf_talent_status(row.get("readiness_status")) not in {"insufficient_data", "blocked", "missing"}
-    )
-    readiness_calculable = (
-        _sf_talent_int(operational_row.get("calculable_count"))
-        or _sf_talent_int(operational_row.get("calculable_employee_count"))
-    ) if operational_row else readiness_calculable_rows
-    readiness_insufficient_rows = sum(
-        1
-        for row in readiness_rows
-        if _sf_talent_status(row.get("readiness_status")) == "insufficient_data"
-    )
-    nine_box_available_rows = sum(
-        1
-        for row in nine_box_rows
-        if _sf_talent_status(row.get("box_status")) not in {"blocked", "insufficient_data", "missing"}
-    )
+    readiness_counts = _sf_talent_readiness_counts(operational_row, readiness_rows)
     return {
-        "profiled_employees": profiled_employees,
+        "profiled_employees": _sf_talent_profiled_count(operational_row, profile_rows),
         "roles_profiled": _sf_talent_int(operational_row.get("role_count")) or len(role_rows),
         "mobility_observed": _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
             1 for row in mobility_rows if _sf_talent_int(row.get("movement_events")) > 0
         ),
-        "readiness_calculable": readiness_calculable,
-        "readiness_insufficient": (
-            _sf_talent_int(operational_row.get("readiness_pending_count"))
-            if operational_row
-            else readiness_insufficient_rows
-        ),
-        "nine_box_available": (
-            _sf_talent_int(operational_row.get("nine_box_classified_count"))
-            if operational_row
-            else nine_box_available_rows
+        "readiness_calculable": readiness_counts["readiness_calculable"],
+        "readiness_insufficient": readiness_counts["readiness_insufficient"],
+        "nine_box_available": _sf_talent_nine_box_available_count(
+            operational_row,
+            nine_box_rows,
         ),
         "roles_without_requirements": (
             _sf_talent_int(operational_row.get("roles_without_requirements"))
