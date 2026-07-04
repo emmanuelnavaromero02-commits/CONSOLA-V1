@@ -37,7 +37,10 @@ from app.domains.data_platform.rag_payloads import (
     rag_search_arguments,
     rag_synthesis_messages,
 )
-from app.domains.data_platform.rag_requests import rag_reindex_payload
+from app.domains.data_platform.rag_requests import (
+    rag_ingest_payload,
+    rag_reindex_payload,
+)
 from app.domains.data_platform.refinement_errors import (
     payload_error_detail,
     refinement_error_status,
@@ -575,6 +578,77 @@ async def test_rag_reindex_payload_rejects_dataset_outside_cartridge():
         )
 
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rag_ingest_payload_adds_security_context():
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"source": "manual"}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    result = await rag_ingest_payload(
+        body={"name": "manual", "content": "texto"},
+        user=SCOPED_USER,
+        rag_url="http://rag",
+        http_client_factory=FakeClient,
+        headers_factory=lambda service: {"x-service": service},
+        upstream_error_detail=lambda _response, fallback: fallback,
+        build_security_context=lambda user: {"workspace_id": user["workspace_id"]},
+    )
+
+    assert result == {"source": "manual"}
+    assert captured["client_kwargs"]["headers"] == {"x-service": "MCP_INFRA"}
+    assert captured["url"] == "http://rag/rag/ingest"
+    assert captured["json"]["security_context"] == {"workspace_id": "workspace-a"}
+
+
+@pytest.mark.asyncio
+async def test_rag_ingest_payload_raises_safe_upstream_error():
+    class FakeResponse:
+        status_code = 503
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json):
+            return FakeResponse()
+
+    with pytest.raises(HTTPException) as exc:
+        await rag_ingest_payload(
+            body={"name": "manual"},
+            user=SCOPED_USER,
+            rag_url="http://rag",
+            http_client_factory=lambda **_kwargs: FakeClient(),
+            headers_factory=lambda _service: {},
+            upstream_error_detail=lambda _response, fallback: f"{fallback}: timeout",
+            build_security_context=lambda _user: {},
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "RAG ingest failed: timeout"
 
 
 def test_technical_source_visibility_requires_active_scope():

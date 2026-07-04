@@ -211,6 +211,7 @@ from app.domains.data_platform.rag_payloads import (
 )
 from app.domains.data_platform.rag_requests import (
     rag_answer_payload as _rag_answer_payload_impl,
+    rag_ingest_payload as _rag_ingest_payload_impl,
     rag_reindex_payload as _rag_reindex_payload_impl,
 )
 from app.domains.data_platform.semantic_requests import (
@@ -5450,14 +5451,15 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
     ],
 )
 async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("datasets.write"))):
-    body = {**body, "security_context": build_security_context(user)}
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
-        r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
-        if r.status_code >= 400:
-            raise HTTPException(
-                r.status_code, _upstream_error_detail(r, "RAG ingest failed")
-            )
-        return r.json()
+    return await _rag_ingest_payload_impl(
+        body=body,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        upstream_error_detail=_upstream_error_detail,
+        build_security_context=build_security_context,
+    )
 
 
 @app.post(

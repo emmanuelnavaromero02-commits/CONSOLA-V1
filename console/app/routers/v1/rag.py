@@ -116,12 +116,15 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
 )
 @_bind_to_main
 async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("datasets.write"))):
-    body = {**body, "security_context": build_security_context(user)}
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
-        r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG ingest failed"))
-        return r.json()
+    return await _rag_ingest_payload_impl(
+        body=body,
+        user=user,
+        rag_url=_RAG_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        upstream_error_detail=_upstream_error_detail,
+        build_security_context=build_security_context,
+    )
 
 # /api/rag/ask
 @router.post("/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))])

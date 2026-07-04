@@ -124,3 +124,26 @@ async def rag_reindex_payload(
                 upstream_error_detail(response, "RAG reindex failed"),
             )
         return response.json()
+
+
+async def rag_ingest_payload(
+    *,
+    body: dict[str, Any],
+    user: dict[str, Any],
+    rag_url: str,
+    http_client_factory: Callable[..., Any],
+    headers_factory: Callable[[str], dict[str, str]],
+    upstream_error_detail: Callable[[Any, str], Any],
+    build_security_context: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    payload = {**dict(body or {}), "security_context": build_security_context(user)}
+    async with http_client_factory(
+        headers=headers_factory("MCP_INFRA"), timeout=300
+    ) as client:
+        response = await client.post(f"{rag_url}/rag/ingest", json=payload)
+        if response.status_code >= 400:
+            raise HTTPException(
+                response.status_code,
+                upstream_error_detail(response, "RAG ingest failed"),
+            )
+        return response.json()
