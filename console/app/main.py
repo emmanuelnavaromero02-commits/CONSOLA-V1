@@ -254,6 +254,9 @@ from app.domains.pipeline.run_state import (
     pipeline_silver_datasets_by_source as _pipeline_silver_datasets_by_source,
     sanitize_pipeline_run_for_user as _sanitize_pipeline_run_for_user_impl,
 )
+from app.domains.pipeline.run_logs import (
+    build_pipeline_run_logs_payload as _build_pipeline_run_logs_payload_impl,
+)
 from app.domains.pipeline.scope import (
     pipeline_runs_read_conn as _pipeline_runs_read_conn_impl,
     pipeline_runs_scope_predicate as _pipeline_runs_scope_predicate_impl,
@@ -3583,108 +3586,21 @@ async def api_pipeline_run_logs(
             },
         )
 
-    run = await _refresh_dag_run_status(dict(row), user)
-    dag_id = run.get("dag_id") or metadata.get("dag_id")
-    resolved_dag_run_id = (
-        run.get("airflow_dag_run_id") or run.get("run_id") or dag_run_id
+    return await _build_pipeline_run_logs_payload_impl(
+        cartridge=cartridge,
+        entity=entity,
+        dag_run_id=dag_run_id,
+        run_row=dict(row),
+        metadata=metadata,
+        user=user,
+        refresh_dag_run_status=_refresh_dag_run_status,
+        mcp_invoke=mcp_registry.invoke,
+        normalize_airflow_state=_normalize_airflow_state,
+        airflow_log_task_ids=_airflow_log_task_ids,
+        airflow_log_attempt=_airflow_log_attempt,
+        error_id_factory=lambda: uuid.uuid4().hex,
+        logger_exception=logger.exception,
     )
-    response = {
-        "cartridge": cartridge,
-        "entity": entity,
-        "dag_id": dag_id,
-        "dag_run_id": resolved_dag_run_id,
-        "status": _normalize_airflow_state(run.get("status")),
-        "tasks": [],
-        "logs": [],
-        "error": run.get("error_message"),
-        "available": False,
-        "attempted": _airflow_log_attempt(dag_id, resolved_dag_run_id, []),
-    }
-
-    try:
-        tasks_result = await mcp_registry.invoke(
-            "infra",
-            "airflow_list_task_instances",
-            {
-                "dag_id": dag_id,
-                "dag_run_id": resolved_dag_run_id,
-            },
-            user=user,
-        )
-        if tasks_result.get("error"):
-            fallback_task_ids = _airflow_log_task_ids(dag_id, [])
-            response["attempted"] = _airflow_log_attempt(
-                dag_id, resolved_dag_run_id, fallback_task_ids
-            )
-            response["error"] = (
-                f"Could not list Airflow tasks for dag_id={dag_id} "
-                f"dag_run_id={resolved_dag_run_id}: {tasks_result['error']}"
-            )
-            return response
-
-        tasks = tasks_result.get("tasks") or []
-        response["tasks"] = tasks
-        task_ids = _airflow_log_task_ids(dag_id, tasks)
-        response["attempted"] = _airflow_log_attempt(
-            dag_id, resolved_dag_run_id, task_ids, tasks
-        )
-        if not task_ids:
-            response["error"] = (
-                f"No Airflow log task found for dag_id={dag_id} dag_run_id={resolved_dag_run_id}; "
-                f"available_task_ids={response['attempted']['available_task_ids']}"
-            )
-            return response
-
-        logs = []
-        for task_id in task_ids:
-            log_result = await mcp_registry.invoke(
-                "infra",
-                "airflow_get_task_logs",
-                {
-                    "dag_id": dag_id,
-                    "dag_run_id": resolved_dag_run_id,
-                    "task_id": task_id,
-                },
-                user=user,
-            )
-            if log_result.get("error"):
-                logs.append(
-                    {
-                        "task_id": task_id,
-                        "available": False,
-                        "error": log_result["error"],
-                    }
-                )
-            elif not log_result.get("logs"):
-                logs.append(
-                    {
-                        "task_id": task_id,
-                        "available": False,
-                        "error": "No logs returned by Airflow",
-                    }
-                )
-            else:
-                logs.append(
-                    {
-                        "task_id": task_id,
-                        "available": True,
-                        "logs": log_result.get("logs", ""),
-                    }
-                )
-
-        response["logs"] = logs
-        response["available"] = any(item.get("available") for item in logs)
-        if not response["available"]:
-            response["error"] = (
-                f"No Airflow logs found for dag_id={dag_id} "
-                f"dag_run_id={resolved_dag_run_id} task_ids={task_ids}"
-            )
-        return response
-    except Exception:
-        _eid = uuid.uuid4().hex
-        logger.exception("run logs Airflow fetch failed error_id=%s", _eid)
-        response["error"] = f"Internal server error. error_id={_eid}"
-        return response
 
 
 @app.post(
