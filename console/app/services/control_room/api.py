@@ -2984,6 +2984,81 @@ def _sf_talent_signal_intelligence(
 
 
 @_bind_to_core
+def _sf_talent_signal_base_item(
+    source: ControlRoomSource,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    return _base_item(
+        source,
+        {"severity": context["severity"], "generated_at": context["generated_at"]},
+        context["signal_type"],
+        context["signal_id"],
+        context["title"],
+    )
+
+
+@_bind_to_core
+def _sf_talent_signal_item_fields(
+    *,
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    context: dict[str, Any],
+    priority: dict[str, Any],
+    math_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    priority_score = priority["score"]
+    readiness_status = context["readiness_status"]
+    return {
+        "title": context["title"],
+        "description": context["recommendation"],
+        "recommendation": context["recommendation"],
+        "root_cause": _sf_talent_signal_root_cause(readiness_status),
+        "impact": _sf_talent_signal_impact(context["affected_count"]),
+        "details": {
+            **_sf_talent_signal_details(row),
+            "source_dataset": source.dataset,
+            "source_row_count": context["source_row_count"],
+            "materialized_at": context["materialized_at"],
+            "readiness_status": readiness_status,
+            "blockers": context["blockers"],
+            "recommendation_only": True,
+        },
+        "detected_at": context["generated_at"],
+        "status": "open",
+        "data_status": "gold_ready",
+        "source_system": "sap_successfactors",
+        "dataset": source.dataset,
+        "gold_table": source.dataset,
+        "freshness_at": context["generated_at"],
+        "freshness_field": "generated_at",
+        "control_origin": "sap_successfactors_talent_signal",
+        "advisory": True,
+        "recommendation_only": True,
+        "priority": priority,
+        "intelligence": _sf_talent_signal_intelligence(
+            source=source,
+            row=row,
+            context=context,
+            priority_score=priority_score,
+        ),
+        "monte_carlo": math_provenance["monte_carlo"],
+        "bayesian_calibration": math_provenance["bayesian_calibration"],
+        "math_provenance": math_provenance,
+        "selected_option_id": "review_talent_signal",
+        "execution_status": "not_started",
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_lookup_sql(signal_id: str) -> str:
+    escaped_signal_id = signal_id.replace("'", "''")
+    return (
+        "SELECT * FROM sap_successfactors_talent_signals "
+        f"WHERE signal_id = '{escaped_signal_id}'"
+    )
+
+
+@_bind_to_core
 def _normalize_successfactors_talent_signal(
     source: ControlRoomSource,
     row: dict[str, Any],
@@ -3005,60 +3080,17 @@ def _normalize_successfactors_talent_signal(
         confidence=confidence,
     )
     priority = _sf_talent_signal_priority(context, source)
-    priority_score = priority["score"]
-    item = _base_item(
-        source,
-        {"severity": context["severity"], "generated_at": generated_at},
-        context["signal_type"],
-        signal_id,
-        context["title"],
-    )
+    item = _sf_talent_signal_base_item(source, context)
     item.update(
-        {
-            "title": context["title"],
-            "description": context["recommendation"],
-            "recommendation": context["recommendation"],
-            "root_cause": _sf_talent_signal_root_cause(readiness_status),
-            "impact": _sf_talent_signal_impact(affected_count),
-            "details": {
-                **_sf_talent_signal_details(row),
-                "source_dataset": source.dataset,
-                "source_row_count": source_row_count,
-                "materialized_at": context["materialized_at"],
-                "readiness_status": readiness_status,
-                "blockers": context["blockers"],
-                "recommendation_only": True,
-            },
-            "detected_at": generated_at,
-            "status": "open",
-            "data_status": "gold_ready",
-            "source_system": "sap_successfactors",
-            "dataset": source.dataset,
-            "gold_table": source.dataset,
-            "freshness_at": generated_at,
-            "freshness_field": "generated_at",
-            "control_origin": "sap_successfactors_talent_signal",
-            "advisory": True,
-            "recommendation_only": True,
-            "priority": priority,
-            "intelligence": _sf_talent_signal_intelligence(
-                source=source,
-                row=row,
-                context=context,
-                priority_score=priority_score,
-            ),
-            "monte_carlo": math_provenance["monte_carlo"],
-            "bayesian_calibration": math_provenance["bayesian_calibration"],
-            "math_provenance": math_provenance,
-            "selected_option_id": "review_talent_signal",
-            "execution_status": "not_started",
-        }
+        _sf_talent_signal_item_fields(
+            source=source,
+            row=row,
+            context=context,
+            priority=priority,
+            math_provenance=math_provenance,
+        )
     )
-    escaped_signal_id = signal_id.replace("'", "''")
-    item["sql"] = (
-        "SELECT * FROM sap_successfactors_talent_signals "
-        f"WHERE signal_id = '{escaped_signal_id}'"
-    )
+    item["sql"] = _sf_talent_signal_lookup_sql(signal_id)
     return item
 
 
