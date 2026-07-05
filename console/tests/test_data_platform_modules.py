@@ -28,6 +28,7 @@ from app.domains.data_platform.schema_payloads import (
     empty_partitions,
     empty_preview,
     gold_schema_error_payload,
+    normalize_preview_payload,
     normalize_dataset_detail,
     preview_has_columns,
     schema_error,
@@ -109,6 +110,35 @@ def test_schema_error_and_message_classify_missing_parquet():
     assert schema_message("error", [error]) == "sin parquet materializado"
 
 
+def test_normalize_preview_payload_accepts_columns_rows_and_fields_shapes():
+    source = "raw/acme/User"
+
+    columns_payload = normalize_preview_payload(
+        source,
+        {
+            "columns": [
+                {"column_name": "userId", "type": "VARCHAR"},
+                "lastModifiedDateTime",
+            ],
+            "rows": [{"userId": "u1", "lastModifiedDateTime": "2026-07-01"}],
+        },
+    )
+    assert columns_payload["schema"] == [
+        {"column_name": "userId", "type": "VARCHAR", "name": "userId"},
+        {"name": "lastModifiedDateTime"},
+    ]
+    assert columns_payload["columns"] == columns_payload["schema"]
+    assert columns_payload["data"] == columns_payload["rows"]
+    assert preview_has_columns({"fields": [{"name": "externalCode"}]})
+
+    rows_only_payload = normalize_preview_payload(
+        source,
+        {"data": [{"externalCode": "100", "status": "A"}]},
+    )
+    assert rows_only_payload["schema"] == [{"name": "externalCode"}, {"name": "status"}]
+    assert rows_only_payload["rows"] == [{"externalCode": "100", "status": "A"}]
+
+
 def test_schema_response_payloads_keep_safe_statuses():
     error = schema_error("preview", HTTPException(404, "No files found"))
 
@@ -127,6 +157,16 @@ def test_schema_response_payloads_keep_safe_statuses():
     assert bronze_payload["source_kind"] == "bronze"
     assert bronze_payload["status"] == "error"
     assert bronze_payload["errors"] == [error]
+
+    normalized_bronze = bronze_schema_payload(
+        "raw/acme/User",
+        empty_partitions("raw/acme/User"),
+        {"fields": [{"column_name": "userId"}], "rows": [{"userId": "u1"}]},
+        [],
+    )
+    assert normalized_bronze["status"] == "ready"
+    assert normalized_bronze["preview"]["schema"] == [{"column_name": "userId", "name": "userId"}]
+    assert normalized_bronze["preview"]["data"] == [{"userId": "u1"}]
 
 
 @pytest.mark.asyncio

@@ -636,8 +636,12 @@ def _sf_talent_readiness_counts(
     calculable_rows = sum(
         1
         for row in readiness_rows
-        if _sf_talent_status(row.get("readiness_status"))
-        not in {"insufficient_data", "blocked", "missing"}
+        if (
+            _sf_talent_status(row.get("readiness_status"))
+            not in {"insufficient_data", "blocked", "missing"}
+            or _sf_talent_status(row.get("source_mode"))
+            in {"cpa_real", "benchmark_internal"}
+        )
     )
     insufficient_rows = sum(
         1
@@ -649,13 +653,15 @@ def _sf_talent_readiness_counts(
             "readiness_calculable": calculable_rows,
             "readiness_insufficient": insufficient_rows,
         }
+    operational_calculable = (
+        _sf_talent_int(operational_row.get("calculable_count"))
+        or _sf_talent_int(operational_row.get("calculable_employee_count"))
+    )
+    operational_pending = _sf_talent_int(operational_row.get("readiness_pending_count"))
     return {
-        "readiness_calculable": (
-            _sf_talent_int(operational_row.get("calculable_count"))
-            or _sf_talent_int(operational_row.get("calculable_employee_count"))
-        ),
-        "readiness_insufficient": _sf_talent_int(
-            operational_row.get("readiness_pending_count")
+        "readiness_calculable": max(operational_calculable, calculable_rows),
+        "readiness_insufficient": (
+            insufficient_rows if readiness_rows else operational_pending
         ),
     }
 
@@ -665,14 +671,35 @@ def _sf_talent_nine_box_available_count(
     operational_row: dict[str, Any],
     nine_box_rows: list[dict[str, Any]],
 ) -> int:
-    if operational_row:
-        return _sf_talent_int(operational_row.get("nine_box_classified_count"))
-    return sum(
+    row_count = sum(
         1
         for row in nine_box_rows
-        if _sf_talent_status(row.get("box_status"))
-        not in {"blocked", "insufficient_data", "missing"}
+        if (
+            _sf_talent_status(row.get("box_status"))
+            not in {"blocked", "insufficient_data", "missing"}
+            or _sf_talent_status(row.get("source_mode"))
+            in {"cpa_real", "benchmark_internal"}
+        )
     )
+    if operational_row:
+        return max(
+            _sf_talent_int(operational_row.get("nine_box_classified_count")),
+            row_count,
+        )
+    return row_count
+
+
+@_bind_to_core
+def _sf_talent_source_mode(
+    operational_row: dict[str, Any],
+    readiness_rows: list[dict[str, Any]],
+) -> str:
+    modes = {_sf_talent_status(row.get("source_mode"), "") for row in readiness_rows}
+    if "cpa_real" in modes:
+        return "cpa_real"
+    if "benchmark_internal" in modes:
+        return "benchmark_internal"
+    return _sf_talent_status(operational_row.get("source_mode") or "")
 
 
 @_bind_to_core
@@ -687,6 +714,7 @@ def _sf_talent_kpi_metrics(
     nine_box_rows = rows["nine_box_rows"]
     operational_row = rows["operational_row"]
     readiness_counts = _sf_talent_readiness_counts(operational_row, readiness_rows)
+    source_mode = _sf_talent_source_mode(operational_row, readiness_rows)
     return {
         "profiled_employees": _sf_talent_profiled_count(operational_row, profile_rows),
         "roles_profiled": _sf_talent_int(operational_row.get("role_count")) or len(role_rows),
@@ -712,7 +740,7 @@ def _sf_talent_kpi_metrics(
             operational_row.get("feature_status") or results["operational_features"]["status"]
         ),
         "confidence": operational_row.get("confidence"),
-        "source_mode": _sf_talent_status(operational_row.get("source_mode") or ""),
+        "source_mode": source_mode,
         "operational_label": str(operational_row.get("user_status_label") or "En espera de datos"),
     }
 
@@ -741,10 +769,17 @@ def _sf_talent_kpi_blockers(
     ]
 
     blockers = []
+    has_operational_reference = (
+        metrics.get("source_mode") == "benchmark_internal"
+        and _sf_talent_int(metrics.get("readiness_calculable")) > 0
+    )
     if (
-        not metrics["profiled_employees"]
-        or metrics["readiness_insufficient"]
-        or metrics["readiness_calculable"] == 0
+        not has_operational_reference
+        and (
+            not metrics["profiled_employees"]
+            or metrics["readiness_insufficient"]
+            or metrics["readiness_calculable"] == 0
+        )
     ):
         blockers.append(
             {
@@ -989,7 +1024,14 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     rows = _sf_talent_kpi_rows(results)
     metrics = _sf_talent_kpi_metrics(rows, results)
     metrics["readiness_status"] = _sf_talent_status(
-        rows["operational_row"].get("readiness_status") or metrics["operational_status"]
+        rows["operational_row"].get("readiness_status")
+        or (
+            "benchmark_internal"
+            if metrics["source_mode"] == "benchmark_internal"
+            and metrics["readiness_calculable"] > 0
+            else ""
+        )
+        or metrics["operational_status"]
     )
     blockers = _sf_talent_kpi_blockers(rows, results, metrics)
     signals = _sf_talent_signal_payloads(rows["signal_rows"])
@@ -1380,6 +1422,56 @@ def _sf_talent_9box_totals(cells: list[dict[str, Any]]) -> dict[str, int]:
 
 
 @_bind_to_core
+def _sf_talent_9box_operational_rows_from_detail(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_box: dict[str, dict[str, int]] = {}
+    for row in rows:
+        box_key = str(row.get("box_key") or "").strip()
+        if not box_key:
+            continue
+        counts = by_box.setdefault(
+            box_key,
+            {
+                "employee_count": 0,
+                "ready_count": 0,
+                "benchmark_count": 0,
+                "blocked_count": 0,
+            },
+        )
+        counts["employee_count"] += 1
+        box_status = _sf_talent_status(row.get("box_status"), "")
+        source_mode = _sf_talent_status(row.get("source_mode"), "")
+        is_ready = (
+            box_status not in {"blocked", "insufficient_data", "missing", ""}
+            or source_mode in {"cpa_real", "benchmark_internal"}
+        )
+        if is_ready:
+            counts["ready_count"] += 1
+        else:
+            counts["blocked_count"] += 1
+        if source_mode == "benchmark_internal" or box_status == "benchmark_internal":
+            counts["benchmark_count"] += 1
+    return [
+        {
+            "box_key": box_key,
+            "employee_count": counts["employee_count"],
+            "ready_count": counts["ready_count"],
+            "benchmark_count": counts["benchmark_count"],
+            "blocked_count": counts["blocked_count"],
+            "box_status": (
+                "benchmark_internal"
+                if counts["benchmark_count"] and counts["ready_count"]
+                else "ready"
+                if counts["ready_count"]
+                else "blocked"
+            ),
+        }
+        for box_key, counts in by_box.items()
+    ]
+
+
+@_bind_to_core
 def _sf_talent_9box_blockers(
     result: dict[str, Any],
     *,
@@ -1405,6 +1497,15 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     result = await _sf_talent_gold_result(dataset, user, 100)
     cells = _sf_talent_9box_cells(result["rows"])
     totals = _sf_talent_9box_totals(cells)
+    if totals["ready"] == 0:
+        detail_result = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
+        detail_rows = _sf_talent_9box_operational_rows_from_detail(detail_result["rows"])
+        detail_cells = _sf_talent_9box_cells(detail_rows)
+        detail_totals = _sf_talent_9box_totals(detail_cells)
+        if detail_totals["ready"] > 0:
+            cells = detail_cells
+            totals = detail_totals
+            result = detail_result
     blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
 
     tenant_id, workspace_id = _workspace_scope(user)

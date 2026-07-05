@@ -14,6 +14,43 @@ from fastapi import HTTPException
 from app.logging_config import _redact
 
 
+def _column_name(item: Any) -> str | None:
+    if isinstance(item, dict):
+        raw = item.get("name") or item.get("column_name") or item.get("column") or item.get("field")
+    else:
+        raw = item
+    name = str(raw or "").strip()
+    return name or None
+
+
+def normalize_preview_payload(source: str, preview: Any) -> dict[str, Any]:
+    if not isinstance(preview, dict):
+        return empty_preview(source, "partial", "datos parciales")
+    payload = dict(preview)
+    rows = payload.get("rows") or payload.get("data") or payload.get("result") or []
+    if not isinstance(rows, list):
+        rows = []
+    raw_schema = payload.get("schema") or payload.get("columns") or payload.get("fields") or []
+    if not isinstance(raw_schema, list):
+        raw_schema = []
+    schema: list[dict[str, Any]] = []
+    for item in raw_schema:
+        if isinstance(item, dict):
+            name = _column_name(item)
+            schema.append({**item, "name": name} if name else dict(item))
+        else:
+            name = _column_name(item)
+            if name:
+                schema.append({"name": name})
+    if not schema and rows and isinstance(rows[0], dict):
+        schema = [{"name": str(key)} for key in rows[0].keys()]
+    payload["schema"] = schema
+    payload["columns"] = schema
+    payload["rows"] = rows
+    payload["data"] = rows
+    return payload
+
+
 def empty_partitions(
     source: str, status: str | None = None, message: str | None = None
 ) -> dict:
@@ -135,7 +172,7 @@ def schema_payload_warnings(stage: str, payload: Any) -> list[dict]:
 def preview_has_columns(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
-    for key in ("columns", "schema"):
+    for key in ("columns", "schema", "fields"):
         value = payload.get(key)
         if isinstance(value, list) and value:
             return True
@@ -194,6 +231,7 @@ def bronze_schema_payload(
     preview: dict,
     errors: list[dict],
 ) -> dict:
+    preview = normalize_preview_payload(source, preview)
     status = schema_status(errors, preview)
     message = schema_message(status, errors)
     payload: dict[str, Any] = {
