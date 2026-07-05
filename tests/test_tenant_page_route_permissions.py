@@ -7,6 +7,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 PAGES_PY = REPO / "console/app/routers/pages.py"
 MAIN_PY = REPO / "console/app/main.py"
+ACCESS_PAYLOAD_PY = REPO / "console/app/domains/iam/access_payload.py"
 SIDEBAR_TSX = REPO / "console-next/src/components/AppSidebar.tsx"
 
 
@@ -57,7 +58,7 @@ def test_internal_pages_keep_platform_admin_gate():
 
 def test_visible_routes_use_ui_capabilities_that_match_backend_guards():
     sidebar = _read(SIDEBAR_TSX)
-    main_src = _read(MAIN_PY)
+    access_payload_src = _read(ACCESS_PAYLOAD_PY)
     page_src = _read(PAGES_PY)
     expectations = (
         ("/studio", "can_view_studio"),
@@ -72,7 +73,7 @@ def test_visible_routes_use_ui_capabilities_that_match_backend_guards():
     for route, capability in expectations:
         assert f'"{route}"' in sidebar
         assert f'"{capability}"' in sidebar
-        assert f'"{capability}"' in main_src
+        assert f'"{capability}"' in access_payload_src
 
     viewer_block = _route_block(page_src, '"/viewer"')
     assert "Depends(_require_viewer_permission)" in viewer_block
