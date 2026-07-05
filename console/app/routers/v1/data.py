@@ -348,50 +348,12 @@ async def api_lineage(cartridge: str | None = None, user: dict = Depends(require
     if cartridge:
         datasets = [d for d in datasets if d.get("cartridge") == cartridge]
 
-    by_name = {d["name"]: d for d in datasets if d.get("name")}
-    nodes: dict[str, dict] = {}
-    edges: list[dict] = []
+    def source_visible(source: str) -> bool:
+        if not _dataset_source_visible_for_user(user, source):
+            return False
+        return True
 
-    for d in datasets:
-        name = d.get("name")
-        if not name:
-            continue
-        nid = f"ds:{name}"
-        nodes[nid] = {
-            "id": nid,
-            "label": name,
-            "type": d.get("layer", "silver"),
-            "cartridge": d.get("cartridge", ""),
-            "is_stale": bool(d.get("is_stale")),
-            "staleness_reason": d.get("staleness_reason"),
-            "row_count": d.get("row_count"),
-            "last_refresh": d.get("last_refresh"),
-        }
-        for src in (d.get("sources") or []):
-            source = (src or "").strip()
-            if not _dataset_source_visible_for_user(user, source):
-                continue
-            source_lower = source.lower()
-            if source_lower.startswith("raw/"):
-                rid = f"raw:{source[4:]}"
-                if rid not in nodes:
-                    parts = source[4:].split("/", 1)
-                    nodes[rid] = {
-                        "id": rid,
-                        "label": parts[-1] if parts else source,
-                        "type": "raw",
-                        "cartridge": parts[0] if len(parts) > 1 else "",
-                    }
-                edges.append({"from": rid, "to": nid})
-                continue
-            candidates = [source, source.replace("silver_", "", 1), source.replace("gold_", "", 1)]
-            if "/" in source:
-                candidates.append(source.rsplit("/", 1)[-1])
-            matched = next((candidate for candidate in candidates if candidate in by_name), None)
-            if matched:
-                edges.append({"from": f"ds:{matched}", "to": nid})
-
-    return {"nodes": list(nodes.values()), "edges": edges}
+    return _lineage_graph_payload(datasets, source_visible=source_visible)
 
 # /api/data/{dataset}
 @router.get("/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))])
@@ -432,42 +394,19 @@ async def api_data(
 @_bind_to_main
 async def api_data_options(dataset: str, columns: str = "", user: dict = Depends(require_permission("datasets.read"))):
     """Return distinct values per column for building filter selectors."""
-    _validate_dataset_name(dataset)
-    cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
-    if not cols:
-        raise HTTPException(400, "columns param required, e.g. ?columns=revenue_manager,cliente")
-
-    # Validate column names (alphanumeric + underscore only)
-    import re as _re
-    for col in cols:
-        if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
-            raise HTTPException(400, f"Invalid column name: {col}")
-
-    sqls = [f"SELECT DISTINCT {col} AS val, '{col}' AS col FROM pggold.gold_{dataset} WHERE {col} IS NOT NULL"
-            for col in cols]
-    union_sql = " UNION ALL ".join(sqls) + f" ORDER BY col, val"
-
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "preview_transform",
-                             {
-                                 "sql": union_sql,
-                                 "limit": 5000,
-                                 "user_context": _rls_user_context(user),
-                             },
-                             user,
-                         ))
-    result = r.json()
-    rows = result.get("data", [])
-
-    # Group by column name
-    options: dict = {col: [] for col in cols}
-    for row in rows:
-        col_key = row.get("col")
-        if col_key in options and row.get("val") is not None:
-            options[col_key].append(str(row["val"]))
-    return options
+    # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
+    # It invokes preview_transform with _rls_user_context(user) through the shared helper.
+    return await _data_options_payload_impl(
+        dataset=dataset,
+        columns=columns,
+        user=user,
+        refinement_url=REFINEMENT_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        rls_user_context=_rls_user_context,
+        upstream_error_detail=_upstream_error_detail,
+    )
 
 # /api/data/{dataset}/query
 @router.post("/api/data/{dataset}/query", dependencies=[Depends(require_permission("datasets.read"))])
@@ -480,79 +419,18 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
            "limit": 1000, "columns": ["col1", "col2"]}
     fiscal_year uses March-February logic automatically.
     """
-    _validate_dataset_name(dataset)
-    import re as _re
-    filters   = body.get("filters", {})
-    limit     = min(int(body.get("limit", 2000)), 10000)
-    columns   = body.get("columns", ["*"])
-
     # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
-    _user_context = _rls_user_context(_user)
-
-    # Validate column names
-    safe_cols = []
-    for col in columns:
-        if col == "*" or _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
-            safe_cols.append(col)
-    select_clause = ", ".join(safe_cols) if safe_cols else "*"
-
-    if not isinstance(filters, dict):
-        raise HTTPException(400, "filters must be an object")
-    if len(filters) > 20:
-        raise HTTPException(400, "Too many filters (max 20)")
-
-    # Build a parameterized query — values go into `params`, never interpolated into SQL.
-    # Column/table identifiers are allowlisted via regex; only values are parametrized.
-    params: list = []
-
-    def _add_param(v) -> str:
-        """Append value to params list and return a DuckDB positional placeholder."""
-        s = str(v)
-        if len(s) > 500:
-            raise HTTPException(400, "Filter value too long (max 500 chars)")
-        params.append(s)
-        return "?"
-
-    conditions = []
-    for key, val in filters.items():
-        if val is None or val == "" or val == []:
-            continue
-        if key == "fiscal_year":
-            # March-February fiscal year: month<=2 belongs to previous calendar year.
-            # fiscal_year values must be integers — cast before adding to params.
-            fy_expr = "(CASE WHEN EXTRACT(MONTH FROM mes)<=2 THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END)"
-            vals = val if isinstance(val, list) else [val]
-            if len(vals) > 50:
-                raise HTTPException(400, "Too many fiscal_year values (max 50)")
-            placeholders = ",".join(_add_param(int(v)) for v in vals)
-            conditions.append(f"{fy_expr} IN ({placeholders})")
-        elif _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
-            vals = val if isinstance(val, list) else [val]
-            if len(vals) > 100:
-                raise HTTPException(400, f"Too many values for filter '{key}' (max 100)")
-            if len(vals) == 1:
-                conditions.append(f"{key} = {_add_param(vals[0])}")
-            else:
-                placeholders = ",".join(_add_param(v) for v in vals)
-                conditions.append(f"{key} IN ({placeholders})")
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
-
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "preview_transform",
-                             {"sql": sql, "params": params, "limit": limit, "user_context": _user_context},
-                             _user,
-                         ))
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, "Query failed")
-    result = r.json()
-    if result.get("error"):
-        raise HTTPException(400, result["error"])
-    return result.get("data", [])
+    return await _filtered_data_query_payload_impl(
+        dataset=dataset,
+        body=body,
+        user=_user,
+        refinement_url=REFINEMENT_URL,
+        http_client_factory=httpx.AsyncClient,
+        headers_factory=_hdr_for,
+        mcp_payload_factory=_mcp_payload,
+        rls_user_context=_rls_user_context,
+    )
 
 # /explorer
 @router.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
@@ -571,14 +449,21 @@ async def viewer_lineage(request: Request):
 # /api/semantic
 @router.get("/api/semantic", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
-async def api_semantic(cartridge: str = "replicon", user: dict = Depends(require_permission("datasets.read"))):
+async def api_semantic(cartridge: str = "", user: dict = Depends(require_permission("datasets.read"))):
     from app.services import cartridge_service as _cs
-    _require_cartridge_visible(user, cartridge)
+    cartridge, _active = await _resolve_scoped_operation_cartridge(
+        user,
+        cartridge,
+        fallback="sap_successfactors",
+    )
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
-        entities = manifest.get("entities") or []
-        return {"cartridge": cartridge, "server": manifest, "entities": entities}
+        return _semantic_manifest_response(
+            cartridge=cartridge,
+            manifest=manifest,
+            catalog_entities=await _gold_semantic_entities_from_catalog(cartridge, user),
+        )
 
     # Fallback: Pattern A — invoke via MCP server
     servers = await mcp_registry.list_servers()

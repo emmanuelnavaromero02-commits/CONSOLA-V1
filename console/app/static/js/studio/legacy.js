@@ -1481,8 +1481,24 @@ import { state } from './legacy-state.js';
 
         // Schema
         const prev    = d.preview || {};
-        const schema  = prev.schema || [];
-        const rows    = prev.data  || [];
+        const rows    = Array.isArray(prev.data) ? prev.data
+          : (Array.isArray(prev.rows) ? prev.rows
+          : (Array.isArray(prev.result) ? prev.result : []));
+        const rawSchema = Array.isArray(prev.schema) ? prev.schema
+          : (Array.isArray(prev.columns) ? prev.columns
+          : (Array.isArray(prev.fields) ? prev.fields : []));
+        const inferredSchema = (!rawSchema.length && rows.length && rows[0] && typeof rows[0] === 'object' && !Array.isArray(rows[0]))
+          ? Object.keys(rows[0]).map(name => ({ name }))
+          : rawSchema;
+        const schema = inferredSchema.map(col => {
+          if (typeof col === 'string') return { name: col, type: '' };
+          if (!col || typeof col !== 'object') return { name: '', type: '' };
+          return {
+            ...col,
+            name: col.name || col.column_name || col.column || col.field || '',
+            type: col.type || col.data_type || col.logical_type || '',
+          };
+        }).filter(col => col.name);
         const errMsg  = prev.error;
 
         if (errMsg) {
@@ -1494,13 +1510,13 @@ import { state } from './legacy-state.js';
         }
 
         const colsHtml = schema.map(c =>
-          `<span class="schema-col">${esc(c.name)} <em>${esc(c.type)}</em></span>`
+          `<span class="schema-col">${esc(c.name)}${c.type ? ` <em>${esc(c.type)}</em>` : ''}</span>`
         ).join('');
 
         let tableHtml = '';
         if (rows.length) {
           const cols = schema.map(c => c.name);
-          tableHtml = `
+          tableHtml = cols.length ? `
             <div style="overflow-x:auto;margin-top:10px">
               <table class="preview-data-tbl">
                 <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
@@ -1508,7 +1524,7 @@ import { state } from './legacy-state.js';
                   `<tr>${cols.map(c => `<td title="${esc(String(row[c]??''))}">${esc(String(row[c]??''))}</td>`).join('')}</tr>`
                 ).join('')}</tbody>
               </table>
-            </div>`;
+            </div>` : '';
         }
 
         panel.innerHTML = `<div class="et-preview-inner">
@@ -1519,7 +1535,7 @@ import { state } from './legacy-state.js';
             </div>
             <div class="schema-cols">${colsHtml}</div>
           </div>
-          ${tableHtml || '<div style="color:var(--text3);font-size:10px;font-style:italic">Sin filas disponibles en Bronze</div>'}
+          ${tableHtml || `<div style="color:var(--text3);font-size:10px;font-style:italic">${rows.length ? 'Filas disponibles, sin columnas inferidas' : 'Sin filas disponibles en Bronze'}</div>`}
         </div>`;
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner"><div class="preview-err">Error: ${esc(e.message)}</div></div>`;

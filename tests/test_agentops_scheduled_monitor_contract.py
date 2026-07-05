@@ -4,6 +4,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MONITOR_SOURCE = (
+    ROOT / "console/app/domains/agentops/successfactors_talent_monitor.py"
+)
 
 
 def test_agent_schedule_runs_migration_enforces_one_run_per_fire_time():
@@ -100,10 +103,7 @@ def test_agent_runtime_audit_normalizes_structured_tool_errors():
 
 
 def test_successfactors_runtime_monitor_contract_keeps_bayes_engine():
-    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
-    section = source.split("def _successfactors_talent_monitor_contract", 1)[1].split(
-        "async def _ensure_successfactors_talent_monitor", 1
-    )[0]
+    section = MONITOR_SOURCE.read_text(encoding="utf-8")
 
     assert '"name": "monte_carlo"' in section
     assert '"name": "bayesian_calibration"' in section
@@ -113,10 +113,7 @@ def test_successfactors_runtime_monitor_contract_keeps_bayes_engine():
 
 
 def test_sync_agentops_candidates_require_workspace_scope():
-    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
-    section = source.split("def _sync_agentops_monitor_candidates", 1)[1].split(
-        "def _successfactors_talent_monitor_contract", 1
-    )[0]
+    section = MONITOR_SOURCE.read_text(encoding="utf-8")
 
     assert 'str(agent.get("tenant_id") or "").strip()' in section
     assert 'str(agent.get("workspace_id") or "").strip()' in section
@@ -144,9 +141,13 @@ def test_scheduled_agents_fail_closed_without_monitor_contract():
 
 def test_successfactors_monitor_runtime_repair_before_agent_reads():
     source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
+    monitor_source = MONITOR_SOURCE.read_text(encoding="utf-8")
     assert "def _successfactors_talent_monitor_needs_runtime_repair" in source
-    assert '"sap_successfactors_talent_monitor"' in source
-    assert "role != \"monitor\" or not _has_operational_monitor_contract(agent)" in source
+    assert '"sap_successfactors_talent_monitor"' in monitor_source
+    assert (
+        "role != \"monitor\" or not has_operational_monitor_contract(agent)"
+        in monitor_source
+    )
     list_section = source.split("async def api_agents_list", 1)[1].split(
         "async def api_agents_tool_catalog",
         1,
@@ -168,14 +169,14 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
     )[0]
     assert "_coerce_successfactors_talent_monitor_payload(body)" in create_section
     assert "_coerce_successfactors_talent_monitor_payload(body)" in update_section
-    coerce_section = source.split("def _coerce_successfactors_talent_monitor_payload", 1)[1].split(
-        "async def _ensure_successfactors_talent_monitor",
+    coerce_section = monitor_source.split(
+        "def coerce_successfactors_talent_monitor_payload",
         1,
-    )[0]
-    assert 'slug != _SUCCESSFACTORS_TALENT_MONITOR_SLUG' in coerce_section
+    )[1]
+    assert 'slug != SUCCESSFACTORS_TALENT_MONITOR_SLUG' in coerce_section
     assert 'patched["extra"] = merged_extra' in coerce_section
     assert 'patched["role"] = "monitor"' in coerce_section
-    assert 'patched["allowed_tools"] = _merge_agent_tools' in coerce_section
+    assert 'patched["allowed_tools"] = merge_agent_tools' in coerce_section
 
     v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
     v1_list_section = v1_source.split("async def api_agents_list", 1)[1].split(

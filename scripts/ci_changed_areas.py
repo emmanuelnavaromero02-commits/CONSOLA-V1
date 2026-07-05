@@ -51,6 +51,24 @@ PY_RUNTIME_ROOTS = (
     "infra/airflow/",
 )
 
+CONSOLE_SERVICE_RELEASE_EXCLUDE = (
+    r"^console/app/services/db_pool\.py$",
+    r"^console/app/services/operations_service\.py$",
+    r"^console/app/services/mcp_payloads\.py$",
+    r"^console/app/services/request_rate_limits\.py$",
+    r"^console/app/services/readyz_dependencies\.py$",
+    r"^console/app/services/readyz_data\.py$",
+    r"^console/app/services/runtime_calls\.py$",
+    r"^console/app/services/security_headers\.py$",
+    r"^console/app/services/service_urls\.py$",
+    r"^console/app/services/status_pages\.py$",
+    r"^console/app/services/startup_readiness\.py$",
+    r"^console/app/services/sync_agentops\.py$",
+    r"^console/app/services/sync_control_room\.py$",
+    r"^console/app/services/sync_progress\.py$",
+    r"^console/app/services/vault_utils\.py$",
+)
+
 
 def _run(args: list[str]) -> str:
     return subprocess.check_output(args, text=True).strip()
@@ -89,6 +107,10 @@ def _changed_files(base: str, head: str) -> list[str]:
 
 def _any(files: list[str], *patterns: str) -> bool:
     return any(any(re.search(pattern, path) for pattern in patterns) for path in files)
+
+
+def _matches(path: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(pattern, path) for pattern in patterns)
 
 
 def _all_true_for_schedule(flags: dict[str, bool]) -> None:
@@ -236,6 +258,25 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
     root_test_targets = _root_test_targets(files)
     cartridge_test_targets = _cartridge_test_targets(files)
 
+    full_stack_files = [
+        path
+        for path in files
+        if not _matches(path, CONSOLE_SERVICE_RELEASE_EXCLUDE)
+    ]
+    release_full_stack = compose or _any(
+        full_stack_files,
+        r"^console/Dockerfile$",
+        r"^console/app/(dependencies\.py|security\.py|config/|middleware/|services/)",
+        r"^refinement/(app|Dockerfile)",
+        r"^vault/(app|Dockerfile)",
+        r"^workspace/(app|Dockerfile)",
+        r"^mcp-infra/(app|Dockerfile)",
+        r"^cartridges/[^/]+/(app|dags|Dockerfile)",
+        r"^infra/airflow/",
+        r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
+        r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
+    )
+
     flags: dict[str, bool | str] = {
         "python": py_file,
         "python_runtime": py_runtime,
@@ -258,21 +299,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         "cartridge_requirement_paths": _cartridge_requirement_paths(files),
         "build_matrix": build_matrix,
         "has_build_matrix": _has_build_matrix(build_matrix),
-        "release_full_stack": e2e
-        or compose
-        or _any(
-            files,
-            r"^console/(app|Dockerfile)",
-            r"^console-next/",
-            r"^refinement/(app|Dockerfile)",
-            r"^vault/(app|Dockerfile)",
-            r"^workspace/(app|Dockerfile)",
-            r"^mcp-infra/(app|Dockerfile)",
-            r"^cartridges/[^/]+/(app|dags|Dockerfile)",
-            r"^infra/airflow/",
-            r"^scripts/(production|v1_stress|acceptance|smoke|run-e2e)",
-            r"^\.github/workflows/(release|deploy-aws|docker-image|e2e)\.yml$",
-        ),
+        "release_full_stack": release_full_stack,
     }
     bool_flags = {k: v for k, v in flags.items() if isinstance(v, bool)}
     _all_true_for_schedule(bool_flags)

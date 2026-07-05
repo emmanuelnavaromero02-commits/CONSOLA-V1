@@ -26,6 +26,7 @@ from app.services import audit_service
 from app.services.security_context import build_security_context
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
+from app.services.service_urls import running_in_container, vault_url
 
 
 router = APIRouter(prefix="/api/cartridges", tags=["Cartridges"])
@@ -62,7 +63,7 @@ def _require_cartridge_visible(user: dict | None, cartridge: str) -> None:
 
 def _cartridge_url(cartridge: str, path: str) -> str:
     port = _CARTRIDGE_PORTS[cartridge]
-    if not _running_in_container():
+    if not running_in_container():
         return f"http://127.0.0.1:{port}{path}"
     host = cartridge.replace("_", "-")
     return f"http://{host}:{port}{path}"
@@ -104,19 +105,8 @@ def _normalize_conn_id(conn_id: str | None) -> str | None:
     return requested
 
 
-def _running_in_container() -> bool:
-    return Path("/.dockerenv").exists() or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-
-
-def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
-    raw = os.environ.get(env_name)
-    if raw:
-        return raw.rstrip("/")
-    return docker_default.rstrip("/") if _running_in_container() else local_default.rstrip("/")
-
-
 def _vault_url() -> str:
-    return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
+    return vault_url()
 
 
 # v1.44.1: vault sits behind its own internal-API-key pair. The legacy

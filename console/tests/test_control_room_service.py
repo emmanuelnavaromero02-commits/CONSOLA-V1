@@ -483,6 +483,104 @@ async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row_is_stale(monkeypatch):
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_employee_profile":
+            return [{"employee_key": "tal_1"}, {"employee_key": "tal_2"}]
+        if dataset == "sap_successfactors_talent_readiness":
+            return [
+                {
+                    "employee_key": "tal_1",
+                    "readiness_status": "benchmark_internal",
+                    "source_mode": "benchmark_internal",
+                },
+                {
+                    "employee_key": "tal_2",
+                    "readiness_status": "benchmark_internal",
+                    "source_mode": "benchmark_internal",
+                },
+            ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "employee_key": "tal_1",
+                    "box_status": "benchmark_internal",
+                    "source_mode": "benchmark_internal",
+                }
+            ]
+        if dataset == "sap_successfactors_talent_operational_features":
+            return [
+                {
+                    "profiled_count": 2,
+                    "calculable_count": 0,
+                    "readiness_pending_count": 2,
+                    "nine_box_classified_count": 0,
+                    "feature_status": "partial",
+                    "source_mode": "",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+
+    result = await control_room_service.sap_successfactors_talent_kpis(USER)
+
+    assert result["readiness"]["calculable_employees"] == 2
+    assert result["readiness"]["insufficient_data_employees"] == 0
+    assert result["readiness"]["nine_box_available"] == 1
+    assert result["readiness"]["source_mode"] == "benchmark_internal"
+    assert result["readiness"]["readiness_status"] == "benchmark_internal"
+    assert not any(
+        blocker["id"] == "talent_cpa_inputs_missing"
+        for blocker in result["blockers"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_sap_successfactors_talent_9box_falls_back_to_detailed_rows(monkeypatch):
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_9box_operational":
+            return [
+                {
+                    "box_key": "core",
+                    "employee_count": 0,
+                    "ready_count": 0,
+                    "benchmark_count": 0,
+                    "blocked_count": 0,
+                    "box_status": "blocked",
+                }
+            ]
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {
+                    "employee_key": "tal_1",
+                    "box_key": "core",
+                    "box_status": "benchmark_internal",
+                    "source_mode": "benchmark_internal",
+                },
+                {
+                    "employee_key": "tal_2",
+                    "box_key": "estrella",
+                    "box_status": "ready",
+                    "source_mode": "cpa_real",
+                },
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+
+    result = await control_room_service.sap_successfactors_talent_9box(USER)
+
+    assert result["status"] == "ready"
+    assert result["totals"]["ready"] == 2
+    assert result["totals"]["reference"] == 1
+    assert not any(
+        blocker["id"] == "talent_9box_cpa_incomplete"
+        for blocker in result["blockers"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box":

@@ -244,32 +244,36 @@ def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
 
 
 def test_schema_viewer_has_gold_dataset_fallback() -> None:
-    source = _read("console/app/main.py")
+    source = _read("console/app/domains/data_platform/gold_catalog.py")
     router_source = _read("console/app/routers/v1/data.py")
+    main_source = _read("console/app/main.py")
     for needle in (
-        "def _gold_sources_from_catalog",
+        "async def sources_from_catalog",
         "OMEGA_HIDDEN_GOLD_SOURCE_CARTRIDGES",
         "simulation",
         "gold/",
-        "def _gold_schema_payload",
+        "async def schema_payload",
         "source_kind",
         "Gold database is not configured",
     ):
         assert needle in source
+    assert "async def _gold_schema_payload" in main_source
+    assert "async def _gold_sources_from_catalog" in main_source
     assert "_gold_schema_payload(source, user)" in router_source
     assert "_gold_sources_from_catalog(user)" in router_source
 
 
 def test_semantic_viewer_has_gold_catalog_fallback() -> None:
-    source = _read("console/app/main.py")
+    source = _read("console/app/domains/data_platform/gold_catalog.py")
+    main_source = _read("console/app/main.py")
     schema_js = _read("console/app/static/js/viewers/schema.js")
     for needle in (
-        "def _gold_semantic_entities_from_catalog",
+        "async def semantic_entities_from_catalog",
         'source": "gold_catalog"',
-        '_gold_schema_payload(f"gold/{dataset}"',
-        "await _gold_semantic_entities_from_catalog(cartridge, user)",
+        'self.schema_payload(f"gold/{dataset}"',
     ):
         assert needle in source
+    assert "await _gold_semantic_entities_from_catalog(cartridge, user)" in main_source
     assert "if (!currentSource && sources.length)" in schema_js
 
 

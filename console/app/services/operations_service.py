@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 import httpx
 
 from app.services import auth
+from app.services.service_urls import service_url
 
 
 async def list_migrations() -> list[dict]:
@@ -33,17 +33,6 @@ async def get_system_version() -> str:
     return "unknown"
 
 
-def _running_in_container() -> bool:
-    return Path("/.dockerenv").exists() or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-
-
-def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
-    raw = os.environ.get(env_name)
-    if raw:
-        return raw.rstrip("/")
-    return docker_default.rstrip("/") if _running_in_container() else local_default.rstrip("/")
-
-
 _BASE_SERVICE_PROBES = {
     "console":    ("CONSOLE_INTERNAL_URL", "http://console:8000", "http://127.0.0.1:8000", "/api/system/info"),
     "workspace":  ("WORKSPACE_INTERNAL_URL", "http://workspace:8001", "http://127.0.0.1:8001", "/healthz"),
@@ -66,7 +55,7 @@ _CARTRIDGE_SERVICE_PROBES = {
 
 
 def _probe_url(env_name: str, docker_default: str, local_default: str, path: str) -> str:
-    return f"{_service_url(env_name, docker_default, local_default)}{path}"
+    return f"{service_url(env_name, docker_default, local_default)}{path}"
 
 
 def service_probes(active_cartridges: set[str] | None = None) -> dict[str, str]:

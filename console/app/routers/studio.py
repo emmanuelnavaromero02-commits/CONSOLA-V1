@@ -26,6 +26,30 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
+from app.domains.security.internal_auth import (
+    internal_outbound_headers as _internal_outbound_headers_impl,
+    internal_outbound_key as _internal_outbound_key_impl,
+)
+from app.domains.studio.validation import (
+    clean_dag_id as _clean_dag_id_impl,
+    clean_filename as _clean_filename_impl,
+    clean_identifier as _clean_identifier_impl,
+    valid_identifier as _valid_identifier_impl,
+)
+from app.domains.studio.static_introspection import (
+    fields_from_static_entity as _fields_from_static_entity_impl,
+    load_static_entity_specs as _load_static_entity_specs_impl,
+    schema_entities_from_fields as _schema_entities_from_fields_impl,
+    static_introspection_payload as _static_introspection_payload_impl,
+)
+from app.domains.studio.source_metadata import (
+    base_url_for_source as _base_url_for_source_impl,
+    connection_value as _connection_value_impl,
+    connector_payload as _connector_payload_impl,
+    env_or_connection as _env_or_connection_impl,
+    looks_odata as _looks_odata_impl,
+    service_metadata_paths as _service_metadata_paths_impl,
+)
 from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
@@ -59,9 +83,6 @@ SUPERSET_INTERNAL_ONLY_MESSAGE = (
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_SAFE_DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
-_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _MAX_SPEC_BYTES = 2 * 1024 * 1024
 _MAX_METADATA_BYTES = 5 * 1024 * 1024
 _BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
@@ -87,20 +108,22 @@ class _PinnedHTTPResponse:
 
 
 def _key_for(server: str) -> str:
-    pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
-    if pair:
-        return pair
-    if os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
-        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production")
-    return get_internal_api_key()
+    return _internal_outbound_key_impl(
+        server,
+        internal_api_key=get_internal_api_key(),
+        is_production=os.environ.get("APP_ENV", "production").strip().lower()
+        in {"production", "prod"},
+    )
 
 
 def _hdr_for(server: str) -> dict[str, str]:
-    headers = {"x-api-key": _key_for(server), "x-internal-service": "console"}
-    rid = request_id_var.get()
-    if rid:
-        headers["x-request-id"] = rid
-    return headers
+    return _internal_outbound_headers_impl(
+        server,
+        internal_api_key=get_internal_api_key(),
+        is_production=os.environ.get("APP_ENV", "production").strip().lower()
+        in {"production", "prod"},
+        request_id=request_id_var.get(),
+    )
 
 
 def _vault_headers_for_user(user: dict | None) -> dict[str, str]:
@@ -122,134 +145,31 @@ def _mcp_payload(tool: str, args: dict[str, Any], user: dict | None = None) -> d
 
 
 def _clean_identifier(value: str, *, label: str) -> str:
-    ident = (value or "").strip()
-    if not _IDENT_RE.fullmatch(ident):
-        raise HTTPException(400, f"Invalid {label}: use letters, numbers and underscores only")
-    return ident
+    return _clean_identifier_impl(value, label=label)
 
 
 def _schema_entities_from_fields(fields_by_entity: dict[str, list[schema_introspect.Field]]) -> list[dict[str, Any]]:
-    entities: list[dict[str, Any]] = []
-    for name, fields in sorted(fields_by_entity.items()):
-        try:
-            entity = _clean_identifier(str(name), label="entity")
-        except HTTPException:
-            continue
-        primary_key = next((field["name"] for field in fields if field.get("primary_key")), "")
-        entities.append({
-            "name": entity,
-            "entity": entity,
-            "display_name": entity,
-            "primary_key": primary_key,
-            "fields": fields,
-        })
-    return entities
+    return _schema_entities_from_fields_impl(fields_by_entity)
 
 
 def _load_static_entity_specs(cartridge_id: str) -> list[dict[str, Any]]:
-    candidates = [
-        Path(f"/registry/cartridges/{cartridge_id}/app/config/entities.yaml"),
-        Path(__file__).resolve().parents[3] / "cartridges" / cartridge_id / "app" / "config" / "entities.yaml",
-    ]
-    path = next((candidate for candidate in candidates if candidate.exists()), None)
-    if path is None:
-        return []
-    parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    raw_entities = parsed.get("entities") if isinstance(parsed, dict) else []
-    return [dict(item) for item in raw_entities if isinstance(item, dict)]
+    return _load_static_entity_specs_impl(
+        cartridge_id,
+        repo_root=Path(__file__).resolve().parents[3],
+    )
 
 
 def _fields_from_static_entity(entity: dict[str, Any]) -> list[dict[str, Any]]:
-    fields: list[dict[str, Any]] = []
-    existing = entity.get("fields")
-    if isinstance(existing, list):
-        for field in existing:
-            if isinstance(field, dict) and field.get("name"):
-                fields.append(schema_introspect.normalize_field(field))
-    select_fields = entity.get("select_fields")
-    if isinstance(select_fields, list):
-        seen = {field["name"] for field in fields}
-        primary_key = str(entity.get("primary_key") or "")
-        for name in select_fields:
-            name = str(name)
-            if name in seen:
-                continue
-            lower = name.lower()
-            guessed_type = "timestamp" if any(fragment in lower for fragment in ("date", "time", "aedtm")) else "string"
-            fields.append({
-                "name": name,
-                "type": guessed_type,
-                "nullable": True,
-                "primary_key": name == primary_key,
-                "source_type": "static_select_field",
-            })
-    properties = entity.get("properties")
-    if isinstance(properties, list):
-        seen = {field["name"] for field in fields}
-        primary_key = str(entity.get("primary_key") or entity.get("id_field") or "")
-        for name in properties:
-            name = str(name)
-            if not name or name in seen:
-                continue
-            lower = name.lower()
-            guessed_type = "timestamp" if any(fragment in lower for fragment in ("date", "time", "updated", "modified")) else "string"
-            fields.append({
-                "name": name,
-                "type": guessed_type,
-                "nullable": True,
-                "primary_key": name == primary_key,
-                "source_type": "static_property",
-            })
-            seen.add(name)
-    if not fields and entity.get("primary_key"):
-        fields.append({
-            "name": str(entity["primary_key"]),
-            "type": "string",
-            "nullable": False,
-            "primary_key": True,
-            "source_type": "static_primary_key",
-        })
-    if entity.get("watermark_field") and all(f["name"] != entity["watermark_field"] for f in fields):
-        fields.append({
-            "name": str(entity["watermark_field"]),
-            "type": "timestamp",
-            "nullable": True,
-            "primary_key": False,
-            "source_type": "static_watermark_field",
-        })
-    return fields
+    return _fields_from_static_entity_impl(entity)
 
 
 def _static_introspection_payload(cartridge_id: str, connector_schema: dict[str, Any], *, reason: str = "") -> dict[str, Any]:
-    entities: list[dict[str, Any]] = []
-    for item in _load_static_entity_specs(cartridge_id):
-        name = item.get("entity") or item.get("name")
-        if not name:
-            continue
-        try:
-            entity = _clean_identifier(str(name), label="entity")
-        except HTTPException:
-            continue
-        fields = _fields_from_static_entity(item)
-        entities.append({
-            "name": entity,
-            "entity": entity,
-            "display_name": item.get("display_name") or item.get("title") or entity,
-            "description": item.get("description") or "",
-            "mode": item.get("mode") or "full",
-            "primary_key": item.get("primary_key") or next((f["name"] for f in fields if f.get("primary_key")), ""),
-            "watermark_field": item.get("watermark_field") or "",
-            "odata_entity": item.get("odata_entity") or "",
-            "fields": fields,
-        })
-    return {
-        "cartridge_id": cartridge_id,
-        "endpoint": f"/api/cartridges/{cartridge_id}/connector_schema",
-        "connector_schema": connector_schema,
-        "entities": entities,
-        "source": "static",
-        "reason": reason or "live introspection unavailable; returned connector.yaml/entities.yaml fallback",
-    }
+    return _static_introspection_payload_impl(
+        cartridge_id,
+        connector_schema,
+        reason=reason,
+        entity_specs=_load_static_entity_specs(cartridge_id),
+    )
 
 
 async def _vault_connection(cartridge_id: str, conn_id: str = "default", user: dict | None = None) -> tuple[dict[str, Any], str]:
@@ -303,20 +223,15 @@ async def _vault_connection(cartridge_id: str, conn_id: str = "default", user: d
 
 
 def _connector_payload(connector_schema: dict[str, Any]) -> dict[str, Any]:
-    connector = connector_schema.get("connector") if isinstance(connector_schema.get("connector"), dict) else connector_schema
-    return connector if isinstance(connector, dict) else {}
+    return _connector_payload_impl(connector_schema)
 
 
 def _connection_value(connection: dict[str, Any], *names: str) -> str:
-    for name in names:
-        value = connection.get(name)
-        if value not in (None, ""):
-            return str(value)
-    return ""
+    return _connection_value_impl(connection, *names)
 
 
 def _env_or_connection(connection: dict[str, Any], env_name: str, *names: str) -> str:
-    return os.environ.get(env_name or "", "") or _connection_value(connection, *names)
+    return _env_or_connection_impl(connection, env_name, *names)
 
 
 async def _source_auth(
@@ -380,31 +295,15 @@ async def _source_auth(
 
 
 def _base_url_for_source(connector: dict[str, Any], connection: dict[str, Any]) -> str:
-    api = connector.get("api") if isinstance(connector.get("api"), dict) else {}
-    env_name = str(api.get("base_url_env") or "")
-    return _env_or_connection(connection, env_name, "base_url", "url").rstrip("/")
+    return _base_url_for_source_impl(connector, connection)
 
 
 def _service_metadata_paths(cartridge_id: str) -> list[str]:
-    paths = [""]
-    for item in _load_static_entity_specs(cartridge_id):
-        odata_entity = str(item.get("service_path") or item.get("odata_entity") or "")
-        if "/" not in odata_entity:
-            continue
-        service = odata_entity.split("/", 1)[0].strip("/")
-        if service and service not in paths:
-            paths.append(service)
-    return paths[:8]
+    return _service_metadata_paths_impl(_load_static_entity_specs(cartridge_id))
 
 
 def _looks_odata(cartridge_id: str, connector: dict[str, Any], args: dict[str, Any]) -> bool:
-    explicit = str(args.get("source_kind") or args.get("kind") or "").lower()
-    if explicit in {"odata", "sap"}:
-        return True
-    if cartridge_id.startswith("sap_"):
-        return True
-    auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
-    return str(auth.get("type") or "").lower() in {"basic", "oauth2_client_credentials"}
+    return _looks_odata_impl(cartridge_id, connector, args)
 
 
 def _is_production_env() -> bool:
@@ -666,7 +565,7 @@ async def _live_sql_introspection(args: dict[str, Any], connection: dict[str, An
     }
     if not table_filter:
         return [], "tables are required for SQL introspection"
-    if any(not _IDENT_RE.fullmatch(table) for table in table_filter):
+    if any(not _valid_identifier_impl(table) for table in table_filter):
         return [], "table names must use letters, numbers and underscores only"
     parsed_dsn = urlparse(dsn)
     dsn_query = parse_qs(parsed_dsn.query, keep_blank_values=True)
@@ -1234,15 +1133,11 @@ studio_assistant.register_local_tool(
 
 
 def _clean_filename(value: str) -> str:
-    name = _SAFE_FILENAME_RE.sub("_", os.path.basename(value or "spec.yaml")).strip("._")
-    return name or "spec.yaml"
+    return _clean_filename_impl(value)
 
 
 def _clean_dag_id(value: str) -> str:
-    dag_id = (value or "").strip()
-    if not _SAFE_DAG_ID_RE.fullmatch(dag_id):
-        raise HTTPException(400, "Invalid dag_id: use letters, numbers and underscores only")
-    return dag_id
+    return _clean_dag_id_impl(value)
 
 
 def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:

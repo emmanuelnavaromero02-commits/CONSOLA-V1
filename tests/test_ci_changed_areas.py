@@ -78,3 +78,217 @@ def test_dependency_changes_trigger_security_without_full_stack_by_default():
     assert flags["python_deps"] is True
     assert flags["node_deps"] is True
     assert flags["release_full_stack"] is False
+
+
+def test_console_page_route_changes_do_not_trigger_full_stack_release_gate():
+    flags = _flags("console/app/routers/pages.py")
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+
+
+def test_console_main_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags("console/app/main.py")
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["e2e"] is False
+    assert flags["release_full_stack"] is False
+
+
+def test_console_service_url_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/service_urls.py",
+        "console/app/services/operations_service.py",
+        "console/app/services/vault_utils.py",
+        "tests/test_service_urls.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_service_urls.py"
+
+
+def test_console_status_page_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/status_pages.py",
+        "console/app/main.py",
+        "tests/test_status_pages.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_status_pages.py"
+
+
+def test_console_security_header_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/security_headers.py",
+        "console/app/main.py",
+        "tests/test_security_headers.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_security_headers.py"
+
+
+def test_console_request_rate_limit_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/request_rate_limits.py",
+        "console/app/main.py",
+        "tests/test_request_rate_limits.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_request_rate_limits.py"
+
+
+def test_console_mcp_payload_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/mcp_payloads.py",
+        "console/app/main.py",
+        "tests/test_mcp_payloads.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_mcp_payloads.py"
+
+
+def test_console_db_pool_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/db_pool.py",
+        "console/app/main.py",
+        "tests/test_db_pool.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_db_pool.py"
+
+
+def test_console_startup_readiness_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/startup_readiness.py",
+        "console/app/main.py",
+        "tests/test_startup_readiness.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_startup_readiness.py"
+
+
+def test_console_runtime_call_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/runtime_calls.py",
+        "console/app/main.py",
+        "tests/test_runtime_calls.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_runtime_calls.py"
+
+
+def test_console_readyz_dependency_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/readyz_dependencies.py",
+        "console/app/main.py",
+        "tests/test_readyz_dependencies.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_readyz_dependencies.py"
+
+
+def test_console_readyz_data_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/readyz_data.py",
+        "console/app/main.py",
+        "tests/test_readyz_data.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_readyz_data.py"
+
+
+def test_console_sync_progress_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/sync_progress.py",
+        "console/app/main.py",
+        "tests/test_sync_progress.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_sync_progress.py"
+
+
+def test_console_sync_agentops_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/sync_agentops.py",
+        "console/app/main.py",
+        "tests/test_sync_agentops.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_sync_agentops.py"
+
+
+def test_console_sync_control_room_helper_refactor_does_not_trigger_full_stack_release_gate():
+    flags = _flags(
+        "console/app/services/sync_control_room.py",
+        "console/app/main.py",
+        "tests/test_sync_control_room.py",
+    )
+
+    assert flags["python_runtime"] is True
+    assert flags["console_tests"] is True
+    assert flags["root_tests"] is True
+    assert flags["e2e"] is True
+    assert flags["release_full_stack"] is False
+    assert flags["root_test_targets"] == "tests/test_sync_control_room.py"

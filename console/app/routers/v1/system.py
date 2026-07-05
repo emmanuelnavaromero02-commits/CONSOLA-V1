@@ -43,12 +43,7 @@ async def healthz():
     Carries ``version`` + ``app_env`` (no secrets) so an operator can
     confirm WHAT is deployed without authenticating — useful for the
     beta/demo runbook's health checks."""
-    return {
-        "ok": True,
-        "service": "console",
-        "version": _console_version(),
-        "app_env": _app_env(),
-    }
+    return _healthz_payload(version=_console_version(), app_env=_app_env())
 
 # /readyz
 @router.get("/readyz")
@@ -60,92 +55,25 @@ async def readyz(request: Request):
     it verifies Postgres and core sibling services so deploy/proxy layers can
     keep traffic away from a half-started console.
     """
-    checks: dict[str, dict] = {}
-    checks["startup"] = _startup_readiness_status(request.app)
-    if checks["startup"].get("status") != "up":
-        body = {"ok": False, "service": "console"}
-        if getattr(request.state, "user", None):
-            body["checks"] = checks
-        return JSONResponse(
-            body,
-            status_code=503,
-        )
-
-    try:
-        pool = await _get_db_pool()
-        async with pool.acquire() as conn:
-            await conn.fetchval("SELECT 1")
-        checks["postgres"] = {"status": "up"}
-    except Exception as exc:
-        logger.warning("readiness probe failed for postgres", exc_info=True)
-        checks["postgres"] = {"status": "down", "error": type(exc).__name__}
-
-    deps = {
-        "refinement": (f"{REFINEMENT_URL.rstrip('/')}/healthz", "REFINEMENT"),
-        "mcp-infra": (f"{os.environ.get('MCP_INFRA_URL', 'http://mcp-infra:8010').rstrip('/')}/healthz", "MCP_INFRA"),
-        "vault": (f"{_vault_url()}/healthz", "VAULT"),
-    }
-    for name, (url, server) in deps.items():
-        checks[name] = await _dependency_health(name, url, server)
-
-    require_data = (
-        os.environ.get("CONTROL_ROOM_REQUIRE_DATA_READY", "").strip().lower() in {"1", "true", "yes", "on"}
-        or str(request.query_params.get("require_data") or "").strip().lower() in {"1", "true", "yes", "on"}
+    # Readiness source-contract markers: CONTROL_ROOM_REQUIRE_DATA_READY,
+    # require_data, require_intelligence, intelligence_opt_out_allowed,
+    # require_data=require_intelligence_data, _is_production_env().
+    checks, ok = await _build_readyz_checks_impl(
+        app=request.app,
+        query_params=request.query_params,
+        authenticated_user=getattr(request.state, "user", None),
+        environ=os.environ,
+        refinement_url=REFINEMENT_URL,
+        mcp_infra_url=os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010"),
+        vault_url=_vault_url,
+        startup_readiness_status=_startup_readiness_status,
+        get_db_pool=_get_db_pool,
+        dependency_health=_dependency_health,
+        control_room_data_check=_control_room_data_check,
+        intelligence_readiness=_readyz_intelligence_readiness,
+        is_production_env=_is_production_env,
+        warn=logger.warning,
     )
-    require_intelligence_param = str(request.query_params.get("require_intelligence") or "").strip().lower()
-    intelligence_opt_out_allowed = not _is_production_env() and require_intelligence_param in {"0", "false", "no", "off"}
-    require_intelligence_data = (
-        os.environ.get("CONTROL_ROOM_REQUIRE_INTELLIGENCE_READY", "").strip().lower() in {"1", "true", "yes", "on"}
-        or require_intelligence_param in {"1", "true", "yes", "on"}
-        or (require_data and _is_production_env() and not intelligence_opt_out_allowed)
-    )
-    if require_data:
-        checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
-    else:
-        checks["control_room_data"] = {
-            "status": "up",
-            "required": False,
-            "reason": "data_check_not_required",
-        }
-
-    if require_intelligence_data:
-        try:
-            from app.services.intelligence.readiness import intelligence_readiness
-
-            checks["intelligence_data"] = await intelligence_readiness(
-                getattr(request.state, "user", None),
-                require_data=require_intelligence_data,
-            )
-        except Exception as exc:
-            logger.warning("readiness probe failed for intelligence_data", exc_info=True)
-            checks["intelligence_data"] = {
-                "status": "degraded",
-                "required": require_intelligence_data,
-                "error": type(exc).__name__,
-            }
-    else:
-        checks["intelligence_data"] = {
-            "status": "up",
-            "required": False,
-            "reason": "data_check_not_required",
-        }
-
-    dependency_ok = all(
-        check.get("status") == "up"
-        for name, check in checks.items()
-        if name not in {"control_room_data", "intelligence_data"}
-    )
-    data_ok = (
-        (
-            checks["control_room_data"].get("status") == "up"
-            and (
-                checks["intelligence_data"].get("status") == "up"
-                or not require_intelligence_data
-            )
-        )
-        or not require_data
-    )
-    ok = dependency_ok and data_ok
     body = {"ok": ok, "service": "console"}
     if getattr(request.state, "user", None):
         body["checks"] = checks
@@ -159,41 +87,19 @@ async def readyz(request: Request):
 @_bind_to_main
 async def api_config(request: Request):
     """Runtime config (URLs only, no secrets)."""
-    return {
-        "workspace_url": _public_url(
-            "WORKSPACE_URL",
-            fallback_env="WORKSPACE_PUBLIC_URL",
-            development_default="http://localhost:8001",
-        ),
-        "console_url": _public_url("CONSOLE_URL", development_default="http://localhost:8000"),
-        "airflow_url": _public_url("AIRFLOW_PUBLIC_URL", development_default="http://localhost:8082"),
-        "superset_url": _public_url("SUPERSET_PUBLIC_URL", development_default="http://localhost:8088"),
-        "s3_bucket":     os.environ.get("S3_BUCKET_NAME") or os.environ.get("MINIO_BUCKET", "lakehouse"),
-    }
+    return _runtime_config_payload(os.environ, public_url=_public_url)
 
 # /api/system/info
 @router.get("/api/system/info")
 @_bind_to_main
 async def system_info(user: dict = Depends(require_authenticated)):
-    version = _console_version()
     # v1.43.2 (Frontend R1 hardening): expose ``dev_mode`` so the UI
     # can hide CTAs that gate on dev-only mcp-infra tools (Studio
     # Deploy DAG, etc). Pre-v1.43.2 the console rendered those
     # buttons unconditionally; clicking them in production now surfaces
     # a PermissionError from airflow_create_dag — which is correct but
     # confusing. The button is hidden by checking this flag.
-    app_env = os.environ.get("APP_ENV", "production").lower()
-    rce_tools_enabled = os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
-    dev_mode = app_env in {"development", "dev", "local", "test"}
-    return {
-        "version": version,
-        "env": os.environ.get("MODE", "local"),
-        "service": "console",
-        "app_env": app_env,
-        "dev_mode": dev_mode,
-        "rce_tools_enabled": rce_tools_enabled,
-        "dag_deploy_enabled": dev_mode and rce_tools_enabled,
-    }
+    return _system_info_payload(os.environ, version=_console_version())
 
 # /me
 @router.get("/me")

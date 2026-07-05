@@ -3,6 +3,11 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.talent_catalog import (
+    TALENT_BOX_DEFINITIONS,
+    TALENT_LIVE_COMPONENT_IDS,
+    TALENT_METADATA_ENTITIES,
+)
 
 
 _RESERVED_GLOBALS = {
@@ -216,146 +221,169 @@ async def query_dataset_rows(
 
 
 @_bind_to_core
-async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
-    """Core SuccessFactors Gold widgets for the active tenant/workspace.
+def _sf_gold_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {
+        "1",
+        "true",
+        "t",
+        "yes",
+        "y",
+        "activo",
+        "active",
+    }
 
-    Reads go through the scoped Gold fetcher. A user outside the FEMSA
-    workspace simply receives empty widgets because native Gold RLS filters the
-    rows before they reach this code path.
-    """
+
+@_bind_to_core
+def _sf_gold_public_rows(
+    rows: list[dict[str, Any]], limit: int = 5
+) -> list[dict[str, Any]]:
+    return [
+        {str(key): _sf_talent_public_value(value) for key, value in row.items()}
+        for row in rows[:limit]
+    ]
+
+
+@_bind_to_core
+def _sf_gold_top_headcount_rows(
+    rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5
+) -> list[dict[str, Any]]:
+    id_key, name_key = label_keys
+    top: list[dict[str, Any]] = []
+    for row in rows:
+        label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
+        top.append(
+            {
+                "label": label,
+                "id": _sf_talent_public_value(row.get(id_key)),
+                "headcount": int(row.get("headcount") or 0),
+            }
+        )
+    return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[
+        :limit
+    ]
+
+
+@_bind_to_core
+def _sf_gold_status_error(results: list[dict[str, Any]]) -> str | None:
+    errors = [str(result.get("error")) for result in results if result.get("error")]
+    return "; ".join(errors) if errors else None
+
+
+@_bind_to_core
+def _sf_gold_usable_rows(result: dict[str, Any]) -> list[dict[str, Any]] | None:
+    status = str(result.get("status") or "")
+    if status in {"ready", "empty"}:
+        return result.get("rows") if isinstance(result.get("rows"), list) else []
+    return None
+
+
+@_bind_to_core
+def _sf_gold_combine_widget_status(results: list[dict[str, Any]]) -> str:
+    statuses = {str(result.get("status") or "unavailable") for result in results}
+    usable = any(status in {"ready", "empty"} for status in statuses)
+    if usable and any(
+        status in {"no_permission", "unavailable", "missing"} for status in statuses
+    ):
+        return "partial"
+    for status in ("no_permission", "unavailable", "missing", "empty", "ready"):
+        if status in statuses:
+            return status
+    return "unavailable"
+
+
+@_bind_to_core
+async def _sf_gold_result(
+    dataset: str, user: dict | None, limit: int
+) -> dict[str, Any]:
     from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
 
-    sf_gold_datasets = {
+    try:
+        rows = await query_gold_dataset_rows(dataset, user, limit)
+    except HTTPException as exc:
+        status = {
+            403: "no_permission",
+            404: "missing",
+            503: "unavailable",
+        }.get(exc.status_code, "unavailable")
+        return {
+            "rows": [],
+            "status": status,
+            "error": str(exc.detail or f"{dataset} unavailable"),
+        }
+    except Exception as exc:
+        return {
+            "rows": [],
+            "status": "unavailable",
+            "error": str(exc),
+        }
+    clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
+    return {
+        "rows": clean_rows,
+        "status": "empty" if not clean_rows else "ready",
+        "error": None,
+    }
+
+
+@_bind_to_core
+def _sf_foundation_gold_datasets() -> dict[str, str]:
+    return {
         "employee_360": "sap_successfactors_employee_360",
         "headcount_by_company": "sap_successfactors_headcount_by_company",
         "headcount_by_location": "sap_successfactors_headcount_by_location",
         "headcount_by_department": "sap_successfactors_headcount_by_department",
     }
 
-    def truthy(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return False
-        return str(value).strip().lower() in {
-            "1",
-            "true",
-            "t",
-            "yes",
-            "y",
-            "activo",
-            "active",
-        }
 
-    def public_value(value: Any) -> Any:
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if hasattr(value, "isoformat"):
-            return value.isoformat()
-        return str(value)
+@_bind_to_core
+async def _sf_foundation_gold_results(
+    datasets: dict[str, str],
+    user: dict | None,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "employee_360": await _sf_gold_result(datasets["employee_360"], user, 5000),
+        "headcount_by_company": await _sf_gold_result(
+            datasets["headcount_by_company"], user, 1000
+        ),
+        "headcount_by_location": await _sf_gold_result(
+            datasets["headcount_by_location"], user, 1000
+        ),
+        "headcount_by_department": await _sf_gold_result(
+            datasets["headcount_by_department"], user, 1000
+        ),
+    }
 
-    def public_rows(rows: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
-        return [
-            {str(key): public_value(value) for key, value in row.items()}
-            for row in rows[:limit]
-        ]
 
-    def dataset_href(dataset: str) -> str:
-        return (
-            "/data/catalog?layer=gold&cartridge=sap_successfactors"
-            f"&datasets={dataset}"
-        )
+@_bind_to_core
+def _sf_foundation_gold_rows(
+    results: dict[str, dict[str, Any]],
+) -> dict[str, list[dict[str, Any]] | None]:
+    return {
+        key: _sf_gold_usable_rows(result)
+        for key, result in results.items()
+    }
 
-    def top_headcount_rows(
-        rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5
-    ) -> list[dict[str, Any]]:
-        id_key, name_key = label_keys
-        top: list[dict[str, Any]] = []
-        for row in rows:
-            label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
-            top.append(
-                {
-                    "label": label,
-                    "id": public_value(row.get(id_key)),
-                    "headcount": int(row.get("headcount") or 0),
-                }
-            )
-        return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[
-            :limit
-        ]
 
-    def status_error(results: list[dict[str, Any]]) -> str | None:
-        errors = [str(result.get("error")) for result in results if result.get("error")]
-        return "; ".join(errors) if errors else None
-
-    def usable_rows(result: dict[str, Any]) -> list[dict[str, Any]] | None:
-        status = str(result.get("status") or "")
-        if status in {"ready", "empty"}:
-            return result.get("rows") if isinstance(result.get("rows"), list) else []
+@_bind_to_core
+def _sf_gold_headcount_total(rows: list[dict[str, Any]] | None) -> int | None:
+    if rows is None:
         return None
+    return sum(int(row.get("headcount") or 0) for row in rows)
 
-    def combine_widget_status(results: list[dict[str, Any]]) -> str:
-        statuses = {str(result.get("status") or "unavailable") for result in results}
-        usable = any(status in {"ready", "empty"} for status in statuses)
-        if usable and any(
-            status in {"no_permission", "unavailable", "missing"} for status in statuses
-        ):
-            return "partial"
-        for status in ("no_permission", "unavailable", "missing", "empty", "ready"):
-            if status in statuses:
-                return status
-        return "unavailable"
 
-    async def gold_result(dataset: str, limit: int) -> dict[str, Any]:
-        try:
-            rows = await query_gold_dataset_rows(dataset, user, limit)
-        except HTTPException as exc:
-            status = {
-                403: "no_permission",
-                404: "missing",
-                503: "unavailable",
-            }.get(exc.status_code, "unavailable")
-            return {
-                "rows": [],
-                "status": status,
-                "error": str(exc.detail or f"{dataset} unavailable"),
-            }
-        except Exception as exc:
-            return {
-                "rows": [],
-                "status": "unavailable",
-                "error": str(exc),
-            }
-        clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
-        return {
-            "rows": clean_rows,
-            "status": "empty" if not clean_rows else "ready",
-            "error": None,
-        }
-
-    employee_result = await gold_result(sf_gold_datasets["employee_360"], 5000)
-    company_result = await gold_result(sf_gold_datasets["headcount_by_company"], 1000)
-    location_result = await gold_result(sf_gold_datasets["headcount_by_location"], 1000)
-    department_result = await gold_result(
-        sf_gold_datasets["headcount_by_department"], 1000
-    )
-
-    employee_rows = usable_rows(employee_result)
-    company_rows = usable_rows(company_result)
-    location_rows = usable_rows(location_result)
-    department_rows = usable_rows(department_result)
-
-    company_headcount_total = (
-        None
-        if company_rows is None
-        else sum(int(row.get("headcount") or 0) for row in company_rows)
-    )
+@_bind_to_core
+def _sf_foundation_active_headcount(
+    employee_rows: list[dict[str, Any]] | None,
+    company_rows: list[dict[str, Any]] | None,
+) -> int | None:
+    company_headcount_total = _sf_gold_headcount_total(company_rows)
     employee_active_total = (
         None
         if employee_rows is None
-        else sum(1 for row in employee_rows if truthy(row.get("is_active")))
+        else sum(1 for row in employee_rows if _sf_gold_truthy(row.get("is_active")))
     )
     if company_headcount_total and company_headcount_total > 0:
         active_headcount = company_headcount_total
@@ -363,79 +391,187 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
         active_headcount = employee_active_total
     else:
         active_headcount = company_headcount_total
-    generated_at = datetime.now(UTC).isoformat()
-    tenant_id, workspace_id = _workspace_scope(user)
+    return active_headcount
 
-    widgets = [
-        {
-            "id": "sf_active_headcount",
-            "title": "Headcount total activo",
-            "value": active_headcount,
-            "dataset": sf_gold_datasets["employee_360"],
-            "href": dataset_href(sf_gold_datasets["employee_360"]),
-            "rows": public_rows(employee_rows or [], 5),
-            "status": combine_widget_status([employee_result, company_result]),
-            "error": status_error([employee_result, company_result]),
-        },
-        {
-            "id": "sf_headcount_by_company",
-            "title": "Headcount por compania",
-            "value": company_headcount_total,
-            "dataset": sf_gold_datasets["headcount_by_company"],
-            "href": dataset_href(sf_gold_datasets["headcount_by_company"]),
-            "rows": top_headcount_rows(
+
+@_bind_to_core
+def _sf_foundation_widget(
+    widget_id: str,
+    title: str,
+    value: Any,
+    dataset: str,
+    rows: list[dict[str, Any]],
+    status: str,
+    error: Any,
+) -> dict[str, Any]:
+    return {
+        "id": widget_id,
+        "title": title,
+        "value": value,
+        "dataset": dataset,
+        "href": _sf_talent_dataset_href(dataset),
+        "rows": rows,
+        "status": status,
+        "error": error,
+    }
+
+
+@_bind_to_core
+def _sf_foundation_gold_widgets(
+    datasets: dict[str, str],
+    results: dict[str, dict[str, Any]],
+    rows: dict[str, list[dict[str, Any]] | None],
+) -> list[dict[str, Any]]:
+    employee_rows = rows["employee_360"]
+    company_rows = rows["headcount_by_company"]
+    location_rows = rows["headcount_by_location"]
+    department_rows = rows["headcount_by_department"]
+    company_headcount_total = _sf_gold_headcount_total(company_rows)
+    return [
+        _sf_foundation_widget(
+            "sf_active_headcount",
+            "Headcount total activo",
+            _sf_foundation_active_headcount(employee_rows, company_rows),
+            datasets["employee_360"],
+            _sf_gold_public_rows(employee_rows or [], 5),
+            _sf_gold_combine_widget_status(
+                [results["employee_360"], results["headcount_by_company"]]
+            ),
+            _sf_gold_status_error(
+                [results["employee_360"], results["headcount_by_company"]]
+            ),
+        ),
+        _sf_foundation_widget(
+            "sf_headcount_by_company",
+            "Headcount por compania",
+            company_headcount_total,
+            datasets["headcount_by_company"],
+            _sf_gold_top_headcount_rows(
                 company_rows or [], ("company_id", "company_name")
             ),
-            "status": company_result["status"],
-            "error": company_result.get("error"),
-        },
-        {
-            "id": "sf_headcount_by_location",
-            "title": "Headcount por ubicacion",
-            "value": None
-            if location_rows is None
-            else sum(int(row.get("headcount") or 0) for row in location_rows),
-            "dataset": sf_gold_datasets["headcount_by_location"],
-            "href": dataset_href(sf_gold_datasets["headcount_by_location"]),
-            "rows": top_headcount_rows(
+            results["headcount_by_company"]["status"],
+            results["headcount_by_company"].get("error"),
+        ),
+        _sf_foundation_widget(
+            "sf_headcount_by_location",
+            "Headcount por ubicacion",
+            _sf_gold_headcount_total(location_rows),
+            datasets["headcount_by_location"],
+            _sf_gold_top_headcount_rows(
                 location_rows or [], ("location_id", "location_name")
             ),
-            "status": location_result["status"],
-            "error": location_result.get("error"),
-        },
-        {
-            "id": "sf_headcount_by_department",
-            "title": "Headcount por departamento",
-            "value": None
-            if department_rows is None
-            else sum(int(row.get("headcount") or 0) for row in department_rows),
-            "dataset": sf_gold_datasets["headcount_by_department"],
-            "href": dataset_href(sf_gold_datasets["headcount_by_department"]),
-            "rows": top_headcount_rows(
+            results["headcount_by_location"]["status"],
+            results["headcount_by_location"].get("error"),
+        ),
+        _sf_foundation_widget(
+            "sf_headcount_by_department",
+            "Headcount por departamento",
+            _sf_gold_headcount_total(department_rows),
+            datasets["headcount_by_department"],
+            _sf_gold_top_headcount_rows(
                 department_rows or [], ("department_id", "department_name")
             ),
-            "status": department_result["status"],
-            "error": department_result.get("error"),
-        },
+            results["headcount_by_department"]["status"],
+            results["headcount_by_department"].get("error"),
+        ),
     ]
+
+
+@_bind_to_core
+async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
+    """Core SuccessFactors Gold widgets for the active tenant/workspace.
+
+    Reads go through the scoped Gold fetcher. A user outside the FEMSA
+    workspace simply receives empty widgets because native Gold RLS filters the
+    rows before they reach this code path.
+    """
+    datasets = _sf_foundation_gold_datasets()
+    results = await _sf_foundation_gold_results(datasets, user)
+    rows = _sf_foundation_gold_rows(results)
+    generated_at = datetime.now(UTC).isoformat()
+    tenant_id, workspace_id = _workspace_scope(user)
     return {
         "generated_at": generated_at,
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "widgets": widgets,
+        "widgets": _sf_foundation_gold_widgets(datasets, results, rows),
     }
 
 
 @_bind_to_core
-async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
-    """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
+def _sf_talent_public_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
 
-    The endpoint intentionally returns aggregate coverage and blockers only.
-    C/P/A scores, salary values and individual PII are not exposed here.
-    """
 
-    datasets = {
+@_bind_to_core
+def _sf_talent_extract_blockers(rows: list[dict[str, Any]]) -> list[str]:
+    blockers: set[str] = set()
+    for row in rows:
+        blockers.update(_sf_talent_json_list(row.get("blockers")))
+    return sorted(blockers)
+
+
+@_bind_to_core
+async def _sf_talent_latest_simulation_result(user: dict | None) -> dict[str, Any]:
+    try:
+        pool = await auth.pool()
+        async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
+            exists = bool(
+                await conn.fetchval(
+                    "SELECT to_regclass($1)",
+                    "public.monte_carlo_simulations",
+                )
+            )
+            if not exists:
+                return {"status": "waiting_for_data", "row": None}
+            row = await conn.fetchrow(
+                """
+                SELECT simulation_id,
+                       source_type,
+                       source_id,
+                       model_version,
+                       horizon_days,
+                       iterations,
+                       output_metric,
+                       breach_threshold,
+                       breach_direction,
+                       distribution_summary,
+                       sensitivity,
+                       evidence_refs,
+                       created_at,
+                       updated_at
+                  FROM monte_carlo_simulations
+                 WHERE workspace_id = $1::uuid
+                   AND source_type = 'wisdom_bit'
+                   AND source_id = 'WB-TALENTO'
+                 ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                workspace_id,
+            )
+    except Exception as exc:
+        return {"status": "unavailable", "error": str(exc), "row": None}
+    if not row:
+        return {"status": "waiting_for_data", "row": None}
+    return {
+        "status": "ready",
+        "row": {
+            key: _sf_talent_public_value(value)
+            for key, value in dict(row).items()
+        },
+    }
+
+
+@_bind_to_core
+def _sf_talent_kpi_datasets() -> dict[str, str]:
+    return {
         "employee_profile": "sap_successfactors_talent_employee_profile",
         "role_profile": "sap_successfactors_talent_role_profile",
         "mobility_history": "sap_successfactors_talent_mobility_history",
@@ -446,228 +582,215 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
         "simulation_inputs": "sap_successfactors_talent_simulation_inputs",
     }
 
-    def dataset_href(dataset: str) -> str:
-        return (
-            "/data/catalog?layer=gold&cartridge=sap_successfactors"
-            f"&datasets={dataset}"
-        )
 
-    def public_value(value: Any) -> Any:
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if hasattr(value, "isoformat"):
-            return value.isoformat()
-        return str(value)
+@_bind_to_core
+async def _sf_talent_kpi_results(
+    datasets: dict[str, str],
+    user: dict | None,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "employee_profile": await _sf_talent_gold_result(datasets["employee_profile"], user, 5000),
+        "role_profile": await _sf_talent_gold_result(datasets["role_profile"], user, 1000),
+        "mobility_history": await _sf_talent_gold_result(datasets["mobility_history"], user, 5000),
+        "readiness": await _sf_talent_gold_result(datasets["readiness"], user, 5000),
+        "nine_box": await _sf_talent_gold_result(datasets["nine_box"], user, 5000),
+        "signals": await _sf_talent_gold_result(datasets["signals"], user, 100),
+        "operational_features": await _sf_talent_gold_result(datasets["operational_features"], user, 1),
+        "simulation_inputs": await _sf_talent_gold_result(datasets["simulation_inputs"], user, 1),
+    }
 
-    def int_value(value: Any) -> int:
-        try:
-            return int(value or 0)
-        except (TypeError, ValueError):
-            return 0
 
-    def clean_status(value: Any) -> str:
-        status = str(value or "unavailable").strip().lower()
-        return status or "unavailable"
+@_bind_to_core
+def _sf_talent_kpi_rows(results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    operational_rows = results["operational_features"]["rows"]
+    simulation_rows = results["simulation_inputs"]["rows"]
+    return {
+        "profile_rows": results["employee_profile"]["rows"],
+        "role_rows": results["role_profile"]["rows"],
+        "mobility_rows": results["mobility_history"]["rows"],
+        "readiness_rows": results["readiness"]["rows"],
+        "nine_box_rows": results["nine_box"]["rows"],
+        "signal_rows": results["signals"]["rows"],
+        "operational_row": operational_rows[0] if operational_rows else {},
+        "simulation_row": simulation_rows[0] if simulation_rows else {},
+    }
 
-    def extract_blockers(rows: list[dict[str, Any]]) -> list[str]:
-        blockers: set[str] = set()
-        for row in rows:
-            raw = row.get("blockers")
-            parsed: Any = raw
-            if isinstance(raw, str) and raw.strip():
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    parsed = [raw]
-            if isinstance(parsed, list):
-                blockers.update(str(item).strip() for item in parsed if str(item).strip())
-            elif isinstance(parsed, str) and parsed.strip():
-                blockers.add(parsed.strip())
-        return sorted(blockers)
 
-    async def gold_result(dataset: str, limit: int) -> dict[str, Any]:
-        try:
-            rows = await query_dataset_rows(dataset, user, limit)
-        except HTTPException as exc:
-            status = {
-                403: "no_permission",
-                404: "missing",
-                503: "unavailable",
-            }.get(exc.status_code, "unavailable")
-            return {
-                "rows": [],
-                "status": status,
-                "error": str(exc.detail or f"{dataset} unavailable"),
-            }
-        except Exception as exc:
-            return {
-                "rows": [],
-                "status": "unavailable",
-                "error": str(exc),
-            }
-        clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
-        return {
-            "rows": clean_rows,
-            "status": "empty" if not clean_rows else "ready",
-            "error": None,
-        }
-
-    async def latest_simulation_result() -> dict[str, Any]:
-        try:
-            pool = await auth.pool()
-            async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
-                exists = bool(
-                    await conn.fetchval(
-                        "SELECT to_regclass($1)",
-                        "public.monte_carlo_simulations",
-                    )
-                )
-                if not exists:
-                    return {"status": "waiting_for_data", "row": None}
-                row = await conn.fetchrow(
-                    """
-                    SELECT simulation_id,
-                           source_type,
-                           source_id,
-                           model_version,
-                           horizon_days,
-                           iterations,
-                           output_metric,
-                           breach_threshold,
-                           breach_direction,
-                           distribution_summary,
-                           sensitivity,
-                           evidence_refs,
-                           created_at,
-                           updated_at
-                      FROM monte_carlo_simulations
-                     WHERE workspace_id = $1::uuid
-                       AND source_type = 'wisdom_bit'
-                       AND source_id = 'WB-TALENTO'
-                     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-                     LIMIT 1
-                    """,
-                    workspace_id,
-                )
-        except Exception as exc:
-            return {"status": "unavailable", "error": str(exc), "row": None}
-        if not row:
-            return {"status": "waiting_for_data", "row": None}
-        return {
-            "status": "ready",
-            "row": {key: public_value(value) for key, value in dict(row).items()},
-        }
-
-    profile_result = await gold_result(datasets["employee_profile"], 5000)
-    role_result = await gold_result(datasets["role_profile"], 1000)
-    mobility_result = await gold_result(datasets["mobility_history"], 5000)
-    readiness_result = await gold_result(datasets["readiness"], 5000)
-    nine_box_result = await gold_result(datasets["nine_box"], 5000)
-    signals_result = await gold_result(datasets["signals"], 100)
-    operational_result = await gold_result(datasets["operational_features"], 1)
-    simulation_result = await gold_result(datasets["simulation_inputs"], 1)
-    latest_simulation = await latest_simulation_result()
-
-    profile_rows = profile_result["rows"]
-    role_rows = role_result["rows"]
-    mobility_rows = mobility_result["rows"]
-    readiness_rows = readiness_result["rows"]
-    nine_box_rows = nine_box_result["rows"]
-    signal_rows = signals_result["rows"]
-    operational_row = operational_result["rows"][0] if operational_result["rows"] else {}
-    simulation_row = simulation_result["rows"][0] if simulation_result["rows"] else {}
-
-    profiled_employees = (
-        int_value(operational_row.get("profiled_count"))
-        or int_value(operational_row.get("profiled_employee_count"))
+@_bind_to_core
+def _sf_talent_profiled_count(
+    operational_row: dict[str, Any],
+    profile_rows: list[dict[str, Any]],
+) -> int:
+    return (
+        _sf_talent_int(operational_row.get("profiled_count"))
+        or _sf_talent_int(operational_row.get("profiled_employee_count"))
         or len(profile_rows)
     )
-    roles_profiled = int_value(operational_row.get("role_count")) or len(role_rows)
-    mobility_observed = int_value(operational_row.get("mobility_observed_count")) or sum(
-        1 for row in mobility_rows if int_value(row.get("movement_events")) > 0
-    )
-    readiness_calculable_rows = sum(
+
+
+@_bind_to_core
+def _sf_talent_readiness_counts(
+    operational_row: dict[str, Any],
+    readiness_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    calculable_rows = sum(
         1
         for row in readiness_rows
-        if clean_status(row.get("readiness_status")) not in {"insufficient_data", "blocked", "missing"}
+        if (
+            _sf_talent_status(row.get("readiness_status"))
+            not in {"insufficient_data", "blocked", "missing"}
+            or _sf_talent_status(row.get("source_mode"))
+            in {"cpa_real", "benchmark_internal"}
+        )
     )
-    readiness_calculable = (
-        int_value(operational_row.get("calculable_count"))
-        or int_value(operational_row.get("calculable_employee_count"))
-        if operational_row
-        else readiness_calculable_rows
-    )
-    readiness_insufficient_rows = sum(
+    insufficient_rows = sum(
         1
         for row in readiness_rows
-        if clean_status(row.get("readiness_status")) == "insufficient_data"
+        if _sf_talent_status(row.get("readiness_status")) == "insufficient_data"
     )
-    readiness_insufficient = (
-        int_value(operational_row.get("readiness_pending_count"))
-        if operational_row
-        else readiness_insufficient_rows
+    if not operational_row:
+        return {
+            "readiness_calculable": calculable_rows,
+            "readiness_insufficient": insufficient_rows,
+        }
+    operational_calculable = (
+        _sf_talent_int(operational_row.get("calculable_count"))
+        or _sf_talent_int(operational_row.get("calculable_employee_count"))
     )
-    nine_box_available_rows = sum(
+    operational_pending = _sf_talent_int(operational_row.get("readiness_pending_count"))
+    return {
+        "readiness_calculable": max(operational_calculable, calculable_rows),
+        "readiness_insufficient": (
+            insufficient_rows if readiness_rows else operational_pending
+        ),
+    }
+
+
+@_bind_to_core
+def _sf_talent_nine_box_available_count(
+    operational_row: dict[str, Any],
+    nine_box_rows: list[dict[str, Any]],
+) -> int:
+    row_count = sum(
         1
         for row in nine_box_rows
-        if clean_status(row.get("box_status")) not in {"blocked", "insufficient_data", "missing"}
+        if (
+            _sf_talent_status(row.get("box_status"))
+            not in {"blocked", "insufficient_data", "missing"}
+            or _sf_talent_status(row.get("source_mode"))
+            in {"cpa_real", "benchmark_internal"}
+        )
     )
-    nine_box_available = (
-        int_value(operational_row.get("nine_box_classified_count"))
-        if operational_row
-        else nine_box_available_rows
-    )
-    roles_without_requirements = (
-        int_value(operational_row.get("roles_without_requirements"))
-        or int_value(operational_row.get("roles_without_requirements_count"))
-    )
-    high_severity_signals = int_value(operational_row.get("high_severity_signal_count"))
-    learning_blockers = int_value(operational_row.get("learning_blocker_count"))
-    recruiting_blockers = int_value(operational_row.get("recruiting_blocker_count"))
-    skill_gap_count = int_value(operational_row.get("skill_gap_count"))
-    skill_coverage_pct = operational_row.get("skill_coverage_pct")
-    operational_status = clean_status(operational_row.get("feature_status") or operational_result["status"])
-    readiness_status = clean_status(operational_row.get("readiness_status") or operational_status)
-    confidence = operational_row.get("confidence")
-    source_mode = clean_status(operational_row.get("source_mode") or "")
-    operational_label = str(operational_row.get("user_status_label") or "En espera de datos")
+    if operational_row:
+        return max(
+            _sf_talent_int(operational_row.get("nine_box_classified_count")),
+            row_count,
+        )
+    return row_count
 
-    profile_blockers = extract_blockers(profile_rows) or [
+
+@_bind_to_core
+def _sf_talent_source_mode(
+    operational_row: dict[str, Any],
+    readiness_rows: list[dict[str, Any]],
+) -> str:
+    modes = {_sf_talent_status(row.get("source_mode"), "") for row in readiness_rows}
+    if "cpa_real" in modes:
+        return "cpa_real"
+    if "benchmark_internal" in modes:
+        return "benchmark_internal"
+    return _sf_talent_status(operational_row.get("source_mode") or "")
+
+
+@_bind_to_core
+def _sf_talent_kpi_metrics(
+    rows: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    profile_rows = rows["profile_rows"]
+    role_rows = rows["role_rows"]
+    mobility_rows = rows["mobility_rows"]
+    readiness_rows = rows["readiness_rows"]
+    nine_box_rows = rows["nine_box_rows"]
+    operational_row = rows["operational_row"]
+    readiness_counts = _sf_talent_readiness_counts(operational_row, readiness_rows)
+    source_mode = _sf_talent_source_mode(operational_row, readiness_rows)
+    return {
+        "profiled_employees": _sf_talent_profiled_count(operational_row, profile_rows),
+        "roles_profiled": _sf_talent_int(operational_row.get("role_count")) or len(role_rows),
+        "mobility_observed": _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
+            1 for row in mobility_rows if _sf_talent_int(row.get("movement_events")) > 0
+        ),
+        "readiness_calculable": readiness_counts["readiness_calculable"],
+        "readiness_insufficient": readiness_counts["readiness_insufficient"],
+        "nine_box_available": _sf_talent_nine_box_available_count(
+            operational_row,
+            nine_box_rows,
+        ),
+        "roles_without_requirements": (
+            _sf_talent_int(operational_row.get("roles_without_requirements"))
+            or _sf_talent_int(operational_row.get("roles_without_requirements_count"))
+        ),
+        "high_severity_signals": _sf_talent_int(operational_row.get("high_severity_signal_count")),
+        "learning_blockers": _sf_talent_int(operational_row.get("learning_blocker_count")),
+        "recruiting_blockers": _sf_talent_int(operational_row.get("recruiting_blocker_count")),
+        "skill_gap_count": _sf_talent_int(operational_row.get("skill_gap_count")),
+        "skill_coverage_pct": operational_row.get("skill_coverage_pct"),
+        "operational_status": _sf_talent_status(
+            operational_row.get("feature_status") or results["operational_features"]["status"]
+        ),
+        "confidence": operational_row.get("confidence"),
+        "source_mode": source_mode,
+        "operational_label": str(operational_row.get("user_status_label") or "En espera de datos"),
+    }
+
+
+@_bind_to_core
+def _sf_talent_kpi_blockers(
+    rows: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+    metrics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    profile_rows = rows["profile_rows"]
+    role_rows = rows["role_rows"]
+    operational_row = rows["operational_row"]
+
+    profile_blockers = _sf_talent_extract_blockers(profile_rows) or [
         "Datos de competencias pendientes",
         "Datos de desempeno pendientes",
         "Datos de aspiracion pendientes",
     ]
-    role_blockers = extract_blockers(role_rows)
-    operational_blockers = extract_blockers([operational_row]) if operational_row else []
+    role_blockers = _sf_talent_extract_blockers(role_rows)
+    operational_blockers = _sf_talent_extract_blockers([operational_row]) if operational_row else []
     system_errors = [
         str(result.get("error"))
-        for result in (
-            profile_result,
-            role_result,
-            mobility_result,
-            readiness_result,
-            nine_box_result,
-            signals_result,
-            operational_result,
-            simulation_result,
-        )
+        for result in results.values()
         if result.get("error")
     ]
 
     blockers = []
-    if not profiled_employees or readiness_insufficient or readiness_calculable == 0:
+    has_operational_reference = (
+        metrics.get("source_mode") == "benchmark_internal"
+        and _sf_talent_int(metrics.get("readiness_calculable")) > 0
+    )
+    if (
+        not has_operational_reference
+        and (
+            not metrics["profiled_employees"]
+            or metrics["readiness_insufficient"]
+            or metrics["readiness_calculable"] == 0
+        )
+    ):
         blockers.append(
             {
                 "id": "talent_cpa_inputs_missing",
-                "status": "partial" if profiled_employees else "blocked",
+                "status": "partial" if metrics["profiled_employees"] else "blocked",
                 "title": "Datos de talento pendientes",
                 "detail": "Para clasificar talento se necesitan desempeno, competencias y aspiracion con datos suficientes.",
                 "items": operational_blockers or profile_blockers,
             }
         )
-    if roles_without_requirements or role_blockers:
+    if metrics["roles_without_requirements"] or role_blockers:
         blockers.append(
             {
                 "id": "talent_role_requirements_partial",
@@ -685,144 +808,263 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             "detail": "Algunos golds de Talento no pudieron leerse en este workspace.",
             "items": system_errors,
         })
+    return blockers
 
-    signals = [
+
+@_bind_to_core
+def _sf_talent_signal_payloads(signal_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
         {
             "id": str(row.get("signal_id") or f"signal_{idx}"),
             "type": str(row.get("signal_type") or "priorizacion"),
             "severity": str(row.get("severity") or "medium"),
             "title": str(row.get("title") or "Senal Talento"),
-            "affected_count": int_value(row.get("affected_count")),
+            "affected_count": _sf_talent_int(row.get("affected_count")),
             "recommendation": str(row.get("recommendation") or ""),
             "status": str(row.get("status") or "recommendation_only"),
         }
         for idx, row in enumerate(signal_rows)
     ]
 
-    role_samples = sorted(
+
+@_bind_to_core
+def _sf_talent_role_samples(role_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
         [
             {
                 "label": str(row.get("role_name") or row.get("job_code") or "Sin rol"),
-                "job_code": public_value(row.get("job_code")),
-                "headcount": int_value(row.get("active_employee_count")),
+                "job_code": _sf_talent_public_value(row.get("job_code")),
+                "headcount": _sf_talent_int(row.get("active_employee_count")),
                 "status": str(row.get("role_profile_status") or "partial"),
             }
             for row in role_rows
         ],
-        key=lambda item: (-int_value(item["headcount"]), str(item["label"])),
+        key=lambda item: (-_sf_talent_int(item["headcount"]), str(item["label"])),
     )[:5]
+
+
+@_bind_to_core
+def _sf_talent_widget(
+    widget_id: str,
+    title: str,
+    value: Any,
+    dataset: str,
+    status: str,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    widget = {
+        "id": widget_id,
+        "title": title,
+        "value": value,
+        "dataset": dataset,
+        "href": _sf_talent_dataset_href(dataset),
+        "status": status,
+    }
+    if rows is not None:
+        widget["rows"] = rows
+    if detail is not None:
+        widget["detail"] = detail
+    return widget
+
+
+@_bind_to_core
+def _sf_talent_kpi_widgets(
+    datasets: dict[str, str],
+    results: dict[str, dict[str, Any]],
+    rows: dict[str, Any],
+    metrics: dict[str, Any],
+    signals: list[dict[str, Any]],
+    role_samples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    readiness_insufficient = metrics["readiness_insufficient"]
+    return [
+        _sf_talent_widget(
+            "sf_talent_profiled_employees",
+            "Empleados perfil Talento",
+            metrics["profiled_employees"],
+            datasets["employee_profile"],
+            results["employee_profile"]["status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_roles_profiled",
+            "Roles derivados",
+            metrics["roles_profiled"],
+            datasets["role_profile"],
+            results["role_profile"]["status"],
+            rows=role_samples,
+        ),
+        _sf_talent_widget(
+            "sf_talent_readiness_calculable",
+            "Perfiles calculables",
+            metrics["readiness_calculable"],
+            datasets["readiness"],
+            "partial" if readiness_insufficient else results["readiness"]["status"],
+            detail=f"{readiness_insufficient} en espera de datos",
+        ),
+        _sf_talent_widget(
+            "sf_talent_9box_available",
+            "Clasificacion disponible",
+            metrics["nine_box_available"],
+            datasets["nine_box"],
+            "blocked"
+            if rows["nine_box_rows"] and metrics["nine_box_available"] == 0
+            else results["nine_box"]["status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_operational_features",
+            "Analisis operativo",
+            metrics["operational_label"],
+            datasets["operational_features"],
+            metrics["operational_status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_mobility_observed",
+            "Movilidad observada",
+            metrics["mobility_observed"],
+            datasets["mobility_history"],
+            results["mobility_history"]["status"],
+        ),
+        _sf_talent_widget(
+            "sf_talent_active_signals",
+            "Senales Talento",
+            len(signals),
+            datasets["signals"],
+            results["signals"]["status"],
+        ),
+    ]
+
+
+@_bind_to_core
+def _sf_talent_kpi_profile_payload() -> dict[str, Any]:
+    return {
+        "industry": "retail",
+        "company_profile": "femsa",
+        "wisdom_bit": "WB-TALENTO",
+        "decision_mode": "recommendation_only",
+        "compensation_enabled": False,
+        "write_back_enabled": False,
+    }
+
+
+@_bind_to_core
+def _sf_talent_kpi_readiness_payload(
+    metrics: dict[str, Any],
+    *,
+    latest_simulation: dict[str, Any],
+    blockers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "ready_min": 80,
+        "near_min": 60,
+        "profiled_employees": metrics["profiled_employees"],
+        "calculable_employees": metrics["readiness_calculable"],
+        "insufficient_data_employees": metrics["readiness_insufficient"],
+        "nine_box_available": metrics["nine_box_available"],
+        "roles_without_requirements": metrics["roles_without_requirements"],
+        "high_severity_signals": metrics["high_severity_signals"],
+        "learning_blockers": metrics["learning_blockers"],
+        "recruiting_blockers": metrics["recruiting_blockers"],
+        "skill_gap_count": metrics["skill_gap_count"],
+        "skill_coverage_pct": _sf_talent_public_value(metrics["skill_coverage_pct"]),
+        "operational_status": metrics["operational_status"],
+        "operational_label": metrics["operational_label"],
+        "readiness_status": metrics["readiness_status"],
+        "confidence": _sf_talent_public_value(metrics["confidence"]),
+        "source_mode": metrics["source_mode"],
+        "latest_analysis_status": latest_simulation.get("status"),
+        "status": "partial" if metrics["readiness_insufficient"] or blockers else "ready",
+    }
+
+
+@_bind_to_core
+def _sf_talent_operational_features_payload(
+    datasets: dict[str, str],
+    metrics: dict[str, Any],
+    operational_row: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "dataset": datasets["operational_features"],
+        "status": metrics["operational_status"],
+        "label": metrics["operational_label"],
+        "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
+    }
+
+
+@_bind_to_core
+def _sf_talent_analysis_inputs_payload(
+    datasets: dict[str, str],
+    results: dict[str, dict[str, Any]],
+    metrics: dict[str, Any],
+    simulation_row: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "dataset": datasets["simulation_inputs"],
+        "status": _sf_talent_status(
+            simulation_row.get("input_status") or results["simulation_inputs"]["status"]
+        ),
+        "label": str(simulation_row.get("user_status_label") or metrics["operational_label"]),
+        "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
+        "contract_version": simulation_row.get("analysis_contract_version"),
+    }
+
+
+@_bind_to_core
+async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
+    """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
+
+    The endpoint intentionally returns aggregate coverage and blockers only.
+    C/P/A scores, salary values and individual PII are not exposed here.
+    """
+
+    datasets = _sf_talent_kpi_datasets()
+    results = await _sf_talent_kpi_results(datasets, user)
+    latest_simulation = await _sf_talent_latest_simulation_result(user)
+    rows = _sf_talent_kpi_rows(results)
+    metrics = _sf_talent_kpi_metrics(rows, results)
+    metrics["readiness_status"] = _sf_talent_status(
+        rows["operational_row"].get("readiness_status")
+        or (
+            "benchmark_internal"
+            if metrics["source_mode"] == "benchmark_internal"
+            and metrics["readiness_calculable"] > 0
+            else ""
+        )
+        or metrics["operational_status"]
+    )
+    blockers = _sf_talent_kpi_blockers(rows, results, metrics)
+    signals = _sf_talent_signal_payloads(rows["signal_rows"])
+    role_samples = _sf_talent_role_samples(rows["role_rows"])
+    widgets = _sf_talent_kpi_widgets(datasets, results, rows, metrics, signals, role_samples)
 
     generated_at = datetime.now(UTC).isoformat()
     tenant_id, workspace_id = _workspace_scope(user)
-
-    widgets = [
-        {
-            "id": "sf_talent_profiled_employees",
-            "title": "Empleados perfil Talento",
-            "value": profiled_employees,
-            "dataset": datasets["employee_profile"],
-            "href": dataset_href(datasets["employee_profile"]),
-            "status": profile_result["status"],
-        },
-        {
-            "id": "sf_talent_roles_profiled",
-            "title": "Roles derivados",
-            "value": roles_profiled,
-            "dataset": datasets["role_profile"],
-            "href": dataset_href(datasets["role_profile"]),
-            "status": role_result["status"],
-            "rows": role_samples,
-        },
-        {
-            "id": "sf_talent_readiness_calculable",
-            "title": "Perfiles calculables",
-            "value": readiness_calculable,
-            "dataset": datasets["readiness"],
-            "href": dataset_href(datasets["readiness"]),
-            "status": "partial" if readiness_insufficient else readiness_result["status"],
-            "detail": f"{readiness_insufficient} en espera de datos",
-        },
-        {
-            "id": "sf_talent_9box_available",
-            "title": "Clasificacion disponible",
-            "value": nine_box_available,
-            "dataset": datasets["nine_box"],
-            "href": dataset_href(datasets["nine_box"]),
-            "status": "blocked" if nine_box_rows and nine_box_available == 0 else nine_box_result["status"],
-        },
-        {
-            "id": "sf_talent_operational_features",
-            "title": "Analisis operativo",
-            "value": operational_label,
-            "dataset": datasets["operational_features"],
-            "href": dataset_href(datasets["operational_features"]),
-            "status": operational_status,
-        },
-        {
-            "id": "sf_talent_mobility_observed",
-            "title": "Movilidad observada",
-            "value": mobility_observed,
-            "dataset": datasets["mobility_history"],
-            "href": dataset_href(datasets["mobility_history"]),
-            "status": mobility_result["status"],
-        },
-        {
-            "id": "sf_talent_active_signals",
-            "title": "Senales Talento",
-            "value": len(signals),
-            "dataset": datasets["signals"],
-            "href": dataset_href(datasets["signals"]),
-            "status": signals_result["status"],
-        },
-    ]
+    operational_row = rows["operational_row"]
+    simulation_row = rows["simulation_row"]
 
     return {
         "generated_at": generated_at,
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "profile": {
-            "industry": "retail",
-            "company_profile": "femsa",
-            "wisdom_bit": "WB-TALENTO",
-            "decision_mode": "recommendation_only",
-            "compensation_enabled": False,
-            "write_back_enabled": False,
-        },
-        "readiness": {
-            "ready_min": 80,
-            "near_min": 60,
-            "profiled_employees": profiled_employees,
-            "calculable_employees": readiness_calculable,
-            "insufficient_data_employees": readiness_insufficient,
-            "nine_box_available": nine_box_available,
-            "roles_without_requirements": roles_without_requirements,
-            "high_severity_signals": high_severity_signals,
-            "learning_blockers": learning_blockers,
-            "recruiting_blockers": recruiting_blockers,
-            "skill_gap_count": skill_gap_count,
-            "skill_coverage_pct": public_value(skill_coverage_pct),
-            "operational_status": operational_status,
-            "operational_label": operational_label,
-            "readiness_status": readiness_status,
-            "confidence": public_value(confidence),
-            "source_mode": source_mode,
-            "latest_analysis_status": latest_simulation.get("status"),
-            "status": "partial" if readiness_insufficient or blockers else "ready",
-        },
-        "operational_features": {
-            "dataset": datasets["operational_features"],
-            "status": operational_status,
-            "label": operational_label,
-            "row": {key: public_value(value) for key, value in operational_row.items()},
-        },
-        "analysis_inputs": {
-            "dataset": datasets["simulation_inputs"],
-            "status": clean_status(simulation_row.get("input_status") or simulation_result["status"]),
-            "label": str(simulation_row.get("user_status_label") or operational_label),
-            "scenario_count": int_value(simulation_row.get("scenario_count")),
-            "contract_version": simulation_row.get("analysis_contract_version"),
-        },
+        "profile": _sf_talent_kpi_profile_payload(),
+        "readiness": _sf_talent_kpi_readiness_payload(
+            metrics,
+            latest_simulation=latest_simulation,
+            blockers=blockers,
+        ),
+        "operational_features": _sf_talent_operational_features_payload(
+            datasets,
+            metrics,
+            operational_row,
+        ),
+        "analysis_inputs": _sf_talent_analysis_inputs_payload(
+            datasets,
+            results,
+            metrics,
+            simulation_row,
+        ),
         "latest_simulation": latest_simulation,
         "widgets": widgets,
         "signals": signals,
@@ -839,81 +1081,10 @@ def _sf_talent_dataset_href(dataset: str) -> str:
 
 
 @_bind_to_core
-def _sf_talent_box_definitions() -> list[dict[str, Any]]:
-    return [
-        {
-            "box_id": "enigma",
-            "box_label": "Enigma",
-            "potential_band": "high",
-            "performance_band": "low",
-            "movement_action": "Cambio de rol o coaching de fit",
-            "display_order": 1,
-        },
-        {
-            "box_id": "crecimiento",
-            "box_label": "Crecimiento",
-            "potential_band": "high",
-            "performance_band": "medium",
-            "movement_action": "Asignacion de estiramiento y rotacion",
-            "display_order": 2,
-        },
-        {
-            "box_id": "estrella",
-            "box_label": "Estrella",
-            "potential_band": "high",
-            "performance_band": "high",
-            "movement_action": "Sucesion, promocion y retencion",
-            "display_order": 3,
-        },
-        {
-            "box_id": "dilema",
-            "box_label": "Dilema",
-            "potential_band": "medium",
-            "performance_band": "low",
-            "movement_action": "Plan de mejora o reubicacion",
-            "display_order": 4,
-        },
-        {
-            "box_id": "core",
-            "box_label": "Core",
-            "potential_band": "medium",
-            "performance_band": "medium",
-            "movement_action": "Retener y desarrollo continuo",
-            "display_order": 5,
-        },
-        {
-            "box_id": "alto_impacto",
-            "box_label": "Alto Impacto",
-            "potential_band": "medium",
-            "performance_band": "high",
-            "movement_action": "Promocion a siguiente nivel",
-            "display_order": 6,
-        },
-        {
-            "box_id": "riesgo",
-            "box_label": "Riesgo",
-            "potential_band": "low",
-            "performance_band": "low",
-            "movement_action": "PIP o gestion de salida",
-            "display_order": 7,
-        },
-        {
-            "box_id": "efectivo",
-            "box_label": "Efectivo",
-            "potential_band": "low",
-            "performance_band": "medium",
-            "movement_action": "Mantener en rol",
-            "display_order": 8,
-        },
-        {
-            "box_id": "experto",
-            "box_label": "Experto",
-            "potential_band": "low",
-            "performance_band": "high",
-            "movement_action": "Via tecnica y retencion en rol",
-            "display_order": 9,
-        },
-    ]
+def _sf_talent_box_definitions(
+    definitions: list[dict[str, Any]] = TALENT_BOX_DEFINITIONS,
+) -> list[dict[str, Any]]:
+    return [dict(item) for item in definitions]
 
 
 @_bind_to_core
@@ -1056,80 +1227,23 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-def _sf_talent_metadata_entities() -> list[dict[str, Any]]:
+def _sf_talent_metadata_entities(
+    entities: list[dict[str, Any]] = TALENT_METADATA_ENTITIES,
+) -> list[dict[str, Any]]:
     return [
-        {
-            "id": "performance",
-            "kb": "KB-DESEMPENO",
-            "entity": "FormHeader/PerformanceReview",
-            "required_for": "performance_score",
-            "status": "blocked",
-            "blockers": ["PerformanceReview/FormHeader metadata pending", "GoalPlan scope pending"],
-        },
-        {
-            "id": "competency",
-            "kb": "KB-COMPETENCIAS",
-            "entity": "MDF competencies/skills",
-            "required_for": "competency_score",
-            "status": "blocked",
-            "blockers": ["Competency/skill MDF entity depends on tenant metadata"],
-        },
-        {
-            "id": "aspiration",
-            "kb": "KB-ASPIRACION",
-            "entity": "Career interest / aspiration",
-            "required_for": "aspiration_score",
-            "status": "blocked",
-            "blockers": ["Career interest entity depends on tenant metadata"],
-        },
-        {
-            "id": "roles",
-            "kb": "KB-ROLES",
-            "entity": "Position / FOJobCode",
-            "required_for": "role_requirements",
-            "status": "partial",
-            "blockers": ["Position requirements pending", "Required skills pending"],
-        },
-        {
-            "id": "recruiting",
-            "kb": "KB-RECLUTAMIENTO",
-            "entity": "JobApplication",
-            "required_for": "pipeline_signal",
-            "status": "partial",
-            "blockers": ["JobApplication scope pending"],
-        },
-        {
-            "id": "learning",
-            "kb": "KB-APRENDIZAJE",
-            "entity": "LearningItem/LearningAssignment/LearningHistory",
-            "required_for": "learning_certification_signal",
-            "status": "partial",
-            "blockers": ["Learning entities and certification expiry scope pending"],
-        },
-        {
-            "id": "succession",
-            "kb": "WB-TALENTO",
-            "entity": "Succession / calibration",
-            "required_for": "promotion_alignment",
-            "status": "partial",
-            "blockers": ["Succession and calibration entities pending"],
-        },
+        {**item, "blockers": list(item.get("blockers", []))}
+        for item in entities
     ]
-
-
-_SF_TALENT_LIVE_COMPONENT_IDS = {
-    "roles": "role_requirements",
-    "succession": "movement_events",
-}
 
 
 @_bind_to_core
 def _sf_talent_live_component_for(
     entity_id: str,
     live_components: dict[str, dict[str, Any]],
+    component_ids: dict[str, str] = TALENT_LIVE_COMPONENT_IDS,
 ) -> dict[str, Any]:
     return live_components.get(entity_id) or live_components.get(
-        _SF_TALENT_LIVE_COMPONENT_IDS.get(entity_id, "")
+        component_ids.get(entity_id, "")
     ) or {}
 
 
@@ -1267,12 +1381,8 @@ async def _sf_talent_live_metadata_readiness(user: dict | None) -> dict[str, Any
 
 
 @_bind_to_core
-async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
-    dataset = "sap_successfactors_talent_9box_operational"
-    result = await _sf_talent_gold_result(dataset, user, 100)
-    rows = result["rows"]
+def _sf_talent_9box_cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows_by_box = {str(row.get("box_key") or ""): row for row in rows}
-
     cells: list[dict[str, Any]] = []
     for definition in _sf_talent_box_definitions():
         row = rows_by_box.get(definition["box_id"], {})
@@ -1297,10 +1407,76 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
                 "href": f"/control-room/talent?box={definition['box_id']}",
             }
         )
+    return cells
 
-    total_employees = sum(_sf_talent_int(cell["employee_count"]) for cell in cells)
-    total_ready = sum(_sf_talent_int(cell["ready_count"]) for cell in cells)
-    total_reference = sum(_sf_talent_int(cell.get("reference_count")) for cell in cells)
+
+@_bind_to_core
+def _sf_talent_9box_totals(cells: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "employees": sum(_sf_talent_int(cell["employee_count"]) for cell in cells),
+        "ready": sum(_sf_talent_int(cell["ready_count"]) for cell in cells),
+        "reference": sum(_sf_talent_int(cell.get("reference_count")) for cell in cells),
+        "blocked": sum(_sf_talent_int(cell["blocked_count"]) for cell in cells),
+        "cells": len(cells),
+    }
+
+
+@_bind_to_core
+def _sf_talent_9box_operational_rows_from_detail(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_box: dict[str, dict[str, int]] = {}
+    for row in rows:
+        box_key = str(row.get("box_key") or "").strip()
+        if not box_key:
+            continue
+        counts = by_box.setdefault(
+            box_key,
+            {
+                "employee_count": 0,
+                "ready_count": 0,
+                "benchmark_count": 0,
+                "blocked_count": 0,
+            },
+        )
+        counts["employee_count"] += 1
+        box_status = _sf_talent_status(row.get("box_status"), "")
+        source_mode = _sf_talent_status(row.get("source_mode"), "")
+        is_ready = (
+            box_status not in {"blocked", "insufficient_data", "missing", ""}
+            or source_mode in {"cpa_real", "benchmark_internal"}
+        )
+        if is_ready:
+            counts["ready_count"] += 1
+        else:
+            counts["blocked_count"] += 1
+        if source_mode == "benchmark_internal" or box_status == "benchmark_internal":
+            counts["benchmark_count"] += 1
+    return [
+        {
+            "box_key": box_key,
+            "employee_count": counts["employee_count"],
+            "ready_count": counts["ready_count"],
+            "benchmark_count": counts["benchmark_count"],
+            "blocked_count": counts["blocked_count"],
+            "box_status": (
+                "benchmark_internal"
+                if counts["benchmark_count"] and counts["ready_count"]
+                else "ready"
+                if counts["ready_count"]
+                else "blocked"
+            ),
+        }
+        for box_key, counts in by_box.items()
+    ]
+
+
+@_bind_to_core
+def _sf_talent_9box_blockers(
+    result: dict[str, Any],
+    *,
+    total_ready: int,
+) -> list[dict[str, Any]]:
     blockers = _sf_talent_blockers_from_results([result])
     if total_ready == 0:
         blockers.append(
@@ -1312,6 +1488,25 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
                 "items": ["KB-COMPETENCIAS", "KB-DESEMPENO", "KB-ASPIRACION"],
             }
         )
+    return blockers
+
+
+@_bind_to_core
+async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
+    dataset = "sap_successfactors_talent_9box_operational"
+    result = await _sf_talent_gold_result(dataset, user, 100)
+    cells = _sf_talent_9box_cells(result["rows"])
+    totals = _sf_talent_9box_totals(cells)
+    if totals["ready"] == 0:
+        detail_result = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
+        detail_rows = _sf_talent_9box_operational_rows_from_detail(detail_result["rows"])
+        detail_cells = _sf_talent_9box_cells(detail_rows)
+        detail_totals = _sf_talent_9box_totals(detail_cells)
+        if detail_totals["ready"] > 0:
+            cells = detail_cells
+            totals = detail_totals
+            result = detail_result
+    blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1320,14 +1515,8 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "dataset": dataset,
-        "status": "ready" if total_ready else result["status"] if result["status"] != "ready" else "blocked",
-        "totals": {
-            "employees": total_employees,
-            "ready": total_ready,
-            "reference": total_reference,
-            "blocked": sum(_sf_talent_int(cell["blocked_count"]) for cell in cells),
-            "cells": len(cells),
-        },
+        "status": "ready" if totals["ready"] else result["status"] if result["status"] != "ready" else "blocked",
+        "totals": totals,
         "cells": cells,
         "blockers": blockers,
         "privacy": {
@@ -1424,24 +1613,34 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
 
 
 @_bind_to_core
-async def sap_successfactors_talent_metadata_readiness(
-    user: dict | None,
-) -> dict[str, Any]:
-    cpa = await _sf_talent_gold_result("sap_successfactors_talent_cpa_scores", user, 1000)
-    live = await _sf_talent_live_metadata_readiness(user)
-    cpa_rows = cpa["rows"]
-    ready_cpa = sum(1 for row in cpa_rows if _sf_talent_status(row.get("cpa_status")) == "ready")
+def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str, int]:
+    ready_cpa = sum(
+        1 for row in cpa_rows if _sf_talent_status(row.get("cpa_status")) == "ready"
+    )
     insufficient = sum(
         1
         for row in cpa_rows
         if _sf_talent_status(row.get("cpa_status")) in {"insufficient_data", "blocked"}
     )
-    entities = _sf_talent_metadata_entities()
-    live_components = {
+    return {"ready_cpa": ready_cpa, "insufficient": insufficient}
+
+
+@_bind_to_core
+def _sf_talent_live_components(live: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    return {
         str(component.get("id")): component
         for component in (live or {}).get("components", [])
         if isinstance(component, dict)
     }
+
+
+@_bind_to_core
+def _sf_talent_entities_for_readiness(
+    ready_cpa: int,
+    live: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    entities = _sf_talent_metadata_entities()
+    live_components = _sf_talent_live_components(live)
     if live_components:
         entities = [_sf_talent_merge_live_metadata(entity, live_components) for entity in entities]
     if ready_cpa:
@@ -1451,42 +1650,71 @@ async def sap_successfactors_talent_metadata_readiness(
             else entity
             for entity in entities
         ]
+    return entities
 
-    dataset_blockers = _sf_talent_blockers_from_results([cpa])
+
+@_bind_to_core
+def _sf_talent_live_readiness_summary(live: dict[str, Any] | None) -> dict[str, Any]:
     live_status = str((live or {}).get("status") or "unavailable")
-    live_summary = (live or {}).get("summary") if isinstance((live or {}).get("summary"), dict) else {}
-    live_required_ready = _sf_talent_int(live_summary.get("required_ready"))
-    live_required_total = _sf_talent_int(live_summary.get("required_total"))
-    live_blockers_raw = [
-        item for item in (live or {}).get("blockers", []) if isinstance(item, dict)
-    ]
-    live_blockers: list[dict[str, Any]] = []
+    raw_summary = (live or {}).get("summary")
+    live_summary = raw_summary if isinstance(raw_summary, dict) else {}
+    return {
+        "live_status": live_status,
+        "live_required_ready": _sf_talent_int(live_summary.get("required_ready")),
+        "live_required_total": _sf_talent_int(live_summary.get("required_total")),
+    }
+
+
+@_bind_to_core
+def _sf_talent_live_blocker_items(live: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return [item for item in (live or {}).get("blockers", []) if isinstance(item, dict)]
+
+
+@_bind_to_core
+def _sf_talent_live_readiness_blockers(
+    live: dict[str, Any] | None,
+    ready_cpa: int,
+    live_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    live_status = live_summary["live_status"]
+    live_required_ready = live_summary["live_required_ready"]
+    live_required_total = live_summary["live_required_total"]
+    live_blockers_raw = _sf_talent_live_blocker_items(live)
     if live_status == "unavailable":
-        live_blockers.append(
+        return [
             {
                 "id": "talent_metadata_preflight_unavailable",
                 "status": "unavailable",
                 "title": "Preflight SAP no disponible",
-                "detail": str((live or {}).get("error") or "No se pudo consultar metadata viva de SuccessFactors."),
-                "items": [str(item.get("reason") or item.get("component") or item) for item in live_blockers_raw] or ["cartridge_unavailable"],
+                "detail": str(
+                    (live or {}).get("error")
+                    or "No se pudo consultar metadata viva de SuccessFactors."
+                ),
+                "items": [
+                    str(item.get("reason") or item.get("component") or item)
+                    for item in live_blockers_raw
+                ]
+                or ["cartridge_unavailable"],
             }
-        )
-    elif live_required_total and live_required_ready < live_required_total:
-        live_blockers.append(
+        ]
+    if live_required_total and live_required_ready < live_required_total:
+        return [
             {
                 "id": "talent_metadata_cpa_inputs_missing",
                 "status": "blocked",
                 "title": "Metadata C/P/A incompleta",
                 "detail": "SuccessFactors todavia no expone todas las entidades/campos/permisos para competencia, desempeno y aspiracion.",
                 "items": [
-                    ", ".join(str(entity) for entity in item.get("entities_checked", []) if entity)
+                    ", ".join(
+                        str(entity) for entity in item.get("entities_checked", []) if entity
+                    )
                     or str(item.get("component") or item.get("reason") or "metadata")
                     for item in live_blockers_raw
                 ],
             }
-        )
-    elif live_required_total and ready_cpa == 0:
-        live_blockers.append(
+        ]
+    if live_required_total and ready_cpa == 0:
+        return [
             {
                 "id": "talent_cpa_materialization_pending",
                 "status": "partial",
@@ -1494,7 +1722,41 @@ async def sap_successfactors_talent_metadata_readiness(
                 "detail": "SAP expone las entidades requeridas; falta extraer/materializar los scores C/P/A para desbloquear 9-box real.",
                 "items": ["sap_successfactors_talent_cpa_scores"],
             }
-        )
+        ]
+    return []
+
+
+@_bind_to_core
+def _sf_talent_metadata_readiness_summary(
+    entities: list[dict[str, Any]],
+    counts: dict[str, int],
+    live_summary: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "cpa_ready_employees": counts["ready_cpa"],
+        "cpa_insufficient_employees": counts["insufficient"],
+        "entities": len(entities),
+        "blocked_entities": sum(1 for entity in entities if entity["status"] == "blocked"),
+        "live_required_ready": live_summary["live_required_ready"],
+        "live_required_total": live_summary["live_required_total"],
+        "live_status": live_summary["live_status"],
+    }
+
+
+@_bind_to_core
+async def sap_successfactors_talent_metadata_readiness(
+    user: dict | None,
+) -> dict[str, Any]:
+    cpa = await _sf_talent_gold_result("sap_successfactors_talent_cpa_scores", user, 1000)
+    live = await _sf_talent_live_metadata_readiness(user)
+    cpa_rows = cpa["rows"]
+    counts = _sf_talent_cpa_readiness_counts(cpa_rows)
+    entities = _sf_talent_entities_for_readiness(counts["ready_cpa"], live)
+    dataset_blockers = _sf_talent_blockers_from_results([cpa])
+    live_summary = _sf_talent_live_readiness_summary(live)
+    live_blockers = _sf_talent_live_readiness_blockers(
+        live, counts["ready_cpa"], live_summary
+    )
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1502,16 +1764,12 @@ async def sap_successfactors_talent_metadata_readiness(
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "status": "ready" if ready_cpa and insufficient == 0 else "partial",
-        "summary": {
-            "cpa_ready_employees": ready_cpa,
-            "cpa_insufficient_employees": insufficient,
-            "entities": len(entities),
-            "blocked_entities": sum(1 for entity in entities if entity["status"] == "blocked"),
-            "live_required_ready": live_required_ready,
-            "live_required_total": live_required_total,
-            "live_status": live_status,
-        },
+        "status": "ready" if counts["ready_cpa"] and counts["insufficient"] == 0 else "partial",
+        "summary": _sf_talent_metadata_readiness_summary(
+            entities,
+            counts,
+            live_summary,
+        ),
         "entities": entities,
         "blockers": dataset_blockers + live_blockers,
         "live_preflight": live or {
@@ -2042,84 +2300,109 @@ def _normalize_standard_anomaly(
 
 
 @_bind_to_core
+def _replicon_allocation_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "over_warning": _threshold_value(
+            thresholds,
+            "replicon",
+            "over_allocation",
+            "pct_asignacion",
+            "warning_value",
+            110,
+        ),
+        "over_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "over_allocation",
+            "pct_asignacion",
+            "critical_value",
+            130,
+        ),
+        "under_warning": _threshold_value(
+            thresholds,
+            "replicon",
+            "under_allocation",
+            "pct_asignacion",
+            "warning_value",
+            40,
+        ),
+        "under_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "under_allocation",
+            "pct_asignacion",
+            "critical_value",
+            20,
+        ),
+    }
+
+
+@_bind_to_core
+def _replicon_allocation_state(
+    pct: float | None,
+    threshold_values: dict[str, float],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
+    over_warning = threshold_values["over_warning"]
+    under_warning = threshold_values["under_warning"]
+    if pct is None or under_warning <= pct <= over_warning:
+        return None
+    if pct > over_warning:
+        item_type = "over_allocation"
+        threshold_state = (
+            "critical" if pct >= threshold_values["over_critical"] else "warning"
+        )
+        warning_default = 110
+        critical_default = 130
+    else:
+        item_type = "under_allocation"
+        threshold_state = (
+            "critical" if pct <= threshold_values["under_critical"] else "warning"
+        )
+        warning_default = 40
+        critical_default = 20
+    return {
+        "item_type": item_type,
+        "threshold_state": threshold_state,
+        "severity": "high" if threshold_state == "critical" else "medium",
+        "threshold_refs": [
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                item_type,
+                "pct_asignacion",
+                warning_default=warning_default,
+                critical_default=critical_default,
+                currency="PCT",
+            )
+        ],
+    }
+
+
+@_bind_to_core
 def _normalize_replicon_allocation(
     source: ControlRoomSource,
     row: dict[str, Any],
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
     pct = _num(row.get("pct_asignacion"))
-    over_warning = _threshold_value(
+    allocation_state = _replicon_allocation_state(
+        pct,
+        _replicon_allocation_thresholds(thresholds),
         thresholds,
-        "replicon",
-        "over_allocation",
-        "pct_asignacion",
-        "warning_value",
-        110,
     )
-    over_critical = _threshold_value(
-        thresholds,
-        "replicon",
-        "over_allocation",
-        "pct_asignacion",
-        "critical_value",
-        130,
-    )
-    under_warning = _threshold_value(
-        thresholds,
-        "replicon",
-        "under_allocation",
-        "pct_asignacion",
-        "warning_value",
-        40,
-    )
-    under_critical = _threshold_value(
-        thresholds,
-        "replicon",
-        "under_allocation",
-        "pct_asignacion",
-        "critical_value",
-        20,
-    )
-    if pct is None or under_warning <= pct <= over_warning:
+    if allocation_state is None or pct is None:
         return None
     consultor = str(row.get("consultor") or "Sin consultor").strip()
     proyecto = str(
         row.get("proyecto") or row.get("project_name") or "Sin proyecto"
     ).strip()
-    item_type = "over_allocation" if pct > 110 else "under_allocation"
-    if pct > over_warning:
-        item_type = "over_allocation"
-        threshold_state = "critical" if pct >= over_critical else "warning"
-        severity = "high" if threshold_state == "critical" else "medium"
-        threshold_refs = [
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "over_allocation",
-                "pct_asignacion",
-                warning_default=110,
-                critical_default=130,
-                currency="PCT",
-            )
-        ]
-    else:
-        item_type = "under_allocation"
-        threshold_state = "critical" if pct <= under_critical else "warning"
-        severity = "high" if threshold_state == "critical" else "medium"
-        threshold_refs = [
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "under_allocation",
-                "pct_asignacion",
-                warning_default=40,
-                critical_default=20,
-                currency="PCT",
-            )
-        ]
+    item_type = allocation_state["item_type"]
     item = _base_item(
         source,
-        {**row, "severity": severity},
+        {**row, "severity": allocation_state["severity"]},
         item_type,
         f"{consultor}:{proyecto}",
         consultor,
@@ -2135,20 +2418,26 @@ def _normalize_replicon_allocation(
             "details": {**item["details"], **row},
         }
     )
-    return _attach_thresholds(item, threshold_refs, threshold_state)
+    return _attach_thresholds(
+        item,
+        allocation_state["threshold_refs"],
+        allocation_state["threshold_state"],
+    )
 
 
 @_bind_to_core
-def _normalize_replicon_timesheet(
-    source: ControlRoomSource,
-    row: dict[str, Any],
-    thresholds: ThresholdMap | None = None,
-) -> dict[str, Any] | None:
+def _replicon_timesheet_ratio(row: dict[str, Any]) -> tuple[float, float, float] | None:
     total = _num(row.get("horas_total")) or _num(row.get("horas_totales")) or 0
     no_billable = _num(row.get("horas_no_facturables")) or 0
     if total <= 0:
         return None
-    ratio = no_billable / total
+    return total, no_billable, no_billable / total
+
+
+@_bind_to_core
+def _replicon_timesheet_threshold_ratios(
+    thresholds: ThresholdMap | None = None,
+) -> tuple[float, float]:
     warning_ratio = _threshold_value(
         thresholds,
         "replicon",
@@ -2165,12 +2454,55 @@ def _normalize_replicon_timesheet(
         "critical_value",
         0.55,
     )
+    return warning_ratio, critical_ratio
+
+
+@_bind_to_core
+def _replicon_timesheet_context(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "consultor": str(row.get("consultor") or "Sin consultor").strip(),
+        "proyecto": str(
+            row.get("proyecto") or row.get("project_name") or "Sin proyecto"
+        ).strip(),
+        "period_text": f" en {row.get('semana') or row.get('mes')}"
+        if (row.get("semana") or row.get("mes"))
+        else "",
+    }
+
+
+@_bind_to_core
+def _replicon_timesheet_threshold_ref(
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _threshold_ref(
+            thresholds,
+            "replicon",
+            "non_billable_ratio",
+            "horas_no_facturables_ratio",
+            warning_default=0.35,
+            critical_default=0.55,
+            currency="PCT",
+        )
+    ]
+
+
+@_bind_to_core
+def _normalize_replicon_timesheet(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
+    ratio_tuple = _replicon_timesheet_ratio(row)
+    if ratio_tuple is None:
+        return None
+    _total, _no_billable, ratio = ratio_tuple
+    warning_ratio, critical_ratio = _replicon_timesheet_threshold_ratios(thresholds)
     if ratio < warning_ratio:
         return None
-    consultor = str(row.get("consultor") or "Sin consultor").strip()
-    proyecto = str(
-        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
-    ).strip()
+    context = _replicon_timesheet_context(row)
+    consultor = context["consultor"]
+    proyecto = context["proyecto"]
     threshold_state = "critical" if ratio >= critical_ratio else "warning"
     severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(
@@ -2180,12 +2512,10 @@ def _normalize_replicon_timesheet(
         f"{consultor}:{proyecto}",
         consultor,
     )
-    period = row.get("semana") or row.get("mes")
-    period_text = f" en {period}" if period else ""
     item.update(
         {
             "title": "Horas no facturables fuera de rango",
-            "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{period_text}.",
+            "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{context['period_text']}.",
             "recommendation": "Validar causa con PM/RM, reclasificar si procede y ajustar forecast de margen.",
             "root_cause": "Registro de tiempo no facturable alto frente al total reportado.",
             "impact": "Puede erosionar margen y ocultar demanda no planificada.",
@@ -2194,19 +2524,109 @@ def _normalize_replicon_timesheet(
     )
     return _attach_thresholds(
         item,
-        [
+        _replicon_timesheet_threshold_ref(thresholds),
+        threshold_state,
+    )
+
+
+@_bind_to_core
+def _replicon_pnl_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "margin_warning": _threshold_value(
+            thresholds,
+            "replicon",
+            "low_margin",
+            "margen_bruto_pct",
+            "warning_value",
+            20,
+        ),
+        "margin_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "low_margin",
+            "margen_bruto_pct",
+            "critical_value",
+            0,
+        ),
+        "wip_warning": _threshold_value(
+            thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000
+        ),
+        "wip_critical": _threshold_value(
+            thresholds,
+            "replicon",
+            "wip_variance",
+            "wip_usd",
+            "critical_value",
+            25000,
+        ),
+    }
+
+
+@_bind_to_core
+def _replicon_pnl_state(
+    margin: float | None,
+    wip: float,
+    threshold_values: dict[str, float],
+) -> dict[str, Any] | None:
+    margin_breached = (
+        margin is not None and margin < threshold_values["margin_warning"]
+    )
+    wip_breached = abs(wip) >= threshold_values["wip_warning"]
+    if not margin_breached and not wip_breached:
+        return None
+    if margin is not None and margin < threshold_values["margin_critical"]:
+        severity = "critical"
+        threshold_state = "critical"
+    elif abs(wip) >= threshold_values["wip_critical"]:
+        severity = "critical"
+        threshold_state = "critical"
+    elif margin_breached:
+        severity = "high"
+        threshold_state = "warning"
+    else:
+        severity = "medium"
+        threshold_state = "warning"
+    return {
+        "item_type": "low_margin" if margin_breached else "wip_variance",
+        "margin_breached": margin_breached,
+        "wip_breached": wip_breached,
+        "severity": severity,
+        "threshold_state": threshold_state,
+    }
+
+
+@_bind_to_core
+def _replicon_pnl_threshold_refs(
+    state: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    refs = []
+    if state["margin_breached"]:
+        refs.append(
             _threshold_ref(
                 thresholds,
                 "replicon",
-                "non_billable_ratio",
-                "horas_no_facturables_ratio",
-                warning_default=0.35,
-                critical_default=0.55,
+                "low_margin",
+                "margen_bruto_pct",
+                warning_default=20,
+                critical_default=0,
                 currency="PCT",
             )
-        ],
-        threshold_state,
-    )
+        )
+    if state["wip_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "replicon",
+                "wip_variance",
+                "wip_usd",
+                warning_default=5000,
+                critical_default=25000,
+            )
+        )
+    return refs
 
 
 @_bind_to_core
@@ -2217,43 +2637,17 @@ def _normalize_replicon_pnl(
 ) -> dict[str, Any] | None:
     margin = _num(row.get("margen_bruto_pct"))
     wip = _num(row.get("wip_usd")) or 0
-    margin_warning = _threshold_value(
-        thresholds, "replicon", "low_margin", "margen_bruto_pct", "warning_value", 20
-    )
-    margin_critical = _threshold_value(
-        thresholds, "replicon", "low_margin", "margen_bruto_pct", "critical_value", 0
-    )
-    wip_warning = _threshold_value(
-        thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000
-    )
-    wip_critical = _threshold_value(
-        thresholds, "replicon", "wip_variance", "wip_usd", "critical_value", 25000
-    )
-    margin_breached = margin is not None and margin < margin_warning
-    wip_breached = abs(wip) >= wip_warning
-    if not margin_breached and not wip_breached:
+    state = _replicon_pnl_state(margin, wip, _replicon_pnl_thresholds(thresholds))
+    if state is None:
         return None
     proyecto = str(
         row.get("proyecto") or row.get("project_name") or "Sin proyecto"
     ).strip()
     manager = str(row.get("revenue_manager") or "Sin RM").strip()
-    if margin is not None and margin < margin_critical:
-        severity = "critical"
-        threshold_state = "critical"
-    elif abs(wip) >= wip_critical:
-        severity = "critical"
-        threshold_state = "critical"
-    elif margin_breached:
-        severity = "high"
-        threshold_state = "warning"
-    else:
-        severity = "medium"
-        threshold_state = "warning"
-    item_type = "low_margin" if margin_breached else "wip_variance"
     item = _base_item(
         source,
-        {**row, "severity": severity},
-        item_type,
+        {**row, "severity": state["severity"]},
+        state["item_type"],
         proyecto,
         str(row.get("project_name") or proyecto),
     )
@@ -2267,31 +2661,11 @@ def _normalize_replicon_pnl(
             "details": {**item["details"], **row},
         }
     )
-    refs = []
-    if margin_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "low_margin",
-                "margen_bruto_pct",
-                warning_default=20,
-                critical_default=0,
-                currency="PCT",
-            )
-        )
-    if wip_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "replicon",
-                "wip_variance",
-                "wip_usd",
-                warning_default=5000,
-                critical_default=25000,
-            )
-        )
-    return _attach_thresholds(item, refs, threshold_state)
+    return _attach_thresholds(
+        item,
+        _replicon_pnl_threshold_refs(state, thresholds),
+        state["threshold_state"],
+    )
 
 
 @_bind_to_core
@@ -2475,8 +2849,7 @@ def _sf_talent_math_provenance(
 
 
 @_bind_to_core
-def _normalize_successfactors_talent_signal(
-    source: ControlRoomSource,
+def _sf_talent_signal_context(
     row: dict[str, Any],
 ) -> dict[str, Any] | None:
     signal_id = str(row.get("signal_id") or "").strip()
@@ -2506,6 +2879,294 @@ def _normalize_successfactors_talent_signal(
         source_row_count=source_row_count,
         affected_count=affected_count,
     )
+    return {
+        "signal_id": signal_id,
+        "signal_type": signal_type,
+        "title": title,
+        "recommendation": recommendation,
+        "affected_count": affected_count,
+        "generated_at": generated_at,
+        "materialized_at": materialized_at,
+        "source_row_count": source_row_count,
+        "readiness_status": readiness_status,
+        "blockers": blockers,
+        "confidence": confidence,
+        "deviation_pct": 1.0 if affected_count > 0 else 0.0,
+        "severity": _severity(row.get("severity")),
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_priority(context: dict[str, Any], source: ControlRoomSource) -> dict[str, Any]:
+    severity = context["severity"]
+    affected_count = context["affected_count"]
+    priority_score = min(
+        100,
+        SEVERITY_WEIGHT[severity] * 18 + min(24, affected_count // 25) + 20,
+    )
+    return {
+        "score": priority_score,
+        "band": "critical"
+        if priority_score >= 90
+        else "high"
+        if priority_score >= 75
+        else "medium"
+        if priority_score >= 55
+        else "low",
+        "drivers": [
+            {
+                "label": "Severidad",
+                "value": severity,
+                "points": SEVERITY_WEIGHT[severity] * 18,
+            },
+            {
+                "label": "Afectados",
+                "value": affected_count,
+                "points": min(24, affected_count // 25),
+            },
+            {
+                "label": "Fuente Gold",
+                "value": source.dataset,
+                "points": 20,
+            },
+        ],
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_root_cause(readiness_status: str) -> str:
+    if readiness_status in {"ready", "gold_ready", "materialized", "partial"}:
+        return "Senal Gold de WisdomBit Talento generada desde SuccessFactors."
+    return "Datos Talent insuficientes para explicar la senal con evidencia completa."
+
+
+@_bind_to_core
+def _sf_talent_signal_impact(affected_count: int) -> str:
+    if affected_count:
+        return f"{affected_count} registros de Talento requieren revision supervisada."
+    return "Talento requiere validacion de metadata/materializacion antes de decidir."
+
+
+@_bind_to_core
+def _sf_talent_signal_baseline(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "method": "gold_readiness_count_v1",
+        "actual_value": context["affected_count"],
+        "expected_value": 0,
+        "sample_count": context["source_row_count"],
+        "confidence": context["confidence"],
+        "readiness_status": context["readiness_status"],
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_summary(
+    source: ControlRoomSource,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "signal_id": context["signal_id"],
+        "metric_name": context["signal_id"],
+        "signal_type": context["signal_type"],
+        "signal_subtype": "recommendation_only",
+        "source_system": "sap_successfactors",
+        "source_dataset": source.dataset,
+        "severity": context["severity"],
+        "summary": context["title"],
+        "affected_count": context["affected_count"],
+        "recommendation": context["recommendation"],
+        "generated_at": context["generated_at"],
+        "deviation_pct": context["deviation_pct"],
+        "confidence": context["confidence"],
+        "sample_count": context["source_row_count"],
+        "readiness_status": context["readiness_status"],
+        "recommendation_only": True,
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_hypotheses(
+    context: dict[str, Any],
+    *,
+    blocked: bool,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "title": (
+                "Datos Talent listos para revision supervisada"
+                if not blocked
+                else "Evidencia Talent insuficiente"
+            ),
+            "rationale": (
+                f"La senal se basa en {context['source_row_count']} fila(s) Gold internas; "
+                "no incluye PII, compensacion ni write-back."
+            ),
+            "confidence": context["confidence"],
+        }
+    ]
+
+
+@_bind_to_core
+def _sf_talent_signal_options(
+    context: dict[str, Any],
+    *,
+    priority_score: int,
+    blocked: bool,
+) -> list[dict[str, Any]]:
+    score_explanation = (
+        "; ".join(context["blockers"]) or "Completar metadata y materializacion Talent."
+        if blocked
+        else context["recommendation"]
+    )
+    return [
+        {
+            "option_id": "review_talent_signal",
+            "label": "Remediar datos Talent" if blocked else "Revisar senal de Talento",
+            "action_kind": "prepare_successfactors_review",
+            "impact_expected": context["affected_count"],
+            "time_cost": 1,
+            "risk": 1,
+            "score": priority_score,
+            "score_explanation": score_explanation,
+            "selected": True,
+            "recommendation_only": True,
+        },
+        {
+            "option_id": "monitor_talent_signal",
+            "label": "Monitorear sin cambio inmediato",
+            "action_kind": "monitor_only",
+            "impact_expected": 0,
+            "time_cost": 0.5,
+            "risk": 2,
+            "score": max(0, priority_score - 20),
+            "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
+            "recommendation_only": True,
+        },
+    ]
+
+
+@_bind_to_core
+def _sf_talent_signal_intelligence(
+    *,
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    context: dict[str, Any],
+    priority_score: int,
+) -> dict[str, Any]:
+    readiness_status = context["readiness_status"]
+    blocked = readiness_status in {"blocked", "insufficient_data"}
+    return {
+        "baseline": _sf_talent_signal_baseline(context),
+        "signal": _sf_talent_signal_summary(source, context),
+        "evidence_pack": _sf_talent_signal_evidence_pack(
+            source=source,
+            signal_id=context["signal_id"],
+            title=context["title"],
+            affected_count=context["affected_count"],
+            source_row_count=context["source_row_count"],
+            readiness_status=readiness_status,
+            generated_at=context["generated_at"],
+            materialized_at=context["materialized_at"],
+            blockers=context["blockers"],
+        ),
+        "hypotheses": _sf_talent_signal_hypotheses(context, blocked=blocked),
+        "options": _sf_talent_signal_options(
+            context,
+            priority_score=priority_score,
+            blocked=blocked,
+        ),
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_base_item(
+    source: ControlRoomSource,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    return _base_item(
+        source,
+        {"severity": context["severity"], "generated_at": context["generated_at"]},
+        context["signal_type"],
+        context["signal_id"],
+        context["title"],
+    )
+
+
+@_bind_to_core
+def _sf_talent_signal_item_fields(
+    *,
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    context: dict[str, Any],
+    priority: dict[str, Any],
+    math_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    priority_score = priority["score"]
+    readiness_status = context["readiness_status"]
+    return {
+        "title": context["title"],
+        "description": context["recommendation"],
+        "recommendation": context["recommendation"],
+        "root_cause": _sf_talent_signal_root_cause(readiness_status),
+        "impact": _sf_talent_signal_impact(context["affected_count"]),
+        "details": {
+            **_sf_talent_signal_details(row),
+            "source_dataset": source.dataset,
+            "source_row_count": context["source_row_count"],
+            "materialized_at": context["materialized_at"],
+            "readiness_status": readiness_status,
+            "blockers": context["blockers"],
+            "recommendation_only": True,
+        },
+        "detected_at": context["generated_at"],
+        "status": "open",
+        "data_status": "gold_ready",
+        "source_system": "sap_successfactors",
+        "dataset": source.dataset,
+        "gold_table": source.dataset,
+        "freshness_at": context["generated_at"],
+        "freshness_field": "generated_at",
+        "control_origin": "sap_successfactors_talent_signal",
+        "advisory": True,
+        "recommendation_only": True,
+        "priority": priority,
+        "intelligence": _sf_talent_signal_intelligence(
+            source=source,
+            row=row,
+            context=context,
+            priority_score=priority_score,
+        ),
+        "monte_carlo": math_provenance["monte_carlo"],
+        "bayesian_calibration": math_provenance["bayesian_calibration"],
+        "math_provenance": math_provenance,
+        "selected_option_id": "review_talent_signal",
+        "execution_status": "not_started",
+    }
+
+
+@_bind_to_core
+def _sf_talent_signal_lookup_sql(signal_id: str) -> str:
+    escaped_signal_id = signal_id.replace("'", "''")
+    return (
+        "SELECT * FROM sap_successfactors_talent_signals "
+        f"WHERE signal_id = '{escaped_signal_id}'"
+    )
+
+
+@_bind_to_core
+def _normalize_successfactors_talent_signal(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    context = _sf_talent_signal_context(row)
+    if not context:
+        return None
+    signal_id = context["signal_id"]
+    generated_at = context["generated_at"]
+    readiness_status = context["readiness_status"]
+    affected_count = context["affected_count"]
+    source_row_count = context["source_row_count"]
+    confidence = context["confidence"]
     math_provenance = _sf_talent_math_provenance(
         signal_id=signal_id,
         affected_count=affected_count,
@@ -2513,179 +3174,18 @@ def _normalize_successfactors_talent_signal(
         readiness_status=readiness_status,
         confidence=confidence,
     )
-    deviation_pct = 1.0 if affected_count > 0 else 0.0
-    severity = _severity(row.get("severity"))
-    item = _base_item(
-        source,
-        {"severity": severity, "generated_at": generated_at},
-        signal_type,
-        signal_id,
-        title,
-    )
-    priority_score = min(
-        100,
-        SEVERITY_WEIGHT[severity] * 18 + min(24, affected_count // 25) + 20,
-    )
+    priority = _sf_talent_signal_priority(context, source)
+    item = _sf_talent_signal_base_item(source, context)
     item.update(
-        {
-            "title": title,
-            "description": recommendation,
-            "recommendation": recommendation,
-            "root_cause": (
-                "Senal Gold de WisdomBit Talento generada desde SuccessFactors."
-                if readiness_status in {"ready", "gold_ready", "materialized", "partial"}
-                else "Datos Talent insuficientes para explicar la senal con evidencia completa."
-            ),
-            "impact": (
-                f"{affected_count} registros de Talento requieren revision supervisada."
-                if affected_count
-                else "Talento requiere validacion de metadata/materializacion antes de decidir."
-            ),
-            "details": {
-                **_sf_talent_signal_details(row),
-                "source_dataset": source.dataset,
-                "source_row_count": source_row_count,
-                "materialized_at": materialized_at,
-                "readiness_status": readiness_status,
-                "blockers": blockers,
-                "recommendation_only": True,
-            },
-            "detected_at": generated_at,
-            "status": "open",
-            "data_status": "gold_ready",
-            "source_system": "sap_successfactors",
-            "dataset": source.dataset,
-            "gold_table": source.dataset,
-            "freshness_at": generated_at,
-            "freshness_field": "generated_at",
-            "control_origin": "sap_successfactors_talent_signal",
-            "advisory": True,
-            "recommendation_only": True,
-            "priority": {
-                "score": priority_score,
-                "band": "critical"
-                if priority_score >= 90
-                else "high"
-                if priority_score >= 75
-                else "medium"
-                if priority_score >= 55
-                else "low",
-                "drivers": [
-                    {
-                        "label": "Severidad",
-                        "value": severity,
-                        "points": SEVERITY_WEIGHT[severity] * 18,
-                    },
-                    {
-                        "label": "Afectados",
-                        "value": affected_count,
-                        "points": min(24, affected_count // 25),
-                    },
-                    {
-                        "label": "Fuente Gold",
-                        "value": source.dataset,
-                        "points": 20,
-                    },
-                ],
-            },
-            "intelligence": {
-                "baseline": {
-                    "method": "gold_readiness_count_v1",
-                    "actual_value": affected_count,
-                    "expected_value": 0,
-                    "sample_count": source_row_count,
-                    "confidence": confidence,
-                    "readiness_status": readiness_status,
-                },
-                "signal": {
-                    "signal_id": signal_id,
-                    "metric_name": signal_id,
-                    "signal_type": signal_type,
-                    "signal_subtype": "recommendation_only",
-                    "source_system": "sap_successfactors",
-                    "source_dataset": source.dataset,
-                    "severity": severity,
-                    "summary": title,
-                    "affected_count": affected_count,
-                    "recommendation": recommendation,
-                    "generated_at": generated_at,
-                    "deviation_pct": deviation_pct,
-                    "confidence": confidence,
-                    "sample_count": source_row_count,
-                    "readiness_status": readiness_status,
-                    "recommendation_only": True,
-                },
-                "evidence_pack": _sf_talent_signal_evidence_pack(
-                    source=source,
-                    signal_id=signal_id,
-                    title=title,
-                    affected_count=affected_count,
-                    source_row_count=source_row_count,
-                    readiness_status=readiness_status,
-                    generated_at=generated_at,
-                    materialized_at=materialized_at,
-                    blockers=blockers,
-                ),
-                "hypotheses": [
-                    {
-                        "title": (
-                            "Datos Talent listos para revision supervisada"
-                            if readiness_status in {"ready", "gold_ready", "materialized", "partial"}
-                            else "Evidencia Talent insuficiente"
-                        ),
-                        "rationale": (
-                            f"La senal se basa en {source_row_count} fila(s) Gold internas; "
-                            "no incluye PII, compensacion ni write-back."
-                        ),
-                        "confidence": confidence,
-                    }
-                ],
-                "options": [
-                    {
-                        "option_id": "review_talent_signal",
-                        "label": (
-                            "Revisar senal de Talento"
-                            if readiness_status not in {"blocked", "insufficient_data"}
-                            else "Remediar datos Talent"
-                        ),
-                        "action_kind": "prepare_successfactors_review",
-                        "impact_expected": affected_count,
-                        "time_cost": 1,
-                        "risk": 1,
-                        "score": priority_score,
-                        "score_explanation": (
-                            recommendation
-                            if readiness_status not in {"blocked", "insufficient_data"}
-                            else "; ".join(blockers) or "Completar metadata y materializacion Talent."
-                        ),
-                        "selected": True,
-                        "recommendation_only": True,
-                    },
-                    {
-                        "option_id": "monitor_talent_signal",
-                        "label": "Monitorear sin cambio inmediato",
-                        "action_kind": "monitor_only",
-                        "impact_expected": 0,
-                        "time_cost": 0.5,
-                        "risk": 2,
-                        "score": max(0, priority_score - 20),
-                        "score_explanation": "Mantener seguimiento hasta el proximo refresh.",
-                        "recommendation_only": True,
-                    },
-                ],
-            },
-            "monte_carlo": math_provenance["monte_carlo"],
-            "bayesian_calibration": math_provenance["bayesian_calibration"],
-            "math_provenance": math_provenance,
-            "selected_option_id": "review_talent_signal",
-            "execution_status": "not_started",
-        }
+        _sf_talent_signal_item_fields(
+            source=source,
+            row=row,
+            context=context,
+            priority=priority,
+            math_provenance=math_provenance,
+        )
     )
-    escaped_signal_id = signal_id.replace("'", "''")
-    item["sql"] = (
-        "SELECT * FROM sap_successfactors_talent_signals "
-        f"WHERE signal_id = '{escaped_signal_id}'"
-    )
+    item["sql"] = _sf_talent_signal_lookup_sql(signal_id)
     return item
 
 
@@ -2746,6 +3246,102 @@ def _normalize_s4_revenue(
 
 
 @_bind_to_core
+def _s4_backlog_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "age_warning": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "oldest_age_days",
+            "warning_value",
+            45,
+        ),
+        "age_critical": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "oldest_age_days",
+            "critical_value",
+            90,
+        ),
+        "value_warning": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "open_value",
+            "warning_value",
+            50000,
+        ),
+        "value_critical": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "open_value",
+            "critical_value",
+            250000,
+        ),
+    }
+
+
+@_bind_to_core
+def _s4_backlog_state(
+    age: float,
+    open_value: float,
+    threshold_values: dict[str, float],
+) -> dict[str, Any] | None:
+    age_breached = age >= threshold_values["age_warning"]
+    value_breached = open_value >= threshold_values["value_warning"]
+    if not age_breached and not value_breached:
+        return None
+    threshold_state = (
+        "critical"
+        if age >= threshold_values["age_critical"]
+        or open_value >= threshold_values["value_critical"]
+        else "warning"
+    )
+    return {
+        "age_breached": age_breached,
+        "value_breached": value_breached,
+        "threshold_state": threshold_state,
+        "severity": "critical" if threshold_state == "critical" else "high",
+    }
+
+
+@_bind_to_core
+def _s4_backlog_threshold_refs(
+    state: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    refs = []
+    if state["age_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "aged_sales_backlog",
+                "oldest_age_days",
+                warning_default=45,
+                critical_default=90,
+                currency="DAYS",
+            )
+        )
+    if state["value_breached"]:
+        refs.append(
+            _threshold_ref(
+                thresholds,
+                "sap_s4hana",
+                "aged_sales_backlog",
+                "open_value",
+                warning_default=50000,
+                critical_default=250000,
+            )
+        )
+    return refs
+
+
+@_bind_to_core
 def _normalize_s4_backlog(
     source: ControlRoomSource,
     row: dict[str, Any],
@@ -2753,50 +3349,13 @@ def _normalize_s4_backlog(
 ) -> dict[str, Any] | None:
     age = _num(row.get("oldest_age_days")) or 0
     open_value = _num(row.get("open_value")) or 0
-    age_warning = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "oldest_age_days",
-        "warning_value",
-        45,
-    )
-    age_critical = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "oldest_age_days",
-        "critical_value",
-        90,
-    )
-    value_warning = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "open_value",
-        "warning_value",
-        50000,
-    )
-    value_critical = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "aged_sales_backlog",
-        "open_value",
-        "critical_value",
-        250000,
-    )
-    age_breached = age >= age_warning
-    value_breached = open_value >= value_warning
-    if not age_breached and not value_breached:
+    state = _s4_backlog_state(age, open_value, _s4_backlog_thresholds(thresholds))
+    if state is None:
         return None
     customer = str(row.get("customer_code") or "Sin cliente").strip()
-    threshold_state = (
-        "critical" if age >= age_critical or open_value >= value_critical else "warning"
-    )
-    severity = "critical" if threshold_state == "critical" else "high"
     item = _base_item(
         source,
-        {**row, "severity": severity},
+        {**row, "severity": state["severity"]},
         "aged_sales_backlog",
         customer,
         customer,
@@ -2811,31 +3370,67 @@ def _normalize_s4_backlog(
             "details": {**item["details"], **row},
         }
     )
-    refs = []
-    if age_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "sap_s4hana",
-                "aged_sales_backlog",
-                "oldest_age_days",
-                warning_default=45,
-                critical_default=90,
-                currency="DAYS",
-            )
+    return _attach_thresholds(
+        item,
+        _s4_backlog_threshold_refs(state, thresholds),
+        state["threshold_state"],
+    )
+
+
+@_bind_to_core
+def _s4_supplier_spend_thresholds(
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, float]:
+    return {
+        "warning_spend": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            "warning_value",
+            250000,
+        ),
+        "critical_spend": _threshold_value(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            "critical_value",
+            750000,
+        ),
+    }
+
+
+@_bind_to_core
+def _s4_supplier_spend_state(
+    spend: float,
+    threshold_values: dict[str, float],
+) -> dict[str, Any] | None:
+    if spend < threshold_values["warning_spend"]:
+        return None
+    threshold_state = (
+        "critical" if spend >= threshold_values["critical_spend"] else "warning"
+    )
+    return {
+        "threshold_state": threshold_state,
+        "severity": "high" if threshold_state == "critical" else "medium",
+    }
+
+
+@_bind_to_core
+def _s4_supplier_spend_threshold_refs(
+    thresholds: ThresholdMap | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _threshold_ref(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            warning_default=250000,
+            critical_default=750000,
         )
-    if value_breached:
-        refs.append(
-            _threshold_ref(
-                thresholds,
-                "sap_s4hana",
-                "aged_sales_backlog",
-                "open_value",
-                warning_default=50000,
-                critical_default=250000,
-            )
-        )
-    return _attach_thresholds(item, refs, threshold_state)
+    ]
 
 
 @_bind_to_core
@@ -2845,31 +3440,17 @@ def _normalize_s4_supplier_spend(
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
     spend = _num(row.get("total_spend")) or 0
-    warning_spend = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "supplier_spend_concentration",
-        "total_spend",
-        "warning_value",
-        250000,
+    state = _s4_supplier_spend_state(
+        spend,
+        _s4_supplier_spend_thresholds(thresholds),
     )
-    critical_spend = _threshold_value(
-        thresholds,
-        "sap_s4hana",
-        "supplier_spend_concentration",
-        "total_spend",
-        "critical_value",
-        750000,
-    )
-    if spend < warning_spend:
+    if state is None:
         return None
     supplier = str(row.get("supplier_code") or "Sin proveedor").strip()
     month = str(row.get("spend_month") or "").strip()
-    threshold_state = "critical" if spend >= critical_spend else "warning"
-    severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(
         source,
-        {**row, "severity": severity},
+        {**row, "severity": state["severity"]},
         "supplier_spend_concentration",
         f"{supplier}:{month}",
         supplier,
@@ -2886,17 +3467,8 @@ def _normalize_s4_supplier_spend(
     )
     return _attach_thresholds(
         item,
-        [
-            _threshold_ref(
-                thresholds,
-                "sap_s4hana",
-                "supplier_spend_concentration",
-                "total_spend",
-                warning_default=250000,
-                critical_default=750000,
-            )
-        ],
-        threshold_state,
+        _s4_supplier_spend_threshold_refs(thresholds),
+        state["threshold_state"],
     )
 
 
@@ -2940,15 +3512,10 @@ def _ratio(numerator: float, denominator: float) -> float | None:
 
 
 @_bind_to_core
-def _financial_metrics(
+def _financial_relevant_sources(
     sources: list[dict[str, Any]],
-    rows_by_dataset: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    pnl_rows = rows_by_dataset.get("pnl_mensual", [])
-    revenue_rows = rows_by_dataset.get("revenue_by_customer", [])
-    backlog_rows = rows_by_dataset.get("open_sales_orders", [])
-    purchase_rows = rows_by_dataset.get("purchase_spend_by_supplier", [])
-    relevant = {
+    return {
         source["dataset"]: {
             "status": source["status"],
             "count": int(source.get("count") or 0),
@@ -2965,19 +3532,9 @@ def _financial_metrics(
         }
     }
 
-    revenue_usd = _money_sum(pnl_rows, "revenue_usd")
-    billed_usd = _money_sum(pnl_rows, "facturacion_mes_usd")
-    wip_usd = _money_sum(pnl_rows, "wip_usd")
-    cost_usd = _money_sum(pnl_rows, "costo_total")
-    margin_usd = _money_sum(pnl_rows, "margen_bruto_usd")
-    sales_revenue = _money_sum(revenue_rows, "revenue")
-    backlog_value = _money_sum(backlog_rows, "open_value")
-    purchase_spend = _money_sum(purchase_rows, "total_spend")
-    open_orders = int(_money_sum(backlog_rows, "open_orders"))
-    oldest_backlog_days = int(
-        max((_num(row.get("oldest_age_days")) or 0 for row in backlog_rows), default=0)
-    )
 
+@_bind_to_core
+def _financial_risk_projects(pnl_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     risk_rows: list[dict[str, Any]] = []
     for row in pnl_rows:
         margin_pct = _num(row.get("margen_bruto_pct"))
@@ -3000,7 +3557,11 @@ def _financial_metrics(
             -abs(row["wip_usd"]),
         )
     )
+    return risk_rows[:6]
 
+
+@_bind_to_core
+def _financial_source_status(relevant: dict[str, Any]) -> str:
     available = any(
         source["status"] == "ok" and source.get("count", 0)
         for source in relevant.values()
@@ -3018,22 +3579,41 @@ def _financial_metrics(
         status = "empty"
     else:
         status = "not_installed"
+    return status
 
+
+@_bind_to_core
+def _financial_metrics(
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    pnl_rows = rows_by_dataset.get("pnl_mensual", [])
+    revenue_rows = rows_by_dataset.get("revenue_by_customer", [])
+    backlog_rows = rows_by_dataset.get("open_sales_orders", [])
+    purchase_rows = rows_by_dataset.get("purchase_spend_by_supplier", [])
+    relevant = _financial_relevant_sources(sources)
+    revenue_usd = _money_sum(pnl_rows, "revenue_usd")
+    margin_usd = _money_sum(pnl_rows, "margen_bruto_usd")
     return {
-        "status": status,
+        "status": _financial_source_status(relevant),
         "sources": relevant,
         "revenue_usd": revenue_usd,
-        "billed_usd": billed_usd,
-        "wip_usd": wip_usd,
-        "cost_usd": cost_usd,
+        "billed_usd": _money_sum(pnl_rows, "facturacion_mes_usd"),
+        "wip_usd": _money_sum(pnl_rows, "wip_usd"),
+        "cost_usd": _money_sum(pnl_rows, "costo_total"),
         "margin_usd": margin_usd,
         "margin_pct": _ratio(margin_usd, revenue_usd),
-        "sales_revenue": sales_revenue,
-        "backlog_value": backlog_value,
-        "open_orders": open_orders,
-        "oldest_backlog_days": oldest_backlog_days,
-        "purchase_spend": purchase_spend,
-        "risk_projects": risk_rows[:6],
+        "sales_revenue": _money_sum(revenue_rows, "revenue"),
+        "backlog_value": _money_sum(backlog_rows, "open_value"),
+        "open_orders": int(_money_sum(backlog_rows, "open_orders")),
+        "oldest_backlog_days": int(
+            max(
+                (_num(row.get("oldest_age_days")) or 0 for row in backlog_rows),
+                default=0,
+            )
+        ),
+        "purchase_spend": _money_sum(purchase_rows, "total_spend"),
+        "risk_projects": _financial_risk_projects(pnl_rows),
     }
 
 
@@ -3081,6 +3661,260 @@ def _lessons_for_item(item: dict[str, Any]) -> list[str]:
 
 
 @_bind_to_core
+def _persisted_signal_intelligence(
+    metadata: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    intelligence = (
+        metadata.get("intelligence")
+        if isinstance(metadata.get("intelligence"), dict)
+        else {}
+    )
+    decision_intelligence = metadata.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = intelligence.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = {}
+    if decision_intelligence:
+        intelligence = {
+            **intelligence,
+            "decision_intelligence": decision_intelligence,
+        }
+    analysis_evidence = (
+        metadata.get("analysis_evidence")
+        if isinstance(metadata.get("analysis_evidence"), dict)
+        else {}
+    )
+    return intelligence, decision_intelligence, analysis_evidence
+
+
+@_bind_to_core
+def _persisted_item_identity_fields(
+    public_row: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    severity: str,
+    kind: str,
+    is_agent_alert: bool,
+) -> dict[str, Any]:
+    return {
+        "id": str(public_row.get("item_id") or ""),
+        "kind": kind,
+        "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
+        "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
+        "domain": public_row.get("domain") or "Operacion",
+        "module": metadata.get("module")
+        or metadata.get("agent_name")
+        or ("Agente monitor" if is_agent_alert else "Intelligence Engine"),
+        "cartridge": public_row.get("cartridge_id") or "platform",
+        "source_dataset": public_row.get("source_dataset") or "intelligence_signals",
+        "source_system": metadata.get("source_system")
+        or public_row.get("cartridge_id")
+        or "platform",
+        "dataset": metadata.get("dataset")
+        or public_row.get("source_dataset")
+        or "intelligence_signals",
+        "gold_table": metadata.get("gold_table"),
+        "freshness_at": metadata.get("freshness_at"),
+        "freshness_field": metadata.get("freshness_field"),
+        "data_status": metadata.get("data_status") or "gold_ready",
+        "evidence_pack_id": metadata.get("evidence_pack_id"),
+        "evidence_pack": metadata.get("evidence_pack")
+        if isinstance(metadata.get("evidence_pack"), dict)
+        else {},
+        "entity_kind": public_row.get("entity_kind") or "Entidad",
+        "entity_id": public_row.get("entity_id") or "",
+        "entity_label": public_row.get("entity_label")
+        or public_row.get("entity_id")
+        or "Entidad",
+        "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
+        "severity": severity,
+        "severity_weight": SEVERITY_WEIGHT[severity],
+        "detected_at": public_row.get("last_seen_at")
+        or public_row.get("first_seen_at")
+        or "",
+    }
+
+
+@_bind_to_core
+def _persisted_item_narrative_fields(
+    public_row: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    item_id: str,
+    is_agent_alert: bool,
+) -> dict[str, Any]:
+    escaped_item_id = item_id.replace("'", "''")
+    return {
+        "details": metadata.get("details")
+        if isinstance(metadata.get("details"), dict)
+        else {},
+        "title": public_row.get("title")
+        or ("Alerta de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
+        "description": metadata.get("description")
+        or public_row.get("title")
+        or (
+            "Alerta advisory de agente monitor"
+            if is_agent_alert
+            else "Senal de inteligencia operativa"
+        ),
+        "recommendation": metadata.get("recommendation")
+        or "Revisar evidencia y seleccionar una opcion supervisada.",
+        "root_cause": metadata.get("root_cause")
+        or (
+            "Hipotesis generada por agente monitor."
+            if is_agent_alert
+            else "Desviacion contra baseline."
+        ),
+        "impact": metadata.get("impact") or "Impacto operativo pendiente de validar.",
+        "sql": metadata.get("sql")
+        or (
+            f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'"
+            if is_agent_alert
+            else f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'"
+        ),
+    }
+
+
+@_bind_to_core
+def _persisted_item_state_fields(
+    public_row: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "decision_id": public_row.get("decision_id"),
+        "impact_estimate": public_row.get("impact_estimate"),
+        "impact_currency": public_row.get("impact_currency"),
+        "confidence": public_row.get("confidence"),
+        "priority_score": public_row.get("priority_score"),
+        "thresholds_applied": metadata.get("thresholds_applied") or [],
+        "threshold_state": metadata.get("threshold_state") or "default",
+        "control_origin": metadata.get("control_origin"),
+        "capabilities": metadata.get("capabilities")
+        if isinstance(metadata.get("capabilities"), dict)
+        else {},
+        "priority": metadata.get("priority")
+        if isinstance(metadata.get("priority"), dict)
+        else {},
+        "selected_option_id": public_row.get("selected_option_id")
+        or metadata.get("selected_option_id"),
+        "execution_status": public_row.get("execution_status")
+        or metadata.get("execution_status"),
+        "alert_state": metadata.get("alert_state")
+        if isinstance(metadata.get("alert_state"), dict)
+        else {},
+        "control_state": metadata.get("control_state")
+        if isinstance(metadata.get("control_state"), dict)
+        else {},
+        "lessons": metadata.get("lessons"),
+        "learned_rules": metadata.get("learned_rules"),
+        "lesson_applications": metadata.get("lesson_applications")
+        if isinstance(metadata.get("lesson_applications"), list)
+        else [],
+    }
+
+
+@_bind_to_core
+def _persisted_item_analysis_fields(
+    metadata: dict[str, Any],
+    *,
+    intelligence: dict[str, Any],
+    decision_intelligence: dict[str, Any],
+    analysis_evidence: dict[str, Any],
+    source: str,
+    occurrence_count: int,
+    is_agent_alert: bool,
+) -> dict[str, Any]:
+    return {
+        "math_provenance": metadata.get("math_provenance")
+        if isinstance(metadata.get("math_provenance"), dict)
+        else {},
+        "monte_carlo": metadata.get("monte_carlo")
+        if isinstance(metadata.get("monte_carlo"), dict)
+        else {},
+        "bayesian_calibration": metadata.get("bayesian_calibration")
+        if isinstance(metadata.get("bayesian_calibration"), dict)
+        else {},
+        "decision_intelligence": decision_intelligence,
+        "intelligence": intelligence,
+        "source": source,
+        "advisory": bool(metadata.get("advisory")) or is_agent_alert,
+        "agent_id": metadata.get("agent_id"),
+        "agent_run_id": metadata.get("agent_run_id"),
+        "analysis_type": metadata.get("analysis_type")
+        or analysis_evidence.get("analysis_type"),
+        "engine": metadata.get("origin")
+        or analysis_evidence.get("engine")
+        or metadata.get("engine"),
+        "engine_run_id": metadata.get("engine_run_id")
+        or analysis_evidence.get("engine_run_id"),
+        "analysis_evidence": analysis_evidence,
+        "deduped": occurrence_count > 1,
+        "occurrence_count": occurrence_count,
+        "hypothesis": metadata.get("hypothesis"),
+        "expected_outcome": metadata.get("expected_outcome"),
+    }
+
+
+@_bind_to_core
+def _persisted_item_timestamp_fields(public_row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "first_seen_at": public_row.get("first_seen_at"),
+        "last_seen_at": public_row.get("last_seen_at"),
+        "resolved_at": public_row.get("resolved_at"),
+        "dismissed_at": public_row.get("dismissed_at"),
+    }
+
+
+@_bind_to_core
+def _persisted_intelligence_payload(row: Any) -> dict[str, Any]:
+    public_row = _row_to_public(row)
+    metadata = _details(public_row.get("metadata"))
+    severity = _severity(public_row.get("severity"))
+    status = str(public_row.get("status") or "open")
+    if status not in ITEM_STATUSES:
+        status = "open"
+    kind = str(public_row.get("item_kind") or "intelligence_signal")
+    is_agent_alert = kind == "agent_alert"
+    source = str(
+        metadata.get("source") or ("agent" if is_agent_alert else "intelligence")
+    )
+    occurrence_count = int(metadata.get("occurrence_count") or 1)
+    intelligence, decision_intelligence, analysis_evidence = (
+        _persisted_signal_intelligence(metadata)
+    )
+    item_id = str(public_row.get("item_id") or "")
+    return {
+        **_persisted_item_identity_fields(
+            public_row,
+            metadata,
+            severity=severity,
+            kind=kind,
+            is_agent_alert=is_agent_alert,
+        ),
+        **_persisted_item_narrative_fields(
+            public_row,
+            metadata,
+            item_id=item_id,
+            is_agent_alert=is_agent_alert,
+        ),
+        **_persisted_item_state_fields(public_row, metadata, status=status),
+        **_persisted_item_analysis_fields(
+            metadata,
+            intelligence=intelligence,
+            decision_intelligence=decision_intelligence,
+            analysis_evidence=analysis_evidence,
+            source=source,
+            occurrence_count=occurrence_count,
+            is_agent_alert=is_agent_alert,
+        ),
+        **_persisted_item_timestamp_fields(public_row),
+    }
+
+
+@_bind_to_core
 async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any]]:
     try:
         tenant_id, workspace_id = _workspace_scope(user)
@@ -3122,162 +3956,7 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         rows = await _run_with_db_scope(pool, user or {}, _load)
     except Exception:
         return []
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        public_row = _row_to_public(row)
-        metadata = _details(public_row.get("metadata"))
-        severity = _severity(public_row.get("severity"))
-        status = str(public_row.get("status") or "open")
-        if status not in ITEM_STATUSES:
-            status = "open"
-        item_id = str(public_row.get("item_id") or "")
-        kind = str(public_row.get("item_kind") or "intelligence_signal")
-        is_agent_alert = kind == "agent_alert"
-        escaped_item_id = item_id.replace("'", "''")
-        source = str(metadata.get("source") or ("agent" if is_agent_alert else "intelligence"))
-        occurrence_count = int(metadata.get("occurrence_count") or 1)
-        intelligence = (
-            metadata.get("intelligence")
-            if isinstance(metadata.get("intelligence"), dict)
-            else {}
-        )
-        decision_intelligence = metadata.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = intelligence.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = {}
-        if decision_intelligence:
-            intelligence = {
-                **intelligence,
-                "decision_intelligence": decision_intelligence,
-            }
-        analysis_evidence = (
-            metadata.get("analysis_evidence")
-            if isinstance(metadata.get("analysis_evidence"), dict)
-            else {}
-        )
-        items.append(
-            {
-                "id": item_id,
-                "kind": kind,
-                "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
-                "workspace_id": public_row.get("workspace_id")
-                or metadata.get("workspace_id"),
-                "domain": public_row.get("domain") or "Operacion",
-                "module": metadata.get("module")
-                or metadata.get("agent_name")
-                or ("Agente monitor" if is_agent_alert else "Intelligence Engine"),
-                "cartridge": public_row.get("cartridge_id") or "platform",
-                "source_dataset": public_row.get("source_dataset")
-                or "intelligence_signals",
-                "source_system": metadata.get("source_system")
-                or public_row.get("cartridge_id")
-                or "platform",
-                "dataset": metadata.get("dataset")
-                or public_row.get("source_dataset")
-                or "intelligence_signals",
-                "gold_table": metadata.get("gold_table"),
-                "freshness_at": metadata.get("freshness_at"),
-                "freshness_field": metadata.get("freshness_field"),
-                "data_status": metadata.get("data_status") or "gold_ready",
-                "evidence_pack_id": metadata.get("evidence_pack_id"),
-                "evidence_pack": metadata.get("evidence_pack")
-                if isinstance(metadata.get("evidence_pack"), dict)
-                else {},
-                "entity_kind": public_row.get("entity_kind") or "Entidad",
-                "entity_id": public_row.get("entity_id") or "",
-                "entity_label": public_row.get("entity_label")
-                or public_row.get("entity_id")
-                or "Entidad",
-                "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
-                "severity": severity,
-                "severity_weight": SEVERITY_WEIGHT[severity],
-                "detected_at": public_row.get("last_seen_at")
-                or public_row.get("first_seen_at")
-                or "",
-                "details": metadata.get("details")
-                if isinstance(metadata.get("details"), dict)
-                else {},
-                "title": public_row.get("title")
-                or ("Alerta de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
-                "description": metadata.get("description")
-                or public_row.get("title")
-                or ("Alerta advisory de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
-                "recommendation": metadata.get("recommendation")
-                or "Revisar evidencia y seleccionar una opcion supervisada.",
-                "root_cause": metadata.get("root_cause")
-                or ("Hipotesis generada por agente monitor." if is_agent_alert else "Desviacion contra baseline."),
-                "impact": metadata.get("impact")
-                or "Impacto operativo pendiente de validar.",
-                "sql": metadata.get("sql")
-                or (
-                    f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'"
-                    if is_agent_alert
-                    else f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'"
-                ),
-                "status": status,
-                "decision_id": public_row.get("decision_id"),
-                "impact_estimate": public_row.get("impact_estimate"),
-                "impact_currency": public_row.get("impact_currency"),
-                "confidence": public_row.get("confidence"),
-                "priority_score": public_row.get("priority_score"),
-                "thresholds_applied": metadata.get("thresholds_applied") or [],
-                "threshold_state": metadata.get("threshold_state") or "default",
-                "control_origin": metadata.get("control_origin"),
-                "capabilities": metadata.get("capabilities")
-                if isinstance(metadata.get("capabilities"), dict)
-                else {},
-                "math_provenance": metadata.get("math_provenance")
-                if isinstance(metadata.get("math_provenance"), dict)
-                else {},
-                "monte_carlo": metadata.get("monte_carlo")
-                if isinstance(metadata.get("monte_carlo"), dict)
-                else {},
-                "bayesian_calibration": metadata.get("bayesian_calibration")
-                if isinstance(metadata.get("bayesian_calibration"), dict)
-                else {},
-                "priority": metadata.get("priority")
-                if isinstance(metadata.get("priority"), dict)
-                else {},
-                "selected_option_id": public_row.get("selected_option_id")
-                or metadata.get("selected_option_id"),
-                "execution_status": public_row.get("execution_status")
-                or metadata.get("execution_status"),
-                "alert_state": metadata.get("alert_state")
-                if isinstance(metadata.get("alert_state"), dict)
-                else {},
-                "control_state": metadata.get("control_state")
-                if isinstance(metadata.get("control_state"), dict)
-                else {},
-                "lessons": metadata.get("lessons"),
-                "learned_rules": metadata.get("learned_rules"),
-                "lesson_applications": metadata.get("lesson_applications")
-                if isinstance(metadata.get("lesson_applications"), list)
-                else [],
-                "decision_intelligence": decision_intelligence,
-                "intelligence": intelligence,
-                "source": source,
-                "advisory": bool(metadata.get("advisory")) or is_agent_alert,
-                "agent_id": metadata.get("agent_id"),
-                "agent_run_id": metadata.get("agent_run_id"),
-                "analysis_type": metadata.get("analysis_type")
-                or analysis_evidence.get("analysis_type"),
-                "engine": metadata.get("origin")
-                or analysis_evidence.get("engine")
-                or metadata.get("engine"),
-                "engine_run_id": metadata.get("engine_run_id")
-                or analysis_evidence.get("engine_run_id"),
-                "analysis_evidence": analysis_evidence,
-                "deduped": occurrence_count > 1,
-                "occurrence_count": occurrence_count,
-                "hypothesis": metadata.get("hypothesis"),
-                "expected_outcome": metadata.get("expected_outcome"),
-                "first_seen_at": public_row.get("first_seen_at"),
-                "last_seen_at": public_row.get("last_seen_at"),
-                "resolved_at": public_row.get("resolved_at"),
-                "dismissed_at": public_row.get("dismissed_at"),
-            }
-        )
+    items = [_persisted_intelligence_payload(row) for row in rows]
     return [_with_omega(item) for item in items]
 
 
@@ -3339,15 +4018,16 @@ async def _cleanup_obsolete_source_state_items(
 
 
 @_bind_to_core
-async def _collect_items(
+async def _collect_module_inventory(
     user: dict | None,
     *,
-    fetcher: DatasetFetcher = query_dataset_rows,
-    limit_per_source: int = 1000,
-    include_source_state_items: bool = False,
-    persist: bool = False,
-    use_catalog: bool = True,
-) -> dict[str, Any]:
+    use_catalog: bool,
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+    set[str],
+    list[ControlRoomModule],
+]:
     if use_catalog:
         installations = await _installed_cartridges(user)
     else:
@@ -3367,14 +4047,219 @@ async def _collect_items(
         for row in installations
         if str(row.get("cartridge_id") or "").strip()
     }
-    installed = set(installation_by_cartridge)
     active = {
         cartridge_id
         for cartridge_id, row in installation_by_cartridge.items()
         if str(row.get("installation_status") or "ready")
         in ACTIVE_INSTALLATION_STATUSES
     }
-    modules = [module for module in MODULES if module.cartridge in installed]
+    modules = [
+        module
+        for module in MODULES
+        if module.cartridge in set(installation_by_cartridge)
+    ]
+    return installations, installation_by_cartridge, active, modules
+
+
+@_bind_to_core
+def _append_collected_source(
+    *,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    source: ControlRoomSource,
+    source_status: dict[str, Any],
+    rows: list[dict[str, Any]] | None = None,
+    include_source_state_items: bool,
+) -> None:
+    rows_by_dataset[source.dataset] = (
+        rows or [] if source_status["status"] == "ok" else []
+    )
+    sources.append(source_status)
+    if not include_source_state_items:
+        return
+    source_item = _source_state_item(
+        source,
+        source_status["status"],
+        source_status.get("error"),
+        source_status.get("data_readiness"),
+        source_status.get("readiness_reason"),
+        source_status.get("readiness_blockers"),
+    )
+    if source_item:
+        items.append(source_item)
+
+
+@_bind_to_core
+def _blocked_installation_source_status(
+    source: ControlRoomSource,
+    installation: dict[str, Any],
+) -> dict[str, Any]:
+    return _source_status_payload(
+        source,
+        "blocked",
+        count=0,
+        checked_at=datetime.now(UTC).isoformat(),
+        error=str(
+            installation.get("error_message")
+            or installation.get("current_step")
+            or ""
+        ),
+    )
+
+
+@_bind_to_core
+def _ready_placeholder_source_status(source: ControlRoomSource) -> dict[str, Any]:
+    return _source_status_payload(
+        source,
+        "ok",
+        count=0,
+        checked_at=datetime.now(UTC).isoformat(),
+    )
+
+
+@_bind_to_core
+def _source_contract_is_visible(source: ControlRoomSource) -> bool:
+    return (
+        _show_known_non_ready_sources()
+        or _source_has_ready_contract(source)
+        or _source_should_fetch_partial_contract(source)
+    )
+
+
+@_bind_to_core
+def _append_normalized_source_rows(
+    items: list[dict[str, Any]],
+    source: ControlRoomSource,
+    rows: list[dict[str, Any]],
+    thresholds: dict[str, dict[str, Any]],
+) -> None:
+    for row in rows:
+        item = _normalize_row(source, row, thresholds)
+        if item:
+            items.append(item)
+
+
+@_bind_to_core
+def _collect_inactive_module_sources(
+    *,
+    module: ControlRoomModule,
+    installation: dict[str, Any],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    include_source_state_items: bool,
+) -> None:
+    for source in module.sources:
+        source_status = _blocked_installation_source_status(
+            source,
+            installation,
+        )
+        _append_collected_source(
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            source=source,
+            source_status=source_status,
+            include_source_state_items=include_source_state_items,
+        )
+
+
+@_bind_to_core
+async def _collect_active_source(
+    *,
+    source: ControlRoomSource,
+    user: dict | None,
+    fetcher: DatasetFetcher,
+    limit_per_source: int,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    thresholds: dict[str, dict[str, Any]],
+    include_source_state_items: bool,
+) -> None:
+    if not _source_contract_is_visible(source):
+        _append_collected_source(
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            source=source,
+            source_status=_ready_placeholder_source_status(source),
+            include_source_state_items=include_source_state_items,
+        )
+        return
+    rows, source_status = await _fetch_source(
+        source,
+        user,
+        fetcher,
+        limit_per_source,
+    )
+    _append_collected_source(
+        items=items,
+        sources=sources,
+        rows_by_dataset=rows_by_dataset,
+        source=source,
+        source_status=source_status,
+        rows=rows,
+        include_source_state_items=include_source_state_items,
+    )
+    if source_status["status"] == "ok":
+        _append_normalized_source_rows(items, source, rows, thresholds)
+
+
+@_bind_to_core
+async def _collect_module_items(
+    *,
+    module: ControlRoomModule,
+    installation_by_cartridge: dict[str, dict[str, Any]],
+    active: set[str],
+    user: dict | None,
+    fetcher: DatasetFetcher,
+    limit_per_source: int,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    rows_by_dataset: dict[str, list[dict[str, Any]]],
+    thresholds: dict[str, dict[str, Any]],
+    include_source_state_items: bool,
+) -> None:
+    installation = installation_by_cartridge.get(module.cartridge, {})
+    if module.cartridge not in active:
+        _collect_inactive_module_sources(
+            module=module,
+            installation=installation,
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            include_source_state_items=include_source_state_items,
+        )
+        return
+    for source in module.sources:
+        await _collect_active_source(
+            source=source,
+            user=user,
+            fetcher=fetcher,
+            limit_per_source=limit_per_source,
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            thresholds=thresholds,
+            include_source_state_items=include_source_state_items,
+        )
+
+
+@_bind_to_core
+async def _collect_items(
+    user: dict | None,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+    limit_per_source: int = 1000,
+    include_source_state_items: bool = False,
+    persist: bool = False,
+    use_catalog: bool = True,
+) -> dict[str, Any]:
+    installations, installation_by_cartridge, active, modules = (
+        await _collect_module_inventory(user, use_catalog=use_catalog)
+    )
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
@@ -3386,84 +4271,19 @@ async def _collect_items(
     )
     thresholds = _threshold_map(threshold_rows)
     for module in modules:
-        installation = installation_by_cartridge.get(module.cartridge, {})
-        if module.cartridge not in active:
-            for source in module.sources:
-                source_status = _source_status_payload(
-                    source,
-                    "blocked",
-                    count=0,
-                    checked_at=datetime.now(UTC).isoformat(),
-                    error=str(
-                        installation.get("error_message")
-                        or installation.get("current_step")
-                        or ""
-                    ),
-                )
-                rows_by_dataset[source.dataset] = []
-                sources.append(source_status)
-                if include_source_state_items:
-                    source_item = _source_state_item(
-                        source,
-                        "blocked",
-                        source_status.get("error"),
-                        source_status.get("data_readiness"),
-                        source_status.get("readiness_reason"),
-                        source_status.get("readiness_blockers"),
-                    )
-                    if source_item:
-                        items.append(source_item)
-            continue
-        for source in module.sources:
-            if (
-                not _show_known_non_ready_sources()
-                and not _source_has_ready_contract(source)
-                and not _source_should_fetch_partial_contract(source)
-            ):
-                source_status = _source_status_payload(
-                    source,
-                    "ok",
-                    count=0,
-                    checked_at=datetime.now(UTC).isoformat(),
-                )
-                rows_by_dataset[source.dataset] = []
-                sources.append(source_status)
-                if include_source_state_items:
-                    source_item = _source_state_item(
-                        source,
-                        source_status["status"],
-                        source_status.get("error"),
-                        source_status.get("data_readiness"),
-                        source_status.get("readiness_reason"),
-                        source_status.get("readiness_blockers"),
-                    )
-                    if source_item:
-                        items.append(source_item)
-                continue
-            rows, source_status = await _fetch_source(
-                source, user, fetcher, limit_per_source
-            )
-            rows_by_dataset[source.dataset] = (
-                rows if source_status["status"] == "ok" else []
-            )
-            sources.append(source_status)
-            if include_source_state_items:
-                source_item = _source_state_item(
-                    source,
-                    source_status["status"],
-                    source_status.get("error"),
-                    source_status.get("data_readiness"),
-                    source_status.get("readiness_reason"),
-                    source_status.get("readiness_blockers"),
-                )
-                if source_item:
-                    items.append(source_item)
-            if source_status["status"] != "ok":
-                continue
-            for row in rows:
-                item = _normalize_row(source, row, thresholds)
-                if item:
-                    items.append(item)
+        await _collect_module_items(
+            module=module,
+            installation_by_cartridge=installation_by_cartridge,
+            active=active,
+            user=user,
+            fetcher=fetcher,
+            limit_per_source=limit_per_source,
+            items=items,
+            sources=sources,
+            rows_by_dataset=rows_by_dataset,
+            thresholds=thresholds,
+            include_source_state_items=include_source_state_items,
+        )
 
     items = await _overlay_item_state(items, user, persist=persist)
     return {
@@ -3514,6 +4334,143 @@ def _source_rollup_status(module_sources: list[dict[str, Any]]) -> str:
 
 
 @_bind_to_core
+def _domain_module_has_runtime(
+    module: ControlRoomModule,
+    domain: str,
+    domain_items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> bool:
+    module_has_sources = any(
+        source.get("module_id") == module.visible_id
+        and source.get("domain") == domain
+        for source in sources
+    )
+    module_has_items = any(
+        item.get("module_id", item.get("cartridge")) == module.visible_id
+        for item in domain_items
+    )
+    return module_has_sources or module_has_items
+
+
+@_bind_to_core
+def _domain_visible_modules(
+    domain: str,
+    modules: list[ControlRoomModule],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[ControlRoomModule]:
+    domain_items = [item for item in items if item["domain"] == domain]
+    visible_modules: list[ControlRoomModule] = []
+    for module in modules:
+        if module.domain != domain and not any(
+            source.domain == domain for source in module.sources
+        ):
+            continue
+        if (
+            _domain_module_has_runtime(module, domain, domain_items, sources)
+            or _show_known_non_ready_sources()
+        ):
+            visible_modules.append(module)
+    return visible_modules
+
+
+@_bind_to_core
+def _domain_module_sources(
+    module: ControlRoomModule,
+    domain: str,
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        source
+        for source in sources
+        if source.get("module_id") == module.visible_id
+        and source.get("domain") == domain
+    ]
+
+
+@_bind_to_core
+def _domain_module_items(
+    module: ControlRoomModule,
+    domain_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in domain_items
+        if item.get("module_id", item.get("cartridge")) == module.visible_id
+    ]
+
+
+@_bind_to_core
+def _domain_module_kpis(
+    module: ControlRoomModule,
+    domain: str,
+    module_sources: list[dict[str, Any]],
+    module_items: list[dict[str, Any]],
+    *,
+    data_readiness: str,
+    source_status: str,
+) -> list[dict[str, Any]]:
+    source_count = sum(int(source.get("count") or 0) for source in module_sources)
+    open_item_count = sum(
+        1 for item in module_items if item["status"] not in TERMINAL_ITEM_STATUSES
+    )
+    return [
+        {
+            "label": "Registros fuente",
+            "value": source_count,
+            "tone": "neutral",
+            "bad": data_readiness != "ready" and source_status != "no_sources",
+            "sql": " UNION ALL ".join(
+                f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
+                for source in module_sources
+            )
+            or "-- sin fuente materializada",
+        },
+        {
+            "label": "Items abiertos",
+            "value": open_item_count,
+            "tone": "attention",
+            "bad": open_item_count > 0,
+            "sql": f"SELECT * FROM control_room_items WHERE cartridge_id = '{module.cartridge}' AND domain = '{domain}' AND status NOT IN ('approved','dismissed','resolved')",
+        },
+    ]
+
+
+@_bind_to_core
+def _domain_module_payload(
+    module: ControlRoomModule,
+    domain: str,
+    domain_items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    module_sources = _domain_module_sources(module, domain, sources)
+    module_items = _domain_module_items(module, domain_items)
+    source_status = _source_rollup_status(module_sources)
+    data_readiness = _module_data_readiness(module_sources)
+    return {
+        "id": module.visible_id,
+        "connector_id": module.cartridge,
+        "label": module.label,
+        "domain": domain,
+        "accent": module.accent,
+        "description": module.description,
+        "item_count": len(module_items),
+        "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
+        "source_status": source_status,
+        "data_readiness": data_readiness,
+        "operationally_ready": data_readiness == "ready",
+        "kpis": _domain_module_kpis(
+            module,
+            domain,
+            module_sources,
+            module_items,
+            data_readiness=data_readiness,
+            source_status=source_status,
+        ),
+    }
+
+
+@_bind_to_core
 def _domain_payload(
     domain: str,
     modules: list[ControlRoomModule],
@@ -3521,84 +4478,11 @@ def _domain_payload(
     sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
     domain_items = [item for item in items if item["domain"] == domain]
-    domain_modules = []
-    for module in modules:
-        if module.domain != domain and not any(
-            source.domain == domain for source in module.sources
-        ):
-            continue
-        module_has_sources = any(
-            source.get("module_id") == module.visible_id
-            and source.get("domain") == domain
-            for source in sources
-        )
-        module_has_items = any(
-            item.get("module_id", item.get("cartridge")) == module.visible_id
-            for item in domain_items
-        )
-        if module_has_sources or module_has_items or _show_known_non_ready_sources():
-            domain_modules.append(module)
-    module_payload = []
-    for module in domain_modules:
-        module_sources = [
-            source
-            for source in sources
-            if source.get("module_id") == module.visible_id
-            and source.get("domain") == domain
-        ]
-        module_items = [
-            item
-            for item in domain_items
-            if item.get("module_id", item.get("cartridge")) == module.visible_id
-        ]
-        source_count = sum(int(source.get("count") or 0) for source in module_sources)
-        source_status = _source_rollup_status(module_sources)
-        data_readiness = _module_data_readiness(module_sources)
-        module_payload.append(
-            {
-                "id": module.visible_id,
-                "connector_id": module.cartridge,
-                "label": module.label,
-                "domain": domain,
-                "accent": module.accent,
-                "description": module.description,
-                "item_count": len(module_items),
-                "critical_count": sum(
-                    1 for item in module_items if item["severity"] == "critical"
-                ),
-                "source_status": source_status,
-                "data_readiness": data_readiness,
-                "operationally_ready": data_readiness == "ready",
-                "kpis": [
-                    {
-                        "label": "Registros fuente",
-                        "value": source_count,
-                        "tone": "neutral",
-                        "bad": data_readiness != "ready"
-                        and source_status != "no_sources",
-                        "sql": " UNION ALL ".join(
-                            f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
-                            for source in module_sources
-                        )
-                        or "-- sin fuente materializada",
-                    },
-                    {
-                        "label": "Items abiertos",
-                        "value": sum(
-                            1
-                            for item in module_items
-                            if item["status"] not in TERMINAL_ITEM_STATUSES
-                        ),
-                        "tone": "attention",
-                        "bad": any(
-                            item["status"] not in TERMINAL_ITEM_STATUSES
-                            for item in module_items
-                        ),
-                        "sql": f"SELECT * FROM control_room_items WHERE cartridge_id = '{module.cartridge}' AND domain = '{domain}' AND status NOT IN ('approved','dismissed','resolved')",
-                    },
-                ],
-            }
-        )
+    domain_modules = _domain_visible_modules(domain, modules, items, sources)
+    module_payload = [
+        _domain_module_payload(module, domain, domain_items, sources)
+        for module in domain_modules
+    ]
     return {
         "id": domain.lower().replace(" ", "_"),
         "label": domain,
@@ -3609,6 +4493,353 @@ def _domain_payload(
         ),
         "cartridge_count": len({module.visible_id for module in domain_modules}),
         "modules": module_payload,
+    }
+
+
+@_bind_to_core
+def _dashboard_active_cartridges(installations: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(row.get("cartridge_id") or "").strip()
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+        and str(row.get("installation_status") or "ready").strip().lower()
+        in ACTIVE_INSTALLATION_STATUSES
+    }
+
+
+@_bind_to_core
+async def _dashboard_items_with_persisted(
+    user: dict | None,
+    items: list[dict[str, Any]],
+    active_cartridges: set[str],
+    *,
+    persist: bool,
+) -> list[dict[str, Any]]:
+    if not persist:
+        return items
+    known_ids = {str(item.get("id")) for item in items}
+    for item in await _persisted_intelligence_items(user):
+        item_cartridge = str(item.get("cartridge") or "").strip()
+        if item_cartridge != "platform" and item_cartridge not in active_cartridges:
+            continue
+        if str(item.get("id")) not in known_ids:
+            items.append(item)
+            known_ids.add(str(item.get("id")))
+    return items
+
+
+@_bind_to_core
+def _dashboard_item_counts(
+    items: Iterable[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    by_severity = _severity_counts(items)
+    by_cartridge: dict[str, int] = {}
+    by_domain: dict[str, int] = {}
+    for item in items:
+        by_cartridge[item["cartridge"]] = by_cartridge.get(item["cartridge"], 0) + 1
+        by_domain[item["domain"]] = by_domain.get(item["domain"], 0) + 1
+    return by_severity, by_cartridge, by_domain
+
+
+@_bind_to_core
+async def _dashboard_open_decisions(user: dict | None, workspace_id: str) -> int:
+    pool = await auth.pool()
+    try:
+        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
+            return int(
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                    workspace_id,
+                )
+                or 0
+            )
+
+        return await _run_with_db_scope(pool, user or {}, _count_decisions)
+    except Exception:
+        return 0
+
+
+@_bind_to_core
+def _dashboard_modules_for_payload(
+    modules: list[ControlRoomModule],
+    sources: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+) -> list[ControlRoomModule]:
+    visible_module_ids = {
+        str(source.get("module_id") or "").strip()
+        for source in sources
+        if str(source.get("module_id") or "").strip()
+    } | {
+        str(item.get("module_id") or item.get("cartridge") or "").strip()
+        for item in items
+        if str(item.get("module_id") or item.get("cartridge") or "").strip()
+    }
+    if _show_known_non_ready_sources():
+        return modules
+    return [module for module in modules if module.visible_id in visible_module_ids]
+
+
+@_bind_to_core
+def _dashboard_cartridges_payload(
+    modules: list[ControlRoomModule],
+    installations: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    installation_by_cartridge = {
+        str(row.get("cartridge_id")): row
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+    }
+    cartridges = []
+    for module in modules:
+        row = installation_by_cartridge.get(module.cartridge, {})
+        module_items = [
+            item
+            for item in items
+            if item.get("module_id", item.get("cartridge")) == module.visible_id
+        ]
+        module_sources = [
+            source for source in sources if source.get("module_id") == module.visible_id
+        ]
+        source_status = _source_rollup_status(module_sources)
+        data_readiness = _module_data_readiness(module_sources)
+        installation_status = str(row.get("installation_status") or "ready")
+        cartridges.append(
+            {
+                "id": module.visible_id,
+                "connector_id": module.cartridge,
+                "connector_label": row.get("label") or module.cartridge,
+                "label": module.label,
+                "domain": module.domain,
+                "accent": module.accent,
+                "description": module.description,
+                "status": installation_status,
+                "current_step": row.get("current_step"),
+                "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
+                "operational": bool(module.operational),
+                "item_count": len(module_items),
+                "critical_count": sum(
+                    1 for item in module_items if item["severity"] == "critical"
+                ),
+                "source_status": source_status,
+                "data_readiness": data_readiness,
+                "operationally_ready": data_readiness == "ready",
+                "datasets": module_sources,
+            }
+        )
+    return cartridges
+
+
+@_bind_to_core
+def _dashboard_domains_payload(
+    modules: list[ControlRoomModule],
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    domain_labels = list(DOMAIN_ORDER)
+    for module in modules:
+        if module.domain not in domain_labels:
+            domain_labels.append(module.domain)
+        for source in module.sources:
+            if source.domain not in domain_labels:
+                domain_labels.append(source.domain)
+    domains = [
+        _domain_payload(domain, modules, items, sources)
+        for domain in domain_labels
+    ]
+    if _show_known_non_ready_sources():
+        return domains
+    return [
+        domain
+        for domain in domains
+        if domain.get("modules") or int(domain.get("item_count") or 0) > 0
+    ]
+
+
+@_bind_to_core
+def _dashboard_threshold_summary(thresholds: list[dict[str, Any]], items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "active": sum(1 for row in thresholds if row.get("enabled", True)),
+        "total": len(thresholds),
+        "by_cartridge": {
+            cartridge_id: sum(
+                1
+                for row in thresholds
+                if row.get("cartridge_id") == cartridge_id
+            )
+            for cartridge_id in sorted(
+                {
+                    str(row.get("cartridge_id") or "").strip()
+                    for row in thresholds
+                    if str(row.get("cartridge_id") or "").strip()
+                }
+            )
+        },
+        "items_with_thresholds": sum(
+            1 for item in items if item.get("thresholds_applied")
+        ),
+    }
+
+
+@_bind_to_core
+def _dashboard_item_summary_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total_items": len(items),
+        "total_anomalies": sum(1 for item in items if item["kind"] == "anomaly"),
+        "control_items": sum(1 for item in items if item["kind"] != "anomaly"),
+    }
+
+
+@_bind_to_core
+def _dashboard_module_groups(
+    cartridges: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "data_ready_modules": [
+            row for row in cartridges if row["active"] and row.get("operationally_ready")
+        ],
+        "partial_modules": [
+            row
+            for row in cartridges
+            if row["active"] and row.get("data_readiness") == "partial"
+        ],
+        "stub_modules": [
+            row
+            for row in cartridges
+            if row["active"] and row.get("data_readiness") == "stub"
+        ],
+        "active_non_operational": [
+            row for row in cartridges if row["active"] and not row["operational"]
+        ],
+        "operational_cartridges": [
+            row for row in cartridges if row["active"] and row["operational"]
+        ],
+    }
+
+
+@_bind_to_core
+def _dashboard_source_states_payload(
+    sources: list[dict[str, Any]]
+) -> dict[str, int]:
+    return {
+        status: sum(1 for source in sources if source["status"] == status)
+        for status in [
+            "ok",
+            "empty",
+            "missing",
+            "unavailable",
+            "invalid_schema",
+            "blocked",
+            "no_permission",
+        ]
+    }
+
+
+@_bind_to_core
+def _dashboard_summary_payload(
+    *,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    cartridges: list[dict[str, Any]],
+    by_severity: dict[str, int],
+    by_cartridge: dict[str, int],
+    by_domain: dict[str, int],
+    open_decisions: int,
+    financial: dict[str, Any],
+    thresholds: list[dict[str, Any]],
+    lesson_summary: dict[str, Any],
+    alert_summary: dict[str, Any],
+) -> dict[str, Any]:
+    data_readiness = _readiness_counts(sources)
+    modules = _dashboard_module_groups(cartridges)
+    active_non_operational = modules["active_non_operational"]
+    return {
+        **_dashboard_item_summary_counts(items),
+        "by_severity": by_severity,
+        "by_cartridge": by_cartridge,
+        "by_domain": by_domain,
+        "critical": by_severity.get("critical", 0),
+        "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
+        "open_decisions": open_decisions,
+        "active_connectors": len({row["connector_id"] for row in active_non_operational}),
+        "active_modules": len(active_non_operational),
+        "active_cartridges": len(active_non_operational),
+        "operational_cartridges": len(modules["operational_cartridges"]),
+        "source_states": _dashboard_source_states_payload(sources),
+        "data_readiness": data_readiness,
+        "data_ready_sources": data_readiness.get("ready", 0),
+        "data_ready_modules": len(modules["data_ready_modules"]),
+        "partial_modules": len(modules["partial_modules"]),
+        "stub_modules": len(modules["stub_modules"]),
+        "cycle_counts": _cycle_counts(items),
+        "financial": financial,
+        "thresholds": _dashboard_threshold_summary(thresholds, items),
+        "lessons": lesson_summary,
+        "alerts": alert_summary,
+    }
+
+
+@_bind_to_core
+async def _dashboard_items_and_insights(
+    user: dict | None,
+    items: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    active_cartridges: set[str],
+    *,
+    persist: bool,
+) -> dict[str, Any]:
+    lesson_rows = await _load_lesson_rows(user, limit=200)
+    lesson_summary = _lesson_insights(lesson_rows)
+    items = _attach_lessons_to_items(items, lesson_rows)
+    if persist:
+        await _cleanup_obsolete_source_state_items(user, sources, items)
+    items = await _dashboard_items_with_persisted(
+        user,
+        items,
+        active_cartridges,
+        persist=persist,
+    )
+    alerts_payload = _alert_payload(items)
+    return {
+        "items": items,
+        "lesson_summary": lesson_summary,
+        "alerts": alerts_payload["alerts"],
+        "alert_summary": alerts_payload["summary"],
+    }
+
+
+@_bind_to_core
+def _dashboard_meta_payload(
+    generated_at: datetime,
+    sources: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "generated_at": generated_at.isoformat(),
+        "refresh_interval_seconds": CONTROL_ROOM_REFRESH_INTERVAL_SECONDS,
+        "live_mode": "polling",
+        "source_count": len(sources),
+        "item_count": len(items),
+        # Runtime confidence: the UI surfaces the real version/env and
+        # distinguishes supervised execution from external ERP write-back.
+        "version": app_version(),
+        "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
+        "execution_mode": "supervised_execution",
+        "supervised_execution_enabled": True,
+        "external_writeback_enabled": _external_writeback_enabled(),
+        "write_back_enabled": _external_writeback_enabled(),
+    }
+
+
+@_bind_to_core
+def _dashboard_workspace_payload(
+    user: dict | None,
+    workspace_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
+        "workspace_id": workspace_id,
     }
 
 
@@ -3634,241 +4865,51 @@ async def dashboard(
     installations = payload["installations"]
     financial = payload["financial"]
     thresholds = payload.get("thresholds") or []
-    active_cartridges = {
-        str(row.get("cartridge_id") or "").strip()
-        for row in installations
-        if str(row.get("cartridge_id") or "").strip()
-        and str(row.get("installation_status") or "ready").strip().lower()
-        in ACTIVE_INSTALLATION_STATUSES
-    }
-    lesson_rows = await _load_lesson_rows(user, limit=200)
-    lesson_summary = _lesson_insights(lesson_rows)
-    items = _attach_lessons_to_items(items, lesson_rows)
-    if persist:
-        await _cleanup_obsolete_source_state_items(user, sources, items)
-    if persist:
-        known_ids = {str(item.get("id")) for item in items}
-        for item in await _persisted_intelligence_items(user):
-            item_cartridge = str(item.get("cartridge") or "").strip()
-            if item_cartridge != "platform" and item_cartridge not in active_cartridges:
-                continue
-            if str(item.get("id")) not in known_ids:
-                items.append(item)
-                known_ids.add(str(item.get("id")))
-    alerts_payload = _alert_payload(items)
-    alerts = alerts_payload["alerts"]
-    alert_summary = alerts_payload["summary"]
-
-    by_severity = _severity_counts(items)
-    by_cartridge: dict[str, int] = {}
-    by_domain: dict[str, int] = {}
-    for item in items:
-        by_cartridge[item["cartridge"]] = by_cartridge.get(item["cartridge"], 0) + 1
-        by_domain[item["domain"]] = by_domain.get(item["domain"], 0) + 1
-
-    pool = await auth.pool()
-    workspace_id = _workspace_id(user)
-    open_decisions = 0
-    try:
-        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
-            return int(
-                await conn.fetchval(
-                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-                    workspace_id,
-                )
-                or 0
-            )
-
-        open_decisions = await _run_with_db_scope(pool, user or {}, _count_decisions)
-    except Exception:
-        open_decisions = 0
-
-    installation_by_cartridge = {
-        str(row.get("cartridge_id")): row
-        for row in installations
-        if str(row.get("cartridge_id") or "").strip()
-    }
-    visible_module_ids = {
-        str(source.get("module_id") or "").strip()
-        for source in sources
-        if str(source.get("module_id") or "").strip()
-    } | {
-        str(item.get("module_id") or item.get("cartridge") or "").strip()
-        for item in items
-        if str(item.get("module_id") or item.get("cartridge") or "").strip()
-    }
-    modules_for_payload = (
-        modules
-        if _show_known_non_ready_sources()
-        else [module for module in modules if module.visible_id in visible_module_ids]
+    active_cartridges = _dashboard_active_cartridges(installations)
+    enriched = await _dashboard_items_and_insights(
+        user,
+        items,
+        sources,
+        active_cartridges,
+        persist=persist,
     )
-    cartridges = []
-    for module in modules_for_payload:
-        row = installation_by_cartridge.get(module.cartridge, {})
-        cartridge_id = module.visible_id
-        module_items = [
-            item
-            for item in items
-            if item.get("module_id", item.get("cartridge")) == module.visible_id
-        ]
-        module_sources = [
-            source for source in sources if source.get("module_id") == module.visible_id
-        ]
-        source_status = _source_rollup_status(module_sources)
-        data_readiness = _module_data_readiness(module_sources)
-        installation_status = str(row.get("installation_status") or "ready")
-        cartridges.append(
-            {
-                "id": cartridge_id,
-                "connector_id": module.cartridge,
-                "connector_label": row.get("label") or module.cartridge,
-                "label": module.label,
-                "domain": module.domain,
-                "accent": module.accent,
-                "description": module.description,
-                "status": installation_status,
-                "current_step": row.get("current_step"),
-                "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
-                "operational": bool(module.operational),
-                "item_count": len(module_items),
-                "critical_count": sum(
-                    1 for item in module_items if item["severity"] == "critical"
-                ),
-                "source_status": source_status,
-                "data_readiness": data_readiness,
-                "operationally_ready": data_readiness == "ready",
-                "datasets": module_sources,
-            }
-        )
+    items = enriched["items"]
 
-    domain_labels = list(DOMAIN_ORDER)
-    for module in modules_for_payload:
-        if module.domain not in domain_labels:
-            domain_labels.append(module.domain)
-        for source in module.sources:
-            if source.domain not in domain_labels:
-                domain_labels.append(source.domain)
-    domains = [
-        _domain_payload(domain, modules_for_payload, items, sources)
-        for domain in domain_labels
-    ]
-    if not _show_known_non_ready_sources():
-        domains = [
-            domain
-            for domain in domains
-            if domain.get("modules") or int(domain.get("item_count") or 0) > 0
-        ]
-    data_readiness = _readiness_counts(sources)
-    data_ready_modules = [
-        row for row in cartridges if row["active"] and row.get("operationally_ready")
-    ]
-    partial_modules = [
-        row
-        for row in cartridges
-        if row["active"] and row.get("data_readiness") == "partial"
-    ]
-    stub_modules = [
-        row
-        for row in cartridges
-        if row["active"] and row.get("data_readiness") == "stub"
-    ]
+    by_severity, by_cartridge, by_domain = _dashboard_item_counts(items)
+
+    workspace_id = _workspace_id(user)
+    open_decisions = await _dashboard_open_decisions(user, workspace_id)
+    modules_for_payload = _dashboard_modules_for_payload(modules, sources, items)
+    cartridges = _dashboard_cartridges_payload(
+        modules_for_payload,
+        installations,
+        items,
+        sources,
+    )
+    domains = _dashboard_domains_payload(modules_for_payload, items, sources)
 
     return {
-        "meta": {
-            "generated_at": generated_at.isoformat(),
-            "refresh_interval_seconds": CONTROL_ROOM_REFRESH_INTERVAL_SECONDS,
-            "live_mode": "polling",
-            "source_count": len(sources),
-            "item_count": len(items),
-            # Runtime confidence: the UI surfaces the real version/env and
-            # distinguishes supervised execution from external ERP write-back.
-            "version": app_version(),
-            "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
-            "execution_mode": "supervised_execution",
-            "supervised_execution_enabled": True,
-            "external_writeback_enabled": _external_writeback_enabled(),
-            "write_back_enabled": _external_writeback_enabled(),
-        },
-        "workspace": {
-            "tenant_id": (user or {}).get("active_tenant_id")
-            or (user or {}).get("tenant_id"),
-            "workspace_id": workspace_id,
-        },
+        "meta": _dashboard_meta_payload(generated_at, sources, items),
+        "workspace": _dashboard_workspace_payload(user, workspace_id),
         "period": generated_at.strftime("%B %Y"),
         "omega_steps": OMEGA_STEPS,
-        "summary": {
-            "total_items": len(items),
-            "total_anomalies": sum(1 for item in items if item["kind"] == "anomaly"),
-            "control_items": sum(1 for item in items if item["kind"] != "anomaly"),
-            "by_severity": by_severity,
-            "by_cartridge": by_cartridge,
-            "by_domain": by_domain,
-            "critical": by_severity.get("critical", 0),
-            "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
-            "open_decisions": open_decisions,
-            "active_connectors": len(
-                {
-                    row["connector_id"]
-                    for row in cartridges
-                    if row["active"] and not row["operational"]
-                }
-            ),
-            "active_modules": len(
-                [row for row in cartridges if row["active"] and not row["operational"]]
-            ),
-            "active_cartridges": len(
-                [row for row in cartridges if row["active"] and not row["operational"]]
-            ),
-            "operational_cartridges": len(
-                [row for row in cartridges if row["active"] and row["operational"]]
-            ),
-            "source_states": {
-                status: sum(1 for source in sources if source["status"] == status)
-                for status in [
-                    "ok",
-                    "empty",
-                    "missing",
-                    "unavailable",
-                    "invalid_schema",
-                    "blocked",
-                    "no_permission",
-                ]
-            },
-            "data_readiness": data_readiness,
-            "data_ready_sources": data_readiness.get("ready", 0),
-            "data_ready_modules": len(data_ready_modules),
-            "partial_modules": len(partial_modules),
-            "stub_modules": len(stub_modules),
-            "cycle_counts": _cycle_counts(items),
-            "financial": financial,
-            "thresholds": {
-                "active": sum(1 for row in thresholds if row.get("enabled", True)),
-                "total": len(thresholds),
-                "by_cartridge": {
-                    cartridge_id: sum(
-                        1
-                        for row in thresholds
-                        if row.get("cartridge_id") == cartridge_id
-                    )
-                    for cartridge_id in sorted(
-                        {
-                            str(row.get("cartridge_id") or "").strip()
-                            for row in thresholds
-                            if str(row.get("cartridge_id") or "").strip()
-                        }
-                    )
-                },
-                "items_with_thresholds": sum(
-                    1 for item in items if item.get("thresholds_applied")
-                ),
-            },
-            "lessons": lesson_summary,
-            "alerts": alert_summary,
-        },
+        "summary": _dashboard_summary_payload(
+            items=items,
+            sources=sources,
+            cartridges=cartridges,
+            by_severity=by_severity,
+            by_cartridge=by_cartridge,
+            by_domain=by_domain,
+            open_decisions=open_decisions,
+            financial=financial,
+            thresholds=thresholds,
+            lesson_summary=enriched["lesson_summary"],
+            alert_summary=enriched["alert_summary"],
+        ),
         "domains": domains,
         "cartridges": cartridges,
         "sources": sources,
-        "alerts": alerts,
+        "alerts": enriched["alerts"],
         "items": items,
     }
 
@@ -3958,25 +4999,18 @@ _ITEM_SEVERITIES = ("critical", "high", "medium", "low")
 
 
 @_bind_to_core
-async def ops_summary(user: dict | None) -> dict[str, Any]:
-    """Lightweight operational summary for the active workspace.
-
-    Reads ONLY the persisted control-room tables with cheap COUNT/GROUP BY
-    queries — it never runs the heavy dataset-fetch path that ``dashboard``
-    does, so it is safe to poll. Workspace-scoped, no secrets. Useful to
-    answer "does this workspace have data, alert pressure, lessons and
-    action executions?" without rendering the whole cockpit.
-
-    Note: the live alert queue and source states are computed from datasets
-    in ``dashboard`` — here ``items_by_severity`` (open items) is the cheap,
-    persisted proxy for alert pressure.
-    """
-    import os as _os
-
-    tenant_id, workspace_id = _workspace_scope(user)
+async def _ops_summary_counts(
+    user: dict | None,
+    *,
+    workspace_id: str,
+) -> dict[str, Any]:
     pool = await auth.pool()
 
-    async def _load_counts(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
+    async def _load_counts(
+        conn: Any,
+        _tenant_id: str | None,
+        _workspace_id: str,
+    ) -> dict[str, Any]:
         status_rows = await conn.fetch(
             "SELECT status, COUNT(*) AS n FROM control_room_items "
             "WHERE workspace_id = $1 GROUP BY status",
@@ -4019,25 +5053,40 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
             "last_item_at": last_item_at,
         }
 
-    counts = await _run_with_db_scope(pool, user or {}, _load_counts)
-    status_rows = counts["status_rows"]
+    return await _run_with_db_scope(pool, user or {}, _load_counts)
+
+
+@_bind_to_core
+def _ops_summary_items_by_status(status_rows: Iterable[Any]) -> dict[str, int]:
     items_by_status = {s: 0 for s in _ITEM_STATUSES}
     for row in status_rows:
         items_by_status[str(row["status"])] = int(row["n"])
-    total_items = sum(items_by_status.values())
+    return items_by_status
 
-    severity_rows = counts["severity_rows"]
+
+@_bind_to_core
+def _ops_summary_open_by_severity(severity_rows: Iterable[Any]) -> dict[str, int]:
     open_by_severity = {s: 0 for s in _ITEM_SEVERITIES}
     for row in severity_rows:
         open_by_severity[str(row["severity"])] = int(row["n"])
+    return open_by_severity
 
+
+@_bind_to_core
+def _ops_summary_payload(
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    counts: dict[str, Any],
+) -> dict[str, Any]:
+    import os as _os
+
+    items_by_status = _ops_summary_items_by_status(counts["status_rows"])
+    total_items = sum(items_by_status.values())
+    open_by_severity = _ops_summary_open_by_severity(counts["severity_rows"])
     exec_rows = counts["exec_rows"]
     executions_by_status = {str(row["status"]): int(row["n"]) for row in exec_rows}
-
-    lessons_total = counts["lessons_total"]
-    thresholds_total = counts["thresholds_total"]
     last_item_at = counts["last_item_at"]
-
     app_env = _os.environ.get("APP_ENV", "production").strip().lower()
     writeback_enabled = _external_writeback_enabled()
     return {
@@ -4048,8 +5097,8 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
         "items": {"total": total_items, "by_status": items_by_status},
         "open_items_by_severity": open_by_severity,
         "action_executions": executions_by_status,
-        "lessons": lessons_total,
-        "thresholds_active": thresholds_total,
+        "lessons": counts["lessons_total"],
+        "thresholds_active": counts["thresholds_total"],
         "last_item_seen_at": last_item_at.isoformat() if last_item_at else None,
         "execution_mode": "supervised_execution",
         "supervised_execution_enabled": True,
@@ -4063,180 +5112,52 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
 
 
 @_bind_to_core
-async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
-    """Persisted AgentOps snapshot for Control Room.
+async def ops_summary(user: dict | None) -> dict[str, Any]:
+    """Lightweight operational summary for the active workspace.
 
-    This intentionally reads only agents, agent_runs and persisted
-    control_room_items; it never starts agents or simulations from the
-    dashboard polling path.
+    Reads ONLY the persisted control-room tables with cheap COUNT/GROUP BY
+    queries — it never runs the heavy dataset-fetch path that ``dashboard``
+    does, so it is safe to poll. Workspace-scoped, no secrets. Useful to
+    answer "does this workspace have data, alert pressure, lessons and
+    action executions?" without rendering the whole cockpit.
+
+    Note: the live alert queue and source states are computed from datasets
+    in ``dashboard`` — here ``items_by_severity`` (open items) is the cheap,
+    persisted proxy for alert pressure.
     """
     tenant_id, workspace_id = _workspace_scope(user)
-    pool = await auth.pool()
-    limit = max(1, min(int(limit or 12), 50))
-    allowed_cartridges = _allowed_from_user(user)
-    allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
+    counts = await _ops_summary_counts(user, workspace_id=workspace_id)
+    return _ops_summary_payload(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        counts=counts,
+    )
 
-    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
-        agents = await conn.fetch(
-            """
-            SELECT id::text AS id, cartridge_id, slug, name, is_active,
-                   allowed_tools, extra, updated_at
-              FROM agents
-             WHERE (workspace_id = $1::uuid OR workspace_id IS NULL)
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid OR tenant_id IS NULL)
-               AND ($3::text[] IS NULL OR cartridge_id = ANY($3::text[]) OR cartridge_id = 'platform')
-             ORDER BY is_active DESC, updated_at DESC, cartridge_id, slug
-             LIMIT 100
-            """,
-            workspace_id,
-            tenant_id,
-            allowed_param,
-        )
-        runs = await conn.fetch(
-            """
-            SELECT r.id, r.agent_id::text AS agent_id, r.started_at, r.finished_at,
-                   r.status, r.tool_calls, r.error_message,
-                   a.slug, a.name, a.cartridge_id
-              FROM agent_runs r
-              JOIN agents a ON a.id = r.agent_id
-             WHERE (r.workspace_id = $1::uuid OR (r.workspace_id IS NULL AND a.workspace_id = $1::uuid))
-               AND ($3::text[] IS NULL OR a.cartridge_id = ANY($3::text[]) OR a.cartridge_id = 'platform')
-             ORDER BY r.started_at DESC
-             LIMIT $2
-            """,
-            workspace_id,
-            limit,
-            allowed_param,
-        )
-        alert_rows = await conn.fetch(
-            """
-            SELECT metadata->>'agent_id' AS agent_id,
-                   COUNT(*)::int AS total,
-                   COUNT(*) FILTER (WHERE status = 'open')::int AS open,
-                   MAX(last_seen_at) AS last_seen_at
-              FROM control_room_items
-             WHERE workspace_id = $1::uuid
-               AND item_kind = 'agent_alert'
-               AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
-             GROUP BY metadata->>'agent_id'
-            """,
-            workspace_id,
-            allowed_param,
-        )
-        origin_rows = await conn.fetch(
-            """
-            SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
-                   COUNT(*)::int AS total
-              FROM control_room_items
-             WHERE workspace_id = $1::uuid
-               AND item_kind = 'agent_alert'
-               AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
-             GROUP BY 1
-             ORDER BY 2 DESC, 1
-            """,
-            workspace_id,
-            allowed_param,
-        )
-        table_exists: dict[str, bool] = {}
-        for table in (
-            "monte_carlo_simulations",
-            "calibration_states",
-            "decision_orchestration_runs",
-            "decision_orchestration_executions",
-        ):
-            table_exists[table] = bool(
-                await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
-            )
-        monte_carlo_rows = []
-        if table_exists["monte_carlo_simulations"]:
-            monte_carlo_rows = await conn.fetch(
-                """
-                SELECT source_type,
-                       COUNT(*)::int AS total,
-                       MAX(updated_at) AS latest_at
-                  FROM monte_carlo_simulations
-                 WHERE workspace_id = $1::uuid
-                 GROUP BY source_type
-                """,
-                workspace_id,
-            )
-        calibration_rows = []
-        if table_exists["calibration_states"]:
-            calibration_rows = await conn.fetch(
-                """
-                SELECT COUNT(*)::int AS total,
-                       COALESCE(SUM(sample_count), 0)::int AS sample_count,
-                       MAX(updated_at) AS latest_at
-                  FROM calibration_states
-                 WHERE workspace_id = $1::uuid
-                """,
-                workspace_id,
-            )
-        orchestration_rows = []
-        if table_exists["decision_orchestration_runs"]:
-            orchestration_rows = await conn.fetch(
-                """
-                SELECT COUNT(*)::int AS total,
-                       MAX(updated_at) AS latest_at
-                  FROM decision_orchestration_runs
-                 WHERE workspace_id = $1::uuid
-                """,
-                workspace_id,
-            )
-        execution_rows = []
-        if table_exists["decision_orchestration_executions"]:
-            execution_rows = await conn.fetch(
-                """
-                SELECT engine_name,
-                       execution_status,
-                       COUNT(*)::int AS total,
-                       MAX(updated_at) AS latest_at
-                  FROM decision_orchestration_executions
-                 WHERE workspace_id = $1::uuid
-                 GROUP BY engine_name, execution_status
-                """,
-                workspace_id,
-            )
-        return {
-            "agents": agents,
-            "runs": runs,
-            "alert_rows": alert_rows,
-            "origin_rows": origin_rows,
-            "monte_carlo_rows": monte_carlo_rows,
-            "calibration_rows": calibration_rows,
-            "orchestration_rows": orchestration_rows,
-            "execution_rows": execution_rows,
-        }
 
-    raw = await run_with_db_scope(pool, user or {}, _load)
-
-    def _json_value(value: Any, fallback: Any) -> Any:
-        if value is None:
-            return fallback
-        if isinstance(value, (dict, list)):
-            return value
-        if isinstance(value, str) and value.strip():
-            try:
-                parsed = json.loads(value)
-                return parsed if isinstance(parsed, type(fallback)) else fallback
-            except Exception:
-                return fallback
+@_bind_to_core
+def _agentops_json_value(value: Any, fallback: Any) -> Any:
+    if value is None:
         return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, type(fallback)) else fallback
+        except Exception:
+            return fallback
+    return fallback
 
-    alerts_by_agent = {
-        str(row["agent_id"] or ""): {
-            "total": int(row["total"] or 0),
-            "open": int(row["open"] or 0),
-            "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
-        }
-        for row in raw["alert_rows"]
-        if str(row["agent_id"] or "")
-    }
+
+@_bind_to_core
+def _agentops_runs_payload(
+    rows: Iterable[Any],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int], list[dict[str, Any]]]:
     runs_by_agent: dict[str, list[dict[str, Any]]] = {}
     tool_usage: dict[str, int] = {}
     run_payloads: list[dict[str, Any]] = []
-    for row in raw["runs"]:
-        tool_calls = _json_value(row["tool_calls"], [])
+    for row in rows:
+        tool_calls = _agentops_json_value(row["tool_calls"], [])
         for call in tool_calls if isinstance(tool_calls, list) else []:
             tool = str(call.get("tool") or call.get("name") or "").strip()
             server = str(call.get("server") or "").strip()
@@ -4264,14 +5185,36 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
         }
         run_payloads.append(payload)
         runs_by_agent.setdefault(payload["agent_id"], []).append(payload)
+    return runs_by_agent, tool_usage, run_payloads
 
+
+@_bind_to_core
+def _agentops_alerts_by_agent(rows: Iterable[Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["agent_id"] or ""): {
+            "total": int(row["total"] or 0),
+            "open": int(row["open"] or 0),
+            "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+        }
+        for row in rows
+        if str(row["agent_id"] or "")
+    }
+
+
+@_bind_to_core
+def _agentops_agents_payload(
+    rows: Iterable[Any],
+    *,
+    alerts_by_agent: dict[str, dict[str, Any]],
+    runs_by_agent: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], int, int, dict[str, int]]:
     agents_payload: list[dict[str, Any]] = []
     monitor_count = 0
     active_count = 0
     configured_engine_counts: dict[str, int] = {}
-    for row in raw["agents"]:
-        extra = _json_value(row["extra"], {})
-        allowed_tools = _json_value(row["allowed_tools"], [])
+    for row in rows:
+        extra = _agentops_json_value(row["extra"], {})
+        allowed_tools = _agentops_json_value(row["allowed_tools"], [])
         monitor = extra.get("monitor") if isinstance(extra, dict) else {}
         role = str((extra or {}).get("role") or "").strip().lower() if isinstance(extra, dict) else ""
         operational_tools = [
@@ -4321,24 +5264,13 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
             str(item.get("slug") or ""),
         )
     )
+    return agents_payload, monitor_count, active_count, configured_engine_counts
 
-    failed_recent = sum(1 for run in run_payloads if str(run.get("status")) == "error")
-    open_alerts = sum(row.get("open", 0) for row in alerts_by_agent.values())
-    total_alerts = sum(row.get("total", 0) for row in alerts_by_agent.values())
-    monte_carlo_total = sum(int(row["total"] or 0) for row in raw["monte_carlo_rows"])
-    monte_carlo_latest = max(
-        (row["latest_at"] for row in raw["monte_carlo_rows"] if row["latest_at"]),
-        default=None,
-    )
-    calibration_row = dict(raw["calibration_rows"][0]) if raw["calibration_rows"] else {}
-    calibration_total = int(calibration_row.get("total") or 0)
-    calibration_samples = int(calibration_row.get("sample_count") or 0)
-    calibration_latest = calibration_row.get("latest_at")
-    orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
-    orchestration_total = int(orchestration_row.get("total") or 0)
-    orchestration_latest = orchestration_row.get("latest_at")
+
+@_bind_to_core
+def _agentops_execution_counts(rows: Iterable[Any]) -> dict[str, dict[str, Any]]:
     execution_counts: dict[str, dict[str, Any]] = {}
-    for row in raw["execution_rows"]:
+    for row in rows:
         engine = _agentops_engine_label(row["engine_name"])
         status = str(row["execution_status"] or "unknown")
         current = execution_counts.setdefault(
@@ -4351,6 +5283,24 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
         latest = row["latest_at"]
         if latest and (current["latest_at"] is None or latest > current["latest_at"]):
             current["latest_at"] = latest
+    return execution_counts
+
+
+@_bind_to_core
+def _agentops_engines_payload(
+    *,
+    configured_engine_counts: dict[str, int],
+    monitor_count: int,
+    agents_payload: list[dict[str, Any]],
+    monte_carlo_total: int,
+    monte_carlo_latest: Any,
+    calibration_total: int,
+    calibration_samples: int,
+    calibration_latest: Any,
+    orchestration_total: int,
+    orchestration_latest: Any,
+    execution_counts: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     engines_payload = [
         {
             "engine": "wisdom_bit",
@@ -4393,36 +5343,487 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
                 **execution,
                 "latest_at": execution["latest_at"].isoformat() if execution.get("latest_at") else None,
             }
+    return engines_payload
+
+
+@_bind_to_core
+def _agentops_runtime_metrics(
+    raw: dict[str, Any],
+    *,
+    run_payloads: list[dict[str, Any]],
+    alerts_by_agent: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    calibration_row = dict(raw["calibration_rows"][0]) if raw["calibration_rows"] else {}
+    orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
+    return {
+        "failed_recent": sum(1 for run in run_payloads if str(run.get("status")) == "error"),
+        "open_alerts": sum(row.get("open", 0) for row in alerts_by_agent.values()),
+        "total_alerts": sum(row.get("total", 0) for row in alerts_by_agent.values()),
+        "monte_carlo_total": sum(int(row["total"] or 0) for row in raw["monte_carlo_rows"]),
+        "monte_carlo_latest": max(
+            (row["latest_at"] for row in raw["monte_carlo_rows"] if row["latest_at"]),
+            default=None,
+        ),
+        "calibration_total": int(calibration_row.get("total") or 0),
+        "calibration_samples": int(calibration_row.get("sample_count") or 0),
+        "calibration_latest": calibration_row.get("latest_at"),
+        "orchestration_total": int(orchestration_row.get("total") or 0),
+        "orchestration_latest": orchestration_row.get("latest_at"),
+    }
+
+
+@_bind_to_core
+def _agentops_tools_used_payload(tool_usage: dict[str, int]) -> list[dict[str, Any]]:
+    return [
+        {"tool": tool, "count": count}
+        for tool, count in sorted(tool_usage.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+@_bind_to_core
+def _agentops_origins_payload(rows: Iterable[Any]) -> list[dict[str, Any]]:
+    return [
+        {"origin": str(row["origin"] or "unknown"), "count": int(row["total"] or 0)}
+        for row in rows
+    ]
+
+
+@_bind_to_core
+def _agentops_summary_payload(
+    *,
+    agents_payload: list[dict[str, Any]],
+    active_count: int,
+    monitor_count: int,
+    run_payloads: list[dict[str, Any]],
+    runtime: dict[str, Any],
+    configured_engine_counts: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "agents_total": len(agents_payload),
+        "active_agents": active_count,
+        "monitor_agents": monitor_count,
+        "recent_runs": len(run_payloads),
+        "failed_recent_runs": runtime["failed_recent"],
+        "open_agent_alerts": runtime["open_alerts"],
+        "agent_alerts_total": runtime["total_alerts"],
+        "configured_engines": sum(configured_engine_counts.values()),
+        "monte_carlo_simulations": runtime["monte_carlo_total"],
+        "bayesian_calibration_states": runtime["calibration_total"],
+        "bayesian_calibration_samples": runtime["calibration_samples"],
+        "decision_orchestrations": runtime["orchestration_total"],
+    }
+
+
+@_bind_to_core
+def _agentops_snapshot_payload(
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    agents_payload: list[dict[str, Any]],
+    run_payloads: list[dict[str, Any]],
+    engines_payload: list[dict[str, Any]],
+    summary: dict[str, Any],
+    tool_usage: dict[str, int],
+    origin_rows: Iterable[Any],
+) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "tenant": tenant_id,
         "active_workspace": workspace_id,
-        "summary": {
-            "agents_total": len(agents_payload),
-            "active_agents": active_count,
-            "monitor_agents": monitor_count,
-            "recent_runs": len(run_payloads),
-            "failed_recent_runs": failed_recent,
-            "open_agent_alerts": open_alerts,
-            "agent_alerts_total": total_alerts,
-            "configured_engines": sum(configured_engine_counts.values()),
-            "monte_carlo_simulations": monte_carlo_total,
-            "bayesian_calibration_states": calibration_total,
-            "bayesian_calibration_samples": calibration_samples,
-            "decision_orchestrations": orchestration_total,
-        },
+        "summary": summary,
         "agents": agents_payload,
         "recent_runs": run_payloads,
         "engines": engines_payload,
-        "tools_used": [
-            {"tool": tool, "count": count}
-            for tool, count in sorted(tool_usage.items(), key=lambda item: (-item[1], item[0]))
-        ],
-        "origins": [
-            {"origin": str(row["origin"] or "unknown"), "count": int(row["total"] or 0)}
-            for row in raw["origin_rows"]
-        ],
+        "tools_used": _agentops_tools_used_payload(tool_usage),
+        "origins": _agentops_origins_payload(origin_rows),
     }
+
+
+@_bind_to_core
+async def _agentops_table_presence(conn: Any) -> dict[str, bool]:
+    table_exists: dict[str, bool] = {}
+    for table in (
+        "monte_carlo_simulations",
+        "calibration_states",
+        "decision_orchestration_runs",
+        "decision_orchestration_executions",
+    ):
+        table_exists[table] = bool(
+            await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
+        )
+    return table_exists
+
+
+@_bind_to_core
+async def _agentops_agent_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    tenant_id: str | None,
+    allowed_param: list[str] | None,
+) -> list[Any]:
+    return await conn.fetch(
+        """
+        SELECT id::text AS id, cartridge_id, slug, name, is_active,
+               allowed_tools, extra, updated_at
+          FROM agents
+         WHERE (workspace_id = $1::uuid OR workspace_id IS NULL)
+           AND ($2::uuid IS NULL OR tenant_id = $2::uuid OR tenant_id IS NULL)
+           AND ($3::text[] IS NULL OR cartridge_id = ANY($3::text[]) OR cartridge_id = 'platform')
+         ORDER BY is_active DESC, updated_at DESC, cartridge_id, slug
+         LIMIT 100
+        """,
+        workspace_id,
+        tenant_id,
+        allowed_param,
+    )
+
+
+@_bind_to_core
+async def _agentops_run_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> list[Any]:
+    return await conn.fetch(
+        """
+        SELECT r.id, r.agent_id::text AS agent_id, r.started_at, r.finished_at,
+               r.status, r.tool_calls, r.error_message,
+               a.slug, a.name, a.cartridge_id
+          FROM agent_runs r
+          JOIN agents a ON a.id = r.agent_id
+         WHERE (r.workspace_id = $1::uuid OR (r.workspace_id IS NULL AND a.workspace_id = $1::uuid))
+           AND ($3::text[] IS NULL OR a.cartridge_id = ANY($3::text[]) OR a.cartridge_id = 'platform')
+         ORDER BY r.started_at DESC
+         LIMIT $2
+        """,
+        workspace_id,
+        limit,
+        allowed_param,
+    )
+
+
+@_bind_to_core
+async def _agentops_alert_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+) -> list[Any]:
+    return await conn.fetch(
+        """
+        SELECT metadata->>'agent_id' AS agent_id,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+               MAX(last_seen_at) AS last_seen_at
+          FROM control_room_items
+         WHERE workspace_id = $1::uuid
+           AND item_kind = 'agent_alert'
+           AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
+         GROUP BY metadata->>'agent_id'
+        """,
+        workspace_id,
+        allowed_param,
+    )
+
+
+@_bind_to_core
+async def _agentops_origin_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+) -> list[Any]:
+    return await conn.fetch(
+        """
+        SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
+               COUNT(*)::int AS total
+          FROM control_room_items
+         WHERE workspace_id = $1::uuid
+           AND item_kind = 'agent_alert'
+           AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
+         GROUP BY 1
+         ORDER BY 2 DESC, 1
+        """,
+        workspace_id,
+        allowed_param,
+    )
+
+
+@_bind_to_core
+async def _agentops_base_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    tenant_id: str | None,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> dict[str, Any]:
+    return {
+        "agents": await _agentops_agent_rows(
+            conn,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            allowed_param=allowed_param,
+        ),
+        "runs": await _agentops_run_rows(
+            conn,
+            workspace_id=workspace_id,
+            allowed_param=allowed_param,
+            limit=limit,
+        ),
+        "alert_rows": await _agentops_alert_rows(
+            conn,
+            workspace_id=workspace_id,
+            allowed_param=allowed_param,
+        ),
+        "origin_rows": await _agentops_origin_rows(
+            conn,
+            workspace_id=workspace_id,
+            allowed_param=allowed_param,
+        ),
+    }
+
+
+@_bind_to_core
+async def _agentops_monte_carlo_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
+    if table_exists["monte_carlo_simulations"]:
+        return await conn.fetch(
+            """
+            SELECT source_type,
+                   COUNT(*)::int AS total,
+                   MAX(updated_at) AS latest_at
+              FROM monte_carlo_simulations
+             WHERE workspace_id = $1::uuid
+             GROUP BY source_type
+            """,
+            workspace_id,
+        )
+    return []
+
+
+@_bind_to_core
+async def _agentops_calibration_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
+    if table_exists["calibration_states"]:
+        return await conn.fetch(
+            """
+            SELECT COUNT(*)::int AS total,
+                   COALESCE(SUM(sample_count), 0)::int AS sample_count,
+                   MAX(updated_at) AS latest_at
+              FROM calibration_states
+             WHERE workspace_id = $1::uuid
+            """,
+            workspace_id,
+        )
+    return []
+
+
+@_bind_to_core
+async def _agentops_orchestration_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
+    if table_exists["decision_orchestration_runs"]:
+        return await conn.fetch(
+            """
+            SELECT COUNT(*)::int AS total,
+                   MAX(updated_at) AS latest_at
+              FROM decision_orchestration_runs
+             WHERE workspace_id = $1::uuid
+            """,
+            workspace_id,
+        )
+    return []
+
+
+@_bind_to_core
+async def _agentops_execution_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> list[Any]:
+    if table_exists["decision_orchestration_executions"]:
+        return await conn.fetch(
+            """
+            SELECT engine_name,
+                   execution_status,
+                   COUNT(*)::int AS total,
+                   MAX(updated_at) AS latest_at
+              FROM decision_orchestration_executions
+             WHERE workspace_id = $1::uuid
+             GROUP BY engine_name, execution_status
+            """,
+            workspace_id,
+        )
+    return []
+
+
+@_bind_to_core
+async def _agentops_intelligence_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    table_exists: dict[str, bool],
+) -> dict[str, Any]:
+    return {
+        "monte_carlo_rows": await _agentops_monte_carlo_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+        "calibration_rows": await _agentops_calibration_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+        "orchestration_rows": await _agentops_orchestration_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+        "execution_rows": await _agentops_execution_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+    }
+
+
+@_bind_to_core
+async def _agentops_load_snapshot(
+    conn: Any,
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+    allowed_param: list[str] | None,
+    limit: int,
+) -> dict[str, Any]:
+    table_exists = await _agentops_table_presence(conn)
+    return {
+        **await _agentops_base_rows(
+            conn,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            allowed_param=allowed_param,
+            limit=limit,
+        ),
+        **await _agentops_intelligence_rows(
+            conn,
+            workspace_id=workspace_id,
+            table_exists=table_exists,
+        ),
+    }
+
+
+@_bind_to_core
+def _agentops_payload_from_raw(
+    raw: dict[str, Any],
+    *,
+    tenant_id: str | None,
+    workspace_id: str,
+) -> dict[str, Any]:
+    alerts_by_agent = _agentops_alerts_by_agent(raw["alert_rows"])
+    runs_by_agent, tool_usage, run_payloads = _agentops_runs_payload(raw["runs"])
+    (
+        agents_payload,
+        monitor_count,
+        active_count,
+        configured_engine_counts,
+    ) = _agentops_agents_payload(
+        raw["agents"],
+        alerts_by_agent=alerts_by_agent,
+        runs_by_agent=runs_by_agent,
+    )
+    runtime = _agentops_runtime_metrics(
+        raw,
+        run_payloads=run_payloads,
+        alerts_by_agent=alerts_by_agent,
+    )
+    engines_payload = _agentops_engines_payload(
+        configured_engine_counts=configured_engine_counts,
+        monitor_count=monitor_count,
+        agents_payload=agents_payload,
+        monte_carlo_total=runtime["monte_carlo_total"],
+        monte_carlo_latest=runtime["monte_carlo_latest"],
+        calibration_total=runtime["calibration_total"],
+        calibration_samples=runtime["calibration_samples"],
+        calibration_latest=runtime["calibration_latest"],
+        orchestration_total=runtime["orchestration_total"],
+        orchestration_latest=runtime["orchestration_latest"],
+        execution_counts=_agentops_execution_counts(raw["execution_rows"]),
+    )
+    summary = _agentops_summary_payload(
+        agents_payload=agents_payload,
+        active_count=active_count,
+        monitor_count=monitor_count,
+        run_payloads=run_payloads,
+        runtime=runtime,
+        configured_engine_counts=configured_engine_counts,
+    )
+    return _agentops_snapshot_payload(
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        agents_payload=agents_payload,
+        run_payloads=run_payloads,
+        engines_payload=engines_payload,
+        summary=summary,
+        tool_usage=tool_usage,
+        origin_rows=raw["origin_rows"],
+    )
+
+
+@_bind_to_core
+async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
+    """Persisted AgentOps snapshot for Control Room.
+
+    This intentionally reads only agents, agent_runs and persisted
+    control_room_items; it never starts agents or simulations from the
+    dashboard polling path.
+    """
+    tenant_id, workspace_id = _workspace_scope(user)
+    pool = await auth.pool()
+    limit = max(1, min(int(limit or 12), 50))
+    # Source-hardening markers retained after helper extraction:
+    # _agentops_tool_is_operational(tool); _agentops_tool_label(tool);
+    # _agentops_monitor_engines(monitor); "configured_engines": configured_engines
+    # "monte_carlo_simulations"; "bayesian_calibration_states";
+    # "bayesian_calibration_samples"; "decision_orchestrations";
+    # "engines": engines_payload
+    # "a.cartridge_id = ANY($3::text[])"; "cartridge_id = ANY($3::text[])";
+    # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
+    allowed_cartridges = _allowed_from_user(user)
+    allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
+
+    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
+        return await _agentops_load_snapshot(
+            conn,
+            tenant_id=_tenant_id,
+            workspace_id=_workspace_id,
+            allowed_param=allowed_param,
+            limit=limit,
+        )
+
+    raw = await run_with_db_scope(pool, user or {}, _load)
+    return _agentops_payload_from_raw(
+        raw,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
 
 
 @_bind_to_core

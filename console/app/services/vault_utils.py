@@ -1,30 +1,15 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.security import get_internal_api_key
+from app.services.service_urls import vault_url
 
 
 _DEFAULT_CONN_ID = "default"
-
-
-def _running_in_container() -> bool:
-    return Path("/.dockerenv").exists() or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-
-
-def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
-    raw = os.environ.get(env_name)
-    if raw:
-        return raw.rstrip("/")
-    return docker_default.rstrip("/") if _running_in_container() else local_default.rstrip("/")
-
-
-def vault_url() -> str:
-    return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
 
 
 def vault_headers() -> dict[str, str]:
