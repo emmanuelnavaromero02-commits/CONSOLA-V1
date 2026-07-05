@@ -75,13 +75,18 @@ def test_v1_route_inventory_marks_all_modules_as_legacy_mirrors():
 
 def test_visible_endpoint_fixes_are_not_v1_only():
     main_src = (REPO / "console/app/main.py").read_text(encoding="utf-8")
+    run_logs_src = (
+        REPO / "console/app/domains/pipeline/run_logs.py"
+    ).read_text(encoding="utf-8")
     v1_jobs_src = (REPO / "console/app/routers/v1/jobs.py").read_text(encoding="utf-8")
     v1_data_src = (REPO / "console/app/routers/v1/data.py").read_text(encoding="utf-8")
 
     assert '@app.get("/api/jobs/{job_id}/logs"' in main_src
-    assert "job_service.get_scoped" in main_src
-    assert 'job_args.get("cartridge_id")' in main_src
-    assert "WHERE run_id=$1 AND cartridge=$2" in main_src
+    assert "_build_job_logs_payload_impl" in main_src
+    assert "job_service=job_service" in main_src
+    assert "job_service.get_scoped" in run_logs_src
+    assert 'job_args.get("cartridge_id")' in run_logs_src
+    assert "WHERE run_id=$1 AND cartridge=$2" in run_logs_src
     assert '@router.get("/api/jobs/{job_id}/logs"' in v1_jobs_src
     assert "job_service.get_scoped" in v1_jobs_src
     assert 'job_args.get("cartridge_id")' in v1_jobs_src

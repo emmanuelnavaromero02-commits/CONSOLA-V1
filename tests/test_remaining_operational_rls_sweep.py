@@ -121,13 +121,15 @@ def test_every_closed_operational_table_has_a_real_consumer_marker():
 def test_agent_runtime_and_watchdog_loaders_set_scope_before_scoped_agent_reads():
     runtime = _read(REPO / "console/app/services/agent_runtime.py")
     v1_agents = _read(REPO / "console/app/routers/v1/agents.py")
-    main = _read(REPO / "console/app/main.py")
+    invocation = _read(REPO / "console/app/domains/agentops/invocation.py")
+    streaming = _read(REPO / "console/app/domains/agentops/streaming.py")
     watchdog = _read(REPO / "console/app/services/watchdog_registry.py")
     service = _read(REPO / "console/app/services/agent_service.py")
 
     assert "from app.services.db_scope import scoped_db" in runtime
     assert "load_agent(agent_id, user_context=user)" in v1_agents
-    assert "load_agent(agent_id, user_context=user)" in main
+    assert "load_agent(agent_id, user_context=user)" in invocation
+    assert "load_agent(agent_id, user_context=user)" in streaming
     assert "load_agent_by_slug(" in watchdog
     assert "user_context=user" in watchdog
     assert "SET_SCOPE_SQL" in service
