@@ -217,9 +217,11 @@ benchmark AS (
     ORDER BY materialized_at DESC NULLS LAST
     LIMIT 1
 ),
-scored AS (
+benchmark_raw AS (
     SELECT
         cpa.*,
+        COALESCE(benchmark.enabled, FALSE) AS benchmark_enabled,
+        COALESCE(benchmark.approved, FALSE) AS benchmark_approved,
         benchmark.benchmark_version,
         COALESCE(benchmark.readiness_high_threshold, 80.0) AS readiness_high_threshold,
         COALESCE(benchmark.readiness_medium_threshold, 60.0) AS readiness_medium_threshold,
@@ -257,22 +259,70 @@ scored AS (
                     END
                 )
             )), 2)
-        END AS benchmark_score
+        END AS benchmark_raw_score,
+        CASE
+            WHEN cpa.fit_score IS NOT NULL THEN 1.0
+            WHEN cpa.job_code IS NOT NULL
+              OR TRY_CAST(cpa.tenure_months AS DOUBLE) IS NOT NULL
+              OR TRY_CAST(cpa.direct_reports AS DOUBLE) IS NOT NULL
+              OR cpa.required_skills_status IS NOT NULL THEN 1.0
+            ELSE 0.0
+        END AS benchmark_input_available
     FROM cpa
     LEFT JOIN benchmark ON TRUE
+),
+cohort AS (
+    SELECT
+        *,
+        COUNT(*) OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+        ) AS workspace_employee_count,
+        AVG(benchmark_input_available) OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+        ) AS benchmark_input_coverage,
+        PERCENT_RANK() OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+            ORDER BY benchmark_raw_score NULLS LAST, COALESCE(CAST(job_code AS VARCHAR), ''), COALESCE(CAST(user_id AS VARCHAR), '')
+        ) AS benchmark_percentile
+    FROM benchmark_raw
 ),
 classified AS (
     SELECT
         *,
-        COALESCE(fit_score, benchmark_score) AS readiness_score,
+        CASE
+            WHEN fit_score IS NOT NULL THEN NULL
+            WHEN benchmark_enabled
+              AND benchmark_approved
+              AND benchmark_raw_score IS NOT NULL
+              AND workspace_employee_count >= 50
+              AND benchmark_input_coverage >= 0.80
+                THEN ROUND(benchmark_percentile * 100.0, 2)
+            ELSE NULL
+        END AS benchmark_score,
         CASE
             WHEN fit_score IS NOT NULL THEN 'cpa_real'
-            WHEN benchmark_score IS NOT NULL THEN 'benchmark_internal'
+            WHEN benchmark_enabled
+              AND benchmark_approved
+              AND benchmark_raw_score IS NOT NULL
+              AND workspace_employee_count >= 50
+              AND benchmark_input_coverage >= 0.80 THEN 'benchmark_internal'
             ELSE 'insufficient_data'
-        END AS source_mode
-    FROM scored
+        END AS source_mode,
+        CASE
+            WHEN fit_score IS NOT NULL THEN fit_score
+            WHEN benchmark_enabled
+              AND benchmark_approved
+              AND benchmark_raw_score IS NOT NULL
+              AND workspace_employee_count >= 50
+              AND benchmark_input_coverage >= 0.80
+                THEN ROUND(benchmark_percentile * 100.0, 2)
+            ELSE NULL
+        END AS readiness_score
+    FROM cohort
 )
 SELECT
+    tenant_id,
+    workspace_id,
     user_id,
     full_name,
     company_name,
@@ -286,12 +336,18 @@ SELECT
     performance_score,
     aspiration_score,
     fit_score,
+    benchmark_raw_score,
     benchmark_score,
     ROUND(readiness_score, 2) AS readiness_score,
     source_mode,
     benchmark_version,
+    workspace_employee_count,
+    ROUND(benchmark_input_coverage, 4) AS benchmark_input_coverage,
     CASE
         WHEN readiness_score IS NULL THEN 'insufficient_data'
+        WHEN source_mode = 'benchmark_internal' AND benchmark_percentile >= 0.70 THEN 'ready'
+        WHEN source_mode = 'benchmark_internal' AND benchmark_percentile >= 0.30 THEN 'near'
+        WHEN source_mode = 'benchmark_internal' THEN 'not_ready'
         WHEN readiness_score >= readiness_high_threshold THEN 'ready'
         WHEN readiness_score >= readiness_medium_threshold THEN 'near'
         ELSE 'not_ready'
@@ -308,15 +364,28 @@ SELECT
     role_profile_status,
     required_skills_status,
     CASE
-        WHEN source_mode = 'insufficient_data' THEN 3
+        WHEN source_mode = 'insufficient_data' THEN 4
         WHEN required_skills_status = 'blocked' THEN 1
         ELSE 0
     END AS blocker_count,
     CASE
-        WHEN source_mode = 'insufficient_data' THEN '["talent_cpa_inputs_missing","benchmark_internal_not_configured"]'
+        WHEN source_mode = 'insufficient_data' THEN '[' || RTRIM(
+            CONCAT(
+                CASE WHEN fit_score IS NULL THEN '"talent_cpa_inputs_missing",' ELSE '' END,
+                CASE WHEN NOT benchmark_enabled OR NOT benchmark_approved THEN '"benchmark_internal_not_configured",' ELSE '' END,
+                CASE WHEN benchmark_enabled AND benchmark_approved AND workspace_employee_count < 50 THEN '"benchmark_min_population_not_met",' ELSE '' END,
+                CASE WHEN benchmark_enabled AND benchmark_approved AND benchmark_input_coverage < 0.80 THEN '"benchmark_min_coverage_not_met",' ELSE '' END
+            ),
+            ','
+        ) || ']'
         WHEN required_skills_status = 'blocked' THEN '["role_requirements_pending"]'
         ELSE '[]'
     END AS blockers,
+    CASE
+        WHEN source_mode = 'cpa_real' THEN 0.85
+        WHEN source_mode = 'benchmark_internal' THEN 0.60
+        ELSE 0.0
+    END AS confidence,
     'talent_readiness.v2' AS contract_version,
     CURRENT_TIMESTAMP AS generated_at
 FROM classified
@@ -337,35 +406,109 @@ scored AS (
                 THEN TRY_CAST(performance_score AS DOUBLE) / 20
             WHEN TRY_CAST(performance_score AS DOUBLE) IS NOT NULL
                 THEN TRY_CAST(performance_score AS DOUBLE)
-            WHEN TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
-                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
             ELSE NULL
         END AS performance_scale,
         CASE
-            WHEN TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
-                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
+            WHEN TRY_CAST(competency_score AS DOUBLE) IS NOT NULL OR TRY_CAST(aspiration_score AS DOUBLE) IS NOT NULL THEN
+                (
+                    0.60 * CASE
+                        WHEN TRY_CAST(competency_score AS DOUBLE) IS NULL THEN 0
+                        WHEN TRY_CAST(competency_score AS DOUBLE) > 5 THEN TRY_CAST(competency_score AS DOUBLE) / 20
+                        ELSE TRY_CAST(competency_score AS DOUBLE)
+                    END
+                )
+                + (
+                    0.40 * CASE
+                        WHEN TRY_CAST(aspiration_score AS DOUBLE) IS NULL THEN 0
+                        WHEN TRY_CAST(aspiration_score AS DOUBLE) > 5 THEN TRY_CAST(aspiration_score AS DOUBLE) / 20
+                        ELSE TRY_CAST(aspiration_score AS DOUBLE)
+                    END
+                )
             ELSE NULL
-        END AS potential_scale
+        END AS potential_scale,
+        CASE
+            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL THEN
+                ROUND(LEAST(100.0, GREATEST(0.0,
+                    (0.60 * TRY_CAST(readiness_score AS DOUBLE))
+                    + (0.25 * CASE
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) >= 36 THEN 100.0
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) >= 12 THEN 65.0
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) IS NOT NULL THEN 35.0
+                        ELSE 45.0
+                    END)
+                    + (0.15 * CASE
+                        WHEN required_skills_status NOT IN ('blocked', 'insufficient_data', 'missing') THEN 100.0
+                        ELSE 40.0
+                    END)
+                )), 2)
+            ELSE NULL
+        END AS benchmark_performance_proxy,
+        CASE
+            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL THEN
+                ROUND(LEAST(100.0, GREATEST(0.0,
+                    (0.50 * TRY_CAST(readiness_score AS DOUBLE))
+                    + (0.25 * CASE
+                        WHEN TRY_CAST(direct_reports AS DOUBLE) >= 5 THEN 100.0
+                        WHEN TRY_CAST(direct_reports AS DOUBLE) > 0 THEN 70.0
+                        ELSE 35.0
+                    END)
+                    + (0.15 * CASE
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) BETWEEN 12 AND 60 THEN 100.0
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) IS NOT NULL THEN 55.0
+                        ELSE 45.0
+                    END)
+                    + (0.10 * CASE
+                        WHEN role_profile_status NOT IN ('blocked', 'insufficient_data', 'missing') THEN 100.0
+                        ELSE 40.0
+                    END)
+                )), 2)
+            ELSE NULL
+        END AS benchmark_potential_proxy
     FROM readiness
+),
+ranked AS (
+    SELECT
+        *,
+        PERCENT_RANK() OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+            ORDER BY benchmark_performance_proxy NULLS LAST, COALESCE(CAST(job_code AS VARCHAR), ''), COALESCE(CAST(user_id AS VARCHAR), '')
+        ) AS benchmark_performance_percentile,
+        PERCENT_RANK() OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+            ORDER BY benchmark_potential_proxy NULLS LAST, COALESCE(CAST(role_name AS VARCHAR), ''), COALESCE(CAST(user_id AS VARCHAR), '')
+        ) AS benchmark_potential_percentile
+    FROM scored
 ),
 banded AS (
     SELECT
         *,
         CASE
+            WHEN source_mode = 'benchmark_internal' AND benchmark_performance_proxy IS NOT NULL
+              AND benchmark_performance_percentile >= 0.70 THEN 'high'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_performance_proxy IS NOT NULL
+              AND benchmark_performance_percentile >= 0.30 THEN 'medium'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_performance_proxy IS NOT NULL THEN 'low'
             WHEN performance_scale IS NULL THEN 'insufficient_data'
             WHEN performance_scale >= 4 THEN 'high'
             WHEN performance_scale >= 3 THEN 'medium'
             ELSE 'low'
         END AS performance_band_calc,
         CASE
+            WHEN source_mode = 'benchmark_internal' AND benchmark_potential_proxy IS NOT NULL
+              AND benchmark_potential_percentile >= 0.70 THEN 'high'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_potential_proxy IS NOT NULL
+              AND benchmark_potential_percentile >= 0.30 THEN 'medium'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_potential_proxy IS NOT NULL THEN 'low'
             WHEN potential_scale IS NULL THEN 'insufficient_data'
             WHEN potential_scale >= 4 THEN 'high'
             WHEN potential_scale >= 3 THEN 'medium'
             ELSE 'low'
         END AS potential_band_calc
-    FROM scored
+    FROM ranked
 )
 SELECT
+    tenant_id,
+    workspace_id,
     user_id,
     full_name,
     company_name,
@@ -374,7 +517,11 @@ SELECT
     job_code,
     role_name,
     performance_score,
-    ROUND(potential_scale, 2) AS potential_score,
+    ROUND(COALESCE(potential_scale * 20.0, benchmark_potential_percentile * 100.0), 2) AS potential_score,
+    ROUND(COALESCE(performance_scale * 20.0, benchmark_performance_percentile * 100.0), 2) AS performance_proxy_score,
+    ROUND(COALESCE(potential_scale * 20.0, benchmark_potential_percentile * 100.0), 2) AS potential_proxy_score,
+    ROUND(benchmark_performance_proxy, 2) AS benchmark_performance_proxy,
+    ROUND(benchmark_potential_proxy, 2) AS benchmark_potential_proxy,
     ROUND(readiness_score, 2) AS readiness_score,
     source_mode,
     benchmark_version,
@@ -461,7 +608,7 @@ SELECT
     0::BIGINT AS ready_count,
     0::BIGINT AS benchmark_count,
     0::BIGINT AS blocked_count,
-    'blocked' AS box_status,
+    'empty' AS box_status,
     display_order,
     CURRENT_TIMESTAMP AS generated_at
 FROM boxes

@@ -32,6 +32,42 @@ describe("TalentControlRoom native panels", () => {
     expect(markup).not.toContain("omega-9box.html");
   });
 
+  it("renders internal reference without marking empty boxes as blocked", () => {
+    const cells: SfTalentNineBoxCell[] = [
+      {
+        box_id: "riesgo",
+        box_label: "Riesgo",
+        potential_band: "low",
+        performance_band: "low",
+        movement_action: "Gestionar riesgo",
+        display_order: 1,
+        employee_count: 8,
+        ready_count: 8,
+        reference_count: 8,
+        blocked_count: 0,
+        status: "benchmark_internal",
+      },
+      {
+        box_id: "estrella",
+        box_label: "Estrella",
+        potential_band: "high",
+        performance_band: "high",
+        movement_action: "Sucesion",
+        display_order: 2,
+        employee_count: 0,
+        ready_count: 0,
+        blocked_count: 0,
+        status: "empty",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(<NineBoxMatrix cells={cells} onSelect={vi.fn()} />);
+
+    expect(markup).toContain("Referencia interna");
+    expect(markup).toContain("Sin empleados");
+    expect(markup).not.toContain("benchmark_internal");
+  });
+
   it("renders only masked roster fields", () => {
     const payload: SfTalentRosterPayload = {
       dataset: "sap_successfactors_talent_9box",

@@ -41,18 +41,15 @@ async def viewer_decisions(request: Request):
 @router.get("/api/decisions", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_permission("datasets.read"))):
-    where, params = [], []
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         return {"decisions": []}
-    where.append(_dec_visible_clause(user["id"], _dec_is_workspace_admin(user), params, workspace_id))
-    if status in ("open", "closed"):
-        params.append(status)
-        where.append(f"status = ${len(params)}")
-    if overdue.lower() == "true":
-        where.append("status = 'open' AND commitment_date IS NOT NULL AND commitment_date < CURRENT_DATE")
-    sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
-    sql += " ORDER BY created_at DESC LIMIT 500"
+    sql, params = _dec_list_query(
+        user=user,
+        workspace_id=workspace_id,
+        status=status,
+        overdue=overdue,
+    )
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         rows = await conn.fetch(sql, *params)
@@ -122,44 +119,20 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
     if not _dec_can_edit(existing, user):
         raise HTTPException(403, "you can only edit decisions you created or are assigned to")
 
-    allowed = {
-        "title", "description", "commitment_date", "kpis",
-        "status", "outcome", "closed_at", "follow_up_decision_id",
-        "assignee_id", "visibility",
-    }
-    sets, params = [], []
-    for k, v in body.items():
-        if k not in allowed:
-            continue
-        if k == "kpis":
-            params.append(_json_dec.dumps(v))
-            sets.append(f"{k} = ${len(params)}::jsonb")
-            continue
-        if k == "commitment_date":
-            v = _coerce_date(v)
-        elif k == "closed_at":
-            v = _coerce_dt(v)
-        elif k == "visibility" and v not in ("private", "shared"):
-            continue
-        params.append(v)
-        sets.append(f"{k} = ${len(params)}")
+    sets, params = _decision_update_assignments(body)
     if not sets:
         raise HTTPException(400, "no updatable fields supplied")
-    if body.get("status") == "closed" and "closed_at" not in body:
-        sets.append("closed_at = COALESCE(closed_at, NOW())")
     # Sprint v1.37: pin UPDATE to (id, workspace_id) — defense-in-depth
     # against a future code path that loads ``existing`` from a
     # different source. ``existing`` already came from
     # ``_dec_load_with_visibility`` which itself filters by workspace,
     # so ``existing["workspace_id"]`` is the active workspace by
     # construction.
-    params.append(decision_id)
-    decision_ref = f"${len(params)}"
-    params.append(existing["workspace_id"])
-    workspace_ref = f"${len(params)}"
-    sql = (
-        f"UPDATE decisions SET {', '.join(sets)} "
-        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
+    sql, params = _decision_update_sql_and_params(
+        sets=sets,
+        params=params,
+        decision_id=decision_id,
+        existing=existing,
     )
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
@@ -220,11 +193,12 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
 @router.get("/api/users")
 @_bind_to_main
 async def api_users_list(user: dict = Depends(require_permission("iam.users.read"))):
-    users = await _auth.list_users(active_only=True)
-    if _is_global_iam_admin(user):
-        return {"users": users}
-    visible_ids = await _visible_user_ids_for_admin(user, users)
-    return {"users": [u for u in users if u.get("id") in visible_ids]}
+    return await _list_user_picker_payload_impl(
+        user=user,
+        auth_list_users=_auth.list_users,
+        is_global_iam_admin=_is_global_iam_admin,
+        visible_user_ids_for_admin=_visible_user_ids_for_admin,
+    )
 
 # /admin/users
 @router.get("/admin/users", dependencies=[Depends(require_permission("iam.users.read"))])
@@ -416,18 +390,13 @@ async def api_admin_users_delete(
 @router.get("/vpn-config/{token}")
 @_bind_to_main
 async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
-    info = await _tokens.consume_lookup(token, "vpn")
-    if not info or not info.get("wg_client_id"):
-        raise HTTPException(404, "Link invalido o ya utilizado")
-    try:
-        cfg = await _vpn.get_config(info["wg_client_id"])
-    except _vpn.VPNError as exc:
-        raise HTTPException(502, "No se pudo obtener la configuracion VPN") from exc
-    safe = _safe_filename(info.get("email") or "user")
-    return Response(
-        content=cfg,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{safe}.conf"'},
+    return await _vpn_config_download_response_impl(
+        token=token,
+        tokens_service=_tokens,
+        vpn_service=_vpn,
+        safe_filename=_safe_filename,
+        response_cls=Response,
+        vpn_error_cls=_vpn.VPNError,
     )
 
 # /api/admin/users/{user_id}/vpn-reissue
@@ -590,48 +559,16 @@ async def api_admin_users_reinvite(
 @_bind_to_main
 async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict = Depends(require_permission("iam.users.write"))):
     """Email a password reset link and issue a one-time admin temporary password."""
-    import secrets as _secrets
-
-    target_user = await _auth.get_user_by_id(user_id)
-    if not target_user or not target_user.get("is_active"):
-        raise HTTPException(404, "user not found or inactive")
-    await _assert_can_manage_target_user(admin, user_id)
-    temporary_password = f"{_secrets.token_urlsafe(24)}Aa1!"
-    pool = await _auth.pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            updated = await conn.fetchrow(
-                """
-                UPDATE users
-                   SET password_hash = $1,
-                       must_change_password = TRUE,
-                       is_active = TRUE
-                 WHERE id = $2
-                   AND is_active = TRUE
-                 RETURNING id
-                """,
-                _auth.hash_password(temporary_password),
-                user_id,
-            )
-            if not updated:
-                raise HTTPException(404, "user not found or inactive")
-            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
-            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-    tok, _ = await _tokens.create(user_id, "reset")
-    subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
-    sent = await _email.send_email(target_user["email"], subject, html)
-    await _audit.record_event(
-        admin.get("id"), admin.get("email"), "password_reset.sent", "user", str(user_id),
-        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
-        metadata={
-            "email_sent": sent,
-            "temporary_password_issued": True,
-            "password_delivery": "one_time_response",
-            "sessions_revoked": True,
-        },
+    return await _admin_send_reset_payload_impl(
+        user_id=user_id,
+        admin=admin,
+        request_ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        auth_service=_auth,
+        audit_service=_audit,
+        tokens_service=_tokens,
+        email_service=_email,
+        reset_link_for_token=_reset_link,
+        reset_ttl_hours=RESET_TTL_HOURS,
+        assert_can_manage_target_user=_assert_can_manage_target_user,
     )
-    return {
-        "sent": sent,
-        "temporary_password": temporary_password,
-        "password_delivery": "one_time_response",
-    }

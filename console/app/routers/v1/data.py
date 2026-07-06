@@ -105,17 +105,12 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
 @router.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_sources(user: dict = Depends(require_permission("datasets.read"))):
-    data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
-    # Normalize: result may be {"result": [...]} or {"sources": [...]}
-    sources = data.get("result") or data.get("sources") or []
-    gold_sources = await _gold_sources_from_catalog(user)
-    if isinstance(sources, list):
-        return {
-            "sources": sorted(
-                set(_filter_technical_sources(user, sources) + gold_sources)
-            )
-        }
-    return {"sources": gold_sources}
+    return await _sources_response_payload_impl(
+        user=user,
+        refinement_invoke=_refinement_invoke,
+        gold_sources_from_catalog=_gold_sources_from_catalog,
+        filter_technical_sources=_filter_technical_sources,
+    )
 
 # /api/datasets/save
 @router.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
@@ -204,9 +199,10 @@ async def api_dataset_lineage(name: str, user: dict = Depends(require_permission
 @_bind_to_main
 async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
     ctx = build_security_context(user)
-    buckets = _EXPLORER_DEFAULT_BUCKETS if _is_security_admin_context(ctx) else [
-        item for item in _EXPLORER_DEFAULT_BUCKETS if item.get("id") == "lakehouse"
-    ]
+    buckets = _explorer_visible_buckets(
+        _EXPLORER_DEFAULT_BUCKETS,
+        is_security_admin=_is_security_admin_context(ctx),
+    )
     quicklinks = [
         item for item in _EXPLORER_QUICKLINKS
         if _explorer_path_allowed(item.get("prefix", ""), user)
@@ -228,20 +224,18 @@ async def api_explorer_list(
     bucket_name = _resolve_explorer_bucket(bucket, user)
     if not _explorer_path_allowed(prefix, user):
         raise HTTPException(403, "prefix not allowed")
-    kwargs = {
-        "Bucket": bucket_name,
-        "Prefix": prefix,
-        "MaxKeys": min(max(max_keys, 1), 1000),
-        "Delimiter": "/",
-    }
-    if continuation_token:
-        kwargs["ContinuationToken"] = continuation_token
+    kwargs = _explorer_list_kwargs(
+        bucket_name=bucket_name,
+        prefix=prefix,
+        max_keys=max_keys,
+        continuation_token=continuation_token,
+    )
     try:
         resp = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
     except Exception as exc:
         raise HTTPException(502, "object storage list failed") from exc
     objects = [
-        {"key": o["Key"], "size": o["Size"], "last_modified": o["LastModified"].isoformat()}
+        _explorer_object_row(o)
         for o in resp.get("Contents", [])
         if o.get("Key") != prefix
         and _explorer_path_allowed(o.get("Key", ""), user, object_access=True)
@@ -251,14 +245,13 @@ async def api_explorer_list(
         for p in resp.get("CommonPrefixes", [])
         if _explorer_path_allowed(p.get("Prefix", ""), user)
     ]
-    return {
-        "bucket": bucket_name,
-        "prefix": prefix,
-        "folders": folders,
-        "objects": objects,
-        "next_token": resp.get("NextContinuationToken"),
-        "is_truncated": bool(resp.get("IsTruncated", False)),
-    }
+    return _explorer_list_response(
+        bucket_name=bucket_name,
+        prefix=prefix,
+        folders=folders,
+        objects=objects,
+        response=resp,
+    )
 
 # /api/explorer/download
 @router.get("/api/explorer/download", dependencies=[Depends(require_permission("pipelines.read"))])
@@ -294,7 +287,7 @@ async def api_explorer_download(
         status="success",
         metadata={"expires_in": expires_in},
     )
-    return {"url": url, "expires_in": expires_in}
+    return _explorer_download_response(url, expires_in=expires_in)
 
 # /api/explorer/object
 @router.delete(
@@ -328,7 +321,7 @@ async def api_explorer_delete(
         ip=request.client.host if request.client else None,
         status="success",
     )
-    return {"deleted": True, "bucket": bucket_name, "key": key}
+    return _explorer_delete_response(bucket_name=bucket_name, key=key)
 
 # /api/lineage
 @router.get("/api/lineage", dependencies=[Depends(require_permission("datasets.read"))])

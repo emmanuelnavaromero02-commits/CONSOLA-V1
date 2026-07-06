@@ -65,11 +65,14 @@ function apiMessage(error: unknown): string {
 }
 
 function cellTone(cell: SfTalentNineBoxCell): string {
-  if (cell.status === "ready" && cell.performance_band === "high") {
+  if ((cell.status === "ready" || cell.status === "benchmark_internal") && cell.performance_band === "high") {
     return "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200";
   }
-  if (cell.status === "ready") {
+  if (cell.status === "ready" || cell.status === "benchmark_internal") {
     return "border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200";
+  }
+  if (cell.status === "empty" || cell.employee_count === 0) {
+    return "border-slate-500/25 bg-slate-500/10 text-slate-700 dark:text-slate-300";
   }
   if (cell.performance_band === "low" || cell.potential_band === "low") {
     return "border-rose-500/25 bg-rose-500/10 text-rose-800 dark:text-rose-200";
@@ -80,6 +83,21 @@ function cellTone(cell: SfTalentNineBoxCell): string {
 function extractionTargets(metadata: SfTalentMetadataReadinessPayload | null): SfTalentExtractionTarget[] {
   const targets = metadata?.live_preflight?.extraction_targets;
   return Array.isArray(targets) ? targets : [];
+}
+
+function metadataNextTargets(metadata: SfTalentMetadataReadinessPayload | null): SfTalentExtractionTarget[] {
+  const liveTargets = extractionTargets(metadata);
+  if (liveTargets.length) return liveTargets;
+  return (metadata?.entities ?? []).map((entity) => ({
+    component: entity.id,
+    component_label: entity.kb,
+    entity: entity.live_selected_entity || entity.odata_entity || entity.entity,
+    odata_entity: entity.odata_entity || entity.live_selected_entity || undefined,
+    status: entity.live_status || entity.status,
+    ready_to_extract: entity.ready_to_extract,
+    fields_found: entity.fields_found,
+    fields_missing: entity.fields_missing,
+  }));
 }
 
 function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
@@ -98,12 +116,32 @@ function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
     normalized === "attention" ||
     normalized === "inactive" ||
     normalized === "no_sources" ||
+    normalized === "benchmark_internal" ||
+    normalized === "insufficient_data" ||
+    normalized === "blocked_by_sap" ||
+    normalized === "blocked_by_permission" ||
+    normalized === "pending_approval" ||
+    normalized === "partial_fields" ||
     normalized === "error"
   ) {
     return normalized;
   }
   if (normalized === "metadata_ready" || normalized === "ready_to_extract") return "partial";
+  if (normalized === "entity_not_exposed_in_sap") return "blocked_by_sap";
+  if (normalized === "permission_denied") return "blocked_by_permission";
   return "missing";
+}
+
+function readinessSummaryCopy(overview: SfTalentOverviewPayload | null, nineBox: SfTalentNineBoxPayload | null) {
+  const sourceMode = String(overview?.readiness.source_mode || "");
+  const referenceCount = nineBox?.totals.reference ?? 0;
+  if (sourceMode === "cpa_real") {
+    return { label: "Readiness SAP real", detail: "datos C/P/A del tenant" };
+  }
+  if (sourceMode === "benchmark_internal" || referenceCount > 0) {
+    return { label: "Readiness con referencia", detail: "referencia interna aprobada" };
+  }
+  return { label: "Readiness", detail: "en espera de C/P/A o referencia" };
 }
 
 const talentComponents = [
@@ -144,6 +182,7 @@ export function TalentOverviewPanel({
   const classified = nineBox?.totals.ready ?? overview?.nine_box.totals?.ready ?? 0;
   const blockedEntities = metadata?.summary.blocked_entities ?? 0;
   const activeSignals = anomalies?.summary.total ?? overview?.anomalies.summary?.total ?? 0;
+  const readinessCopy = readinessSummaryCopy(overview, nineBox);
 
   return (
     <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Resumen Talento">
@@ -155,9 +194,9 @@ export function TalentOverviewPanel({
         tone={profiled ? "good" : "warning"}
       />
       <CommandMetric
-        label="Readiness real"
+        label={readinessCopy.label}
         value={`${formatNumber(calculable)}/${formatNumber(profiled)}`}
-        detail="requiere C/P/A completo"
+        detail={readinessCopy.detail}
         icon={ShieldCheck}
         tone={calculable ? "good" : "warning"}
       />
@@ -187,7 +226,7 @@ export function TalentCollarSegmenter({
   onChange: (value: Collar) => void;
 }) {
   const options: Array<{ id: Collar; label: string; detail: string }> = [
-    { id: "confianza", label: "Confianza", detail: "9-box C/P/A" },
+    { id: "confianza", label: "Confianza", detail: "9-box talento" },
     { id: "sindicalizado", label: "Sindicalizado", detail: "Escalafon futuro" },
   ];
 
@@ -240,30 +279,49 @@ export function NineBoxMatrix({
         </div>
       </div>
       <div className="grid gap-2 md:grid-cols-3">
-        {ordered.map((cell) => (
-          <button
-            key={cell.box_id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(cell.box_id)}
-            className={cn(
-              "min-h-[132px] rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
-              cellTone(cell),
-              selectedBoxId === cell.box_id ? "ring-2 ring-sky-500" : "",
-            )}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <strong className="text-sm">{cell.box_label}</strong>
-              <ReadinessBadge status={cell.status} compact />
-            </div>
-            <p className="mt-2 text-3xl font-semibold tabular-nums">{formatNumber(cell.ready_count || cell.employee_count)}</p>
-            <p className="text-xs opacity-80">
-              {bandLabel(cell.potential_band)} potencial · {bandLabel(cell.performance_band)} desempeno
-            </p>
-            <MiniBar value={cell.ready_count} max={Math.max(1, cell.employee_count)} label="clasificables" tone={cell.status === "ready" ? "good" : "warning"} />
-            <p className="mt-2 min-h-[34px] text-xs opacity-85">{cell.movement_action}</p>
-          </button>
-        ))}
+        {ordered.map((cell) => {
+          const referenceCount = cell.reference_count ?? 0;
+          const visibleCount = cell.ready_count || cell.employee_count;
+          const statusLabel =
+            referenceCount > 0
+              ? "Referencia interna"
+              : cell.ready_count > 0
+                ? "Datos SAP reales"
+                : cell.employee_count === 0
+                  ? "Sin empleados"
+                  : undefined;
+          const badgeStatus: ControlRoomStatus =
+            referenceCount > 0 ? "benchmark_internal" : cell.employee_count === 0 ? "empty" : normalizeReadinessStatus(cell.status);
+          return (
+            <button
+              key={cell.box_id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(cell.box_id)}
+              className={cn(
+                "min-h-[132px] rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
+                cellTone(cell),
+                selectedBoxId === cell.box_id ? "ring-2 ring-sky-500" : "",
+              )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <strong className="text-sm">{cell.box_label}</strong>
+                <ReadinessBadge status={badgeStatus} label={statusLabel} compact />
+              </div>
+              <p className="mt-2 text-3xl font-semibold tabular-nums">{formatNumber(visibleCount)}</p>
+              <p className="text-xs opacity-80">
+                {bandLabel(cell.potential_band)} potencial · {bandLabel(cell.performance_band)} desempeno
+              </p>
+              <MiniBar
+                value={cell.ready_count}
+                max={Math.max(1, cell.employee_count)}
+                label="clasificables"
+                tone={cell.ready_count > 0 ? "good" : "warning"}
+              />
+              <p className="mt-2 min-h-[34px] text-xs opacity-85">{cell.movement_action}</p>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -327,7 +385,7 @@ export function MaskedTalentRoster({
       ) : (
         <div className="min-h-[220px] rounded-lg border border-dashed p-6 text-sm text-muted-foreground dark:border-slate-500/20">
           <Table2 aria-hidden className="mb-3 h-5 w-5" />
-          No hay roster clasificable para esta caja o C/P/A sigue bloqueado.
+          Selecciona una caja con empleados clasificados. Si no hay empleados, esta caja esta vacia para la corrida actual.
         </div>
       )}
     </section>
@@ -377,7 +435,7 @@ export function TalentAnomalyList({
         ))}
         {!anomalies.length ? (
           <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground dark:border-amber-400/20">
-            Sin senales activas. Si C/P/A falta, revisa metadata readiness.
+            Sin senales activas para esta corrida. Revisa fuentes pendientes si esperabas alertas de talento.
           </div>
         ) : null}
       </div>
@@ -544,7 +602,7 @@ export function TalentControlRoom() {
 
   const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box.cells ?? [], [nineBox, overview]);
   const anomalyItems = anomalies?.items ?? overview?.anomalies.items ?? [];
-  const cpaExtractionTargets = useMemo(() => extractionTargets(metadata), [metadata]);
+  const cpaExtractionTargets = useMemo(() => metadataNextTargets(metadata), [metadata]);
   const componentReadiness = useMemo(() => talentComponentReadiness(metadata), [metadata]);
 
   async function handlePreview() {
@@ -683,11 +741,11 @@ export function TalentControlRoom() {
                     Siguiente extraccion C/P/A
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Targets vivos desde metadata y permisos SuccessFactors.
+                    Targets vivos, pendientes y bloqueados desde metadata y permisos SuccessFactors.
                   </p>
                 </div>
                 <ReadinessBadge
-                  status={cpaExtractionTargets.length ? "partial" : "blocked"}
+                  status={cpaExtractionTargets.some((target) => target.ready_to_extract) ? "ready" : cpaExtractionTargets.length ? "partial" : "blocked"}
                   label={cpaExtractionTargets.length ? `${cpaExtractionTargets.length} targets` : "sin targets"}
                   compact
                 />
@@ -703,13 +761,11 @@ export function TalentControlRoom() {
                         {target.component_label || target.component}
                       </span>
                       <span className="block truncate text-muted-foreground">
-                        {target.entity}
+                      {target.entity}
                         {target.odata_entity && target.odata_entity !== target.entity ? ` -> ${target.odata_entity}` : ""}
                       </span>
                     </div>
-                    <span className="shrink-0 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground dark:border-emerald-400/20">
-                      {target.status || target.sample_status || "metadata"}
-                    </span>
+                    <ReadinessBadge status={normalizeReadinessStatus(target.status || target.sample_status)} compact />
                   </div>
                 ))}
                 {!cpaExtractionTargets.length ? (

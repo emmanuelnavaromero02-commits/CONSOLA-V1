@@ -16,8 +16,6 @@ scored AS (
                 THEN TRY_CAST(performance_score AS DOUBLE) / 20
             WHEN TRY_CAST(performance_score AS DOUBLE) IS NOT NULL
                 THEN TRY_CAST(performance_score AS DOUBLE)
-            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
-                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
             ELSE NULL
         END AS performance_scale,
         CASE
@@ -36,30 +34,91 @@ scored AS (
                         ELSE TRY_CAST(aspiration_score AS DOUBLE)
                     END
                 )
-            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL
-                THEN TRY_CAST(readiness_score AS DOUBLE) / 20
             ELSE NULL
-        END AS potential_scale
+        END AS potential_scale,
+        CASE
+            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL THEN
+                ROUND(LEAST(100.0, GREATEST(0.0,
+                    (0.60 * TRY_CAST(readiness_score AS DOUBLE))
+                    + (0.25 * CASE
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) >= 36 THEN 100.0
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) >= 12 THEN 65.0
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) IS NOT NULL THEN 35.0
+                        ELSE 45.0
+                    END)
+                    + (0.15 * CASE
+                        WHEN required_skills_status NOT IN ('blocked', 'insufficient_data', 'missing') THEN 100.0
+                        ELSE 40.0
+                    END)
+                )), 2)
+            ELSE NULL
+        END AS benchmark_performance_proxy,
+        CASE
+            WHEN source_mode = 'benchmark_internal' AND TRY_CAST(readiness_score AS DOUBLE) IS NOT NULL THEN
+                ROUND(LEAST(100.0, GREATEST(0.0,
+                    (0.50 * TRY_CAST(readiness_score AS DOUBLE))
+                    + (0.25 * CASE
+                        WHEN TRY_CAST(direct_reports AS DOUBLE) >= 5 THEN 100.0
+                        WHEN TRY_CAST(direct_reports AS DOUBLE) > 0 THEN 70.0
+                        ELSE 35.0
+                    END)
+                    + (0.15 * CASE
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) BETWEEN 12 AND 60 THEN 100.0
+                        WHEN TRY_CAST(tenure_months AS DOUBLE) IS NOT NULL THEN 55.0
+                        ELSE 45.0
+                    END)
+                    + (0.10 * CASE
+                        WHEN role_profile_status NOT IN ('blocked', 'insufficient_data', 'missing') THEN 100.0
+                        ELSE 40.0
+                    END)
+                )), 2)
+            ELSE NULL
+        END AS benchmark_potential_proxy
     FROM readiness
+),
+ranked AS (
+    SELECT
+        *,
+        PERCENT_RANK() OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+            ORDER BY benchmark_performance_proxy NULLS LAST, COALESCE(CAST(job_code AS VARCHAR), ''), COALESCE(CAST(user_id AS VARCHAR), '')
+        ) AS benchmark_performance_percentile,
+        PERCENT_RANK() OVER (
+            PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), ''), COALESCE(CAST(workspace_id AS VARCHAR), '')
+            ORDER BY benchmark_potential_proxy NULLS LAST, COALESCE(CAST(role_name AS VARCHAR), ''), COALESCE(CAST(user_id AS VARCHAR), '')
+        ) AS benchmark_potential_percentile
+    FROM scored
 ),
 banded AS (
     SELECT
         *,
         CASE
+            WHEN source_mode = 'benchmark_internal' AND benchmark_performance_proxy IS NOT NULL
+              AND benchmark_performance_percentile >= 0.70 THEN 'high'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_performance_proxy IS NOT NULL
+              AND benchmark_performance_percentile >= 0.30 THEN 'medium'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_performance_proxy IS NOT NULL THEN 'low'
             WHEN performance_scale IS NULL THEN 'insufficient_data'
             WHEN performance_scale >= 4 THEN 'high'
             WHEN performance_scale >= 3 THEN 'medium'
             ELSE 'low'
         END AS performance_band_calc,
         CASE
+            WHEN source_mode = 'benchmark_internal' AND benchmark_potential_proxy IS NOT NULL
+              AND benchmark_potential_percentile >= 0.70 THEN 'high'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_potential_proxy IS NOT NULL
+              AND benchmark_potential_percentile >= 0.30 THEN 'medium'
+            WHEN source_mode = 'benchmark_internal' AND benchmark_potential_proxy IS NOT NULL THEN 'low'
             WHEN potential_scale IS NULL THEN 'insufficient_data'
             WHEN potential_scale >= 4 THEN 'high'
             WHEN potential_scale >= 3 THEN 'medium'
             ELSE 'low'
         END AS potential_band_calc
-    FROM scored
+    FROM ranked
 )
 SELECT
+    tenant_id,
+    workspace_id,
     user_id,
     full_name,
     company_name,
@@ -68,7 +127,11 @@ SELECT
     job_code,
     role_name,
     performance_score,
-    ROUND(potential_scale, 2) AS potential_score,
+    ROUND(COALESCE(potential_scale * 20.0, benchmark_potential_percentile * 100.0), 2) AS potential_score,
+    ROUND(COALESCE(performance_scale * 20.0, benchmark_performance_percentile * 100.0), 2) AS performance_proxy_score,
+    ROUND(COALESCE(potential_scale * 20.0, benchmark_potential_percentile * 100.0), 2) AS potential_proxy_score,
+    ROUND(benchmark_performance_proxy, 2) AS benchmark_performance_proxy,
+    ROUND(benchmark_potential_proxy, 2) AS benchmark_potential_proxy,
     ROUND(readiness_score, 2) AS readiness_score,
     source_mode,
     benchmark_version,

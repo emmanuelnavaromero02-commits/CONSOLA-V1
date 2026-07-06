@@ -7,7 +7,6 @@ UI minimalista: chat con asistente + estado de servidores MCP.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import os
@@ -103,6 +102,7 @@ from app.domains.admin.users_scope import (
     assert_can_use_workspace as _assert_can_use_workspace_impl,
     attach_workspace_summaries as _attach_workspace_summaries_impl,
     list_admin_users_payload as _list_admin_users_payload_impl,
+    list_user_picker_payload as _list_user_picker_payload_impl,
     set_workspace_role_for_user as _set_workspace_role_for_user_impl,
     target_user_workspace_ids as _target_user_workspace_ids_impl,
     visible_user_ids_for_admin as _visible_user_ids_for_admin_impl,
@@ -114,6 +114,10 @@ from app.domains.admin.vpn_invites import (
     issue_vpn_for_user as _issue_vpn_for_user_impl,
     reissue_vpn_for_user_payload as _reissue_vpn_for_user_payload_impl,
     rollback_failed_invite as _rollback_failed_invite_impl,
+    vpn_config_download_response as _vpn_config_download_response_impl,
+)
+from app.domains.admin.password_reset import (
+    admin_send_reset_payload as _admin_send_reset_payload_impl,
 )
 from app.domains.admin.user_mutations import (
     create_admin_user_payload as _create_admin_user_payload_impl,
@@ -141,11 +145,16 @@ from app.domains.decisions.access import (
     can_delete_decision as _dec_can_delete_impl,
     can_edit_decision as _dec_can_edit_impl,
     current_workspace_id as _current_workspace_id_impl,
+    decision_list_query as _dec_list_query_impl,
+    decision_load_query as _dec_load_query_impl,
+    decision_visible_clause as _dec_visible_clause_impl,
     is_decision_workspace_admin as _dec_is_workspace_admin_impl,
 )
 from app.domains.decisions.payloads import (
     coerce_date as _coerce_date_impl,
     coerce_datetime as _coerce_dt_impl,
+    decision_update_assignments as _decision_update_assignments_impl,
+    decision_update_sql_and_params as _decision_update_sql_and_params_impl,
     decision_row_to_dict as _dec_row_to_dict_impl,
 )
 from app.domains.iam.roles import (
@@ -201,8 +210,14 @@ from app.domains.data_platform.lineage_payloads import (
     lineage_graph_payload as _lineage_graph_payload,
 )
 from app.domains.data_platform.explorer_access import (
+    explorer_delete_response as _explorer_delete_response,
+    explorer_download_response as _explorer_download_response,
+    explorer_list_kwargs as _explorer_list_kwargs,
+    explorer_list_response as _explorer_list_response,
+    explorer_object_row as _explorer_object_row,
     explorer_path_allowed as _explorer_path_allowed_impl,
     explorer_quicklinks_for_cartridges as _explorer_quicklinks_for_cartridges_impl,
+    explorer_visible_buckets as _explorer_visible_buckets,
     resolve_explorer_bucket as _resolve_explorer_bucket_impl,
 )
 from app.domains.data_platform.refinement_errors import (
@@ -227,6 +242,7 @@ from app.domains.data_platform.schema_payloads import (
 )
 from app.domains.data_platform.schema_requests import (
     schema_response_payload as _schema_response_payload_impl,
+    sources_response_payload as _sources_response_payload_impl,
 )
 from app.domains.data_platform.rag_payloads import (
     rag_empty_answer as _rag_empty_answer,
@@ -2307,21 +2323,12 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
 @app.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_sources(user: dict = Depends(require_permission("datasets.read"))):
     async def load_sources() -> dict:
-        try:
-            data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
-        except HTTPException:
-            data = {}
-        # Normalize: result may be {"result": [...]} or {"sources": [...]}
-        sources = data.get("result") or data.get("sources") or []
-        gold_sources = await _gold_sources_from_catalog(user)
-        if isinstance(sources, list):
-            sources = _filter_technical_sources(user, sources)
-            return {
-                "sources": sorted(
-                    set([str(s) for s in sources if str(s).strip()] + gold_sources)
-                )
-            }
-        return {"sources": gold_sources}
+        return await _sources_response_payload_impl(
+            user=user,
+            refinement_invoke=_refinement_invoke,
+            gold_sources_from_catalog=_gold_sources_from_catalog,
+            filter_technical_sources=_filter_technical_sources,
+        )
 
     return await _scoped_read_cache_get_or_set("sources", user, ("all",), load_sources)
 
@@ -2505,12 +2512,9 @@ def _explorer_path_allowed(
 )
 async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
     ctx = build_security_context(user)
-    buckets = (
-        _EXPLORER_DEFAULT_BUCKETS
-        if _is_security_admin_context(ctx)
-        else [
-            item for item in _EXPLORER_DEFAULT_BUCKETS if item.get("id") == "lakehouse"
-        ]
+    buckets = _explorer_visible_buckets(
+        _EXPLORER_DEFAULT_BUCKETS,
+        is_security_admin=_is_security_admin_context(ctx),
     )
     active_cartridges = await _active_scoped_connection_cartridges(
         user, _OPERATIONAL_CARTRIDGES
@@ -2542,24 +2546,18 @@ async def api_explorer_list(
     bucket_name = _resolve_explorer_bucket(bucket, user)
     if not _explorer_path_allowed(prefix, user):
         raise HTTPException(403, "prefix not allowed")
-    kwargs = {
-        "Bucket": bucket_name,
-        "Prefix": prefix,
-        "MaxKeys": min(max(max_keys, 1), 1000),
-        "Delimiter": "/",
-    }
-    if continuation_token:
-        kwargs["ContinuationToken"] = continuation_token
+    kwargs = _explorer_list_kwargs(
+        bucket_name=bucket_name,
+        prefix=prefix,
+        max_keys=max_keys,
+        continuation_token=continuation_token,
+    )
     try:
         resp = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
     except Exception as exc:
         raise HTTPException(502, f"object storage list failed: {exc}") from exc
     objects = [
-        {
-            "key": o["Key"],
-            "size": o["Size"],
-            "last_modified": o["LastModified"].isoformat(),
-        }
+        _explorer_object_row(o)
         for o in resp.get("Contents", [])
         if o.get("Key") != prefix
         and _explorer_path_allowed(o.get("Key", ""), user, object_access=True)
@@ -2569,14 +2567,13 @@ async def api_explorer_list(
         for p in resp.get("CommonPrefixes", [])
         if _explorer_path_allowed(p.get("Prefix", ""), user)
     ]
-    return {
-        "bucket": bucket_name,
-        "prefix": prefix,
-        "folders": folders,
-        "objects": objects,
-        "next_token": resp.get("NextContinuationToken"),
-        "is_truncated": bool(resp.get("IsTruncated", False)),
-    }
+    return _explorer_list_response(
+        bucket_name=bucket_name,
+        prefix=prefix,
+        folders=folders,
+        objects=objects,
+        response=resp,
+    )
 
 
 @app.get(
@@ -2614,7 +2611,7 @@ async def api_explorer_download(
         status="success",
         metadata={"expires_in": expires_in},
     )
-    return {"url": url, "expires_in": expires_in}
+    return _explorer_download_response(url, expires_in=expires_in)
 
 
 @app.delete(
@@ -2650,7 +2647,7 @@ async def api_explorer_delete(
         ip=request.client.host if request.client else None,
         status="success",
     )
-    return {"deleted": True, "bucket": bucket_name, "key": key}
+    return _explorer_delete_response(bucket_name=bucket_name, key=key)
 
 
 @app.get("/api/lineage", dependencies=[Depends(require_permission("datasets.read"))])
@@ -6470,39 +6467,43 @@ def _current_workspace_id(user: dict) -> str | None:
 def _dec_visible_clause(
     uid: int, is_admin: bool, params: list, workspace_id: str | None = None
 ) -> str:
-    """Returns a SQL clause that filters decisions visible to this user.
-
-    Sprint v1.37 (audit B7 P0): now also scopes to ``workspace_id``.
-    Pre-v1.37 the clause filtered only by ``visibility`` /
-    ``created_by_id`` / ``assignee_id``, so a user with membership in
-    multiple workspaces saw every ``visibility='shared'`` decision in
-    every workspace they had ever joined (even when their active
-    session was scoped to a single one). Combined with the v1.32
-    migration adding ``workspace_id`` to ``decisions``, the column
-    exists; this is the code path catching up.
-
-    Admins are still global by design, but only inside the active
-    workspace — they don't get to read tenant A's decisions while their
-    active session is on tenant B. If ``workspace_id`` is ``None``
-    (user has no active workspace), the clause is ``FALSE`` so the
-    query returns nothing rather than every row.
-    """
-    if not workspace_id:
-        return "FALSE"
-    params.append(workspace_id)
-    ws_param = f"${len(params)}"
-    workspace_clause = f"workspace_id = {ws_param}"
-    if is_admin:
-        return workspace_clause
-    params.append(uid)
-    p = f"${len(params)}"
-    return f"({workspace_clause} AND (created_by_id = {p} OR assignee_id = {p}))"
+    return _dec_visible_clause_impl(
+        uid=uid,
+        is_admin=is_admin,
+        params=params,
+        workspace_id=workspace_id,
+    )
 
 
 def _dec_is_workspace_admin(user: dict) -> bool:
     return _dec_is_workspace_admin_impl(
         is_global_admin=_is_global_iam_admin(user),
         workspace_role=_workspace_role(user),
+    )
+
+
+def _dec_load_query(decision_id: int, user: dict, workspace_id: str) -> tuple[str, list[Any]]:
+    return _dec_load_query_impl(
+        decision_id=decision_id,
+        user_id=user["id"],
+        is_admin=_dec_is_workspace_admin(user),
+        workspace_id=workspace_id,
+    )
+
+
+def _dec_list_query(
+    *,
+    user: dict,
+    workspace_id: str,
+    status: str,
+    overdue: str,
+) -> tuple[str, list[Any]]:
+    return _dec_list_query_impl(
+        user_id=user["id"],
+        is_admin=_dec_is_workspace_admin(user),
+        workspace_id=workspace_id,
+        status=status,
+        overdue=overdue,
     )
 
 
@@ -6516,12 +6517,7 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         return None
-    is_admin = _dec_is_workspace_admin(user)
-    params: list = [decision_id, workspace_id]
-    sql = "SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2"
-    if not is_admin:
-        params.append(user["id"])
-        sql += f" AND (created_by_id = ${len(params)} OR assignee_id = ${len(params)})"
+    sql, params = _dec_load_query(decision_id, user, workspace_id)
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         row = await conn.fetchrow(sql, *params)
@@ -6548,24 +6544,15 @@ def _dec_can_delete(row: dict, user: dict) -> bool:
 async def api_decisions_list(
     status: str = "", overdue: str = "", user: dict = Depends(require_permission("datasets.read"))
 ):
-    where, params = [], []
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         return {"decisions": []}
-    where.append(
-        _dec_visible_clause(
-            user["id"], _dec_is_workspace_admin(user), params, workspace_id
-        )
+    sql, params = _dec_list_query(
+        user=user,
+        workspace_id=workspace_id,
+        status=status,
+        overdue=overdue,
     )
-    if status in ("open", "closed"):
-        params.append(status)
-        where.append(f"status = ${len(params)}")
-    if overdue.lower() == "true":
-        where.append(
-            "status = 'open' AND commitment_date IS NOT NULL AND commitment_date < CURRENT_DATE"
-        )
-    sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
-    sql += " ORDER BY created_at DESC LIMIT 500"
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         rows = await conn.fetch(sql, *params)
@@ -6629,41 +6616,8 @@ async def api_decisions_get(
     return out
 
 
-_DECISION_UPDATE_FIELDS = {
-    "title",
-    "description",
-    "commitment_date",
-    "kpis",
-    "status",
-    "outcome",
-    "closed_at",
-    "follow_up_decision_id",
-    "assignee_id",
-    "visibility",
-}
-
-
 def _decision_update_assignments(body: dict) -> tuple[list[str], list[Any]]:
-    sets: list[str] = []
-    params: list[Any] = []
-    for k, v in body.items():
-        if k not in _DECISION_UPDATE_FIELDS:
-            continue
-        if k == "kpis":
-            params.append(_json_dec.dumps(v))
-            sets.append(f"{k} = ${len(params)}::jsonb")
-            continue
-        if k == "commitment_date":
-            v = _coerce_date(v)
-        elif k == "closed_at":
-            v = _coerce_dt(v)
-        elif k == "visibility" and v not in ("private", "shared"):
-            continue
-        params.append(v)
-        sets.append(f"{k} = ${len(params)}")
-    if body.get("status") == "closed" and "closed_at" not in body:
-        sets.append("closed_at = COALESCE(closed_at, NOW())")
-    return sets, params
+    return _decision_update_assignments_impl(body)
 
 
 def _decision_update_sql_and_params(
@@ -6679,16 +6633,12 @@ def _decision_update_sql_and_params(
     # ``_dec_load_with_visibility`` which itself filters by workspace,
     # so ``existing["workspace_id"]`` is the active workspace by
     # construction.
-    update_params = list(params)
-    update_params.append(decision_id)
-    decision_ref = f"${len(update_params)}"
-    update_params.append(existing["workspace_id"])
-    workspace_ref = f"${len(update_params)}"
-    sql = (
-        f"UPDATE decisions SET {', '.join(sets)} "
-        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
+    return _decision_update_sql_and_params_impl(
+        sets=sets,
+        params=params,
+        decision_id=decision_id,
+        workspace_id=existing["workspace_id"],
     )
-    return sql, update_params
 
 
 async def _execute_decision_update(
@@ -6819,11 +6769,12 @@ def _assignable_role(value: str | None, actor_user: dict | None = None) -> str:
 
 @app.get("/api/users")
 async def api_users_list(user: dict = Depends(require_permission("iam.users.read"))):
-    users = await _auth.list_users(active_only=True)
-    if _is_global_iam_admin(user):
-        return {"users": users}
-    visible_ids = await _visible_user_ids_for_admin(user, users)
-    return {"users": [u for u in users if u.get("id") in visible_ids]}
+    return await _list_user_picker_payload_impl(
+        user=user,
+        auth_list_users=_auth.list_users,
+        is_global_iam_admin=_is_global_iam_admin,
+        visible_user_ids_for_admin=_visible_user_ids_for_admin,
+    )
 
 
 # ── Admin user management ───────────────────────────────────────────────────
@@ -7057,20 +7008,13 @@ async def _rollback_failed_invite(user_id: int, vpn_result: dict | None = None) 
 
 @app.get("/vpn-config/{token}")
 async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
-    info = await _tokens.consume_lookup(token, "vpn")
-    if not info or not info.get("wg_client_id"):
-        raise HTTPException(404, "Link invalido o ya utilizado")
-    try:
-        cfg = await _vpn.get_config(info["wg_client_id"])
-    except _vpn.VPNError as exc:
-        raise HTTPException(
-            502, f"No se pudo obtener la configuracion VPN: {exc}"
-        ) from exc
-    safe = _safe_filename(info.get("email") or "user")
-    return Response(
-        content=cfg,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{safe}.conf"'},
+    return await _vpn_config_download_response_impl(
+        token=token,
+        tokens_service=_tokens,
+        vpn_service=_vpn,
+        safe_filename=_safe_filename,
+        response_cls=Response,
+        vpn_error_cls=_vpn.VPNError,
     )
 
 
@@ -7170,91 +7114,18 @@ async def api_admin_users_send_reset(
     admin: dict = Depends(require_permission("iam.users.write")),
 ):
     """Email a password reset link and issue a one-time admin temporary password."""
-    target_user = await _load_active_reset_target_user(user_id)
-    await _assert_can_manage_target_user(admin, user_id)
-    temporary_password = _temporary_admin_reset_password()
-    await _replace_user_password_for_reset(user_id, temporary_password)
-    tok, _ = await _tokens.create(user_id, "reset")
-    sent = await _send_admin_reset_email(target_user, tok)
-    await _audit_admin_password_reset(
-        admin=admin,
+    return await _admin_send_reset_payload_impl(
         user_id=user_id,
-        request=request,
-        sent=sent,
-    )
-    return {
-        "sent": sent,
-        "temporary_password": temporary_password,
-        "password_delivery": "one_time_response",
-    }
-
-
-def _temporary_admin_reset_password() -> str:
-    import secrets as _secrets
-
-    return f"{_secrets.token_urlsafe(24)}Aa1!"
-
-
-async def _load_active_reset_target_user(user_id: int) -> dict:
-    target_user = await _auth.get_user_by_id(user_id)
-    if not target_user or not target_user.get("is_active"):
-        raise HTTPException(404, "user not found or inactive")
-    return target_user
-
-
-async def _replace_user_password_for_reset(
-    user_id: int, temporary_password: str
-) -> None:
-    pool = await _auth.pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            updated = await conn.fetchrow(
-                """
-                UPDATE users
-                   SET password_hash = $1,
-                       must_change_password = TRUE,
-                       is_active = TRUE
-                 WHERE id = $2
-                   AND is_active = TRUE
-                 RETURNING id
-                """,
-                _auth.hash_password(temporary_password),
-                user_id,
-            )
-            if not updated:
-                raise HTTPException(404, "user not found or inactive")
-            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
-            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-
-
-async def _send_admin_reset_email(target_user: dict, tok: str) -> bool:
-    subject, html = _email.render_password_reset(
-        target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS
-    )
-    return await _email.send_email(target_user["email"], subject, html)
-
-
-async def _audit_admin_password_reset(
-    *,
-    admin: dict,
-    user_id: int,
-    request: Request,
-    sent: bool,
-) -> None:
-    await _audit.record_event(
-        admin.get("id"),
-        admin.get("email"),
-        "password_reset.sent",
-        "user",
-        str(user_id),
-        ip=_client_ip(request),
+        admin=admin,
+        request_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "email_sent": sent,
-            "temporary_password_issued": True,
-            "password_delivery": "one_time_response",
-            "sessions_revoked": True,
-        },
+        auth_service=_auth,
+        audit_service=_audit,
+        tokens_service=_tokens,
+        email_service=_email,
+        reset_link_for_token=_reset_link,
+        reset_ttl_hours=RESET_TTL_HOURS,
+        assert_can_manage_target_user=_assert_can_manage_target_user,
     )
 
 

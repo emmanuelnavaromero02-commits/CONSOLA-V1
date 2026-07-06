@@ -5,6 +5,68 @@ from typing import Any
 from fastapi import HTTPException
 
 
+def explorer_visible_buckets(
+    default_buckets: list[dict[str, str]], *, is_security_admin: bool
+) -> list[dict[str, str]]:
+    if is_security_admin:
+        return default_buckets
+    return [item for item in default_buckets if item.get("id") == "lakehouse"]
+
+
+def explorer_list_kwargs(
+    *,
+    bucket_name: str,
+    prefix: str,
+    max_keys: int,
+    continuation_token: str | None = None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "Bucket": bucket_name,
+        "Prefix": prefix,
+        "MaxKeys": min(max(max_keys, 1), 1000),
+        "Delimiter": "/",
+    }
+    if continuation_token:
+        kwargs["ContinuationToken"] = continuation_token
+    return kwargs
+
+
+def explorer_object_row(obj: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "key": obj["Key"],
+        "size": obj["Size"],
+        "last_modified": obj["LastModified"].isoformat(),
+    }
+
+
+def explorer_list_response(
+    *,
+    bucket_name: str,
+    prefix: str,
+    folders: list[str],
+    objects: list[dict[str, Any]],
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "bucket": bucket_name,
+        "prefix": prefix,
+        "folders": folders,
+        "objects": objects,
+        "next_token": response.get("NextContinuationToken"),
+        "is_truncated": bool(response.get("IsTruncated", False)),
+    }
+
+
+def explorer_download_response(url: str, *, expires_in: int) -> dict[str, Any]:
+    return {"url": url, "expires_in": expires_in}
+
+
+def explorer_delete_response(
+    *, bucket_name: str, key: str
+) -> dict[str, bool | str]:
+    return {"deleted": True, "bucket": bucket_name, "key": key}
+
+
 def resolve_explorer_bucket(
     bucket: str,
     default_buckets: list[dict[str, str]],
