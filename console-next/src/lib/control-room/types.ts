@@ -1,6 +1,22 @@
 export type Severity = "critical" | "high" | "medium" | "low";
 export type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
-export type DataReadiness = "ready" | "partial" | "stub" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission" | "error";
+export type DataReadiness =
+  | "ready"
+  | "partial"
+  | "stub"
+  | "empty"
+  | "missing"
+  | "unavailable"
+  | "invalid_schema"
+  | "blocked"
+  | "no_permission"
+  | "error"
+  | "benchmark_internal"
+  | "insufficient_data"
+  | "blocked_by_sap"
+  | "blocked_by_permission"
+  | "pending_approval"
+  | "partial_fields";
 export type SourceRollup = SourceState | "partial" | "stub" | "attention" | "inactive" | "no_sources" | "error";
 export type LoadState = "loading" | "ready" | "error";
 export type DetailMode = "auto" | "manual" | null;
@@ -311,6 +327,9 @@ export interface SfTalentKpisPayload {
     insufficient_data_employees: number;
     nine_box_available: number;
     status: DataReadiness | SourceState | "partial";
+    source_mode?: string;
+    readiness_status?: string;
+    confidence?: number | null;
   };
   widgets: SfTalentWidget[];
   signals: SfTalentSignal[];
@@ -326,6 +345,8 @@ export interface SfTalentNineBoxCell {
   display_order: number;
   employee_count: number;
   ready_count: number;
+  cpa_real_count?: number;
+  reference_count?: number;
   blocked_count: number;
   status: DataReadiness | SourceState | "ready" | "partial";
   href?: string;
@@ -341,6 +362,7 @@ export interface SfTalentNineBoxPayload {
   totals: {
     employees: number;
     ready: number;
+    reference?: number;
     blocked: number;
     cells: number;
   };

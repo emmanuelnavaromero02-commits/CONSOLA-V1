@@ -1393,7 +1393,7 @@ def _sf_talent_9box_cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         classified_count = ready_count
         status = _sf_talent_status(
             row.get("box_status"),
-            "ready" if classified_count > 0 else "blocked",
+            "ready" if classified_count > 0 else "empty",
         )
         cells.append(
             {

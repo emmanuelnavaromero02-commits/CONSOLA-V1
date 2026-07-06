@@ -6,6 +6,29 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 
+async def sources_response_payload(
+    *,
+    user: dict | None,
+    refinement_invoke: Callable[..., Awaitable[dict[str, Any]]],
+    gold_sources_from_catalog: Callable[[dict | None], Awaitable[list[str]]],
+    filter_technical_sources: Callable[[dict | None, list[Any]], list[Any]],
+) -> dict[str, list[str]]:
+    try:
+        data = await refinement_invoke("list_sources", {}, timeout=60, user=user)
+    except Exception:
+        data = {}
+    sources = data.get("result") or data.get("sources") or []
+    gold_sources = await gold_sources_from_catalog(user)
+    if isinstance(sources, list):
+        visible = filter_technical_sources(user, sources)
+        return {
+            "sources": sorted(
+                set([str(s) for s in visible if str(s).strip()] + gold_sources)
+            )
+        }
+    return {"sources": gold_sources}
+
+
 async def schema_response_payload(
     *,
     source: str,

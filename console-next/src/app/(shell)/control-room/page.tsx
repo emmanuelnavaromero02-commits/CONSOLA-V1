@@ -65,7 +65,23 @@ import { cn } from "@/lib/utils";
 
 type Severity = "critical" | "high" | "medium" | "low";
 type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
-type DataReadiness = "ready" | "partial" | "stub" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission" | "error";
+type DataReadiness =
+  | "ready"
+  | "partial"
+  | "stub"
+  | "empty"
+  | "missing"
+  | "unavailable"
+  | "invalid_schema"
+  | "blocked"
+  | "no_permission"
+  | "error"
+  | "benchmark_internal"
+  | "insufficient_data"
+  | "blocked_by_sap"
+  | "blocked_by_permission"
+  | "pending_approval"
+  | "partial_fields";
 type SourceRollup = SourceState | "partial" | "stub" | "attention" | "inactive" | "no_sources" | "error";
 type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;

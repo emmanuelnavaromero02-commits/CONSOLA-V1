@@ -31,6 +31,7 @@ SEC_PY = REPO / "console/app/routers/security.py"
 TS_TYPES = REPO / "console-next/src/lib/operations/types.ts"
 TS_CLIENT = REPO / "console-next/src/lib/operations/client.ts"
 ADMIN_TENANTS_PY = REPO / "console/app/routers/admin_tenants.py"
+ADMIN_PASSWORD_RESET_PY = REPO / "console/app/domains/admin/password_reset.py"
 
 
 def _read(p: Path) -> str:
@@ -145,12 +146,14 @@ def test_admin_reset_returns_one_time_temporary_password():
     assert marker in src, "api_admin_users_send_reset block not found"
     start = src.index(marker)
     body = src[start : src.index("async def api_vault_list_connections", start)]
-    assert '"temporary_password": temporary_password' in body
-    assert '"password_delivery": "one_time_response"' in body
-    assert "must_change_password = TRUE" in body
-    assert "DELETE FROM refresh_tokens" in body
-    assert "DELETE FROM user_sessions" in body
-    assert "temporary_password_issued" in body
+    reset_domain = _read(ADMIN_PASSWORD_RESET_PY)
+    assert "_admin_send_reset_payload_impl" in body
+    assert '"temporary_password": temporary_password' in reset_domain
+    assert '"password_delivery": "one_time_response"' in reset_domain
+    assert "must_change_password = TRUE" in reset_domain
+    assert "DELETE FROM refresh_tokens" in reset_domain
+    assert "DELETE FROM user_sessions" in reset_domain
+    assert "temporary_password_issued" in reset_domain
 
 
 def test_operations_ui_surfaces_reset_temporary_password_once():

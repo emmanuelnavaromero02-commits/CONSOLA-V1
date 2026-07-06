@@ -34,29 +34,35 @@ export const readinessLabels: Record<string, string> = {
   attention: "Requiere atención",
   inactive: "Actualización pendiente",
   no_sources: "Sin datos configurados",
+  benchmark_internal: "Referencia interna",
+  insufficient_data: "Datos insuficientes",
+  blocked_by_sap: "Entidad no expuesta en SAP",
+  blocked_by_permission: "Falta permiso SAP",
+  pending_approval: "Requiere confirmación",
+  partial_fields: "Campos parciales",
   error: "Error operativo",
 };
 
 export function readinessTone(status?: ControlRoomStatus): string {
-  if (status === "ready" || status === "ok") {
+  if (status === "ready" || status === "ok" || status === "benchmark_internal") {
     return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   }
-  if (status === "partial" || status === "attention") {
+  if (status === "partial" || status === "attention" || status === "partial_fields" || status === "pending_approval" || status === "insufficient_data") {
     return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   }
   if (status === "stub" || status === "empty" || status === "inactive" || status === "no_sources") {
     return "border-slate-500/40 bg-slate-500/10 text-slate-700 dark:text-slate-300";
   }
-  if (status === "blocked" || status === "no_permission") {
+  if (status === "blocked" || status === "no_permission" || status === "blocked_by_sap" || status === "blocked_by_permission") {
     return "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300";
   }
   return "border-destructive/40 bg-destructive/10 text-destructive";
 }
 
 function ReadinessStatusIcon({ status, className }: { status?: ControlRoomStatus; className: string }) {
-  if (status === "ready" || status === "ok") return <CheckCircle2 aria-hidden className={className} />;
-  if (status === "partial" || status === "attention") return <Clock3 aria-hidden className={className} />;
-  if (status === "blocked" || status === "no_permission") return <LockKeyhole aria-hidden className={className} />;
+  if (status === "ready" || status === "ok" || status === "benchmark_internal") return <CheckCircle2 aria-hidden className={className} />;
+  if (status === "partial" || status === "attention" || status === "partial_fields" || status === "pending_approval" || status === "insufficient_data") return <Clock3 aria-hidden className={className} />;
+  if (status === "blocked" || status === "no_permission" || status === "blocked_by_sap" || status === "blocked_by_permission") return <LockKeyhole aria-hidden className={className} />;
   if (status === "stub" || status === "empty" || status === "inactive" || status === "no_sources") return <AlertTriangle aria-hidden className={className} />;
   return <XCircle aria-hidden className={className} />;
 }

@@ -54,3 +54,17 @@ def test_talent_chain_fallbacks_keep_downstream_gold_materializable():
     assert readiness is not None
     assert "sap_successfactors_talent_benchmark_internal" in readiness["sql_def"]
     assert "benchmark_internal" in readiness["sql_def"]
+    assert "PERCENT_RANK()" in readiness["sql_def"]
+    assert "workspace_employee_count >= 50" in readiness["sql_def"]
+    assert "benchmark_input_coverage >= 0.80" in readiness["sql_def"]
+
+    nine_box = fallback_dataset_for_successfactors(
+        {"name": "sap_successfactors_talent_9box", "layer": "gold"},
+        RuntimeError("No files found that match read_parquet source"),
+    )
+    assert nine_box is not None
+    assert "benchmark_performance_proxy" in nine_box["sql_def"]
+    assert "benchmark_potential_proxy" in nine_box["sql_def"]
+    assert "benchmark_performance_percentile" in nine_box["sql_def"]
+    assert "benchmark_potential_percentile" in nine_box["sql_def"]
+    assert "TRY_CAST(readiness_score AS DOUBLE) / 20" not in nine_box["sql_def"]

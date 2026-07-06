@@ -158,7 +158,10 @@ SELECT
     ROUND(skill_coverage_ratio * 100, 2) AS skill_coverage_pct,
     ROUND(role_requirements_ratio * 100, 2) AS role_requirements_coverage_pct,
     ROUND(nine_box_ratio * 100, 2) AS nine_box_coverage_pct,
-    confidence,
+    CASE
+        WHEN readiness_benchmark_count > 0 AND readiness_cpa_real_count = 0 THEN LEAST(confidence, 0.60)
+        ELSE confidence
+    END AS confidence,
     CASE
         WHEN readiness_benchmark_count > 0 AND readiness_cpa_real_count = 0 THEN 'benchmark_internal'
         WHEN readiness_cpa_real_count > 0 THEN 'cpa_real'

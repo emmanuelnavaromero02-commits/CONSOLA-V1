@@ -43,7 +43,7 @@ SELECT
     CASE
         WHEN COALESCE(metrics.ready_count, 0) > 0 AND COALESCE(metrics.benchmark_count, 0) > 0 THEN 'benchmark_internal'
         WHEN COALESCE(metrics.ready_count, 0) > 0 THEN 'ready'
-        ELSE 'blocked'
+        ELSE 'empty'
     END AS box_status,
     boxes.display_order,
     CURRENT_TIMESTAMP AS generated_at

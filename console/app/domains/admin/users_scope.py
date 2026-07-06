@@ -120,6 +120,20 @@ async def list_admin_users_payload(
     return {"users": await attach_workspace_summaries(scoped_users)}
 
 
+async def list_user_picker_payload(
+    *,
+    user: dict,
+    auth_list_users: Callable[..., Awaitable[list[dict]]],
+    is_global_iam_admin: Callable[[dict | None], bool],
+    visible_user_ids_for_admin: Callable[[dict, list[dict]], Awaitable[set[int]]],
+) -> dict:
+    users = await auth_list_users(active_only=True)
+    if is_global_iam_admin(user):
+        return {"users": users}
+    visible_ids = await visible_user_ids_for_admin(user, users)
+    return {"users": [u for u in users if u.get("id") in visible_ids]}
+
+
 async def visible_user_ids_for_admin(
     admin_user: dict,
     users: list[dict],

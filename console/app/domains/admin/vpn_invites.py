@@ -114,6 +114,32 @@ async def reissue_vpn_for_user_payload(
     return {"reissued": result.get("issued", False), **result}
 
 
+async def vpn_config_download_response(
+    *,
+    token: str,
+    tokens_service: Any,
+    vpn_service: Any,
+    safe_filename: Callable[[str], str],
+    response_cls: Any,
+    vpn_error_cls: type[BaseException],
+) -> Any:
+    info = await tokens_service.consume_lookup(token, "vpn")
+    if not info or not info.get("wg_client_id"):
+        raise HTTPException(404, "Link invalido o ya utilizado")
+    try:
+        config_text = await vpn_service.get_config(info["wg_client_id"])
+    except vpn_error_cls as exc:
+        raise HTTPException(
+            502, f"No se pudo obtener la configuracion VPN: {exc}"
+        ) from exc
+    safe = safe_filename(info.get("email") or "user")
+    return response_cls(
+        content=config_text,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.conf"'},
+    )
+
+
 async def rollback_failed_invite(
     user_id: int,
     vpn_result: dict | None = None,
