@@ -117,6 +117,28 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
     assert len(connects) == 2
 
 
+def test_clear_gold_row_cache_removes_only_requested_scope():
+    gold_fetcher._GOLD_ROW_CACHE[
+        ("dataset_a", "tenant-1", "workspace-1", 20)
+    ] = (999999999.0, [{"value": 1}])
+    gold_fetcher._GOLD_ROW_CACHE[
+        ("dataset_a", "tenant-1", "workspace-2", 20)
+    ] = (999999999.0, [{"value": 2}])
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[
+        ("dataset_a", "tenant-1", "workspace-1", 20)
+    ] = asyncio.Lock()
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[
+        ("dataset_a", "tenant-1", "workspace-2", 20)
+    ] = asyncio.Lock()
+
+    gold_fetcher.clear_gold_row_cache("tenant-1", "workspace-1")
+
+    assert ("dataset_a", "tenant-1", "workspace-1", 20) not in gold_fetcher._GOLD_ROW_CACHE
+    assert ("dataset_a", "tenant-1", "workspace-1", 20) not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE
+    assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+
+
 @pytest.mark.asyncio
 async def test_gold_fetcher_singleflights_concurrent_cold_reads(monkeypatch):
     monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")

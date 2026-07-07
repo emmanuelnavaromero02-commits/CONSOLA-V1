@@ -4241,8 +4241,15 @@ async def _run_sync_agentops_status(**kwargs: Any) -> dict[str, Any]:
 
 def _sync_control_room_cache_invalidate(current_user: dict | None) -> None:
     from app.routers.control_room import _control_room_cache_invalidate
+    from app.services.intelligence.gold_fetcher import clear_gold_row_cache
 
     _control_room_cache_invalidate(current_user)
+    try:
+        tenant_id, workspace_id = _workspace_scope_from_user(current_user)
+    except Exception:
+        clear_gold_row_cache()
+        return
+    clear_gold_row_cache(tenant_id, workspace_id)
 
 
 async def _build_sync_run_status(

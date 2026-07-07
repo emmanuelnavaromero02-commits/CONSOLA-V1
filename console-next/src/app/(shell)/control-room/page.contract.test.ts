@@ -52,6 +52,7 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("Alcance de sincronización");
     expect(pageSource).toContain('const [controlSyncTarget, setControlSyncTarget] = useState<SyncTarget>("all")');
     expect(pageSource).toContain("syncTargetSupportsTalent");
+    expect(pageSource).toContain("activeSyncConnectorId");
     expect(pageSource).toContain('<option value="talent">Talento</option>');
     expect(pageSource).toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target })");
     expect(pageSource).toContain("SYNC_NOW_MAX_POLL_ATTEMPTS = 600");
@@ -64,7 +65,8 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("AnalyticAppsPanel");
     expect(pageSource).toContain("listApps");
     expect(pageSource).toContain("includeUnready: true");
-    expect(pageSource).toContain('cartridge: cartridge === "all" ? undefined : cartridge');
+    expect(pageSource).toContain("analyticsCartridge");
+    expect(pageSource).toContain("selectedModule?.connector_id");
     expect(pageSource).toContain("loadAnalyticsApps");
     expect(analyticAppsPanelSource).toContain("NativeAnalyticModule");
     expect(analyticAppsPanelSource).toContain("Modulos de decision");

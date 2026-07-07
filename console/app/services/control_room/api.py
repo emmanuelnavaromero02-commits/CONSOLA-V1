@@ -703,6 +703,14 @@ def _sf_talent_source_mode(
 
 
 @_bind_to_core
+def _sf_talent_first_int(row: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        if key in row and row.get(key) not in (None, ""):
+            return _sf_talent_int(row.get(key))
+    return 0
+
+
+@_bind_to_core
 def _sf_talent_kpi_metrics(
     rows: dict[str, Any],
     results: dict[str, dict[str, Any]],
@@ -732,8 +740,16 @@ def _sf_talent_kpi_metrics(
             or _sf_talent_int(operational_row.get("roles_without_requirements_count"))
         ),
         "high_severity_signals": _sf_talent_int(operational_row.get("high_severity_signal_count")),
-        "learning_blockers": _sf_talent_int(operational_row.get("learning_blocker_count")),
-        "recruiting_blockers": _sf_talent_int(operational_row.get("recruiting_blocker_count")),
+        "learning_blockers": _sf_talent_first_int(
+            operational_row,
+            "learning_blocked_count",
+            "learning_blocker_count",
+        ),
+        "recruiting_blockers": _sf_talent_first_int(
+            operational_row,
+            "recruiting_blocked_count",
+            "recruiting_blocker_count",
+        ),
         "skill_gap_count": _sf_talent_int(operational_row.get("skill_gap_count")),
         "skill_coverage_pct": operational_row.get("skill_coverage_pct"),
         "operational_status": _sf_talent_status(

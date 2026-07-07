@@ -1400,9 +1400,15 @@ export default function ControlRoomPage() {
     setAnalyticsAppsLoading(true);
     setAnalyticsAppsError("");
     try {
+      const selectedModule = dashboard?.cartridges.find((item) => (
+        item.id === cartridge || item.connector_id === cartridge
+      ));
+      const analyticsCartridge = cartridge === "all"
+        ? undefined
+        : selectedModule?.connector_id || selectedModule?.id || cartridge;
       const payload = await listApps({
         includeUnready: true,
-        cartridge: cartridge === "all" ? undefined : cartridge,
+        cartridge: analyticsCartridge,
       });
       setAnalyticsApps(payload);
       setSelectedAnalyticsApp((current) => (
@@ -1415,7 +1421,7 @@ export default function ControlRoomPage() {
     } finally {
       setAnalyticsAppsLoading(false);
     }
-  }, [cartridge]);
+  }, [cartridge, dashboard?.cartridges]);
 
   const loadSfGoldKpis = useCallback(async () => {
     setSfGoldLoading(true);
@@ -1581,6 +1587,7 @@ export default function ControlRoomPage() {
     activeSyncCartridge
       && (activeSyncCartridge.id === "sap_successfactors" || activeSyncCartridge.connector_id === "sap_successfactors"),
   );
+  const activeSyncConnectorId = activeSyncCartridge?.connector_id || activeSyncCartridge?.id || "";
   const activeModules = cartridges.filter((item) => item.active && !item.operational);
   const activeConnectorCount = dashboard?.summary.active_connectors
     ?? new Set(activeModules.map((item) => item.connector_id || item.id)).size;
@@ -2236,7 +2243,7 @@ export default function ControlRoomPage() {
   }, [activeControlRoomSection, loadActiveControlRoomSection, loadDashboard, selectedId]);
 
   const syncControlRoomData = useCallback(async () => {
-    const activeCartridge = activeSyncCartridge?.id || "sap_successfactors";
+    const activeCartridge = activeSyncConnectorId || "sap_successfactors";
     const target = syncTargetSupportsTalent ? controlSyncTarget : controlSyncTarget === "foundation" ? "foundation" : "all";
 
     setSyncError("");
@@ -2257,11 +2264,11 @@ export default function ControlRoomPage() {
       setSyncError(message);
       toast.error(message);
     }
-  }, [activeSyncCartridge?.id, controlSyncTarget, pollControlSyncRun, syncTargetSupportsTalent]);
+  }, [activeSyncConnectorId, controlSyncTarget, pollControlSyncRun, syncTargetSupportsTalent]);
 
   useEffect(() => {
-    if (!activeSyncCartridge?.id || controlSyncing || controlSyncPollRef.current) return undefined;
-    const activeCartridge = activeSyncCartridge.id;
+    if (!activeSyncConnectorId || controlSyncing || controlSyncPollRef.current) return undefined;
+    const activeCartridge = activeSyncConnectorId;
     const target = syncTargetSupportsTalent ? controlSyncTarget : controlSyncTarget === "foundation" ? "foundation" : "all";
     const restoreKey = `${activeCartridge}:${target}`;
     if (controlSyncRestoreRef.current.has(restoreKey)) return undefined;
@@ -2296,7 +2303,7 @@ export default function ControlRoomPage() {
       cancelled = true;
     };
   }, [
-    activeSyncCartridge?.id,
+    activeSyncConnectorId,
     controlSyncTarget,
     controlSyncing,
     pollControlSyncRun,
@@ -2307,17 +2314,17 @@ export default function ControlRoomPage() {
     const resumeWhenVisible = () => {
       if (
         document.visibilityState !== "visible"
-        || !activeSyncCartridge?.id
+        || !activeSyncConnectorId
         || !controlSyncRun
         || controlSyncing
         || isSyncTerminal(controlSyncRun.status)
       ) return;
-      void pollControlSyncRun(activeSyncCartridge.id, controlSyncRun, { announce: false });
+      void pollControlSyncRun(activeSyncConnectorId, controlSyncRun, { announce: false });
     };
 
     document.addEventListener("visibilitychange", resumeWhenVisible);
     return () => document.removeEventListener("visibilitychange", resumeWhenVisible);
-  }, [activeSyncCartridge?.id, controlSyncRun, controlSyncing, pollControlSyncRun]);
+  }, [activeSyncConnectorId, controlSyncRun, controlSyncing, pollControlSyncRun]);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950 dark:bg-[#050a12] dark:text-slate-100">

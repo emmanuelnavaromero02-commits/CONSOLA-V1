@@ -63,6 +63,31 @@ def _gold_cache_set(key: tuple[str, str, str, int], rows: list[dict[str, Any]]) 
     return rows
 
 
+def clear_gold_row_cache(tenant_id: str | None = None, workspace_id: str | None = None) -> None:
+    """Clear cached Gold reads after sync/materialization updates."""
+    tenant_text = str(tenant_id or "").strip()
+    workspace_text = str(workspace_id or "").strip()
+    if not tenant_text and not workspace_text:
+        _GOLD_ROW_CACHE.clear()
+        _GOLD_ROW_CACHE_LOCKS.clear()
+        return
+
+    def matches(key: tuple[str, str, str, int]) -> bool:
+        _dataset, key_tenant, key_workspace, _limit = key
+        if tenant_text and key_tenant != tenant_text:
+            return False
+        if workspace_text and key_workspace != workspace_text:
+            return False
+        return True
+
+    for key in list(_GOLD_ROW_CACHE):
+        if matches(key):
+            _GOLD_ROW_CACHE.pop(key, None)
+    for key in list(_GOLD_ROW_CACHE_LOCKS):
+        if matches(key):
+            _GOLD_ROW_CACHE_LOCKS.pop(key, None)
+
+
 async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
     rows = await conn.fetch(
         """

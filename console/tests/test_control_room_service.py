@@ -483,6 +483,38 @@ async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_aliases(monkeypatch):
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_operational_features":
+            return [
+                {
+                    "profiled_count": 1288,
+                    "calculable_count": 1288,
+                    "readiness_low": 100,
+                    "readiness_medium": 700,
+                    "readiness_high": 488,
+                    "nine_box_classified_count": 1288,
+                    "learning_blocked_count": 3,
+                    "recruiting_blocked_count": 2,
+                    "feature_status": "partial",
+                    "readiness_status": "benchmark_internal",
+                    "source_mode": "benchmark_internal",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+
+    result = await control_room_service.sap_successfactors_talent_kpis(USER)
+
+    assert result["readiness"]["profiled_employees"] == 1288
+    assert result["readiness"]["calculable_employees"] == 1288
+    assert result["readiness"]["nine_box_available"] == 1288
+    assert result["readiness"]["learning_blockers"] == 3
+    assert result["readiness"]["recruiting_blockers"] == 2
+
+
+@pytest.mark.asyncio
 async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row_is_stale(monkeypatch):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_employee_profile":
