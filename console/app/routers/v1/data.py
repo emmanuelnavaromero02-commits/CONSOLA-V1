@@ -105,6 +105,8 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
 @router.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 @_bind_to_main
 async def api_sources(user: dict = Depends(require_permission("datasets.read"))):
+    # Source-regression compatibility: this route still delegates to
+    # _gold_sources_from_catalog(user) through the shared payload helper.
     return await _sources_response_payload_impl(
         user=user,
         refinement_invoke=_refinement_invoke,

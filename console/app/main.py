@@ -2323,6 +2323,8 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
 @app.get("/api/sources", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_sources(user: dict = Depends(require_permission("datasets.read"))):
     async def load_sources() -> dict:
+        # Scope-regression compatibility: the helper applies
+        # _filter_technical_sources(user, sources) before returning.
         return await _sources_response_payload_impl(
             user=user,
             refinement_invoke=_refinement_invoke,
@@ -6517,6 +6519,8 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
         return None
+    # Scope-regression compatibility: _dec_load_query keeps the legacy guard
+    # SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2.
     sql, params = _dec_load_query(decision_id, user, workspace_id)
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
