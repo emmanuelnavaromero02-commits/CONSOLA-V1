@@ -198,6 +198,50 @@ async def test_schema_response_payload_handles_missing_bronze_source():
 
 
 @pytest.mark.asyncio
+async def test_schema_response_payload_uses_storage_uri_fallback_for_bronze_columns():
+    async def refinement_invoke(tool, args, **_kwargs):
+        if tool == "get_source_partitions":
+            return empty_partitions(args["source"])
+        if tool == "preview_source":
+            return {"source": args["source"], "error": "No files found"}
+        raise AssertionError(f"unexpected tool {tool}")
+
+    async def storage_schema_fallback(_source):
+        return {
+            "source": "raw/acme/User",
+            "schema": [{"name": "userId", "type": "VARCHAR"}],
+            "columns": [{"name": "userId", "type": "VARCHAR"}],
+            "data": [],
+        }
+
+    async def gold_schema_payload(_source, _user):
+        raise AssertionError("gold schema should not be called")
+
+    payload = await schema_response_payload(
+        source="raw/acme/User",
+        user=SCOPED_USER,
+        gold_dataset_from_source=lambda _source: None,
+        gold_schema_payload=gold_schema_payload,
+        refinement_invoke=refinement_invoke,
+        schema_error=schema_error,
+        gold_schema_error_payload=gold_schema_error_payload,
+        empty_partitions=empty_partitions,
+        empty_preview=empty_preview,
+        schema_payload_warnings=schema_payload_warnings,
+        preview_has_columns=preview_has_columns,
+        bronze_schema_payload=bronze_schema_payload,
+        storage_schema_fallback=storage_schema_fallback,
+    )
+
+    assert payload["status"] == "partial"
+    assert payload["preview"]["columns"] == [{"name": "userId", "type": "VARCHAR"}]
+    assert any(
+        error.get("reason") == "storage_uri_schema_fallback"
+        for error in payload.get("errors", [])
+    )
+
+
+@pytest.mark.asyncio
 async def test_schema_response_payload_handles_missing_gold_source():
     async def refinement_invoke(_tool, _args, **_kwargs):
         raise AssertionError("bronze refinement should not be called")

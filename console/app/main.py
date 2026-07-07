@@ -2297,6 +2297,91 @@ async def _gold_schema_payload(source: str, user: dict | None) -> dict[str, Any]
     return await _get_gold_catalog_runtime().schema_payload(source, user)
 
 
+def _bronze_source_cartridge_entity(source: str) -> tuple[str, str] | None:
+    parts = str(source or "").strip().strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "raw":
+        return None
+    cartridge = parts[1].strip()
+    entity = parts[2].strip()
+    if not cartridge or not entity:
+        return None
+    return cartridge, entity
+
+
+def _sql_single_quote(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+async def _latest_bronze_storage_uri_for_schema(
+    source: str, user: dict | None
+) -> str | None:
+    parts = _bronze_source_cartridge_entity(source)
+    if parts is None:
+        return None
+    cartridge, entity = parts
+    if not await _table_has_column("pipeline_runs", "storage_uri"):
+        return None
+    scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
+    query = f"""
+        SELECT storage_uri
+        FROM pipeline_runs
+        WHERE cartridge_id = $1
+          AND entity = $2
+          AND COALESCE(storage_uri, '') <> ''
+          {scope_sql}
+        ORDER BY finished_at DESC NULLS LAST, started_at DESC NULLS LAST
+        LIMIT 1
+    """
+    try:
+        pool = await _get_db_pool()
+        async with _pipeline_runs_read_conn(pool, user) as conn:
+            row = await conn.fetchrow(query, cartridge, entity, *scope_values)
+    except Exception:
+        logger.debug(
+            "schema storage_uri fallback lookup failed source=%s",
+            source,
+            exc_info=True,
+        )
+        return None
+    uri = str(row["storage_uri"] if row else "").strip()
+    if not uri or not _dataset_source_visible_for_user(user, uri):
+        return None
+    return uri
+
+
+async def _bronze_storage_uri_schema_fallback(
+    source: str, user: dict | None
+) -> dict[str, Any] | None:
+    storage_uri = await _latest_bronze_storage_uri_for_schema(source, user)
+    if not storage_uri:
+        return None
+    sql = (
+        "SELECT * FROM read_parquet("
+        f"{_sql_single_quote(storage_uri)}, "
+        "hive_partitioning = true, union_by_name = true"
+        ") WHERE 1 = 0"
+    )
+    preview = await _refinement_invoke(
+        "preview_transform",
+        {"sql": sql, "limit": 1, "sources": [source]},
+        timeout=30,
+        user=user,
+    )
+    if isinstance(preview, dict):
+        preview = {
+            **preview,
+            "source": source,
+            "storage_uri": storage_uri,
+            "rows": preview.get("rows") or preview.get("data") or [],
+        }
+    return preview if isinstance(preview, dict) else None
+
+
+def _invalidate_data_platform_read_caches(user: dict | None) -> None:
+    for namespace in ("schema", "sources", "catalog"):
+        _scoped_read_cache_invalidate(namespace, user)
+
+
 @app.get("/api/schema", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_schema(source: str, user: dict = Depends(require_permission("datasets.read"))):
     _require_technical_source_access(user, source)
@@ -2315,6 +2400,9 @@ async def api_schema(source: str, user: dict = Depends(require_permission("datas
             schema_payload_warnings=_schema_payload_warnings,
             preview_has_columns=_preview_has_columns,
             bronze_schema_payload=_bronze_schema_payload,
+            storage_schema_fallback=lambda checked_source: _bronze_storage_uri_schema_fallback(
+                checked_source, user
+            ),
         )
 
     return await _scoped_read_cache_get_or_set("schema", user, (source,), load_schema)
@@ -3543,7 +3631,7 @@ async def _api_pipeline_extract_dag_based(
         slot=slot,
         user=user,
     )
-    return await _pipeline_extract_success_response(
+    response = await _pipeline_extract_success_response(
         cartridge=cartridge,
         entity=entity,
         dag_id=dag_id,
@@ -3552,6 +3640,8 @@ async def _api_pipeline_extract_dag_based(
         metadata=metadata,
         result=result,
     )
+    _invalidate_data_platform_read_caches(user)
+    return response
 
 
 @app.post(
@@ -3567,6 +3657,7 @@ async def api_pipeline_extract_all(
     body = body or {}
     user = _runtime_user(user)
     _require_cartridge_visible(user, cartridge)
+    _invalidate_data_platform_read_caches(user)
     aggregate_result = await _maybe_trigger_aggregate_extract_all(
         cartridge=cartridge,
         body=body,
@@ -4209,6 +4300,7 @@ async def api_cartridge_sync_now(
     )
     if reserved_response is not None:
         return reserved_response
+    _invalidate_data_platform_read_caches(user)
 
     return await _continue_sync_now_after_reservation(
         cartridge=cartridge,

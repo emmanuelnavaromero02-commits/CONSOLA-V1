@@ -46,6 +46,8 @@ async def schema_response_payload(
         [str, dict[str, Any], dict[str, Any], list[dict[str, Any]]],
         dict[str, Any],
     ],
+    storage_schema_fallback: Callable[[str], Awaitable[dict[str, Any] | None]]
+    | None = None,
 ) -> dict[str, Any]:
     if gold_dataset_from_source(source):
         try:
@@ -81,6 +83,28 @@ async def schema_response_payload(
 
     errors.extend(schema_payload_warnings("partitions", partitions))
     errors.extend(schema_payload_warnings("preview", preview))
+    if not preview_has_columns(preview) and storage_schema_fallback is not None:
+        try:
+            fallback_preview = await storage_schema_fallback(source)
+        except Exception as exc:
+            error = schema_error("preview_storage_uri", exc)
+            errors.append(error)
+            fallback_preview = None
+        if fallback_preview and preview_has_columns(fallback_preview):
+            preview = fallback_preview
+            errors.append(
+                {
+                    "stage": "preview_storage_uri",
+                    "status_code": 200,
+                    "reason": "storage_uri_schema_fallback",
+                    "message": "schema inferido desde parquet registrado",
+                    "detail": (
+                        "El preview original no devolvió columnas; se usó el "
+                        "parquet exacto registrado para esta ejecución."
+                    ),
+                }
+            )
+
     if not preview_has_columns(preview):
         errors.append(
             {

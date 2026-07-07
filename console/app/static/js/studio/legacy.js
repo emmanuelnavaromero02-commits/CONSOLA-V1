@@ -1481,6 +1481,7 @@ import { state } from './legacy-state.js';
 
         // Schema
         const prev    = d.preview || {};
+        const errors  = Array.isArray(d.errors) ? d.errors : [];
         const rows    = Array.isArray(prev.data) ? prev.data
           : (Array.isArray(prev.rows) ? prev.rows
           : (Array.isArray(prev.result) ? prev.result : []));
@@ -1500,6 +1501,7 @@ import { state } from './legacy-state.js';
           };
         }).filter(col => col.name);
         const errMsg  = prev.error;
+        const recordedRows = run && run.record_count != null ? Number(run.record_count) : 0;
 
         if (errMsg) {
           panel.innerHTML = `<div class="et-preview-inner">
@@ -1526,6 +1528,14 @@ import { state } from './legacy-state.js';
               </table>
             </div>` : '';
         }
+        const emptyPreviewMessage = schema.length
+          ? 'Sin filas de muestra disponibles en Bronze'
+          : (recordedRows > 0
+            ? `Parquet registrado con ${recordedRows.toLocaleString('es')} filas, pero no se pudieron inferir columnas todavía. Reintenta o revisa Schema.`
+            : 'Sin filas disponibles en Bronze');
+        const fallbackNote = errors.some(err => err && err.reason === 'storage_uri_schema_fallback')
+          ? '<div style="color:var(--amber);font-size:10px;margin-top:6px">Schema recuperado desde el parquet registrado de la ejecución.</div>'
+          : '';
 
         panel.innerHTML = `<div class="et-preview-inner">
           ${statsHtml}
@@ -1534,8 +1544,9 @@ import { state } from './legacy-state.js';
               ${schema.length} COLUMNAS
             </div>
             <div class="schema-cols">${colsHtml}</div>
+            ${fallbackNote}
           </div>
-          ${tableHtml || `<div style="color:var(--text3);font-size:10px;font-style:italic">${rows.length ? 'Filas disponibles, sin columnas inferidas' : 'Sin filas disponibles en Bronze'}</div>`}
+          ${tableHtml || `<div style="color:var(--text3);font-size:10px;font-style:italic">${rows.length ? 'Filas disponibles, sin columnas inferidas' : emptyPreviewMessage}</div>`}
         </div>`;
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner"><div class="preview-err">Error: ${esc(e.message)}</div></div>`;
