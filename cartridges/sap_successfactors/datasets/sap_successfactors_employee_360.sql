@@ -31,6 +31,11 @@ divi AS (SELECT division_id, division_name FROM read_parquet('s3://{bucket}/silv
 loc AS (SELECT location_id, location_name FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_folocation_latest/**/*.parquet'))
 SELECT
     e.user_id                       AS user_id,            -- plano
+    -- Clave tecnica para joins internos de talento. Replica el shadowing de
+    -- Performance (protection_service._shadow = sha256 hex) para poder unir con
+    -- performance_cycle/competency/aspiration, cuyo user_id viene shadowed. No
+    -- expone PII: es el mismo hash irreversible del userId ya crudo aqui.
+    sha256(CAST(e.user_id AS VARCHAR)) AS user_id_hash,
     p.full_name                     AS full_name,          -- masked
     p.gender                        AS gender,
     p.marital_status                AS marital_status,

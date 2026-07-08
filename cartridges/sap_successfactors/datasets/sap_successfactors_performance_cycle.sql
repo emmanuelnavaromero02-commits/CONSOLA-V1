@@ -72,7 +72,10 @@ review_ranked AS (
         reviews.*,
         ROW_NUMBER() OVER (
             PARTITION BY user_id
-            ORDER BY cycle_end_date DESC NULLS LAST, cycle_start_date DESC NULLS LAST, form_data_id DESC NULLS LAST
+            -- Tomar la ultima form CALIFICADA (performance_rating no nulo) antes que
+            -- la mas reciente: un usuario puede tener su rating en una form anterior
+            -- y la mas nueva sin calificar. Sin esto se pierden los ratings validos.
+            ORDER BY (performance_rating IS NOT NULL) DESC, cycle_end_date DESC NULLS LAST, cycle_start_date DESC NULLS LAST, form_data_id DESC NULLS LAST
         ) AS _rn
     FROM reviews
     WHERE user_id IS NOT NULL
@@ -110,6 +113,9 @@ base_users AS (
 )
 SELECT
     b.user_id,
+    -- user_id ya viene shadowed (sha256 del formSubjectId). Se expone como
+    -- user_id_hash para unir con employee_360.user_id_hash sin des-shadowear.
+    b.user_id AS user_id_hash,
     r.form_data_id,
     r.form_template_id,
     r.status AS review_status,

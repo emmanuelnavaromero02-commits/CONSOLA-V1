@@ -103,7 +103,7 @@ WITH emp AS (
 ),
 performance AS (
     SELECT
-        user_id,
+        user_id_hash,
         MAX(
             CASE
                 WHEN performance_rating IS NULL THEN NULL
@@ -115,7 +115,7 @@ performance AS (
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performance_cycle/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
-    GROUP BY user_id
+    GROUP BY user_id_hash
 )
 SELECT
     emp.tenant_id,
@@ -152,7 +152,7 @@ SELECT
     END AS blockers,
     CURRENT_TIMESTAMP AS generated_at
 FROM emp
-LEFT JOIN performance ON performance.user_id = emp.user_id
+LEFT JOIN performance ON performance.user_id_hash = emp.user_id_hash
 ORDER BY emp.user_id
 """,
     # Performance cycle degradation: when optional goal sources (GoalPlan,
@@ -171,13 +171,17 @@ ranked AS (
         reviews.*,
         ROW_NUMBER() OVER (
             PARTITION BY user_id
-            ORDER BY cycle_end_date DESC NULLS LAST, cycle_start_date DESC NULLS LAST, form_data_id DESC NULLS LAST
+            -- Ultima form CALIFICADA por usuario (no la mas reciente sin rating).
+            ORDER BY (performance_rating IS NOT NULL) DESC, cycle_end_date DESC NULLS LAST, cycle_start_date DESC NULLS LAST, form_data_id DESC NULLS LAST
         ) AS _rn
     FROM reviews
     WHERE user_id IS NOT NULL
 )
 SELECT
     user_id,
+    -- user_id ya es el formSubjectId shadowed (sha256); se expone como
+    -- user_id_hash para unir con employee_360.user_id_hash sin des-shadowear.
+    user_id AS user_id_hash,
     form_data_id,
     form_template_id,
     status AS review_status,

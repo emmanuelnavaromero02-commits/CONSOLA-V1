@@ -131,3 +131,44 @@ def test_unparseable_row_count_is_treated_as_empty(bad_row_count):
     )
 
     assert annotated["degraded"] is True
+
+
+# user_id_hash: Performance's user key is shadowed (sha256 of formSubjectId) while
+# foundation user_id is raw. Talent joins must use a common technical hash key
+# (user_id_hash = sha256(raw user_id)) so Performance can join to the profile
+# WITHOUT de-shadowing any PII.
+
+_DS = _REPO / "cartridges/sap_successfactors/datasets"
+
+
+def test_employee_360_exposes_user_id_hash_matching_shadowing():
+    sql = (_DS / "sap_successfactors_employee_360.sql").read_text(encoding="utf-8")
+    # sha256 hex == protection_service._shadow, so it equals the shadowed formSubjectId
+    assert "sha256(CAST(e.user_id AS VARCHAR)) AS user_id_hash" in sql
+
+
+def test_performance_cycle_exposes_user_id_hash_and_ranks_rated_first():
+    sql = (_DS / "sap_successfactors_performance_cycle.sql").read_text(encoding="utf-8")
+    assert "AS user_id_hash" in sql
+    # ranking picks the latest RATED form, not just the latest form
+    assert "(performance_rating IS NOT NULL) DESC" in sql
+
+
+def test_employee_profile_joins_talent_by_user_id_hash_not_raw():
+    sql = (_DS / "sap_successfactors_talent_employee_profile.sql").read_text(encoding="utf-8")
+    assert "performance.user_id_hash = emp.user_id_hash" in sql
+    assert "competency.user_id_hash = emp.user_id_hash" in sql
+    assert "aspiration.user_id_hash = emp.user_id_hash" in sql
+    # manager_hierarchy stays on the raw foundation user_id
+    assert "hier.user_id = emp.user_id" in sql
+
+
+def test_talent_fallbacks_join_by_user_id_hash_and_rank_rated_first():
+    ep = TALENT_GOLD_FALLBACK_SQL["sap_successfactors_talent_employee_profile"]
+    assert "performance.user_id_hash = emp.user_id_hash" in ep
+    # Competency/Aspiration stay explicitly NULL — tenant/SAP dependency, not simulated
+    assert "NULL::DOUBLE AS competency_score" in ep
+    assert "NULL::DOUBLE AS aspiration_score" in ep
+    pc = TALENT_GOLD_FALLBACK_SQL["sap_successfactors_performance_cycle"]
+    assert "AS user_id_hash" in pc
+    assert "(performance_rating IS NOT NULL) DESC" in pc
