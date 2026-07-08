@@ -243,7 +243,11 @@ def workspace_server_url(
     is_production_env: Callable[[], bool] | None = None,
     logger_warning: Callable[[str], None] | None = None,
 ) -> str:
-    env = environ or os.environ
+    # Respect an explicitly-passed empty mapping. `environ or os.environ` would
+    # treat {} as falsy and leak the real process env, so a caller asking for
+    # "no config" (e.g. the production-safety check) would still read WORKSPACE_*
+    # from the ambient environment (green locally, red in the full stack).
+    env = environ if environ is not None else os.environ
     raw = env.get("WORKSPACE_INTERNAL_URL") or env.get("WORKSPACE_BACKEND_URL")
     if raw:
         return raw.rstrip("/")
