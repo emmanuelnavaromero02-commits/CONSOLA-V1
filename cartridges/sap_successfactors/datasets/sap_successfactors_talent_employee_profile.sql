@@ -15,9 +15,12 @@ hier AS (
                       hive_partitioning = true,
                       union_by_name = true)
 ),
+-- Los CTEs de talento se agregan por user_id_hash (clave tecnica shadowed) para
+-- poder unir con employee_360.user_id_hash. performance_cycle ya expone
+-- user_id_hash; competency/aspiration traen su user_id shadowed (= el hash).
 performance AS (
     SELECT
-        user_id,
+        user_id_hash,
         AVG(
             CASE
                 WHEN performance_rating IS NULL THEN NULL
@@ -29,11 +32,11 @@ performance AS (
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performance_cycle/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
-    GROUP BY user_id
+    GROUP BY user_id_hash
 ),
 competency AS (
     SELECT
-        user_id,
+        user_id AS user_id_hash,
         AVG(proficiency_100) AS competency_score,
         BOOL_OR(competency_status = 'ready') AS has_competency
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_competency/**/*.parquet',
@@ -43,7 +46,7 @@ competency AS (
 ),
 aspiration AS (
     SELECT
-        user_id,
+        user_id AS user_id_hash,
         AVG(aspiration_100) AS aspiration_score,
         BOOL_OR(aspiration_status = 'ready') AS has_aspiration
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_aspiration/**/*.parquet',
@@ -83,9 +86,11 @@ profile AS (
         COALESCE(aspiration.has_aspiration, FALSE) AS has_aspiration
     FROM emp
     LEFT JOIN hier ON hier.user_id = emp.user_id
-    LEFT JOIN performance ON performance.user_id = emp.user_id
-    LEFT JOIN competency ON competency.user_id = emp.user_id
-    LEFT JOIN aspiration ON aspiration.user_id = emp.user_id
+    -- Talento une por user_id_hash (shadowed en ambos lados); manager_hierarchy
+    -- usa user_id crudo de foundation, que si coincide con emp.user_id.
+    LEFT JOIN performance ON performance.user_id_hash = emp.user_id_hash
+    LEFT JOIN competency ON competency.user_id_hash = emp.user_id_hash
+    LEFT JOIN aspiration ON aspiration.user_id_hash = emp.user_id_hash
 )
 SELECT
     tenant_id,
