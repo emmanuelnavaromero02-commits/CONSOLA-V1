@@ -513,7 +513,13 @@ entities:
       - formSubjectId
       - formTemplateId
       - status
+      # overallRating is null in this tenant's FormHeader; the overall performance
+      # rating is carried by the `rating` scalar (populated only when isRated=true).
+      # Select both so the silver can COALESCE the real value. Evidence: 2,104
+      # forms with isRated=true expose rating=1..N via FormHeader.rating.
       - overallRating
+      - rating
+      - isRated
       - potentialRating
       - formStartDate
       - formEndDate

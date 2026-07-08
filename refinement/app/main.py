@@ -35,7 +35,7 @@ from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.security import get_internal_api_key
-from app.successfactors_fallbacks import fallback_dataset_for_successfactors
+from app.successfactors_fallbacks import annotate_operational_fallback, fallback_dataset_for_successfactors
 
 DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
@@ -58,13 +58,16 @@ def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict
         if not fallback:
             raise
         result = engine.materialize(fallback, user_context)
-        return {
-            **result,
-            "status": "partial",
-            "fallback": True,
-            "fallback_reason": "missing_materialized_dependency",
-            "original_error": str(exc)[:1000],
-        }
+        annotated = annotate_operational_fallback(str(ds.get("name") or ""), result, str(exc))
+        if annotated.get("degraded"):
+            logger.warning(
+                "successfactors operational fallback degraded: dataset=%s row_count=%s reason=%s strict_error=%s",
+                ds.get("name"),
+                result.get("row_count"),
+                annotated.get("degraded_reason"),
+                bool(annotated.get("error")),
+            )
+        return annotated
 
 
 def _normalize_postgres_dsn(raw: str) -> str:

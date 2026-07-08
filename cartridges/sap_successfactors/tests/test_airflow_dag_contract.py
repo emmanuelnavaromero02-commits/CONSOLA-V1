@@ -178,3 +178,18 @@ def test_successfactors_gold_refresh_order_respects_target():
         "sap_successfactors_talent_operational_features",
         "sap_successfactors_talent_simulation_inputs",
     ]
+
+
+def test_extract_all_dag_bridges_to_intelligence_via_dataset_refresh_chain():
+    # P3: el DAG programado de SF debe puentear a la capa de inteligencia (como ya
+    # hacen HubSpot/Replicon) disparando el meta-DAG dataset_refresh_chain tras la
+    # extraccion. Sin este puente, el dato extraido nunca alcanza los motores de
+    # decision por el reloj ("se extrae de SF y no pasa nada").
+    source = (ROOT / "dags" / "sap_successfactors_extract_all.py").read_text(encoding="utf-8")
+
+    assert "dataset_refresh_chain" in source
+    assert "def trigger_refresh_chain" in source
+    assert "trigger_refresh_chain(trigger_extract_all())" in source
+    # Debe respetar la separacion de responsabilidades: puentea por REST, NO
+    # importando el job_runner del cartucho dentro del DAG.
+    assert "app.core.job_runner" not in source
