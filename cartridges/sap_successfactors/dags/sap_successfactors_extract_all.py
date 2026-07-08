@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
+import requests
 from airflow.decorators import dag, task
 
 
@@ -634,7 +635,58 @@ def sap_successfactors_extract_all():
         finally:
             runtime.reset_security_context(token)
 
-    trigger_extract_all()
+    @task
+    def trigger_refresh_chain(result: dict) -> dict:
+        """Puente Airflow -> inteligencia (P3).
+
+        Tras la extraccion+gold del cartucho, dispara el meta-DAG
+        dataset_refresh_chain para que materialice la cascada de talento en
+        orden y notifique /internal/intelligence/gold-refresh -- exactamente
+        lo que hoy solo hacen HubSpot y Replicon y de lo que carecia SAP
+        SuccessFactors (por eso el dato extraido nunca alcanzaba los motores
+        de decision por el reloj).
+
+        Se dispara por REST, sin importar el job_runner del cartucho dentro del
+        DAG, para respetar la separacion de responsabilidades del contrato de DAGs.
+        """
+        import logging
+        from airflow.operators.python import get_current_context
+
+        log = logging.getLogger("airflow.task")
+        dag_run = get_current_context().get("dag_run")
+        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+        refresh_conf: dict[str, Any] = {
+            # VERIFICAR con el stack arriba: confirmar que este seed alcanza toda
+            # la cascada de talento (employee_360 -> cpa_scores -> readiness ->
+            # 9box -> simulation_inputs). Si la cobertura resultara parcial,
+            # sembrar con la raiz de foundation o iterar por dataset materializado.
+            "seed_dataset": "sap_successfactors_employee_360",
+            "cartridge_id": "sap_successfactors",
+            "triggered_by": "sap_successfactors_extract_all",
+        }
+        # dataset_refresh_chain exige el scope SaaS cuando esta presente.
+        for key in ("tenant_id", "workspace_id", "security_context"):
+            if run_conf.get(key):
+                refresh_conf[key] = run_conf[key]
+
+        airflow_url = os.environ.get("AIRFLOW_URL", "http://airflow:8080").rstrip("/")
+        user = os.environ.get("AIRFLOW_USER") or os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
+        password = os.environ.get("AIRFLOW_PASSWORD") or os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
+        try:
+            response = requests.post(
+                f"{airflow_url}/api/v1/dags/dataset_refresh_chain/dagRuns",
+                auth=(user, password),
+                json={"conf": refresh_conf},
+                timeout=15,
+            )
+            response.raise_for_status()
+            log.info("refresh_chain disparado: %s", response.status_code)
+            return {"triggered": True, "status": response.status_code}
+        except Exception as exc:  # noqa: BLE001 - el puente no debe tumbar la extraccion
+            log.warning("refresh_chain trigger fallo: %s", exc)
+            return {"triggered": False, "error": str(exc)}
+
+    trigger_refresh_chain(trigger_extract_all())
 
 
 dag = sap_successfactors_extract_all()

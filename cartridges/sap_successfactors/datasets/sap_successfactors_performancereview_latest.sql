@@ -31,7 +31,19 @@ SELECT
     formSubjectId AS user_id,
     formTemplateId AS form_template_id,
     status,
-    TRY_CAST(overallRating AS DOUBLE) AS performance_rating,
+    -- Overall performance rating. In this tenant FormHeader.overallRating is null
+    -- and the real rating lives in FormHeader.rating (populated only when the form
+    -- is rated: isRated=true). Take rating for rated forms and fall back to
+    -- overallRating for tenants that populate the header field. The isRated guard
+    -- avoids treating the rating=0 placeholder on unrated forms as a real score.
+    COALESCE(
+        CASE
+            WHEN LOWER(CAST(isRated AS VARCHAR)) IN ('true', '1', 't')
+                THEN TRY_CAST(rating AS DOUBLE)
+        END,
+        TRY_CAST(overallRating AS DOUBLE)
+    ) AS performance_rating,
+    (LOWER(CAST(isRated AS VARCHAR)) IN ('true', '1', 't')) AS is_rated,
     TRY_CAST(potentialRating AS DOUBLE) AS potential_rating,
     TRY_CAST(formStartDate AS DATE) AS cycle_start_date,
     TRY_CAST(formEndDate AS DATE) AS cycle_end_date,

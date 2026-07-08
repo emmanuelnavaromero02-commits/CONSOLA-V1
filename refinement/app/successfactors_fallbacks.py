@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -87,6 +88,11 @@ WHERE FALSE
 
 
 TALENT_GOLD_FALLBACK_SQL: dict[str, str] = {
+    # Performance is DECOUPLED from Competency/Aspiration here: even when the
+    # C/A silvers are absent (tenant does not expose UserSkill/CareerInterest/
+    # CareerWorksheet/SuccessionNomination), real Performance still flows from
+    # performance_cycle -> performance_score. Competency/Aspiration stay NULL and
+    # explicitly blocked; they are a tenant/SAP dependency, never simulated.
     "sap_successfactors_talent_employee_profile": """
 WITH emp AS (
     SELECT *
@@ -94,38 +100,98 @@ WITH emp AS (
                       hive_partitioning = true,
                       union_by_name = true)
     WHERE COALESCE(is_active, FALSE) = TRUE
+),
+performance AS (
+    SELECT
+        user_id,
+        MAX(
+            CASE
+                WHEN performance_rating IS NULL THEN NULL
+                WHEN performance_rating <= 5 THEN performance_rating * 20
+                ELSE performance_rating
+            END
+        ) AS performance_score,
+        BOOL_OR(performance_status = 'ready') AS has_performance
+    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performance_cycle/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+    GROUP BY user_id
 )
 SELECT
-    tenant_id,
-    workspace_id,
-    user_id,
-    full_name,
-    company_id,
-    company_name,
-    division_id,
-    division_name,
-    department_id,
-    department_name,
-    location_id,
-    location_name,
-    job_code,
-    manager_id,
+    emp.tenant_id,
+    emp.workspace_id,
+    emp.user_id,
+    emp.full_name,
+    emp.company_id,
+    emp.company_name,
+    emp.division_id,
+    emp.division_name,
+    emp.department_id,
+    emp.department_name,
+    emp.location_id,
+    emp.location_name,
+    emp.job_code,
+    emp.manager_id,
     0::BIGINT AS direct_reports,
     0::BIGINT AS hierarchy_depth,
-    start_date,
-    end_date,
+    emp.start_date,
+    emp.end_date,
     CASE
-        WHEN TRY_CAST(start_date AS DATE) IS NULL THEN NULL
-        ELSE DATE_DIFF('month', TRY_CAST(start_date AS DATE), CURRENT_DATE)
+        WHEN TRY_CAST(emp.start_date AS DATE) IS NULL THEN NULL
+        ELSE DATE_DIFF('month', TRY_CAST(emp.start_date AS DATE), CURRENT_DATE)
     END AS tenure_months,
     NULL::DOUBLE AS competency_score,
-    NULL::DOUBLE AS performance_score,
+    performance.performance_score AS performance_score,
     NULL::DOUBLE AS aspiration_score,
     'insufficient_data' AS cpa_status,
-    'foundation_ready' AS profile_status,
-    '["missing_competency","missing_performance","missing_aspiration"]' AS blockers,
+    CASE WHEN COALESCE(performance.has_performance, FALSE) THEN 'partial' ELSE 'foundation_ready' END AS profile_status,
+    CASE
+        WHEN COALESCE(performance.has_performance, FALSE)
+            THEN '["missing_competency","missing_aspiration"]'
+        ELSE '["missing_competency","missing_performance","missing_aspiration"]'
+    END AS blockers,
     CURRENT_TIMESTAMP AS generated_at
 FROM emp
+LEFT JOIN performance ON performance.user_id = emp.user_id
+ORDER BY emp.user_id
+""",
+    # Performance cycle degradation: when optional goal sources (GoalPlan,
+    # GoalAchievements, ...) are not exposed by the tenant and their silvers do
+    # not exist, still materialize the cycle from the guaranteed performance
+    # review silver so performance_rating flows. Goal roll-ups degrade to 0.
+    "sap_successfactors_performance_cycle": """
+WITH reviews AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_performancereview_latest/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+),
+ranked AS (
+    SELECT
+        reviews.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY user_id
+            ORDER BY cycle_end_date DESC NULLS LAST, cycle_start_date DESC NULLS LAST, form_data_id DESC NULLS LAST
+        ) AS _rn
+    FROM reviews
+    WHERE user_id IS NOT NULL
+)
+SELECT
+    user_id,
+    form_data_id,
+    form_template_id,
+    status AS review_status,
+    performance_rating,
+    potential_rating,
+    cycle_start_date,
+    cycle_end_date,
+    0::BIGINT AS goals_total,
+    0::BIGINT AS goals_completed,
+    NULL::DOUBLE AS goals_percent_complete_avg,
+    CASE WHEN performance_rating IS NULL THEN 'insufficient_data' ELSE 'ready' END AS performance_status,
+    load_date
+FROM ranked
+WHERE _rn = 1
 ORDER BY user_id
 """,
     "sap_successfactors_talent_role_profile": """
@@ -811,8 +877,12 @@ SELECT
 }
 
 SUCCESSFACTORS_GOLD_FALLBACK_SOURCES: dict[str, list[str]] = {
+    "sap_successfactors_performance_cycle": [
+        "silver/sap_successfactors/sap_successfactors_performancereview_latest",
+    ],
     "sap_successfactors_talent_employee_profile": [
         "gold/sap_successfactors/sap_successfactors_employee_360",
+        "silver/sap_successfactors/sap_successfactors_performance_cycle",
     ],
     "sap_successfactors_talent_role_profile": [
         "gold/sap_successfactors/sap_successfactors_employee_360",
@@ -854,3 +924,68 @@ def fallback_dataset_for_successfactors(ds: dict[str, Any], exc: Exception | Any
             + " Fallback operativo: dependencia SuccessFactors no materializada."
         ).strip(),
     }
+
+
+def _strict_fallback_enabled() -> bool:
+    """El modo estricto (opt-in) hace que un gold vacio por falta de foundation
+    se reporte como error, para que dataset_refresh_chain deje de contarlo como
+    exito silencioso. Apagado por defecto para no voltear la semantica de un
+    entorno desplegado sin aviso."""
+    return str(os.environ.get("REFINEMENT_SF_FALLBACK_STRICT", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _fallback_row_count_is_zero(result: dict[str, Any]) -> bool:
+    try:
+        return int(result.get("row_count") or 0) <= 0
+    except (TypeError, ValueError):
+        # row_count no confiable -> tratar como vacio (fail-safe hacia visibilidad).
+        return True
+
+
+def annotate_operational_fallback(
+    dataset_name: str,
+    result: dict[str, Any],
+    original_error: str,
+) -> dict[str, Any]:
+    """Hace OBSERVABLE el estado degradado de un fallback operativo (P2).
+
+    Antes, un fallback devolvia status 'partial'/fallback=True SIN clave 'error',
+    de modo que dataset_refresh_chain lo contaba como exito y disparaba el
+    gold-refresh de inteligencia como si hubiera datos: por eso "se extraia de SF
+    y no pasaba nada" sin que saltara ninguna alarma. Aqui:
+
+    - `degraded=True` cuando el fallback produce 0 filas (no hay datos de origen).
+    - `error` SOLO cuando ademas es un dataset foundation vacio Y el modo estricto
+      esta activo (REFINEMENT_SF_FALLBACK_STRICT), para que el chain lo marque no-ok.
+
+    No altera las claves previas (status/fallback/fallback_reason/original_error):
+    es aditivo y por defecto no rompe el comportamiento actual.
+    """
+    empty = _fallback_row_count_is_zero(result)
+    is_foundation = dataset_name in FOUNDATION_GOLD_FALLBACK_SQL
+    annotated: dict[str, Any] = {
+        **result,
+        "status": "partial",
+        "fallback": True,
+        "fallback_reason": "missing_materialized_dependency",
+        "original_error": (original_error or "")[:1000],
+        "degraded": bool(empty),
+    }
+    if empty:
+        annotated["degraded_reason"] = (
+            "foundation_source_missing_empty_gold"
+            if is_foundation
+            else "upstream_dependency_empty_gold"
+        )
+        if is_foundation and _strict_fallback_enabled():
+            annotated["error"] = (
+                f"successfactors foundation fallback produjo gold vacio para "
+                f"{dataset_name}: no hay datos de origen extraidos (conecta un tenant "
+                "que exponga las entidades foundation/org con permiso de lectura)"
+            )
+    return annotated
