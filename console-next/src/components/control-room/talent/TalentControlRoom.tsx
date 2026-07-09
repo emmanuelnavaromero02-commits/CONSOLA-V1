@@ -105,6 +105,7 @@ function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
   if (
     normalized === "ready" ||
     normalized === "ok" ||
+    normalized === "available" ||
     normalized === "partial" ||
     normalized === "stub" ||
     normalized === "empty" ||
@@ -157,11 +158,21 @@ function talentComponentReadiness(metadata: SfTalentMetadataReadinessPayload | n
   const entities = new Map((metadata?.entities ?? []).map((entity) => [entity.id, entity]));
   return talentComponents.map((component) => {
     const entity = entities.get(component.id);
+    const status = normalizeReadinessStatus(entity?.live_status || entity?.status);
+    const blockers = entity?.blockers ?? ["metadata/materialización pendiente"];
+    // Desempeño presente pero C/P/A incompleto: copy explícito (no solo "Disponible")
+    // y la nota se trata como "pendiente" (ámbar), nunca como bloqueo (naranja).
+    const performanceAvailable = component.id === "performance" && status === "available";
     return {
       ...component,
-      status: normalizeReadinessStatus(entity?.live_status || entity?.status),
+      status,
       entity: entity?.entity || "pendiente",
-      blockers: entity?.blockers ?? ["metadata/materialización pendiente"],
+      blockers,
+      badgeLabel: performanceAvailable ? "Desempeño disponible" : undefined,
+      note: performanceAvailable
+        ? "Potencial pendiente (faltan Competencias y Aspiración)"
+        : blockers.slice(0, 2).join(" · ") || "Sin blockers",
+      notePending: performanceAvailable,
     };
   });
 }
@@ -665,11 +676,11 @@ export function TalentControlRoom() {
             <article key={component.id} className="rounded-lg border bg-card p-3 text-sm shadow-sm dark:border-sky-400/15 dark:bg-[#081423]">
               <div className="flex items-start justify-between gap-2">
                 <strong className="text-foreground dark:text-white">{component.label}</strong>
-                <ReadinessBadge status={component.status} compact />
+                <ReadinessBadge status={component.status} label={component.badgeLabel} compact />
               </div>
               <p className="mt-1 truncate text-xs text-muted-foreground">{component.entity}</p>
-              <p className="mt-2 line-clamp-2 text-xs text-orange-700 dark:text-orange-300">
-                {component.blockers.slice(0, 2).join(" · ") || "Sin blockers"}
+              <p className={`mt-2 line-clamp-2 text-xs ${component.notePending ? "text-amber-700 dark:text-amber-300" : "text-orange-700 dark:text-orange-300"}`}>
+                {component.note}
               </p>
             </article>
           ))}

@@ -1789,7 +1789,14 @@ def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str,
         for row in cpa_rows
         if _sf_talent_status(row.get("cpa_status")) in {"insufficient_data", "blocked"}
     )
-    return {"ready_cpa": ready_cpa, "insufficient": insufficient}
+    performance_present = sum(
+        1 for row in cpa_rows if _sf_talent_float(row.get("performance_score")) is not None
+    )
+    return {
+        "ready_cpa": ready_cpa,
+        "insufficient": insufficient,
+        "performance_present": performance_present,
+    }
 
 
 @_bind_to_core
@@ -1805,6 +1812,7 @@ def _sf_talent_live_components(live: dict[str, Any] | None) -> dict[str, dict[st
 def _sf_talent_entities_for_readiness(
     ready_cpa: int,
     live: dict[str, Any] | None,
+    performance_present: int = 0,
 ) -> list[dict[str, Any]]:
     entities = _sf_talent_metadata_entities()
     live_components = _sf_talent_live_components(live)
@@ -1814,6 +1822,22 @@ def _sf_talent_entities_for_readiness(
         entities = [
             {**entity, "status": "ready", "blockers": []}
             if entity["id"] in {"performance", "competency", "aspiration"}
+            else entity
+            for entity in entities
+        ]
+    # GATE 1 (Opcion 3): Desempeno no debe verse "Bloqueado" si existe performance_score.
+    # La entidad Performance pasa a "available" (Desempeno disponible - Potencial pendiente);
+    # Competencia y Aspiracion permanecen bloqueadas. No fabrica fit_score ni toca 9-box, y
+    # NO usa el tono verde "ready" (que exige C/P/A completo).
+    if performance_present:
+        entities = [
+            {
+                **entity,
+                "status": "available",
+                "blockers": ["Potencial pendiente (faltan Competencias y Aspiracion)"],
+            }
+            if entity["id"] == "performance"
+            and _sf_talent_status(entity.get("status")) == "blocked"
             else entity
             for entity in entities
         ]
@@ -1918,7 +1942,9 @@ async def sap_successfactors_talent_metadata_readiness(
     live = await _sf_talent_live_metadata_readiness(user)
     cpa_rows = cpa["rows"]
     counts = _sf_talent_cpa_readiness_counts(cpa_rows)
-    entities = _sf_talent_entities_for_readiness(counts["ready_cpa"], live)
+    entities = _sf_talent_entities_for_readiness(
+        counts["ready_cpa"], live, counts["performance_present"]
+    )
     dataset_blockers = _sf_talent_blockers_from_results([cpa])
     live_summary = _sf_talent_live_readiness_summary(live)
     live_blockers = _sf_talent_live_readiness_blockers(

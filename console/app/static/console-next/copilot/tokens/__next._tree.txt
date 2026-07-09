@@ -1,2 +1,2 @@
-:HL["/static/console-next/_next/static/chunks/0k_szao~n~0xt.css","style"]
+:HL["/static/console-next/_next/static/chunks/17kype46ve-fl.css","style"]
 0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"(shell)","param":null,"prefetchHints":0,"slots":{"children":{"name":"copilot","param":null,"prefetchHints":0,"slots":{"children":{"name":"tokens","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}}}}}},"staleTime":300,"buildId":"console-next-static"}

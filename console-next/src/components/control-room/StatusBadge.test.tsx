@@ -6,6 +6,7 @@ import { MiniBar, OriginBadge, ReadinessBadge, originLabels, readinessLabels, re
 describe("Control Room readiness states", () => {
   it.each([
     ["ready", "Listo"],
+    ["available", "Disponible"],
     ["partial", "Datos parciales"],
     ["stub", "Fuera de alcance actual"],
     ["empty", "Sin datos configurados"],
@@ -27,6 +28,13 @@ describe("Control Room readiness states", () => {
     expect(readinessTone("blocked")).toContain("orange");
     expect(readinessTone("no_permission")).toContain("orange");
     expect(readinessTone("error")).toContain("destructive");
+  });
+
+  it("distingues 'available' del verde 'ready' y del naranja 'blocked'", () => {
+    // Desempeno disponible pero C/P/A incompleto: tono teal propio, ni verde ni bloqueado.
+    expect(readinessTone("available")).toContain("teal");
+    expect(readinessTone("available")).not.toContain("emerald");
+    expect(readinessTone("available")).not.toContain("orange");
   });
 
   it("renders a bounded lightweight chart without external libraries", () => {

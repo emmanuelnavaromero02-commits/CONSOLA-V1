@@ -713,6 +713,78 @@ async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation
 
 
 @pytest.mark.asyncio
+async def test_talent_performance_entity_available_when_performance_present(monkeypatch):
+    """GATE 1 (Opcion 3): con performance_score presente pero competency/aspiration
+    ausentes (cpa_status='insufficient_data', ready_cpa=0), la entidad Performance deja
+    de estar 'blocked' y pasa a 'available' (Desempeno disponible - Potencial pendiente).
+    Competencia y Aspiracion permanecen bloqueadas; no se fabrica fit ni tono verde."""
+
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_cpa_scores":
+            return [
+                {
+                    "user_id": "200",
+                    "cpa_status": "insufficient_data",
+                    "performance_score": 4.0,
+                    "competency_score": None,
+                    "aspiration_score": None,
+                },
+                {
+                    "user_id": "201",
+                    "cpa_status": "insufficient_data",
+                    "performance_score": None,
+                    "competency_score": None,
+                    "aspiration_score": None,
+                },
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+
+    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(USER)
+    entities = {entity["id"]: entity for entity in readiness["entities"]}
+
+    # Performance ya no aparece bloqueado; pasa a 'available' y NUNCA a 'ready' (verde exige C/P/A).
+    assert entities["performance"]["status"] == "available"
+    assert entities["performance"]["status"] != "ready"
+    assert any(
+        "Potencial pendiente" in str(blocker)
+        for blocker in entities["performance"]["blockers"]
+    )
+    # Competencia y Aspiracion permanecen bloqueadas.
+    assert entities["competency"]["status"] == "blocked"
+    assert entities["aspiration"]["status"] == "blocked"
+    # ready_cpa == 0 aqui: no hay empleados con C/P/A completo, no se fabrica fit_score.
+    assert readiness["summary"]["cpa_ready_employees"] == 0
+
+
+@pytest.mark.asyncio
+async def test_talent_performance_entity_stays_blocked_without_performance(monkeypatch):
+    """Sin performance_score en ninguna fila, Performance sigue 'blocked' (sin regresion)."""
+
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_cpa_scores":
+            return [
+                {
+                    "user_id": "300",
+                    "cpa_status": "insufficient_data",
+                    "performance_score": None,
+                    "competency_score": None,
+                    "aspiration_score": None,
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+
+    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(USER)
+    entities = {entity["id"]: entity for entity in readiness["entities"]}
+    assert entities["performance"]["status"] == "blocked"
+    assert entities["competency"]["status"] == "blocked"
+    assert entities["aspiration"]["status"] == "blocked"
+
+
+@pytest.mark.asyncio
 async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         return SAMPLE_ROWS[dataset]

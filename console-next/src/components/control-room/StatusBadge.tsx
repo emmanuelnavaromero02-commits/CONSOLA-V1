@@ -1,11 +1,14 @@
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, Bot, BrainCircuit, CheckCircle2, Clock3, Cpu, Database, LockKeyhole, SlidersHorizontal, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, BrainCircuit, CheckCircle2, CircleDot, Clock3, Cpu, Database, LockKeyhole, SlidersHorizontal, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { DataReadiness, SourceRollup, SourceState } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
-export type ControlRoomStatus = DataReadiness | SourceState | SourceRollup | "error";
+// "available": una dimension (p. ej. Desempeno) esta presente aunque el conjunto C/P/A
+// aun no este completo. Se anade solo aqui (no al DataReadiness global) para evitar que el
+// vocabulario se filtre a payloads que no lo modelan.
+export type ControlRoomStatus = DataReadiness | SourceState | SourceRollup | "error" | "available";
 export type ControlOrigin =
   | "rule"
   | "generic_gold_signal"
@@ -23,6 +26,7 @@ export type ControlOrigin =
 export const readinessLabels: Record<string, string> = {
   ready: "Listo",
   ok: "Listo",
+  available: "Disponible",
   partial: "Datos parciales",
   stub: "Fuera de alcance actual",
   empty: "Sin datos configurados",
@@ -44,6 +48,11 @@ export const readinessLabels: Record<string, string> = {
 };
 
 export function readinessTone(status?: ControlRoomStatus): string {
+  if (status === "available") {
+    // Dimension presente (p. ej. Desempeno) pero el conjunto C/P/A aun no esta completo:
+    // tono teal propio, deliberadamente distinto del verde "Listo" (que exige C/P/A).
+    return "border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-300";
+  }
   if (status === "ready" || status === "ok" || status === "benchmark_internal") {
     return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   }
@@ -60,6 +69,7 @@ export function readinessTone(status?: ControlRoomStatus): string {
 }
 
 function ReadinessStatusIcon({ status, className }: { status?: ControlRoomStatus; className: string }) {
+  if (status === "available") return <CircleDot aria-hidden className={className} />;
   if (status === "ready" || status === "ok" || status === "benchmark_internal") return <CheckCircle2 aria-hidden className={className} />;
   if (status === "partial" || status === "attention" || status === "partial_fields" || status === "pending_approval" || status === "insufficient_data") return <Clock3 aria-hidden className={className} />;
   if (status === "blocked" || status === "no_permission" || status === "blocked_by_sap" || status === "blocked_by_permission") return <LockKeyhole aria-hidden className={className} />;
