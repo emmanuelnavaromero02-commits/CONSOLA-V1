@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from jose import ExpiredSignatureError, JWTError, jwt
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
 
 
 DEFAULT_JWT_ALGORITHM = "HS256"
@@ -66,7 +67,7 @@ def decode_access_token(token: str) -> dict:
         claims = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
     except ExpiredSignatureError as exc:
         raise JWTAuthError("access token expired") from exc
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise JWTAuthError("access token invalid") from exc
 
     _validate_minimum_claim_output(claims)
