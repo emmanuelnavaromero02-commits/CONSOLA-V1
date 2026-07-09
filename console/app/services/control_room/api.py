@@ -1834,7 +1834,7 @@ def _sf_talent_entities_for_readiness(
             {
                 **entity,
                 "status": "available",
-                "blockers": ["Potencial pendiente: falta Competencia y Aspiracion"],
+                "blockers": ["Potencial pendiente (faltan Competencias y Aspiracion)"],
             }
             if entity["id"] == "performance"
             and _sf_talent_status(entity.get("status")) == "blocked"
