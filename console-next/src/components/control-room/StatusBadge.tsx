@@ -272,3 +272,80 @@ export function MiniBar({
     </div>
   );
 }
+
+/**
+ * Sparkline: mini tendencia (SVG inline, sin librerias ni fetch). Renderiza una
+ * serie numerica ya calculada por el backend (fuente unica); ignora huecos null.
+ */
+export function Sparkline({
+  values,
+  label,
+  format,
+  tone = "good",
+}: {
+  values: Array<number | null>;
+  label?: string;
+  format?: (value: number) => string;
+  tone?: "good" | "warning" | "danger" | "neutral";
+}) {
+  const points = values.filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
+  const width = 120;
+  const height = 28;
+  const stroke =
+    tone === "warning"
+      ? "#f59e0b"
+      : tone === "danger"
+        ? "#ef4444"
+        : tone === "neutral"
+          ? "#6366f1"
+          : "#10b981";
+  const min = points.length ? Math.min(...points) : 0;
+  const max = points.length ? Math.max(...points) : 0;
+  const span = max - min || 1;
+  const step = points.length > 1 ? width / (points.length - 1) : 0;
+  const polyline = points
+    .map((value, index) => {
+      const x = index * step;
+      const y = height - ((value - min) / span) * (height - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const last = points.length ? points[points.length - 1] : null;
+  return (
+    <div className="space-y-1">
+      {label ? (
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>{label}</span>
+          <span className="tabular-nums text-foreground/80">
+            {last == null ? "—" : format ? format(last) : String(last)}
+          </span>
+        </div>
+      ) : null}
+      {points.length >= 2 ? (
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="h-8 w-full"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={label ? `Tendencia de ${label}` : "Tendencia"}
+        >
+          <polyline
+            points={polyline}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      ) : (
+        <div className="flex h-8 items-center text-xs text-muted-foreground">
+          Sin historia suficiente
+        </div>
+      )}
+    </div>
+  );
+}
