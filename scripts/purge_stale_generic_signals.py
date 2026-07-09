@@ -72,9 +72,14 @@ async def _workspaces(conn: asyncpg.Connection) -> list[tuple[str | None, str]]:
     return [(r["tenant"], r["ws"]) for r in rows]
 
 
+# Belt-and-suspenders: un ``WHERE workspace_id = $1`` EXPLÍCITO además de la RLS,
+# para que un rol mal configurado (superusuario que ignora RLS) NUNCA barra otra
+# workspace. ``$1`` = workspace del scope actual.
 async def _garbage_signal_ids(conn: asyncpg.Connection, scope_ids: tuple) -> list[str]:
     rows = await conn.fetch(
-        f"SELECT signal_id, metric, entity_id FROM intelligence_signals WHERE {_LIKE_GENERIC}"
+        f"SELECT signal_id, metric, entity_id FROM intelligence_signals "
+        f"WHERE workspace_id = $1::uuid AND {_LIKE_GENERIC}",
+        scope_ids[1],
     )
     return [
         r["signal_id"]
@@ -84,10 +89,15 @@ async def _garbage_signal_ids(conn: asyncpg.Connection, scope_ids: tuple) -> lis
 
 
 async def _garbage_item_ids(conn: asyncpg.Connection, scope_ids: tuple) -> list[str]:
+    # Intencional: la clase basura del fallback generic-Gold se republica SIEMPRE
+    # como item_kind='intelligence_signal'. Los agent_alert (monitores) no son de
+    # esta clase; el filtro de lectura los cubre por robustez pero la purga no los
+    # toca (verificado en prod: 0 agent_alert con anomaly_type generic_).
     rows = await conn.fetch(
-        "SELECT item_id, anomaly_type, entity_id "
-        r"FROM control_room_items WHERE item_kind='intelligence_signal' "
-        r"AND anomaly_type LIKE 'generic\_%' ESCAPE '\'"
+        "SELECT item_id, anomaly_type, entity_id FROM control_room_items "
+        "WHERE workspace_id = $1::uuid AND item_kind='intelligence_signal' "
+        r"AND anomaly_type LIKE 'generic\_%' ESCAPE '\'",
+        scope_ids[1],
     )
     return [
         r["item_id"]
@@ -98,7 +108,9 @@ async def _garbage_item_ids(conn: asyncpg.Connection, scope_ids: tuple) -> list[
 
 async def _garbage_baseline_ids(conn: asyncpg.Connection, scope_ids: tuple) -> list[int]:
     rows = await conn.fetch(
-        f"SELECT id, metric, entity_id FROM metric_baselines WHERE {_LIKE_GENERIC}"
+        f"SELECT id, metric, entity_id FROM metric_baselines "
+        f"WHERE workspace_id = $1::uuid AND {_LIKE_GENERIC}",
+        scope_ids[1],
     )
     return [
         r["id"]
@@ -117,26 +129,31 @@ async def _count(conn: asyncpg.Connection, table: str, sids: list[str]) -> int:
     )
 
 
+# Tablas que el DB borra AUTOMÁTICAMENTE por FK ON DELETE CASCADE (verificado en
+# prod). Por signal_id -> intelligence_signals; por item_id -> control_room_items.
+_CASCADE_BY_SIGNAL = ("decision_intelligence_snapshots",)
+_CASCADE_BY_ITEM = ("control_room_item_events", "action_runs", "control_room_action_executions")
+
+
 async def _cascade_counts(
     conn: asyncpg.Connection, sids: list[str], item_ids: list[str]
-) -> tuple[int, int]:
-    """Filas que el DB borra AUTOMÁTICAMENTE por FK ON DELETE CASCADE (verificado
-    en prod): decision_intelligence_snapshots(workspace_id, signal_id) ->
-    intelligence_signals; control_room_item_events(workspace_id, item_id) ->
-    control_room_items. Se reportan para transparencia total del impacto."""
-    snaps = (
-        int(await conn.fetchval(
-            "SELECT count(*) FROM decision_intelligence_snapshots WHERE signal_id = ANY($1::text[])",
-            sids,
-        )) if sids else 0
-    )
-    events = (
-        int(await conn.fetchval(
-            "SELECT count(*) FROM control_room_item_events WHERE item_id = ANY($1::text[])",
-            item_ids,
-        )) if item_ids else 0
-    )
-    return snaps, events
+) -> dict[str, int]:
+    """Cuenta las filas que cascadean por FK al borrar señales/items, para
+    transparencia total del impacto (aunque el DB las borra solo)."""
+    counts: dict[str, int] = {}
+    for table in _CASCADE_BY_SIGNAL:
+        counts[table] = (
+            int(await conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE signal_id = ANY($1::text[])", sids
+            )) if sids else 0
+        )
+    for table in _CASCADE_BY_ITEM:
+        counts[table] = (
+            int(await conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE item_id = ANY($1::text[])", item_ids
+            )) if item_ids else 0
+        )
+    return counts
 
 
 async def _delete_garbage(
@@ -190,13 +207,13 @@ async def process_workspace(
         async with conn.transaction():
             sids, item_ids, baseline_ids = await _collect()
             child_counts = {t: await _count(conn, t, sids) for t in _CHILD_BY_SIGNAL}
-            snaps, events = await _cascade_counts(conn, sids, item_ids)
+            cascade = await _cascade_counts(conn, sids, item_ids)
             await _delete_garbage(conn, sids, item_ids, baseline_ids)
         action = "PURGADO (transacción aplicada)"
     else:
         sids, item_ids, baseline_ids = await _collect()
         child_counts = {t: await _count(conn, t, sids) for t in _CHILD_BY_SIGNAL}
-        snaps, events = await _cascade_counts(conn, sids, item_ids)
+        cascade = await _cascade_counts(conn, sids, item_ids)
         action = (
             "nada que purgar"
             if not (sids or item_ids or baseline_ids)
@@ -209,8 +226,7 @@ async def process_workspace(
         "control_room_items": len(item_ids),
         "metric_baselines": len(baseline_ids),
         **{f"child_{t}": child_counts[t] for t in _CHILD_BY_SIGNAL},
-        "cascade_snapshots": snaps,
-        "cascade_item_events": events,
+        "cascade": cascade,
         "action": action,
     }
 
@@ -220,39 +236,55 @@ async def main() -> None:
     ap.add_argument("--apply", action="store_true", help="Ejecuta el borrado (default: dry-run)")
     ap.add_argument("--workspace", action="append", default=[], help="workspace_id (repetible)")
     ap.add_argument("--tenant", default=None, help="tenant_id (con --workspace)")
+    ap.add_argument(
+        "--force-superuser",
+        action="store_true",
+        help="Permite --apply aun si el rol es superusuario (RLS ignorada). NO recomendado.",
+    )
     args = ap.parse_args()
 
     conn = await asyncpg.connect(_dsn())
     try:
+        who = await conn.fetchval("SELECT current_user")
+        is_super = await conn.fetchval("SELECT usesuper FROM pg_user WHERE usename = current_user")
+        # Guard duro: un superusuario ignora RLS; con --apply podría barrer basura
+        # de TODAS las workspaces en la primera iteración. El WHERE workspace_id
+        # explícito ya lo acota, pero abortamos salvo override explícito.
+        if is_super and args.apply and not args.force_superuser:
+            raise SystemExit(
+                f"ABORTADO: el rol '{who}' es SUPERUSUARIO (ignora RLS). Ejecuta con un rol "
+                "RLS-bound (omega_console/omega_workspace) o pasa --force-superuser si lo asumes."
+            )
         if args.workspace:
             targets = [(args.tenant, w) for w in args.workspace]
         else:
             targets = await _workspaces(conn)
         mode = "APPLY" if args.apply else "DRY-RUN"
-        who = await conn.fetchval("SELECT current_user")
-        is_super = await conn.fetchval("SELECT usesuper FROM pg_user WHERE usename = current_user")
         print(f"=== purga señales generic stale — modo {mode} — rol={who} — {len(targets)} workspace(s) ===")
         if is_super:
-            print("!! ADVERTENCIA: el rol es SUPERUSUARIO — ignora RLS; el scoping por workspace NO es efectivo.")
-            print("!! Ejecuta con un rol RLS-bound (omega_console/omega_workspace), NO postgres.")
-        totals = {"signals": 0, "control_room_items": 0, "metric_baselines": 0, "cascade_snapshots": 0, "cascade_item_events": 0}
+            print("!! ADVERTENCIA: rol SUPERUSUARIO — RLS ignorada; el WHERE workspace_id explícito es el único freno.")
+        cascade_tables = _CASCADE_BY_SIGNAL + _CASCADE_BY_ITEM
+        totals = {"signals": 0, "control_room_items": 0, "metric_baselines": 0}
+        cascade_totals = {t: 0 for t in cascade_tables}
         for tenant, ws in targets:
             rep = await process_workspace(conn, tenant, ws, apply=args.apply)
             if rep["signals"] or rep["control_room_items"] or rep["metric_baselines"]:
+                casc = "/".join(f"{t.split('_')[-1]}={rep['cascade'][t]}" for t in cascade_tables)
                 print(
                     f"  ws {ws[:8]}: signals={rep['signals']} items={rep['control_room_items']} "
                     f"baselines={rep['metric_baselines']} "
                     f"hijas(ev/hyp/opt/pred)={rep['child_evidence_packs']}/{rep['child_hypotheses']}/"
                     f"{rep['child_decision_options']}/{rep['child_prediction_outcomes']} "
-                    f"cascada-FK(snapshots/events)={rep['cascade_snapshots']}/{rep['cascade_item_events']} "
-                    f"-> {rep['action']}"
+                    f"cascada-FK[{casc}] -> {rep['action']}"
                 )
                 for k in totals:
                     totals[k] += rep[k]
+                for t in cascade_tables:
+                    cascade_totals[t] += rep["cascade"][t]
+        casc_tot = " ".join(f"{t}={cascade_totals[t]}" for t in cascade_tables)
         print(
             f"=== TOTAL: signals={totals['signals']} items={totals['control_room_items']} "
-            f"baselines={totals['metric_baselines']} "
-            f"cascada-FK(snapshots/events)={totals['cascade_snapshots']}/{totals['cascade_item_events']} ==="
+            f"baselines={totals['metric_baselines']} | cascada-FK: {casc_tot} ==="
         )
         if not args.apply and any(totals.values()):
             print("(dry-run: re-ejecuta con --apply para borrar)")
