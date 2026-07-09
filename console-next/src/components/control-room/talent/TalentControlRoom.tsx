@@ -105,6 +105,7 @@ function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
   if (
     normalized === "ready" ||
     normalized === "ok" ||
+    normalized === "available" ||
     normalized === "partial" ||
     normalized === "stub" ||
     normalized === "empty" ||
