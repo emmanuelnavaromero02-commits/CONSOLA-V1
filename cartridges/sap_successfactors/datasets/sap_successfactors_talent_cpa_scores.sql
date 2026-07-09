@@ -82,7 +82,14 @@ SELECT
     required_skills_status,
     CASE
         WHEN competency_100 IS NULL OR performance_100 IS NULL OR aspiration_100 IS NULL
-            THEN '["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]'
+            -- GATE 3 (Fase B): blockers CONDICIONALES por componente — cada KB solo
+            -- se lista si su score falta. Antes se emitian los 3 en bloque, marcando
+            -- KB-DESEMPENO como bloqueado aun con performance_100 presente.
+            THEN to_json(list_filter([
+                    CASE WHEN competency_100 IS NULL THEN 'KB-COMPETENCIAS blocked' END,
+                    CASE WHEN performance_100 IS NULL THEN 'KB-DESEMPENO blocked' END,
+                    CASE WHEN aspiration_100 IS NULL THEN 'KB-ASPIRACION blocked' END
+                ], x -> x IS NOT NULL))::VARCHAR
         WHEN required_skills_status = 'blocked'
             THEN '["Position requirements pending","Skills/competencies metadata pending"]'
         ELSE '[]'
