@@ -159,9 +159,15 @@ async def _cascade_counts(
 async def _delete_garbage(
     conn: asyncpg.Connection, sids: list[str], item_ids: list[str], baseline_ids: list[int]
 ) -> None:
-    """Borra hijas-por-signal_id, baselines, items y por último las señales. Las
-    tablas con FK ON DELETE CASCADE (snapshots, item_events) se limpian solas al
-    borrar el padre; el orden hijas->padres evita cualquier violación de FK."""
+    """Borra hijas-por-signal_id, baselines, luego las SEÑALES y por último los ITEMS.
+
+    Orden crítico: intelligence_signals se borra ANTES que control_room_items. Así
+    decision_intelligence_snapshots cae por su FK (workspace_id, signal_id) ON DELETE
+    CASCADE y desaparece primero; si se borraran los items antes, la FK COMPUESTA
+    (workspace_id, control_room_item_id) -> control_room_items ON DELETE SET NULL
+    pondría NULL en workspace_id (NOT NULL) de las snapshots aún vivas y violaría la
+    constraint. control_room_item_events cascadea igual al borrar los items.
+    """
     if sids:
         await conn.execute(
             "DELETE FROM evidence_items WHERE evidence_pack_id IN "
@@ -176,15 +182,18 @@ async def _delete_garbage(
         await conn.execute(
             "DELETE FROM metric_baselines WHERE id = ANY($1::bigint[])", baseline_ids
         )
-    if item_ids:
-        # control_room_item_events cascadea por FK ON DELETE CASCADE.
-        await conn.execute(
-            "DELETE FROM control_room_items WHERE item_id = ANY($1::text[])", item_ids
-        )
     if sids:
-        # decision_intelligence_snapshots cascadea por FK ON DELETE CASCADE.
+        # PRIMERO las señales: decision_intelligence_snapshots cascadea por
+        # (workspace_id, signal_id) ON DELETE CASCADE y se elimina antes de tocar
+        # los items -> evita el SET NULL de la FK compuesta sobre workspace_id.
         await conn.execute(
             "DELETE FROM intelligence_signals WHERE signal_id = ANY($1::text[])", sids
+        )
+    if item_ids:
+        # Ya sin snapshots que referencien estos items; control_room_item_events
+        # cascadea por FK ON DELETE CASCADE.
+        await conn.execute(
+            "DELETE FROM control_room_items WHERE item_id = ANY($1::text[])", item_ids
         )
 
 
