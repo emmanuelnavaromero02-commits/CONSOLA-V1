@@ -265,7 +265,13 @@ SELECT
     'insufficient_data' AS cpa_status,
     'partial' AS role_profile_status,
     'blocked' AS required_skills_status,
-    '["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]' AS blockers,
+    -- GATE 3 (Fase B): blockers condicionales por componente (aqui C/P/A_100 son NULL
+    -- por fallback foundation-safe, asi que emite los 3; mismo patron que cpa_scores).
+    to_json(list_filter([
+        CASE WHEN competency_100 IS NULL THEN 'KB-COMPETENCIAS blocked' END,
+        CASE WHEN performance_100 IS NULL THEN 'KB-DESEMPENO blocked' END,
+        CASE WHEN aspiration_100 IS NULL THEN 'KB-ASPIRACION blocked' END
+    ], x -> x IS NOT NULL))::VARCHAR AS blockers,
     CURRENT_TIMESTAMP AS generated_at
 FROM emp
 ORDER BY user_id

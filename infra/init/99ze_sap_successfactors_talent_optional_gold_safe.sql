@@ -55,7 +55,13 @@ SELECT
     CAST(NULL AS DOUBLE) AS aspiration_score,
     'insufficient_data' AS cpa_status,
     'foundation_ready' AS profile_status,
-    '["KB-COMPETENCIAS blocked","KB-DESEMPENO blocked","KB-ASPIRACION blocked"]' AS blockers,
+    -- GATE 3 (Fase B): blockers condicionales por componente (aqui los 3 scores son
+    -- NULL por diseno foundation-safe, asi que emite los 3; mismo patron que cpa_scores).
+    to_json(list_filter([
+        CASE WHEN competency_score IS NULL THEN 'KB-COMPETENCIAS blocked' END,
+        CASE WHEN performance_score IS NULL THEN 'KB-DESEMPENO blocked' END,
+        CASE WHEN aspiration_score IS NULL THEN 'KB-ASPIRACION blocked' END
+    ], x -> x IS NOT NULL))::VARCHAR AS blockers,
     CURRENT_TIMESTAMP AS generated_at
 FROM emp
 LEFT JOIN hier ON hier.user_id = emp.user_id
