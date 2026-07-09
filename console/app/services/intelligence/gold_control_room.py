@@ -711,6 +711,41 @@ def _is_scope_or_audit_field(name: str) -> bool:
     return lowered in _SCOPE_OR_AUDIT_FIELDS or lowered.endswith("_hash")
 
 
+GENERIC_GOLD_ORIGIN = "generic_gold_signal"
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def is_stale_generic_signal(metric: Any, entity_id: Any = None) -> bool:
+    """True for a garbage generic-Gold fallback signal (the pre-#475 class).
+
+    The ``generic_`` prefix on the metric IS the origin marker: only the generic
+    Gold fallback ever names a metric ``generic_<field>`` (contract metrics carry
+    their own ids). We deliberately do NOT gate on a ``control_origin`` field —
+    ``intelligence_signals.metadata`` does not persist one (only the republished
+    ``control_room_items`` row does), so a control_origin gate would silently
+    miss every signal row.
+
+    A signal is the garbage class iff its metric is ``generic_<field>`` AND
+    either the value axis is a hard identifier/structural column (``user_id``,
+    ``department_id``, ``display_order`` …) OR its entity resolved to a raw scope
+    UUID (the tenant/workspace id shown as the "entity"). #475's guardrails now
+    prevent BOTH at generation time, so any surviving match is stale data written
+    before that fix shipped. Legitimate generic signals on real time-series KPIs
+    (genuine business column, real string-code entity) are never matched.
+    """
+    name = str(metric or "").strip()
+    if not name.startswith("generic_"):
+        return False
+    field = name[len("generic_") :]
+    if _is_structural_field(field):
+        return True
+    if entity_id and _UUID_RE.match(str(entity_id).strip()):
+        return True
+    return False
+
+
 def _distinct_period_points(rows: list[dict[str, Any]], time_field: str) -> int:
     """Count distinct monitoring periods, normalised like downstream period_key()."""
     keys: set[str] = set()

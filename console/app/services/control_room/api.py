@@ -4123,7 +4123,18 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
         rows = await _run_with_db_scope(pool, user or {}, _load)
     except Exception:
         return []
-    items = [_persisted_intelligence_payload(row) for row in rows]
+    # Defense-in-depth: hide the pre-#475 generic-Gold garbage class (stale rows
+    # like "Gold metric user_id: <tenant-uuid> ...") from the decision surface.
+    # #475 stops NEW ones; this suppresses residual until the purge removes them,
+    # without touching legitimate intelligence items or real generic KPI signals.
+    from app.services.intelligence.gold_control_room import is_stale_generic_signal
+
+    kept: list[Any] = []
+    for row in rows:
+        if is_stale_generic_signal(row.get("anomaly_type"), row.get("entity_id")):
+            continue
+        kept.append(row)
+    items = [_persisted_intelligence_payload(row) for row in kept]
     return [_with_omega(item) for item in items]
 
 
