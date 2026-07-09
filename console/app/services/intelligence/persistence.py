@@ -725,10 +725,13 @@ async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
     # without touching legitimate generic signals on real time-series KPIs.
     from app.services.intelligence.gold_control_room import is_stale_generic_signal
 
+    scope_ids = (tenant_id, workspace_id)
     signals: list[dict[str, Any]] = []
     for row in rows:
         signal = row_to_signal(row)
-        if is_stale_generic_signal(signal.get("metric"), signal.get("entity_id")):
+        if is_stale_generic_signal(
+            signal.get("metric"), signal.get("entity_id"), scope_ids
+        ):
             continue
         signals.append(signal)
     return {"signals": signals}

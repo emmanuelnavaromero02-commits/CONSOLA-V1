@@ -4129,9 +4129,10 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
     # without touching legitimate intelligence items or real generic KPI signals.
     from app.services.intelligence.gold_control_room import is_stale_generic_signal
 
+    scope_ids = (tenant_id, workspace_id)
     kept: list[Any] = []
     for row in rows:
-        if is_stale_generic_signal(row.get("anomaly_type"), row.get("entity_id")):
+        if is_stale_generic_signal(row.get("anomaly_type"), row.get("entity_id"), scope_ids):
             continue
         kept.append(row)
     items = [_persisted_intelligence_payload(row) for row in kept]

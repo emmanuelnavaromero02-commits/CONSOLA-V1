@@ -717,7 +717,9 @@ _UUID_RE = re.compile(
 )
 
 
-def is_stale_generic_signal(metric: Any, entity_id: Any = None) -> bool:
+def is_stale_generic_signal(
+    metric: Any, entity_id: Any = None, scope_ids: Any = None
+) -> bool:
     """True for a garbage generic-Gold fallback signal (the pre-#475 class).
 
     The ``generic_`` prefix on the metric IS the origin marker: only the generic
@@ -730,10 +732,17 @@ def is_stale_generic_signal(metric: Any, entity_id: Any = None) -> bool:
     A signal is the garbage class iff its metric is ``generic_<field>`` AND
     either the value axis is a hard identifier/structural column (``user_id``,
     ``department_id``, ``display_order`` …) OR its entity resolved to a raw scope
-    UUID (the tenant/workspace id shown as the "entity"). #475's guardrails now
-    prevent BOTH at generation time, so any surviving match is stale data written
-    before that fix shipped. Legitimate generic signals on real time-series KPIs
-    (genuine business column, real string-code entity) are never matched.
+    UUID (the tenant/workspace id shown as the "entity").
+
+    ``scope_ids`` are the scope UUIDs of the caller (tenant_id, workspace_id).
+    When provided, the UUID branch matches ONLY those exact ids — so a legitimate
+    generic KPI whose business entity happens to be a (non-scope) UUID is never
+    swept. When omitted, any UUID entity matches (conservative, read-hide only).
+    Pass ``scope_ids`` for destructive callers (the purge) to preclude data loss.
+
+    #475's guardrails now prevent BOTH garbage shapes at generation time, so any
+    surviving match is stale data written before that fix shipped. Legitimate
+    generic signals on real time-series KPIs are never matched.
     """
     name = str(metric or "").strip()
     if not name.startswith("generic_"):
@@ -741,8 +750,11 @@ def is_stale_generic_signal(metric: Any, entity_id: Any = None) -> bool:
     field = name[len("generic_") :]
     if _is_structural_field(field):
         return True
-    if entity_id and _UUID_RE.match(str(entity_id).strip()):
-        return True
+    ent = str(entity_id or "").strip()
+    if ent and _UUID_RE.match(ent):
+        if scope_ids is None:
+            return True
+        return ent in {str(s).strip() for s in scope_ids if s}
     return False
 
 

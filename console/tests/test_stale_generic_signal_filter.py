@@ -42,6 +42,31 @@ class TestStaleGenericGarbage:
         assert is_stale_generic_signal("generic_user_id", TENANT_UUID) is True
 
 
+WORKSPACE_UUID = "4a6e9743-d54e-46ff-a023-111f06572c42"
+OTHER_BUSINESS_UUID = "11111111-2222-3333-4444-555555555555"
+
+
+class TestScopeUuidBranch:
+    """La rama entidad-UUID: con scope_ids sólo matchea el UUID de tenant/workspace
+    (la basura real), nunca un UUID de negocio ajeno al scope (fix falso positivo)."""
+
+    def test_scope_uuid_entity_is_garbage(self):
+        assert is_stale_generic_signal("generic_headcount", TENANT_UUID, (TENANT_UUID, WORKSPACE_UUID)) is True
+        assert is_stale_generic_signal("generic_headcount", WORKSPACE_UUID, (TENANT_UUID, WORKSPACE_UUID)) is True
+
+    def test_non_scope_business_uuid_is_not_garbage(self):
+        # KPI real cuya entidad de negocio es un UUID que NO es scope: NO se barre.
+        assert is_stale_generic_signal("generic_headcount", OTHER_BUSINESS_UUID, (TENANT_UUID, WORKSPACE_UUID)) is False
+
+    def test_structural_metric_ignores_scope(self):
+        # Estructural es basura aunque la entidad sea un UUID de negocio ajeno.
+        assert is_stale_generic_signal("generic_user_id", OTHER_BUSINESS_UUID, (TENANT_UUID, WORKSPACE_UUID)) is True
+
+    def test_no_scope_falls_back_to_any_uuid(self):
+        # Sin scope_ids (lector conservador): cualquier UUID en metric generic_ oculta.
+        assert is_stale_generic_signal("generic_headcount", OTHER_BUSINESS_UUID, None) is True
+
+
 class TestLegitimateSignalsNotFiltered:
     def test_legitimate_generic_kpi_is_not_garbage(self):
         # KPI real (no estructural) con entidad de negocio real (no UUID) = legítima.
