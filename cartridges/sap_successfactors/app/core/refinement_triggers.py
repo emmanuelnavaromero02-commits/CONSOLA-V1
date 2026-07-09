@@ -8,55 +8,16 @@ from urllib.parse import quote
 import httpx
 
 from app.core.request_context import refinement_security_context
+# Fuente unica de verdad de los ordenes de datasets gold SF (ver dataset_orders.py
+# + app/config/gold_dataset_orders.json). NO redefinir como literales aqui.
+from app.core.dataset_orders import (
+    SUCCESSFACTORS_GOLD_FOUNDATION_ORDER,
+    SUCCESSFACTORS_GOLD_TALENT_ORDER,
+    SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER,
+)
 
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-
-SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
-    "sap_successfactors_employee_360",
-    "sap_successfactors_org_structure",
-    "sap_successfactors_headcount_by_location",
-    "sap_successfactors_headcount_by_department",
-    "sap_successfactors_headcount_by_company",
-    "sap_successfactors_manager_hierarchy",
-]
-
-SUCCESSFACTORS_SILVER_TALENT_CURATED_ORDER = [
-    "sap_successfactors_performance_cycle",
-    "sap_successfactors_employee_competency",
-    "sap_successfactors_employee_aspiration",
-    "sap_successfactors_role_requirements",
-    "sap_successfactors_learning_completion",
-    "sap_successfactors_job_application_pipeline",
-    "sap_successfactors_movement_events",
-    "sap_successfactors_recruitment_pipeline",
-    "sap_successfactors_compensation_full",
-]
-
-SUCCESSFACTORS_GOLD_TALENT_ORDER = [
-    "sap_successfactors_talent_employee_profile",
-    "sap_successfactors_talent_role_profile",
-    "sap_successfactors_talent_mobility_history",
-    "sap_successfactors_talent_cpa_scores",
-    "sap_successfactors_talent_benchmark_internal",
-    "sap_successfactors_talent_readiness",
-    "sap_successfactors_talent_9box",
-    "sap_successfactors_talent_9box_operational",
-    "sap_successfactors_talent_performance_goals",
-    "sap_successfactors_talent_competency_skill_gap",
-    "sap_successfactors_talent_aspiration_signals",
-    "sap_successfactors_talent_role_coverage",
-    "sap_successfactors_talent_learning_certification_status",
-    "sap_successfactors_recruitment_application_funnel",
-    "sap_successfactors_talent_retention_risk",
-    "sap_successfactors_talent_promotion_alignment",
-    "sap_successfactors_talent_calibration_sensitivity",
-    "sap_successfactors_talent_role_fit_assignments",
-    "sap_successfactors_talent_action_candidates",
-    "sap_successfactors_talent_signals",
-    "sap_successfactors_talent_operational_features",
-    "sap_successfactors_talent_simulation_inputs",
-]
 
 
 def _refinement_auth() -> tuple[str, str]:

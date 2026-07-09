@@ -1,0 +1,157 @@
+version: 1
+cartridge: sap_successfactors
+domain: Personas
+# Contratos de inteligencia de talento SF (Fase 2A — Familia 1).
+# Series de tiempo mensuales por cohorte organizacional (division) derivadas de
+# fechas del dato (start_date/end_date), NO scores transversales por empleado.
+# Esto encaja con el motor (serie por entidad) y habilita Monte Carlo derived
+# con historia real. Metricas tenant-independientes (no dependen de C/A del tenant).
+metrics:
+  - id: talent_headcount_by_cohort
+    name: Plantilla activa por cohorte (mensual)
+    dataset: sap_successfactors_talent_headcount_by_cohort_month
+    entity:
+      kind: division
+      id_field: cohort_id
+      label_field: cohort_name
+    time_field: snapshot_month
+    value_field: active_headcount
+    expected_behavior: watch
+    baseline:
+      method: moving_average
+      minimum_history: 3
+      window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [30, 90]
+      minimum_history: 3
+    impact:
+      currency: USD
+      unit_value: 2500
+    hypotheses:
+      - id: workforce_shape_change
+        title: Cambio en la composicion de la plantilla
+        rationale: Un cambio de plantilla por cohorte debe validarse contra altas, bajas, transferencias o reestructura organizacional.
+    signal_rules:
+      warning_pct: 0.15
+      critical_pct: 0.30
+    action_templates:
+      - id: validate_workforce_movements
+        label: Validar altas, bajas y transferencias de la cohorte
+        action_kind: owner_review
+        impact_multiplier: 0.20
+        cost: 250
+        risk: 120
+        time_cost: 100
+      - id: update_capacity_plan
+        label: Actualizar plan de capacidad
+        action_kind: planning_update
+        impact_multiplier: 0.35
+        cost: 700
+        risk: 220
+        time_cost: 180
+      - id: monitor_headcount_trend
+        label: Mantener monitoreo de plantilla
+        action_kind: monitor
+        impact_multiplier: 0.00
+        cost: 0
+        risk: 40
+        time_cost: 0
+
+  - id: talent_avg_tenure_by_cohort
+    name: Antiguedad promedio por cohorte (mensual)
+    dataset: sap_successfactors_talent_tenure_by_cohort_month
+    entity:
+      kind: division
+      id_field: cohort_id
+      label_field: cohort_name
+    time_field: snapshot_month
+    value_field: avg_tenure_months
+    expected_behavior: watch
+    baseline:
+      method: moving_average
+      minimum_history: 3
+      window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [90]
+      minimum_history: 3
+    impact:
+      currency: USD
+      unit_value: 1500
+    hypotheses:
+      - id: tenure_shift
+        title: Cambio en la antiguedad de la cohorte
+        rationale: Una caida abrupta de antiguedad sugiere salida de personal senior; un alza sostenida sin renovacion sugiere envejecimiento de plantilla.
+    signal_rules:
+      warning_pct: 0.20
+      critical_pct: 0.40
+    action_templates:
+      - id: review_seniority_mix
+        label: Revisar mezcla de antiguedad y sucesion
+        action_kind: owner_review
+        impact_multiplier: 0.20
+        cost: 220
+        risk: 110
+        time_cost: 90
+      - id: monitor_tenure_trend
+        label: Mantener monitoreo de antiguedad
+        action_kind: monitor
+        impact_multiplier: 0.00
+        cost: 0
+        risk: 30
+        time_cost: 0
+
+  - id: talent_attrition_rate_by_cohort
+    name: Tasa de rotacion por cohorte (mensual)
+    dataset: sap_successfactors_talent_attrition_by_cohort_month
+    entity:
+      kind: division
+      id_field: cohort_id
+      label_field: cohort_name
+    time_field: snapshot_month
+    value_field: attrition_rate
+    # Umbrales de MATERIALIDAD altos a proposito: en el dato actual las separaciones
+    # son escasas (~8 en 36 meses / 20 cohortes = ruido Poisson) y la desviacion
+    # porcentual sobre una tasa ~0 es inestable. Con expected_behavior=watch y
+    # warning_pct=2.0 la metrica queda SILENCIOSA ante el ruido 0<->tiny (validado:
+    # 0 señales sobre el dato real) y solo emite ante un cambio de rotacion
+    # materialmente grande (>200% relativo). Contratarla (en vez de dejarla sin
+    # contrato) evita ademas que el fallback generico emita señales espurias sobre
+    # sus columnas. Una señal de rotacion mas sensible requiere un modelo de
+    # conteo/Poisson (fase posterior). No se emiten datos ni señales sinteticas.
+    expected_behavior: watch
+    baseline:
+      method: moving_average
+      minimum_history: 3
+      window: 6
+    prediction:
+      enabled: false
+      horizon_days: []
+    impact:
+      currency: USD
+      unit_value: 3000
+    hypotheses:
+      - id: attrition_spike
+        title: Pico de rotacion en la cohorte
+        rationale: Un aumento materialmente grande de bajas por cohorte puede venir de clima, compensacion, carga de trabajo o reestructura; validar contra eventos de salida.
+    signal_rules:
+      warning_pct: 2.00
+      critical_pct: 5.00
+    action_templates:
+      - id: retention_review
+        label: Revisar retencion con People Ops
+        action_kind: owner_review
+        impact_multiplier: 0.30
+        cost: 300
+        risk: 160
+        time_cost: 120
+      - id: monitor_attrition_trend
+        label: Mantener monitoreo de rotacion
+        action_kind: monitor
+        impact_multiplier: 0.00
+        cost: 0
+        risk: 50
+        time_cost: 0
