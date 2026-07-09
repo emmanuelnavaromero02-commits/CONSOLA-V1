@@ -967,6 +967,44 @@ async def test_run_intelligence_gold_refresh_infers_generic_signal_for_missing_c
 
 
 @pytest.mark.asyncio
+async def test_run_intelligence_skips_generic_for_cross_sectional_snapshot(monkeypatch):
+    # A per-employee snapshot (one row per user, single generated_at, no period)
+    # must NOT be fabricated into a time series, and must never emit a signal on
+    # the user_id identifier column (the production generic_user_id garbage).
+    async def fake_fetcher(dataset: str, user: dict | None, limit: int):
+        assert dataset == "talent_snapshot"
+        return [
+            {"generated_at": "2026-07-05 04:43:23", "user_id": 103169, "performance_100": 80},
+            {"generated_at": "2026-07-05 04:43:23", "user_id": 103252, "performance_100": 40},
+            {"generated_at": "2026-07-05 04:43:23", "user_id": 999999999, "performance_100": 10},
+        ]
+
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
+    )
+
+    result = await intelligence_engine.run_intelligence(
+        USER,
+        {
+            "cartridge_id": "hubspot",
+            "datasets": ["talent_snapshot"],
+            "run_mode": "gold_refresh",
+        },
+        fetcher=fake_fetcher,
+        persist=False,
+    )
+
+    assert result["generic_gold_signal_count"] == 0
+    assert result["skipped_counts"].get("cross_sectional_no_timeseries") == 1
+    assert all(
+        artifact["signal"]["metric"] != "generic_user_id"
+        for artifact in result["artifacts"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_intelligence_gold_refresh_run_ref_is_idempotent(monkeypatch):
     async def fake_get_run_by_ref(user: dict, run_ref: str):
         assert run_ref == "gold-refresh:workspace-1:hubspot:dag-run-1"

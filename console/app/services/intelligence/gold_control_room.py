@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import date, datetime
 from statistics import median
 from typing import Any
 
@@ -10,6 +12,81 @@ from app.services.intelligence.utils import num, sample_hash, time_key
 RULESET_VERSION = "control_room_gold_signal.v1"
 GENERIC_ORIGIN = "generic_gold_signal"
 INTELLIGENCE_ORIGIN = "intelligence_signal"
+
+# Guardrails for the generic Gold fallback. The fallback is a best-effort safety
+# net for uncontracted Gold, so it must never (a) fabricate a time series from a
+# cross-sectional snapshot, nor (b) rank an identifier/structural column as a
+# business metric. See _infer_time_field (value-aware period detection) and
+# _is_structural_field (hard-identifier exclusion for the value axis).
+_MIN_GENERIC_PERIOD_POINTS = 2
+
+# Value/entity axis must never be a hard identifier. Deliberately conservative:
+# only unambiguous identifier/ordering columns are excluded. KPI-shaped suffixes
+# such as *_index / *_rank / *_position (engagement_index, percentile_rank) are
+# NOT excluded because they are legitimate business metrics.
+_STRUCTURAL_FIELD_EXACT = {
+    "id",
+    "rank",
+    "sequence",
+    "ordinal",
+    "sort_order",
+    "display_order",
+    "row_count",
+    "source_row_count",
+    "record_count",
+    "workspace_id",
+    "tenant_id",
+    "owner_user_id",
+}
+_STRUCTURAL_FIELD_SUFFIXES = (
+    "_id",
+    "_ids",
+    "_uuid",
+    "_guid",
+    "_hash",
+    "_key",
+    "_pk",
+    "_fk",
+    "_code",
+)
+
+# Entity axis: exclude only scoping/audit columns (so a UUID tenant/workspace is
+# never picked as the business entity). Business identifiers (string codes) stay
+# eligible as entities.
+_SCOPE_OR_AUDIT_FIELDS = {"id", "tenant_id", "workspace_id", "owner_user_id"}
+
+# Monitoring-period column detection uses a default-DENY policy: a column is a
+# period only if it clearly denotes one. This is safer than an attribute-date
+# blocklist (which is an unwinnable arms race) — an unrecognised column simply
+# fails safe (no fabricated series) rather than risking a spurious signal.
+#
+# (1) Bare axis names: the whole column name IS a time axis.
+_BARE_PERIOD_NAMES = {
+    "date", "fecha", "day", "dia", "ds", "timestamp", "ts",
+    "as_of", "as_of_date", "asof", "period_key",
+}
+# (2) Strong period TOKENS: if any name token is one of these, it is a period
+# (so month_end / quarter_end / snapshot_month / fiscal_year / calendar_month
+# are periods, while start_date / hire_date / signup_date / order_date are NOT,
+# because their descriptive token is not a period token).
+_STRONG_PERIOD_TOKENS = {
+    "month", "mes", "period", "periodo", "snapshot", "quarter", "trimestre",
+    "week", "semana", "year", "anio", "ano", "fiscal", "reporting", "report",
+    "calendar", "asof",
+}
+# Write timestamps are never monitoring periods.
+_WRITE_TIMESTAMP_NAMES = {
+    "generated_at", "created_at", "updated_at", "modified_at", "deleted_at",
+    "inserted_at", "loaded_at", "ingested_at", "extracted_at", "refreshed_at",
+}
+_NAME_TOKEN_RE = re.compile(r"[_\s./-]+")
+# Period-key tokens that are not full ISO dates: 2026-01, 2026-Q1, 2026-W03, 2026.
+# Year is constrained to 19xx/20xx so 4-digit facility codes (1000/3000) in a
+# column named "year" are not mistaken for periods.
+_PERIOD_TOKEN_RE = re.compile(
+    r"^(19|20)\d{2}(([-/](0?[1-9]|1[0-2]))([-/](0?[1-9]|[12]\d|3[01]))?"
+    r"|[-/ ]?[Qq][1-4]|[-/ ]?[Ww]\d{1,2})?$"
+)
 
 
 def enrich_artifact(
@@ -259,13 +336,15 @@ def build_generic_gold_artifacts(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     metric = infer_generic_metric(dataset=dataset, rows=rows)
     if metric is None:
+        status, reason = _generic_unusable_reason(rows)
         return [], [
             {
                 "cartridge_id": cartridge_id,
                 "dataset": dataset,
                 "metric": None,
-                "status": "generic_gold_unusable",
-                "reason": "dataset has no numeric metric columns to analyze",
+                "status": status,
+                "reason": reason,
+                "control_origin": GENERIC_ORIGIN,
             }
         ]
     contract = {
@@ -289,6 +368,25 @@ def build_generic_gold_artifacts(
     return artifacts, skipped
 
 
+def _generic_unusable_reason(rows: list[dict[str, Any]]) -> tuple[str, str]:
+    """Classify why a Gold dataset yields no generic metric (for observability)."""
+    if not rows:
+        return ("generic_gold_unusable", "dataset has no rows to analyze")
+    time_field = _infer_time_field(rows)
+    if time_field is None or (
+        _distinct_period_points(rows, time_field) < _MIN_GENERIC_PERIOD_POINTS
+    ):
+        return (
+            "cross_sectional_no_timeseries",
+            "gold dataset is a cross-sectional snapshot without a monitoring "
+            "period (>=2 distinct points); generic time-series signal not applicable",
+        )
+    return (
+        "generic_gold_unusable",
+        "dataset has no numeric metric columns to analyze",
+    )
+
+
 def infer_generic_metric(
     *,
     dataset: str,
@@ -296,8 +394,15 @@ def infer_generic_metric(
 ) -> dict[str, Any] | None:
     if not rows:
         return None
-    time_field = _infer_time_field(rows) or "__omega_period"
-    normalized = _ensure_time_field(rows, time_field)
+    time_field = _infer_time_field(rows)
+    if time_field is None:
+        # No monitoring-period column: cross-sectional Gold cannot form a series.
+        return None
+    if _distinct_period_points(rows, time_field) < _MIN_GENERIC_PERIOD_POINTS:
+        # A single snapshot is cross-sectional, not a time series. Do NOT fabricate
+        # per-row "periods" (that treats each entity/employee as a fake time point).
+        return None
+    normalized = rows
     value_field = _infer_value_field(normalized, time_field)
     if not value_field:
         return None
@@ -535,46 +640,111 @@ def _lookup_path(path: str, values: dict[str, Any]) -> Any:
     return current
 
 
+def _name_looks_like_period(name: str) -> bool:
+    """True for a column NAME that clearly denotes a monitoring period.
+
+    Default-deny: write timestamps (``generated_at``, ``*_at``) and attribute
+    dates (``start_date``, ``hire_date``, ``signup_date``, ``order_date`` — any
+    ``<attr>_date`` whose descriptive token is not itself a period token) are
+    rejected, so a cross-sectional snapshot is never fabricated into a series.
+    A column qualifies only if it is a bare axis name (``date``/``month``/``ts``)
+    or carries a strong period token (``month_end``, ``fiscal_year``).
+    """
+    lowered = str(name or "").strip().lower()
+    if not lowered:
+        return False
+    if lowered in _WRITE_TIMESTAMP_NAMES or lowered.endswith("_at"):
+        return False
+    if lowered in _BARE_PERIOD_NAMES:
+        return True
+    tokens = set(_NAME_TOKEN_RE.split(lowered))
+    return bool(tokens & _STRONG_PERIOD_TOKENS)
+
+
+def _is_period_value(value: Any) -> bool:
+    """True when a value is a real date/datetime or an explicit period token."""
+    if value is None:
+        return False
+    if isinstance(value, (datetime, date)):
+        return True
+    text = str(value).strip()
+    if not text:
+        return False
+    if _PERIOD_TOKEN_RE.match(text):
+        return True
+    return time_key(value)[0] == 2
+
+
+def _period_key_norm(value: Any) -> str | None:
+    """Normalise a period value to match downstream period_key() windowing."""
+    if not _is_period_value(value):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()[:10]
+
+
+def _is_structural_field(name: str) -> bool:
+    """True for hard identifier / ordering / scoping columns (never a value axis).
+
+    Guards the generic fallback against ranking an identifier (``user_id`` and
+    friends have huge numeric ranges) or a structural column (``display_order``,
+    ``source_row_count``) as the "widest spread" business metric. Intentionally
+    conservative so genuine KPIs (``engagement_index``, ``percentile_rank``) are
+    NOT excluded.
+    """
+    lowered = str(name or "").strip().lower()
+    if not lowered:
+        return True
+    if lowered in _STRUCTURAL_FIELD_EXACT:
+        return True
+    return lowered.endswith(_STRUCTURAL_FIELD_SUFFIXES)
+
+
+def _is_scope_or_audit_field(name: str) -> bool:
+    """True for scoping/audit columns that must never be the business entity."""
+    lowered = str(name or "").strip().lower()
+    if not lowered:
+        return True
+    return lowered in _SCOPE_OR_AUDIT_FIELDS or lowered.endswith("_hash")
+
+
+def _distinct_period_points(rows: list[dict[str, Any]], time_field: str) -> int:
+    """Count distinct monitoring periods, normalised like downstream period_key()."""
+    keys: set[str] = set()
+    for row in rows:
+        norm = _period_key_norm(row.get(time_field))
+        if norm:
+            keys.add(norm)
+    return len(keys)
+
+
 def _infer_time_field(rows: list[dict[str, Any]]) -> str | None:
-    candidate_names = (
-        "date",
-        "fecha",
-        "month",
-        "mes",
-        "period",
-        "period_key",
-        "snapshot",
-        "created_at",
-        "updated_at",
-    )
-    keys = list(rows[0].keys())
-    for key in keys:
-        lowered = key.lower()
-        if any(name in lowered for name in candidate_names):
-            return key
-    for key in keys:
-        values = [row.get(key) for row in rows[:20]]
-        parsed = sum(1 for value in values if time_key(value)[0] == 2)
-        if parsed >= max(2, len(values) // 2):
+    """Return a monitoring-period column, or None for cross-sectional gold.
+
+    Value-aware: the column NAME must look like a period AND its VALUES must
+    actually be periods (dates / period tokens) with at least
+    _MIN_GENERIC_PERIOD_POINTS distinct points. This rejects attribute dates
+    (``start_date``), write timestamps (``generated_at``) and period-named
+    non-date columns (``notice_period``), and only builds a series when a genuine
+    time axis with real history exists.
+    """
+    if not rows:
+        return None
+    for key in rows[0].keys():
+        if not _name_looks_like_period(key):
+            continue
+        if _distinct_period_points(rows, key) >= _MIN_GENERIC_PERIOD_POINTS:
             return key
     return None
-
-
-def _ensure_time_field(rows: list[dict[str, Any]], time_field: str) -> list[dict[str, Any]]:
-    if time_field != "__omega_period":
-        return rows
-    normalized = []
-    for index, row in enumerate(rows):
-        copy = dict(row)
-        copy[time_field] = f"{index + 1:08d}"
-        normalized.append(copy)
-    return normalized
 
 
 def _infer_value_field(rows: list[dict[str, Any]], time_field: str) -> str | None:
     scores: list[tuple[float, str]] = []
     for key in rows[0].keys():
-        if key == time_field:
+        if key == time_field or _is_structural_field(key):
             continue
         values = [num(row.get(key)) for row in rows]
         numeric = [value for value in values if value is not None]
@@ -594,7 +764,7 @@ def _infer_entity_field(
     value_field: str,
 ) -> str | None:
     for key in rows[0].keys():
-        if key in {time_field, value_field}:
+        if key in {time_field, value_field} or _is_scope_or_audit_field(key):
             continue
         values = [row.get(key) for row in rows]
         non_empty = [str(value).strip() for value in values if str(value or "").strip()]
