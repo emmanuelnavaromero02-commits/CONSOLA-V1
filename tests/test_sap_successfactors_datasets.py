@@ -1,6 +1,6 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-72 silver + 33 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
+72 silver + 36 gold dataset SQL files in cartridges/sap_successfactors/datasets/.
 Historical install migrations seed the original foundation/talent set; Console
 startup refreshes the full packaged catalog from datasets/*.sql.
 
@@ -30,7 +30,7 @@ ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "confi
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
 EXPECTED_SILVER = 72
-EXPECTED_GOLD = 33
+EXPECTED_GOLD = 36
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 BASE_MIGRATION_DEDUP_KEYS = {
     "sap_successfactors_user_latest.sql": ("userId",),
