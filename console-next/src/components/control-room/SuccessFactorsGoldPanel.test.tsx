@@ -183,6 +183,80 @@ describe("SuccessFactorsGoldPanel", () => {
     expect(markup).toContain("recommendation_only");
   });
 
+  it("renders the Workforce Trends section from the single backend bundle without fetching data", () => {
+    const talent: SfTalentKpisPayload = {
+      generated_at: "2026-07-09T18:00:00Z",
+      profile: {
+        industry: "retail",
+        company_profile: "femsa",
+        wisdom_bit: "WB-TALENTO",
+        decision_mode: "recommendation_only",
+        compensation_enabled: false,
+        write_back_enabled: false,
+      },
+      readiness: {
+        ready_min: 80,
+        near_min: 60,
+        profiled_employees: 1288,
+        calculable_employees: 0,
+        insufficient_data_employees: 1288,
+        nine_box_available: 0,
+        status: "partial",
+      },
+      widgets: [],
+      signals: [],
+      blockers: [],
+      workforce_trends: {
+        status: "ready",
+        kpis: {
+          active_headcount: 1288,
+          avg_tenure_months: 174.39,
+          attrition_rate: 0.0,
+          history_months: 36,
+        },
+        series: {
+          months: ["2026-05", "2026-06", "2026-07"],
+          headcount: [1286, 1287, 1288],
+          avg_tenure_months: [172.4, 173.4, 174.4],
+          attrition_rate: [0.0, 0.0, 0.0],
+        },
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <SuccessFactorsGoldPanel payload={{ widgets: [] }} loading={false} error="" sources={[source]} talent={talent} />,
+    );
+
+    // KPIs desde el bundle (una sola fuente), no valores sinteticos
+    expect(markup).toContain("Workforce Trends");
+    expect(markup).toContain("Plantilla activa");
+    expect(markup).toContain("Antigüedad promedio");
+    expect(markup).toContain("Rotación");
+    expect(markup).toContain("Meses de historia");
+    expect(markup).toContain("años"); // antiguedad en años (174.39/12 = 14.5)
+    expect(markup).toContain("14.5 años");
+    expect(markup).toContain("36"); // meses de historia (tile)
+    expect(markup).toContain("serie mensual por cohorte · una sola fuente");
+    // sparklines (SVG inline, sin librerias)
+    expect(markup).toContain("<polyline");
+    // no debe hacer fetch a /api/data desde el panel (contract)
+    expect(markup).not.toContain("/api/data/");
+  });
+
+  it("hides Workforce Trends when the bundle is absent (honest empty state)", () => {
+    const talent: SfTalentKpisPayload = {
+      profile: { industry: "retail", company_profile: "femsa", wisdom_bit: "WB-TALENTO", decision_mode: "recommendation_only", compensation_enabled: false, write_back_enabled: false },
+      readiness: { ready_min: 80, near_min: 60, profiled_employees: 0, calculable_employees: 0, insufficient_data_employees: 0, nine_box_available: 0, status: "partial" },
+      widgets: [],
+      signals: [],
+      blockers: [],
+    };
+    const markup = renderToStaticMarkup(
+      <SuccessFactorsGoldPanel payload={{ widgets: [] }} loading={false} error="" sources={[source]} talent={talent} />,
+    );
+    expect(markup).not.toContain("Workforce Trends");
+  });
+
   it("covers all SuccessFactors business fronts and translates the decision model", () => {
     const businessSources: SourceStatus[] = [
       source,

@@ -1026,6 +1026,153 @@ def _sf_talent_analysis_inputs_payload(
     }
 
 
+# --- Workforce Trends (Fase 3 P0) --------------------------------------------
+# Fuente UNICA de: plantilla activa, antiguedad promedio, rotacion, meses de
+# historia y las series para sparklines/graficos. Lee gold YA materializado
+# (talent_operational_features + las 3 series mensuales por cohorte de #476) y
+# AGREGA una sola vez aqui. NO toca Gold/Monte Carlo/Bayes/datasets: solo
+# presentacion. Consumido por Control Room (via el payload de talent-kpis) y,
+# mas adelante, por Workforce Overview (via el endpoint) sin re-agregar.
+# NOTA: estos helpers llevan @_bind_to_core porque build_workforce_trends corre en
+# el namespace de core (ver _bind_to_core); sin el decorador no serian visibles.
+
+
+@_bind_to_core
+def _wt_num(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@_bind_to_core
+def _wt_int(value: Any) -> int | None:
+    num = _wt_num(value)
+    return int(num) if num is not None else None
+
+
+@_bind_to_core
+def _wt_month_key(row: dict[str, Any]) -> str:
+    return str(row.get("snapshot_month") or "")[:7]
+
+
+@_bind_to_core
+def _wt_aggregate_series(
+    headcount_rows: list[dict[str, Any]],
+    tenure_rows: list[dict[str, Any]],
+    attrition_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Agrega las 3 series por-(cohorte,mes) a series por-mes de todo el workspace.
+
+    headcount = suma; antiguedad = promedio PONDERADO por cohort_size; rotacion =
+    suma(separations)/suma(cohort_size) RECOMPUTADA por mes (nunca promediar tasas).
+    """
+    headcount: dict[str, float] = {}
+    for row in headcount_rows:
+        month = _wt_month_key(row)
+        value = _wt_num(row.get("active_headcount"))
+        if month and value is not None:
+            headcount[month] = headcount.get(month, 0.0) + value
+
+    tenure: dict[str, list[float]] = {}
+    for row in tenure_rows:
+        month = _wt_month_key(row)
+        avg = _wt_num(row.get("avg_tenure_months"))
+        size = _wt_num(row.get("cohort_size")) or 0.0
+        if month and avg is not None and size > 0:
+            acc = tenure.setdefault(month, [0.0, 0.0])
+            acc[0] += avg * size
+            acc[1] += size
+
+    attrition: dict[str, list[float]] = {}
+    for row in attrition_rows:
+        month = _wt_month_key(row)
+        separations = _wt_num(row.get("separations")) or 0.0
+        size = _wt_num(row.get("cohort_size")) or 0.0
+        if month:
+            acc = attrition.setdefault(month, [0.0, 0.0])
+            acc[0] += separations
+            acc[1] += size
+
+    months = sorted(set(headcount) | set(tenure) | set(attrition))
+    return {
+        "months": months,
+        "headcount": [
+            int(round(headcount[month])) if month in headcount else None for month in months
+        ],
+        "avg_tenure_months": [
+            round(tenure[month][0] / tenure[month][1], 2)
+            if month in tenure and tenure[month][1] > 0
+            else None
+            for month in months
+        ],
+        "attrition_rate": [
+            round(attrition[month][0] / attrition[month][1], 4)
+            if month in attrition and attrition[month][1] > 0
+            else None
+            for month in months
+        ],
+    }
+
+
+@_bind_to_core
+async def build_workforce_trends(
+    user: dict | None,
+    *,
+    operational_row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Bundle unico de Workforce Trends para todas las superficies (presentacion).
+
+    operational_row se pasa cuando ya fue leido (payload de talent-kpis) para no
+    re-consultar; el endpoint standalone lo omite y se lee aqui.
+    """
+    if operational_row is None:
+        op_result = await _sf_talent_gold_result(
+            "sap_successfactors_talent_operational_features", user, 1
+        )
+        op_rows = op_result.get("rows") or []
+        operational_row = op_rows[0] if op_rows else {}
+
+    headcount = await _sf_talent_gold_result(
+        "sap_successfactors_talent_headcount_by_cohort_month", user, 5000
+    )
+    tenure = await _sf_talent_gold_result(
+        "sap_successfactors_talent_tenure_by_cohort_month", user, 5000
+    )
+    attrition = await _sf_talent_gold_result(
+        "sap_successfactors_talent_attrition_by_cohort_month", user, 5000
+    )
+    series = _wt_aggregate_series(
+        headcount.get("rows") or [],
+        tenure.get("rows") or [],
+        attrition.get("rows") or [],
+    )
+
+    kpis = {
+        "active_headcount": _wt_int(operational_row.get("active_headcount_current")),
+        "avg_tenure_months": _wt_num(operational_row.get("avg_tenure_months_current")),
+        "attrition_rate": _wt_num(operational_row.get("attrition_rate_current")),
+        "history_months": _wt_int(operational_row.get("headcount_history_months")),
+    }
+    has_kpis = any(value is not None for value in kpis.values())
+    status = "ready" if series["months"] and has_kpis else (
+        "partial" if series["months"] or has_kpis else "waiting_for_data"
+    )
+    return {
+        "status": status,
+        "datasets": {
+            "headcount": "sap_successfactors_talent_headcount_by_cohort_month",
+            "tenure": "sap_successfactors_talent_tenure_by_cohort_month",
+            "attrition": "sap_successfactors_talent_attrition_by_cohort_month",
+            "operational_features": "sap_successfactors_talent_operational_features",
+        },
+        "kpis": kpis,
+        "series": series,
+    }
+
+
 @_bind_to_core
 async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     """Talent/WisdomBit KPIs for the active SuccessFactors workspace.
@@ -1074,6 +1221,10 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
             datasets,
             metrics,
             operational_row,
+        ),
+        "workforce_trends": await build_workforce_trends(
+            user,
+            operational_row=operational_row,
         ),
         "analysis_inputs": _sf_talent_analysis_inputs_payload(
             datasets,

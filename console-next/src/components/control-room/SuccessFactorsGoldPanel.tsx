@@ -1,10 +1,10 @@
-import { AlertTriangle, ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, CreditCard, GraduationCap, Network, ShieldCheck, TrendingDown, Users } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, CreditCard, GraduationCap, Network, ShieldCheck, TrendingDown, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
-import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, readinessLabels } from "./StatusBadge";
+import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline, readinessLabels } from "./StatusBadge";
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
@@ -424,6 +424,10 @@ export function SuccessFactorsGoldPanel({
   const talentReadinessTotal = talent?.readiness.profiled_employees ?? talentNumber("sf_talent_profiled_employees") ?? 0;
   const talentReadinessCalculable = talent?.readiness.calculable_employees ?? talentNumber("sf_talent_readiness_calculable") ?? 0;
   const talentNineBoxAvailable = talent?.readiness.nine_box_available ?? talentNumber("sf_talent_9box_available") ?? 0;
+  // Fase 3 P0: Workforce Trends — fuente unica (bundle del backend); no se agrega en frontend.
+  const workforceTrends = talent?.workforce_trends;
+  const wtKpis = workforceTrends?.kpis;
+  const wtSeries = workforceTrends?.series;
 
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-emerald-400/20 dark:bg-[#081423] dark:shadow-[0_0_30px_rgba(16,185,129,0.08)]" aria-label="Indicadores ejecutivos de personal">
@@ -546,6 +550,56 @@ export function SuccessFactorsGoldPanel({
                 tone={talentSignals.length ? "warning" : "neutral"}
               />
             </div>
+
+            {workforceTrends ? (
+              <div className="mt-4 rounded-lg border bg-card p-4 dark:border-cyan-400/15 dark:bg-[#06131f]">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Workforce Trends</p>
+                  <span className="text-xs text-muted-foreground">
+                    {wtSeries && wtSeries.months.length
+                      ? "serie mensual por cohorte · una sola fuente"
+                      : "En espera de datos"}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <CommandMetric
+                    label="Plantilla activa"
+                    value={wtKpis?.active_headcount != null ? formatNumber(wtKpis.active_headcount) : "—"}
+                    detail="empleados activos"
+                    icon={Users}
+                    tone={wtKpis?.active_headcount ? "good" : "neutral"}
+                  />
+                  <CommandMetric
+                    label="Antigüedad promedio"
+                    value={wtKpis?.avg_tenure_months != null ? `${(wtKpis.avg_tenure_months / 12).toFixed(1)} años` : "—"}
+                    detail="ponderada por cohorte"
+                    icon={CalendarDays}
+                    tone={wtKpis?.avg_tenure_months ? "good" : "neutral"}
+                  />
+                  <CommandMetric
+                    label="Rotación"
+                    value={wtKpis?.attrition_rate != null ? `${(wtKpis.attrition_rate * 100).toFixed(1)}%` : "—"}
+                    detail="último mes completo"
+                    icon={TrendingDown}
+                    tone={wtKpis?.attrition_rate ? "warning" : "good"}
+                  />
+                  <CommandMetric
+                    label="Meses de historia"
+                    value={wtKpis?.history_months != null ? formatNumber(wtKpis.history_months) : "—"}
+                    detail="serie mensual por cohorte"
+                    icon={Activity}
+                    tone={wtKpis?.history_months ? "good" : "neutral"}
+                  />
+                </div>
+                {wtSeries ? (
+                  <div className="mt-4 grid gap-4 md:grid-cols-3">
+                    <Sparkline label="Headcount" values={wtSeries.headcount.slice(-12)} format={(value) => formatNumber(Math.round(value))} tone="good" />
+                    <Sparkline label="Antigüedad" values={wtSeries.avg_tenure_months.slice(-12)} format={(value) => `${(value / 12).toFixed(1)} a`} tone="neutral" />
+                    <Sparkline label="Rotación" values={wtSeries.attrition_rate.slice(-12)} format={(value) => `${(value * 100).toFixed(1)}%`} tone="warning" />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               <div className="rounded-lg border bg-card p-3 dark:border-violet-400/15 dark:bg-[#081423]">

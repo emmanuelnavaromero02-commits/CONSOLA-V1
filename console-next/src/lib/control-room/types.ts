@@ -334,6 +334,25 @@ export interface SfTalentKpisPayload {
   widgets: SfTalentWidget[];
   signals: SfTalentSignal[];
   blockers: SfTalentBlocker[];
+  /** Fase 3 P0: fuente unica de plantilla/antiguedad/rotacion/historia + series. */
+  workforce_trends?: SfWorkforceTrends;
+}
+
+export interface SfWorkforceTrends {
+  status: "ready" | "partial" | "waiting_for_data" | string;
+  datasets?: Record<string, string>;
+  kpis: {
+    active_headcount: number | null;
+    avg_tenure_months: number | null;
+    attrition_rate: number | null;
+    history_months: number | null;
+  };
+  series: {
+    months: string[];
+    headcount: Array<number | null>;
+    avg_tenure_months: Array<number | null>;
+    attrition_rate: Array<number | null>;
+  };
 }
 
 export interface SfTalentNineBoxCell {

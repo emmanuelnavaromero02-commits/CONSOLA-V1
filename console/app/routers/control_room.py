@@ -195,6 +195,12 @@ async def _control_room_internal_view(
             user,
             lambda: control_room_service.sap_successfactors_talent_kpis(user),
         )
+    if view == "sap_successfactors_workforce_trends":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-workforce-trends",
+            user,
+            lambda: control_room_service.build_workforce_trends(user),
+        )
     if view == "sap_successfactors_talent_overview":
         return await _control_room_cache_get_or_set(
             "sap-successfactors-talent-overview",
