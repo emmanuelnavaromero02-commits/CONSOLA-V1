@@ -63,7 +63,16 @@ services:
       PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-}"
     ports:
       - "15433:5433"
-    command: -p 5433
+    command:
+      - postgres
+      - -p
+      - "5433"
+      - -c
+      - max_connections=200
+      - -c
+      - idle_session_timeout=5min
+      - -c
+      - idle_in_transaction_session_timeout=2min
     volumes:
       - postgres_gold_data:/var/lib/postgresql/data
       - ./init_gold:/docker-entrypoint-initdb.d

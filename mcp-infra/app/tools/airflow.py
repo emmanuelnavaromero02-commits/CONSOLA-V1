@@ -201,13 +201,26 @@ async def airflow_trigger_dag(
 )
 async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
+    dag_run_id = _validate_dag_run_id(dag_run_id) or dag_run_id
     async with _client() as c:
         r = await _request_with_transport_retry(
             c, "GET", f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
         )
+        if r.status_code == 404:
+            return {
+                "dag_id": dag_id,
+                "dag_run_id": dag_run_id,
+                "found": False,
+                "state": "not_found",
+                "start_date": None,
+                "end_date": None,
+            }
         r.raise_for_status()
         data = r.json()
     return {
+        "dag_id":     dag_id,
+        "dag_run_id": data.get("dag_run_id", dag_run_id),
+        "found":      True,
         "state":      data["state"],
         "start_date": data.get("start_date"),
         "end_date":   data.get("end_date"),
@@ -229,6 +242,7 @@ async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
 )
 async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
+    dag_run_id = _validate_dag_run_id(dag_run_id) or dag_run_id
     async with httpx.AsyncClient(auth=_AUTH, timeout=60, headers=_request_headers()) as c:
         r = await _request_with_transport_retry(
             c,
@@ -237,9 +251,23 @@ async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> d
             f"/taskInstances/{task_id}/logs/1",
             headers=_request_headers({"Accept": "text/plain"}),
         )
+        if r.status_code == 404:
+            return {
+                "logs": "",
+                "dag_id": dag_id,
+                "dag_run_id": dag_run_id,
+                "task_id": task_id,
+                "found": False,
+            }
         r.raise_for_status()
     # Trim to last 6 000 chars so it fits in context
-    return {"logs": r.text[-6000:], "dag_id": dag_id, "task_id": task_id}
+    return {
+        "logs": r.text[-6000:],
+        "dag_id": dag_id,
+        "dag_run_id": dag_run_id,
+        "task_id": task_id,
+        "found": True,
+    }
 
 
 @tool(
@@ -541,15 +569,26 @@ async def airflow_set_variable(key: str, value: str) -> dict:
 )
 async def airflow_list_task_instances(dag_id: str, dag_run_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
+    dag_run_id = _validate_dag_run_id(dag_run_id) or dag_run_id
     async with _client() as c:
         r = await _request_with_transport_retry(
             c,
             "GET",
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances"
         )
+        if r.status_code == 404:
+            return {
+                "dag_id": dag_id,
+                "dag_run_id": dag_run_id,
+                "found": False,
+                "tasks": [],
+            }
         r.raise_for_status()
         tasks = r.json().get("task_instances", [])
     return {
+        "dag_id": dag_id,
+        "dag_run_id": dag_run_id,
+        "found": True,
         "tasks": [
             {
                 "task_id":  t["task_id"],
@@ -582,10 +621,17 @@ async def airflow_list_dag_runs(dag_id: str, limit: int = 10) -> dict:
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
             params={"limit": limit, "order_by": "-start_date"},
         )
+        if r.status_code == 404:
+            return {
+                "dag_id": dag_id,
+                "found": False,
+                "runs": [],
+            }
         r.raise_for_status()
         runs = r.json().get("dag_runs", [])
     return {
         "dag_id": dag_id,
+        "found": True,
         "runs": [
             {
                 "dag_run_id": run["dag_run_id"],
