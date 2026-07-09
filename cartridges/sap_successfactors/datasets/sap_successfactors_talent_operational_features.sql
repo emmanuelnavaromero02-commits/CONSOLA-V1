@@ -1,5 +1,5 @@
 -- sap_successfactors_talent_operational_features  (gold)  cartridge: sap_successfactors
--- sources: ["gold/sap_successfactors/sap_successfactors_talent_employee_profile", "gold/sap_successfactors/sap_successfactors_talent_role_profile", "gold/sap_successfactors/sap_successfactors_talent_readiness", "gold/sap_successfactors/sap_successfactors_talent_9box", "gold/sap_successfactors/sap_successfactors_talent_9box_operational", "gold/sap_successfactors/sap_successfactors_talent_mobility_history", "gold/sap_successfactors/sap_successfactors_talent_signals", "gold/sap_successfactors/sap_successfactors_talent_learning_certification_status", "gold/sap_successfactors/sap_successfactors_recruitment_application_funnel", "gold/sap_successfactors/sap_successfactors_talent_competency_skill_gap"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_talent_employee_profile", "gold/sap_successfactors/sap_successfactors_talent_role_profile", "gold/sap_successfactors/sap_successfactors_talent_readiness", "gold/sap_successfactors/sap_successfactors_talent_9box", "gold/sap_successfactors/sap_successfactors_talent_9box_operational", "gold/sap_successfactors/sap_successfactors_talent_mobility_history", "gold/sap_successfactors/sap_successfactors_talent_signals", "gold/sap_successfactors/sap_successfactors_talent_learning_certification_status", "gold/sap_successfactors/sap_successfactors_recruitment_application_funnel", "gold/sap_successfactors/sap_successfactors_talent_competency_skill_gap", "gold/sap_successfactors/sap_successfactors_talent_headcount_by_cohort_month", "gold/sap_successfactors/sap_successfactors_talent_tenure_by_cohort_month", "gold/sap_successfactors/sap_successfactors_talent_attrition_by_cohort_month"]
 -- description: Feature pack agregado para WB-TALENTO. Una fila por workspace/materializacion; sin PII ni nombres de motores.
 
 WITH employee_profile AS (
@@ -62,6 +62,27 @@ skill_gaps AS (
                       hive_partitioning = true,
                       union_by_name = true)
 ),
+-- Fase 2A — Familia 1: KPIs de tendencia (headcount/tenure/attrition) del mes mas
+-- reciente de las series mensuales por cohorte. Alimentan tiles de Control Room y
+-- el conteo/estado que consume AgentOps.
+headcount_month AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_headcount_by_cohort_month/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+),
+tenure_month AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_tenure_by_cohort_month/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+),
+attrition_month AS (
+    SELECT *
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_attrition_by_cohort_month/**/*.parquet',
+                      hive_partitioning = true,
+                      union_by_name = true)
+),
 metrics AS (
     SELECT
         (SELECT MAX(CAST(workspace_id AS VARCHAR)) FROM employee_profile) AS workspace_id,
@@ -91,7 +112,18 @@ metrics AS (
         (SELECT COUNT(*) FROM mobility WHERE movement_events > 0) AS mobility_observed_count,
         (SELECT COUNT(*) FROM skill_gaps WHERE skill_gap_status IN ('insufficient_data', 'partial', 'blocked')) AS skill_gap_count,
         (SELECT COUNT(*) FROM skill_gaps WHERE skill_gap_status = 'ready') AS skill_ready_role_count,
-        (SELECT COUNT(*) FROM skill_gaps) AS skill_role_count
+        (SELECT COUNT(*) FROM skill_gaps) AS skill_role_count,
+        -- Fase 2A — KPIs de tendencia del mes mas reciente (series por cohorte).
+        (SELECT COALESCE(SUM(active_headcount), 0) FROM headcount_month
+            WHERE snapshot_month = (SELECT MAX(snapshot_month) FROM headcount_month)) AS active_headcount_current,
+        (SELECT ROUND(SUM(avg_tenure_months * cohort_size) / NULLIF(SUM(cohort_size), 0), 2) FROM tenure_month
+            WHERE snapshot_month = (SELECT MAX(snapshot_month) FROM tenure_month)) AS avg_tenure_months_current,
+        -- Ultimo mes COMPLETO (excluye el mes calendario en curso, que es parcial y
+        -- subreportaria separaciones).
+        (SELECT ROUND(SUM(separations)::DOUBLE / NULLIF(SUM(cohort_size), 0), 4) FROM attrition_month
+            WHERE snapshot_month = (SELECT MAX(snapshot_month) FROM attrition_month
+                                    WHERE snapshot_month < DATE_TRUNC('month', CURRENT_DATE))) AS attrition_rate_current,
+        (SELECT COUNT(DISTINCT snapshot_month) FROM headcount_month) AS headcount_history_months
 ),
 coverage AS (
     SELECT
@@ -209,6 +241,11 @@ SELECT
         ),
         ','
     ) || ']' AS blockers,
-    'talent_operational_features.v2' AS contract_version,
+    -- Fase 2A — KPIs de tendencia (Familia 1). Aditivos; no alteran columnas previas.
+    active_headcount_current,
+    avg_tenure_months_current,
+    attrition_rate_current,
+    headcount_history_months,
+    'talent_operational_features.v3' AS contract_version,
     CURRENT_TIMESTAMP AS generated_at
 FROM scored

@@ -24,67 +24,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.successfactors_fallbacks import fallback_dataset_for_successfactors
 
 
-SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = [
-    "sap_successfactors_employee_360",
-    "sap_successfactors_org_structure",
-    "sap_successfactors_headcount_by_location",
-    "sap_successfactors_headcount_by_department",
-    "sap_successfactors_headcount_by_company",
-    "sap_successfactors_manager_hierarchy",
-]
+def _load_gold_dataset_orders() -> dict:
+    """Carga la FUENTE UNICA DE VERDAD de los ordenes de datasets gold SF.
 
-SUCCESSFACTORS_GOLD_TALENT_ORDER = [
-    "sap_successfactors_talent_employee_profile",
-    "sap_successfactors_talent_role_profile",
-    "sap_successfactors_talent_mobility_history",
-    "sap_successfactors_talent_cpa_scores",
-    "sap_successfactors_talent_benchmark_internal",
-    "sap_successfactors_talent_readiness",
-    "sap_successfactors_talent_9box",
-    "sap_successfactors_talent_9box_operational",
-    "sap_successfactors_talent_performance_goals",
-    "sap_successfactors_talent_competency_skill_gap",
-    "sap_successfactors_talent_aspiration_signals",
-    "sap_successfactors_talent_role_coverage",
-    "sap_successfactors_talent_learning_certification_status",
-    "sap_successfactors_recruitment_application_funnel",
-    "sap_successfactors_talent_retention_risk",
-    "sap_successfactors_talent_promotion_alignment",
-    "sap_successfactors_talent_calibration_sensitivity",
-    "sap_successfactors_talent_role_fit_assignments",
-    "sap_successfactors_talent_action_candidates",
-    "sap_successfactors_talent_signals",
-    "sap_successfactors_talent_operational_features",
-    "sap_successfactors_talent_simulation_inputs",
-]
+    Vive en el cartucho (cartridges/sap_successfactors/app/config/
+    gold_dataset_orders.json) y la comparten los modulos del cartucho
+    (dataset_orders.py). Este runner corre en el servicio refinement, que no puede
+    importar el paquete del cartucho, asi que lee el MISMO JSON: del mount
+    /registry/cartridges en runtime, o de la ruta del checkout en tests/local.
+    """
+    candidates = [
+        Path("/registry/cartridges/sap_successfactors/app/config/gold_dataset_orders.json"),
+        Path(__file__).resolve().parents[2]
+        / "cartridges" / "sap_successfactors" / "app" / "config" / "gold_dataset_orders.json",
+    ]
+    for path in candidates:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            talent = list(data["talent_order"])
+            contract = list(data["talent_contract_order"])
+            operational = list(data["talent_operational_order"])
+            if contract + operational != talent:
+                raise ValueError(
+                    f"gold_dataset_orders.json invalido en {path}: "
+                    "talent_contract_order + talent_operational_order != talent_order"
+                )
+            return {
+                "foundation": list(data["foundation_order"]),
+                "talent": talent,
+                "contract": contract,
+                "operational": operational,
+            }
+    raise FileNotFoundError(
+        "No se encontro gold_dataset_orders.json (buscado en: "
+        + "; ".join(str(p) for p in candidates)
+        + "). El cartucho sap_successfactors debe estar montado en /registry/cartridges."
+    )
 
-SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER = [
-    "sap_successfactors_talent_employee_profile",
-    "sap_successfactors_talent_role_profile",
-    "sap_successfactors_talent_mobility_history",
-    "sap_successfactors_talent_cpa_scores",
-    "sap_successfactors_talent_benchmark_internal",
-    "sap_successfactors_talent_readiness",
-    "sap_successfactors_talent_9box",
-]
 
-SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER = [
-    "sap_successfactors_talent_9box_operational",
-    "sap_successfactors_talent_performance_goals",
-    "sap_successfactors_talent_competency_skill_gap",
-    "sap_successfactors_talent_aspiration_signals",
-    "sap_successfactors_talent_role_coverage",
-    "sap_successfactors_talent_learning_certification_status",
-    "sap_successfactors_recruitment_application_funnel",
-    "sap_successfactors_talent_retention_risk",
-    "sap_successfactors_talent_promotion_alignment",
-    "sap_successfactors_talent_calibration_sensitivity",
-    "sap_successfactors_talent_role_fit_assignments",
-    "sap_successfactors_talent_action_candidates",
-    "sap_successfactors_talent_signals",
-    "sap_successfactors_talent_operational_features",
-    "sap_successfactors_talent_simulation_inputs",
-]
+_GOLD_ORDERS = _load_gold_dataset_orders()
+SUCCESSFACTORS_GOLD_FOUNDATION_ORDER = _GOLD_ORDERS["foundation"]
+SUCCESSFACTORS_GOLD_TALENT_ORDER = _GOLD_ORDERS["talent"]
+SUCCESSFACTORS_GOLD_TALENT_CONTRACT_ORDER = _GOLD_ORDERS["contract"]
+SUCCESSFACTORS_GOLD_TALENT_OPERATIONAL_ORDER = _GOLD_ORDERS["operational"]
 
 ALLOWED_FOUNDATION_DATASETS = set(SUCCESSFACTORS_GOLD_FOUNDATION_ORDER) | set(SUCCESSFACTORS_GOLD_TALENT_ORDER)
 
