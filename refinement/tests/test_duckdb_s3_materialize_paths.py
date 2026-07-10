@@ -137,6 +137,55 @@ def test_aws_s3_without_static_keys_uses_credential_chain(monkeypatch):
     assert "s3_secret_access_key=''" not in combined
 
 
+def test_gcs_lakehouse_configures_duckdb_gcs_secret(monkeypatch):
+    statements: list[str] = []
+
+    class FakeConn:
+        def execute(self, sql):
+            statements.append(sql)
+            return self
+
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("GCS_BUCKET", "modecissions-gcs-lakehouse")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-key")
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
+    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+
+    engine = DuckDBEngine()
+    engine._conn()
+
+    combined = "\n".join(statements)
+    assert engine._storage_uri("raw/x.parquet") == "gs://modecissions-gcs-lakehouse/raw/x.parquet"
+    assert "TYPE gcs" in combined
+    assert "KEY_ID 'gcs-key'" in combined
+    assert "SECRET 'gcs-secret'" in combined
+    assert "s3_endpoint" not in combined
+    assert "gcs_fuse" not in combined
+
+
+def test_gcs_lakehouse_requires_hmac_for_duckdb_reads(monkeypatch):
+    class FakeConn:
+        def execute(self, _sql):
+            return self
+
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("GCS_BUCKET", "modecissions-gcs-lakehouse")
+    monkeypatch.delenv("GCS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("GCS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("LAKEHOUSE_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("LAKEHOUSE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "aws-key-must-not-be-used")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret-must-not-be-used")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-key-must-not-be-used")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret-must-not-be-used")
+    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+
+    engine = DuckDBEngine()
+
+    with pytest.raises(ValueError, match="GCS lakehouse refinement reads require HMAC credentials"):
+        engine._conn()
+
+
 def test_minio_uses_path_style(monkeypatch):
     statements: list[str] = []
 
