@@ -134,6 +134,7 @@ set_env SUPERSET_PUBLIC_URL ""
 set_env SUPERSET_SESSION_COOKIE_SECURE "$${COOKIE_SECURE}"
 set_env SUPERSET_FORCE_HTTPS "$${COOKIE_SECURE}"
 set_env SUPERSET_ENABLE_PROXY_FIX true
+set_env LAKEHOUSE_PROVIDER gcs
 set_env S3_BUCKET_NAME "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_BUCKET "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_ENDPOINT "$${LAKEHOUSE_ENDPOINT}"
@@ -155,8 +156,17 @@ if hmac_secret_key="$(secret_value gcs_hmac_secret_access_key)"; then
   set_env MINIO_SECRET_KEY "$${hmac_secret_key}"
 fi
 
+if [[ "$${LAKEHOUSE_ENDPOINT}" == "storage.googleapis.com" ]]; then
+  if [[ -z "$${MINIO_ACCESS_KEY:-}" || -z "$${MINIO_SECRET_KEY:-}" ]]; then
+    echo "[omega-startup] missing GCS HMAC secrets: $${SECRET_PREFIX}-gcs_hmac_access_key_id / $${SECRET_PREFIX}-gcs_hmac_secret_access_key" >&2
+    echo "[omega-startup] refusing to fall back to local MinIO for GCP lakehouse" >&2
+    exit 1
+  fi
+fi
+
 cat > infra/docker-compose.gcp.yml <<'YAML'
 x-gcp-lakehouse-env: &gcp-lakehouse-env
+  LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
   S3_BUCKET_NAME: $${S3_BUCKET_NAME:-}
   S3_ENDPOINT_URL: $${S3_ENDPOINT_URL:-}
   MINIO_BUCKET: $${MINIO_BUCKET:-}
@@ -218,6 +228,7 @@ services:
       AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
       AIRFLOW_HEALTH_PATH: $${AIRFLOW_HEALTH_PATH:-/airflow/health}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
       AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
       AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
@@ -235,6 +246,7 @@ services:
       <<: *gcp-lakehouse-env
       AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
       AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
       AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
@@ -247,6 +259,7 @@ services:
       AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
       AIRFLOW_HEALTH_PATH: $${AIRFLOW_HEALTH_PATH:-/airflow/health}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
       AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
       AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}

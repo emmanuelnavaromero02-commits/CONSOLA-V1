@@ -91,6 +91,13 @@ def _pg_ident(value: str) -> str:
     return '"' + str(value or "").replace('"', '""') + '"'
 
 
+def _duckdb_ident(value: str) -> str:
+    return '"' + str(value or "").replace('"', '""') + '"'
+
+
+LAKEHOUSE_PROVIDER_VALUES = {"auto", "minio", "aws_s3", "gcs"}
+
+
 def _duckdb_type_to_pg_type(raw: str) -> str:
     """Map DuckDB DESCRIBE types to PostgreSQL column types for Gold drift.
 
@@ -184,8 +191,15 @@ def validate_safe_identifier(value: str, label: str = "identifier") -> None:
 class DuckDBEngine:
     def __init__(self):
         self.minio_endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
-        _aws_endpoint = "amazonaws.com" in (self.minio_endpoint or "").lower()
-        self.minio_access   = os.environ.get("MINIO_ACCESS_KEY") or ("" if _aws_endpoint else "minio")
+        raw_provider = (os.environ.get("LAKEHOUSE_PROVIDER") or "auto").strip().lower()
+        if raw_provider not in LAKEHOUSE_PROVIDER_VALUES:
+            raise ValueError(
+                "LAKEHOUSE_PROVIDER must be one of "
+                + ", ".join(sorted(LAKEHOUSE_PROVIDER_VALUES))
+            )
+        self.lakehouse_provider = raw_provider
+        _provider = self._resolved_lakehouse_provider()
+        self.minio_access   = os.environ.get("MINIO_ACCESS_KEY") or ("" if _provider in {"aws_s3", "gcs"} else "minio")
         self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
@@ -198,6 +212,26 @@ class DuckDBEngine:
         self._con: duckdb.DuckDBPyConnection | None = None
         self._duckdb_lock = threading.RLock()
 
+    def _resolved_lakehouse_provider(self) -> str:
+        if self.lakehouse_provider != "auto":
+            return self.lakehouse_provider
+        endpoint = (self.minio_endpoint or "").lower()
+        if "amazonaws.com" in endpoint:
+            return "aws_s3"
+        if "storage.googleapis.com" in endpoint:
+            return "gcs"
+        return "minio"
+
+    def _require_gcs_hmac_credentials(self) -> None:
+        if self._resolved_lakehouse_provider() != "gcs":
+            return
+        if (self.minio_access or "").strip() and (self.minio_secret or "").strip():
+            return
+        raise ValueError(
+            "GCS lakehouse requires MINIO_ACCESS_KEY and MINIO_SECRET_KEY "
+            "from GCS HMAC Secret Manager values; refusing to fall back to MinIO."
+        )
+
     def _uses_aws_s3_credential_chain(self) -> bool:
         """True when running against AWS S3 with instance/profile creds.
 
@@ -206,16 +240,14 @@ class DuckDBEngine:
         DuckDB with empty access/secret strings makes httpfs attempt anonymous
         S3 reads and every materialization fails with HTTP 403.
         """
-        endpoint = (self.minio_endpoint or "").lower()
         return (
-            "amazonaws.com" in endpoint
+            self._resolved_lakehouse_provider() == "aws_s3"
             and not (self.minio_access or "").strip()
             and not (self.minio_secret or "").strip()
         )
 
     def _s3_url_style(self) -> str:
-        endpoint = (self.minio_endpoint or "").lower()
-        return "vhost" if "amazonaws.com" in endpoint else "path"
+        return "vhost" if self._resolved_lakehouse_provider() == "aws_s3" else "path"
 
     # ── DuckDB connection ─────────────────────────────────────────────────────
 
@@ -232,6 +264,7 @@ class DuckDBEngine:
             # quotes ourselves. Without escaping, a MinIO secret containing
             # a quote would terminate the literal early and the rest of
             # the credential would be parsed as SQL.
+            self._require_gcs_hmac_credentials()
             self._con.execute(
                 f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
                 f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
@@ -500,7 +533,7 @@ class DuckDBEngine:
                 missing.append(src)
                 continue
             layer, cartridge, name = parts[0], parts[1], parts[2]
-            if not self._latest_materialized_uri(layer, cartridge, name, user_context):
+            if not self._materialized_dependency_uri(layer, cartridge, name, user_context):
                 missing.append(src)
         return missing
 
@@ -542,7 +575,7 @@ class DuckDBEngine:
                 parts = src.split("/")
                 if len(parts) >= 3:
                     layer, cartridge, name = parts[0], parts[1], parts[2]
-                    latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
+                    latest = self._materialized_dependency_uri(layer, cartridge, name, user_context)
                     scoped = latest or (
                         self._silver_path(cartridge, name, user_context)
                         if layer == "silver"
@@ -553,7 +586,7 @@ class DuckDBEngine:
                 parts = src.split("/")
                 if len(parts) >= 3:
                     layer, cartridge, name = parts[0], parts[1], parts[2]
-                    latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
+                    latest = self._materialized_dependency_uri(layer, cartridge, name, user_context)
                     if latest:
                         _replace_dataset_refs(layer, cartridge, name, latest)
         return out
@@ -579,6 +612,91 @@ class DuckDBEngine:
         key = str(uri)[len(prefix):].strip("/")
         return key or None
 
+    def _minio_object_client(self):
+        self._require_gcs_hmac_credentials()
+        from minio import Minio
+
+        return Minio(
+            self.minio_endpoint,
+            access_key=self.minio_access,
+            secret_key=self.minio_secret,
+            secure=self.minio_secure,
+        )
+
+    def _current_materialized_uri(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+    ) -> str:
+        if layer == "silver":
+            return self._silver_path(cartridge, name, user_context)
+        if layer == "gold":
+            return self._gold_path(cartridge, name, user_context)
+        raise ValueError("Invalid dataset layer")
+
+    def _storage_uri_exists(self, uri: str | None) -> bool:
+        key = self._s3_object_key(uri or "")
+        if not key:
+            return False
+        try:
+            if self._uses_aws_s3_credential_chain():
+                self._boto3_s3_client().head_object(Bucket=self.minio_bucket, Key=key)
+                return True
+            self._minio_object_client().stat_object(self.minio_bucket, key)
+            return True
+        except Exception:
+            return False
+
+    def _latest_snapshot_uri(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+    ) -> str | None:
+        prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
+        try:
+            if self._uses_aws_s3_credential_chain():
+                client = self._boto3_s3_client()
+                paginator = client.get_paginator("list_objects_v2")
+                keys: list[str] = []
+                for page in paginator.paginate(Bucket=self.minio_bucket, Prefix=prefix):
+                    keys.extend(
+                        str(obj.get("Key") or "")
+                        for obj in page.get("Contents", [])
+                        if str(obj.get("Key") or "").endswith(".parquet")
+                    )
+            else:
+                client = self._minio_object_client()
+                keys = [
+                    obj.object_name
+                    for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True)
+                    if str(obj.object_name or "").endswith(".parquet")
+                ]
+            keys = sorted((key for key in keys if key), reverse=True)
+            if not keys:
+                return None
+            return f"s3://{self.minio_bucket}/{keys[0]}"
+        except Exception:
+            return None
+
+    def _materialized_dependency_uri(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+    ) -> str | None:
+        latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
+        if latest and self._storage_uri_exists(latest):
+            return latest
+        current = self._current_materialized_uri(layer, cartridge, name, user_context)
+        if self._storage_uri_exists(current):
+            return current
+        return self._latest_snapshot_uri(layer, cartridge, name, user_context)
+
     def _delete_s3_prefix(self, uri: str) -> None:
         """Delete an existing MinIO/S3 object or prefix before DuckDB rewrites it.
 
@@ -602,14 +720,7 @@ class DuckDBEngine:
             except Exception:
                 pass
             return
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
+        client = self._minio_object_client()
         self._delete_s3_key_with_client(client, key)
 
     def _delete_s3_key_with_client(self, client, key: str) -> None:
@@ -622,7 +733,7 @@ class DuckDBEngine:
         except Exception:
             pass
 
-    def _upload_local_parquet(self, local_path: str, parquet_path: str) -> str:
+    def _upload_local_parquet(self, local_path: str, parquet_path: str, *, retry_same_key: bool = False) -> str:
         key = self._s3_object_key(parquet_path)
         if not key:
             return parquet_path
@@ -631,7 +742,7 @@ class DuckDBEngine:
             last_error: Exception | None = None
             for attempt in range(1, 9):
                 attempt_key = key
-                if attempt > 1:
+                if attempt > 1 and not retry_same_key:
                     if key.endswith(".parquet"):
                         attempt_key = f"{key[:-8]}.retry{attempt}-{uuid.uuid4().hex[:8]}.parquet"
                     else:
@@ -652,18 +763,11 @@ class DuckDBEngine:
             if last_error:
                 raise last_error
             return parquet_path
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
+        client = self._minio_object_client()
         last_error: Exception | None = None
         for attempt in range(1, 9):
             attempt_key = key
-            if attempt > 1:
+            if attempt > 1 and not retry_same_key:
                 if key.endswith(".parquet"):
                     attempt_key = f"{key[:-8]}.retry{attempt}-{uuid.uuid4().hex[:8]}.parquet"
                 else:
@@ -712,6 +816,48 @@ class DuckDBEngine:
                 except FileNotFoundError:
                     pass
 
+    def _copy_to_parquet_targets(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        sql: str,
+        parquet_paths: list[str],
+    ) -> str:
+        targets: list[str] = []
+        for path in parquet_paths:
+            if path and path not in targets:
+                targets.append(path)
+        if not targets:
+            raise ValueError("At least one parquet target is required")
+        if len(targets) == 1:
+            return self._copy_to_parquet(con, sql, targets[0])
+        if any(not self._s3_object_key(path) for path in targets):
+            first = ""
+            for path in targets:
+                copied = self._copy_to_parquet(con, sql, path)
+                first = first or copied
+            return first
+
+        tmp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(prefix="omega-materialize-", suffix=".parquet", delete=False) as tmp:
+                tmp_path = tmp.name
+            con.execute(f"COPY ({sql}) TO '{tmp_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+            uploaded: list[str] = []
+            for target in targets:
+                is_current_alias = target.rstrip("/").endswith("/data.parquet")
+                if is_current_alias:
+                    self._delete_s3_prefix(target)
+                uploaded.append(
+                    self._upload_local_parquet(tmp_path, target, retry_same_key=is_current_alias)
+                )
+            return uploaded[0]
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass
+
     def _prune_snapshots(
         self,
         layer: str,
@@ -721,17 +867,27 @@ class DuckDBEngine:
         keep: int = 5,
     ) -> None:
         prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
         try:
+            if self._uses_aws_s3_credential_chain():
+                client = self._boto3_s3_client()
+                paginator = client.get_paginator("list_objects_v2")
+                objects: list[str] = []
+                for page in paginator.paginate(Bucket=self.minio_bucket, Prefix=prefix):
+                    objects.extend(
+                        str(obj.get("Key") or "")
+                        for obj in page.get("Contents", [])
+                        if str(obj.get("Key") or "").endswith(".parquet")
+                    )
+                for object_name in sorted(objects, reverse=True)[keep:]:
+                    client.delete_object(Bucket=self.minio_bucket, Key=object_name)
+                return
+            client = self._minio_object_client()
             objects = sorted(
-                [obj.object_name for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True)],
+                [
+                    obj.object_name
+                    for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True)
+                    if str(obj.object_name or "").endswith(".parquet")
+                ],
                 reverse=True,
             )
             for object_name in objects[keep:]:
@@ -750,17 +906,27 @@ class DuckDBEngine:
             return sql
         try:
             rows = con.execute(f"DESCRIBE SELECT * FROM ({sql}) _scope_probe LIMIT 0").fetchall()
-            cols = {str(r[0]).lower() for r in rows}
+            columns = [str(r[0]) for r in rows]
         except Exception:
-            cols = set()
-        extras = []
-        if "tenant_id" not in cols:
-            extras.append(f"{_sql_quote(tenant)} AS tenant_id")
-        if "workspace_id" not in cols:
-            extras.append(f"{_sql_quote(workspace)} AS workspace_id")
-        if not extras:
-            return sql
-        return f"SELECT {', '.join(extras)}, _scope_q.* FROM ({sql}) _scope_q"
+            columns = []
+        if not columns:
+            return (
+                f"SELECT {_sql_quote(tenant)} AS tenant_id, "
+                f"{_sql_quote(workspace)} AS workspace_id, _scope_q.* "
+                f"FROM ({sql}) _scope_q"
+            )
+        projection = [
+            f"_scope_q.{_duckdb_ident(col)}"
+            for col in columns
+            if col.lower() not in {"tenant_id", "workspace_id"}
+        ]
+        projection.extend(
+            [
+                f"{_sql_quote(tenant)} AS tenant_id",
+                f"{_sql_quote(workspace)} AS workspace_id",
+            ]
+        )
+        return f"SELECT {', '.join(projection)} FROM ({sql}) _scope_q"
 
     def _resolve_latest_date(self, source: str, user_context: dict | None = None) -> str | None:
         """Devuelve el load_date más reciente disponible en una fuente Bronze."""
@@ -1506,7 +1672,7 @@ class DuckDBEngine:
         self,
         con: duckdb.DuckDBPyConnection,
         table: str,
-        storage_path: str,
+        storage_path: str | list[str],
         tenant: str,
         workspace: str,
         user_context: dict | None,
@@ -1516,14 +1682,15 @@ class DuckDBEngine:
         # parquet snapshot can keep an old cached column list even after the
         # pggold table was altered successfully.
         self._pg_gold_attach(con, user_context)
-        return self._copy_to_parquet(
+        paths = storage_path if isinstance(storage_path, list) else [storage_path]
+        return self._copy_to_parquet_targets(
             con,
             (
                 f"SELECT * FROM pggold.{table} "
                 f"WHERE tenant_id = {_sql_quote(tenant)} "
                 f"AND workspace_id = {_sql_quote(workspace)}"
             ),
-            storage_path,
+            paths,
         )
 
     def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
@@ -1580,10 +1747,11 @@ class DuckDBEngine:
                 )
                 self._apply_gold_rls(table)
                 gold_parquet_path = self._snapshot_path("gold", cartridge, name, user_context)
+                gold_current_path = self._current_materialized_uri("gold", cartridge, name, user_context)
                 gold_storage_uri = self._copy_scoped_gold_table_snapshot(
                     con,
                     table,
-                    gold_parquet_path,
+                    [gold_parquet_path, gold_current_path],
                     tenant,
                     workspace,
                     user_context,
@@ -1598,7 +1766,8 @@ class DuckDBEngine:
                 self._validate_scoped_storage_sql(effective_sql, user_context)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 parquet_path  = self._snapshot_path("silver", cartridge, name, user_context)
-                storage_uri = self._copy_to_parquet(con, effective_sql, parquet_path)
+                current_path = self._current_materialized_uri("silver", cartridge, name, user_context)
+                storage_uri = self._copy_to_parquet_targets(con, effective_sql, [parquet_path, current_path])
                 row_count = con.execute(
                     f"SELECT COUNT(*) FROM read_parquet('{storage_uri}')"
                 ).fetchone()[0]

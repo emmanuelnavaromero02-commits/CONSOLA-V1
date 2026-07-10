@@ -248,6 +248,28 @@ def test_gold_write_path_avoids_duckdb_postgres_copy_with_rls():
     assert "INSERT INTO pggold." not in src
 
 
+def test_ensure_scope_columns_overrides_existing_null_scope_columns():
+    engine = DuckDBEngine()
+    con = MagicMock()
+    con.execute.return_value.fetchall.return_value = [
+        ("tenant_id", "VARCHAR"),
+        ("workspace_id", "VARCHAR"),
+        ("employee_id", "VARCHAR"),
+    ]
+
+    scoped = engine._ensure_scope_columns(
+        con,
+        "SELECT NULL AS tenant_id, NULL AS workspace_id, 'e1' AS employee_id",
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert "_scope_q.\"tenant_id\"" not in scoped
+    assert "_scope_q.\"workspace_id\"" not in scoped
+    assert "_scope_q.\"employee_id\"" in scoped
+    assert "'tenant-a' AS tenant_id" in scoped
+    assert "'workspace-a' AS workspace_id" in scoped
+
+
 def test_gold_snapshot_copy_refreshes_attachment_before_export(monkeypatch):
     engine = DuckDBEngine()
     con = MagicMock()
@@ -260,8 +282,8 @@ def test_gold_snapshot_copy_refreshes_attachment_before_export(monkeypatch):
     )
     monkeypatch.setattr(
         engine,
-        "_copy_to_parquet",
-        lambda _con, sql, path: calls.append(("copy", sql)) or path,
+        "_copy_to_parquet_targets",
+        lambda _con, sql, paths: calls.append(("copy", sql)) or paths[0],
     )
 
     result = engine._copy_scoped_gold_table_snapshot(

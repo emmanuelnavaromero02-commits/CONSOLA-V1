@@ -35,7 +35,11 @@ from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.security import get_internal_api_key
-from app.successfactors_fallbacks import annotate_operational_fallback, fallback_dataset_for_successfactors
+from app.successfactors_fallbacks import (
+    annotate_operational_fallback,
+    fallback_dataset_for_successfactors,
+    is_missing_successfactors_dependency_error,
+)
 
 DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
@@ -50,14 +54,97 @@ _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 
 
+def _is_successfactors_dataset(ds: dict) -> bool:
+    return (
+        str(ds.get("cartridge") or "").strip() == "sap_successfactors"
+        or str(ds.get("name") or "").startswith("sap_successfactors_")
+    )
+
+
+def _successfactors_degraded_result(
+    ds: dict,
+    missing_sources: list[str],
+    original_error: str = "",
+    *,
+    fallback: bool = False,
+) -> dict:
+    result: dict = {
+        "name": str(ds.get("name") or ""),
+        "layer": str(ds.get("layer") or "silver"),
+        "row_count": 0,
+        "storage_uri": "",
+        "status": "partial",
+        "degraded": True,
+        "degraded_reason": "missing_materialized_dependencies",
+        "missing_sources": list(missing_sources or []),
+    }
+    if original_error:
+        result["original_error"] = original_error[:1000]
+    if fallback:
+        result["fallback"] = True
+        result["fallback_reason"] = "missing_materialized_dependency"
+    return result
+
+
+def _missing_dependency_result_if_any(ds: dict, user_context: dict) -> dict | None:
+    if not _is_successfactors_dataset(ds):
+        return None
+    missing = engine.missing_materialized_dependencies(ds.get("sources") or [], user_context)
+    if not missing:
+        return None
+    exc = RuntimeError("missing_materialized_dependencies: " + ", ".join(missing))
+    fallback = fallback_dataset_for_successfactors(ds, exc)
+    if not fallback:
+        return _successfactors_degraded_result(ds, missing, str(exc))
+    fallback_missing = engine.missing_materialized_dependencies(fallback.get("sources") or [], user_context)
+    if fallback_missing:
+        return _successfactors_degraded_result(ds, fallback_missing, str(exc), fallback=True)
+    try:
+        result = engine.materialize(fallback, user_context)
+    except Exception as fallback_exc:
+        if not is_missing_successfactors_dependency_error(fallback_exc):
+            raise
+        fallback_missing = engine.missing_materialized_dependencies(
+            fallback.get("sources") or [], user_context
+        )
+        return _successfactors_degraded_result(
+            ds,
+            fallback_missing or missing,
+            str(fallback_exc),
+            fallback=True,
+        )
+    annotated = annotate_operational_fallback(str(ds.get("name") or ""), result, str(exc))
+    annotated.setdefault("missing_sources", missing)
+    return annotated
+
+
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
+    dependency_result = _missing_dependency_result_if_any(ds, user_context)
+    if dependency_result is not None:
+        return dependency_result
     try:
         return engine.materialize(ds, user_context)
     except Exception as exc:
         fallback = fallback_dataset_for_successfactors(ds, exc)
         if not fallback:
             raise
-        result = engine.materialize(fallback, user_context)
+        fallback_missing = engine.missing_materialized_dependencies(fallback.get("sources") or [], user_context)
+        if fallback_missing:
+            return _successfactors_degraded_result(ds, fallback_missing, str(exc), fallback=True)
+        try:
+            result = engine.materialize(fallback, user_context)
+        except Exception as fallback_exc:
+            if not is_missing_successfactors_dependency_error(fallback_exc):
+                raise
+            fallback_missing = engine.missing_materialized_dependencies(
+                fallback.get("sources") or [], user_context
+            )
+            return _successfactors_degraded_result(
+                ds,
+                fallback_missing,
+                str(fallback_exc),
+                fallback=True,
+            )
         annotated = annotate_operational_fallback(str(ds.get("name") or ""), result, str(exc))
         if annotated.get("degraded"):
             logger.warning(

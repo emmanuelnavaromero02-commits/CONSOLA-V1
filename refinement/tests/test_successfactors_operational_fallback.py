@@ -172,3 +172,69 @@ def test_talent_fallbacks_join_by_user_id_hash_and_rank_rated_first():
     pc = TALENT_GOLD_FALLBACK_SQL["sap_successfactors_performance_cycle"]
     assert "AS user_id_hash" in pc
     assert "(performance_rating IS NOT NULL) DESC" in pc
+
+
+def test_successfactors_missing_dependency_returns_partial_not_exception(monkeypatch):
+    import app.main as refinement_main
+
+    class FakeEngine:
+        def missing_materialized_dependencies(self, sources, ctx):
+            return ["silver/sap_successfactors/missing_source"]
+
+        def materialize(self, ds, ctx):
+            raise AssertionError("materialize should not run when dependency precheck fails")
+
+    monkeypatch.setattr(refinement_main, "engine", FakeEngine())
+    ds = {
+        "name": "sap_successfactors_custom_indicator",
+        "layer": "gold",
+        "cartridge": "sap_successfactors",
+        "sources": ["silver/sap_successfactors/missing_source"],
+        "sql_def": "SELECT 1",
+    }
+
+    result = refinement_main._materialize_with_operational_fallback(
+        ds,
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert result["status"] == "partial"
+    assert result["degraded"] is True
+    assert result["degraded_reason"] == "missing_materialized_dependencies"
+    assert result["missing_sources"] == ["silver/sap_successfactors/missing_source"]
+    assert result["row_count"] == 0
+
+
+def test_successfactors_fallback_materializes_when_fallback_dependencies_exist(monkeypatch):
+    import app.main as refinement_main
+
+    materialized: list[str] = []
+
+    class FakeEngine:
+        def missing_materialized_dependencies(self, sources, ctx):
+            if any("missing_source" in source for source in sources):
+                return ["silver/sap_successfactors/missing_source"]
+            return []
+
+        def materialize(self, ds, ctx):
+            materialized.append(ds["name"])
+            return {"name": ds["name"], "layer": "gold", "row_count": 0, "storage_uri": "s3://lakehouse/fallback.parquet"}
+
+    monkeypatch.setattr(refinement_main, "engine", FakeEngine())
+    ds = {
+        "name": "sap_successfactors_talent_employee_profile",
+        "layer": "gold",
+        "cartridge": "sap_successfactors",
+        "sources": ["silver/sap_successfactors/missing_source"],
+        "sql_def": "SELECT * FROM read_parquet('s3://lakehouse/missing.parquet')",
+    }
+
+    result = refinement_main._materialize_with_operational_fallback(
+        ds,
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert materialized == ["sap_successfactors_talent_employee_profile"]
+    assert result["status"] == "partial"
+    assert result["fallback"] is True
+    assert result["missing_sources"] == ["silver/sap_successfactors/missing_source"]
