@@ -763,6 +763,11 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         "cartridge-hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
+    "banxico": {
+        "banxico": ("INTERNAL_API_KEY_BANXICO_TO_CONSOLE",),
+        "cartridge-banxico": ("INTERNAL_API_KEY_BANXICO_TO_CONSOLE",),
+        "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
+    },
     "salesforce": {
         "salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
         "cartridge-salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),

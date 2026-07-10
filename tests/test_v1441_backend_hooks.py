@@ -101,6 +101,18 @@ def test_save_credentials_rejects_empty_body():
     )
 
 
+def test_save_credentials_validates_payload_fields_before_vault_write():
+    src = _read(CART_ROUTER)
+    save_block = re.search(
+        r"async def save_credentials.*?(?=^async def|\Z)",
+        src, re.DOTALL | re.MULTILINE,
+    )
+    body = save_block.group(0) if save_block else ""
+    assert "_validate_credential_payload" in src
+    assert "_validate_credential_payload(cartridge, body)" in body
+    assert "json=credential_payload" in body
+
+
 def test_save_credentials_records_audit_event():
     src = _read(CART_ROUTER)
     save_block = re.search(

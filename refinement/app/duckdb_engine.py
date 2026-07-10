@@ -188,10 +188,10 @@ class DuckDBEngine:
         _aws_endpoint = "amazonaws.com" in (self.minio_endpoint or "").lower()
         self.minio_access   = os.environ.get("MINIO_ACCESS_KEY") or ("" if _aws_endpoint else "minio")
         self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
-        self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
+        self.minio_bucket   = os.environ.get("MINIO_BUCKET", "")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
-        self.storage        = storage_from_env(bucket=self.minio_bucket)
-        self.minio_bucket   = getattr(getattr(self.storage, "config", None), "bucket", self.minio_bucket)
+        self.storage        = storage_from_env(bucket=self.minio_bucket or None)
+        self.minio_bucket   = getattr(getattr(self.storage, "config", None), "bucket", self.minio_bucket or "lakehouse")
         self.pg_url         = os.environ.get("DATABASE_URL", "")
         # Analytical (gold) DB. Falls back to service DB if unset, so
         # local/dev environments without postgres_gold keep working.
@@ -216,6 +216,43 @@ class DuckDBEngine:
             and not (self.minio_secret or "").strip()
         )
 
+    def _uses_gcs_lakehouse(self) -> bool:
+        provider = getattr(getattr(self.storage, "config", None), "provider", "")
+        return provider == "gcs"
+
+    def _gcs_hmac_credentials(self) -> tuple[str, str]:
+        key_id = (
+            os.environ.get("GCS_ACCESS_KEY_ID")
+            or os.environ.get("GOOGLE_HMAC_ACCESS_KEY_ID")
+            or os.environ.get("LAKEHOUSE_ACCESS_KEY")
+            or ""
+        ).strip()
+        secret = (
+            os.environ.get("GCS_SECRET_ACCESS_KEY")
+            or os.environ.get("GOOGLE_HMAC_SECRET_ACCESS_KEY")
+            or os.environ.get("LAKEHOUSE_SECRET_KEY")
+            or ""
+        ).strip()
+        if not key_id or not secret:
+            raise ValueError(
+                "GCS lakehouse refinement reads require HMAC credentials "
+                "via GCS_ACCESS_KEY_ID/GCS_SECRET_ACCESS_KEY or LAKEHOUSE_ACCESS_KEY/LAKEHOUSE_SECRET_KEY"
+            )
+        return key_id, secret
+
+    def _configure_duckdb_gcs(self, con: duckdb.DuckDBPyConnection) -> None:
+        key_id, secret = self._gcs_hmac_credentials()
+        try:
+            con.execute(
+                "CREATE OR REPLACE SECRET omega_gcs ("
+                "TYPE gcs, "
+                f"KEY_ID {_sql_quote(key_id)}, "
+                f"SECRET {_sql_quote(secret)}"
+                ");"
+            )
+        except Exception:
+            raise ValueError("GCS lakehouse DuckDB credential setup failed") from None
+
     def _s3_url_style(self) -> str:
         endpoint = (self.minio_endpoint or "").lower()
         return "vhost" if "amazonaws.com" in endpoint else "path"
@@ -235,12 +272,15 @@ class DuckDBEngine:
             # quotes ourselves. Without escaping, a MinIO secret containing
             # a quote would terminate the literal early and the rest of
             # the credential would be parsed as SQL.
-            self._con.execute(
-                f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
-                f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
-                f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
-            )
-            if self._uses_aws_s3_credential_chain():
+            if self._uses_gcs_lakehouse():
+                self._configure_duckdb_gcs(self._con)
+            else:
+                self._con.execute(
+                    f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
+                    f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
+                    f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
+                )
+            if not self._uses_gcs_lakehouse() and self._uses_aws_s3_credential_chain():
                 region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
                 self._con.execute(
                     "CREATE OR REPLACE SECRET omega_s3_role ("
@@ -248,7 +288,7 @@ class DuckDBEngine:
                     f"REGION {_sql_quote(region)}"
                     ");"
                 )
-            else:
+            elif not self._uses_gcs_lakehouse():
                 self._con.execute(
                     f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
                     f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"

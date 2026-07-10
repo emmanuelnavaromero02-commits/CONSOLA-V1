@@ -5,6 +5,7 @@ import {
   activateCartridge,
   deleteCredentials,
   getConnectorSchema,
+  KNOWN_CARTRIDGES,
   listCartridges,
   saveCredentials,
   testConnection,
@@ -84,6 +85,36 @@ describe("cartridge client", () => {
       authMethodValues: ["bearer_token", "oauth2_client_credentials"],
     });
   });
+
+  it("adapts Banxico Bmx-Token metadata into a Vault token field", async () => {
+    apiMock.get.mockResolvedValueOnce({
+      data: {
+        connector: {
+          name: "Banco de Mexico SIE",
+          auth: {
+            type: "bmx_token",
+            env_var: "BANXICO_API_TOKEN",
+            header: "Bmx-Token",
+          },
+        },
+      },
+      status: 200,
+      headers: new Headers(),
+      requestId: "r",
+    });
+
+    await expect(getConnectorSchema("banxico")).resolves.toMatchObject({
+      name: "Banco de Mexico SIE",
+      fields: [
+        { name: "token", type: "password", label: "Bmx-Token", description: "BANXICO_API_TOKEN", required: true },
+      ],
+    });
+  });
+
+  it("includes Banxico as a known cartridge id", () => {
+    expect(KNOWN_CARTRIDGES).toContain("banxico");
+  });
+
 
   it("adapts SuccessFactors OAuth/SAML metadata into Vault fields", async () => {
     apiMock.get.mockResolvedValueOnce({

@@ -1,0 +1,57 @@
+entities:
+  - entity: series_observations
+    mode: incremental
+    primary_key: series_id,observation_date
+    date_field: observation_date
+    watermark_field: observation_date
+    metadata_entity: series_metadata
+    max_series_per_request: 20
+    metadata_preflight_status: pending_live_banxico_token
+    pending_official_validation:
+      - expected_title
+      - unit
+      - frequency
+      - expected_min
+      - expected_max
+    metadata_preflight_rule: "Do not treat this allowlist as frozen until BANXICO_API_TOKEN live preflight passes."
+    series:
+      - series_id: SF43718
+        metric_name: usd_mxn_fix
+        official_preflight_status: pending_live_banxico_token
+        expected_title: "Tipo de cambio Pesos por dólar E.U.A. Tipo de cambio para solventar obligaciones denominadas en moneda extranjera Fecha de determinación (FIX)"
+        unit: mxn_per_usd
+        frequency: daily
+        overlap_days: 7
+        expected_min: 5
+        expected_max: 50
+      - series_id: SF61745
+        metric_name: target_rate
+        official_preflight_status: pending_live_banxico_token
+        expected_title: "Tasa objetivo"
+        unit: percent_annual
+        frequency: event
+        overlap_days: 90
+        expected_min: 0
+        expected_max: 30
+      - series_id: SF60648
+        metric_name: tiie_28d
+        official_preflight_status: pending_live_banxico_token
+        expected_title: "TIIE a 28 días"
+        unit: percent_annual
+        frequency: daily
+        overlap_days: 7
+        expected_min: 0
+        expected_max: 50
+      - series_id: SP68257
+        metric_name: udi_value
+        official_preflight_status: pending_live_banxico_token
+        expected_title: "Valor de UDIS"
+        unit: mxn
+        frequency: daily
+        overlap_days: 7
+        expected_min: 1
+        expected_max: 50
+
+  - entity: series_metadata
+    mode: full
+    primary_key: series_id
