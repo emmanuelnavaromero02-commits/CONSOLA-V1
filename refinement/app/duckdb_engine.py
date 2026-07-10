@@ -18,14 +18,13 @@ Lineage:
 from __future__ import annotations
 
 import os
-import io
 import json
 import re
 import tempfile
 import threading
-import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import duckdb
@@ -34,9 +33,11 @@ from psycopg2.extras import execute_values
 import sqlglot
 from sqlglot import exp as _sqlglot_exp
 
+from omega_lakehouse import ObjectAlreadyExists, storage_from_env
+
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
-S3_LITERAL_RE = re.compile(r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
+S3_LITERAL_RE = re.compile(r"(['\"])((?:s3|gs)://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
 DUCKDB_MEMORY_LIMIT_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$", re.IGNORECASE)
 
 
@@ -189,6 +190,8 @@ class DuckDBEngine:
         self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+        self.storage        = storage_from_env(bucket=self.minio_bucket)
+        self.minio_bucket   = getattr(getattr(self.storage, "config", None), "bucket", self.minio_bucket)
         self.pg_url         = os.environ.get("DATABASE_URL", "")
         # Analytical (gold) DB. Falls back to service DB if unset, so
         # local/dev environments without postgres_gold keep working.
@@ -328,11 +331,11 @@ class DuckDBEngine:
         if source.startswith("/") or source.startswith(("http://", "https://")):
             raise ValueError("Invalid bronze source")
 
-        if source.startswith("s3://"):
-            expected_prefix = f"s3://{self.minio_bucket}/raw/"
+        if source.startswith(("s3://", "gs://")):
+            expected_prefix = f"{self._storage_scheme()}://{self.minio_bucket}/raw/"
             if not source.startswith(expected_prefix):
                 raise ValueError("Invalid bronze source")
-            relative = source[len(f"s3://{self.minio_bucket}/"):]
+            relative = source[len(self._storage_uri("")):]
             parts = relative.split("/")
             if len(parts) < 3 or parts[0] != "raw":
                 raise ValueError("Invalid bronze source")
@@ -373,14 +376,15 @@ class DuckDBEngine:
         tenant, workspace = self._scope_values(user_context)
         if tenant and workspace:
             return (
-                f"s3://{self.minio_bucket}/{source}/"
-                f"tenant_id={tenant}/workspace_id={workspace}/**/*.parquet"
+                self._storage_uri(
+                    f"{source}/tenant_id={tenant}/workspace_id={workspace}/**/*.parquet"
+                )
             )
         # Keep unscoped reads on the legacy/global layout only. A recursive glob
         # over both `load_date=...` and `tenant_id=.../workspace_id=...` layouts
         # makes DuckDB's hive partition reader fail because the partition keys
         # differ across files.
-        return f"s3://{self.minio_bucket}/{source}/load_date=*/batch_id=*/*.parquet"
+        return self._storage_uri(f"{source}/load_date=*/batch_id=*/*.parquet")
 
     def _bronze_read(self, source: str, user_context: dict | None = None) -> str:
         path = self._bronze_path(source, user_context)
@@ -397,10 +401,11 @@ class DuckDBEngine:
         tenant, workspace = self._scope_values(user_context)
         if tenant and workspace:
             return (
-                f"s3://{self.minio_bucket}/silver/{cartridge}/{name}/"
-                f"tenant_id={tenant}/workspace_id={workspace}/data.parquet"
+                self._storage_uri(
+                    f"silver/{cartridge}/{name}/tenant_id={tenant}/workspace_id={workspace}/data.parquet"
+                )
             )
-        return f"s3://{self.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
+        return self._storage_uri(f"silver/{cartridge}/{name}/data.parquet")
 
     def _gold_path(self, cartridge: str, name: str, user_context: dict | None = None) -> str:
         """Legacy Gold parquet path used for backwards-compatible SQL rewrites."""
@@ -409,10 +414,11 @@ class DuckDBEngine:
         tenant, workspace = self._scope_values(user_context)
         if tenant and workspace:
             return (
-                f"s3://{self.minio_bucket}/gold/{cartridge}/{name}/"
-                f"tenant_id={tenant}/workspace_id={workspace}/data.parquet"
+                self._storage_uri(
+                    f"gold/{cartridge}/{name}/tenant_id={tenant}/workspace_id={workspace}/data.parquet"
+                )
             )
-        return f"s3://{self.minio_bucket}/gold/{cartridge}/{name}/data.parquet"
+        return self._storage_uri(f"gold/{cartridge}/{name}/data.parquet")
 
     def _snapshot_prefix(
         self,
@@ -440,7 +446,9 @@ class DuckDBEngine:
     ) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         suffix = uuid.uuid4().hex[:12]
-        return f"s3://{self.minio_bucket}/{self._snapshot_prefix(layer, cartridge, name, user_context)}{stamp}-{suffix}.parquet"
+        return self._storage_uri(
+            f"{self._snapshot_prefix(layer, cartridge, name, user_context)}{stamp}-{suffix}.parquet"
+        )
 
     def _latest_materialized_uri(
         self,
@@ -461,7 +469,7 @@ class DuckDBEngine:
             "storage_uri <> ''",
             "storage_uri LIKE %s",
         ]
-        params: list[str] = [name, cartridge, layer, "s3://%"]
+        params: list[str] = [name, cartridge, layer, f"{self._storage_scheme()}://%"]
         tenant, workspace = self._scope_values(user_context)
         if tenant and workspace:
             clauses.append("storage_uri LIKE %s")
@@ -520,7 +528,7 @@ class DuckDBEngine:
 
         def _replace_dataset_refs(layer: str, cartridge: str, name: str, replacement: str) -> None:
             nonlocal out
-            base = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}"
+            base = self._storage_uri(f"{layer}/{cartridge}/{name}")
             for pattern in (
                 f"{base}/data.parquet",
                 f"{base}/*.parquet",
@@ -533,7 +541,7 @@ class DuckDBEngine:
             if src.startswith("raw/"):
                 try:
                     scoped = self._bronze_path(src, user_context)
-                    legacy = f"s3://{self.minio_bucket}/{src}/**/*.parquet"
+                    legacy = self._storage_uri(f"{src}/**/*.parquet")
                     out = out.replace(legacy, scoped)
                     out = out.replace(legacy.replace("**/*.parquet", "*.parquet"), scoped)
                 except Exception:
@@ -563,7 +571,7 @@ class DuckDBEngine:
         if not tenant or not workspace:
             return
         scope_fragment = f"tenant_id={tenant}/workspace_id={workspace}/"
-        bucket_prefix = f"s3://{self.minio_bucket}/"
+        bucket_prefix = self._storage_uri("")
         for match in S3_LITERAL_RE.finditer(sql or ""):
             uri = match.group(2)
             if not uri.startswith(bucket_prefix):
@@ -573,11 +581,20 @@ class DuckDBEngine:
                 raise ValueError("S3 path is outside the caller tenant/workspace scope")
 
     def _s3_object_key(self, uri: str) -> str | None:
-        prefix = f"s3://{self.minio_bucket}/"
+        prefix = self._storage_uri("")
         if not str(uri or "").startswith(prefix):
             return None
         key = str(uri)[len(prefix):].strip("/")
         return key or None
+
+    def _storage_scheme(self) -> str:
+        provider = getattr(getattr(self.storage, "config", None), "provider", "s3")
+        return "gs" if provider == "gcs" else "s3"
+
+    def _storage_uri(self, key: str) -> str:
+        clean = str(key or "").strip("/")
+        base = f"{self._storage_scheme()}://{self.minio_bucket}"
+        return f"{base}/{clean}" if clean else f"{base}/"
 
     def _delete_s3_prefix(self, uri: str) -> None:
         """Delete an existing MinIO/S3 object or prefix before DuckDB rewrites it.
@@ -590,76 +607,12 @@ class DuckDBEngine:
         key = self._s3_object_key(uri)
         if not key:
             return
-        if self._uses_aws_s3_credential_chain():
-            client = self._boto3_s3_client()
-            paginator = client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=self.minio_bucket, Prefix=key):
-                objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-                if objects:
-                    client.delete_objects(Bucket=self.minio_bucket, Delete={"Objects": objects})
-            try:
-                client.delete_object(Bucket=self.minio_bucket, Key=key)
-            except Exception:
-                pass
-            return
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
-        self._delete_s3_key_with_client(client, key)
-
-    def _delete_s3_key_with_client(self, client, key: str) -> None:
-        for obj in client.list_objects(self.minio_bucket, prefix=key, recursive=True):
-            client.remove_object(self.minio_bucket, obj.object_name)
-        # In the common case `data.parquet` is a single object, not a prefix.
-        # Removing a missing key is harmless on MinIO/S3-compatible backends.
-        try:
-            client.remove_object(self.minio_bucket, key)
-        except Exception:
-            pass
+        self.storage.delete_prefix(key, require_trailing_slash=False)
 
     def _upload_local_parquet(self, local_path: str, parquet_path: str) -> str:
         key = self._s3_object_key(parquet_path)
         if not key:
             return parquet_path
-        if self._uses_aws_s3_credential_chain():
-            client = self._boto3_s3_client()
-            last_error: Exception | None = None
-            for attempt in range(1, 9):
-                attempt_key = key
-                if attempt > 1:
-                    if key.endswith(".parquet"):
-                        attempt_key = f"{key[:-8]}.retry{attempt}-{uuid.uuid4().hex[:8]}.parquet"
-                    else:
-                        attempt_key = f"{key}.retry{attempt}-{uuid.uuid4().hex[:8]}"
-                try:
-                    client.upload_file(
-                        local_path,
-                        self.minio_bucket,
-                        attempt_key,
-                        ExtraArgs={"ContentType": "application/octet-stream"},
-                    )
-                    return f"s3://{self.minio_bucket}/{attempt_key}"
-                except Exception as exc:
-                    last_error = exc
-                    if attempt == 8:
-                        break
-                    time.sleep(min(0.5 * attempt, 3.0))
-            if last_error:
-                raise last_error
-            return parquet_path
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
         last_error: Exception | None = None
         for attempt in range(1, 9):
             attempt_key = key
@@ -669,29 +622,22 @@ class DuckDBEngine:
                 else:
                     attempt_key = f"{key}.retry{attempt}-{uuid.uuid4().hex[:8]}"
             try:
-                client.fput_object(
-                    self.minio_bucket,
+                result = self.storage.put_file(
                     attempt_key,
-                    local_path,
-                    content_type="application/octet-stream",
+                    Path(local_path),
+                    overwrite=False,
                 )
-                return f"s3://{self.minio_bucket}/{attempt_key}"
+                return result.uri
+            except ObjectAlreadyExists as exc:
+                last_error = exc
+                continue
             except Exception as exc:
                 last_error = exc
                 if attempt == 8:
                     break
-                time.sleep(min(0.5 * attempt, 3.0))
         if last_error:
             raise last_error
         return parquet_path
-
-    def _boto3_s3_client(self):
-        import boto3
-
-        return boto3.client(
-            "s3",
-            region_name=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1",
-        )
 
     def _copy_to_parquet(self, con: duckdb.DuckDBPyConnection, sql: str, parquet_path: str) -> str:
         key = self._s3_object_key(parquet_path)
@@ -721,21 +667,13 @@ class DuckDBEngine:
         keep: int = 5,
     ) -> None:
         prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
         try:
             objects = sorted(
-                [obj.object_name for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True)],
+                [obj.key for obj in self.storage.iter_list(prefix)],
                 reverse=True,
             )
             for object_name in objects[keep:]:
-                client.remove_object(self.minio_bucket, object_name)
+                self.storage.delete_object(object_name)
         except Exception:
             pass
 
@@ -836,28 +774,9 @@ class DuckDBEngine:
     ) -> list[str]:
         prefixes = self._bronze_listing_prefixes(allowed_prefixes)
         sources: set[str] = set()
-        if self._uses_aws_s3_credential_chain():
-            client = self._boto3_s3_client()
-            paginator = client.get_paginator("list_objects_v2")
-            for prefix in prefixes:
-                for page in paginator.paginate(Bucket=self.minio_bucket, Prefix=prefix):
-                    for obj in page.get("Contents", []):
-                        source = self._bronze_source_from_object_key(obj.get("Key", ""), user_context)
-                        if source:
-                            sources.add(source)
-            return sorted(sources)
-
-        from minio import Minio
-
-        client = Minio(
-            self.minio_endpoint,
-            access_key=self.minio_access,
-            secret_key=self.minio_secret,
-            secure=self.minio_secure,
-        )
         for prefix in prefixes:
-            for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True):
-                source = self._bronze_source_from_object_key(obj.object_name, user_context)
+            for obj in self.storage.iter_list(prefix):
+                source = self._bronze_source_from_object_key(obj.key, user_context)
                 if source:
                     sources.add(source)
         return sorted(sources)

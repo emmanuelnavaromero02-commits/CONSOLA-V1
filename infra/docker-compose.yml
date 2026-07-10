@@ -119,8 +119,8 @@ services:
 
   console:
     build:
-      context: ../console
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: console/Dockerfile
     container_name: mode_console
     environment:
       # v1.43.2 (Codex P1-2): APP_ENV default flipped to ``production`` in
@@ -309,8 +309,8 @@ services:
 
   refinement:
     build:
-      context: ../refinement
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: refinement/Dockerfile
     container_name: mode_refinement
     mem_limit: ${REFINEMENT_MEM_LIMIT:-1g}
     cpus: ${REFINEMENT_CPUS:-1.0}
@@ -756,8 +756,8 @@ services:
 
   mcp-infra:
     build:
-      context: ../mcp-infra
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: mcp-infra/Dockerfile
     container_name: mode_mcp_infra
     environment:
       # v1.43.2 (Codex P1-2): see console block above. mcp-infra is the

@@ -9,6 +9,7 @@ import re
 
 from app.config import settings
 from app.registry import tool
+from omega_lakehouse import storage_from_env
 
 
 MAX_PARQUET_READ_BYTES = int(os.environ.get("MINIO_TOOL_MAX_READ_BYTES", str(25 * 1024 * 1024)))
@@ -36,32 +37,21 @@ def _spec_key(cartridge_id: str, filename: str) -> str:
     return f"cartridges/{_safe_cartridge_id(cartridge_id)}/specs/{_safe_filename(filename)}"
 
 
-def _client():
-    from minio import Minio
-    return Minio(
-        settings.minio_endpoint,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        secure=settings.minio_secure,
-    )
+def _storage(bucket: str | None = None):
+    return storage_from_env(bucket=bucket or settings.minio_bucket)
 
 
-def _read_bounded_object(client, bucket: str, object_path: str) -> bytes:
-    stat = client.stat_object(bucket, object_path)
+def _read_bounded_object(storage, object_path: str, *, max_bytes: int = MAX_PARQUET_READ_BYTES) -> bytes:
+    stat = storage.stat(object_path)
     size = int(getattr(stat, "size", 0) or 0)
-    if size > MAX_PARQUET_READ_BYTES:
+    if size > max_bytes:
         raise ValueError(
-            f"object too large for MCP preview ({size} bytes > {MAX_PARQUET_READ_BYTES} bytes)"
+            f"object too large for MCP preview ({size} bytes > {max_bytes} bytes)"
         )
-    response = client.get_object(bucket, object_path)
-    try:
-        raw = response.read(MAX_PARQUET_READ_BYTES + 1)
-        if len(raw) > MAX_PARQUET_READ_BYTES:
-            raise ValueError(f"object too large for MCP preview (> {MAX_PARQUET_READ_BYTES} bytes)")
-        return raw
-    finally:
-        response.close()
-        response.release_conn()
+    raw = storage.get_bytes(object_path)
+    if len(raw) > max_bytes:
+        raise ValueError(f"object too large for MCP preview (> {max_bytes} bytes)")
+    return raw
 
 
 @tool(
@@ -77,11 +67,11 @@ def _read_bounded_object(client, bucket: str, object_path: str) -> bytes:
     },
 )
 def minio_list_objects(prefix: str = "", bucket: str | None = None) -> dict:
-    c   = _client()
     bkt = bucket or settings.minio_bucket
+    storage = _storage(bkt)
     objs = []
     truncated = False
-    for obj in c.list_objects(bkt, prefix=prefix, recursive=True):
+    for obj in storage.iter_list(prefix):
         if len(objs) >= 200:
             truncated = True
             break
@@ -89,9 +79,9 @@ def minio_list_objects(prefix: str = "", bucket: str | None = None) -> dict:
     return {
         "objects": [
             {
-                "name":          o.object_name,
+                "name":          o.key,
                 "size_bytes":    o.size,
-                "last_modified": str(o.last_modified),
+                "last_modified": str(o.updated_at),
             }
             for o in objs
         ],
@@ -116,9 +106,8 @@ def minio_list_objects(prefix: str = "", bucket: str | None = None) -> dict:
 )
 def minio_get_parquet_schema(object_path: str, bucket: str | None = None) -> dict:
     import pyarrow.parquet as pq
-    c   = _client()
     bkt = bucket or settings.minio_bucket
-    raw = _read_bounded_object(c, bkt, object_path)
+    raw = _read_bounded_object(_storage(bkt), object_path)
     pf  = pq.ParquetFile(io.BytesIO(raw))
     schema = pf.schema_arrow
     return {
@@ -143,10 +132,9 @@ def minio_get_parquet_schema(object_path: str, bucket: str | None = None) -> dic
 )
 def minio_get_sample_rows(object_path: str, n: int = 10, bucket: str | None = None) -> dict:
     import pyarrow.parquet as pq
-    c   = _client()
     bkt = bucket or settings.minio_bucket
     n = min(max(int(n or 10), 1), 100)
-    raw = _read_bounded_object(c, bkt, object_path)
+    raw = _read_bounded_object(_storage(bkt), object_path)
     df  = pq.read_table(io.BytesIO(raw)).to_pandas().head(n)
     return {
         "rows":    df.to_dict(orient="records"),
@@ -172,16 +160,14 @@ def minio_get_sample_rows(object_path: str, n: int = 10, bucket: str | None = No
     },
 )
 def minio_upload_spec(cartridge_id: str, filename: str, content: str) -> dict:
-    c   = _client()
     bkt = settings.minio_bucket
+    storage = _storage(bkt)
     cartridge_id = _safe_cartridge_id(cartridge_id)
     key = _spec_key(cartridge_id, filename)
     raw = content.encode("utf-8")
     if len(raw) > MAX_SPEC_BYTES:
         raise ValueError(f"spec too large ({len(raw)} bytes > {MAX_SPEC_BYTES} bytes)")
-    if not c.bucket_exists(bkt):
-        c.make_bucket(bkt)
-    c.put_object(bkt, key, io.BytesIO(raw), len(raw), content_type="text/plain")
+    storage.put_bytes(key, raw, overwrite=True, metadata={"content-type": "text/plain"})
     return {"uploaded": key, "size_bytes": len(raw), "cartridge_id": cartridge_id}
 
 
@@ -197,19 +183,19 @@ def minio_upload_spec(cartridge_id: str, filename: str, content: str) -> dict:
     },
 )
 def minio_list_cartridge_specs(cartridge_id: str) -> dict:
-    c      = _client()
     bkt    = settings.minio_bucket
+    storage = _storage(bkt)
     cartridge_id = _safe_cartridge_id(cartridge_id)
     prefix = f"cartridges/{cartridge_id}/specs/"
     objs = []
-    for obj in c.list_objects(bkt, prefix=prefix, recursive=True):
+    for obj in storage.iter_list(prefix):
         if len(objs) >= MAX_SPEC_LIST:
             break
         objs.append(obj)
     return {
         "cartridge_id": cartridge_id,
         "specs": [
-            {"name": o.object_name.replace(prefix, ""), "size_bytes": o.size}
+            {"name": o.key.replace(prefix, ""), "size_bytes": o.size}
             for o in objs
         ],
     }
@@ -228,23 +214,16 @@ def minio_list_cartridge_specs(cartridge_id: str) -> dict:
     },
 )
 def minio_read_spec(cartridge_id: str, filename: str) -> dict:
-    c   = _client()
     bkt = settings.minio_bucket
+    storage = _storage(bkt)
     cartridge_id = _safe_cartridge_id(cartridge_id)
     filename = _safe_filename(filename)
     key = _spec_key(cartridge_id, filename)
-    stat = c.stat_object(bkt, key)
-    size = int(getattr(stat, "size", 0) or 0)
+    stat = storage.stat(key)
+    size = int(stat.size or 0)
     if size > MAX_SPEC_BYTES:
         raise ValueError(f"spec too large ({size} bytes > {MAX_SPEC_BYTES} bytes)")
-    response = c.get_object(bkt, key)
-    try:
-        raw = response.read(MAX_SPEC_BYTES + 1)
-        if len(raw) > MAX_SPEC_BYTES:
-            raise ValueError(f"spec too large (> {MAX_SPEC_BYTES} bytes)")
-    finally:
-        response.close()
-        response.release_conn()
+    raw = _read_bounded_object(storage, key, max_bytes=MAX_SPEC_BYTES)
     return {
         "cartridge_id": cartridge_id,
         "filename":     filename,

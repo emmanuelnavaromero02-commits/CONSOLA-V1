@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY mcp-infra/requirements.txt .
 RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 
 
@@ -31,7 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 
 RUN useradd -m appuser
-COPY --chown=appuser:appuser . .
+COPY --chown=appuser:appuser omega_lakehouse/ omega_lakehouse/
+COPY --chown=appuser:appuser mcp-infra/ .
 USER appuser
 
 EXPOSE 8010
