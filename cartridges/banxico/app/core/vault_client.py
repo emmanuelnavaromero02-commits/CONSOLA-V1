@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 from typing import Any
@@ -8,8 +7,6 @@ from typing import Any
 import requests
 
 logger = logging.getLogger(__name__)
-
-_CONNECTION_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 
 _FIELD_ALIASES: tuple[str, ...] = (
     "token",
@@ -32,11 +29,6 @@ def _runtime_env() -> str:
 
 def _local_fallbacks_allowed() -> bool:
     return _runtime_env() in _LOCAL_ENVIRONMENTS
-
-
-def _context_cache_key(security_context: str | None) -> str:
-    value = (security_context or "").strip()
-    return hashlib.sha256(value.encode("utf-8")).hexdigest() if value else ""
 
 
 def _normalize_conn_id(conn_id: str | None) -> str:
@@ -66,10 +58,6 @@ def _connection_candidates(conn_id: str | None) -> tuple[str, ...]:
 def _fetch_connection(conn_id: str | None, security_context: str | None) -> dict[str, Any]:
     selected_conn_id = _normalize_conn_id(conn_id)
     scoped_context = (security_context or "").strip() or None
-    cache_key = ("banxico", _context_cache_key(scoped_context), selected_conn_id)
-    cached = _CONNECTION_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
 
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
     for candidate_conn_id in _connection_candidates(conn_id):
@@ -90,7 +78,6 @@ def _fetch_connection(conn_id: str | None, security_context: str | None) -> dict
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict):
-                    _CONNECTION_CACHE[cache_key] = payload
                     return payload
             except Exception as exc:
                 logger.debug("Banxico Vault reveal failed for %s: %s", candidate_conn_id, type(exc).__name__)

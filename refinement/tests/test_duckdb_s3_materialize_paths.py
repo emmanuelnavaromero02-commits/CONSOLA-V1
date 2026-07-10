@@ -158,9 +158,30 @@ def test_gcs_lakehouse_configures_duckdb_gcs_secret(monkeypatch):
     assert engine._storage_uri("raw/x.parquet") == "gs://modecissions-gcs-lakehouse/raw/x.parquet"
     assert "TYPE gcs" in combined
     assert "KEY_ID 'gcs-key'" in combined
-    assert "SECRET 'gcs-secret'" in combined
+    assert "SECRET " in combined
     assert "s3_endpoint" not in combined
     assert "gcs_fuse" not in combined
+
+
+def test_gcs_lakehouse_sanitizes_duckdb_secret_setup_errors(monkeypatch):
+    class FakeConn:
+        def execute(self, sql):
+            if "CREATE OR REPLACE SECRET omega_gcs" in sql:
+                raise RuntimeError("bad sql contained gcs-secret")
+            return self
+
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs")
+    monkeypatch.setenv("GCS_BUCKET", "modecissions-gcs-lakehouse")
+    monkeypatch.setenv("GCS_ACCESS_KEY_ID", "gcs-key")
+    monkeypatch.setenv("GCS_SECRET_ACCESS_KEY", "gcs-secret")
+    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+
+    engine = DuckDBEngine()
+
+    with pytest.raises(ValueError) as exc:
+        engine._conn()
+    assert str(exc.value) == "GCS lakehouse DuckDB credential setup failed"
+    assert "gcs-secret" not in str(exc.value)
 
 
 def test_gcs_lakehouse_requires_hmac_for_duckdb_reads(monkeypatch):

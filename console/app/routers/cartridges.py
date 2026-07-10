@@ -138,6 +138,56 @@ def _scrub_credential_payload(payload: dict) -> dict:
     return {k: ("***" if v not in (None, "") else "") for k, v in payload.items()}
 
 
+def _connector_config(cartridge: str) -> dict:
+    import yaml
+
+    candidates = [
+        Path(f"/registry/cartridges/{cartridge}/app/config/connector.yaml"),
+        Path(__file__).resolve().parents[3] / "cartridges" / cartridge / "app" / "config" / "connector.yaml",
+    ]
+    for path in candidates:
+        if path.exists():
+            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raise HTTPException(404, "Schema not found")
+
+
+def _allowed_credential_fields(cartridge: str) -> set[str]:
+    config = _connector_config(cartridge)
+    connector = config.get("connector") if isinstance(config.get("connector"), dict) else {}
+    auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
+    auth_type = str(auth.get("type") or "").strip()
+    allowed = {
+        str(field.get("name")).strip()
+        for field in (config.get("fields") or [])
+        if isinstance(field, dict) and str(field.get("name") or "").strip()
+    }
+    if auth_type in {"bearer_token", "bmx_token"}:
+        allowed.add("token")
+    if auth_type == "basic":
+        allowed.update({"username", "password"})
+    if auth_type in {"oauth2_client_credentials", "oauth2_password"}:
+        allowed.update({"client_id", "client_secret", "token_url", "scope"})
+    allowed.add("auth_method")
+    return allowed
+
+
+def _validate_credential_payload(cartridge: str, payload: dict) -> dict:
+    allowed = _allowed_credential_fields(cartridge)
+    clean: dict[str, object] = {}
+    rejected: list[str] = []
+    for raw_key, value in payload.items():
+        key = str(raw_key or "").strip()
+        if not key or key not in allowed:
+            rejected.append(key or "<empty>")
+            continue
+        clean[key] = value
+    if rejected:
+        raise HTTPException(400, f"Unsupported credential field(s): {', '.join(sorted(rejected))}")
+    if not clean:
+        raise HTTPException(400, "Credential payload must include at least one supported field")
+    return clean
+
+
 @router.get("", dependencies=[Depends(require_permission("cartridges.read"))])
 async def list_cartridges(user: dict = Depends(require_authenticated)):
     allowed = _allowed_cartridges(user)
@@ -152,15 +202,7 @@ async def list_cartridges(user: dict = Depends(require_authenticated)):
 async def connector_schema(cartridge: str, user: dict = Depends(require_authenticated)):
     """Return connector.yaml so the UI can render a dynamic form."""
     _require_cartridge_visible(user, cartridge)
-    import yaml
-    candidates = [
-        Path(f"/registry/cartridges/{cartridge}/app/config/connector.yaml"),
-        Path(__file__).resolve().parents[3] / "cartridges" / cartridge / "app" / "config" / "connector.yaml",
-    ]
-    for path in candidates:
-        if path.exists():
-            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    raise HTTPException(404, "Schema not found")
+    return _connector_config(cartridge)
 
 
 @router.get(
@@ -345,21 +387,22 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
     _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
     if not isinstance(body, dict) or not body:
         raise HTTPException(400, "Credential payload must be a non-empty object")
+    credential_payload = _validate_credential_payload(cartridge, body)
 
     user = getattr(request.state, "user", None) or {}
     audit_metadata = {
         "conn_id": _DEFAULT_CONN_ID,
-        "fields_written": sorted(body.keys()),
+        "fields_written": sorted(credential_payload.keys()),
         # Values are *never* persisted in audit_events. See
         # _scrub_credential_payload() for the masking contract.
-        "masked_values": _scrub_credential_payload(body),
+        "masked_values": _scrub_credential_payload(credential_payload),
     }
 
     try:
         async with httpx.AsyncClient(headers=_vault_headers(), timeout=10.0) as c:
             r = await c.put(
                 f"{_VAULT_URL}/connections/{cartridge}/{_DEFAULT_CONN_ID}",
-                json=body,
+                json=credential_payload,
             )
         ok = r.is_success
         status = "success" if ok else "failure"
@@ -383,7 +426,7 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
 
     return {
         "ok": True,
-        "encrypted_count": len(body),
+        "encrypted_count": len(credential_payload),
         "conn_id": _DEFAULT_CONN_ID,
     }
 

@@ -242,13 +242,16 @@ class DuckDBEngine:
 
     def _configure_duckdb_gcs(self, con: duckdb.DuckDBPyConnection) -> None:
         key_id, secret = self._gcs_hmac_credentials()
-        con.execute(
-            "CREATE OR REPLACE SECRET omega_gcs ("
-            "TYPE gcs, "
-            f"KEY_ID {_sql_quote(key_id)}, "
-            f"SECRET {_sql_quote(secret)}"
-            ");"
-        )
+        try:
+            con.execute(
+                "CREATE OR REPLACE SECRET omega_gcs ("
+                "TYPE gcs, "
+                f"KEY_ID {_sql_quote(key_id)}, "
+                f"SECRET {_sql_quote(secret)}"
+                ");"
+            )
+        except Exception:
+            raise ValueError("GCS lakehouse DuckDB credential setup failed") from None
 
     def _s3_url_style(self) -> str:
         endpoint = (self.minio_endpoint or "").lower()

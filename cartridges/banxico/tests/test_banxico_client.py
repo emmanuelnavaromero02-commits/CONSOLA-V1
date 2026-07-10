@@ -46,7 +46,6 @@ def test_development_allows_banxico_api_token_without_vault(monkeypatch):
 
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("BANXICO_API_TOKEN", "dev-env-token")
-    vault_client._CONNECTION_CACHE.clear()
 
     def unexpected_vault_call(*_args, **_kwargs):
         raise AssertionError("Vault should not be called for local env token fallback")
@@ -66,7 +65,6 @@ def test_production_token_can_be_resolved_from_console_vault(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("INTERNAL_API_KEY_BANXICO_TO_CONSOLE", "banxico-console-key")
     monkeypatch.setenv("CONSOLE_URL", "http://console.test")
-    vault_client._CONNECTION_CACHE.clear()
     captured: dict[str, object] = {}
 
     class VaultResponse:
@@ -109,7 +107,6 @@ def test_production_rejects_env_token_without_vault(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("BANXICO_API_TOKEN", "prod-env-token")
     monkeypatch.delenv("INTERNAL_API_KEY_BANXICO_TO_CONSOLE", raising=False)
-    vault_client._CONNECTION_CACHE.clear()
 
     with pytest.raises(RuntimeError) as exc:
         BanxicoClient(conn_id="default", session=FakeSession(_response(200, b"{}")))
@@ -124,7 +121,6 @@ def test_production_without_token_has_clear_error(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("BANXICO_API_TOKEN", raising=False)
     monkeypatch.delenv("INTERNAL_API_KEY_BANXICO_TO_CONSOLE", raising=False)
-    vault_client._CONNECTION_CACHE.clear()
 
     with pytest.raises(RuntimeError, match="Vault conn_id is required"):
         BanxicoClient(session=FakeSession(_response(200, b"{}")))
@@ -139,7 +135,6 @@ def test_production_secret_not_in_logs_errors_or_http_response(monkeypatch, capl
     monkeypatch.setenv("BANXICO_API_TOKEN", secret)
     monkeypatch.setenv("INTERNAL_API_KEY_BANXICO_TO_CONSOLE", "banxico-console-key")
     monkeypatch.setenv("CONSOLE_URL", "http://console.test")
-    vault_client._CONNECTION_CACHE.clear()
     caplog.set_level(logging.DEBUG, logger="app.core.vault_client")
 
     def fake_get(*_args, **_kwargs):
