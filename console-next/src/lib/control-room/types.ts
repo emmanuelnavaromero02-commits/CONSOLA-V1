@@ -371,6 +371,25 @@ export interface SfTalentNineBoxCell {
   href?: string;
 }
 
+export interface SfTalentDesempenoRow {
+  employee_key: string;
+  display_name: string;
+  role: string;
+  unit: string;
+  performance_band_available: "high" | "medium" | "low" | string;
+  potential_pending: boolean;
+  fit_band: string;
+}
+
+// Cohorte "Desempeño disponible": desempeño real presente, Potencial pendiente (falta C+A).
+// Alimenta la columna Desempeño (B), la franja del 9-box (C) y el contador.
+export interface SfTalentDesempenoCohort {
+  count: number;
+  band_counts: { high: number; medium: number; low: number };
+  roster: SfTalentDesempenoRow[];
+  roster_truncated: boolean;
+}
+
 export interface SfTalentNineBoxPayload {
   generated_at?: string;
   connection_id?: string;
@@ -386,6 +405,7 @@ export interface SfTalentNineBoxPayload {
     cells: number;
   };
   cells: SfTalentNineBoxCell[];
+  desempeno_disponible?: SfTalentDesempenoCohort;
   blockers: SfTalentBlocker[];
   privacy?: {
     roster?: string;
@@ -403,6 +423,9 @@ export interface SfTalentRosterRow {
   box_id: string;
   box_label: string;
   performance_band: string;
+  performance_band_available?: string;
+  potential_pending?: boolean;
+  desempeno_disponible?: boolean;
   potential_band: string;
   fit_band: string;
   movement_age_bucket: string;

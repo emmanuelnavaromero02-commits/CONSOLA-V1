@@ -602,6 +602,15 @@ SELECT
     source_mode,
     benchmark_version,
     performance_band_calc AS performance_band,
+    -- Opcion 1: banda "Desempeno disponible" del performance_score REAL (cortes actuales),
+    -- nunca proxy; NULL sin desempeno. + cohorte esperando Competencias y Aspiracion.
+    CASE
+        WHEN performance_scale IS NULL THEN NULL
+        WHEN performance_scale >= 4 THEN 'high'
+        WHEN performance_scale >= 3 THEN 'medium'
+        ELSE 'low'
+    END AS performance_band_available,
+    CASE WHEN potential_scale IS NULL THEN TRUE ELSE FALSE END AS potential_pending,
     potential_band_calc AS potential_band,
     CASE
         WHEN performance_band_calc = 'insufficient_data' OR potential_band_calc = 'insufficient_data' THEN 'insufficient_data'

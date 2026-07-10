@@ -31,6 +31,7 @@ import type {
   SfTalentActionPreviewPayload,
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
+  SfTalentDesempenoCohort,
   SfTalentExtractionTarget,
   SfTalentMetadataReadinessPayload,
   SfTalentNineBoxCell,
@@ -532,6 +533,236 @@ export function SimulationPanel({
   );
 }
 
+const PERF_BAND_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
+const POTENCIAL_PENDIENTE_TOOLTIP =
+  "El Potencial requiere Competencias y Aspiración. SuccessFactors aún no expone esas entidades para este tenant, por eso permanece pendiente. No se infiere del desempeño.";
+
+// Banda horizontal de desempeño (teal, ordinal Alto/Medio/Bajo). Nunca verde "Listo".
+function PerformanceBand({ band }: { band: string }) {
+  const filled = PERF_BAND_ORDER[band] ?? 0;
+  return (
+    <span className="inline-flex items-center gap-2" title={`Desempeño ${bandLabel(band)} (dato real)`}>
+      <span className="flex gap-[3px]" aria-hidden>
+        {[0, 1, 2].map((index) => (
+          <span
+            key={index}
+            className={cn(
+              "h-2 w-4 rounded-[3px]",
+              index < filled ? "bg-teal-500 dark:bg-teal-400" : "bg-slate-200 dark:bg-slate-700",
+            )}
+          />
+        ))}
+      </span>
+      <span className="text-xs font-semibold text-teal-700 dark:text-teal-300">{bandLabel(band)}</span>
+    </span>
+  );
+}
+
+// Opción 1 (B + C): superficie "Desempeño disponible". Desempeño es un eje independiente
+// (columna + franja); Potencial queda pendiente (requiere C+A); Fit es independiente y no se
+// infiere. Shortlist manual: solo agrupa personas, sin acciones automáticas ni write-back.
+export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempenoCohort | null }) {
+  const [sortDesc, setSortDesc] = useState(true);
+  const [bandFilter, setBandFilter] = useState<"all" | "high" | "medium" | "low">("all");
+  const [shortlist, setShortlist] = useState<Set<string>>(() => new Set());
+
+  const rows = useMemo(() => cohort?.roster ?? [], [cohort]);
+  const visibleRows = useMemo(() => {
+    const filtered = rows.filter((row) => bandFilter === "all" || row.performance_band_available === bandFilter);
+    const sorted = [...filtered].sort((a, b) => {
+      const delta = (PERF_BAND_ORDER[b.performance_band_available] ?? 0) - (PERF_BAND_ORDER[a.performance_band_available] ?? 0);
+      return sortDesc ? delta : -delta;
+    });
+    return sorted;
+  }, [rows, bandFilter, sortDesc]);
+
+  const toggleShortlist = useCallback((key: string) => {
+    setShortlist((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  if (!cohort || cohort.count === 0) return null;
+  const bands = cohort.band_counts;
+  const shortlistRows = rows.filter((row) => shortlist.has(row.employee_key));
+
+  const zones: Array<{ id: "high" | "medium" | "low"; count: number }> = [
+    { id: "low", count: bands.low },
+    { id: "medium", count: bands.medium },
+    { id: "high", count: bands.high },
+  ];
+
+  return (
+    <section className="rounded-xl border border-teal-500/30 bg-card p-4 shadow-sm dark:bg-[#06141a]" aria-label="Desempeño disponible">
+      {/* Contador visible */}
+      <div className="flex flex-col gap-3 border-b border-teal-500/20 pb-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">Desempeño disponible</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <strong className="text-3xl font-semibold tabular-nums text-foreground dark:text-white">{formatNumber(cohort.count)}</strong>
+            <span className="text-sm text-muted-foreground">personas esperando Competencias y Aspiración</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Desempeño real conocido · Potencial pendiente · Fit no inferido.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {zones.slice().reverse().map((zone) => (
+            <span key={zone.id} className="inline-flex items-center gap-2 rounded-full border border-teal-500/30 bg-teal-500/10 px-3 py-1 font-medium text-teal-700 dark:text-teal-300">
+              {bandLabel(zone.id)} <span className="tabular-nums">{formatNumber(zone.count)}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* B — roster con columna Desempeño */}
+      <div className="mt-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSortDesc((value) => !value)}
+            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition hover:bg-muted dark:border-teal-400/20 dark:bg-[#06111f] dark:text-white"
+          >
+            <SlidersHorizontal aria-hidden className="h-3.5 w-3.5" />
+            Desempeño {sortDesc ? "↓" : "↑"}
+          </button>
+          <span className="inline-flex items-center gap-1 rounded-md border bg-background p-0.5 dark:border-teal-400/20 dark:bg-[#06111f]">
+            <Filter aria-hidden className="ml-1.5 h-3.5 w-3.5 text-muted-foreground" />
+            {(["all", "high", "medium", "low"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setBandFilter(value)}
+                className={cn(
+                  "min-h-[30px] rounded px-2.5 py-1 text-xs font-medium transition",
+                  bandFilter === value ? "bg-teal-500 text-white" : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {value === "all" ? "Todos" : bandLabel(value)}
+              </button>
+            ))}
+          </span>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {formatNumber(visibleRows.length)} de {formatNumber(cohort.count)}{cohort.roster_truncated ? " (muestra)" : ""}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr className="border-b dark:border-teal-500/20">
+                <th className="w-9 py-2" />
+                <th className="py-2 pr-3 font-semibold">Persona</th>
+                <th className="py-2 pr-3 font-semibold">Desempeño</th>
+                <th className="py-2 pr-3 font-semibold">Potencial</th>
+                <th className="py-2 pr-3 font-semibold">Fit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => {
+                const selected = shortlist.has(row.employee_key);
+                return (
+                  <tr
+                    key={row.employee_key}
+                    className={cn("border-b last:border-0 dark:border-teal-500/10", selected ? "bg-teal-500/5" : "")}
+                  >
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        aria-label={selected ? "Quitar de shortlist" : "Agregar a shortlist"}
+                        onClick={() => toggleShortlist(row.employee_key)}
+                        className={cn(
+                          "grid h-5 w-5 place-items-center rounded border transition",
+                          selected ? "border-teal-500 bg-teal-500 text-white" : "border-slate-300 bg-background dark:border-slate-600",
+                        )}
+                      >
+                        {selected ? <CheckCircle2 aria-hidden className="h-4 w-4" /> : null}
+                      </button>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="font-medium text-foreground dark:text-white">{row.display_name}</span>
+                      <span className="block text-xs text-muted-foreground">{row.role}</span>
+                    </td>
+                    <td className="py-2 pr-3"><PerformanceBand band={row.performance_band_available} /></td>
+                    <td className="py-2 pr-3">
+                      <span
+                        title={POTENCIAL_PENDIENTE_TOOLTIP}
+                        className="inline-flex cursor-help items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 underline decoration-dotted underline-offset-2 dark:text-amber-300"
+                      >
+                        Pendiente · Requiere Competencias y Aspiración
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="inline-flex items-center gap-1 rounded-md border border-slate-500/30 bg-slate-500/10 px-2 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                        Requiere Competencias y Aspiración
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {shortlistRows.length ? (
+          <div className="mt-4 rounded-lg border border-teal-500/30 bg-teal-500/5 p-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-teal-700 dark:text-teal-300">
+              <UserRoundCheck aria-hidden className="h-4 w-4" />
+              Shortlist por desempeño · {formatNumber(shortlistRows.length)} seleccionadas
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {shortlistRows.map((row) => (
+                <span key={row.employee_key} className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-background px-2 py-0.5 text-xs dark:bg-[#06111f]">
+                  {row.display_name} · {bandLabel(row.performance_band_available)}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Lista manual. Sin acciones automáticas, sin write-back a SuccessFactors: solo agrupa personas por desempeño para revisión humana.
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      {/* C — franja "Desempeño disponible" (1-D, independiente del 9-box) */}
+      <div className="mt-5 rounded-lg border border-teal-500/30 bg-background p-3 dark:bg-[#06111f]">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs font-semibold text-teal-700 dark:text-teal-300">
+            <Target aria-hidden className="h-4 w-4" />
+            Franja Desempeño disponible
+          </div>
+          <span className="text-xs text-muted-foreground">Un solo eje · fuera de la malla 2D</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {zones.map((zone) => (
+            <div
+              key={zone.id}
+              className={cn(
+                "rounded-md border p-2 text-center",
+                zone.id === "high"
+                  ? "border-teal-500/50 bg-teal-500/15"
+                  : zone.id === "medium"
+                    ? "border-teal-500/35 bg-teal-500/10"
+                    : "border-teal-500/20 bg-teal-500/5",
+              )}
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">{bandLabel(zone.id)}</p>
+              <p className="text-2xl font-semibold tabular-nums text-foreground dark:text-white">{formatNumber(zone.count)}</p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Misma banda que la columna. No se ubica en las cajas 2D porque el Potencial no existe (falta Competencias y Aspiración).
+        </p>
+      </div>
+    </section>
+  );
+}
+
 export function TalentControlRoom() {
   const [overview, setOverview] = useState<SfTalentOverviewPayload | null>(null);
   const [nineBox, setNineBox] = useState<SfTalentNineBoxPayload | null>(null);
@@ -701,6 +932,10 @@ export function TalentControlRoom() {
           />
           <MaskedTalentRoster payload={roster} loading={rosterLoading} />
         </div>
+
+        {collar === "confianza" ? (
+          <DesempenoDisponiblePanel cohort={nineBox?.desempeno_disponible} />
+        ) : null}
 
         <div className="grid gap-4 xl:grid-cols-[minmax(320px,0.8fr)_minmax(320px,0.8fr)_minmax(320px,0.8fr)]">
           <TalentAnomalyList

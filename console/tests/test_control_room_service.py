@@ -784,6 +784,89 @@ async def test_talent_performance_entity_stays_blocked_without_performance(monke
     assert entities["aspiration"]["status"] == "blocked"
 
 
+def test_talent_performance_band_reuses_current_cuts():
+    """Opcion 1: banda real desde performance_score con los cortes actuales (0-5: >=4/>=3).
+    Nunca proxy. None sin desempeno."""
+    pb = control_room_service._sf_talent_performance_band
+    assert pb(4.5) == "high"
+    assert pb(3.2) == "medium"
+    assert pb(2.0) == "low"
+    assert pb(90) == "high"  # escala 0-100 -> /20 = 4.5
+    assert pb(64) == "medium"  # 64/20 = 3.2
+    assert pb(None) is None
+    assert pb("") is None
+
+
+def test_talent_roster_row_desempeno_disponible_and_separation():
+    """Desempeno disponible = desempeno real presente + Potencial pendiente. Fit no se infiere
+    (queda insufficient_data mientras fit_score sea NULL)."""
+    row_perf = {
+        "user_id": "1", "performance_score": 4.4,
+        "performance_band_available": "high", "potential_pending": True, "fit_score": None,
+    }
+    row_noperf = {
+        "user_id": "2", "performance_score": None,
+        "performance_band_available": None, "potential_pending": True, "fit_score": None,
+    }
+    row_full = {
+        "user_id": "3", "performance_score": 4.0,
+        "performance_band_available": "high", "potential_pending": False, "fit_score": 85,
+    }
+    masked_perf = control_room_service._sf_talent_masked_roster_row(row_perf)
+    assert masked_perf["performance_band_available"] == "high"
+    assert masked_perf["desempeno_disponible"] is True
+    assert masked_perf["fit_band"] == "insufficient_data"  # Fit no inferido
+    assert control_room_service._sf_talent_masked_roster_row(row_noperf)["desempeno_disponible"] is False
+    # Con C/P/A completo (potencial no pendiente) no entra a la cohorte.
+    assert control_room_service._sf_talent_masked_roster_row(row_full)["desempeno_disponible"] is False
+
+
+def test_talent_roster_row_band_compute_fallback_without_gold_column():
+    """Si el gold aun no trae performance_band_available, se calcula desde performance_score."""
+    row = {"user_id": "9", "performance_score": 4.6, "cpa_status": "insufficient_data"}
+    masked = control_room_service._sf_talent_masked_roster_row(row)
+    assert masked["performance_band_available"] == "high"
+    assert masked["desempeno_disponible"] is True  # perf presente + cpa insuficiente
+
+
+def test_talent_desempeno_cohort_counts_bands_and_sorts():
+    rows = [
+        {"user_id": "1", "performance_score": 4.5, "performance_band_available": "high", "potential_pending": True},
+        {"user_id": "2", "performance_score": 3.1, "performance_band_available": "medium", "potential_pending": True},
+        {"user_id": "3", "performance_score": None, "performance_band_available": None, "potential_pending": True},
+        {"user_id": "4", "performance_score": 4.0, "performance_band_available": "high", "potential_pending": False},
+    ]
+    cohort = control_room_service._sf_talent_desempeno_cohort(rows)
+    assert cohort["count"] == 2  # rows 1 y 2 (3 sin perf, 4 potencial no pendiente)
+    assert cohort["band_counts"] == {"high": 1, "medium": 1, "low": 0}
+    assert cohort["roster"][0]["performance_band_available"] == "high"  # orden desc
+
+
+@pytest.mark.asyncio
+async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_9box":
+            return [
+                {"user_id": "1", "performance_score": 4.5, "performance_band_available": "high",
+                 "potential_pending": True, "box_key": "core", "box_label": "Core", "box_status": "benchmark_internal",
+                 "performance_band": "high", "potential_band": "medium"},
+                {"user_id": "2", "performance_score": 3.0, "performance_band_available": "medium",
+                 "potential_pending": True, "box_key": "riesgo", "box_label": "Riesgo", "box_status": "benchmark_internal",
+                 "performance_band": "medium", "potential_band": "low"},
+                {"user_id": "3", "performance_score": None, "performance_band_available": None,
+                 "potential_pending": True, "box_key": "", "box_label": "Sin datos suficientes", "box_status": "blocked",
+                 "performance_band": "insufficient_data", "potential_band": "insufficient_data"},
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+    payload = await control_room_service.sap_successfactors_talent_9box(USER)
+    cohort = payload["desempeno_disponible"]
+    assert cohort["count"] == 2
+    assert cohort["band_counts"] == {"high": 1, "medium": 1, "low": 0}
+    assert cohort["roster"][0]["performance_band_available"] == "high"
+
+
 @pytest.mark.asyncio
 async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
