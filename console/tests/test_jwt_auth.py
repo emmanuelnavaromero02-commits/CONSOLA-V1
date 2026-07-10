@@ -48,6 +48,13 @@ def test_invalid_signature_fails(monkeypatch):
         decode_access_token(token)
 
 
+def test_non_hs256_algorithm_is_rejected(monkeypatch):
+    monkeypatch.setenv("JWT_ALGORITHM", "ES256")
+
+    with pytest.raises(RuntimeError, match="JWT_ALGORITHM must be HS256"):
+        create_access_token(_claims())
+
+
 def test_minimum_claims_exist():
     token = create_access_token(_claims())
 
