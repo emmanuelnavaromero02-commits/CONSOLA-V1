@@ -220,7 +220,7 @@ decision-backtest-aws:
 
 test:
 	$(PYTEST) -ra tests/
-	PYTHONPATH=console $(PYTEST) -ra console/tests/
+	PYTHONPATH=.:console $(PYTEST) -ra console/tests/
 	PYTHONPATH=. $(PYTEST) -ra refinement/tests/
 	PYTHONPATH=vault $(PYTEST) -ra vault/tests/
 	PYTHONPATH=workspace $(PYTEST) -ra workspace/tests/
