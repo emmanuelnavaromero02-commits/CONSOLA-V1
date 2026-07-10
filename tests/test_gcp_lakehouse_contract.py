@@ -19,4 +19,6 @@ def test_gcp_startup_uses_gcsfuse_and_declares_provider():
     assert "LAKEHOUSE_LOCAL_ROOT: $${LAKEHOUSE_LOCAL_ROOT:-/lakehouse}" in text
     assert "AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs_fuse}" in text
     assert "/mnt/omega-lakehouse:/lakehouse:rw" in text
+    assert 'set_env MINIO_ACCESS_KEY ""' not in text
+    assert 'set_env MINIO_SECRET_KEY ""' not in text
     assert "AIRFLOW_URL: $${AIRFLOW_URL:-http://airflow:8080/airflow}" in text
