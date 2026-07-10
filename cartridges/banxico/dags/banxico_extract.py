@@ -1,0 +1,94 @@
+"""
+banxico_extract DAG
+===================
+Manual Bronze-only extraction for Banxico SIE.
+
+This PR 2A DAG calls the Banxico cartridge microservice and stops after
+Bronze publication. It intentionally does not trigger downstream refresh.
+"""
+from __future__ import annotations
+
+import os
+from datetime import timedelta
+from typing import Any
+
+import httpx
+from airflow.decorators import dag, task
+
+CARTRIDGE_URL = os.environ.get("BANXICO_URL", "http://banxico:8215")
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key() -> str:
+    key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE", "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing")
+
+
+default_args = {
+    "owner": "omega",
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=15),
+}
+
+
+@dag(
+    dag_id="banxico_extract",
+    description="Manual Banxico SIE Bronze-only extraction",
+    schedule=None,
+    catchup=False,
+    max_active_runs=1,
+    default_args=default_args,
+    tags=["banxico", "bronze", "extract"],
+    params={
+        "mode": {"type": "string", "default": "incremental"},
+        "tenant_id": {"type": "string", "default": ""},
+        "workspace_id": {"type": "string", "default": ""},
+    },
+)
+def banxico_extract():
+    @task
+    def extract(params: dict | None = None, **context: Any) -> dict:
+        dag_run = context.get("dag_run")
+        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+        conf = {**(params or {}), **run_conf}
+        tenant_id = str(conf.get("tenant_id") or "")
+        workspace_id = str(conf.get("workspace_id") or "")
+        if not tenant_id or not workspace_id:
+            raise ValueError("tenant_id and workspace_id are required")
+        mode = str(conf.get("mode") or "incremental").strip().lower()
+        endpoint = "run_full_load" if mode == "full" else "run_incremental"
+        body = {
+            key: conf[key]
+            for key in ("tenant_id", "workspace_id", "from_date", "to_date", "series_ids", "run_id")
+            if conf.get(key) is not None
+        }
+        conn_id = str(conf.get("conn_id") or "").strip()
+        headers = {
+            "X-Api-Key": _internal_key(),
+            "X-Internal-Service": "airflow",
+        }
+        with httpx.Client(timeout=900) as client:
+            response = client.post(
+                f"{CARTRIDGE_URL}/skills/{endpoint}/series_observations",
+                json=body,
+                headers=headers,
+                params={"conn_id": conn_id} if conn_id else None,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    extract()
+
+
+dag = banxico_extract()
