@@ -37,6 +37,7 @@ router = APIRouter(prefix="/api/cartridges", tags=["Cartridges"])
 _CARTRIDGE_PORTS = {
     "hubspot": 8210,
     "replicon": 8201,
+    "banxico": 8215,
     "sap_hcm": 8202,
     "sap_successfactors": 8203,
     "sap_s4hana": 8204,

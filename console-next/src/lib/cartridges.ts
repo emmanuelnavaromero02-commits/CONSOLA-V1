@@ -59,7 +59,7 @@ export interface CartridgeActivation {
   [key: string]: unknown;
 }
 
-export const KNOWN_CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors", "salesforce"] as const;
+export const KNOWN_CARTRIDGES = ["replicon", "hubspot", "banxico", "sap_hcm", "sap_s4hana", "sap_successfactors", "salesforce"] as const;
 export type CartridgeId = typeof KNOWN_CARTRIDGES[number];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -190,11 +190,11 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
       if (authMethodEnv) authMethodField.description = authMethodEnv;
       addField(fields, authMethodField);
     }
-    if (authType === "bearer_token") {
+    if (authType === "bearer_token" || authType === "bmx_token") {
       addField(fields, {
         name: "token",
         type: "password",
-        label: "Bearer token",
+        label: authType === "bmx_token" ? "Bmx-Token" : "Bearer token",
         description: text(authSpec.env_var) || "API token",
         required: true,
       });
