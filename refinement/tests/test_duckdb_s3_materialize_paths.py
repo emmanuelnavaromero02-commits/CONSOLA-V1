@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+from omega_lakehouse import ObjectAlreadyExists
 from refinement.app.duckdb_engine import DuckDBEngine
 
 
@@ -29,35 +29,16 @@ def test_scope_storage_sql_rewrites_unscoped_raw_glob_to_legacy_only():
 
 
 def test_delete_s3_prefix_removes_existing_object_and_children(monkeypatch):
-    removed: list[str] = []
+    removed: list[tuple[str, bool]] = []
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def list_objects(self, bucket, prefix, recursive):
-            assert bucket == "lakehouse"
-            assert prefix == "silver/hubspot/hubspot_deals_latest/data.parquet"
-            assert recursive is True
-            return [
-                SimpleNamespace(object_name=f"{prefix}/part.1"),
-                SimpleNamespace(object_name=f"{prefix}/xl.meta"),
-            ]
-
-        def remove_object(self, bucket, key):
-            assert bucket == "lakehouse"
-            removed.append(key)
-
-    monkeypatch.setitem(sys.modules, "minio", SimpleNamespace(Minio=FakeClient))
     engine = DuckDBEngine()
+    engine.storage = SimpleNamespace(
+        delete_prefix=lambda prefix, *, require_trailing_slash: removed.append((prefix, require_trailing_slash))
+    )
 
     engine._delete_s3_prefix("s3://lakehouse/silver/hubspot/hubspot_deals_latest/data.parquet")
 
-    assert removed == [
-        "silver/hubspot/hubspot_deals_latest/data.parquet/part.1",
-        "silver/hubspot/hubspot_deals_latest/data.parquet/xl.meta",
-        "silver/hubspot/hubspot_deals_latest/data.parquet",
-    ]
+    assert removed == [("silver/hubspot/hubspot_deals_latest/data.parquet", False)]
 
 
 def test_copy_to_parquet_writes_local_temp_and_uploads(monkeypatch):
@@ -98,34 +79,36 @@ def test_copy_to_parquet_writes_local_temp_and_uploads(monkeypatch):
     )
 
 
-def test_upload_local_parquet_uses_retry_key_without_overwriting(monkeypatch):
-    uploaded: list[tuple[str, str, str]] = []
+def test_upload_local_parquet_uses_retry_key_without_overwriting(tmp_path):
+    uploaded: list[tuple[str, bytes, bool]] = []
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
+    class FakeStorage:
+        def __init__(self):
             self.calls = 0
 
-        def fput_object(self, bucket, key, local_path, content_type):
+        def put_file(self, key, local_path, *, overwrite):
             self.calls += 1
-            assert bucket == "lakehouse"
             if self.calls == 1:
-                raise RuntimeError("transient minio write error")
-            uploaded.append((key, local_path, content_type))
+                raise ObjectAlreadyExists("exists")
+            uploaded.append((key, local_path.read_bytes(), overwrite))
+            return SimpleNamespace(uri=f"s3://lakehouse/{key}")
 
-    monkeypatch.setitem(sys.modules, "minio", SimpleNamespace(Minio=FakeClient))
     engine = DuckDBEngine()
+    engine.storage = FakeStorage()
+    local = tmp_path / "materialized.parquet"
+    local.write_bytes(b"parquet")
 
     result = engine._upload_local_parquet(
-        "/tmp/materialized.parquet",
+        str(local),
         "s3://lakehouse/silver/hubspot/hubspot_deals_latest/data.parquet",
     )
 
     assert len(uploaded) == 1
-    key, local_path, content_type = uploaded[0]
+    key, payload, overwrite = uploaded[0]
     assert key.startswith("silver/hubspot/hubspot_deals_latest/data.retry2-")
     assert key.endswith(".parquet")
-    assert local_path == "/tmp/materialized.parquet"
-    assert content_type == "application/octet-stream"
+    assert payload == b"parquet"
+    assert overwrite is False
     assert result == f"s3://lakehouse/{key}"
 
 
@@ -199,11 +182,12 @@ def test_missing_materialized_dependencies_reports_unready_silver_sources(monkey
 
 
 def test_aws_s3_upload_uses_boto3_credential_chain(monkeypatch):
-    uploads: list[tuple[str, str, str, dict]] = []
+    uploads: list[tuple[str, str, bool]] = []
 
-    class FakeS3:
-        def upload_file(self, local_path, bucket, key, ExtraArgs):
-            uploads.append((local_path, bucket, key, ExtraArgs))
+    class FakeStorage:
+        def put_file(self, key, local_path, *, overwrite):
+            uploads.append((str(local_path), key, overwrite))
+            return SimpleNamespace(uri=f"s3://modecissions-lakehouse-test/{key}")
 
     monkeypatch.setenv("MINIO_ENDPOINT", "s3.us-east-1.amazonaws.com")
     monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-test")
@@ -211,46 +195,29 @@ def test_aws_s3_upload_uses_boto3_credential_chain(monkeypatch):
     monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
 
     engine = DuckDBEngine()
-    monkeypatch.setattr(engine, "_boto3_s3_client", lambda: FakeS3())
+    engine.storage = FakeStorage()
 
     result = engine._upload_local_parquet(
-        "/tmp/materialized.parquet",
+        __file__,
         "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet",
     )
 
     assert uploads == [
         (
-            "/tmp/materialized.parquet",
-            "modecissions-lakehouse-test",
+            __file__,
             "silver/hubspot/hubspot_deals_latest/data.parquet",
-            {"ContentType": "application/octet-stream"},
+            False,
         )
     ]
     assert result == "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet"
 
 
 def test_aws_s3_delete_prefix_uses_boto3_credential_chain(monkeypatch):
-    deleted_batches: list[list[dict[str, str]]] = []
-    deleted_single: list[str] = []
+    deleted: list[tuple[str, bool]] = []
 
-    class FakePaginator:
-        def paginate(self, Bucket, Prefix):
-            assert Bucket == "modecissions-lakehouse-test"
-            assert Prefix == "silver/hubspot/hubspot_deals_latest/data.parquet"
-            return [{"Contents": [{"Key": f"{Prefix}/part.1"}, {"Key": f"{Prefix}/part.2"}]}]
-
-    class FakeS3:
-        def get_paginator(self, name):
-            assert name == "list_objects_v2"
-            return FakePaginator()
-
-        def delete_objects(self, Bucket, Delete):
-            assert Bucket == "modecissions-lakehouse-test"
-            deleted_batches.append(Delete["Objects"])
-
-        def delete_object(self, Bucket, Key):
-            assert Bucket == "modecissions-lakehouse-test"
-            deleted_single.append(Key)
+    class FakeStorage:
+        def delete_prefix(self, prefix, *, require_trailing_slash):
+            deleted.append((prefix, require_trailing_slash))
 
     monkeypatch.setenv("MINIO_ENDPOINT", "s3.us-east-1.amazonaws.com")
     monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-test")
@@ -258,15 +225,11 @@ def test_aws_s3_delete_prefix_uses_boto3_credential_chain(monkeypatch):
     monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
 
     engine = DuckDBEngine()
-    monkeypatch.setattr(engine, "_boto3_s3_client", lambda: FakeS3())
+    engine.storage = FakeStorage()
 
     engine._delete_s3_prefix("s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet")
 
-    assert deleted_batches == [[
-        {"Key": "silver/hubspot/hubspot_deals_latest/data.parquet/part.1"},
-        {"Key": "silver/hubspot/hubspot_deals_latest/data.parquet/part.2"},
-    ]]
-    assert deleted_single == ["silver/hubspot/hubspot_deals_latest/data.parquet"]
+    assert deleted == [("silver/hubspot/hubspot_deals_latest/data.parquet", False)]
 
 
 def test_snapshot_path_is_scoped_and_unique():

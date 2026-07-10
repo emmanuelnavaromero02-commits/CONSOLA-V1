@@ -10,4 +10,5 @@ sqlglot==25.16.1
 httpx==0.28.1
 minio==7.2.9
 boto3==1.35.99
+google-cloud-storage>=2.18.0,<4
 pytz==2024.2

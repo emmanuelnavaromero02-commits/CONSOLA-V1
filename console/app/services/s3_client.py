@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib import request
 from urllib.parse import urlsplit
 
+from omega_lakehouse import storage_from_env
 from minio import Minio
 from minio.credentials import Credentials, Provider
 
@@ -140,3 +141,55 @@ def get_boto3_s3_client():
         kwargs["aws_access_key_id"] = access_key
         kwargs["aws_secret_access_key"] = secret_key
     return boto3.client("s3", **kwargs)
+
+
+class LakehouseExplorerClient:
+    """Boto3-shaped adapter used by the console object explorer."""
+
+    def _storage(self, bucket: str):
+        return storage_from_env(bucket=bucket)
+
+    def list_objects_v2(self, **kwargs) -> dict:
+        bucket = kwargs["Bucket"]
+        prefix = kwargs.get("Prefix") or ""
+        max_keys = int(kwargs.get("MaxKeys") or 1000)
+        cursor = kwargs.get("ContinuationToken")
+        delimiter = kwargs.get("Delimiter")
+        page = self._storage(bucket).list_page(
+            prefix,
+            page_size=max_keys,
+            cursor=cursor,
+            delimiter=delimiter,
+        )
+        now = datetime.now(timezone.utc)
+        return {
+            "Contents": [
+                {
+                    "Key": obj.key,
+                    "Size": obj.size,
+                    "LastModified": obj.updated_at or now,
+                    "ETag": obj.etag or "",
+                }
+                for obj in page.objects
+            ],
+            "CommonPrefixes": [{"Prefix": prefix} for prefix in page.prefixes],
+            "NextContinuationToken": page.next_cursor,
+            "IsTruncated": page.is_truncated,
+        }
+
+    def generate_presigned_url(self, client_method: str, *, Params: dict, ExpiresIn: int) -> str:
+        if client_method != "get_object":
+            raise ValueError("only get_object presigned URLs are supported")
+        storage = self._storage(Params["Bucket"])
+        presign = getattr(storage, "presigned_get_url", None)
+        if not presign:
+            raise ValueError("provider does not support presigned downloads")
+        return presign(Params["Key"], expires_in=ExpiresIn)
+
+    def delete_object(self, *, Bucket: str, Key: str) -> dict:
+        self._storage(Bucket).delete_object(Key)
+        return {"ResponseMetadata": {"HTTPStatusCode": 204}}
+
+
+def get_lakehouse_explorer_client() -> LakehouseExplorerClient:
+    return LakehouseExplorerClient()

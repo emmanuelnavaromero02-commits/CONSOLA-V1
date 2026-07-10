@@ -46,6 +46,7 @@ PY_RUNTIME_ROOTS = (
     "vault/app/",
     "refinement/app/",
     "mcp-infra/app/",
+    "omega_lakehouse/",
     "cartridges/",
     "airflow/",
     "infra/airflow/",
@@ -121,6 +122,10 @@ def _all_true_for_schedule(flags: dict[str, bool]) -> None:
 
 def _service_changed(files: list[str], service: str, context: str) -> bool:
     root = context.removeprefix("./") + "/"
+    if service in {"console", "refinement", "mcp-infra"} and any(
+        path.startswith("omega_lakehouse/") for path in files
+    ):
+        return True
     if service == "airflow":
         return _any(files, r"^infra/airflow/", r"^airflow/", r"^infra/docker-compose")
     if service.startswith("sap_") or service in {"replicon", "hubspot", "salesforce"}:
@@ -187,6 +192,8 @@ def _root_test_targets(files: list[str]) -> str:
         for path in files
         if re.match(r"^tests/test.*\.py$", path) and Path(path).exists()
     }
+    if any(path.startswith("omega_lakehouse/") for path in files):
+        targets.add("tests/lakehouse")
     for cartridge in _changed_cartridges(files):
         prefix = CARTRIDGE_ROOT_TEST_PREFIXES.get(cartridge)
         if not prefix:

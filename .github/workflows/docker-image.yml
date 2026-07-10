@@ -254,7 +254,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the ${{ matrix.service }} Docker image
-        run: docker build ${{ matrix.context }} --file ${{ matrix.context }}/Dockerfile --tag ${{ matrix.service }}:ci-${{ github.sha }}
+        run: |
+          context="${{ matrix.context }}"
+          dockerfile="${{ matrix.context }}/Dockerfile"
+          case "${{ matrix.service }}" in
+            console|refinement|mcp-infra)
+              context="."
+              dockerfile="${{ matrix.context }}/Dockerfile"
+              ;;
+          esac
+          docker build "$context" --file "$dockerfile" --tag "${{ matrix.service }}:ci-${{ github.sha }}"
 
   no-build-needed:
     needs: changes

@@ -30,6 +30,8 @@ def get_jwt_settings() -> JWTSettings:
         raise RuntimeError("JWT_SECRET_KEY missing or using an insecure default. System halted for security.")
 
     algorithm = os.environ.get("JWT_ALGORITHM", DEFAULT_JWT_ALGORITHM).strip() or DEFAULT_JWT_ALGORITHM
+    if algorithm != DEFAULT_JWT_ALGORITHM:
+        raise RuntimeError("JWT_ALGORITHM must be HS256.")
     expire_raw = os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", str(DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES))
     try:
         expire_minutes = int(expire_raw)

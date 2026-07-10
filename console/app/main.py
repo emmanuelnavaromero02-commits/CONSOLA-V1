@@ -648,7 +648,7 @@ from app.services.permissions import (
     require_permission,
     workspace_role as _workspace_role,
 )
-from app.services.s3_client import get_boto3_s3_client, get_minio_client
+from app.services.s3_client import get_lakehouse_explorer_client, get_minio_client
 from app.services.security_context import (
     build_security_context,
     rls_user_context,
@@ -2565,7 +2565,7 @@ _EXPLORER_ADMIN_QUICKLINKS = [
 
 
 def _s3_client():
-    return get_boto3_s3_client()
+    return get_lakehouse_explorer_client()
 
 
 def _resolve_explorer_bucket(bucket: str, user: dict | None = None) -> str:
