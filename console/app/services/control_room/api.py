@@ -1360,6 +1360,29 @@ def _sf_talent_fit_band(value: Any) -> str:
 
 
 @_bind_to_core
+def _sf_talent_performance_band(value: Any) -> str | None:
+    """Banda de desempeno REAL desde performance_score, con los cortes actuales del 9-box
+    (escala 0-5: >=4 alto, >=3 medio, else bajo). NUNCA usa el proxy benchmark. None si no
+    hay desempeno. Es el compute-fallback cuando el gold aun no trae performance_band_available."""
+    score = _sf_talent_float(value)
+    if score is None:
+        return None
+    scale = score / 20 if score > 5 else score
+    if scale >= 4:
+        return "high"
+    if scale >= 3:
+        return "medium"
+    return "low"
+
+
+@_bind_to_core
+def _sf_talent_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"true", "t", "1", "yes"}
+
+
+@_bind_to_core
 def _sf_talent_movement_bucket(value: Any) -> str:
     months = _sf_talent_float(value)
     if months is None:
@@ -1376,6 +1399,20 @@ def _sf_talent_movement_bucket(value: Any) -> str:
 @_bind_to_core
 def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
     employee_key = _sf_talent_employee_key(row.get("user_id") or row.get("employee_id"))
+    # Banda de desempeno REAL: preferir la columna gold; si aun no existe, calcular desde
+    # performance_score (compute-fallback). NUNCA es el proxy benchmark (que vive en
+    # performance_band). None si no hay desempeno real.
+    band_available = row.get("performance_band_available")
+    if band_available not in {"high", "medium", "low"}:
+        band_available = _sf_talent_performance_band(row.get("performance_score"))
+    # Potencial pendiente (faltan Competencias y Aspiracion): preferir columna gold; si no,
+    # inferir de cpa_status/box_status insuficiente.
+    if row.get("potential_pending") is not None:
+        potential_pending = _sf_talent_bool(row.get("potential_pending"))
+    else:
+        potential_pending = _sf_talent_status(
+            row.get("cpa_status") or row.get("box_status")
+        ) in {"insufficient_data", "blocked"}
     return {
         "employee_key": employee_key,
         "display_name": _sf_talent_masked_name(employee_key),
@@ -1386,6 +1423,10 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         "box_id": str(row.get("box_key") or ""),
         "box_label": str(row.get("box_label") or "9-box"),
         "performance_band": str(row.get("performance_band") or "unknown"),
+        # Banda "Desempeno disponible" (real) + cohorte esperando Competencias y Aspiracion.
+        "performance_band_available": band_available or "insufficient_data",
+        "potential_pending": bool(potential_pending),
+        "desempeno_disponible": bool(band_available) and bool(potential_pending),
         "potential_band": str(row.get("potential_band") or "unknown"),
         "fit_band": _sf_talent_fit_band(row.get("fit_score")),
         "movement_age_bucket": _sf_talent_movement_bucket(row.get("months_since_movement")),
@@ -1659,14 +1700,57 @@ def _sf_talent_9box_blockers(
 
 
 @_bind_to_core
+def _sf_talent_desempeno_cohort(
+    rows: list[dict[str, Any]], *, limit: int = 200
+) -> dict[str, Any]:
+    """Cohorte 'Desempeno disponible': personas con desempeno real presente pero Potencial
+    pendiente (faltan Competencias y Aspiracion). Alimenta la columna Desempeno (B), la franja
+    del 9-box (C) y el contador. Fit permanece independiente y NO se infiere aqui."""
+    band_order = {"high": 3, "medium": 2, "low": 1}
+    band_counts = {"high": 0, "medium": 0, "low": 0}
+    roster: list[dict[str, Any]] = []
+    count = 0
+    for row in rows:
+        masked = _sf_talent_masked_roster_row(row)
+        if not masked.get("desempeno_disponible"):
+            continue
+        count += 1
+        band = str(masked.get("performance_band_available") or "")
+        if band in band_counts:
+            band_counts[band] += 1
+        roster.append(
+            {
+                "employee_key": masked["employee_key"],
+                "display_name": masked["display_name"],
+                "role": masked["role"],
+                "unit": masked["unit"],
+                "performance_band_available": band,
+                "potential_pending": masked["potential_pending"],
+                "fit_band": masked["fit_band"],
+            }
+        )
+    roster.sort(
+        key=lambda item: band_order.get(item["performance_band_available"], 0), reverse=True
+    )
+    return {
+        "count": count,
+        "band_counts": band_counts,
+        "roster": roster[:limit],
+        "roster_truncated": count > limit,
+    }
+
+
+@_bind_to_core
 async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     dataset = "sap_successfactors_talent_9box_operational"
     result = await _sf_talent_gold_result(dataset, user, 100)
     cells = _sf_talent_9box_cells(result["rows"])
     totals = _sf_talent_9box_totals(cells)
+    raw_detail_rows: list[dict[str, Any]] | None = None
     if totals["ready"] == 0:
         detail_result = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
-        detail_rows = _sf_talent_9box_operational_rows_from_detail(detail_result["rows"])
+        raw_detail_rows = detail_result["rows"]
+        detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
         detail_cells = _sf_talent_9box_cells(detail_rows)
         detail_totals = _sf_talent_9box_totals(detail_cells)
         if detail_totals["ready"] > 0:
@@ -1674,6 +1758,13 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
             totals = detail_totals
             result = detail_result
     blockers = _sf_talent_9box_blockers(result, total_ready=totals["ready"])
+
+    # Cohorte "Desempeno disponible" (per-empleado, del detalle 9box). Reutiliza el read del
+    # fallback si ya se hizo; si no, lo consulta una vez.
+    if raw_detail_rows is None:
+        cohort_detail = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
+        raw_detail_rows = cohort_detail["rows"]
+    desempeno_disponible = _sf_talent_desempeno_cohort(raw_detail_rows)
 
     tenant_id, workspace_id = _workspace_scope(user)
     return {
@@ -1685,6 +1776,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "status": "ready" if totals["ready"] else result["status"] if result["status"] != "ready" else "blocked",
         "totals": totals,
         "cells": cells,
+        "desempeno_disponible": desempeno_disponible,
         "blockers": blockers,
         "privacy": {
             "roster": "masked",

@@ -1,9 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import type { SfTalentNineBoxCell, SfTalentRosterPayload } from "@/lib/control-room/types";
+import type { SfTalentDesempenoCohort, SfTalentNineBoxCell, SfTalentRosterPayload } from "@/lib/control-room/types";
 
-import { MaskedTalentRoster, NineBoxMatrix } from "./TalentControlRoom";
+import { DesempenoDisponiblePanel, MaskedTalentRoster, NineBoxMatrix } from "./TalentControlRoom";
 
 describe("TalentControlRoom native panels", () => {
   it("renders the 9-box matrix as native React buttons", () => {
@@ -108,5 +108,43 @@ describe("TalentControlRoom native panels", () => {
     expect(markup).not.toContain("Ana Gomez");
     expect(markup).not.toContain("user_id");
     expect(markup).not.toContain("full_name");
+  });
+});
+
+describe("DesempenoDisponiblePanel (Opción 1 B + C)", () => {
+  const cohort: SfTalentDesempenoCohort = {
+    count: 257,
+    band_counts: { high: 120, medium: 90, low: 47 },
+    roster: [
+      { employee_key: "tal_1", display_name: "M. R.", role: "Analista", unit: "Finanzas", performance_band_available: "high", potential_pending: true, fit_band: "insufficient_data" },
+      { employee_key: "tal_2", display_name: "A. G.", role: "RH", unit: "RH", performance_band_available: "medium", potential_pending: true, fit_band: "insufficient_data" },
+    ],
+    roster_truncated: true,
+  };
+
+  it("muestra el contador y mantiene la separación Desempeño / Potencial / Fit", () => {
+    const markup = renderToStaticMarkup(<DesempenoDisponiblePanel cohort={cohort} />);
+    expect(markup).toContain("Desempeño disponible");
+    expect(markup).toContain("257");
+    expect(markup).toContain("esperando Competencias y Aspiración");
+    // Potencial pendiente + Fit no inferido (copy aprobado, sin abreviatura "C + A")
+    expect(markup).toContain("Requiere Competencias y Aspiración");
+    expect(markup).not.toContain("C + A");
+    // Banda ordinal Alto/Medio/Bajo
+    expect(markup).toContain("Alto");
+    expect(markup).toContain("Medio");
+    // Nunca el verde "Listo" (reservado a C/P/A completo)
+    expect(markup).not.toContain("Listo");
+    // Tooltip explicando por qué Potencial permanece pendiente
+    expect(markup).toContain("El Potencial requiere Competencias y Aspiración");
+  });
+
+  it("no renderiza nada cuando no hay cohorte", () => {
+    expect(renderToStaticMarkup(<DesempenoDisponiblePanel cohort={null} />)).toBe("");
+    expect(
+      renderToStaticMarkup(
+        <DesempenoDisponiblePanel cohort={{ count: 0, band_counts: { high: 0, medium: 0, low: 0 }, roster: [], roster_truncated: false }} />,
+      ),
+    ).toBe("");
   });
 });
