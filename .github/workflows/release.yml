@@ -263,15 +263,18 @@ jobs:
       matrix:
         include:
           - service: console
-            context: ./console
+            context: .
+            dockerfile: ./console/Dockerfile
           - service: workspace
             context: ./workspace
           - service: refinement
-            context: ./refinement
+            context: .
+            dockerfile: ./refinement/Dockerfile
           - service: vault
             context: ./vault
           - service: mcp-infra
-            context: ./mcp-infra
+            context: .
+            dockerfile: ./mcp-infra/Dockerfile
           - service: airflow
             context: ./infra/airflow
           - service: replicon
