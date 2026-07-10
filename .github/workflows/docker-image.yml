@@ -258,7 +258,7 @@ jobs:
           context="${{ matrix.context }}"
           dockerfile="${{ matrix.context }}/Dockerfile"
           case "${{ matrix.service }}" in
-            console|refinement|mcp-infra)
+            console|refinement|mcp-infra|banxico)
               context="."
               dockerfile="${{ matrix.context }}/Dockerfile"
               ;;

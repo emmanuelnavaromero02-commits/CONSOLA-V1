@@ -278,6 +278,9 @@ jobs:
             context: ./cartridges/replicon
           - service: hubspot
             context: ./cartridges/hubspot
+          - service: banxico
+            context: .
+            dockerfile: ./cartridges/banxico/Dockerfile
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana
@@ -310,7 +313,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          file: ${{ matrix.context }}/Dockerfile
+          file: ${{ matrix.dockerfile || format('{0}/Dockerfile', matrix.context) }}
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}

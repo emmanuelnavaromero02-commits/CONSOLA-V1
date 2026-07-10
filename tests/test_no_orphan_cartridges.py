@@ -32,5 +32,21 @@ def test_remaining_cartridge_dirs_are_deployed_or_profiled():
     service_names = set(compose["services"])
     cartridge_dirs = {p.name for p in (ROOT / "cartridges").iterdir() if p.is_dir()}
 
-    assert cartridge_dirs == {"hubspot", "replicon", "salesforce", "sap_hcm", "sap_s4hana", "sap_successfactors"}
-    assert {"replicon", "hubspot", "salesforce", "sap-hcm", "sap-s4hana", "sap-successfactors"}.issubset(service_names)
+    assert cartridge_dirs == {
+        "banxico",
+        "hubspot",
+        "replicon",
+        "salesforce",
+        "sap_hcm",
+        "sap_s4hana",
+        "sap_successfactors",
+    }
+    assert {
+        "banxico",
+        "replicon",
+        "hubspot",
+        "salesforce",
+        "sap-hcm",
+        "sap-s4hana",
+        "sap-successfactors",
+    }.issubset(service_names)

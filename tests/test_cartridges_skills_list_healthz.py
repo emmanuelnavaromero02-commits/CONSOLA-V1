@@ -37,7 +37,7 @@ VALID_HEADERS = {
 }
 
 
-CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
+CARTRIDGES = ("replicon", "hubspot", "banxico", "sap_hcm", "sap_s4hana", "sap_successfactors")
 
 
 def _client(cartridge_id: str):

@@ -18,6 +18,10 @@ const META: Record<
     name: "HubSpot CRM",
     description: "CRM comercial. Deals, empresas, contactos, pipeline y forecast.",
   },
+  banxico: {
+    name: "Banxico SIE",
+    description: "Series macro oficiales. Bronze, provenance y manifest.",
+  },
   sap_hcm: {
     name: "SAP HCM",
     description: "Recursos humanos. Empleados, puestos, organización.",

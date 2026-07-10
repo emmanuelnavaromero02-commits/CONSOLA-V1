@@ -17,7 +17,7 @@ def test_banxico_local_compose_service_is_bronze_only():
     assert svc["build"]["dockerfile"] == "cartridges/banxico/Dockerfile"
     assert svc["container_name"] == "mode_banxico"
     assert "8215:8215" in svc["ports"]
-    assert svc["environment"]["BANXICO_API_TOKEN"] == "${BANXICO_API_TOKEN:-}"
+    assert "BANXICO_API_TOKEN" not in svc["environment"]
     assert svc["environment"]["INTERNAL_API_KEY_BANXICO_TO_CONSOLE"] == "${INTERNAL_API_KEY_BANXICO_TO_CONSOLE:-}"
     assert svc["environment"]["CONSOLE_URL"] == "http://console:8000"
     assert "omega_cartridge_banxico" in svc["environment"]["DATABASE_URL"]

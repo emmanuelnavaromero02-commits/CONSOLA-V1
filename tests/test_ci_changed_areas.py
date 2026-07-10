@@ -72,6 +72,16 @@ def test_cartridge_runtime_change_builds_only_that_cartridge():
     assert flags["cartridge_test_targets"] == "cartridges/sap_successfactors/tests"
 
 
+def test_banxico_runtime_change_builds_with_cartridge_tests():
+    flags = _flags("cartridges/banxico/app/core/banxico_client.py")
+
+    assert flags["python_runtime"] is True
+    assert flags["cartridge_tests"] is True
+    matrix = json.loads(str(flags["build_matrix"]))
+    assert {"service": "banxico", "context": "./cartridges/banxico"} in matrix["include"]
+    assert flags["cartridge_test_targets"] == "cartridges/banxico/tests"
+
+
 def test_dependency_changes_trigger_security_without_full_stack_by_default():
     flags = _flags("console/requirements.txt", "tests-e2e/package-lock.json")
 

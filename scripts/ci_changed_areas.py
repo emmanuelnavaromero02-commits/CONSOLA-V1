@@ -25,6 +25,7 @@ SERVICES = {
     "airflow": "./infra/airflow",
     "replicon": "./cartridges/replicon",
     "hubspot": "./cartridges/hubspot",
+    "banxico": "./cartridges/banxico",
     "sap_hcm": "./cartridges/sap_hcm",
     "sap_s4hana": "./cartridges/sap_s4hana",
     "sap_successfactors": "./cartridges/sap_successfactors",
@@ -33,6 +34,7 @@ SERVICES = {
 
 CARTRIDGE_ROOT_TEST_PREFIXES = {
     "hubspot": "hubspot",
+    "banxico": "banxico",
     "replicon": "replicon",
     "salesforce": "salesforce",
     "sap_hcm": "sap_hcm",
@@ -128,7 +130,7 @@ def _service_changed(files: list[str], service: str, context: str) -> bool:
         return True
     if service == "airflow":
         return _any(files, r"^infra/airflow/", r"^airflow/", r"^infra/docker-compose")
-    if service.startswith("sap_") or service in {"replicon", "hubspot", "salesforce"}:
+    if service.startswith("sap_") or service in {"replicon", "hubspot", "salesforce", "banxico"}:
         # Cartridge datasets and docs are mounted from the repo at runtime; the
         # service image only needs rebuilds for app code, deps, DAGs, or Docker.
         return _any(files, rf"^{re.escape(root)}(app|dags)/", rf"^{re.escape(root)}(Dockerfile|requirements\.txt)$")
