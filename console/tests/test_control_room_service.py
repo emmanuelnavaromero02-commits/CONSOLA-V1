@@ -867,6 +867,60 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
     assert cohort["roster"][0]["performance_band_available"] == "high"
 
 
+def test_desempeno_module_rewired_to_real_performance_not_compensation():
+    """Etapa 1 (Trabajo 1): el modulo Desempeno consume el dataset REAL de performance
+    (talent_cpa_scores), no el stub de compensacion; Compensacion es un modulo SEPARADO."""
+    from app.services.control_room.core import MODULES
+
+    perf = next((m for m in MODULES if m.module_id == "sap_successfactors_performance"), None)
+    comp = next((m for m in MODULES if m.module_id == "sap_successfactors_compensation"), None)
+    assert perf is not None, "modulo Desempeno (sap_successfactors_performance) debe existir"
+    assert comp is not None, "modulo Compensacion (sap_successfactors_compensation) separado debe existir"
+
+    perf_datasets = {s.dataset for s in perf.sources}
+    comp_datasets = {s.dataset for s in comp.sources}
+    assert "sap_successfactors_talent_cpa_scores" in perf_datasets
+    assert "sap_successfactors_compensation_distribution" not in perf_datasets
+    assert "sap_successfactors_compensation_distribution" in comp_datasets
+
+
+def test_no_module_mixes_compensation_and_performance():
+    """Invariante anti-mezcla: ningun modulo tiene a la vez dataset de compensacion y de
+    performance; compensation_distribution lo consume exactamente un modulo; y la separacion
+    de term-match del frontend se conserva (Desempeno no matchea terminos de compensacion,
+    y viceversa)."""
+    from app.services.control_room.core import MODULES
+
+    comp_consumers = 0
+    for module in MODULES:
+        datasets = {source.dataset for source in module.sources}
+        has_comp = any("compensation" in ds for ds in datasets)
+        has_perf = any(("performance" in ds or "cpa_scores" in ds) for ds in datasets)
+        assert not (has_comp and has_perf), f"modulo {module.visible_id} mezcla compensacion y desempeno"
+        if "sap_successfactors_compensation_distribution" in datasets:
+            comp_consumers += 1
+    assert comp_consumers == 1, "compensation_distribution debe consumirlo exactamente un modulo"
+
+    comp_terms = ("compensation", "paycomp", "payment", "paygroup", "payroll", "salary", "amount", "currency")
+    perf_terms = ("performance", "review", "goal", "competency")
+    perf = next(m for m in MODULES if m.module_id == "sap_successfactors_performance")
+    comp = next(m for m in MODULES if m.module_id == "sap_successfactors_compensation")
+
+    def match_string(module) -> str:
+        parts = [module.module_id or ""]
+        for source in module.sources:
+            parts.append(source.dataset)
+            parts.append(source.module_label or "")
+            parts.append(source.visible_module_id)
+        return " ".join(parts).lower()
+
+    perf_str, comp_str = match_string(perf), match_string(comp)
+    assert any(t in perf_str for t in perf_terms), "Desempeno debe seguir matcheando su tarjeta"
+    assert not any(t in perf_str for t in comp_terms), "Desempeno no debe matchear compensacion"
+    assert any(t in comp_str for t in comp_terms), "Compensacion debe matchear su tarjeta"
+    assert not any(t in comp_str for t in perf_terms), "Compensacion no debe matchear desempeno"
+
+
 @pytest.mark.asyncio
 async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:

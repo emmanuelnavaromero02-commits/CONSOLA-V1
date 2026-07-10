@@ -607,6 +607,12 @@ MODULES: tuple[ControlRoomModule, ...] = (
         module_id="sap_successfactors_recruiting",
         description="Embudo, requisiciones y senales de cobertura de vacantes.",
     ),
+    # Etapa 1 (Trabajo 1): "Desempeno" apunta al dataset REAL de performance (C/P/A), no al
+    # stub de compensacion. Se mantiene el mecanismo metric_snapshot (solo cablea; el rediseno
+    # a un widget de Performance es Etapa 2). Compensacion queda como modulo SEPARADO abajo.
+    # DEUDA TECNICA (aprobada 2026-07-10): sap_successfactors_talent_cpa_scores es una fuente
+    # TRANSITORIA para esta tarjeta. En una etapa posterior construir un dataset de negocio
+    # dedicado a Desempeno en vez de reutilizar uno disenado para C/P/A. No bloquea Etapa 1.
     ControlRoomModule(
         cartridge="sap_successfactors",
         label="Desempeno",
@@ -614,20 +620,45 @@ MODULES: tuple[ControlRoomModule, ...] = (
         accent="#7c3aed",
         sources=(
             ControlRoomSource(
-                dataset="sap_successfactors_compensation_distribution",
+                dataset="sap_successfactors_talent_cpa_scores",
                 cartridge="sap_successfactors",
                 domain="Recursos Humanos",
                 module_label="Desempeno",
                 entity_kind="Grupo",
-                entity_id_field="department_id",
-                entity_label_field="department_id",
+                entity_id_field="department_name",
+                entity_label_field="department_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_performance",
             ),
         ),
         module_id="sap_successfactors_performance",
-        description="Compensacion disponible y senales relacionadas con desempeno.",
+        description="Senales de desempeno (C/P/A) del talento. Compensacion es un modulo aparte.",
+    ),
+    # Compensacion como modulo propio: conserva el dataset compensation_distribution (stub por
+    # proteccion de paycomp) para que la tarjeta "Compensacion y pagos" siga respaldada y honesta,
+    # sin mezclarse con Desempeno.
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Compensacion",
+        domain="Recursos Humanos",
+        accent="#0891b2",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_compensation_distribution",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Compensacion",
+                entity_kind="Grupo",
+                entity_id_field="department_id",
+                entity_label_field="department_id",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_compensation",
+            ),
+        ),
+        module_id="sap_successfactors_compensation",
+        description="Distribucion de compensacion por grupo; agregacion pendiente por proteccion de paycomp.",
     ),
     ControlRoomModule(
         cartridge="sap_successfactors",
