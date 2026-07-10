@@ -29,6 +29,17 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg jq python3 openssl lsof
 
+install -m 0755 -d /usr/share/keyrings
+curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt gcsfuse-$(lsb_release -c -s) main" \
+  > /etc/apt/sources.list.d/gcsfuse.list
+apt-get update -y
+apt-get install -y fuse3 gcsfuse
+if ! grep -q '^user_allow_other' /etc/fuse.conf; then
+  echo user_allow_other >> /etc/fuse.conf
+fi
+
 mkdir -p /var/lib/docker
 if [[ -e "$${DATA_DISK}" ]]; then
   if ! blkid "$${DATA_DISK}" >/dev/null 2>&1; then
@@ -100,6 +111,10 @@ bash infra/bootstrap.sh || true
 bash infra/bootstrap-keys.sh infra/.env
 chmod 600 infra/.env
 mkdir -p data/lakehouse
+mkdir -p /mnt/omega-lakehouse
+if ! mountpoint -q /mnt/omega-lakehouse; then
+  gcsfuse --implicit-dirs --file-mode=0666 --dir-mode=0777 -o allow_other "$${LAKEHOUSE_BUCKET}" /mnt/omega-lakehouse
+fi
 mkdir -p airflow/dags airflow/logs/scheduler airflow/plugins
 chown -R 50000:0 airflow/dags airflow/logs airflow/plugins
 chmod -R 775 airflow/dags airflow/logs airflow/plugins
@@ -134,7 +149,8 @@ set_env SUPERSET_PUBLIC_URL ""
 set_env SUPERSET_SESSION_COOKIE_SECURE "$${COOKIE_SECURE}"
 set_env SUPERSET_FORCE_HTTPS "$${COOKIE_SECURE}"
 set_env SUPERSET_ENABLE_PROXY_FIX true
-set_env LAKEHOUSE_PROVIDER gcs
+set_env LAKEHOUSE_PROVIDER gcs_fuse
+set_env LAKEHOUSE_LOCAL_ROOT /lakehouse
 set_env S3_BUCKET_NAME "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_BUCKET "$${LAKEHOUSE_BUCKET}"
 set_env MINIO_ENDPOINT "$${LAKEHOUSE_ENDPOINT}"
@@ -156,17 +172,10 @@ if hmac_secret_key="$(secret_value gcs_hmac_secret_access_key)"; then
   set_env MINIO_SECRET_KEY "$${hmac_secret_key}"
 fi
 
-if [[ "$${LAKEHOUSE_ENDPOINT}" == "storage.googleapis.com" ]]; then
-  if [[ -z "$${MINIO_ACCESS_KEY:-}" || -z "$${MINIO_SECRET_KEY:-}" ]]; then
-    echo "[omega-startup] missing GCS HMAC secrets: $${SECRET_PREFIX}-gcs_hmac_access_key_id / $${SECRET_PREFIX}-gcs_hmac_secret_access_key" >&2
-    echo "[omega-startup] refusing to fall back to local MinIO for GCP lakehouse" >&2
-    exit 1
-  fi
-fi
-
 cat > infra/docker-compose.gcp.yml <<'YAML'
 x-gcp-lakehouse-env: &gcp-lakehouse-env
-  LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+  LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs_fuse}
+  LAKEHOUSE_LOCAL_ROOT: $${LAKEHOUSE_LOCAL_ROOT:-/lakehouse}
   S3_BUCKET_NAME: $${S3_BUCKET_NAME:-}
   S3_ENDPOINT_URL: $${S3_ENDPOINT_URL:-}
   MINIO_BUCKET: $${MINIO_BUCKET:-}
@@ -197,6 +206,8 @@ services:
   refinement:
     environment:
       <<: *gcp-lakehouse-env
+    volumes:
+      - /mnt/omega-lakehouse:/lakehouse:rw
   vault:
     environment:
       <<: *gcp-lakehouse-env
@@ -212,6 +223,8 @@ services:
   sap-successfactors:
     environment:
       <<: *gcp-lakehouse-env
+    volumes:
+      - /mnt/omega-lakehouse:/lakehouse:rw
   sap-hcm:
     environment:
       <<: *gcp-lakehouse-env
@@ -228,7 +241,8 @@ services:
       AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
       AIRFLOW_HEALTH_PATH: $${AIRFLOW_HEALTH_PATH:-/airflow/health}
-      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs_fuse}
+      AIRFLOW_VAR_LAKEHOUSE_LOCAL_ROOT: $${LAKEHOUSE_LOCAL_ROOT:-/lakehouse}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
       AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
       AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
@@ -241,31 +255,39 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    volumes:
+      - /mnt/omega-lakehouse:/lakehouse:rw
   airflow-init:
     environment:
       <<: *gcp-lakehouse-env
       AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
-      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs_fuse}
+      AIRFLOW_VAR_LAKEHOUSE_LOCAL_ROOT: $${LAKEHOUSE_LOCAL_ROOT:-/lakehouse}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
       AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
       AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
       AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+    volumes:
+      - /mnt/omega-lakehouse:/lakehouse:rw
   airflow-scheduler:
     environment:
       <<: *gcp-lakehouse-env
       AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
       AIRFLOW_HEALTH_PATH: $${AIRFLOW_HEALTH_PATH:-/airflow/health}
-      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs_fuse}
+      AIRFLOW_VAR_LAKEHOUSE_LOCAL_ROOT: $${LAKEHOUSE_LOCAL_ROOT:-/lakehouse}
       AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
       AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
       AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
       AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+    volumes:
+      - /mnt/omega-lakehouse:/lakehouse:rw
 YAML
 
 COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml --profile sap)

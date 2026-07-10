@@ -286,6 +286,37 @@ def test_gcs_provider_requires_hmac(monkeypatch):
         engine._conn()
 
 
+def test_gcs_fuse_provider_translates_s3_literals_to_local_mount(monkeypatch, tmp_path):
+    lakehouse = tmp_path / "lakehouse"
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs_fuse")
+    monkeypatch.setenv("LAKEHOUSE_LOCAL_ROOT", str(lakehouse))
+    monkeypatch.setenv("MINIO_BUCKET", "omega-gcs")
+    engine = DuckDBEngine()
+
+    sql = "SELECT * FROM read_parquet('s3://omega-gcs/raw/sap_successfactors/User/**/*.parquet')"
+    rewritten = engine._storage_sql_for_execution(sql)
+
+    assert f"'{lakehouse}/raw/sap_successfactors/User/**/*.parquet'" in rewritten
+
+
+def test_gcs_fuse_upload_copies_to_local_mount(monkeypatch, tmp_path):
+    lakehouse = tmp_path / "lakehouse"
+    src = tmp_path / "materialized.parquet"
+    src.write_bytes(b"parquet")
+    monkeypatch.setenv("LAKEHOUSE_PROVIDER", "gcs_fuse")
+    monkeypatch.setenv("LAKEHOUSE_LOCAL_ROOT", str(lakehouse))
+    monkeypatch.setenv("MINIO_BUCKET", "omega-gcs")
+    engine = DuckDBEngine()
+
+    result = engine._upload_local_parquet(
+        str(src),
+        "s3://omega-gcs/silver/sap_successfactors/example/data.parquet",
+    )
+
+    assert result == "s3://omega-gcs/silver/sap_successfactors/example/data.parquet"
+    assert (lakehouse / "silver/sap_successfactors/example/data.parquet").read_bytes() == b"parquet"
+
+
 def test_minio_uses_path_style(monkeypatch):
     statements: list[str] = []
 

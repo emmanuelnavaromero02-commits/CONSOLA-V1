@@ -21,11 +21,13 @@ import os
 import io
 import json
 import re
+import shutil
 import tempfile
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import duckdb
@@ -95,7 +97,7 @@ def _duckdb_ident(value: str) -> str:
     return '"' + str(value or "").replace('"', '""') + '"'
 
 
-LAKEHOUSE_PROVIDER_VALUES = {"auto", "minio", "aws_s3", "gcs"}
+LAKEHOUSE_PROVIDER_VALUES = {"auto", "minio", "aws_s3", "gcs", "gcs_fuse"}
 
 
 def _duckdb_type_to_pg_type(raw: str) -> str:
@@ -203,6 +205,7 @@ class DuckDBEngine:
         self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+        self.lakehouse_local_root = os.environ.get("LAKEHOUSE_LOCAL_ROOT", "/lakehouse")
         self.pg_url         = os.environ.get("DATABASE_URL", "")
         # Analytical (gold) DB. Falls back to service DB if unset, so
         # local/dev environments without postgres_gold keep working.
@@ -221,6 +224,9 @@ class DuckDBEngine:
         if "storage.googleapis.com" in endpoint:
             return "gcs"
         return "minio"
+
+    def _uses_gcs_fuse(self) -> bool:
+        return self._resolved_lakehouse_provider() == "gcs_fuse"
 
     def _require_gcs_hmac_credentials(self) -> None:
         if self._resolved_lakehouse_provider() != "gcs":
@@ -265,24 +271,25 @@ class DuckDBEngine:
             # a quote would terminate the literal early and the rest of
             # the credential would be parsed as SQL.
             self._require_gcs_hmac_credentials()
-            self._con.execute(
-                f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
-                f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
-                f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
-            )
-            if self._uses_aws_s3_credential_chain():
-                region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+            if not self._uses_gcs_fuse():
                 self._con.execute(
-                    "CREATE OR REPLACE SECRET omega_s3_role ("
-                    "TYPE S3, PROVIDER credential_chain, "
-                    f"REGION {_sql_quote(region)}"
-                    ");"
+                    f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
+                    f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
+                    f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
                 )
-            else:
-                self._con.execute(
-                    f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
-                    f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
-                )
+                if self._uses_aws_s3_credential_chain():
+                    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+                    self._con.execute(
+                        "CREATE OR REPLACE SECRET omega_s3_role ("
+                        "TYPE S3, PROVIDER credential_chain, "
+                        f"REGION {_sql_quote(region)}"
+                        ");"
+                    )
+                else:
+                    self._con.execute(
+                        f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
+                        f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
+                    )
         return self._con
 
     def setup(self):
@@ -417,6 +424,7 @@ class DuckDBEngine:
 
     def _bronze_read(self, source: str, user_context: dict | None = None) -> str:
         path = self._bronze_path(source, user_context)
+        path = self._storage_uri_for_execution(path)
         return f"read_parquet('{path}', hive_partitioning=true, union_by_name=true)"
 
     def _silver_path(self, cartridge: str, name: str, user_context: dict | None = None) -> str:
@@ -612,6 +620,33 @@ class DuckDBEngine:
         key = str(uri)[len(prefix):].strip("/")
         return key or None
 
+    def _local_lakehouse_path_for_key(self, key: str) -> Path:
+        root = Path(self.lakehouse_local_root).resolve()
+        clean = str(key or "").lstrip("/")
+        candidate = (root / clean).resolve()
+        if candidate != root and root not in candidate.parents:
+            raise ValueError("Lakehouse local path escaped root")
+        return candidate
+
+    def _storage_uri_for_execution(self, uri: str) -> str:
+        if not self._uses_gcs_fuse():
+            return uri
+        key = self._s3_object_key(uri)
+        if not key:
+            return uri
+        return str(self._local_lakehouse_path_for_key(key))
+
+    def _storage_sql_for_execution(self, sql: str) -> str:
+        if not self._uses_gcs_fuse():
+            return sql
+
+        def replace(match: re.Match) -> str:
+            quote_char = match.group(1)
+            uri = match.group(2)
+            return f"{quote_char}{self._storage_uri_for_execution(uri)}{quote_char}"
+
+        return S3_LITERAL_RE.sub(replace, sql or "")
+
     def _minio_object_client(self):
         self._require_gcs_hmac_credentials()
         from minio import Minio
@@ -640,6 +675,8 @@ class DuckDBEngine:
         key = self._s3_object_key(uri or "")
         if not key:
             return False
+        if self._uses_gcs_fuse():
+            return self._local_lakehouse_path_for_key(key).exists()
         try:
             if self._uses_aws_s3_credential_chain():
                 self._boto3_s3_client().head_object(Bucket=self.minio_bucket, Key=key)
@@ -658,6 +695,17 @@ class DuckDBEngine:
     ) -> str | None:
         prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
         try:
+            if self._uses_gcs_fuse():
+                base = self._local_lakehouse_path_for_key(prefix)
+                keys = [
+                    f"{prefix}{path.name}"
+                    for path in base.glob("*.parquet")
+                    if path.is_file()
+                ]
+                keys = sorted(keys, reverse=True)
+                if not keys:
+                    return None
+                return f"s3://{self.minio_bucket}/{keys[0]}"
             if self._uses_aws_s3_credential_chain():
                 client = self._boto3_s3_client()
                 paginator = client.get_paginator("list_objects_v2")
@@ -708,6 +756,16 @@ class DuckDBEngine:
         key = self._s3_object_key(uri)
         if not key:
             return
+        if self._uses_gcs_fuse():
+            target = self._local_lakehouse_path_for_key(key)
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                try:
+                    target.unlink()
+                except FileNotFoundError:
+                    pass
+            return
         if self._uses_aws_s3_credential_chain():
             client = self._boto3_s3_client()
             paginator = client.get_paginator("list_objects_v2")
@@ -736,6 +794,11 @@ class DuckDBEngine:
     def _upload_local_parquet(self, local_path: str, parquet_path: str, *, retry_same_key: bool = False) -> str:
         key = self._s3_object_key(parquet_path)
         if not key:
+            return parquet_path
+        if self._uses_gcs_fuse():
+            target = self._local_lakehouse_path_for_key(key)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(local_path, target)
             return parquet_path
         if self._uses_aws_s3_credential_chain():
             client = self._boto3_s3_client()
@@ -868,6 +931,16 @@ class DuckDBEngine:
     ) -> None:
         prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
         try:
+            if self._uses_gcs_fuse():
+                base = self._local_lakehouse_path_for_key(prefix)
+                objects = sorted(
+                    [path for path in base.glob("*.parquet") if path.is_file()],
+                    key=lambda path: path.name,
+                    reverse=True,
+                )
+                for path in objects[keep:]:
+                    path.unlink(missing_ok=True)
+                return
             if self._uses_aws_s3_credential_chain():
                 client = self._boto3_s3_client()
                 paginator = client.get_paginator("list_objects_v2")
@@ -1032,20 +1105,31 @@ class DuckDBEngine:
         try:
             with self._duckdb_lock:
                 con = self._conn()
+                raw_glob = self._storage_uri_for_execution(f"s3://{self.minio_bucket}/raw/**/*.parquet")
                 rows = con.execute(f"""
                     SELECT file
-                    FROM glob('s3://{self.minio_bucket}/raw/**/*.parquet')
+                    FROM glob('{raw_glob}')
                 """).fetchall()
             return sorted({
                 source
                 for row in rows
                 if (source := self._bronze_source_from_object_key(
-                    self._s3_object_key(str(row[0] or "")) or "",
+                    self._object_key_from_execution_file(str(row[0] or "")),
                     user_context,
                 ))
             })
         except Exception:
             return []
+
+    def _object_key_from_execution_file(self, path: str) -> str:
+        if not self._uses_gcs_fuse():
+            return self._s3_object_key(path) or ""
+        try:
+            root = Path(self.lakehouse_local_root).resolve()
+            candidate = Path(path).resolve()
+            return str(candidate.relative_to(root))
+        except Exception:
+            return ""
 
     def list_sources(
         self,
@@ -1230,9 +1314,10 @@ class DuckDBEngine:
                 effective_sql = self._scope_storage_sql(effective_sql, sources or [], user_context)
                 effective_sql = self._inject_latest_date(effective_sql, sources or [], user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
-                if re.search(r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE):
+                execution_sql = self._storage_sql_for_execution(effective_sql)
+                if re.search(r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', execution_sql, re.IGNORECASE):
                     self._pg_gold_attach(con, user_context)
-                limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
+                limited = f"SELECT * FROM ({execution_sql}) _q LIMIT {limit}"
 
                 # Watchdog: fires con.interrupt() if the query runs past
                 # the cap. The Timer is cancelled immediately after a
@@ -1325,10 +1410,11 @@ class DuckDBEngine:
                 effective_sql = self._scope_storage_sql(effective_sql, sources, user_context)
                 effective_sql = self._inject_latest_date(effective_sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
-                if re.search(r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE):
+                execution_sql = self._storage_sql_for_execution(effective_sql)
+                if re.search(r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', execution_sql, re.IGNORECASE):
                     self._pg_gold_attach(con, user_context)
                 rows = con.execute(
-                    f"DESCRIBE SELECT * FROM ({effective_sql}) _q LIMIT 0",
+                    f"DESCRIBE SELECT * FROM ({execution_sql}) _q LIMIT 0",
                     rls_params,
                 ).fetchall()
             return {"name": ds["name"], "fields": [{"name": r[0], "type": r[1]} for r in rows]}
@@ -1733,6 +1819,7 @@ class DuckDBEngine:
                 validate_safe_identifier(table, "table")
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                effective_sql = self._storage_sql_for_execution(effective_sql)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 tenant, workspace = self._scope_values(user_context)
                 if not (tenant and workspace):
@@ -1764,19 +1851,22 @@ class DuckDBEngine:
                 # ── Silver → Parquet snapshot inmutable (última extracción vía lineage) ──
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                effective_sql = self._storage_sql_for_execution(effective_sql)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 parquet_path  = self._snapshot_path("silver", cartridge, name, user_context)
                 current_path = self._current_materialized_uri("silver", cartridge, name, user_context)
                 storage_uri = self._copy_to_parquet_targets(con, effective_sql, [parquet_path, current_path])
+                storage_read_path = self._storage_uri_for_execution(storage_uri)
                 row_count = con.execute(
-                    f"SELECT COUNT(*) FROM read_parquet('{storage_uri}')"
+                    f"SELECT COUNT(*) FROM read_parquet('{storage_read_path}')"
                 ).fetchone()[0]
 
             # ── Infer schema for catalog & lineage ──────────────────────────────
             try:
                 if layer == "silver":
+                    storage_read_path = self._storage_uri_for_execution(storage_uri)
                     schema_rows  = con.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{storage_uri}') LIMIT 0"
+                        f"DESCRIBE SELECT * FROM read_parquet('{storage_read_path}') LIMIT 0"
                     ).fetchall()
                 else:
                     self._pg_gold_attach(con, user_context)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from datetime import datetime
+from pathlib import Path
 from urllib import request
 from urllib.parse import urlsplit
 
@@ -77,13 +80,38 @@ def get_minio_client() -> Minio:
     )
 
 
+def _uses_gcs_fuse() -> bool:
+    return (os.environ.get("LAKEHOUSE_PROVIDER") or "").strip().lower() == "gcs_fuse"
+
+
+def _lakehouse_local_root() -> Path:
+    return Path(os.environ.get("LAKEHOUSE_LOCAL_ROOT", "/lakehouse")).resolve()
+
+
+def _local_object_path(object_name: str) -> Path:
+    root = _lakehouse_local_root()
+    clean = str(object_name or "").lstrip("/")
+    candidate = (root / clean).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError("Lakehouse local path escaped root")
+    return candidate
+
+
 def ensure_bucket_exists(bucket_name: str) -> None:
+    if _uses_gcs_fuse():
+        _lakehouse_local_root().mkdir(parents=True, exist_ok=True)
+        return
     client = get_minio_client()
     if not client.bucket_exists(bucket_name):
         client.make_bucket(bucket_name)
 
 
 def upload_file_to_minio(local_path: str, object_name: str) -> None:
+    if _uses_gcs_fuse():
+        target = _local_object_path(object_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(local_path, target)
+        return
     client = get_minio_client()
     ensure_bucket_exists(settings.minio_bucket)
     client.fput_object(
