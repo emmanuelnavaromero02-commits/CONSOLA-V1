@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from refinement.app.duckdb_engine import DuckDBEngine
+from omega_lakehouse import ObjectStat
 
 
 def test_bronze_source_from_entity_first_scoped_key():
@@ -40,45 +41,30 @@ def test_bronze_source_discovery_rejects_foreign_workspace():
 def test_list_sources_uses_object_store_and_scope(monkeypatch):
     engine = DuckDBEngine()
 
-    class FakePaginator:
-        def paginate(self, *, Bucket, Prefix):
-            assert Bucket == engine.minio_bucket
-            assert Prefix == "raw/sap_successfactors/"
-            return [
-                {
-                    "Contents": [
-                        {
-                            "Key": (
-                                "raw/sap_successfactors/Candidate/"
-                                "tenant_id=tenant-a/workspace_id=workspace-a/"
-                                "load_date=2026-06-25/batch_id=run-1/data.parquet"
-                            )
-                        },
-                        {
-                            "Key": (
-                                "raw/sap_successfactors/User/"
-                                "tenant_id=tenant-a/workspace_id=workspace-a/"
-                                "load_date=2026-06-25/batch_id=run-1/data.parquet"
-                            )
-                        },
-                        {
-                            "Key": (
-                                "raw/sap_successfactors/Candidate/"
-                                "tenant_id=tenant-b/workspace_id=workspace-b/"
-                                "load_date=2026-06-25/batch_id=run-1/data.parquet"
-                            )
-                        },
-                    ]
-                }
+    class FakeStorage:
+        def iter_list(self, prefix):
+            assert prefix == "raw/sap_successfactors/"
+            keys = [
+                (
+                    "raw/sap_successfactors/Candidate/"
+                    "tenant_id=tenant-a/workspace_id=workspace-a/"
+                    "load_date=2026-06-25/batch_id=run-1/data.parquet"
+                ),
+                (
+                    "raw/sap_successfactors/User/"
+                    "tenant_id=tenant-a/workspace_id=workspace-a/"
+                    "load_date=2026-06-25/batch_id=run-1/data.parquet"
+                ),
+                (
+                    "raw/sap_successfactors/Candidate/"
+                    "tenant_id=tenant-b/workspace_id=workspace-b/"
+                    "load_date=2026-06-25/batch_id=run-1/data.parquet"
+                ),
             ]
+            for key in keys:
+                yield ObjectStat(key=key, uri=f"s3://lakehouse/{key}", size=1)
 
-    class FakeS3Client:
-        def get_paginator(self, name):
-            assert name == "list_objects_v2"
-            return FakePaginator()
-
-    monkeypatch.setattr(engine, "_uses_aws_s3_credential_chain", lambda: True)
-    monkeypatch.setattr(engine, "_boto3_s3_client", lambda: FakeS3Client())
+    monkeypatch.setattr(engine, "storage", FakeStorage())
 
     sources = engine.list_sources(
         {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},

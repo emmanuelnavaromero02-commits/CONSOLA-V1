@@ -190,7 +190,17 @@ class DuckDBEngine:
         self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
-        self.storage        = storage_from_env(bucket=self.minio_bucket or None)
+        storage_bucket = self.minio_bucket or None
+        if (
+            os.environ.get("LAKEHOUSE_PROVIDER", "").strip().lower() == "gcs"
+            or os.environ.get("GCS_BUCKET")
+        ):
+            storage_bucket = (
+                os.environ.get("LAKEHOUSE_BUCKET")
+                or os.environ.get("GCS_BUCKET")
+                or None
+            )
+        self.storage        = storage_from_env(bucket=storage_bucket)
         self.minio_bucket   = getattr(getattr(self.storage, "config", None), "bucket", self.minio_bucket or "lakehouse")
         self.pg_url         = os.environ.get("DATABASE_URL", "")
         # Analytical (gold) DB. Falls back to service DB if unset, so
