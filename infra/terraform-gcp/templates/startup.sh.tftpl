@@ -20,6 +20,7 @@ ENABLE_AIRFLOW_SCHEDULER="${enable_airflow_scheduler}"
 APP_ROOT="/opt/modecissions"
 RELEASE_DIR="$${APP_ROOT}/releases/$${SOURCE_SHA}"
 CURRENT_DIR="$${APP_ROOT}/current"
+SHARED_ENV="$${APP_ROOT}/shared/infra.env"
 DATA_DISK="/dev/disk/by-id/google-omega-docker-data"
 SECRET_PREFIX="${secret_prefix}"
 
@@ -99,6 +100,13 @@ secret_value() {
 }
 
 mkdir -p "$${APP_ROOT}/releases"
+EXISTING_ENV=""
+if [[ -f "$${SHARED_ENV}" ]]; then
+  EXISTING_ENV="$${SHARED_ENV}"
+elif [[ -e "$${CURRENT_DIR}/infra/.env" ]] && [[ "$(readlink -f "$${CURRENT_DIR}" 2>/dev/null || true)" != "$${RELEASE_DIR}" ]]; then
+  EXISTING_ENV="$${CURRENT_DIR}/infra/.env"
+fi
+
 if [[ ! -d "$${RELEASE_DIR}" ]]; then
   download_source
   mkdir -p "$${RELEASE_DIR}"
@@ -107,9 +115,19 @@ fi
 ln -sfn "$${RELEASE_DIR}" "$${CURRENT_DIR}"
 cd "$${CURRENT_DIR}"
 
-bash infra/bootstrap.sh || true
-bash infra/bootstrap-keys.sh infra/.env
+mkdir -p "$(dirname "$${SHARED_ENV}")"
+if [[ -n "$${EXISTING_ENV}" ]]; then
+  cp "$${EXISTING_ENV}" infra/.env
+fi
+if [[ -f infra/.env ]]; then
+  bash infra/bootstrap-keys.sh infra/.env
+else
+  bash infra/bootstrap.sh || true
+  bash infra/bootstrap-keys.sh infra/.env
+fi
 chmod 600 infra/.env
+cp infra/.env "$${SHARED_ENV}"
+chmod 600 "$${SHARED_ENV}"
 mkdir -p data/lakehouse
 mkdir -p /mnt/omega-lakehouse
 if ! mountpoint -q /mnt/omega-lakehouse; then
