@@ -122,18 +122,24 @@ async def _vault_secret(scope: str, key: str, user_context: dict | None = None) 
 
 
 async def _resolve_anthropic_api_key(user_context: dict | None = None) -> str:
-    if user_context and not _is_platform_admin_context(user_context):
-        scope = _tenant_llm_vault_scope(user_context)
+    tenant_id, workspace_id = _tenant_scope_parts(user_context)
+    if user_context and tenant_id and workspace_id:
+        scope = "llm"
         value = await _vault_secret(scope, "anthropic_api_key", user_context)
         if value:
             return value
+        if not _is_platform_admin_context(user_context):
+            raise LLMConfigurationError(
+                "Anthropic API key is required for this workspace; configure it in Operations > Vault"
+            )
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if api_key:
+        return api_key
+    if tenant_id and workspace_id:
         raise LLMConfigurationError(
             "Anthropic API key is required for this workspace; configure it in Operations > Vault"
         )
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise LLMConfigurationError("ANTHROPIC_API_KEY is required when CHAT_LLM_PROVIDER=anthropic")
-    return api_key
+    raise LLMConfigurationError("ANTHROPIC_API_KEY is required when CHAT_LLM_PROVIDER=anthropic")
 
 
 def _provider_error_message(provider: str, exc: Exception) -> str:
