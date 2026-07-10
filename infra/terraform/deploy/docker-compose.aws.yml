@@ -731,6 +731,7 @@ services:
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
+      BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
     ports:
       - "8082:8080"
     volumes:
@@ -747,6 +748,7 @@ services:
       # Salesforce DAGs (service may not be provisioned on every AWS
       # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
+      - /opt/modecissions/cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
     networks:
       - modecissions_net
     depends_on:
@@ -810,6 +812,7 @@ services:
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
+      BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs
@@ -824,6 +827,7 @@ services:
       # Salesforce DAGs (service may not be provisioned on every AWS
       # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
+      - /opt/modecissions/cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
     networks:
       - modecissions_net
     depends_on:

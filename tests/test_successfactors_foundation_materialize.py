@@ -238,4 +238,4 @@ def test_successfactors_foundation_missing_scope_is_blocked_not_pass(tmp_path: P
 def test_successfactors_foundation_runner_is_copied_into_refinement_image():
     dockerfile = REFINEMENT_DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "COPY --chown=appuser:appuser scripts/ scripts/" in dockerfile
+    assert "COPY --chown=appuser:appuser refinement/scripts/ scripts/" in dockerfile
