@@ -17,6 +17,7 @@ import httpx
 from airflow.decorators import dag, task
 
 CARTRIDGE_URL = os.environ.get("BANXICO_URL", "http://banxico:8215")
+DEFAULT_CONN_ID = "default"
 
 
 def _is_production() -> bool:
@@ -32,6 +33,13 @@ def _internal_key() -> str:
         if legacy:
             return legacy
     raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing")
+
+
+def _response_error(response: httpx.Response) -> str:
+    text = response.text.replace("\n", " ").strip()
+    if len(text) > 500:
+        text = f"{text[:500]}..."
+    return f"Banxico cartridge request failed status={response.status_code} body={text}"
 
 
 default_args = {
@@ -74,7 +82,7 @@ def banxico_extract():
             for key in ("tenant_id", "workspace_id", "from_date", "to_date", "series_ids", "run_id")
             if conf.get(key) is not None
         }
-        conn_id = str(conf.get("conn_id") or "").strip()
+        conn_id = str(conf.get("conn_id") or DEFAULT_CONN_ID).strip()
         headers = {
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
@@ -89,7 +97,8 @@ def banxico_extract():
                 headers=headers,
                 params={"conn_id": conn_id} if conn_id else None,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise RuntimeError(_response_error(response))
             return response.json()
 
     extract()

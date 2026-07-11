@@ -13,6 +13,9 @@ def test_dag_is_manual_bronze_only_and_serial():
     assert "BANXICO_URL" in source
     assert "X-Security-Context" in source
     assert "json.dumps(security_context" in source
+    assert 'DEFAULT_CONN_ID = "default"' in source
+    assert 'conf.get("conn_id") or DEFAULT_CONN_ID' in source
+    assert "Banxico cartridge request failed status=" in source
 
 
 def test_new_python_files_stay_under_300_lines():

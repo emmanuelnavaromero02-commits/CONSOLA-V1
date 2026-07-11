@@ -17,6 +17,18 @@ def test_banxico_watermark_rls_migration_scopes_runtime_role() -> None:
     assert "WITH CHECK (true)" not in sql
 
 
+def test_banxico_default_connection_migration_sets_default_conn_id() -> None:
+    sql = (
+        Path(__file__).resolve()
+        .parents[3]
+        .joinpath("infra/init/99zs_banxico_default_connection_id.sql")
+        .read_text(encoding="utf-8")
+    )
+    assert "connection_id = 'default'" in sql
+    assert "cartridge_id = 'banxico'" in sql
+    assert "entity = 'series_observations'" in sql
+
+
 def test_psycopg_dsn_accepts_sqlalchemy_postgres_scheme() -> None:
     assert (
         _psycopg_dsn("postgresql+psycopg2://user:pass@postgres:5432/modecissions")

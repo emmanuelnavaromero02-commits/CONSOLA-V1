@@ -83,7 +83,8 @@ ON CONFLICT (cartridge_id, dag_id) DO UPDATE
 
 INSERT INTO entity_config
     (cartridge_id, entity, display_name, mode, primary_key, dag_id, description,
-     watermark_field, watermark_format, page_size, enabled, trigger_type, cron_expression)
+     watermark_field, watermark_format, page_size, enabled, trigger_type, cron_expression,
+     connection_id)
 VALUES (
     'banxico',
     'series_observations',
@@ -97,7 +98,8 @@ VALUES (
     20,
     TRUE,
     'manual',
-    NULL
+    NULL,
+    'default'
 )
 ON CONFLICT (cartridge_id, entity) DO UPDATE
     SET display_name = EXCLUDED.display_name,
@@ -110,4 +112,5 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         page_size = EXCLUDED.page_size,
         enabled = EXCLUDED.enabled,
         trigger_type = EXCLUDED.trigger_type,
-        cron_expression = EXCLUDED.cron_expression;
+        cron_expression = EXCLUDED.cron_expression,
+        connection_id = COALESCE(NULLIF(entity_config.connection_id, ''), EXCLUDED.connection_id);
