@@ -25,11 +25,13 @@ if [[ -z "${IMAGE_TAG:-}" || "${IMAGE_TAG:-}" == "latest" ]]; then
 fi
 echo "IMAGE_TAG=${IMAGE_TAG}"
 
-docker compose -f docker-compose.aws.yml pull \
+export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
+
+docker compose -f docker-compose.aws.yml pull --quiet \
   console workspace refinement vault mcp-infra airflow airflow-scheduler
 
 if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
-  docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml pull \
+  docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml pull --quiet \
     replicon hubspot salesforce banxico sap-hcm sap-successfactors sap-s4hana
 fi
 

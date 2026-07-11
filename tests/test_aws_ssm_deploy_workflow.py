@@ -34,6 +34,8 @@ def test_deploy_workflow_requires_immutable_ref_and_readiness():
     assert "IMAGE_TAG" in workflow
     assert "docker login ghcr.io" in workflow
     assert "docker logout ghcr.io" in workflow
+    assert "/tmp/omega-deploy.log" in workflow
+    assert "tail -n 200" in workflow
     assert "/healthz" in workflow
     assert "/readyz" in workflow
     assert "/readyz?require_data=1" in workflow

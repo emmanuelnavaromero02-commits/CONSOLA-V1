@@ -61,12 +61,13 @@ COMPOSE_FILES=(-f docker-compose.aws.yml)
 if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
   COMPOSE_FILES+=(-f docker-compose.cartridges.yml)
 fi
+export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
 
 if [ -n "${1:-}" ]; then
   docker compose "${COMPOSE_FILES[@]}" up -d postgres postgres_gold
   sleep 15
   bash apply_db_migrations.sh
-  docker compose "${COMPOSE_FILES[@]}" pull "$1"
+  docker compose "${COMPOSE_FILES[@]}" pull --quiet "$1"
   docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate "$1"
 else
   bash build.sh

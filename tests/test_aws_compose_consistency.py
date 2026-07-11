@@ -171,7 +171,8 @@ def test_update_script_uses_cartridge_overlay_for_service_updates():
     src = AWS_UPDATE.read_text(encoding="utf-8")
     assert "COMPOSE_FILES=(-f docker-compose.aws.yml)" in src
     assert "COMPOSE_FILES+=(-f docker-compose.cartridges.yml)" in src
-    assert 'docker compose "${COMPOSE_FILES[@]}" pull "$1"' in src
+    assert 'COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"' in src
+    assert 'docker compose "${COMPOSE_FILES[@]}" pull --quiet "$1"' in src
     assert 'docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate "$1"' in src
 
 

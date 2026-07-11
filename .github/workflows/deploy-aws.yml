@@ -164,8 +164,11 @@ jobs:
           update_cmd = "sudo bash infra/terraform/deploy/update.sh"
           if service:
               update_cmd += " " + shlex.quote(service)
+          deploy_log = "/tmp/omega-deploy.log"
           commands.extend([
-              update_cmd,
+              f"rm -f {deploy_log}",
+              f"{update_cmd} > {deploy_log} 2>&1 || (tail -n 200 {deploy_log}; exit 1)",
+              f"tail -n 120 {deploy_log} || true",
               retry_curl("http://127.0.0.1:8000/healthz"),
               retry_curl("http://127.0.0.1:8000/readyz"),
           ])
