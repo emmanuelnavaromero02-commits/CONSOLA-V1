@@ -33,7 +33,7 @@ services:
       # local dev. ``:-`` keeps the value empty if the operator hasn't
       # rotated .env to match — the migration aborts loudly via
       # ``RAISE EXCEPTION`` instead of creating a NULL-password role.
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:?OMEGA_MCP_INFRA_PASSWORD is required} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:?OMEGA_MCP_INFRA_PASSWORD is required} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - /opt/modecissions/infra/init:/docker-entrypoint-initdb.d
@@ -733,6 +733,7 @@ services:
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
       BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
+      SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
     ports:
       - "8082:8080"
     volumes:
@@ -751,6 +752,7 @@ services:
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - /opt/modecissions/cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - /opt/modecissions/cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
+      - /opt/modecissions/cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
     networks:
       - modecissions_net
     depends_on:
@@ -816,6 +818,7 @@ services:
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
       BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
+      SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs
@@ -832,6 +835,7 @@ services:
       - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - /opt/modecissions/cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - /opt/modecissions/cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
+      - /opt/modecissions/cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
     networks:
       - modecissions_net
     depends_on:

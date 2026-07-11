@@ -19,7 +19,7 @@ services:
       # Sprint v1.38 (audit B5+B6): added six more roles for SAP
       # cartridges, Airflow and Superset (see
       # infra/init/36_cartridge_and_meta_roles.sql).
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD:-} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD:-} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -162,6 +162,7 @@ services:
       INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:-}
       INTERNAL_API_KEY_BANXICO_TO_CONSOLE: ${INTERNAL_API_KEY_BANXICO_TO_CONSOLE:-}
       INTERNAL_API_KEY_INEGI_TO_CONSOLE: ${INTERNAL_API_KEY_INEGI_TO_CONSOLE:-}
+      INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE: ${INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE:-}
       INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: ${INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE:-}
       INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:-}
       INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:-}
@@ -672,6 +673,42 @@ services:
       minio:
         condition: service_healthy
 
+  # SEC EDGAR cartridge: Bronze + governed company context.
+  sec-edgar:
+    build:
+      context: ..
+      dockerfile: cartridges/sec_edgar/Dockerfile
+    container_name: mode_sec_edgar
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE: ${INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE:-}
+      SEC_EDGAR_USER_AGENT: ${SEC_EDGAR_USER_AGENT:-}
+      CONSOLE_URL: http://console:8000
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sec_edgar:${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD:-}@postgres:5432/modecissions"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET: lakehouse
+      MINIO_SECURE: "false"
+    ports:
+      - "8217:8217"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8217/healthz', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
   # ── SAP cartridges (opt-in via `--profile sap`) ─────────────────────────────
   # These cartridges are part of the registry mount and run as standalone
   # FastAPI services for direct console / MCP access. They're under the
@@ -1104,6 +1141,7 @@ services:
       - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
+      - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1190,6 +1228,7 @@ services:
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
+      SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
@@ -1215,6 +1254,7 @@ services:
       - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
+      - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1295,6 +1335,7 @@ services:
       SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       BANXICO_URL:            "${BANXICO_URL:-http://banxico:8215}"
       INEGI_URL:              "${INEGI_URL:-http://inegi:8216}"
+      SEC_EDGAR_URL:          "${SEC_EDGAR_URL:-http://sec-edgar:8217}"
     volumes:
       # Kept read-write on purpose: the per-cartridge DAGs below are nested
       # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
@@ -1317,6 +1358,7 @@ services:
       - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
       - ../cartridges/banxico/dags:/opt/airflow/dags/banxico:ro
       - ../cartridges/inegi/dags:/opt/airflow/dags/inegi:ro
+      - ../cartridges/sec_edgar/dags:/opt/airflow/dags/sec_edgar:ro
     depends_on:
       postgres:
         condition: service_healthy

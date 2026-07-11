@@ -102,7 +102,7 @@ def test_no_orphan_cartridge_dags():
         if cartridge in SAP_DAGS:
             _assert_local_sap_mount(cartridge)
             continue
-        if cartridge in ("replicon", "hubspot", "salesforce", "banxico", "inegi"):
+        if cartridge in ("replicon", "hubspot", "salesforce", "banxico", "inegi", "sec_edgar"):
             # v1.40: replicon DAGs are bind-mounted just like SAP.
             # The HubSpot CRM cartridge and Salesforce follow the same pattern.
             expected_local = f"../cartridges/{cartridge}/dags:/opt/airflow/dags/{cartridge}:ro"

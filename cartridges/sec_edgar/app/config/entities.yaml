@@ -1,0 +1,52 @@
+entities:
+  - entity: company_facts
+    mode: incremental
+    primary_key: cik,metric_name,end_date,fiscal_year,fiscal_period,accession_number
+    date_field: end_date
+    watermark_field: end_date
+    metadata_entity: company_metadata
+    max_companies_per_request: 3
+    metadata_preflight_status: live_sec_verified
+    companies:
+      - cik: "0001061736"
+        ticker: FMX
+        expected_name: "MEXICAN ECONOMIC DEVELOPMENT INC"
+        entity_type: other
+        sic: "2086"
+        sic_description: "Bottled & Canned Soft Drinks & Carbonated Waters"
+        country_code: MX
+        overlap_days: 400
+        facts:
+          - {metric_name: revenue, taxonomy: ifrs-full, concept: Revenue, unit: MXN, freshness_sla_days: 550}
+          - {metric_name: profit_loss, taxonomy: ifrs-full, concept: ProfitLoss, unit: MXN, freshness_sla_days: 550}
+          - {metric_name: assets, taxonomy: ifrs-full, concept: Assets, unit: MXN, freshness_sla_days: 550}
+          - {metric_name: liabilities, taxonomy: ifrs-full, concept: Liabilities, unit: MXN, freshness_sla_days: 550}
+      - cik: "0000910631"
+        ticker: KOF
+        expected_name: "COCA COLA FEMSA SAB DE CV"
+        entity_type: other
+        sic: "2086"
+        sic_description: "Bottled & Canned Soft Drinks & Carbonated Waters"
+        country_code: MX
+        overlap_days: 400
+        facts:
+          - {metric_name: revenue, taxonomy: ifrs-full, concept: Revenue, unit: MXN, freshness_sla_days: 550}
+          - {metric_name: profit_loss, taxonomy: ifrs-full, concept: ProfitLoss, unit: MXN, freshness_sla_days: 550}
+          - {metric_name: assets, taxonomy: ifrs-full, concept: Assets, unit: MXN, freshness_sla_days: 550}
+          - {metric_name: liabilities, taxonomy: ifrs-full, concept: Liabilities, unit: MXN, freshness_sla_days: 550}
+      - cik: "0000021344"
+        ticker: KO
+        expected_name: "COCA COLA CO"
+        entity_type: operating
+        sic: "2080"
+        sic_description: "Beverages"
+        country_code: US
+        overlap_days: 400
+        facts:
+          - {metric_name: revenue, taxonomy: us-gaap, concept: Revenues, unit: USD, freshness_sla_days: 550}
+          - {metric_name: net_income, taxonomy: us-gaap, concept: NetIncomeLoss, unit: USD, freshness_sla_days: 550}
+          - {metric_name: assets, taxonomy: us-gaap, concept: Assets, unit: USD, freshness_sla_days: 550}
+
+  - entity: company_metadata
+    mode: full
+    primary_key: cik

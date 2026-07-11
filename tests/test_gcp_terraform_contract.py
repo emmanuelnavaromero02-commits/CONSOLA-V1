@@ -35,8 +35,10 @@ def test_gcp_secret_manifest_includes_macro_cartridges():
     required = {
         "internal_api_key_banxico_to_console",
         "internal_api_key_inegi_to_console",
+        "internal_api_key_sec_edgar_to_console",
         "omega_cartridge_banxico_password",
         "omega_cartridge_inegi_password",
+        "omega_cartridge_sec_edgar_password",
         "gcs_hmac_access_key_id",
         "gcs_hmac_secret_access_key",
     }

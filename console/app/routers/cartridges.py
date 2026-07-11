@@ -39,12 +39,13 @@ _CARTRIDGE_PORTS = {
     "replicon": 8201,
     "banxico": 8215,
     "inegi": 8216,
+    "sec_edgar": 8217,
     "sap_hcm": 8202,
     "sap_successfactors": 8203,
     "sap_s4hana": 8204,
     "salesforce": 8205,
 }
-_CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico", "inegi"}
+_CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico", "inegi", "sec_edgar"}
 _CONN_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 

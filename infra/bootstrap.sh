@@ -78,6 +78,10 @@ INTERNAL_API_KEY_BANXICO_TO_CONSOLE="$(openssl rand -hex 32)"
 OMEGA_CARTRIDGE_INEGI_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_INEGI_TO_CONSOLE="$(openssl rand -hex 32)"
 
+# SEC EDGAR cartridge: User-Agent lives in Vault/env, no API token required.
+OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD="$(openssl rand -hex 16)"
+INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE="$(openssl rand -hex 32)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Fernet keys are URL-safe base64 of 32 random bytes. Generate them
 # with Python's stdlib so bootstrap does not depend on host cryptography/cffi.
@@ -157,6 +161,11 @@ INTERNAL_API_KEY_BANXICO_TO_CONSOLE=${INTERNAL_API_KEY_BANXICO_TO_CONSOLE}
 # === INEGI cartridge ===
 OMEGA_CARTRIDGE_INEGI_PASSWORD=${OMEGA_CARTRIDGE_INEGI_PASSWORD}
 INTERNAL_API_KEY_INEGI_TO_CONSOLE=${INTERNAL_API_KEY_INEGI_TO_CONSOLE}
+
+# === SEC EDGAR cartridge ===
+OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD}
+INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE=${INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE}
+SEC_EDGAR_USER_AGENT="OMEGA ${ADMIN_EMAIL}"
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows

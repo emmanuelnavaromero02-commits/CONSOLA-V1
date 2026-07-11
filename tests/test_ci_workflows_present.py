@@ -155,12 +155,18 @@ def test_compose_validate_declares_required_pair_keys():
         "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
         "INTERNAL_API_KEY_BANXICO_TO_CONSOLE",
         "INTERNAL_API_KEY_INEGI_TO_CONSOLE",
+        "INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE",
         "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
     ):
         assert key in raw
+
+
+def test_root_context_cartridge_images_build_from_repo_root():
+    raw = DOCKER_WF.read_text(encoding="utf-8")
+    assert "console|refinement|mcp-infra|banxico|inegi|sec_edgar)" in raw
 
 
 def test_console_next_coverage_is_published_in_ci():

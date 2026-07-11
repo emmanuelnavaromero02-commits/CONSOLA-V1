@@ -17,6 +17,7 @@ const ICON_FOR_ID: Record<string, LucideIcon> = {
   hubspot:             Handshake,
   banxico:             Landmark,
   inegi:               BarChart3,
+  sec_edgar:           Landmark,
   sap_hcm:             Users,
   sap_s4hana:          Calculator,
   sap_successfactors:  TrendingUp,
