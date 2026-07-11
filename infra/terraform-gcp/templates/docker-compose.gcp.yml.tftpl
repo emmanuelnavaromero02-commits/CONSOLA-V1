@@ -55,6 +55,10 @@ services:
   inegi:
     environment:
       <<: *gcp-lakehouse-env
+  sec-edgar:
+    environment:
+      <<: *gcp-lakehouse-env
+      SEC_EDGAR_USER_AGENT: $${SEC_EDGAR_USER_AGENT:-}
   sap-successfactors:
     environment:
       <<: *gcp-lakehouse-env
@@ -83,6 +87,7 @@ services:
       AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+      SEC_EDGAR_URL: $${SEC_EDGAR_URL:-http://sec-edgar:8217}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080$${AIRFLOW_HEALTH_PATH:-/health} || exit 1"]
       interval: 30s
@@ -103,6 +108,7 @@ services:
       AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+      SEC_EDGAR_URL: $${SEC_EDGAR_URL:-http://sec-edgar:8217}
   airflow-scheduler:
     environment:
       <<: *gcp-lakehouse-env
@@ -118,3 +124,4 @@ services:
       AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+      SEC_EDGAR_URL: $${SEC_EDGAR_URL:-http://sec-edgar:8217}

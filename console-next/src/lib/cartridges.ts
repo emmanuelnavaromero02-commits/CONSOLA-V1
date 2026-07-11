@@ -64,6 +64,7 @@ export const KNOWN_CARTRIDGES = [
   "hubspot",
   "banxico",
   "inegi",
+  "sec_edgar",
   "sap_hcm",
   "sap_s4hana",
   "sap_successfactors",

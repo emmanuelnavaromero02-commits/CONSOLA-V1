@@ -40,6 +40,7 @@ REQUIRED=(
   OMEGA_CARTRIDGE_HUBSPOT_PASSWORD
   OMEGA_CARTRIDGE_BANXICO_PASSWORD
   OMEGA_CARTRIDGE_INEGI_PASSWORD
+  OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD
 )
 
 missing=()
@@ -55,7 +56,7 @@ if (( ${#missing[@]} > 0 )); then
   exit 2
 fi
 
-PGOPTIONS_VALUE="-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD}"
+PGOPTIONS_VALUE="-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD} -c app.omega_cartridge_banxico_password=${OMEGA_CARTRIDGE_BANXICO_PASSWORD} -c app.omega_cartridge_inegi_password=${OMEGA_CARTRIDGE_INEGI_PASSWORD} -c app.omega_cartridge_sec_edgar_password=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD}"
 GOLD_PGOPTIONS_VALUE="-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD}"
 POSTGRES_PGOPTIONS_VALUE="-c app.postgres_password=${POSTGRES_PASSWORD}"
 

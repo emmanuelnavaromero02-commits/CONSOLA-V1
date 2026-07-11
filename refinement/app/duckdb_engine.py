@@ -1532,6 +1532,14 @@ class DuckDBEngine:
 
             if name in INEGI_DATASETS:
                 return materialize_inegi_dataset(self, ds, user_context)
+        if cartridge == "sec_edgar":
+            try:
+                from app.sec_edgar_materializer import SEC_DATASETS, materialize_sec_dataset
+            except ModuleNotFoundError:  # local tests import refinement.app.*
+                from refinement.app.sec_edgar_materializer import SEC_DATASETS, materialize_sec_dataset
+
+            if name in SEC_DATASETS:
+                return materialize_sec_dataset(self, ds, user_context)
         sql         = ds["sql_def"]
         self._validate_safe_sql(sql)
         sources     = ds.get("sources") or []

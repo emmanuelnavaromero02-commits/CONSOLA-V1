@@ -318,6 +318,7 @@ def test_bootstrap_keys_backfills_all_runtime_db_role_passwords():
         "OMEGA_CARTRIDGE_HUBSPOT_PASSWORD",
         "OMEGA_CARTRIDGE_BANXICO_PASSWORD",
         "OMEGA_CARTRIDGE_INEGI_PASSWORD",
+        "OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD",
     ):
         assert f'"{key}"' in body
 

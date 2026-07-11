@@ -235,6 +235,14 @@ async def _control_room_internal_view(
             user,
             lambda: inegi_readiness(user),
         )
+    if view == "sec_edgar_readiness":
+        from app.services.sec_edgar_readiness import sec_edgar_readiness
+
+        return await _control_room_cache_get_or_set(
+            "sec-edgar-readiness",
+            user,
+            lambda: sec_edgar_readiness(user),
+        )
     if view == "decision_intelligence_runs":
         limit = _bounded_int(params.get("limit"), 50, lower=1, upper=250)
         return await intelligence_history.list_runs(user, limit=limit)
@@ -343,6 +351,13 @@ async def control_room_inegi_readiness(user: dict = Depends(require_authenticate
     from app.services.inegi_readiness import inegi_readiness
 
     return await _control_room_cache_get_or_set("inegi-readiness", user, lambda: inegi_readiness(user))
+
+
+@router.get("/sec-edgar/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sec_edgar_readiness(user: dict = Depends(require_authenticated)):
+    from app.services.sec_edgar_readiness import sec_edgar_readiness
+
+    return await _control_room_cache_get_or_set("sec-edgar-readiness", user, lambda: sec_edgar_readiness(user))
 
 
 @router.post(

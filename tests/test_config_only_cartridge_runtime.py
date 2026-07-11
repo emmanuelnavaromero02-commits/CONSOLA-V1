@@ -12,6 +12,7 @@ CARTRIDGES = (
     "inegi",
     "replicon",
     "salesforce",
+    "sec_edgar",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",

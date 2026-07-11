@@ -64,6 +64,7 @@ def test_default_cartridge_urls_resolve_to_declared_aws_services():
         "salesforce",
         "banxico",
         "inegi",
+        "sec-edgar",
         "sap-hcm",
         "sap-s4hana",
     }
@@ -75,7 +76,7 @@ def test_default_cartridge_urls_resolve_to_declared_aws_services():
 def test_same_host_cartridges_are_internal_only():
     """The same-host overlay is for Docker bridge DNS, not public ports."""
     services = _cartridge_doc().get("services", {})
-    for name in ("replicon", "hubspot", "salesforce", "banxico", "inegi", "sap-hcm", "sap-s4hana"):
+    for name in ("replicon", "hubspot", "salesforce", "banxico", "inegi", "sec-edgar", "sap-hcm", "sap-s4hana"):
         assert name in services
         assert "ports" not in services[name], f"{name} must not publish host ports in AWS"
 
@@ -88,7 +89,7 @@ def test_aws_compose_passes_cartridge_url_env_vars_to_airflow():
     raw = AWS_COMPOSE.read_text(encoding="utf-8")
     for env_var in ("SAP_HCM_URL", "SAP_S4HANA_URL",
                     "REPLICON_URL", "HUBSPOT_URL",
-                    "SALESFORCE_URL", "BANXICO_URL", "INEGI_URL"):
+                    "SALESFORCE_URL", "BANXICO_URL", "INEGI_URL", "SEC_EDGAR_URL"):
         # At least twice — airflow + airflow-scheduler.
         assert raw.count(env_var) >= 2, (
             f"{env_var} should be set on both airflow + airflow-scheduler "

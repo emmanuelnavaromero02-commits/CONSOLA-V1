@@ -774,6 +774,11 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         "cartridge-inegi": ("INTERNAL_API_KEY_INEGI_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
+    "sec_edgar": {
+        "sec_edgar": ("INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE",),
+        "cartridge-sec-edgar": ("INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE",),
+        "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
+    },
     "salesforce": {
         "salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
         "cartridge-salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
@@ -5067,7 +5072,7 @@ _MICROSERVICE_CARTRIDGES = {
     "sap_hcm": os.environ.get("SAP_HCM_URL", "http://sap-hcm:8202"),
     "sap_s4hana": os.environ.get("SAP_S4HANA_URL", "http://sap-s4hana:8204"),
 }
-_CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico", "inegi"}
+_CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico", "inegi", "sec_edgar"}
 
 
 def _internal_headers() -> dict:

@@ -1,0 +1,35 @@
+connector:
+  id: sec_edgar
+  name: SEC EDGAR
+  version: 0.1.0
+  description: Official SEC EDGAR company filings and XBRL facts context.
+  auth:
+    type: none
+  api:
+    base_url: https://data.sec.gov
+    host_allowlist:
+      - data.sec.gov
+    timeout:
+      connect_seconds: 5
+      read_seconds: 30
+    retry:
+      attempts: 3
+      backoff_seconds: [1, 2, 4]
+    rate_limits:
+      requests_per_second: 8
+  runtime:
+    mode: bronze_plus_context
+    scope_source: internal_request
+    required_args:
+      - tenant_id
+      - workspace_id
+  storage:
+    path_template: "raw/sec_edgar/{entity}/tenant_id={tenant_id}/workspace_id={workspace_id}/load_date={load_date}/batch_id={run_id}/"
+    manifest_required: true
+    immutable_batches: true
+fields:
+  - name: user_agent
+    type: string
+    label: SEC User-Agent
+    description: Identifiable SEC User-Agent required by SEC fair access guidance.
+    required: true
