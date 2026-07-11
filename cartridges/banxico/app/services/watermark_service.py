@@ -26,7 +26,7 @@ class WatermarkStore:
 
 class PostgresWatermarkStore(WatermarkStore):
     def __init__(self, database_url: str | None = None) -> None:
-        self.database_url = database_url or settings.database_url
+        self.database_url = _psycopg_dsn(database_url or settings.database_url)
 
     def get_many(self, tenant_id: str, workspace_id: str, series_ids: list[str]) -> dict[str, str | None]:
         result = {series_id: None for series_id in series_ids}
@@ -97,6 +97,10 @@ def _set_scope(cur, tenant_id: str, workspace_id: str) -> None:
     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
     cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id,))
     cur.execute("SELECT set_config('app.platform_admin', %s, true)", ("false",))
+
+
+def _psycopg_dsn(database_url: str) -> str:
+    return database_url.replace("postgresql+psycopg2://", "postgresql://", 1)
 
 
 def default_store() -> WatermarkStore:
