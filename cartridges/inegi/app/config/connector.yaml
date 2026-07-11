@@ -1,0 +1,35 @@
+connector:
+  id: inegi
+  name: INEGI Banco de Indicadores
+  version: 0.1.0
+  description: Official INEGI Banco de Indicadores ingestion for allowlisted macro indicators.
+  auth:
+    type: bearer_token
+    # Local/development fallback only. Production must resolve this token
+    # from Console Vault via conn_id and must not use process env.
+    env_var: INEGI_API_TOKEN
+    header: token-path-segment
+  api:
+    base_url: https://www.inegi.org.mx/app/api/indicadores/desarrolladores/jsonxml
+    host_allowlist:
+      - www.inegi.org.mx
+    locale: es
+    timeout:
+      connect_seconds: 5
+      read_seconds: 30
+    retry:
+      attempts: 3
+      backoff_seconds: [1, 2, 4]
+    rate_limits:
+      metadata_per_minute: 20
+      historical_per_5_minutes: 30
+  runtime:
+    mode: bronze_only
+    scope_source: internal_request
+    required_args:
+      - tenant_id
+      - workspace_id
+  storage:
+    path_template: "raw/inegi/{entity}/tenant_id={tenant_id}/workspace_id={workspace_id}/load_date={load_date}/batch_id={run_id}/"
+    manifest_required: true
+    immutable_batches: true

@@ -35,6 +35,7 @@ def test_remaining_cartridge_dirs_are_deployed_or_profiled():
     assert cartridge_dirs == {
         "banxico",
         "hubspot",
+        "inegi",
         "replicon",
         "salesforce",
         "sap_hcm",
@@ -43,6 +44,7 @@ def test_remaining_cartridge_dirs_are_deployed_or_profiled():
     }
     assert {
         "banxico",
+        "inegi",
         "replicon",
         "hubspot",
         "salesforce",
