@@ -54,6 +54,7 @@ STUDIO_TOOLS_WHITELIST = {
     "cartridge_preview",
     "cartridge_extract",
     "cartridge_extract_all",
+    "create_entity",
     "cartridge_get_run_logs",
     "cartridge_get_job_status",
     "view_job",
@@ -188,6 +189,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "view_job", "view_jobs", "view_pipeline", "view_semantic",
         "minio_*",
         "list_entities", "rename_entity", "update_entity", "get_entity_logs",
+        "create_entity",
         "watermark_get",
     },
     4: {  # REFINAR (Silver/Gold)
@@ -297,12 +299,32 @@ _SENSITIVE_ARG_FRAGMENTS = (
 
 _APPROVAL_DECISION_TOOLS = {"approve_goal_step", "reject_goal_step"}
 _REFINE_DIRECT_ADMIN_TOOLS = {"save_dataset", "materialize"}
+_ENTITY_DIRECT_ADMIN_TOOLS = {"create_entity"}
+_STUDIO_DIRECT_ADMIN_BLOCKED_TOOLS = {
+    "airflow_delete_dag",
+    "delete_app",
+    "delete_dataset",
+    "delete_entity",
+    "postgres_execute_ddl",
+    "postgres_execute_query",
+}
 _REFINE_GOAL_KEYWORDS = (
     "dataset",
     "gold",
     "materializ",
     "refinar",
     "silver",
+)
+_ENTITY_CREATE_PHRASES = (
+    "agrega",
+    "agregar",
+    "alta",
+    "añade",
+    "añadir",
+    "crea",
+    "crear",
+    "new entity",
+    "nueva entidad",
 )
 _APPROVAL_PHRASES = (
     "apruebo",
@@ -381,6 +403,36 @@ def _result_is_error(result: Any) -> bool:
 def _is_refine_dataset_goal(args: dict[str, Any] | None) -> bool:
     text = " ".join(str((args or {}).get(key) or "") for key in ("intent", "description", "title")).casefold()
     return any(keyword in text for keyword in _REFINE_GOAL_KEYWORDS)
+
+
+def _is_explicit_entity_create_request(message: str) -> bool:
+    text = (message or "").casefold()
+    return any(phrase in text for phrase in _ENTITY_CREATE_PHRASES)
+
+
+def _admin_direct_write_allowed(
+    *,
+    step: int,
+    bare_name: str,
+    risk_meta: dict[str, Any],
+    actor_role: str | None,
+    actor_user: dict | None,
+    message: str,
+    refine_preview_ok: bool,
+) -> bool:
+    if not _is_studio_admin(actor_role, actor_user):
+        return False
+    if bare_name in _STUDIO_DIRECT_ADMIN_BLOCKED_TOOLS:
+        return False
+    if risk_meta.get("risk_level") == "destructive":
+        return False
+    if bare_name in _APPROVAL_DECISION_TOOLS:
+        return False
+    if bare_name in _REFINE_DIRECT_ADMIN_TOOLS:
+        return step == 4 and refine_preview_ok
+    if bare_name in _ENTITY_DIRECT_ADMIN_TOOLS:
+        return step == 3 and _is_explicit_entity_create_request(message)
+    return risk_meta.get("risk_level") == "write"
 
 
 def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
@@ -484,6 +536,9 @@ CONSULTAR:
 - list_entities(cartridge_id) → estado actual: nombre, modo, dag_id, último run.
 
 EDITAR:
+- create_entity(cartridge_id, entity, fields, ...): crea una entidad interna de
+  Studio cuando el usuario lo pide explícitamente. Usa esta tool en vez de
+  update_entity para altas nuevas.
 - rename_entity(cartridge_id, old_name, new_name): actualiza entity_config, watermarks,
   pipeline_runs, silver_lineage en una transacción. Bronze histórico queda en el path viejo.
 - update_entity → cambia mode, display_name, dag_id, trigger_type, cron_expression.
@@ -674,12 +729,14 @@ Restricciones globales:
 - PROHIBIDO resolver objetivos amplios sólo en chat. Si el usuario pide validar,
   cerrar, preparar, hardenizar o dejar listo un cartucho, usa goal runs durables:
   `studio__create_goal_run` → `studio__execute_goal_run` → `studio__get_goal_run_status`.
-- PROHIBIDO ejecutar acciones mutantes sin approval del goal run cuando la tool
-  devuelva `approval_required`. Explica tool, riesgo, razón y args_preview; espera
-  que el usuario apruebe antes de llamar `studio__approve_goal_step`.
-- Excepción de Refinar para super-admin/admin: save_dataset/materialize pueden
-  ejecutarse directo después de preview_transform exitoso. No pidas ni menciones
-  approval_key para ese flujo.
+- Para admin/super-admin, las acciones internas de Studio se ejecutan directo
+  cuando la tool está disponible para el paso activo. No pidas ni menciones
+  approval_key para create_entity, extracción, publish_app, Superset, catálogo o
+  refinamiento con preview_transform exitoso.
+- Las acciones destructivas o arbitrarias siguen bloqueadas: deletes,
+  postgres_execute_query/postgres_execute_ddl y herramientas clasificadas como
+  destructive. Si devuelven `approval_required`, explica tool, riesgo, razón y
+  args_preview; espera aprobación explícita antes de `studio__approve_goal_step`.
 - En respuestas de goal run, SIEMPRE reporta pasos completados, pasos bloqueados,
   evidencia relevante y próxima acción concreta.
 - PROHIBIDO pegar código (HTML, SQL, JS, Python, YAML) en el chat. El código se
@@ -902,14 +959,17 @@ async def chat(
             }
         risk_meta = classify_tool(bare_name)
         risk = risk_meta["risk_level"]
-        direct_refine_admin_write = (
-            step == 4
-            and bare_name in _REFINE_DIRECT_ADMIN_TOOLS
-            and refine_preview_state["ok"]
-            and _is_studio_admin(actor_role, actor_user)
+        direct_admin_write = _admin_direct_write_allowed(
+            step=step,
+            bare_name=bare_name,
+            risk_meta=risk_meta,
+            actor_role=actor_role,
+            actor_user=actor_user,
+            message=message,
+            refine_preview_ok=refine_preview_state["ok"],
         )
         if (
-            not direct_refine_admin_write
+            not direct_admin_write
             and bare_name not in _APPROVAL_DECISION_TOOLS
             and (risk_meta.get("requires_approval") or requires_approval(bare_name))
         ):

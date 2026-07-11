@@ -45,6 +45,134 @@ async def test_studio_assistant_exposes_goal_run_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_studio_assistant_exposes_create_entity_in_entities_step(monkeypatch):
+    os.environ["APP_ENV"] = "test"
+    importlib.import_module("app.routers.studio")
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+    captured = {}
+
+    async def list_servers():
+        return []
+
+    async def chat(**kwargs):
+        captured["tools"] = kwargs["tools"]
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant.mcp_registry, "list_servers", list_servers)
+    monkeypatch.setattr(studio_assistant.llm_client, "chat", chat)
+
+    await studio_assistant.chat(
+        "crea una entidad Invoice",
+        [],
+        step=3,
+        manifest={"id": "hubspot", "name": "HubSpot", "entities": [], "dags": []},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai", "workspace_role": "admin"},
+    )
+
+    tool_names = {tool["name"] for tool in captured["tools"]}
+    assert "studio__create_entity" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_admin_can_create_entity_from_explicit_studio_request(monkeypatch):
+    os.environ["APP_ENV"] = "test"
+    studio_router = importlib.import_module("app.routers.studio")
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+    captured = {}
+
+    async def list_servers():
+        return []
+
+    async def fake_create_entity(name, cartridge, spec, user):
+        captured["create_call"] = {
+            "name": name,
+            "cartridge": cartridge,
+            "spec": spec,
+            "user": user,
+        }
+        return {"id": "ent-1", "name": name, "cartridge": cartridge, "spec": spec}
+
+    async def record_event(**_kwargs):
+        return None
+
+    async def chat(**kwargs):
+        result = await kwargs["invoke_tool"](
+            "studio",
+            "create_entity",
+            {
+                "cartridge_id": "hubspot",
+                "entity": "Invoice",
+                "fields": [{"name": "id", "type": "string", "primary_key": True}],
+            },
+        )
+        captured["result"] = result
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant.mcp_registry, "list_servers", list_servers)
+    monkeypatch.setattr(studio_assistant.llm_client, "chat", chat)
+    monkeypatch.setattr(studio_assistant.audit_service, "record_event", record_event)
+    monkeypatch.setattr(studio_router, "_require_cartridge_visible", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(studio_router.studio_entities, "create_entity", fake_create_entity)
+
+    await studio_assistant.chat(
+        "crea una entidad Invoice con id como primary key",
+        [],
+        step=3,
+        manifest={"id": "hubspot", "name": "HubSpot", "entities": [], "dags": []},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai", "workspace_role": "admin"},
+    )
+
+    assert captured["result"]["created"] is True
+    assert captured["result"]["entity"] == "Invoice"
+    assert captured["create_call"]["spec"]["fields"][0]["name"] == "id"
+    assert "approval_required" not in captured["result"]
+
+
+@pytest.mark.asyncio
+async def test_create_entity_without_explicit_request_still_requires_approval(monkeypatch):
+    os.environ["APP_ENV"] = "test"
+    importlib.import_module("app.routers.studio")
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+    captured = {}
+
+    async def list_servers():
+        return []
+
+    async def record_event(**_kwargs):
+        return None
+
+    async def chat(**kwargs):
+        captured["result"] = await kwargs["invoke_tool"](
+            "studio",
+            "create_entity",
+            {
+                "cartridge_id": "hubspot",
+                "entity": "Invoice",
+                "fields": [{"name": "id", "type": "string", "primary_key": True}],
+            },
+        )
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant.mcp_registry, "list_servers", list_servers)
+    monkeypatch.setattr(studio_assistant.llm_client, "chat", chat)
+    monkeypatch.setattr(studio_assistant.audit_service, "record_event", record_event)
+
+    await studio_assistant.chat(
+        "analiza el cartucho",
+        [],
+        step=3,
+        manifest={"id": "hubspot", "name": "HubSpot", "entities": [], "dags": []},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai", "workspace_role": "admin"},
+    )
+
+    assert captured["result"]["approval_required"] is True
+    assert captured["result"]["tool"] == "studio__create_entity"
+
+
+@pytest.mark.asyncio
 async def test_studio_assistant_reports_missing_llm_key_without_500(monkeypatch):
     monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

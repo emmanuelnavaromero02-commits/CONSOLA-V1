@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services import audit_service, auth
+from app.services import audit_service, auth, tool_manifest
 
 
 GoalStepExecutor = Callable[[dict[str, Any], dict[str, Any], dict | None], Awaitable[dict[str, Any]]]
@@ -43,6 +43,14 @@ APPROVAL_REQUIRED_TOOLS = {
     "upsert_catalog_entries",
     "register_relationship",
     "ingest_document",
+}
+DESTRUCTIVE_APPROVAL_TOOLS = {
+    "airflow_delete_dag",
+    "delete_app",
+    "delete_dataset",
+    "delete_entity",
+    "postgres_execute_query",
+    "postgres_execute_ddl",
 }
 
 
@@ -187,7 +195,30 @@ def default_steps(cartridge_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _approval_required(step: dict[str, Any]) -> bool:
+def _is_studio_admin(user: dict | None) -> bool:
+    values = {
+        str((user or {}).get("role") or "").strip().lower(),
+        str((user or {}).get("workspace_role") or "").strip().lower(),
+    }
+    return bool(values & {"admin", "super_admin", "super-admin", "tenant_admin", "workspace_admin", "owner"})
+
+
+def _admin_direct_step_allowed(step: dict[str, Any], user: dict | None) -> bool:
+    if not _is_studio_admin(user):
+        return False
+    tool = str(step.get("tool") or "")
+    if tool in DESTRUCTIVE_APPROVAL_TOOLS:
+        return False
+    risk = str(step.get("risk_level") or "write").lower()
+    classified = tool_manifest.classify_tool(tool)
+    if classified.get("risk_level") == "destructive":
+        return False
+    return risk == "write" or tool in APPROVAL_REQUIRED_TOOLS
+
+
+def _approval_required(step: dict[str, Any], user: dict | None = None) -> bool:
+    if _admin_direct_step_allowed(step, user):
+        return False
     tool = str(step.get("tool") or "")
     risk = str(step.get("risk_level") or "write").lower()
     return risk in WRITE_RISK_LEVELS or tool in APPROVAL_REQUIRED_TOOLS or (_is_production() and tool in APPROVAL_REQUIRED_TOOLS)
@@ -554,7 +585,7 @@ async def execute_goal_run(
             }
         if step.get("status") != "pending":
             continue
-        if _approval_required(step) and not (_json_load(step.get("result"), {}) or {}).get("approved"):
+        if _approval_required(step, user) and not (_json_load(step.get("result"), {}) or {}).get("approved"):
             waiting = await _mark_step_waiting(pool, run, step)
             if waiting is None:
                 continue
