@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec > >(tee -a /var/log/omega-startup.log) 2>&1
+
+PROJECT_ID="${project_id}"
+SOURCE_BUCKET="${source_bucket}"
+SOURCE_OBJECT="${source_object}"
+SOURCE_SHA="${source_sha}"
+PUBLIC_CONSOLE_URL="${public_console_url}"
+PUBLIC_WORKSPACE_URL="${public_workspace_url}"
+PUBLIC_AIRFLOW_URL="${public_airflow_url}"
+TECHNICAL_CONSOLE_URL="${technical_console_url}"
+TECHNICAL_WORKSPACE_URL="${technical_workspace_url}"
+ADMIN_EMAIL="${admin_email}"
+COOKIE_SECURE="${cookie_secure}"
+LAKEHOUSE_BUCKET="${lakehouse_bucket}"
+LAKEHOUSE_ENDPOINT="${lakehouse_endpoint}"
+ENABLE_AIRFLOW_SCHEDULER="${enable_airflow_scheduler}"
+COMPOSE_OVERRIDE='${compose_override}'
+APP_ROOT="/opt/modecissions"
+RELEASE_DIR="$${APP_ROOT}/releases/$${SOURCE_SHA}"
+CURRENT_DIR="$${APP_ROOT}/current"
+SHARED_ENV="$${APP_ROOT}/shared/infra.env"
+DATA_DISK="/dev/disk/by-id/google-omega-docker-data"
+SECRET_PREFIX="${secret_prefix}"
+
+echo "[omega-startup] start $(date -Iseconds)"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg jq python3 openssl lsof
+
+mkdir -p /var/lib/docker
+if [[ -e "$${DATA_DISK}" ]]; then
+  if ! blkid "$${DATA_DISK}" >/dev/null 2>&1; then
+    mkfs.ext4 -F "$${DATA_DISK}"
+  fi
+  if ! grep -q "$${DATA_DISK} /var/lib/docker" /etc/fstab; then
+    echo "$${DATA_DISK} /var/lib/docker ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+  fi
+  mount /var/lib/docker || true
+fi
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable docker
+systemctl start docker
+
+download_source() {
+  local token object_url
+  token="$(curl -fsS -H 'Metadata-Flavor: Google' \
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  object_url="$(python3 - "$${SOURCE_OBJECT}" <<'PY'
+import sys
+from urllib.parse import quote
+print(quote(sys.argv[1], safe=""))
+PY
+)"
+  curl -fL \
+    -H "Authorization: Bearer $${token}" \
+    "https://storage.googleapis.com/storage/v1/b/$${SOURCE_BUCKET}/o/$${object_url}?alt=media" \
+    -o /tmp/omega-source.tgz
+}
+
+access_token() {
+  curl -fsS -H 'Metadata-Flavor: Google' \
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+}
+
+secret_value() {
+  local name token response
+  name="$1"
+  token="$(access_token)"
+  response="$(curl -fsS \
+    -H "Authorization: Bearer $${token}" \
+    "https://secretmanager.googleapis.com/v1/projects/$${PROJECT_ID}/secrets/$${SECRET_PREFIX}$${name}/versions/latest:access" \
+    2>/dev/null || true)"
+  if [[ -z "$${response}" ]]; then
+    return 1
+  fi
+  python3 -c 'import base64,json,sys; payload=json.load(sys.stdin).get("payload",{}).get("data",""); sys.exit(1) if not payload else print(base64.b64decode(payload).decode())' <<<"$${response}"
+}
+
+mkdir -p "$${APP_ROOT}/releases"
+EXISTING_ENV=""
+if [[ -f "$${SHARED_ENV}" ]]; then
+  EXISTING_ENV="$${SHARED_ENV}"
+elif [[ -e "$${CURRENT_DIR}/infra/.env" ]] && [[ "$(readlink -f "$${CURRENT_DIR}" 2>/dev/null || true)" != "$${RELEASE_DIR}" ]]; then
+  EXISTING_ENV="$${CURRENT_DIR}/infra/.env"
+fi
+
+if [[ ! -d "$${RELEASE_DIR}" ]]; then
+  download_source
+  mkdir -p "$${RELEASE_DIR}"
+  tar -xzf /tmp/omega-source.tgz -C "$${RELEASE_DIR}"
+fi
+ln -sfn "$${RELEASE_DIR}" "$${CURRENT_DIR}"
+cd "$${CURRENT_DIR}"
+
+mkdir -p "$(dirname "$${SHARED_ENV}")"
+if [[ -n "$${EXISTING_ENV}" ]]; then
+  cp "$${EXISTING_ENV}" infra/.env
+fi
+if [[ -f infra/.env ]]; then
+  bash infra/bootstrap-keys.sh infra/.env
+else
+  bash infra/bootstrap.sh || true
+  bash infra/bootstrap-keys.sh infra/.env
+fi
+chmod 600 infra/.env
+cp infra/.env "$${SHARED_ENV}"
+chmod 600 "$${SHARED_ENV}"
+mkdir -p data/lakehouse
+mkdir -p airflow/dags airflow/logs/scheduler airflow/plugins
+chown -R 50000:0 airflow/dags airflow/logs airflow/plugins
+chmod -R 775 airflow/dags airflow/logs airflow/plugins
+
+set_env() {
+  python3 - "$1" "$2" infra/.env <<'PY'
+import pathlib
+import sys
+
+key, value, path = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
+lines = path.read_text().splitlines() if path.exists() else []
+prefix = f"{key}="
+for i, line in enumerate(lines):
+    if line.startswith(prefix):
+        lines[i] = f"{key}={value}"
+        break
+else:
+    lines.append(f"{key}={value}")
+path.write_text("\n".join(lines) + "\n")
+PY
+}
+
+set_env APP_ENV production
+set_env COOKIE_SECURE "$${COOKIE_SECURE}"
+set_env CONSOLE_URL "$${PUBLIC_CONSOLE_URL}"
+set_env WORKSPACE_PUBLIC_URL "$${PUBLIC_WORKSPACE_URL}"
+set_env ALLOWED_ORIGINS "$${PUBLIC_CONSOLE_URL},$${PUBLIC_WORKSPACE_URL},$${TECHNICAL_CONSOLE_URL},$${TECHNICAL_WORKSPACE_URL}"
+set_env AIRFLOW_PUBLIC_URL "$${PUBLIC_AIRFLOW_URL}"
+set_env AIRFLOW_URL "http://airflow:8080/airflow"
+set_env AIRFLOW_HEALTH_PATH "/airflow/health"
+set_env SUPERSET_PUBLIC_URL ""
+set_env SUPERSET_SESSION_COOKIE_SECURE "$${COOKIE_SECURE}"
+set_env SUPERSET_FORCE_HTTPS "$${COOKIE_SECURE}"
+set_env SUPERSET_ENABLE_PROXY_FIX true
+set_env LAKEHOUSE_PROVIDER gcs
+set_env LAKEHOUSE_BUCKET "$${LAKEHOUSE_BUCKET}"
+set_env GCS_BUCKET "$${LAKEHOUSE_BUCKET}"
+set_env LAKEHOUSE_ENDPOINT "$${LAKEHOUSE_ENDPOINT}"
+set_env S3_BUCKET_NAME "$${LAKEHOUSE_BUCKET}"
+set_env MINIO_BUCKET "$${LAKEHOUSE_BUCKET}"
+set_env MINIO_ENDPOINT "$${LAKEHOUSE_ENDPOINT}"
+set_env MINIO_SECURE true
+set_env AWS_ACCESS_KEY_ID ""
+set_env AWS_SECRET_ACCESS_KEY ""
+set_env AWS_DEFAULT_REGION auto
+set_env AWS_REGION auto
+set_env S3_ENDPOINT_URL "https://$${LAKEHOUSE_ENDPOINT}"
+
+if hmac_access_key="$(secret_value gcs_hmac_access_key_id)"; then
+  set_env AWS_ACCESS_KEY_ID "$${hmac_access_key}"
+  set_env MINIO_ACCESS_KEY "$${hmac_access_key}"
+  set_env GCS_ACCESS_KEY_ID "$${hmac_access_key}"
+  set_env LAKEHOUSE_ACCESS_KEY "$${hmac_access_key}"
+fi
+if hmac_secret_key="$(secret_value gcs_hmac_secret_access_key)"; then
+  set_env AWS_SECRET_ACCESS_KEY "$${hmac_secret_key}"
+  set_env MINIO_SECRET_KEY "$${hmac_secret_key}"
+  set_env GCS_SECRET_ACCESS_KEY "$${hmac_secret_key}"
+  set_env LAKEHOUSE_SECRET_KEY "$${hmac_secret_key}"
+fi
+
+printf '%s\n' "$${COMPOSE_OVERRIDE}" > infra/docker-compose.gcp.yml
+
+COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml -f infra/docker-compose.gcp.yml --profile sap)
+"$${COMPOSE[@]}" config -q
+"$${COMPOSE[@]}" up --build -d
+if [[ "$${ENABLE_AIRFLOW_SCHEDULER}" != "true" ]]; then
+  "$${COMPOSE[@]}" stop airflow-scheduler || true
+fi
+
+echo "[omega-startup] waiting for console readiness"
+ready=0
+for _ in $(seq 1 180); do
+  if curl -fsS --max-time 5 http://127.0.0.1:8000/readyz >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 10
+done
+if [[ "$${ready}" != "1" ]]; then
+  echo "[omega-startup] console did not become ready"
+  "$${COMPOSE[@]}" ps || true
+  "$${COMPOSE[@]}" logs --tail=200 console || true
+  exit 1
+fi
+
+CREDENTIALS_FILE="$${APP_ROOT}/admin_credentials.txt"
+if [[ ! -f "$${CREDENTIALS_FILE}" ]]; then
+  ADMIN_PASSWORD="$(openssl rand -hex 24)"
+  {
+    echo "url=$${PUBLIC_CONSOLE_URL}"
+    echo "email=$${ADMIN_EMAIL}"
+    echo "password=$${ADMIN_PASSWORD}"
+    echo "source_sha=$${SOURCE_SHA}"
+  } > "$${CREDENTIALS_FILE}"
+  chmod 600 "$${CREDENTIALS_FILE}"
+else
+  ADMIN_PASSWORD="$(awk -F= '$1 == "password" {print $2}' "$${CREDENTIALS_FILE}")"
+fi
+
+"$${COMPOSE[@]}" exec -T \
+  -e BOOTSTRAP_ADMIN_PASSWORD="$${ADMIN_PASSWORD}" \
+  -e BOOTSTRAP_ADMIN_FULL_NAME="OMEGA Admin" \
+  console python -m app.bootstrap_admin "$${ADMIN_EMAIL}"
+
+date -Iseconds > "$${APP_ROOT}/DEPLOYED"
+"$${COMPOSE[@]}" ps > "$${APP_ROOT}/compose-status.txt" || true
+
+echo "[omega-startup] done $(date -Iseconds)"

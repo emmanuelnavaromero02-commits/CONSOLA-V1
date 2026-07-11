@@ -1,0 +1,120 @@
+x-gcp-lakehouse-env: &gcp-lakehouse-env
+  LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+  LAKEHOUSE_BUCKET: $${LAKEHOUSE_BUCKET:-}
+  GCS_BUCKET: $${GCS_BUCKET:-}
+  LAKEHOUSE_ENDPOINT: $${LAKEHOUSE_ENDPOINT:-storage.googleapis.com}
+  S3_BUCKET_NAME: $${S3_BUCKET_NAME:-}
+  S3_ENDPOINT_URL: $${S3_ENDPOINT_URL:-}
+  MINIO_BUCKET: $${MINIO_BUCKET:-}
+  MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
+  MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
+  MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
+  MINIO_SECURE: $${MINIO_SECURE:-true}
+  GCS_ACCESS_KEY_ID: $${GCS_ACCESS_KEY_ID:-}
+  GCS_SECRET_ACCESS_KEY: $${GCS_SECRET_ACCESS_KEY:-}
+  LAKEHOUSE_ACCESS_KEY: $${LAKEHOUSE_ACCESS_KEY:-}
+  LAKEHOUSE_SECRET_KEY: $${LAKEHOUSE_SECRET_KEY:-}
+  AWS_ACCESS_KEY_ID: $${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: $${AWS_SECRET_ACCESS_KEY:-}
+  AWS_DEFAULT_REGION: $${AWS_DEFAULT_REGION:-auto}
+  AWS_REGION: $${AWS_REGION:-auto}
+
+services:
+  console:
+    environment:
+      <<: *gcp-lakehouse-env
+      COOKIE_SECURE: $${COOKIE_SECURE:-true}
+      WORKSPACE_URL: $${WORKSPACE_PUBLIC_URL:-}
+      WORKSPACE_PUBLIC_URL: $${WORKSPACE_PUBLIC_URL:-}
+      AIRFLOW_PUBLIC_URL: $${AIRFLOW_PUBLIC_URL:-}
+      SUPERSET_PUBLIC_URL: $${SUPERSET_PUBLIC_URL:-}
+  workspace:
+    environment:
+      <<: *gcp-lakehouse-env
+      COOKIE_SECURE: $${COOKIE_SECURE:-true}
+      CONSOLE_URL: $${CONSOLE_URL:-}
+      WORKSPACE_PUBLIC_URL: $${WORKSPACE_PUBLIC_URL:-}
+  refinement:
+    environment:
+      <<: *gcp-lakehouse-env
+  vault:
+    environment:
+      <<: *gcp-lakehouse-env
+  replicon:
+    environment:
+      <<: *gcp-lakehouse-env
+  salesforce:
+    environment:
+      <<: *gcp-lakehouse-env
+  hubspot:
+    environment:
+      <<: *gcp-lakehouse-env
+  banxico:
+    environment:
+      <<: *gcp-lakehouse-env
+  inegi:
+    environment:
+      <<: *gcp-lakehouse-env
+  sap-successfactors:
+    environment:
+      <<: *gcp-lakehouse-env
+  sap-hcm:
+    environment:
+      <<: *gcp-lakehouse-env
+  sap-s4hana:
+    environment:
+      <<: *gcp-lakehouse-env
+  mcp-infra:
+    environment:
+      <<: *gcp-lakehouse-env
+      AIRFLOW_URL: $${AIRFLOW_URL:-http://airflow:8080/airflow}
+  airflow:
+    environment:
+      <<: *gcp-lakehouse-env
+      AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW_HEALTH_PATH: $${AIRFLOW_HEALTH_PATH:-/airflow/health}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+      AIRFLOW_VAR_GCS_BUCKET: $${GCS_BUCKET:-}
+      AIRFLOW_VAR_LAKEHOUSE_BUCKET: $${LAKEHOUSE_BUCKET:-}
+      AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
+      AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
+      AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
+      AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
+      AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
+      AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080$${AIRFLOW_HEALTH_PATH:-/health} || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+  airflow-init:
+    environment:
+      <<: *gcp-lakehouse-env
+      AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+      AIRFLOW_VAR_GCS_BUCKET: $${GCS_BUCKET:-}
+      AIRFLOW_VAR_LAKEHOUSE_BUCKET: $${LAKEHOUSE_BUCKET:-}
+      AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
+      AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
+      AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
+      AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
+      AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
+      AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}
+  airflow-scheduler:
+    environment:
+      <<: *gcp-lakehouse-env
+      AIRFLOW__WEBSERVER__BASE_URL: $${AIRFLOW_PUBLIC_URL:-http://airflow:8080}
+      AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
+      AIRFLOW_HEALTH_PATH: $${AIRFLOW_HEALTH_PATH:-/airflow/health}
+      AIRFLOW_VAR_LAKEHOUSE_PROVIDER: $${LAKEHOUSE_PROVIDER:-gcs}
+      AIRFLOW_VAR_GCS_BUCKET: $${GCS_BUCKET:-}
+      AIRFLOW_VAR_LAKEHOUSE_BUCKET: $${LAKEHOUSE_BUCKET:-}
+      AIRFLOW_VAR_S3_BUCKET: $${S3_BUCKET_NAME:-}
+      AIRFLOW_VAR_MINIO_BUCKET: $${MINIO_BUCKET:-}
+      AIRFLOW_VAR_MINIO_ENDPOINT: $${MINIO_ENDPOINT:-}
+      AIRFLOW_VAR_MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY:-}
+      AIRFLOW_VAR_MINIO_SECRET_KEY: $${MINIO_SECRET_KEY:-}
+      AIRFLOW_VAR_MINIO_SECURE: $${MINIO_SECURE:-true}

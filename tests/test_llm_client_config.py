@@ -104,6 +104,55 @@ async def test_tenant_anthropic_key_is_loaded_from_workspace_vault(monkeypatch):
     assert captured["user_context"] == user_context
 
 
+@pytest.mark.asyncio
+async def test_admin_anthropic_key_prefers_workspace_vault(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "global-anthropic-key")
+    llm_client = _load_llm_client()
+    captured = {}
+
+    async def fake_vault_secret(scope, key, user_context=None):
+        captured["scope"] = scope
+        captured["key"] = key
+        captured["vault_user_context"] = user_context
+        return "workspace-admin-key"
+
+    monkeypatch.setattr(llm_client, "_vault_secret", fake_vault_secret)
+
+    user_context = {
+        "id": 42,
+        "role": "admin",
+        "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+    }
+
+    assert await llm_client._resolve_anthropic_api_key(user_context) == "workspace-admin-key"
+    assert captured["scope"] == "llm"
+    assert captured["key"] == "anthropic_api_key"
+    assert captured["vault_user_context"] == user_context
+
+
+@pytest.mark.asyncio
+async def test_admin_anthropic_key_falls_back_to_env_without_workspace_key(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "global-anthropic-key")
+    llm_client = _load_llm_client()
+
+    async def fake_vault_secret(_scope, _key, _user_context=None):
+        return None
+
+    monkeypatch.setattr(llm_client, "_vault_secret", fake_vault_secret)
+
+    user_context = {
+        "id": 42,
+        "role": "admin",
+        "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+    }
+
+    assert await llm_client._resolve_anthropic_api_key(user_context) == "global-anthropic-key"
+
+
 def test_workspace_vault_headers_include_signed_security_context(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", "console_to_vault_key_with_more_than_32_chars")
     monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "s" * 64)

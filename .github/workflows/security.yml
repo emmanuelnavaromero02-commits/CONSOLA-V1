@@ -114,28 +114,9 @@ jobs:
           echo "Discovered requirements files:"
           echo "$REQUIREMENTS"
           echo "---"
-          # v1.43.4: the "cartridge-deps sprint" that v1.43.2 deferred
-          # shipped in this hotfix — fastmcp was bumped 2.5.0 → 3.x
-          # across the cartridges (Codex C1 BLOCKER fix), which
-          # transitively pulled mcp >= 1.23.0, requests >= 2.33.0,
-          # and python-dotenv >= 1.2.2. All ten suppressions are
-          # therefore retired and the audit runs fail-closed again.
+          # Keep the audit fail-closed. Legacy JWT suppressions were retired
+          # when console auth moved to PyJWT.
           IGNORE_FLAGS=(
-            # v1.43.5: both advisories currently have no fixed version in
-            # PyPI's advisory feed. PYSEC-2025-183 is disputed upstream
-            # because JWT key strength is application controlled; our
-            # auth paths enforce server-owned keys and do not accept
-            # user-supplied signing secrets. PYSEC-2025-185 affects
-            # python-jose JWE decompression; console auth uses signed JWT
-            # flows, not JWE decrypt. Keep these scoped by advisory id so
-            # new fixable CVEs still fail the gate.
-            --ignore-vuln PYSEC-2025-183
-            --ignore-vuln PYSEC-2025-185
-            # PYSEC-2026-1325 affects python-ecdsa ECDSA signing on P-256.
-            # Upstream lists no fixed version/planned fix. Console JWT
-            # uses HS256 symmetric signing by default; keep this scoped so
-            # any unrelated/fixable advisory still fails closed.
-            --ignore-vuln PYSEC-2026-1325
           )
           # v1.43.2 (DevOps R1 follow-up): use the PyPI / packaging.org
           # advisory database (pip-audit's default) instead of OSV.
