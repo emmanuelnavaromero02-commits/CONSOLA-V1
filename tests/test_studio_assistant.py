@@ -141,7 +141,7 @@ async def test_studio_assistant_exposes_monitoring_deeplinks_in_entities_step(st
 
 
 @pytest.mark.asyncio
-async def test_studio_assistant_blocks_direct_write_tool_invocation(studio_assistant_module, monkeypatch):
+async def test_studio_assistant_blocks_non_admin_direct_write_tool_invocation(studio_assistant_module, monkeypatch):
     captured = {}
     audits = []
     invoked = False
@@ -176,8 +176,8 @@ async def test_studio_assistant_blocks_direct_write_tool_invocation(studio_assis
         [],
         step=5,
         manifest={"id": "hubspot", "name": "HubSpot"},
-        actor_role="admin",
-        actor_user={"id": 7, "email": "admin@local.ai"},
+        actor_role="operator",
+        actor_user={"id": 7, "email": "operator@local.ai"},
     )
 
     assert invoked is False
@@ -186,6 +186,98 @@ async def test_studio_assistant_blocks_direct_write_tool_invocation(studio_assis
     assert captured["result"]["args_preview"]["password"] == "***"
     assert audits[-1]["status"] == "pending_approval"
     assert audits[-1]["tool_result_status"] == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_studio_admin_can_run_internal_write_tool_directly(studio_assistant_module, monkeypatch):
+    captured = {}
+    audits = []
+
+    async def fake_list_servers():
+        return _servers()
+
+    async def fake_invoke(_server, tool, args, **_kwargs):
+        return {"ok": True, "tool": tool, "dataset": args["dataset"]}
+
+    async def fake_audit(**kwargs):
+        audits.append(kwargs)
+
+    async def fake_chat(**kwargs):
+        captured["result"] = await kwargs["invoke_tool"](
+            "infra",
+            "superset_create_dataset",
+            {"dataset": "gold_margin", "password": "secret"},
+        )
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "list_servers", fake_list_servers)
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_assistant_module.audit_service, "record_event", fake_audit)
+    monkeypatch.setattr(studio_assistant_module.llm_client, "chat", fake_chat)
+
+    await studio_assistant_module.chat(
+        "crea este dataset",
+        [],
+        step=5,
+        manifest={"id": "hubspot", "name": "HubSpot"},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai", "role": "admin"},
+    )
+
+    assert captured["result"] == {
+        "ok": True,
+        "tool": "superset_create_dataset",
+        "dataset": "gold_margin",
+    }
+    assert audits[-1]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_studio_admin_destructive_tool_still_requires_approval(studio_assistant_module, monkeypatch):
+    captured = {}
+    audits = []
+
+    async def fake_list_servers():
+        return [{
+            "id": "infra",
+            "name": "MCP Infra",
+            "healthy": True,
+            "tools": [
+                {"name": "postgres_execute_ddl", "description": "DDL", "input_schema": {"type": "object"}},
+            ],
+        }]
+
+    async def fake_invoke(*_args, **_kwargs):
+        raise AssertionError("destructive tool should not be invoked directly")
+
+    async def fake_audit(**kwargs):
+        audits.append(kwargs)
+
+    async def fake_chat(**kwargs):
+        captured["result"] = await kwargs["invoke_tool"](
+            "infra",
+            "postgres_execute_ddl",
+            {"sql": "DROP TABLE gold_margin"},
+        )
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "list_servers", fake_list_servers)
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_assistant_module.audit_service, "record_event", fake_audit)
+    monkeypatch.setattr(studio_assistant_module.llm_client, "chat", fake_chat)
+
+    await studio_assistant_module.chat(
+        "ejecuta este DDL",
+        [],
+        step=4,
+        manifest={"id": "hubspot", "name": "HubSpot"},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai", "role": "admin"},
+    )
+
+    assert captured["result"]["approval_required"] is True
+    assert captured["result"]["tool"] == "infra__postgres_execute_ddl"
+    assert audits[-1]["status"] == "pending_approval"
 
 
 @pytest.mark.asyncio

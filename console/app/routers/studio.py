@@ -1559,6 +1559,32 @@ async def _studio_cartridge_self_check(args: dict[str, Any], user: dict | None) 
     return await _studio_cartridge_self_check_impl(cartridge_id, user)
 
 
+async def _studio_create_entity(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    cartridge_id = _clean_identifier(str(args.get("cartridge_id") or args.get("cartridge") or ""), label="cartridge_id")
+    _require_cartridge_visible(user, cartridge_id)
+    entity_name = _clean_identifier(str(args.get("entity") or args.get("name") or ""), label="entity")
+    spec = dict(args.get("spec") or {}) if isinstance(args.get("spec"), dict) else {}
+    for key in (
+        "display_name",
+        "mode",
+        "primary_key",
+        "dag_id",
+        "trigger_type",
+        "cron_expression",
+        "description",
+        "enabled",
+        "fields",
+    ):
+        if key in args:
+            spec[key] = args[key]
+    spec["name"] = entity_name
+    spec["cartridge"] = cartridge_id
+    created = await studio_entities.create_entity(entity_name, cartridge_id, spec, user)
+    return {"created": True, "entity": entity_name, "cartridge": cartridge_id, "record": created}
+
+
 async def _studio_create_goal_run(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
     if user is None:
         raise HTTPException(401, "Authentication required")
@@ -1638,6 +1664,34 @@ studio_assistant.register_local_tool(
         "required": ["cartridge_id"],
     },
     handler=_studio_cartridge_self_check,
+)
+
+
+studio_assistant.register_local_tool(
+    "create_entity",
+    description="Crea una entidad de Studio y la sincroniza con entity_config.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {"type": "string"},
+            "entity": {"type": "string"},
+            "display_name": {"type": "string"},
+            "mode": {"type": "string", "enum": ["full", "incremental"]},
+            "primary_key": {"type": "string"},
+            "dag_id": {"type": "string"},
+            "trigger_type": {"type": "string"},
+            "cron_expression": {"type": "string"},
+            "description": {"type": "string"},
+            "enabled": {"type": "boolean"},
+            "fields": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Campos normalizados con name/type y primary_key opcional.",
+            },
+        },
+        "required": ["cartridge_id", "entity", "fields"],
+    },
+    handler=_studio_create_entity,
 )
 
 
