@@ -268,12 +268,17 @@ async def run_entity(
         raise HTTPException(400, "mode must be 'full' or 'incremental'")
     skill = "run_full_load" if mode == "full" else "run_incremental"
     security_context = build_security_context(user)
+    body = {
+        "tenant_id": security_context.get("tenant_id"),
+        "workspace_id": security_context.get("workspace_id"),
+        "security_context": security_context,
+    }
     selected_conn_id = _normalize_conn_id(conn_id)
-    async with httpx.AsyncClient(timeout=30.0, headers=_cartridge_internal_headers()) as c:
+    async with httpx.AsyncClient(timeout=30.0, headers=_cartridge_internal_headers_for_user(user)) as c:
         r = await c.post(
             _cartridge_url(cartridge, f"/skills/{skill}/{entity}"),
             params={"conn_id": selected_conn_id} if selected_conn_id else None,
-            json={"security_context": security_context},
+            json=body,
         )
     if r.status_code >= 400:
         await audit_service.record_event(

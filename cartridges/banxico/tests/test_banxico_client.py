@@ -185,6 +185,20 @@ def test_preflight_fails_when_metadata_title_changes():
         validate_metadata(Client(), series[:1])
 
 
+def test_preflight_accepts_official_title_whitespace_variation():
+    series = load_series_configs()
+    expected = series[0]
+
+    class Client:
+        def get_metadata(self, _ids):
+            spaced = "   ".join(expected.expected_title.split(" "))
+            return {"bmx": {"series": [{"idSerie": expected.series_id, "titulo": spaced}]}}
+
+    evidence = validate_metadata(Client(), series[:1])
+
+    assert evidence[0]["series_id"] == expected.series_id
+
+
 def test_preflight_fails_when_series_is_missing():
     series = load_series_configs()
 

@@ -60,6 +60,8 @@ def _workspace_request_without_banxico():
 
 @pytest.mark.asyncio
 async def test_run_entity_maps_upstream_500_to_honest_dependency_error(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "console_to_cartridge_key")
     response = SimpleNamespace(status_code=500, text='{"detail":"internal error"}')
     monkeypatch.setattr(cartridges.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(response, **kwargs))
     monkeypatch.setattr(cartridges.audit_service, "record_event", AsyncMock())
@@ -71,6 +73,34 @@ async def test_run_entity_maps_upstream_500_to_honest_dependency_error(monkeypat
     assert exc.value.detail["error"] == "cartridge_not_ready"
     assert exc.value.detail["upstream_status"] == 500
     cartridges.audit_service.record_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_entity_forwards_scope_and_signed_context(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "console_to_cartridge_key")
+    response = SimpleNamespace(status_code=200, json=lambda: {"status": "success"})
+    monkeypatch.setattr(cartridges.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(response, **kwargs))
+    monkeypatch.setattr(cartridges.audit_service, "record_event", AsyncMock())
+
+    request = SimpleNamespace(state=SimpleNamespace(user={
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+        "active_tenant_id": "tenant-a",
+        "active_workspace_id": "workspace-a",
+        "allowed_cartridges": ["banxico"],
+    }))
+
+    await cartridges.run_entity("banxico", "series_observations", request, conn_id="default")
+
+    body = _FakeAsyncClient.last_instance.kwargs["json"]
+    forwarded_ctx = json.loads(_FakeAsyncClient.last_instance.client_kwargs["headers"]["X-Security-Context"])
+    assert body["tenant_id"] == "tenant-a"
+    assert body["workspace_id"] == "workspace-a"
+    assert body["security_context"]["tenant_id"] == "tenant-a"
+    assert forwarded_ctx["workspace_id"] == "workspace-a"
+    assert _FakeAsyncClient.last_instance.kwargs["params"] == {"conn_id": "default"}
 
 
 @pytest.mark.asyncio

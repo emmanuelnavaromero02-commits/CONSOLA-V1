@@ -8,6 +8,7 @@ Bronze publication. It intentionally does not trigger downstream refresh.
 """
 from __future__ import annotations
 
+import json
 import os
 from datetime import timedelta
 from typing import Any
@@ -78,6 +79,9 @@ def banxico_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
+        security_context = conf.get("security_context") if isinstance(conf.get("security_context"), dict) else None
+        if security_context:
+            headers["X-Security-Context"] = json.dumps(security_context, ensure_ascii=False)
         with httpx.Client(timeout=900) as client:
             response = client.post(
                 f"{CARTRIDGE_URL}/skills/{endpoint}/series_observations",

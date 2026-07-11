@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.core.banxico_client import BanxicoClient, MetadataDriftError
@@ -23,7 +24,7 @@ def validate_metadata_payload(payload: dict[str, Any], series: tuple[SeriesConfi
         if not actual:
             raise MetadataDriftError(f"Banxico series missing: {expected.series_id}")
         title = str(actual.get("titulo") or "").strip()
-        if title != expected.expected_title:
+        if _canonical_title(title) != _canonical_title(expected.expected_title):
             raise MetadataDriftError(f"Banxico metadata drift: {expected.series_id}")
         evidence.append(
             {
@@ -35,3 +36,7 @@ def validate_metadata_payload(payload: dict[str, Any], series: tuple[SeriesConfi
             }
         )
     return evidence
+
+
+def _canonical_title(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()

@@ -11,6 +11,8 @@ def test_dag_is_manual_bronze_only_and_serial():
     assert "max_active_runs=1" in source
     assert "dataset_refresh_chain" not in source
     assert "BANXICO_URL" in source
+    assert "X-Security-Context" in source
+    assert "json.dumps(security_context" in source
 
 
 def test_new_python_files_stay_under_300_lines():

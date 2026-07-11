@@ -36,7 +36,7 @@ entities:
       - series_id: SF60648
         metric_name: tiie_28d
         official_preflight_status: pending_live_banxico_token
-        expected_title: "TIIE a 28 días"
+        expected_title: "Tasas de Interés Interbancarias TIIE a 28 días - Fecha determinación"
         unit: percent_annual
         frequency: daily
         overlap_days: 7
