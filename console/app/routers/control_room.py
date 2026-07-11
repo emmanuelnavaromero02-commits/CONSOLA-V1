@@ -219,6 +219,14 @@ async def _control_room_internal_view(
             user,
             lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
         )
+    if view == "banxico_readiness":
+        from app.services.banxico_readiness import banxico_readiness
+
+        return await _control_room_cache_get_or_set(
+            "banxico-readiness",
+            user,
+            lambda: banxico_readiness(user),
+        )
     if view == "decision_intelligence_runs":
         limit = _bounded_int(params.get("limit"), 50, lower=1, upper=250)
         return await intelligence_history.list_runs(user, limit=limit)
@@ -313,6 +321,13 @@ async def control_room_sap_successfactors_talent_metadata_readiness(user: dict =
         user,
         lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
     )
+
+
+@router.get("/banxico/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_banxico_readiness(user: dict = Depends(require_authenticated)):
+    from app.services.banxico_readiness import banxico_readiness
+
+    return await _control_room_cache_get_or_set("banxico-readiness", user, lambda: banxico_readiness(user))
 
 
 @router.post(

@@ -1515,9 +1515,17 @@ class DuckDBEngine:
         layer       = ds.get("layer", "silver")
         if layer not in ("silver", "gold"):
             raise ValueError("Invalid dataset layer")
+        cartridge   = ds.get("cartridge", "unknown")
+        if cartridge == "banxico":
+            try:
+                from app.banxico_materializer import BANXICO_DATASETS, materialize_banxico_dataset
+            except ModuleNotFoundError:  # local tests import refinement.app.*
+                from refinement.app.banxico_materializer import BANXICO_DATASETS, materialize_banxico_dataset
+
+            if name in BANXICO_DATASETS:
+                return materialize_banxico_dataset(self, ds, user_context)
         sql         = ds["sql_def"]
         self._validate_safe_sql(sql)
-        cartridge   = ds.get("cartridge", "unknown")
         sources     = ds.get("sources") or []
         with self._duckdb_lock:
             con = self._conn()
