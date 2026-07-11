@@ -147,6 +147,8 @@ jobs:
               "chown ubuntu:ubuntu /home/ubuntu/.ssh/known_hosts",
               "chmod 600 /home/ubuntu/.ssh/known_hosts",
               "sudo -u ubuntu git fetch --tags origin",
+              f"sudo -u ubuntu git checkout --detach {shlex.quote(deploy_ref)}",
+              "sudo bash infra/bootstrap-keys.sh infra/terraform/deploy/.env",
           ]
           update_cmd = "sudo bash infra/terraform/deploy/update.sh"
           if service:

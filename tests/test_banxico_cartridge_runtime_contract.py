@@ -23,6 +23,21 @@ def test_banxico_local_compose_service_is_bronze_only():
     assert "omega_cartridge_banxico" in svc["environment"]["DATABASE_URL"]
 
 
+def test_banxico_aws_overlay_service_is_internal_and_vault_backed():
+    svc = _yaml("infra/terraform/deploy/docker-compose.cartridges.yml")["services"]["banxico"]
+    env = svc["environment"]
+
+    assert svc["image"].endswith("/banxico:${IMAGE_TAG:?IMAGE_TAG is required}")
+    assert "ports" not in svc
+    assert "BANXICO_API_TOKEN" not in env
+    assert env["INTERNAL_API_KEY_BANXICO_TO_CONSOLE"] == (
+        "${INTERNAL_API_KEY_BANXICO_TO_CONSOLE:?INTERNAL_API_KEY_BANXICO_TO_CONSOLE is required}"
+    )
+    assert env["CONSOLE_URL"] == "http://console:8000"
+    assert "omega_cartridge_banxico" in env["DATABASE_URL"]
+    assert "OMEGA_CARTRIDGE_BANXICO_PASSWORD" in env["DATABASE_URL"]
+
+
 def test_banxico_seed_has_no_downstream_engines():
     src = (REPO / "infra/init/95_banxico_role_and_seed.sql").read_text(encoding="utf-8")
     assert "omega_cartridge_banxico" in src
@@ -35,3 +50,46 @@ def test_banxico_dag_is_mounted_for_airflow_runtime():
     compose = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
     assert "BANXICO_URL" in compose
     assert "cartridges/banxico/dags" in compose
+
+
+def test_banxico_aws_runtime_wiring_is_declared():
+    compose = (REPO / "infra/terraform/deploy/docker-compose.aws.yml").read_text(encoding="utf-8")
+    overlay = (REPO / "infra/terraform/deploy/docker-compose.cartridges.yml").read_text(encoding="utf-8")
+    build = (REPO / "infra/terraform/deploy/build.sh").read_text(encoding="utf-8")
+
+    assert "BANXICO_URL" in compose
+    assert "http://banxico:8215" in compose
+    assert "banxico:" in overlay
+    assert "banxico sap-hcm" in build
+
+
+def test_banxico_runtime_secrets_are_bootstrapped_and_migrated():
+    secret_key = "INTERNAL_API_KEY_BANXICO_TO_CONSOLE"
+    role_key = "OMEGA_CARTRIDGE_BANXICO_PASSWORD"
+    guc = "app.omega_cartridge_banxico_password"
+    paths = [
+        REPO / "infra/bootstrap-keys.sh",
+        REPO / "scripts/aws-entrypoint.sh",
+        REPO / "infra/terraform/infra/secretsmanager.tf",
+        REPO / "infra/terraform/deploy/.env.example",
+        REPO / "infra/.env.example",
+    ]
+    for path in paths:
+        src = path.read_text(encoding="utf-8")
+        assert secret_key in src
+        assert role_key in src
+    for path in [
+        REPO / "scripts/apply_db_migrations.sh",
+        REPO / "infra/terraform/deploy/apply_db_migrations.sh",
+        REPO / "scripts/reconcile_db_passwords.sh",
+        REPO / "infra/terraform/deploy/docker-compose.aws.yml",
+    ]:
+        assert guc in path.read_text(encoding="utf-8")
+
+
+def test_banxico_runtime_role_repair_fails_closed():
+    src = (REPO / "infra/init/99zq_banxico_runtime_role_repair.sql").read_text(encoding="utf-8")
+    assert "omega_cartridge_banxico" in src
+    assert "RAISE EXCEPTION" in src
+    assert "CREATE ROLE omega_cartridge_banxico NOLOGIN" not in src
+    assert "schema_migrations" in src

@@ -69,6 +69,11 @@ INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT="$(openssl rand -hex 32)"
 
+# Banxico PR 2A: Bronze-only cartridge. Credentials live in Vault; this
+# key only lets the cartridge reveal its scoped Vault connection.
+OMEGA_CARTRIDGE_BANXICO_PASSWORD="$(openssl rand -hex 16)"
+INTERNAL_API_KEY_BANXICO_TO_CONSOLE="$(openssl rand -hex 32)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Fernet keys are URL-safe base64 of 32 random bytes. Generate them
 # with Python's stdlib so bootstrap does not depend on host cryptography/cffi.
@@ -140,6 +145,10 @@ OMEGA_CARTRIDGE_HUBSPOT_PASSWORD=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD}
 INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE=${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE}
 INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA=${INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA}
 INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT=${INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT}
+
+# === Banxico cartridge ===
+OMEGA_CARTRIDGE_BANXICO_PASSWORD=${OMEGA_CARTRIDGE_BANXICO_PASSWORD}
+INTERNAL_API_KEY_BANXICO_TO_CONSOLE=${INTERNAL_API_KEY_BANXICO_TO_CONSOLE}
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows

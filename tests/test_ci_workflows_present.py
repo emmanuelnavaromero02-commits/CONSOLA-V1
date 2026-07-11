@@ -153,6 +153,7 @@ def test_compose_validate_declares_required_pair_keys():
     for key in (
         "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
         "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+        "INTERNAL_API_KEY_BANXICO_TO_CONSOLE",
         "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
