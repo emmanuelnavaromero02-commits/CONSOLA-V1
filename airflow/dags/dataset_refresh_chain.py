@@ -405,6 +405,13 @@ def _trigger_gold_refresh_intelligence(
     datasets: list[str],
     finished_at: str,
 ) -> None:
+    conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    if bool(conf.get("skip_intelligence")) or cartridge_id == "banxico":
+        print(
+            "[refresh_chain] intelligence skipped: "
+            f"skip_intelligence={bool(conf.get('skip_intelligence'))} cartridge={cartridge_id}"
+        )
+        return
     if not datasets:
         print("[refresh_chain] intelligence skipped: no materialized datasets")
         return
