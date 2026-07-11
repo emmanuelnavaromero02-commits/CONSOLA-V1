@@ -2,7 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Landmark, KeyRound, ShieldCheck } from "lucide-react";
+import { BarChart3, Landmark, KeyRound, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,6 +24,7 @@ export function WorkspaceTokenKeys() {
   const queryClient = useQueryClient();
   const [anthropicKey, setAnthropicKey] = useState("");
   const [banxicoToken, setBanxicoToken] = useState("");
+  const [inegiToken, setInegiToken] = useState("");
   const access = useQuery({
     queryKey: ["me", "access"],
     queryFn: getMeAccess,
@@ -47,6 +48,15 @@ export function WorkspaceTokenKeys() {
     queryKey: ["operations", "vault", "banxico"],
     queryFn: async () => {
       const { data } = await api.get<VaultConnectionStatus>("/api/vault/connections/banxico");
+      return data;
+    },
+    enabled: canReadVault,
+    staleTime: 30_000,
+  });
+  const inegiKey = useQuery({
+    queryKey: ["operations", "vault", "inegi"],
+    queryFn: async () => {
+      const { data } = await api.get<VaultConnectionStatus>("/api/vault/connections/inegi");
       return data;
     },
     enabled: canReadVault,
@@ -81,12 +91,29 @@ export function WorkspaceTokenKeys() {
       toast.error(error instanceof Error ? error.message : "No se pudo guardar el token Banxico.");
     },
   });
+  const saveInegiToken = useMutation({
+    mutationFn: async (value: string) => {
+      await api.post("/api/cartridges/inegi/credentials", {
+        auth_method: "bearer_token",
+        token: value,
+      });
+    },
+    onSuccess: async () => {
+      setInegiToken("");
+      await queryClient.invalidateQueries({ queryKey: ["operations", "vault", "inegi"] });
+      toast.success("Token INEGI guardado en Vault.");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar el token INEGI.");
+    },
+  });
 
   if (!canManageLlmKey && !canManageVault) return null;
 
   const banxicoConfigured = Boolean(banxicoKey.data?.connections?.length);
+  const inegiConfigured = Boolean(inegiKey.data?.connections?.length);
   return (
-    <section className="grid gap-4 xl:grid-cols-2" aria-label="Claves del workspace">
+    <section className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3" aria-label="Claves del workspace">
       {canManageLlmKey ? (
         <SecretCard
           icon={KeyRound}
@@ -122,6 +149,25 @@ export function WorkspaceTokenKeys() {
             const value = banxicoToken.trim();
             if (!value) return toast.error("Pega el Bmx-Token antes de guardar.");
             saveBanxicoToken.mutate(value);
+          }}
+        />
+      ) : null}
+      {canManageVault ? (
+        <SecretCard
+          icon={BarChart3}
+          title="Token INEGI"
+          description="Guarda el token del Banco de Indicadores en Vault para extracción y contexto macro."
+          configured={inegiKey.isLoading ? undefined : inegiConfigured}
+          inputValue={inegiToken}
+          inputPlaceholder="Token INEGI"
+          saving={saveInegiToken.isPending}
+          buttonLabel="Guardar token"
+          onInputChange={setInegiToken}
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = inegiToken.trim();
+            if (!value) return toast.error("Pega el token INEGI antes de guardar.");
+            saveInegiToken.mutate(value);
           }}
         />
       ) : null}

@@ -22,6 +22,10 @@ const META: Record<
     name: "Banxico SIE",
     description: "Series macro oficiales. Bronze, provenance y manifest.",
   },
+  inegi: {
+    name: "INEGI",
+    description: "Indicadores oficiales. Silver/Gold gobernado para contexto macro.",
+  },
   sap_hcm: {
     name: "SAP HCM",
     description: "Recursos humanos. Empleados, puestos, organización.",

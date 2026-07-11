@@ -82,6 +82,16 @@ def test_banxico_runtime_change_builds_with_cartridge_tests():
     assert flags["cartridge_test_targets"] == "cartridges/banxico/tests"
 
 
+def test_inegi_runtime_change_builds_with_cartridge_tests():
+    flags = _flags("cartridges/inegi/app/core/inegi_client.py")
+
+    assert flags["python_runtime"] is True
+    assert flags["cartridge_tests"] is True
+    matrix = json.loads(str(flags["build_matrix"]))
+    assert {"service": "inegi", "context": "./cartridges/inegi"} in matrix["include"]
+    assert flags["cartridge_test_targets"] == "cartridges/inegi/tests"
+
+
 def test_dependency_changes_trigger_security_without_full_stack_by_default():
     flags = _flags("console/requirements.txt", "tests-e2e/package-lock.json")
 

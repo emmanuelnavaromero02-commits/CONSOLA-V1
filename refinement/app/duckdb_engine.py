@@ -1524,6 +1524,14 @@ class DuckDBEngine:
 
             if name in BANXICO_DATASETS:
                 return materialize_banxico_dataset(self, ds, user_context)
+        if cartridge == "inegi":
+            try:
+                from app.inegi_materializer import INEGI_DATASETS, materialize_inegi_dataset
+            except ModuleNotFoundError:  # local tests import refinement.app.*
+                from refinement.app.inegi_materializer import INEGI_DATASETS, materialize_inegi_dataset
+
+            if name in INEGI_DATASETS:
+                return materialize_inegi_dataset(self, ds, user_context)
         sql         = ds["sql_def"]
         self._validate_safe_sql(sql)
         sources     = ds.get("sources") or []

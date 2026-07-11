@@ -227,6 +227,14 @@ async def _control_room_internal_view(
             user,
             lambda: banxico_readiness(user),
         )
+    if view == "inegi_readiness":
+        from app.services.inegi_readiness import inegi_readiness
+
+        return await _control_room_cache_get_or_set(
+            "inegi-readiness",
+            user,
+            lambda: inegi_readiness(user),
+        )
     if view == "decision_intelligence_runs":
         limit = _bounded_int(params.get("limit"), 50, lower=1, upper=250)
         return await intelligence_history.list_runs(user, limit=limit)
@@ -328,6 +336,13 @@ async def control_room_banxico_readiness(user: dict = Depends(require_authentica
     from app.services.banxico_readiness import banxico_readiness
 
     return await _control_room_cache_get_or_set("banxico-readiness", user, lambda: banxico_readiness(user))
+
+
+@router.get("/inegi/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_inegi_readiness(user: dict = Depends(require_authenticated)):
+    from app.services.inegi_readiness import inegi_readiness
+
+    return await _control_room_cache_get_or_set("inegi-readiness", user, lambda: inegi_readiness(user))
 
 
 @router.post(

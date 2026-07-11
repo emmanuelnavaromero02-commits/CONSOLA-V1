@@ -115,6 +115,35 @@ describe("cartridge client", () => {
     expect(KNOWN_CARTRIDGES).toContain("banxico");
   });
 
+  it("adapts INEGI token metadata into a Vault token field", async () => {
+    apiMock.get.mockResolvedValueOnce({
+      data: {
+        connector: {
+          name: "INEGI Banco de Indicadores",
+          auth: {
+            type: "bearer_token",
+            env_var: "INEGI_API_TOKEN",
+            header: "token-path-segment",
+          },
+        },
+      },
+      status: 200,
+      headers: new Headers(),
+      requestId: "r",
+    });
+
+    await expect(getConnectorSchema("inegi")).resolves.toMatchObject({
+      name: "INEGI Banco de Indicadores",
+      fields: [
+        { name: "token", type: "password", label: "Bearer token", description: "INEGI_API_TOKEN", required: true },
+      ],
+    });
+  });
+
+  it("includes INEGI as a known cartridge id", () => {
+    expect(KNOWN_CARTRIDGES).toContain("inegi");
+  });
+
 
   it("adapts SuccessFactors OAuth/SAML metadata into Vault fields", async () => {
     apiMock.get.mockResolvedValueOnce({

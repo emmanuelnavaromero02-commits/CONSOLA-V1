@@ -32,7 +32,7 @@ docker compose -f docker-compose.aws.yml pull --quiet \
 
 if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-true}" == "true" ]]; then
   docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml pull --quiet \
-    replicon hubspot salesforce banxico sap-hcm sap-successfactors sap-s4hana
+    replicon hubspot salesforce banxico inegi sap-hcm sap-successfactors sap-s4hana
 fi
 
 echo "=== Release images ready ==="

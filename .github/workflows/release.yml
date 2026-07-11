@@ -284,6 +284,9 @@ jobs:
           - service: banxico
             context: .
             dockerfile: ./cartridges/banxico/Dockerfile
+          - service: inegi
+            context: .
+            dockerfile: ./cartridges/inegi/Dockerfile
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana

@@ -98,6 +98,7 @@ def _init_pgoptions() -> str:
         "app.omega_cartridge_replicon_password": "test_omega_cartridge_replicon_password",
         "app.omega_cartridge_hubspot_password": "test_omega_cartridge_hubspot_password",
         "app.omega_cartridge_banxico_password": "test_omega_cartridge_banxico_password",
+        "app.omega_cartridge_inegi_password": "test_omega_cartridge_inegi_password",
     }
     return " ".join(f"-c {key}={value}" for key, value in passwords.items())
 

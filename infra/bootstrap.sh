@@ -74,6 +74,10 @@ INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT="$(openssl rand -hex 32)"
 OMEGA_CARTRIDGE_BANXICO_PASSWORD="$(openssl rand -hex 16)"
 INTERNAL_API_KEY_BANXICO_TO_CONSOLE="$(openssl rand -hex 32)"
 
+# INEGI cartridge: official Banco de Indicadores credentials live in Vault.
+OMEGA_CARTRIDGE_INEGI_PASSWORD="$(openssl rand -hex 16)"
+INTERNAL_API_KEY_INEGI_TO_CONSOLE="$(openssl rand -hex 32)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Fernet keys are URL-safe base64 of 32 random bytes. Generate them
 # with Python's stdlib so bootstrap does not depend on host cryptography/cffi.
@@ -149,6 +153,10 @@ INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT=${INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT}
 # === Banxico cartridge ===
 OMEGA_CARTRIDGE_BANXICO_PASSWORD=${OMEGA_CARTRIDGE_BANXICO_PASSWORD}
 INTERNAL_API_KEY_BANXICO_TO_CONSOLE=${INTERNAL_API_KEY_BANXICO_TO_CONSOLE}
+
+# === INEGI cartridge ===
+OMEGA_CARTRIDGE_INEGI_PASSWORD=${OMEGA_CARTRIDGE_INEGI_PASSWORD}
+INTERNAL_API_KEY_INEGI_TO_CONSOLE=${INTERNAL_API_KEY_INEGI_TO_CONSOLE}
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows
