@@ -652,6 +652,7 @@ from app.services.s3_client import get_lakehouse_explorer_client, get_minio_clie
 from app.services.security_context import (
     build_security_context,
     rls_user_context,
+    sign_security_context,
     verify_signed_security_context,
 )
 from app.middleware.request_id import request_id_var
@@ -5061,6 +5062,7 @@ _MICROSERVICE_CARTRIDGES = {
     "sap_hcm": os.environ.get("SAP_HCM_URL", "http://sap-hcm:8202"),
     "sap_s4hana": os.environ.get("SAP_S4HANA_URL", "http://sap-s4hana:8204"),
 }
+_CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico"}
 
 
 def _internal_headers() -> dict:
@@ -5198,13 +5200,20 @@ async def studio_upload_spec(
     return {"uploaded": key, "filename": file.filename, "size": len(content)}
 
 
-def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:
+def _require_cartridge_visible(
+    user: dict | None,
+    cartridge_id: str,
+    *,
+    allow_credential_bootstrap: bool = False,
+) -> None:
     if user is None:
         return
     ctx = build_security_context(user)
     if _is_security_admin_context(ctx):
         return
     if not _cartridge_visible_for_context(ctx, cartridge_id):
+        if allow_credential_bootstrap and cartridge_id in _CREDENTIAL_BOOTSTRAP_CARTRIDGES:
+            return
         raise HTTPException(403, "cartridge not allowed")
 
 
@@ -5782,12 +5791,24 @@ def _tenant_vault_prefix(user: dict) -> str | None:
     return _tenant_vault_prefix_impl(user, is_global_admin=_is_global_iam_admin)
 
 
-def _vault_headers_for_user(user: dict) -> dict[str, str]:
+def _vault_headers_for_user(user: dict, cartridge: str | None = None) -> dict[str, str]:
+    ctx = build_security_context(user)
+    if cartridge in _CREDENTIAL_BOOTSTRAP_CARTRIDGES:
+        allowed = {
+            str(item).strip()
+            for item in (ctx.get("allowed_cartridges") or [])
+            if str(item).strip()
+        }
+        if "*" not in allowed and cartridge not in allowed:
+            allowed.add(str(cartridge))
+            ctx = {**ctx, "allowed_cartridges": sorted(allowed)}
+            ctx.pop("_signature", None)
+            ctx.pop("_signed_at", None)
+            ctx.pop("_signature_version", None)
+            ctx = sign_security_context(ctx)
     return {
         **_hdr_for("VAULT"),
-        "x-security-context": json.dumps(
-            build_security_context(user), ensure_ascii=False
-        ),
+        "x-security-context": json.dumps(ctx, ensure_ascii=False),
     }
 
 
@@ -5826,10 +5847,10 @@ def _tenant_vault_scope(user: dict, scope: str) -> str:
 async def api_vault_list_connections(
     cartridge: str, user: dict = Depends(require_authenticated)
 ):
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     try:
         async with httpx.AsyncClient(
-            headers=_vault_headers_for_user(user), timeout=5
+            headers=_vault_headers_for_user(user, cartridge), timeout=5
         ) as c:
             r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
         if r.status_code in (404, 204):
@@ -5865,9 +5886,9 @@ async def api_vault_reveal_connection(
     cartridge: str, conn_id: str, user: dict = Depends(_internal_or_authenticated)
 ):
     """Returns full credentials including token (not masked)."""
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
         r = await c.get(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
         )
@@ -5910,9 +5931,9 @@ async def api_vault_upsert_connection(
     body: dict,
     user: dict = Depends(require_authenticated),
 ):
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
         r = await c.put(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}",
             json=body,
@@ -5950,9 +5971,9 @@ async def api_vault_upsert_connection(
 async def api_vault_delete_connection(
     cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)
 ):
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
         r = await c.delete(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
         )

@@ -27,6 +27,16 @@ class _FakeAsyncClient:
         self.kwargs = kwargs
         return self._response
 
+    async def put(self, url, **kwargs):
+        self.url = url
+        self.kwargs = kwargs
+        return self._response
+
+    async def delete(self, url, **kwargs):
+        self.url = url
+        self.kwargs = kwargs
+        return self._response
+
 
 def _request():
     return SimpleNamespace(state=SimpleNamespace(user={
@@ -34,6 +44,17 @@ def _request():
         "email": "admin@example.com",
         "role": "admin",
         "allowed_cartridges": ["replicon"],
+    }))
+
+
+def _workspace_request_without_banxico():
+    return SimpleNamespace(state=SimpleNamespace(user={
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+        "active_tenant_id": "tenant-a",
+        "active_workspace_id": "workspace-a",
+        "allowed_cartridges": ["sap_successfactors"],
     }))
 
 
@@ -86,3 +107,44 @@ async def test_test_connection_forwards_selected_conn_id(monkeypatch):
     assert forwarded_ctx["_signature"]
     cartridges.audit_service.record_event.assert_awaited_once()
     assert cartridges.audit_service.record_event.await_args.kwargs["metadata"]["conn_id"] == "femsa_sf"
+
+
+@pytest.mark.asyncio
+async def test_banxico_credentials_bootstrap_can_save_without_workspace_cartridge(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", "console_to_vault_key")
+    response = SimpleNamespace(is_success=True, status_code=200, json=lambda: {"saved": True})
+    monkeypatch.setattr(cartridges.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(response, **kwargs))
+    monkeypatch.setattr(cartridges.audit_service, "record_event", AsyncMock())
+
+    result = await cartridges.save_credentials(
+        "banxico",
+        {"auth_method": "bmx_token", "token": "secret-banxico-token"},
+        _workspace_request_without_banxico(),
+    )
+
+    assert result == {"ok": True, "encrypted_count": 2, "conn_id": "default"}
+    assert _FakeAsyncClient.last_instance.url.endswith("/connections/banxico/default")
+    forwarded_ctx = json.loads(_FakeAsyncClient.last_instance.client_kwargs["headers"]["x-security-context"])
+    assert forwarded_ctx["tenant_id"] == "tenant-a"
+    assert forwarded_ctx["workspace_id"] == "workspace-a"
+    assert "banxico" in forwarded_ctx["allowed_cartridges"]
+    assert _FakeAsyncClient.last_instance.kwargs["json"]["token"] == "secret-banxico-token"
+    audit_kwargs = cartridges.audit_service.record_event.await_args.kwargs
+    assert audit_kwargs["metadata"]["masked_values"]["token"] == "***"
+    assert "secret-banxico-token" not in json.dumps(audit_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_non_bootstrap_credentials_still_respect_workspace_cartridge_scope(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", "console_to_vault_key")
+
+    with pytest.raises(HTTPException) as exc:
+        await cartridges.save_credentials(
+            "hubspot",
+            {"auth_method": "bearer_token", "token": "secret-token"},
+            _workspace_request_without_banxico(),
+        )
+
+    assert exc.value.status_code == 403

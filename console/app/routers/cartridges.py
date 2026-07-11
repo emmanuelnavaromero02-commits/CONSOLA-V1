@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.security import get_internal_api_key
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
 from app.services import audit_service
-from app.services.security_context import build_security_context
+from app.services.security_context import build_security_context, sign_security_context
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 from app.services.service_urls import running_in_container, vault_url
@@ -43,6 +43,7 @@ _CARTRIDGE_PORTS = {
     "sap_s4hana": 8204,
     "salesforce": 8205,
 }
+_CREDENTIAL_BOOTSTRAP_CARTRIDGES = {"banxico"}
 _CONN_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
@@ -54,11 +55,18 @@ def _allowed_cartridges(user: dict | None) -> set[str] | None:
     return allowed
 
 
-def _require_cartridge_visible(user: dict | None, cartridge: str) -> None:
+def _require_cartridge_visible(
+    user: dict | None,
+    cartridge: str,
+    *,
+    allow_credential_bootstrap: bool = False,
+) -> None:
     if cartridge not in _CARTRIDGE_PORTS:
         raise HTTPException(404, "Unknown cartridge")
     allowed = _allowed_cartridges(user)
     if allowed is not None and cartridge not in allowed:
+        if allow_credential_bootstrap and cartridge in _CREDENTIAL_BOOTSTRAP_CARTRIDGES:
+            return
         raise HTTPException(403, "cartridge not allowed")
 
 
@@ -125,6 +133,25 @@ def _vault_headers() -> dict[str, str]:
     if not key:
         key = get_internal_api_key()
     return {"x-api-key": key, "x-internal-service": "console"}
+
+
+def _vault_headers_for_credential_write(user: dict | None, cartridge: str) -> dict[str, str]:
+    headers = _vault_headers()
+    ctx = build_security_context(user)
+    allowed = {
+        str(item).strip()
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    if cartridge in _CREDENTIAL_BOOTSTRAP_CARTRIDGES and "*" not in allowed:
+        allowed.add(cartridge)
+        ctx = {**ctx, "allowed_cartridges": sorted(allowed)}
+        ctx.pop("_signature", None)
+        ctx.pop("_signed_at", None)
+        ctx.pop("_signature_version", None)
+        ctx = sign_security_context(ctx)
+    headers["x-security-context"] = json.dumps(ctx, ensure_ascii=False)
+    return headers
 
 
 def _scrub_credential_payload(payload: dict) -> dict:
@@ -384,12 +411,12 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
 
     Returns: ``{"ok": true, "encrypted_count": N, "conn_id": "default"}``
     """
-    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
+    user = getattr(request.state, "user", None) or {}
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     if not isinstance(body, dict) or not body:
         raise HTTPException(400, "Credential payload must be a non-empty object")
     credential_payload = _validate_credential_payload(cartridge, body)
 
-    user = getattr(request.state, "user", None) or {}
     audit_metadata = {
         "conn_id": _DEFAULT_CONN_ID,
         "fields_written": sorted(credential_payload.keys()),
@@ -399,7 +426,10 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
     }
 
     try:
-        async with httpx.AsyncClient(headers=_vault_headers(), timeout=10.0) as c:
+        async with httpx.AsyncClient(
+            headers=_vault_headers_for_credential_write(user, cartridge),
+            timeout=10.0,
+        ) as c:
             r = await c.put(
                 f"{_VAULT_URL}/connections/{cartridge}/{_DEFAULT_CONN_ID}",
                 json=credential_payload,
@@ -441,13 +471,15 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
 )
 async def delete_credentials(cartridge: str, request: Request):
     """Remove cartridge credentials from the vault. 404 if absent."""
-    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
-
     user = getattr(request.state, "user", None) or {}
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     not_found = False
     ok = False
     try:
-        async with httpx.AsyncClient(headers=_vault_headers(), timeout=10.0) as c:
+        async with httpx.AsyncClient(
+            headers=_vault_headers_for_credential_write(user, cartridge),
+            timeout=10.0,
+        ) as c:
             r = await c.delete(
                 f"{_VAULT_URL}/connections/{cartridge}/{_DEFAULT_CONN_ID}"
             )

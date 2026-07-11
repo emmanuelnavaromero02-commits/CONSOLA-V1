@@ -33,9 +33,9 @@ def _bind_to_main(fn):
 @router.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
 @_bind_to_main
 async def api_vault_list_connections(cartridge: str, user: dict = Depends(require_authenticated)):
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     try:
-        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
             r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
         if r.status_code in (404, 204):
             return {"connections": []}
@@ -66,9 +66,9 @@ async def api_vault_list_connections(cartridge: str, user: dict = Depends(requir
 @_bind_to_main
 async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(_internal_or_authenticated)):
     """Returns full credentials including token (not masked)."""
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
         r = await c.get(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
         )
@@ -101,9 +101,9 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
 @router.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
         r = await c.put(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}",
             json=body,
@@ -120,9 +120,9 @@ async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, 
 @router.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_delete_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
-    _require_cartridge_visible(user, cartridge)
+    _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
         r = await c.delete(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
         )
