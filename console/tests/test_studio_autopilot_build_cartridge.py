@@ -107,13 +107,48 @@ async def test_studio_autopilot_apply_requests_approval_without_writing(monkeypa
                 "sample": {"results": [{"order_id": "o1", "amount": 10.0}]},
             },
         },
-        {"id": "u1", "role": "workspace_admin", "allowed_cartridges": ["*"]},
+        {"id": "u1", "role": "analyst", "allowed_cartridges": ["*"]},
     )
 
     assert result["ok"] is True, result
     assert result["approval_required"] is True
     assert result["tool"] == "studio__create_full_cartridge"
     assert result["args_preview"]["id"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_studio_autopilot_apply_writes_directly_for_workspace_admin(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    studio = importlib.import_module("app.routers.studio")
+    captured = {}
+
+    async def create_full_cartridge(args, actor_user=None):
+        captured["args"] = args
+        captured["actor_user"] = actor_user
+        return {"created": True, "counts": {"entities": 1, "datasets": 2}}
+
+    monkeypatch.setattr(studio.cartridge_service, "create_full_cartridge", create_full_cartridge)
+
+    result = await studio._studio_autopilot_build_cartridge(
+        {
+            "target_cartridge_id": "acme",
+            "name": "ACME",
+            "apply": True,
+            "descriptor": {
+                "kind": "rest_sample",
+                "entity_name": "orders",
+                "sample": {"results": [{"order_id": "o1", "amount": 10.0}]},
+            },
+        },
+        {"id": "u1", "role": "workspace_admin", "allowed_cartridges": ["*"]},
+    )
+
+    assert result["ok"] is True, result
+    assert result["dry_run"] is False
+    assert result["applied"] is True
+    assert "approval_required" not in result
+    assert captured["args"]["id"] == "acme"
+    assert captured["actor_user"]["role"] == "workspace_admin"
 
 
 @pytest.mark.asyncio
