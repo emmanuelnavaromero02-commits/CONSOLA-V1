@@ -63,6 +63,23 @@ def test_sec_edgar_airflow_runtime_wiring_is_declared():
     assert "banxico inegi sec-edgar sap-hcm" in build
 
 
+def test_sec_edgar_release_image_and_deploy_paths_are_declared():
+    release = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    deploy = (REPO / "scripts/deploy_main_aws.py").read_text(encoding="utf-8")
+
+    assert "service: sec_edgar" in release
+    assert "dockerfile: ./cartridges/sec_edgar/Dockerfile" in release
+    assert "banxico inegi sec-edgar sap-hcm" in deploy
+
+
+def test_service_deploy_can_skip_dirty_host_worktree_checkout():
+    update = (REPO / "infra/terraform/deploy/update.sh").read_text(encoding="utf-8")
+    workflow = (REPO / ".github/workflows/deploy-aws.yml").read_text(encoding="utf-8")
+
+    assert "OMEGA_SKIP_WORKTREE_UPDATE" in update
+    assert "sudo OMEGA_SKIP_WORKTREE_UPDATE=1 bash" in workflow
+
+
 def test_sec_edgar_runtime_secrets_are_bootstrapped_and_migrated():
     secret_key = "INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE"
     role_key = "OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD"

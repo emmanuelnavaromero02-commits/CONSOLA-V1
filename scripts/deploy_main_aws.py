@@ -345,7 +345,7 @@ fi
 
 available_services="$(docker compose $COMPOSE_FILES config --services)"
 services=""
-for service in console workspace refinement vault mcp-infra airflow airflow-scheduler sap-successfactors replicon hubspot sap-hcm sap-s4hana salesforce; do
+for service in console workspace refinement vault mcp-infra airflow airflow-scheduler sap-successfactors replicon hubspot salesforce banxico inegi sec-edgar sap-hcm sap-s4hana; do
   if printf '%s\\n' "$available_services" | grep -qx "$service"; then
     services="$services $service"
   fi

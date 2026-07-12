@@ -287,6 +287,9 @@ jobs:
           - service: inegi
             context: .
             dockerfile: ./cartridges/inegi/Dockerfile
+          - service: sec_edgar
+            context: .
+            dockerfile: ./cartridges/sec_edgar/Dockerfile
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana
