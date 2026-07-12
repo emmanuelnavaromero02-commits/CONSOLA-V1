@@ -488,9 +488,10 @@ Step RESUMEN — visión general del cartucho activo.
   mínima si hay metadatos completos; esta tool valida integridad y seed.sql.
 - Crear cartucho desde una frase/spec/fuente: primero usa
   `studio__autopilot_build_cartridge(intent, descriptor/spec/sample, dry_run=true)`.
-  Esa tool genera un blueprint completo sin escribir en DB. Si el usuario aprueba
-  materializarlo, pasa el blueprint por goal run/aprobación antes de escribir con
-  `studio__create_full_cartridge`.
+  Esa tool genera un blueprint completo sin escribir en DB. Para admin/super-admin,
+  si el usuario pide materializarlo, llama la misma tool con `apply=true` o usa
+  `studio__create_full_cartridge` directo; no uses approval_key para esta creación
+  interna no destructiva. Para analyst/no-admin, respeta `approval_required`.
 - Importar ZIP: indica al usuario que use el botón "Importar ZIP".
 """,
     2: """\
@@ -713,8 +714,10 @@ Restricciones globales:
   YAML si esa introspección falla o el esquema devuelto no contiene metadatos suficientes.
 - Si el usuario pide crear un cartucho nuevo desde una frase, spec, sample o fuente,
   primero llama `studio__autopilot_build_cartridge` en dry-run. Esa tool NO escribe:
-  devuelve blueprint completo. Para materializarlo, usa goal run/aprobación y después
-  `studio__create_full_cartridge`.
+  devuelve blueprint completo. Para admin/super-admin, si el usuario pide materializarlo,
+  llama `studio__autopilot_build_cartridge(..., apply=true)` o
+  `studio__create_full_cartridge` directo; no uses goal run/aprobación para esta
+  creación interna no destructiva. Para analyst/no-admin, respeta `approval_required`.
 - Si el usuario pide crear un DAG en el Paso 2, primero llama a
   `studio__introspect_source` para obtener el esquema, luego usa
   `studio__generate_dag_code` con ese esquema y ejecuta silenciosamente

@@ -88,6 +88,14 @@ _MAX_METADATA_BYTES = 5 * 1024 * 1024
 _BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 
+def _is_studio_admin_user(user: dict | None) -> bool:
+    values = {
+        str((user or {}).get("role") or "").strip().lower(),
+        str((user or {}).get("workspace_role") or "").strip().lower(),
+    }
+    return bool(values & {"admin", "super_admin", "super-admin", "tenant_admin", "workspace_admin", "owner"})
+
+
 @dataclass
 class _PinnedHTTPResponse:
     status_code: int
@@ -952,6 +960,21 @@ async def _studio_autopilot_build_cartridge(args: dict[str, Any], user: dict | N
         ),
     }
     if apply_requested and blueprint:
+        if _is_studio_admin_user(user):
+            try:
+                result = await cartridge_service.create_full_cartridge(blueprint, actor_user=user)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            return {
+                **response,
+                "dry_run": False,
+                "applied": True,
+                "next_action": "Cartridge created by Studio Autopilot.",
+                "result": _mark_partial_if_datasets_missing(
+                    blueprint,
+                    result if isinstance(result, dict) else {"result": result},
+                ),
+            }
         response.update({
             "approval_required": True,
             "tool": "studio__create_full_cartridge",
