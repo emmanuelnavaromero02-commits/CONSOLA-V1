@@ -106,6 +106,10 @@ def _init_pgoptions() -> str:
         "app.omega_superset_meta_password": "test_omega_superset_meta_password",
         "app.omega_cartridge_replicon_password": "test_omega_cartridge_replicon_password",
         "app.omega_cartridge_hubspot_password": "test_omega_cartridge_hubspot_password",
+        "app.omega_cartridge_salesforce_password": "test_omega_cartridge_salesforce_password",
+        "app.omega_cartridge_banxico_password": "test_omega_cartridge_banxico_password",
+        "app.omega_cartridge_inegi_password": "test_omega_cartridge_inegi_password",
+        "app.omega_cartridge_sec_edgar_password": "test_omega_cartridge_sec_edgar_password",
     }
     return " ".join(f"-c {key}={value}" for key, value in passwords.items())
 
@@ -124,6 +128,12 @@ async def _wait_for_schema(dsn: str, container_id: str) -> None:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         state = _docker("inspect", "-f", "{{.State.Status}}", container_id, check=False)
+        if state.returncode != 0:
+            logs = _docker("logs", "--tail=200", container_id, check=False)
+            raise RuntimeError(
+                "postgres init container disappeared before schema was ready:"
+                f"\n{logs.stdout}\n{logs.stderr or state.stderr}"
+            )
         if state.stdout.strip() in {"exited", "dead"}:
             logs = _docker("logs", "--tail=200", container_id, check=False)
             raise RuntimeError(
