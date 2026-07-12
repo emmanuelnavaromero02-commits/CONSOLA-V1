@@ -574,6 +574,7 @@ def _set_rls_scope(cur, tenant_id: str, workspace_id: str) -> None:
             "model_version": {"type": "string"},
             "input_variables": {"type": "object"},
             "assumptions": {"type": "object"},
+            "use_external_market_context": {"type": "boolean", "default": False},
             "output_metric": {
                 "type": "string",
                 "enum": ["net_value", "delta", "cost", "delay_days"],
@@ -596,6 +597,7 @@ async def simulation__monte_carlo_run(
     seed: int = 0,
     model_version: str | None = None,
     assumptions: dict[str, Any] | None = None,
+    use_external_market_context: bool = False,
     output_metric: str = "net_value",
     breach_threshold: float | None = None,
     breach_direction: str | None = None,
@@ -613,6 +615,7 @@ async def simulation__monte_carlo_run(
         "model_version": model_version,
         "input_variables": input_variables,
         "assumptions": assumptions or {},
+        "use_external_market_context": bool(use_external_market_context),
         "output_metric": output_metric,
         "breach_threshold": breach_threshold,
         "breach_direction": breach_direction,
