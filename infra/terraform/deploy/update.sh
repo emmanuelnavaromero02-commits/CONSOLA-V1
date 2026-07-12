@@ -45,11 +45,15 @@ if [[ "${APP_ENV_NORMALISED}" == "production" || "${APP_ENV_NORMALISED}" == "pro
 fi
 
 cd "${REPO_DIR}"
-sudo -u ubuntu git fetch --tags origin
-if [[ -n "${DEPLOY_REF:-}" ]]; then
-  sudo -u ubuntu git checkout --detach "${DEPLOY_REF}"
+if [[ "${OMEGA_SKIP_WORKTREE_UPDATE:-0}" == "1" ]]; then
+  echo "Skipping worktree update because OMEGA_SKIP_WORKTREE_UPDATE=1"
 else
-  sudo -u ubuntu git pull --ff-only
+  sudo -u ubuntu git fetch --tags origin
+  if [[ -n "${DEPLOY_REF:-}" ]]; then
+    sudo -u ubuntu git checkout --detach "${DEPLOY_REF}"
+  else
+    sudo -u ubuntu git pull --ff-only
+  fi
 fi
 cd "${DEPLOY_DIR}"
 

@@ -161,7 +161,12 @@ jobs:
                   "--password-stdin >/dev/null"
               ),
           ]
-          update_cmd = "sudo bash infra/terraform/deploy/update.sh"
+          if service:
+              commands.append("export OMEGA_SKIP_WORKTREE_UPDATE=1")
+          if service:
+              update_cmd = "sudo OMEGA_SKIP_WORKTREE_UPDATE=1 bash infra/terraform/deploy/update.sh"
+          else:
+              update_cmd = "sudo bash infra/terraform/deploy/update.sh"
           if service:
               update_cmd += " " + shlex.quote(service)
           deploy_log = "/tmp/omega-deploy.log"
