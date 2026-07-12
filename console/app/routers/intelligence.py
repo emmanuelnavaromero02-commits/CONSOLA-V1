@@ -181,6 +181,7 @@ class MonteCarloRunRequest(_StrictModel):
     model_version: str | None = Field(default=None, max_length=80)
     input_variables: dict[str, dict] = Field(default_factory=dict)
     assumptions: dict = Field(default_factory=dict)
+    use_external_market_context: bool = False
     output_metric: Literal["net_value", "delta", "cost", "delay_days"] = "net_value"
     breach_threshold: float | None = None
     breach_direction: Literal["below", "above"] | None = None

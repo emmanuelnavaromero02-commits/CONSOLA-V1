@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
+from app.services.intelligence import market_context
 from app.services.intelligence import monte_carlo
 from app.services.intelligence.utils import json_dumps, public_json
 
@@ -159,6 +160,7 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(403, "manual_fixture is disabled outside development/test")
     clean["source_type"] = source_type
     clean["source_id"] = source_id
+    clean["use_external_market_context"] = bool(clean.get("use_external_market_context"))
     clean["evidence_refs"] = _validate_evidence_refs(clean.get("evidence_refs"))
     return clean
 
@@ -174,6 +176,7 @@ async def run_simulation(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             source_id=clean["source_id"],
         ):
             raise HTTPException(404, "monte carlo source not found")
+        clean = await market_context.resolve_market_context_inputs(clean, user)
         try:
             result = monte_carlo.run_monte_carlo(clean)
         except monte_carlo.MonteCarloValidationError as exc:

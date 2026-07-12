@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
+from app.services.intelligence import market_context
 from app.services.intelligence import monte_carlo_service
 
 
@@ -99,6 +100,7 @@ def test_monte_carlo_router_exposes_scoped_endpoints_and_csrf_guard():
     assert '@router.get("/monte-carlo"' in router
     assert '@v1_router.get(\n    "/monte-carlo"' in router
     assert "MonteCarloRunRequest(_StrictModel)" in router
+    assert "use_external_market_context" in router
     assert 'Depends(require_permission("control_room.write"))' in router
     assert 'Depends(require_permission("datasets.read"))' in router
     assert "Depends(require_csrf)" in router
@@ -111,6 +113,7 @@ def test_monte_carlo_service_uses_scoped_db_and_blocks_scope_payloads():
     ).read_text(encoding="utf-8")
 
     assert "from app.services.db_scope import scoped_db_for_user" in service
+    assert "resolve_market_context_inputs" in service
     assert "async with scoped_db_for_user(pool, user)" in service
     assert "tenant_id" in service
     assert "security_context" in service
@@ -140,6 +143,80 @@ def test_monte_carlo_service_uses_scoped_db_and_blocks_scope_payloads():
                 ],
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_market_context_variable_requires_explicit_opt_in():
+    payload = {
+        **_payload(),
+        "input_variables": {
+            "cost_per_day": {
+                "type": "external_market_context",
+                "metric_name": "usd_mxn_fix",
+            }
+        },
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        await market_context.resolve_market_context_inputs(payload, {"id": 1})
+
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_market_context_variable_resolves_to_distribution(monkeypatch):
+    async def fake_query(dataset, user, limit=200):
+        assert dataset == "banxico_market_context"
+        return [
+            {
+                "metric_name": "usd_mxn_fix",
+                "value": "18.50",
+                "unit": "mxn_per_usd",
+                "as_of": "2026-07-10",
+                "usable": True,
+                "freshness_status": "ready",
+                "confidence": "0.95",
+                "source_authority": "Banxico",
+                "source_host": "www.banxico.org.mx",
+                "payload_hash": "abc123payload",
+                "request_hash": "req123",
+            }
+        ]
+
+    monkeypatch.setattr(market_context, "query_gold_dataset_rows", fake_query)
+    clean = await market_context.resolve_market_context_inputs(
+        {
+            **_payload(),
+            "use_external_market_context": True,
+            "input_variables": {
+                "cost_per_day": {
+                    "type": "external_market_context",
+                    "metric_name": "usd_mxn_fix",
+                    "uncertainty_pct": "0.10",
+                }
+            },
+        },
+        {"id": 1, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
+    )
+
+    variable = clean["input_variables"]["cost_per_day"]
+    assert variable["type"] == "triangular"
+    assert variable["low"] == 16.65
+    assert variable["mode"] == 18.5
+    assert variable["high"] == 20.35
+    assert clean["evidence_refs"][0]["type"] == "market_context"
+    assumption = clean["assumptions"]["external_market_context"][0]
+    assert assumption["metric_name"] == "usd_mxn_fix"
+    assert assumption["unit"] == "mxn_per_usd"
+    assert "source_url" not in assumption
+    assert "token" not in assumption
+
+
+def test_mcp_monte_carlo_tool_exposes_external_market_opt_in():
+    source = (REPO / "mcp-infra/app/tools/control_room.py").read_text(encoding="utf-8")
+
+    assert "use_external_market_context" in source
+    assert '"use_external_market_context": bool(use_external_market_context)' in source
 
 
 def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypatch):
