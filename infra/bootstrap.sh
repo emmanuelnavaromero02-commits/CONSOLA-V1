@@ -111,7 +111,7 @@ SECURITY_CONTEXT_SIGNING_KEY=${SECURITY_CONTEXT_SIGNING_KEY}
 SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
 # Optional: set to the previous Superset SECRET_KEY before rotating
 # SUPERSET_SECRET_KEY against an existing Superset metastore, then run
-# superset-init so `superset re-encrypt-secrets` can migrate encrypted rows.
+# superset-init so superset re-encrypt-secrets can migrate encrypted rows.
 SUPERSET_PREVIOUS_SECRET_KEY=
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -165,7 +165,7 @@ INTERNAL_API_KEY_INEGI_TO_CONSOLE=${INTERNAL_API_KEY_INEGI_TO_CONSOLE}
 # === SEC EDGAR cartridge ===
 OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD=${OMEGA_CARTRIDGE_SEC_EDGAR_PASSWORD}
 INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE=${INTERNAL_API_KEY_SEC_EDGAR_TO_CONSOLE}
-SEC_EDGAR_USER_AGENT="OMEGA ${ADMIN_EMAIL}"
+SEC_EDGAR_USER_AGENT="OMEGA admin@modecissions.local"
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows
