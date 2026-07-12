@@ -44,6 +44,7 @@ def _load_service(service: str, monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA", "console_to_mcp_transport_key_64_chars_cccccccccc")
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", "console_to_vault_transport_key_64_chars_dddddddddd")
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", "console_to_refinement_transport_key_64_chars_eeee")
+    monkeypatch.setenv("INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT", "mcp_to_refinement_transport_key_64_chars_fffff")
     monkeypatch.setenv("VAULT_ENCRYPTION_KEY", "8sXi-0kBYU5DJ5dY7CCRkW7XHJsXxLPmO6r9OYx-3a4=")
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("AIRFLOW_USER", "airflow")
@@ -99,6 +100,19 @@ def test_refinement_rejects_signed_at_tampering_even_in_test(monkeypatch):
         main._security_context({"security_context": ctx, "_verified_internal_service": "console"})
 
     assert exc.value.status_code == 403
+
+
+def test_refinement_accepts_console_context_forwarded_by_mcp_infra(monkeypatch):
+    main = _load_service("refinement", monkeypatch)
+    ctx = _signed(_trusted_ctx())
+
+    resolved = main._security_context({
+        "security_context": ctx,
+        "_verified_internal_service": "mcp-infra",
+    })
+
+    assert resolved["source"] == "console"
+    assert resolved["tenant_id"] == _trusted_ctx()["tenant_id"]
 
 
 def test_vault_rejects_missing_security_context_signing_key_even_in_test(monkeypatch):
