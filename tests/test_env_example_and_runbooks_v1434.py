@@ -259,6 +259,16 @@ def test_bootstrap_fernet_generation_uses_stdlib_not_host_cryptography():
     )
 
 
+def test_bootstrap_heredoc_does_not_execute_comment_backticks():
+    src = _bootstrap_sh()
+    heredoc = src.split('cat > "${ENV_FILE}" <<EOF', 1)[1].split("\nEOF", 1)[0]
+    assert "`" not in heredoc.replace("\\`", ""), (
+        "infra/bootstrap.sh heredoc comments must not contain raw backticks; "
+        "bash executes them while generating infra/.env"
+    )
+    assert "${ADMIN_EMAIL}" not in heredoc
+
+
 def test_env_example_documents_superset_previous_secret_key():
     src = _env_example()
     assert re.search(r"^SUPERSET_PREVIOUS_SECRET_KEY=", src, re.MULTILINE), (
