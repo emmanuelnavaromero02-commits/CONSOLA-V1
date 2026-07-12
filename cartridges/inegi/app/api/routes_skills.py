@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
@@ -44,7 +45,10 @@ def test_connection(
         )
         return JSONResponse({"status": "ok", "series": evidence})
     except Exception as exc:
-        return JSONResponse({"status": "error", "error": type(exc).__name__}, status_code=503)
+        return JSONResponse(
+            {"status": "error", "error": type(exc).__name__, "message": _safe_error_message(exc)},
+            status_code=503,
+        )
 
 
 @router.post("/run_incremental/{entity}")
@@ -94,10 +98,25 @@ def _run(
         )
     except Exception as exc:
         return JSONResponse(
-            {"status": "failed", "entity": entity, "error": type(exc).__name__},
+            {
+                "status": "failed",
+                "entity": entity,
+                "error": type(exc).__name__,
+                "message": _safe_error_message(exc),
+            },
             status_code=502,
         )
 
 
 def _skill(name: str, method: str, description: str) -> dict:
     return {"name": name, "method": method, "description": description, "summary": description}
+
+
+def _safe_error_message(exc: Exception) -> str:
+    text = str(exc).strip()
+    if not text:
+        return type(exc).__name__
+    return _SECRET_RE.sub("<redacted>", text)[:240]
+
+
+_SECRET_RE = re.compile(r"(?i)(token|password|secret|api[_-]?key)=([^&\s]+)|[A-Za-z0-9_\-]{32,}")

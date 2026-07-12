@@ -119,13 +119,16 @@ class INEGIClient:
             if seconds is not None:
                 raise INEGIRateLimitError(seconds)
         if response.status_code >= 400:
-            raise INEGIClientError(f"INEGI HTTP {response.status_code}")
+            raise INEGIClientError(_response_error_message(response))
         try:
             payload = response.json()
         except ValueError as exc:
             raise INEGIClientError("INEGI response is not valid JSON") from exc
+        inegi_error = _inegi_error_payload(payload)
+        if inegi_error:
+            raise INEGIClientError(inegi_error)
         if not isinstance(payload, dict) or not ("Series" in payload or "CODE" in payload):
-            raise INEGIClientError("INEGI response schema is incompatible")
+            raise INEGIClientError(_schema_error(payload))
         return payload
 
 
@@ -159,7 +162,43 @@ def _backoff(attempt: int) -> float:
 def _safe_error(exc: Exception | None) -> str:
     if exc is None:
         return "INEGI request failed"
+    if isinstance(exc, INEGIClientError):
+        return str(exc) or type(exc).__name__
     return type(exc).__name__
+
+
+def _response_error_message(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"INEGI HTTP {response.status_code}"
+    return _inegi_error_payload(payload) or f"INEGI HTTP {response.status_code}"
+
+
+def _inegi_error_payload(payload: Any) -> str | None:
+    if not isinstance(payload, list):
+        return None
+    parts = [str(item) for item in payload if isinstance(item, str)]
+    if not parts:
+        return None
+    code = _error_part(parts, "ErrorCode") or "unknown"
+    info = _error_part(parts, "ErrorInfo") or _error_part(parts, "ErrorDetails") or "request rejected"
+    return f"INEGI error {code}: {info}"
+
+
+def _error_part(parts: list[str], prefix: str) -> str | None:
+    marker = f"{prefix}:"
+    for item in parts:
+        if item.startswith(marker):
+            return item[len(marker) :].strip() or None
+    return None
+
+
+def _schema_error(payload: Any) -> str:
+    if isinstance(payload, dict):
+        keys = ",".join(sorted(str(key) for key in payload.keys())[:8])
+        return f"INEGI response schema is incompatible: keys={keys or 'none'}"
+    return f"INEGI response schema is incompatible: type={type(payload).__name__}"
 
 
 def _seconds_to_reset(response: requests.Response) -> int | None:
