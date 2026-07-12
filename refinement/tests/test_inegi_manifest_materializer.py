@@ -108,7 +108,7 @@ def test_gold_sql_exposes_stale_rows_with_usable_flag():
 def test_inegi_freshness_slas_are_monthly_only_initially():
     slas = {item["series_id"]: item["freshness_sla_days"] for item in SERIES_CONFIG}
 
-    assert slas == {"454168": 90, "736537": 90, "910414": 90, "910400": 90}
+    assert slas == {"6207136901": 90, "472034": 90, "334360": 90, "334452": 90}
 
 
 def test_duckdb_engine_routes_packaged_inegi_dataset_to_special_materializer(monkeypatch):
