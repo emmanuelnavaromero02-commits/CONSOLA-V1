@@ -223,6 +223,7 @@ jobs:
           INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: dummy_hubspot_to_console_key_for_ci_only_32chars_xxxxxxx
           INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA: dummy_hubspot_to_mcp_key_for_ci_only_32chars_xxxxxxxxxx
           INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT: dummy_hubspot_to_refinement_key_for_ci_only_32chars_xx
+          INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT: dummy_mcp_to_refinement_key_for_ci_only_32chars_xxxxxx
           OMEGA_CARTRIDGE_BANXICO_PASSWORD: dummy_cartridge_banxico_password_for_ci_only
           INTERNAL_API_KEY_BANXICO_TO_CONSOLE: dummy_banxico_to_console_key_for_ci_only_32chars_xxxx
           OMEGA_CARTRIDGE_INEGI_PASSWORD: dummy_cartridge_inegi_password_for_ci_only

@@ -211,10 +211,10 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-salesforce": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "salesforce":           "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
-    # refinement and mcp-infra don't call refinement today, but the old
-    # whitelist allowed them so we keep them accepted via legacy key only.
+    # mcp-infra proxies read-only governed market context to Refinement while
+    # forwarding the signed Console security_context for RLS.
     "refinement": None,
-    "mcp-infra":  None,
+    "mcp-infra":  "INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT",
 }
 
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
@@ -229,7 +229,7 @@ _SECURITY_SOURCE_BY_SERVICE = {
     "cartridge-sap_s4hana": {"cartridge-sap_s4hana"},
     "cartridge-sap_successfactors": {"cartridge-sap_successfactors"},
     "refinement": {"refinement"},
-    "mcp-infra": {"mcp-infra"},
+    "mcp-infra": {"mcp-infra", "console", "agent_runner"},
 }
 _SQL_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 _SQL_FORBIDDEN_RE = re.compile(

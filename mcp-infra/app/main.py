@@ -42,6 +42,7 @@ import app.tools.agents      # noqa: F401
 import app.tools.cartridges  # noqa: F401
 import app.tools.control_room  # noqa: F401
 import app.tools.minio       # noqa: F401
+import app.tools.market_context  # noqa: F401
 import app.tools.pipeline    # noqa: F401
 import app.tools.postgres    # noqa: F401
 import app.tools.rag         # noqa: F401
@@ -339,6 +340,7 @@ _CONTROL_ROOM_READ_TOOLS = {
     "control_room__talent_metadata_readiness_read",
     "control_room__decision_intelligence_runs_read",
 }
+_MARKET_CONTEXT_READ_TOOLS = {"market_context_read"}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
@@ -605,6 +607,49 @@ def _require_cartridge_scope(ctx: dict[str, Any], cartridge_id: str) -> None:
         or _prefix_allowed(ctx, f"cartridges/{cartridge_id}/")
     ):
         raise HTTPException(403, detail="cartridge not allowed")
+
+
+def _cartridge_scope_allowed(ctx: dict[str, Any], cartridge_id: str) -> bool:
+    try:
+        _require_cartridge_scope(ctx, cartridge_id)
+        return True
+    except HTTPException:
+        return False
+
+
+def _market_context_provider_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    if not _has_tenant_workspace_scope(ctx):
+        raise HTTPException(403, detail="market context requires tenant/workspace scope")
+    supplied = sorted(
+        key for key in {"tenant_id", "workspace_id", "security_context", "allowed_providers"}
+        if key in args
+    )
+    if supplied:
+        raise HTTPException(403, detail=f"backend-owned arg is not allowed: {', '.join(supplied)}")
+    provider_to_cartridge = {
+        "banxico": "banxico",
+        "inegi": "inegi",
+        "sec_edgar": "sec_edgar",
+    }
+    raw_requested = args.get("providers")
+    requested = {str(args["provider"])} if args.get("provider") else set()
+    if isinstance(raw_requested, list):
+        requested.update(str(item) for item in raw_requested)
+    unknown = requested - set(provider_to_cartridge)
+    if unknown:
+        raise HTTPException(400, detail="unknown market context provider")
+    allowed: list[str] = []
+    for provider, cartridge_id in provider_to_cartridge.items():
+        if requested and provider not in requested:
+            continue
+        if _cartridge_scope_allowed(ctx, cartridge_id):
+            allowed.append(provider)
+        elif requested:
+            raise HTTPException(403, detail="market context provider not allowed")
+    if not allowed:
+        raise HTTPException(403, detail="no market context providers allowed")
+    args["allowed_providers"] = allowed
+    args["security_context"] = ctx
 
 
 def _validate_pipeline_run_save_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
@@ -1180,6 +1225,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "control_room.write", internal_service)
     elif tool in _CONTROL_ROOM_READ_TOOLS:
         ctx = _require_context_permission(req, "datasets.read", internal_service)
+    elif tool in _MARKET_CONTEXT_READ_TOOLS:
+        ctx = _require_context_permission(req, "datasets.read", internal_service)
     elif tool.startswith("cartridge_"):
         raise HTTPException(403, detail="cartridge tool lacks tenancy metadata")
     else:
@@ -1262,6 +1309,9 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         if tool == "wisdom_bits__run":
             _require_cartridge_scope(ctx, str(args.get("cartridge_id") or "sap_successfactors"))
         args["security_context"] = ctx
+
+    if tool in _MARKET_CONTEXT_READ_TOOLS:
+        _market_context_provider_scope(ctx, args)
 
     if tool.startswith("postgres_"):
         mentioned_tables = _postgres_mentioned_tables(

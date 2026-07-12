@@ -65,7 +65,7 @@ contained, then scrub the file from git history with BFG or
 
 | Credential type | Storage | How it gets there |
 |---|---|---|
-| Internal API keys (12: legacy + 11 per-pair) | `infra/.env` | `infra/bootstrap.sh` + `infra/bootstrap-keys.sh` (random hex) |
+| Internal API keys (legacy + per-pair) | `infra/.env` | `infra/bootstrap.sh` + `infra/bootstrap-keys.sh` (random hex) |
 | JWT signing key, Postgres / MinIO / Superset / Airflow passwords | `infra/.env` | `infra/bootstrap.sh` (random hex) |
 | LLM API keys (Gemini / Anthropic / OpenAI / Google) | DB via Vault service | Settings UI; never hardcoded in `.env` |
 | Cartridge integration creds (Replicon / SAP / SuccessFactors / Outlook) | DB via Vault service | Settings UI; `.env` keys are kept only for legacy local-dev fallback |
