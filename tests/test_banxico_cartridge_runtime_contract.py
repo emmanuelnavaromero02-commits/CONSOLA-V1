@@ -60,7 +60,7 @@ def test_banxico_aws_runtime_wiring_is_declared():
     assert "BANXICO_URL" in compose
     assert "http://banxico:8215" in compose
     assert "banxico:" in overlay
-    assert "banxico inegi sap-hcm" in build
+    assert "banxico inegi sec-edgar sap-hcm" in build
 
 
 def test_banxico_runtime_secrets_are_bootstrapped_and_migrated():

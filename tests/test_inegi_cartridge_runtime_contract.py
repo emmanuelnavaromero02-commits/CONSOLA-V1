@@ -58,7 +58,7 @@ def test_inegi_airflow_runtime_wiring_is_declared():
     assert "INEGI_URL" in aws
     assert "http://inegi:8216" in aws
     assert "inegi:" in overlay
-    assert "banxico inegi sap-hcm" in build
+    assert "banxico inegi sec-edgar sap-hcm" in build
 
 
 def test_inegi_runtime_secrets_are_bootstrapped_and_migrated():

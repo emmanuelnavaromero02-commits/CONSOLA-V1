@@ -406,7 +406,7 @@ def _trigger_gold_refresh_intelligence(
     finished_at: str,
 ) -> None:
     conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
-    if bool(conf.get("skip_intelligence")) or cartridge_id in {"banxico", "inegi", "sec_edgar"}:
+    if bool(conf.get("skip_intelligence")) or _skip_intelligence_for_cartridge(cartridge_id):
         print(
             "[refresh_chain] intelligence skipped: "
             f"skip_intelligence={bool(conf.get('skip_intelligence'))} cartridge={cartridge_id}"
@@ -446,6 +446,15 @@ def _trigger_gold_refresh_intelligence(
         )
     except Exception as exc:                                      # noqa: BLE001
         print(f"[refresh_chain] intelligence trigger failed: {exc}")
+
+def _skip_intelligence_for_cartridge(cartridge_id: str) -> bool:
+    if cartridge_id == "banxico":
+        return True
+    if cartridge_id == "inegi":
+        return True
+    if cartridge_id == "sec_edgar":
+        return True
+    return False
 
 def record_run(**ctx):
     conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
