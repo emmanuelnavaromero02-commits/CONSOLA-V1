@@ -8,7 +8,10 @@ from app.services.config_loader import SeriesConfig
 
 
 def validate_metadata(client: INEGIClient, series: tuple[SeriesConfig, ...]) -> list[dict[str, Any]]:
-    payload = client.get_metadata([item.series_id for item in series])
+    payload = client.get_metadata(
+        [item.series_id for item in series],
+        source_by_id={item.series_id: item.source_dataset for item in series},
+    )
     return validate_metadata_payload(payload, series)
 
 

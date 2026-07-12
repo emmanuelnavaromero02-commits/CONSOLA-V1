@@ -41,19 +41,19 @@ def _catalog(title: str) -> requests.Response:
 def _series() -> requests.Response:
     return _response(
         200,
-        b'{"Series":[{"INDICADOR":"454168","UNIT":"index","FREQ":"M","LASTUPDATE":"2026-06-30","SOURCE":"BISE","OBSERVATIONS":[]}]}',
+        b'{"Series":[{"INDICADOR":"6207136901","UNIT":"1058","FREQ":"8","LASTUPDATE":"2026-06-30","SOURCE":"BISE","OBSERVATIONS":[]}]}',
     )
 
 
 def test_token_uses_official_path_segment_and_source_url_is_redacted():
-    session = QueueSession(_catalog("Indicador global de la actividad economica, base 2018"), _series())
+    session = QueueSession(_catalog("IGAE. Año base 2018. Índice de volumen físico base 2018=100. Total. Series Originales. Índices 2018 = 100"), _series())
     client = INEGIClient(token="secret-token", session=session, sleep=lambda _: None)
-    client.get_metadata(["454168"])
+    client.get_metadata(["6207136901"])
 
-    call = session.calls[0]
+    call = session.calls[1]
     assert "/secret-token" in call["url"]
     assert "token" not in call["headers"]
-    assert "secret-token" not in client.source_url("454168")
+    assert "secret-token" not in client.source_url("6207136901")
     assert "redacted" in client.source_url("454168")
 
 
@@ -67,11 +67,11 @@ def test_development_allows_inegi_api_token_without_vault(monkeypatch):
         raise AssertionError("Vault should not be called for local env token fallback")
 
     monkeypatch.setattr(vault_client.requests, "get", unexpected_vault_call)
-    session = QueueSession(_catalog("Indicador global de la actividad economica, base 2018"), _series())
+    session = QueueSession(_catalog("IGAE. Año base 2018. Índice de volumen físico base 2018=100. Total. Series Originales. Índices 2018 = 100"), _series())
     client = INEGIClient(session=session, sleep=lambda _: None)
-    client.get_metadata(["454168"])
+    client.get_metadata(["6207136901"])
 
-    assert "/dev-env-token" in session.calls[0]["url"]
+    assert "/dev-env-token" in session.calls[1]["url"]
 
 
 def test_production_token_can_be_resolved_from_console_vault(monkeypatch):
@@ -99,7 +99,7 @@ def test_production_token_can_be_resolved_from_console_vault(monkeypatch):
         return VaultResponse()
 
     monkeypatch.setattr(vault_client.requests, "get", fake_get)
-    session = QueueSession(_catalog("Indicador global de la actividad economica, base 2018"), _series())
+    session = QueueSession(_catalog("IGAE. Año base 2018. Índice de volumen físico base 2018=100. Total. Series Originales. Índices 2018 = 100"), _series())
     client = INEGIClient(
         conn_id="default",
         security_context='{"signed":true}',
@@ -114,7 +114,7 @@ def test_production_token_can_be_resolved_from_console_vault(monkeypatch):
         "x-internal-service": "inegi",
         "x-security-context": '{"signed":true}',
     }
-    assert "/vault-token" in session.calls[0]["url"]
+    assert "/vault-token" in session.calls[1]["url"]
 
 
 def test_production_rejects_env_token_without_vault(monkeypatch):
@@ -241,7 +241,7 @@ def test_preflight_fails_when_metadata_title_changes():
     series = load_series_configs()
 
     class Client:
-        def get_metadata(self, _ids):
+        def get_metadata(self, _ids, **_kwargs):
             return {"inegi": {"metadata": [{"id": series[0].series_id, "title": "changed"}]}}
 
     with pytest.raises(MetadataDriftError):
@@ -253,9 +253,20 @@ def test_preflight_accepts_official_title_whitespace_variation():
     expected = series[0]
 
     class Client:
-        def get_metadata(self, _ids):
+        def get_metadata(self, _ids, **_kwargs):
             spaced = "   ".join(expected.expected_title.split(" "))
-            return {"inegi": {"metadata": [{"id": expected.series_id, "title": spaced}]}}
+            return {
+                "inegi": {
+                    "metadata": [
+                        {
+                            "id": expected.series_id,
+                            "title": spaced,
+                            "unit_code": expected.expected_unit_code,
+                            "frequency_code": expected.expected_frequency_code,
+                        }
+                    ]
+                }
+            }
 
     evidence = validate_metadata(Client(), series[:1])
 
@@ -266,7 +277,7 @@ def test_preflight_fails_when_series_is_missing():
     series = load_series_configs()
 
     class Client:
-        def get_metadata(self, _ids):
+        def get_metadata(self, _ids, **_kwargs):
             return {"inegi": {"metadata": []}}
 
     with pytest.raises(MetadataDriftError):
@@ -279,9 +290,8 @@ def test_entities_yaml_marks_live_preflight_as_pending():
     path = Path(__file__).resolve().parents[1] / "app" / "config" / "entities.yaml"
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     observations = config["entities"][0]
-    assert observations["metadata_preflight_status"] == "pending_live_inegi_token"
-    assert "expected_title" in observations["pending_official_validation"]
+    assert observations["metadata_preflight_status"] == "validated_live_inegi_token"
     assert all(
-        item["official_preflight_status"] == "pending_live_inegi_token"
+        item["official_preflight_status"] == "validated_live_inegi_token"
         for item in observations["series"]
     )

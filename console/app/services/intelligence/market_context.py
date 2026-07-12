@@ -20,7 +20,7 @@ METRIC_SOURCES = {
     "igae_index": ("inegi", "inegi_market_context"),
     "unemployment_rate": ("inegi", "inegi_market_context"),
     "consumer_price_index": ("inegi", "inegi_market_context"),
-    "cpi_headline_index": ("inegi", "inegi_market_context"),
+    "core_consumer_price_index": ("inegi", "inegi_market_context"),
 }
 
 

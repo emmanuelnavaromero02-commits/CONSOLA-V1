@@ -44,7 +44,8 @@ def run_series_observations(
     storage = storage or storage_from_env()
     watermarks = watermarks or default_store()
 
-    metadata_payload = client.get_metadata([item.series_id for item in selected])
+    source_by_id = {item.series_id: item.source_dataset for item in selected}
+    metadata_payload = client.get_metadata([item.series_id for item in selected], source_by_id=source_by_id)
     validate_metadata_payload(metadata_payload, selected)
     before = watermarks.get_many(tenant_id, workspace_id, [item.series_id for item in selected])
     end_date = parse_date(to_date) or date.today()
@@ -73,6 +74,7 @@ def run_series_observations(
             [item.series_id for item in window.series],
             window.from_date.isoformat(),
             window.to_date.isoformat(),
+            source_by_id=source_by_id,
         )
         rows = _observation_rows(client, payload, window.series, tenant_id, workspace_id, run_id)
         total_rows += len(rows)

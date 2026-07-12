@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import time
+from urllib.parse import quote
 from typing import Any
 
 import requests
@@ -9,6 +10,10 @@ import requests
 from app.core.rate_limit import WindowRateLimiter
 from app.core.source_security import BASE_URL, sanitize_source_url, validate_url
 from app.core.vault_client import resolve_inegi_token
+
+# Public token embedded by INEGI's own query builder for catalog metadata.
+CATALOG_TOKEN = "96fbd1bf-21e6-28e3-6e64-2b15999d2c89"
+DEFAULT_SOURCE = "BISE"
 
 
 class INEGIClientError(RuntimeError):
@@ -42,11 +47,12 @@ class INEGIClient:
         self._metadata_limiter = WindowRateLimiter(max_calls=20, window_seconds=60)
         self._historical_limiter = WindowRateLimiter(max_calls=30, window_seconds=300)
 
-    def get_metadata(self, series_ids: list[str]) -> dict[str, Any]:
+    def get_metadata(self, series_ids: list[str], source_by_id: dict[str, str] | None = None) -> dict[str, Any]:
         metadata = []
         for indicator_id in _series_ids(series_ids):
-            catalog = self._request("metadata", _catalog_path("CL_INDICATOR", indicator_id, self._token))
-            latest = self._indicator(indicator_id, recent=True)
+            source = _source_for(indicator_id, source_by_id)
+            catalog = self._request("metadata", _catalog_path("CL_INDICATOR", indicator_id, source))
+            latest = self._indicator(indicator_id, recent=True, source=source)
             series = _first_series(latest)
             metadata.append(
                 {
@@ -55,27 +61,36 @@ class INEGIClient:
                     "unit_code": str(series.get("UNIT") or ""),
                     "frequency_code": str(series.get("FREQ") or ""),
                     "last_update": str(series.get("LASTUPDATE") or ""),
-                    "source": str(series.get("SOURCE") or ""),
+                    "source": source,
+                    "source_code": str(series.get("SOURCE") or ""),
                     "raw_catalog": catalog,
                     "raw_indicator": series,
                 }
             )
         return {"inegi": {"metadata": metadata}}
 
-    def get_observations(self, series_ids: list[str], from_date: str, to_date: str) -> dict[str, Any]:
+    def get_observations(
+        self,
+        series_ids: list[str],
+        from_date: str,
+        to_date: str,
+        source_by_id: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         series = []
         for indicator_id in _series_ids(series_ids):
-            payload = self._indicator(indicator_id, recent=False)
+            payload = self._indicator(indicator_id, recent=False, source=_source_for(indicator_id, source_by_id))
             item = _first_series(payload)
             item["INDICADOR"] = str(item.get("INDICADOR") or indicator_id)
             series.append(item)
         return {"inegi": {"series": series, "from_date": from_date, "to_date": to_date}}
 
-    def source_url(self, indicator_id: str, *, recent: bool = False) -> str:
-        return sanitize_source_url(f"{BASE_URL}{_indicator_path(indicator_id, recent=recent, token='__TOKEN__')}")
+    def source_url(self, indicator_id: str, *, recent: bool = False, source: str = DEFAULT_SOURCE) -> str:
+        return sanitize_source_url(
+            f"{BASE_URL}{_indicator_path(indicator_id, recent=recent, token='__TOKEN__', source=source)}"
+        )
 
-    def _indicator(self, indicator_id: str, *, recent: bool) -> dict[str, Any]:
-        return self._request("historical", _indicator_path(indicator_id, recent=recent, token=self._token))
+    def _indicator(self, indicator_id: str, *, recent: bool, source: str) -> dict[str, Any]:
+        return self._request("historical", _indicator_path(indicator_id, recent=recent, token=self._token, source=source))
 
     def _request(self, kind: str, path: str) -> dict[str, Any]:
         limiter = self._metadata_limiter if kind == "metadata" else self._historical_limiter
@@ -138,17 +153,28 @@ def _series_ids(series_ids: list[str]) -> list[str]:
     return [str(item).strip() for item in series_ids if str(item).strip()]
 
 
-def _indicator_path(indicator_id: str, *, recent: bool, token: str) -> str:
+def _indicator_path(indicator_id: str, *, recent: bool, token: str, source: str = DEFAULT_SOURCE) -> str:
     latest = "true" if recent else "false"
-    return f"/INDICATOR/{indicator_id}/es/00/{latest}/BISE/2.0/{token}?type=json"
+    return f"/INDICATOR/{indicator_id}/es/00/{latest}/{_source(source)}/2.0/{quote(token, safe='')}?type=json"
 
 
-def _catalog_path(catalog: str, indicator_id: str, token: str) -> str:
-    return f"/{catalog}/{indicator_id}/es/BISE/2.0/{token}?type=json"
+def _catalog_path(catalog: str, indicator_id: str, source: str) -> str:
+    return f"/{catalog}/{indicator_id}/es/{_source(source)}/2.0/{CATALOG_TOKEN}?type=json"
 
 
 def _resolved_token(*, conn_id: str | None, security_context: str | None) -> str:
     return resolve_inegi_token(conn_id=conn_id, security_context=security_context)
+
+
+def _source_for(indicator_id: str, source_by_id: dict[str, str] | None) -> str:
+    return _source((source_by_id or {}).get(indicator_id) or DEFAULT_SOURCE)
+
+
+def _source(value: str) -> str:
+    clean = str(value or DEFAULT_SOURCE).strip().upper()
+    if clean not in {"BISE", "BIE-BISE"}:
+        raise ValueError("invalid INEGI source dataset")
+    return clean
 
 
 def _retryable_status(status_code: int) -> bool:

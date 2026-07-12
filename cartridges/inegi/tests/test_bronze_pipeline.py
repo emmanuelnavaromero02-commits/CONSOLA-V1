@@ -91,14 +91,22 @@ class FakeClient:
     def __init__(self) -> None:
         self.metadata_payload = {
             "inegi": {
-                "metadata": [{"id": item.series_id, "title": item.expected_title} for item in load_series_configs()]
+                "metadata": [
+                    {
+                        "id": item.series_id,
+                        "title": item.expected_title,
+                        "unit_code": item.expected_unit_code,
+                        "frequency_code": item.expected_frequency_code,
+                    }
+                    for item in load_series_configs()
+                ]
             },
         }
 
-    def get_metadata(self, _ids):
+    def get_metadata(self, _ids, **_kwargs):
         return self.metadata_payload
 
-    def get_observations(self, ids, _from_date, _to_date):
+    def get_observations(self, ids, _from_date, _to_date, **_kwargs):
         return {
             "inegi": {
                 "from_date": _from_date,

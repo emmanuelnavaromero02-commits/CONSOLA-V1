@@ -6,56 +6,54 @@ entities:
     watermark_field: observation_date
     metadata_entity: series_metadata
     max_series_per_request: 20
-    metadata_preflight_status: pending_live_inegi_token
-    pending_official_validation:
-      - expected_title
-      - unit
-      - frequency
-      - expected_min
-      - expected_max
-    metadata_preflight_rule: "Do not treat this allowlist as frozen until INEGI_API_TOKEN live preflight passes."
+    metadata_preflight_status: validated_live_inegi_token
+    metadata_preflight_rule: "Allowlist validated against INEGI Banco de Indicadores on 2026-07-12."
     series:
-      - series_id: "454168"
+      - series_id: "6207136901"
         metric_name: igae_index
-        official_preflight_status: pending_live_inegi_token
-        expected_title: "Indicador global de la actividad economica, base 2018"
+        source_dataset: BISE
+        official_preflight_status: validated_live_inegi_token
+        expected_title: "IGAE. Año base 2018. Índice de volumen físico base 2018=100. Total. Series Originales. Índices 2018 = 100"
         unit: index_2018_100
         frequency: monthly
-        expected_unit_code: ""
-        expected_frequency_code: ""
+        expected_unit_code: "1058"
+        expected_frequency_code: "8"
         overlap_days: 90
         expected_min: 50
         expected_max: 200
-      - series_id: "736537"
+      - series_id: "472034"
         metric_name: unemployment_rate
-        official_preflight_status: pending_live_inegi_token
-        expected_title: "Tasa de desocupacion"
+        source_dataset: BIE-BISE
+        official_preflight_status: validated_live_inegi_token
+        expected_title: "Tasa de desocupación"
         unit: percent
         frequency: monthly
-        expected_unit_code: ""
-        expected_frequency_code: ""
+        expected_unit_code: "3"
+        expected_frequency_code: "8"
         overlap_days: 90
         expected_min: 0
         expected_max: 30
-      - series_id: "910414"
+      - series_id: "334360"
         metric_name: consumer_price_index
-        official_preflight_status: pending_live_inegi_token
-        expected_title: "Indice Nacional de Precios al Consumidor"
-        unit: index
+        source_dataset: BIE-BISE
+        official_preflight_status: validated_live_inegi_token
+        expected_title: "Precios al Consumidor"
+        unit: index_jul_2018_100
         frequency: monthly
-        expected_unit_code: ""
-        expected_frequency_code: ""
+        expected_unit_code: "1012"
+        expected_frequency_code: "8"
         overlap_days: 90
         expected_min: 50
         expected_max: 300
-      - series_id: "910400"
-        metric_name: cpi_headline_index
-        official_preflight_status: pending_live_inegi_token
-        expected_title: "Indice Nacional de Precios al Consumidor"
-        unit: index
+      - series_id: "334452"
+        metric_name: core_consumer_price_index
+        source_dataset: BIE-BISE
+        official_preflight_status: validated_live_inegi_token
+        expected_title: "Precios al Consumidor Subyacente"
+        unit: index_jul_2018_100
         frequency: monthly
-        expected_unit_code: ""
-        expected_frequency_code: ""
+        expected_unit_code: "1012"
+        expected_frequency_code: "8"
         overlap_days: 90
         expected_min: 50
         expected_max: 300

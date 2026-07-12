@@ -13,6 +13,7 @@ CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 class SeriesConfig:
     series_id: str
     metric_name: str
+    source_dataset: str
     expected_title: str
     unit: str
     frequency: str
@@ -44,6 +45,7 @@ def load_series_configs() -> tuple[SeriesConfig, ...]:
         SeriesConfig(
             series_id=str(item["series_id"]),
             metric_name=str(item["metric_name"]),
+            source_dataset=str(item.get("source_dataset") or "BISE"),
             expected_title=str(item["expected_title"]),
             unit=str(item["unit"]),
             frequency=str(item["frequency"]),

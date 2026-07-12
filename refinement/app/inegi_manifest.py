@@ -21,7 +21,7 @@ class INEGIManifest:
 
 SERIES_CONFIG: tuple[dict[str, Any], ...] = (
     {
-        "series_id": "454168",
+        "series_id": "6207136901",
         "metric_name": "igae_index",
         "unit": "index_2018_100",
         "frequency": "monthly",
@@ -30,7 +30,7 @@ SERIES_CONFIG: tuple[dict[str, Any], ...] = (
         "expected_max": 200.0,
     },
     {
-        "series_id": "736537",
+        "series_id": "472034",
         "metric_name": "unemployment_rate",
         "unit": "percent",
         "frequency": "monthly",
@@ -39,18 +39,18 @@ SERIES_CONFIG: tuple[dict[str, Any], ...] = (
         "expected_max": 30.0,
     },
     {
-        "series_id": "910414",
+        "series_id": "334360",
         "metric_name": "consumer_price_index",
-        "unit": "index",
+        "unit": "index_jul_2018_100",
         "frequency": "monthly",
         "freshness_sla_days": 90,
         "expected_min": 50.0,
         "expected_max": 300.0,
     },
     {
-        "series_id": "910400",
-        "metric_name": "cpi_headline_index",
-        "unit": "index",
+        "series_id": "334452",
+        "metric_name": "core_consumer_price_index",
+        "unit": "index_jul_2018_100",
         "frequency": "monthly",
         "freshness_sla_days": 90,
         "expected_min": 50.0,
