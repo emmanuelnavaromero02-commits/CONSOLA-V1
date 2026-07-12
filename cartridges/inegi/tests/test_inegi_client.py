@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 import pytest
@@ -185,6 +186,55 @@ def test_inegi_rate_limit_400_uses_reset_header():
         client.get_metadata(["454168"])
     assert "secret-token" not in str(exc.value)
     assert len(session.calls) == 3
+
+
+def test_inegi_error_payload_is_reported_without_token():
+    session = QueueSession(
+        _response(401, b'["ErrorInfo:No autorizado","ErrorDetails:No autorizado","ErrorCode:110"]')
+    )
+    client = INEGIClient(token="secret-token", session=session, sleep=lambda _: None)
+
+    with pytest.raises(INEGIClientError) as exc:
+        client.get_metadata(["454168"])
+
+    assert "INEGI error 110: No autorizado" in str(exc.value)
+    assert "secret-token" not in str(exc.value)
+
+
+def test_test_connection_returns_safe_error_message(monkeypatch):
+    from app.api import routes_skills
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INEGI_API_TOKEN", "dev-env-token")
+
+    def fail_metadata(*_args, **_kwargs):
+        raise INEGIClientError("INEGI error 110: No autorizado")
+
+    monkeypatch.setattr(routes_skills, "validate_metadata", fail_metadata)
+    response = routes_skills.test_connection(conn_id="default", x_security_context=None)
+    body = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert body["error"] == "INEGIClientError"
+    assert body["message"] == "INEGI error 110: No autorizado"
+
+
+def test_test_connection_scrubs_secret_like_error(monkeypatch):
+    from app.api import routes_skills
+
+    secret = "abcdefghijklmnopqrstuvwxyz123456"
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("INEGI_API_TOKEN", "dev-env-token")
+
+    def fail_metadata(*_args, **_kwargs):
+        raise RuntimeError(f"bad token={secret}")
+
+    monkeypatch.setattr(routes_skills, "validate_metadata", fail_metadata)
+    response = routes_skills.test_connection(conn_id="default", x_security_context=None)
+    body = response.body.decode("utf-8")
+
+    assert secret not in body
+    assert "<redacted>" in body
 
 
 def test_preflight_fails_when_metadata_title_changes():
