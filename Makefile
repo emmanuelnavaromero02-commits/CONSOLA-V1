@@ -224,7 +224,7 @@ test:
 	PYTHONPATH=. $(PYTEST) -ra refinement/tests/
 	PYTHONPATH=vault $(PYTEST) -ra vault/tests/
 	PYTHONPATH=workspace $(PYTEST) -ra workspace/tests/
-	$(PYTEST) cartridges -q
+	$(PYTEST) --import-mode=importlib cartridges -q
 
 test-hermetic:
 	@set -e; \

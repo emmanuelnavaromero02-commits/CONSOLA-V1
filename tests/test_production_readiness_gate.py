@@ -22,6 +22,7 @@ def test_makefile_exposes_production_readiness_and_dr_rehearsal_targets():
     assert "bash scripts/run_dr_rehearsal.sh" in makefile
     assert "multiuser-simulation:" in makefile
     assert "bash scripts/run_multiuser_isolation_simulation.sh" in makefile
+    assert "$(PYTEST) --import-mode=importlib cartridges -q" in makefile
 
 
 def test_production_readiness_gate_checks_real_runtime_surfaces():

@@ -140,7 +140,7 @@ jobs:
             echo "No cartridge pytest targets resolved for this change."
             exit 0
           fi
-          coverage run --parallel-mode --source=cartridges -m pytest $targets -q
+          coverage run --parallel-mode --source=cartridges -m pytest --import-mode=importlib $targets -q
 
       - name: Publish Python coverage artifacts
         if: always()
