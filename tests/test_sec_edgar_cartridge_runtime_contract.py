@@ -110,3 +110,11 @@ def test_sec_edgar_runtime_role_repair_fails_closed():
     assert "RAISE EXCEPTION" in src
     assert "CREATE ROLE omega_cartridge_sec_edgar NOLOGIN" not in src
     assert "schema_migrations" in src
+
+
+def test_sec_edgar_entity_watermarks_rls_policy_exists():
+    src = (REPO / "infra/init/99zy_sec_edgar_entity_watermarks_rls.sql").read_text(encoding="utf-8")
+
+    assert "entity_watermarks_sec_edgar_workspace_rls" in src
+    assert "FOR ALL TO omega_cartridge_sec_edgar" in src
+    assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in src
