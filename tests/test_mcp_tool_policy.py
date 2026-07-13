@@ -88,3 +88,11 @@ def test_control_room_read_tools_are_readonly_without_approval():
         meta = manifest.classify_tool(name)
         assert meta["risk_level"] == "read", name
         assert meta["requires_approval"] is False, name
+
+
+def test_market_context_read_is_readonly_without_approval():
+    manifest = _load_tool_manifest()
+    meta = manifest.classify_tool("market_context_read")
+
+    assert meta["risk_level"] == "read"
+    assert meta["requires_approval"] is False

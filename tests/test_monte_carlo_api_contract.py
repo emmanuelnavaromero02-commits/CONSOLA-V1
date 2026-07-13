@@ -212,6 +212,42 @@ async def test_market_context_variable_resolves_to_distribution(monkeypatch):
     assert "token" not in assumption
 
 
+@pytest.mark.asyncio
+async def test_market_context_variable_rejects_low_confidence(monkeypatch):
+    async def fake_query(dataset, user, limit=200):
+        assert dataset == "banxico_market_context"
+        return [
+            {
+                "metric_name": "usd_mxn_fix",
+                "value": "18.50",
+                "as_of": "2026-07-10",
+                "usable": True,
+                "freshness_status": "ready",
+                "confidence": "0.79",
+            }
+        ]
+
+    monkeypatch.setattr(market_context, "query_gold_dataset_rows", fake_query)
+
+    with pytest.raises(HTTPException) as exc:
+        await market_context.resolve_market_context_inputs(
+            {
+                **_payload(),
+                "use_external_market_context": True,
+                "input_variables": {
+                    "cost_per_day": {
+                        "type": "external_market_context",
+                        "metric_name": "usd_mxn_fix",
+                    }
+                },
+            },
+            {"id": 1, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
+        )
+
+    assert exc.value.status_code == 422
+    assert "confidence is too low" in str(exc.value.detail)
+
+
 def test_mcp_monte_carlo_tool_exposes_external_market_opt_in():
     source = (REPO / "mcp-infra/app/tools/control_room.py").read_text(encoding="utf-8")
 

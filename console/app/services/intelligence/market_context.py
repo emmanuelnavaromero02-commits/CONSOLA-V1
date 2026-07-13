@@ -11,6 +11,7 @@ from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
 EXTERNAL_MARKET_CONTEXT_TYPE = "external_market_context"
 DEFAULT_UNCERTAINTY_PCT = Decimal("0.02")
 MAX_UNCERTAINTY_PCT = Decimal("0.25")
+MIN_USABLE_CONFIDENCE = Decimal("0.80")
 
 METRIC_SOURCES = {
     "usd_mxn_fix": ("banxico", "banxico_market_context"),
@@ -122,6 +123,8 @@ async def _load_metric(metric_name: str, user: dict | None) -> dict[str, Any]:
             raise HTTPException(422, f"market context metric is not usable: {metric_name}")
         if str(row.get("freshness_status") or "") != "ready":
             raise HTTPException(422, f"market context metric is stale: {metric_name}")
+        if _confidence(row.get("confidence"), metric_name) < MIN_USABLE_CONFIDENCE:
+            raise HTTPException(422, f"market context metric confidence is too low: {metric_name}")
         return row
     raise HTTPException(404, f"market context metric not found: {metric_name}")
 
@@ -134,6 +137,13 @@ def _decimal(value: Any, label: str) -> Decimal:
     if not parsed.is_finite():
         raise HTTPException(422, f"{label} must be finite")
     return parsed
+
+
+def _confidence(value: Any, metric_name: str) -> Decimal:
+    confidence = _decimal(value, f"{metric_name}.confidence")
+    if confidence < 0 or confidence > 1:
+        raise HTTPException(422, f"market context metric confidence is invalid: {metric_name}")
+    return confidence
 
 
 def _uncertainty_pct(spec: dict[str, Any]) -> Decimal:

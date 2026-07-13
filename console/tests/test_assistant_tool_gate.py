@@ -74,6 +74,7 @@ async def test_assistant_build_tools_exposes_only_allowlisted_read_tools(monkeyp
                 "healthy": True,
                 "tools": [
                     {"name": "airflow_list_dags", "description": "read", "input_schema": {}},
+                    {"name": "market_context_read", "description": "market", "input_schema": {}},
                     {"name": "airflow_delete_dag", "description": "delete", "input_schema": {}},
                     {"name": "unknown_tool", "description": "unknown", "input_schema": {}},
                 ],
@@ -84,6 +85,15 @@ async def test_assistant_build_tools_exposes_only_allowlisted_read_tools(monkeyp
 
     tools, server_map, catalog = await assistant_tool_gate.build_tools(USER)
 
-    assert [tool["name"] for tool in tools] == ["mcp-infra__airflow_list_dags"]
-    assert server_map == {"mcp-infra__airflow_list_dags": "mcp-infra"}
-    assert set(catalog) == {"mcp-infra__airflow_list_dags"}
+    assert [tool["name"] for tool in tools] == [
+        "mcp-infra__airflow_list_dags",
+        "mcp-infra__market_context_read",
+    ]
+    assert server_map == {
+        "mcp-infra__airflow_list_dags": "mcp-infra",
+        "mcp-infra__market_context_read": "mcp-infra",
+    }
+    assert set(catalog) == {
+        "mcp-infra__airflow_list_dags",
+        "mcp-infra__market_context_read",
+    }
