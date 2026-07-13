@@ -118,3 +118,10 @@ def test_sec_edgar_entity_watermarks_rls_policy_exists():
     assert "entity_watermarks_sec_edgar_workspace_rls" in src
     assert "FOR ALL TO omega_cartridge_sec_edgar" in src
     assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in src
+
+
+def test_sec_edgar_materializer_uses_existing_schema_introspection():
+    src = (REPO / "refinement/app/sec_edgar_materializer.py").read_text(encoding="utf-8")
+
+    assert "_parquet_schema_fields" not in src
+    assert "DESCRIBE SELECT * FROM read_parquet" in src

@@ -235,6 +235,12 @@ def _latest_uri(engine: Any, layer: str, name: str, user_context: dict | None) -
 
 
 def _schema_fields(engine: Any, con: Any, layer: str, name: str, storage_uri: str, user_context: dict | None) -> list[dict]:
-    if layer == "gold" and storage_uri.startswith("postgres_gold:"):
-        return engine._pg_table_schema(storage_uri.split(":", 1)[1], user_context)
-    return engine._parquet_schema_fields(con, storage_uri)
+    try:
+        if layer == "gold":
+            engine._pg_gold_attach(con, user_context)
+            rows = con.execute(f"DESCRIBE SELECT * FROM pggold.gold_{name} LIMIT 0").fetchall()
+        else:
+            rows = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{storage_uri}') LIMIT 0").fetchall()
+        return [{"name": row[0], "type": row[1]} for row in rows]
+    except Exception:
+        return []
