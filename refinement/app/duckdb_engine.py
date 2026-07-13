@@ -1118,7 +1118,7 @@ class DuckDBEngine:
     def get_dataset_schema(self, ds: dict, user_context: dict | None = None) -> dict:
         try:
             validate_safe_identifier(ds["name"], "dataset")
-            sql = ds.get("sql_def") or ds.get("sql") or ""
+            sql = self._managed_materialized_sql(ds, user_context)
             self._validate_safe_sql(sql)
             sources = ds.get("sources") or []
             with self._duckdb_lock:
@@ -1138,6 +1138,21 @@ class DuckDBEngine:
         except Exception as exc:
             return {"name": ds.get("name"), "error": str(exc)}
 
+    def _managed_materialized_sql(self, ds: dict, user_context: dict | None = None) -> str:
+        sql = ds.get("sql_def") or ds.get("sql") or ""
+        if "managed_by_" not in sql or "_materializer" not in sql:
+            return sql
+        layer = str(ds.get("layer") or "")
+        cartridge = str(ds.get("cartridge") or "")
+        name = str(ds.get("name") or "")
+        if layer not in {"silver", "gold"}:
+            return sql
+        validate_safe_identifier(cartridge, "cartridge")
+        validate_safe_identifier(name, "dataset")
+        uri = self._latest_materialized_uri(layer, cartridge, name, user_context)
+        if not uri:
+            return sql
+        return f"SELECT * FROM read_parquet({_sql_quote(uri)}, hive_partitioning=true, union_by_name=true)"
 
     def _rls_filter_clause(self, cols: list, user_context: dict, params: list) -> str:
         """Return the WHERE clause body for a pggold table (no leading WHERE).
@@ -1263,7 +1278,7 @@ class DuckDBEngine:
 
     def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
         validate_safe_identifier(ds.get("name", ""), "dataset")
-        sql = ds.get("sql_def", "")
+        sql = self._managed_materialized_sql(ds, user_context)
         self._validate_safe_sql(sql)
         filter_params = []
         if filters:
