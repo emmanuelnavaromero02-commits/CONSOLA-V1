@@ -34,6 +34,7 @@ payload AS (
           "mcp-infra__control_room__raise_analysis_alert",
           "mcp-infra__decision__orchestrate",
           "mcp-infra__simulation__monte_carlo_run",
+          "mcp-infra__market_context_read",
           "mcp-infra__calibration__bayesian_state",
           "refinement__query_dataset",
           "refinement__get_schema"

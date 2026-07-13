@@ -65,6 +65,7 @@ READ_ONLY_TOOLS = {
     "control_room__talent_9box_read",
     "control_room__talent_metadata_readiness_read",
     "control_room__decision_intelligence_runs_read",
+    "market_context_read",
 
     # pipeline metadata read-only
     "watermark_get",

@@ -163,6 +163,27 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
         )
 
 
+def test_calibration_accepts_market_context_evidence_refs():
+    clean = calibration_service._validate_payload(
+        {
+            **_payload(),
+            "evidence_refs": [
+                {
+                    "type": "market_context",
+                    "id": "banxico:usd_mxn_fix:2026-07-10:abc123",
+                }
+            ],
+        }
+    )
+
+    assert clean["evidence_refs"] == [
+        {
+            "type": "market_context",
+            "id": "banxico:usd_mxn_fix:2026-07-10:abc123",
+        }
+    ]
+
+
 def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("CALIBRATION_ALLOW_SYNTHETIC", raising=False)

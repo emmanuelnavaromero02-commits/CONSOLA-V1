@@ -124,6 +124,15 @@ def test_market_context_tool_normalizes_and_filters(monkeypatch):
     assert "source_url" not in json.dumps(row)
 
 
+def test_market_context_tool_is_registered(monkeypatch):
+    _load_mcp_module(monkeypatch, "app.main")
+    registry = importlib.import_module("app.registry")
+
+    names = {tool["name"] for tool in registry.list_tools()}
+
+    assert "market_context_read" in names
+
+
 def test_market_context_prod_requires_pair_key(monkeypatch):
     mod = _load_mcp_module(monkeypatch, "app.tools.market_context")
     monkeypatch.setenv("APP_ENV", "production")

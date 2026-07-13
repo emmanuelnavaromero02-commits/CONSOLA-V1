@@ -17,6 +17,7 @@ def test_successfactors_talent_monitor_contract_uses_operational_inputs():
 
     assert "mcp-infra__wisdom_bits__run" in allowed_tools
     assert "mcp-infra__simulation__monte_carlo_run" in allowed_tools
+    assert "mcp-infra__market_context_read" in allowed_tools
     assert rag_filter == {
         "cartridges": ["sap_successfactors"],
         "kinds": ["document", "schema"],

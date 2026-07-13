@@ -34,6 +34,7 @@ def test_successfactors_talent_monitor_has_agentops_tools_and_contract():
         "mcp-infra__control_room__raise_analysis_alert",
         "mcp-infra__decision__orchestrate",
         "mcp-infra__simulation__monte_carlo_run",
+        "mcp-infra__market_context_read",
         "mcp-infra__calibration__bayesian_state",
     ):
         assert tool in sql
@@ -88,6 +89,7 @@ def test_successfactors_talent_monitor_bootstraps_entity_config_workspaces():
     assert "sap_successfactors_talent_monitor" in sql
     assert "ON CONFLICT (workspace_id, cartridge_id, slug) WHERE workspace_id IS NOT NULL" in sql
     assert "'mcp-infra__simulation__monte_carlo_run'" in sql
+    assert "'mcp-infra__market_context_read'" in sql
     assert "'mcp-infra__calibration__bayesian_state'" in sql
     assert "'sap_successfactors_talent_simulation_inputs'" in sql
     assert "'WB-TALENTO'" in sql

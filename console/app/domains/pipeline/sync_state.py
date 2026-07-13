@@ -39,11 +39,13 @@ SAP_SUCCESSFACTORS_ENTITY_DAG_ID = "sap_successfactors_extract"
 SAP_SUCCESSFACTORS_EXTRACT_ALL_DAG_ID = "sap_successfactors_extract_all"
 SYNC_AGENTOPS_TOOLS = {
     "mcp-infra__simulation__monte_carlo_run",
+    "mcp-infra__market_context_read",
     "mcp-infra__decision__orchestrate",
     "mcp-infra__wisdom_bits__run",
     "mcp-infra__control_room__raise_alert",
     "mcp-infra__control_room__raise_analysis_alert",
     "infra__simulation__monte_carlo_run",
+    "infra__market_context_read",
     "infra__decision__orchestrate",
     "infra__wisdom_bits__run",
     "infra__control_room__raise_alert",
