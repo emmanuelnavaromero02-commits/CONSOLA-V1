@@ -25,7 +25,17 @@ def _is_platform_admin(user: dict | None) -> bool:
     return canonical_role((user or {}).get("role")) in {"owner", "super_admin", ROLE_ADMIN}
 
 
-_OPERATIONAL_CARTRIDGES = {"replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"}
+_OPERATIONAL_CARTRIDGES = {
+    "banxico",
+    "hubspot",
+    "inegi",
+    "replicon",
+    "salesforce",
+    "sec_edgar",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+}
 _VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 
 

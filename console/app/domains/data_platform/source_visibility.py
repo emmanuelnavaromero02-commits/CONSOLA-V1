@@ -12,9 +12,12 @@ from app.services.security_context import build_security_context
 
 
 OPERATIONAL_CARTRIDGES = {
+    "banxico",
     "hubspot",
+    "inegi",
     "replicon",
     "salesforce",
+    "sec_edgar",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
@@ -255,4 +258,3 @@ def sanitize_datasets_payload_for_user(user: dict | None, payload: Any) -> Any:
             if isinstance(dataset, dict)
         ],
     }
-
