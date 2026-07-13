@@ -336,6 +336,60 @@ def test_scope_storage_sql_rewrites_registered_silver_to_latest_snapshot(monkeyp
     assert "hubspot_deals_latest/data.parquet" not in rewritten
 
 
+def test_managed_materialized_dataset_uses_latest_snapshot(monkeypatch):
+    engine = DuckDBEngine()
+    latest = (
+        "s3://lakehouse/gold/banxico/banxico_market_context/"
+        "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260713.parquet"
+    )
+    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+
+    sql = engine._managed_materialized_sql(
+        {
+            "name": "banxico_market_context",
+            "layer": "gold",
+            "cartridge": "banxico",
+            "sql_def": "SELECT 'managed_by_banxico_materializer' AS note WHERE FALSE",
+        },
+        {"tenant_id": "tenant-1", "workspace_id": "workspace-1"},
+    )
+
+    assert latest in sql
+    assert "read_parquet" in sql
+    assert "managed_by_banxico_materializer" not in sql
+
+
+def test_query_dataset_uses_managed_materialized_snapshot(monkeypatch):
+    engine = DuckDBEngine()
+    latest = (
+        "s3://lakehouse/gold/sec_edgar/sec_market_context/"
+        "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260713.parquet"
+    )
+    captured = {}
+    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+
+    def fake_preview_sql(sql, *args, **kwargs):
+        captured["sql"] = sql
+        return {"rows": []}
+
+    monkeypatch.setattr(engine, "preview_sql", fake_preview_sql)
+
+    result = engine.query_dataset(
+        {
+            "name": "sec_market_context",
+            "layer": "gold",
+            "cartridge": "sec_edgar",
+            "sql_def": "SELECT 'managed_by_sec_edgar_materializer' AS note WHERE FALSE",
+        },
+        {},
+        user_context={"tenant_id": "tenant-1", "workspace_id": "workspace-1"},
+    )
+
+    assert result == {"rows": []}
+    assert latest in captured["sql"]
+    assert "managed_by_sec_edgar_materializer" not in captured["sql"]
+
+
 @pytest.mark.parametrize("glob", ["*.parquet", "**/*.parquet"])
 def test_scope_storage_sql_rewrites_registered_silver_globs_to_latest_snapshot(monkeypatch, glob):
     engine = DuckDBEngine()
