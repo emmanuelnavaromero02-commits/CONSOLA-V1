@@ -5,7 +5,10 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from omega_lakehouse import storage_from_env
+
 from app.api.deps import verify_api_key
+from app.services.bronze_retention import build_retention_dry_run
 from app.services.config_loader import load_company_configs
 from app.services.extraction_service import run_company_facts
 from app.services.preflight_service import validate_metadata
@@ -21,6 +24,7 @@ def list_skills() -> dict:
             _skill("/skills/test_connection", "POST", "Validate SEC EDGAR metadata and facts preflight."),
             _skill("/skills/run_incremental/company_facts", "POST", "Run incremental SEC EDGAR Bronze ingestion."),
             _skill("/skills/run_full_load/company_facts", "POST", "Run full SEC EDGAR Bronze ingestion."),
+            _skill("/skills/retention/sec_bronze_dry_run", "POST", "Report safe SEC EDGAR Bronze cleanup candidates."),
         ],
     }
 
@@ -75,6 +79,24 @@ def run_full_load(
     x_security_context: str | None = Header(default=None, alias="X-Security-Context"),
 ) -> dict:
     return _run(entity, body or {}, mode="full", conn_id=conn_id, security_context=x_security_context)
+
+
+@router.post("/retention/sec_bronze_dry_run")
+def sec_bronze_dry_run(body: dict[str, Any] | None = Body(None)) -> dict:
+    payload = body or {}
+    ctx = payload.get("security_context") if isinstance(payload.get("security_context"), dict) else {}
+    tenant_id = str(payload.get("tenant_id") or ctx.get("tenant_id") or "")
+    workspace_id = str(payload.get("workspace_id") or ctx.get("workspace_id") or "")
+    try:
+        return build_retention_dry_run(
+            storage_from_env(),
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            entities=payload.get("entities"),
+            keep_latest_per_group=int(payload.get("keep_latest_per_group") or 1),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _run(
