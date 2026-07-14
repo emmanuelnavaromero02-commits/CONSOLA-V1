@@ -58,7 +58,7 @@ def test_mcp_tool_result_redacts_cartridge_error_and_run_logs(monkeypatch):
 def test_mcp_tool_result_preserves_public_ids_and_hashes(monkeypatch):
     mcp_main = _load_mcp_main(monkeypatch)
     simulation_id = "mc-" + "a" * 32
-    orchestration_id = "orch-" + "b" * 32
+    orchestration_id = "orch-" + "b" * 64
     payload_hash = "c" * 64
     raw_hex = "d" * 40
 

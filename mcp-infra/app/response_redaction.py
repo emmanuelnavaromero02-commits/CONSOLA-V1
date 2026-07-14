@@ -7,7 +7,7 @@ from app.logging_config import _redact_value
 
 
 _OPAQUE_ID_RE = re.compile(
-    r"^(?:mc|orch|cal-state|cal-obs)-[a-f0-9]{32}$",
+    r"^(?:(?:mc|cal-state|cal-obs)-[a-f0-9]{32}|orch-[a-f0-9]{64})$",
     re.IGNORECASE,
 )
 _HASH_RE = re.compile(r"^[a-f0-9]{32,128}$", re.IGNORECASE)
