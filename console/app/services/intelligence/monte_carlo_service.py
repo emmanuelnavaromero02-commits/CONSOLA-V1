@@ -7,8 +7,7 @@ from fastapi import HTTPException
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.intelligence import market_context
-from app.services.intelligence import monte_carlo
+from app.services.intelligence import market_context, monte_carlo, monte_carlo_repository
 from app.services.intelligence.utils import json_dumps, public_json
 
 
@@ -243,6 +242,7 @@ async def run_simulation(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             result["reproducibility_hash"],
             _actor_id(user),
         )
+    row = await monte_carlo_repository.require_visible(pool, user, simulation_id)
     return {"simulation": public_json(dict(row))}
 
 
