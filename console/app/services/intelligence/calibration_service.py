@@ -10,6 +10,10 @@ from fastapi import HTTPException
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import calibration
+from app.services.intelligence.evidence_refs import (
+    attach_external_evidence_metadata,
+    normalize_evidence_refs,
+)
 from app.services.intelligence.utils import json_dumps, public_json
 
 
@@ -75,20 +79,7 @@ def _short_text(value: Any, *, field: str, max_length: int, required: bool = Tru
 
 
 def _validate_evidence_refs(value: Any) -> list[dict[str, str]]:
-    if value is None:
-        return []
-    if not isinstance(value, list) or len(value) > 20:
-        raise HTTPException(422, "evidence_refs must be a list with at most 20 items")
-    refs: list[dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise HTTPException(422, "evidence_refs entries must be objects")
-        if _forbidden_path(item):
-            raise HTTPException(422, "evidence_refs cannot include scope fields")
-        ref_type = _short_text(item.get("type"), field="evidence_refs.type", max_length=64)
-        ref_id = _short_text(item.get("id"), field="evidence_refs.id", max_length=256)
-        refs.append({"type": ref_type, "id": ref_id})
-    return refs
+    return normalize_evidence_refs(value, max_items=20)
 
 
 def _observed_at(value: Any) -> str:
@@ -385,7 +376,14 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             group=clean["calibration_group"],
             model_version=clean["model_version"],
         )
-        metrics = result["state"]["metrics"]
+        observation_metrics = attach_external_evidence_metadata(
+            result["metrics"],
+            clean["evidence_refs"],
+        )
+        metrics = attach_external_evidence_metadata(
+            result["state"]["metrics"],
+            clean["evidence_refs"],
+        )
         observation_row = await conn.fetchrow(
             """
             INSERT INTO calibration_observations (
@@ -427,7 +425,7 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             clean["calibration_group"],
             json_dumps(result["observation_prior"]),
             json_dumps(result["observation_posterior"]),
-            json_dumps(result["metrics"]),
+            json_dumps(observation_metrics),
             json_dumps(clean["evidence_refs"]),
             result["explanation"],
             result["reproducibility_hash"],
@@ -571,7 +569,8 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             """,
             *params,
         )
-        observations = [_observation_from_row(dict(row)) for row in rows]
+        row_dicts = [dict(row) for row in rows]
+        observations = [_observation_from_row(row) for row in row_dicts]
         prior = await _derived_prior_for_group(
             conn,
             workspace_id=workspace_id,
@@ -584,6 +583,13 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             calibration_group=group,
             model_version=model_version,
             prior=prior,
+        )
+        evidence_refs: list[dict[str, str]] = []
+        for row in row_dicts:
+            evidence_refs.extend(normalize_evidence_refs(_json_obj(row.get("evidence_refs"), [])))
+        state["metrics"] = attach_external_evidence_metadata(
+            state.get("metrics") or {},
+            evidence_refs,
         )
         state_row = await _upsert_state(
             conn,

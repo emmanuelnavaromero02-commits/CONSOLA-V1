@@ -9,6 +9,10 @@ from typing import Any
 
 from app.services import auth, external_actions
 from app.services.db_scope import scoped_db_for_user
+from app.services.intelligence.evidence_refs import (
+    external_evidence_metadata,
+    merge_evidence_refs,
+)
 from app.services.intelligence.utils import json_dumps, public_json, sample_hash
 
 
@@ -306,9 +310,10 @@ def _source_summary(source: dict[str, Any]) -> dict[str, Any]:
 def normalize_signal(payload: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     source_data = _source_summary(source)
     metadata = source_data["metadata"]
-    evidence_refs = payload.get("evidence_refs") or metadata.get("evidence_refs") or []
-    if not isinstance(evidence_refs, list):
-        evidence_refs = []
+    evidence_refs = merge_evidence_refs(
+        metadata.get("evidence_refs"),
+        payload.get("evidence_refs"),
+    )
     return {
         "source_type": payload.get("source_type"),
         "source_id": payload.get("source_id"),
@@ -476,11 +481,13 @@ def build_decision_plan(
         steps.append("Create a sandbox external action proposal for human approval.")
     if problem_type == "insufficient_data":
         steps = ["Collect missing evidence before proposing any action."]
-    return {
+    refs = normalized.get("evidence_refs") or []
+    evidence_metadata = external_evidence_metadata(refs)
+    plan = {
         "mode": "advisory_plan_only",
         "problem_type": problem_type,
         "steps": steps,
-        "evidence_refs": normalized.get("evidence_refs") or [],
+        "evidence_refs": refs,
         "next_human_decision": (
             "approve_or_reject_sandbox_proposal"
             if action_recommended
@@ -488,6 +495,9 @@ def build_decision_plan(
         ),
         "action_recommended": action_recommended,
     }
+    if evidence_metadata:
+        plan.update(evidence_metadata)
+    return plan
 
 
 def build_orchestration_plan(payload: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
@@ -495,6 +505,9 @@ def build_orchestration_plan(payload: dict[str, Any], source: dict[str, Any]) ->
     normalized = normalize_signal(payload, source)
     classification = classify_problem(normalized)
     route = route_engines(classification)
+    evidence_metadata = external_evidence_metadata(normalized.get("evidence_refs") or [])
+    if evidence_metadata:
+        route["engine_plan"]["external_evidence"] = evidence_metadata["external_evidence"]
     decision_plan = build_decision_plan(normalized, classification, route)
     safety_notes = [
         "Plan-only orchestrator: available engines were not executed automatically.",
@@ -503,6 +516,8 @@ def build_orchestration_plan(payload: dict[str, Any], source: dict[str, Any]) ->
     ]
     if decision_plan["action_recommended"]:
         safety_notes.append("Any external action proposal requires human approval.")
+    if evidence_metadata:
+        safety_notes.append("External market context is treated as evidence only, not as automatic truth.")
     return {
         **classification,
         **route,
