@@ -53,3 +53,29 @@ def test_mcp_tool_result_redacts_cartridge_error_and_run_logs(monkeypatch):
         assert secret not in rendered
     assert "Bearer ***REDACTED***" in rendered
     assert "***REDACTED***" in rendered
+
+
+def test_mcp_tool_result_preserves_public_ids_and_hashes(monkeypatch):
+    mcp_main = _load_mcp_main(monkeypatch)
+    simulation_id = "mc-" + "a" * 32
+    orchestration_id = "orch-" + "b" * 32
+    payload_hash = "c" * 64
+    raw_hex = "d" * 40
+
+    redacted = mcp_main._redact_tool_result(
+        {
+            "simulation_id": simulation_id,
+            "source_id": simulation_id,
+            "orchestration_id": orchestration_id,
+            "payload_hash": payload_hash,
+            "message": f"opaque value {raw_hex}",
+            "token": simulation_id,
+        }
+    )
+
+    assert redacted["simulation_id"] == simulation_id
+    assert redacted["source_id"] == simulation_id
+    assert redacted["orchestration_id"] == orchestration_id
+    assert redacted["payload_hash"] == payload_hash
+    assert raw_hex not in redacted["message"]
+    assert redacted["token"] == "***REDACTED***"
