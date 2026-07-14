@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+from app.services.intelligence.gold_fetcher import query_intelligence_dataset_rows as query_gold_dataset_rows
 
 
 EXTERNAL_MARKET_CONTEXT_TYPE = "external_market_context"
