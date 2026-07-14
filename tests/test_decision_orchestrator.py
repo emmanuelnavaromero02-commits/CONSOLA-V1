@@ -328,6 +328,41 @@ def test_classifier_routes_available_and_candidate_engines(orchestrator):
     assert insufficient["action_recommended"] is False
 
 
+def test_orchestrator_preserves_market_context_evidence_without_execution(orchestrator):
+    plan = orchestrator.build_orchestration_plan(
+        {
+            "source_type": "monte_carlo_simulation",
+            "source_id": "mc-1",
+            "title": "Forecast risk with external market context",
+            "description": "Monte Carlo uncertainty includes governed Banxico context.",
+            "evidence_refs": [{"type": "control_room_item", "id": "cri-1"}],
+        },
+        {
+            "source_id": "mc-1",
+            "metadata": {
+                "evidence_refs": [
+                    {
+                        "type": "market_context",
+                        "id": "banxico:usd_mxn_fix:2026-07-10:abc123",
+                    }
+                ]
+            },
+        },
+    )
+
+    refs = plan["evidence_refs"]
+    assert {"type": "control_room_item", "id": "cri-1"} in refs
+    assert {
+        "type": "market_context",
+        "id": "banxico:usd_mxn_fix:2026-07-10:abc123",
+    } in refs
+    assert plan["decision_plan"]["external_evidence"]["market_context_policy"] == "evidence_only"
+    assert plan["engine_plan"]["external_evidence"]["market_context_ref_count"] == 1
+    assert plan["engine_plan"]["available_engines_executed"] is False
+    assert plan["action_recommended"] is False
+    assert any("evidence only" in item for item in plan["safety_notes"])
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
     orchestrator,
