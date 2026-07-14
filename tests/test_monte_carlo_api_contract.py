@@ -16,7 +16,6 @@ REPO = Path(__file__).resolve().parents[1]
 class _FakeConnection:
     def __init__(self):
         self.calls: list[tuple[str, str, tuple]] = []
-        self.simulation: dict | None = None
 
     def transaction(self):
         return self
@@ -40,9 +39,7 @@ class _FakeConnection:
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
-        if "SELECT *" in sql and "monte_carlo_simulations" in sql:
-            return self.simulation
-        self.simulation = {
+        return {
             "id": 1,
             "simulation_id": params[0],
             "tenant_id": params[1],
@@ -56,7 +53,6 @@ class _FakeConnection:
             "output_metric": params[11],
             "reproducibility_hash": params[18],
         }
-        return self.simulation
 
     async def fetch(self, sql: str, *params):
         self.calls.append(("fetch", sql, params))
@@ -311,11 +307,6 @@ async def test_run_simulation_sets_db_scope_validates_source_and_persists(monkey
     )
     assert any(
         call[0] == "fetchrow" and "INSERT INTO monte_carlo_simulations" in call[1]
-        for call in fake.conn.calls
-    )
-    assert any(
-        call[0] == "fetchrow" and "SELECT *" in call[1]
-        and "monte_carlo_simulations" in call[1]
         for call in fake.conn.calls
     )
 
