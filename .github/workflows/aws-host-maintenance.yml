@@ -9,9 +9,14 @@ on:
         type: choice
         options:
           - inspect-recent
+          - inspect-command
           - diagnose
           - repair-ssm
           - safe-cleanup
+      command_id:
+        description: "SSM command UUID required only for inspect-command."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -60,7 +65,7 @@ jobs:
           echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
 
       - name: Build fixed maintenance command
-        if: inputs.operation != 'inspect-recent'
+        if: inputs.operation != 'inspect-recent' && inputs.operation != 'inspect-command'
         env:
           OPERATION: ${{ inputs.operation }}
         run: |
@@ -105,7 +110,7 @@ jobs:
           PY
 
       - name: Run maintenance command through SSM
-        if: inputs.operation != 'inspect-recent'
+        if: inputs.operation != 'inspect-recent' && inputs.operation != 'inspect-command'
         env:
           INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
         run: |
@@ -151,4 +156,21 @@ jobs:
             --details \
             --max-results 10 \
             --query 'CommandInvocations[].{CommandId:CommandId,DocumentName:DocumentName,Status:Status,StatusDetails:StatusDetails,RequestedDateTime:RequestedDateTime,Plugins:CommandPlugins[].{Name:Name,Status:Status,ResponseCode:ResponseCode}}' \
+            --output json
+
+      - name: Inspect exact SSM command status
+        if: inputs.operation == 'inspect-command'
+        env:
+          COMMAND_ID: ${{ inputs.command_id }}
+          INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$COMMAND_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "::error::command_id must be an SSM command UUID"
+            exit 1
+          fi
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query '{CommandId:CommandId,DocumentName:DocumentName,Status:Status,StatusDetails:StatusDetails,ResponseCode:ResponseCode,PluginName:PluginName}' \
             --output json
