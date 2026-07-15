@@ -1,0 +1,132 @@
+name: AWS Host Maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Fixed maintenance operation to run on the production app host."
+        required: true
+        type: choice
+        options:
+          - diagnose
+          - safe-cleanup
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-host-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    name: Production host maintenance through SSM
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
+      AWS_APP_INSTANCE_ID: ${{ vars.AWS_APP_INSTANCE_ID || secrets.AWS_APP_INSTANCE_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve app EC2 instance
+        id: instance
+        shell: bash
+        run: |
+          set -euo pipefail
+          instance_id="${AWS_APP_INSTANCE_ID}"
+          if [[ -z "$instance_id" ]]; then
+            instance_id="$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=modecissions-app" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].InstanceId' \
+              --output text)"
+          fi
+          if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
+            echo "::error::Could not resolve modecissions app instance id"
+            exit 1
+          fi
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build fixed maintenance command
+        env:
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          python3 - <<'PY' > ssm-params.json
+          import json
+          import os
+
+          operation = os.environ["OPERATION"]
+          if operation not in {"diagnose", "safe-cleanup"}:
+              raise SystemExit("unsupported maintenance operation")
+
+          commands = [
+              "set -u",
+              "echo OMEGA_MAINTENANCE_START",
+              "date -u",
+              "df -h / /var/lib/docker 2>/dev/null || df -h /",
+              "df -ih / /var/lib/docker 2>/dev/null || df -ih /",
+              "sudo systemctl is-active amazon-ssm-agent || true",
+              "sudo systemctl is-active docker || true",
+              "sudo docker system df || true",
+              "sudo docker ps --format 'table {{.Names}}\\t{{.Status}}' || true",
+          ]
+          if operation == "safe-cleanup":
+              commands.extend([
+                  "sudo rm -f /tmp/omega-deploy.log",
+                  "sudo apt-get clean",
+                  "sudo journalctl --vacuum-size=500M",
+                  "sudo docker image prune --all --force",
+                  "sudo docker builder prune --all --force",
+                  "sync",
+                  "df -h / /var/lib/docker 2>/dev/null || df -h /",
+                  "df -ih / /var/lib/docker 2>/dev/null || df -ih /",
+              ])
+          commands.append("echo OMEGA_MAINTENANCE_COMPLETE")
+          print(json.dumps({"commands": commands, "executionTimeout": ["600"]}))
+          PY
+
+      - name: Run maintenance command through SSM
+        env:
+          INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          command_id="$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "OMEGA host maintenance: ${{ inputs.operation }}" \
+            --parameters file://ssm-params.json \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          for _ in $(seq 1 90); do
+            status="$(aws ssm get-command-invocation \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)"
+            case "$status" in
+              Success)
+                aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID" \
+                  --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation --command-id "$command_id" --instance-id "$INSTANCE_ID" \
+                  --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "::error::SSM maintenance command did not finish before timeout"
+          exit 1
