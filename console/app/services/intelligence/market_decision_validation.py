@@ -65,6 +65,15 @@ async def _source_snapshot(user: dict) -> dict[str, Any] | None:
     return next((row for row in rows if str(row.get("source_id")) == SOURCE_ID), None)
 
 
+async def _optional_source_snapshot(user: dict) -> dict[str, Any] | None:
+    try:
+        return await _source_snapshot(user)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
+        return None
+
+
 async def _market_snapshot(user: dict) -> dict[str, Any]:
     result = await mcp_registry.invoke(
         "mcp-infra",
@@ -227,7 +236,7 @@ def _report(
 
 
 async def get_validation(user: dict) -> dict[str, Any]:
-    source = await _source_snapshot(user)
+    source = await _optional_source_snapshot(user)
     simulations = await monte_carlo_service.list_simulations(
         user, source_type="wisdom_bit", source_id=SOURCE_ID, limit=50
     )
