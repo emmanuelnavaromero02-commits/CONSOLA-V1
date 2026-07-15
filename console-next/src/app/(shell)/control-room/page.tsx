@@ -29,6 +29,7 @@ import { toast } from "sonner";
 
 import { AnalyticAppsPanel } from "@/components/control-room/AnalyticAppsPanel";
 import { AgentsOpsPanel } from "@/components/control-room/AgentsOpsPanel";
+import { MarketDecisionEvidencePanel } from "@/components/control-room/MarketDecisionEvidencePanel";
 import { SuccessFactorsGoldPanel } from "@/components/control-room/SuccessFactorsGoldPanel";
 import {
   MiniBar,
@@ -2462,6 +2463,7 @@ export default function ControlRoomPage() {
             sfDecisionModel={sfDecisionModel}
             sfDecisionModelLoading={sfDecisionModelLoading}
             sfDecisionModelError={sfDecisionModelError}
+            successFactorsAvailable={successFactorsAvailable}
             domain={domain}
             cartridge={cartridge}
             severity={severity}
@@ -2825,6 +2827,7 @@ function DashboardView({
   sfDecisionModel,
   sfDecisionModelLoading,
   sfDecisionModelError,
+  successFactorsAvailable,
   domain,
   cartridge,
   severity,
@@ -2888,6 +2891,7 @@ function DashboardView({
   sfDecisionModel: SfDecisionModelPayload | null;
   sfDecisionModelLoading: boolean;
   sfDecisionModelError: string;
+  successFactorsAvailable: boolean;
   domain: string;
   cartridge: string;
   severity: Severity | "all";
@@ -2960,6 +2964,7 @@ function DashboardView({
             decisionModelLoading={sfDecisionModelLoading}
             decisionModelError={sfDecisionModelError}
           />
+          {successFactorsAvailable ? <MarketDecisionEvidencePanel /> : null}
           <AgentsOpsPanel
             payload={agentsOps}
             loading={agentsOpsLoading}

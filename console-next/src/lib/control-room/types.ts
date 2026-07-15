@@ -251,6 +251,57 @@ export interface ControlRoomAgentsOpsPayload {
   origins: Array<{ origin: string; count: number }>;
 }
 
+export interface MarketDecisionValidationPayload {
+  status: "ready" | "partial" | "insufficient_data";
+  source: {
+    dataset: string;
+    source_id: string;
+    input_status: string;
+    source_mode: string;
+    employee_count: number;
+    confidence?: number | string | null;
+  };
+  market_context: {
+    provider: string;
+    metric_name: string;
+    as_of?: string | null;
+    unit?: string | null;
+    confidence?: number | string | null;
+    freshness_status?: string | null;
+    distribution?: { low?: number; mode?: number; high?: number };
+  };
+  simulation: {
+    simulation_id?: string | null;
+    model_version?: string | null;
+    output_metric?: string | null;
+    p10?: number | null;
+    p50?: number | null;
+    p90?: number | null;
+    updated_at?: string | null;
+    market_evidence_count: number;
+  };
+  bayes: {
+    status: string;
+    calibration_group: string;
+    sample_count: number;
+    evidence_policy: "evidence_only";
+  };
+  orchestration: {
+    orchestration_id?: string | null;
+    problem_type?: string | null;
+    action_recommended: boolean;
+    external_action_id?: string | null;
+  };
+  policy: {
+    recommendation_only: boolean;
+    causal_claim: boolean;
+    financial_forecast: boolean;
+    creates_calibration_observation: boolean;
+    automatic_action: boolean;
+    external_writeback: boolean;
+  };
+}
+
 export interface SfGoldWidgetRow {
   label?: string;
   id?: string | null;

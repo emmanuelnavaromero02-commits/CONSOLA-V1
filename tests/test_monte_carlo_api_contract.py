@@ -248,6 +248,34 @@ async def test_market_context_variable_rejects_low_confidence(monkeypatch):
     assert "confidence is too low" in str(exc.value.detail)
 
 
+@pytest.mark.asyncio
+async def test_market_context_variable_requires_provider_in_workspace_scope(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+
+    async def unexpected_query(*args, **kwargs):
+        raise AssertionError("provider scope must be checked before Gold read")
+
+    monkeypatch.setattr(market_context, "query_gold_dataset_rows", unexpected_query)
+
+    with pytest.raises(HTTPException) as exc:
+        await market_context.resolve_market_context_inputs(
+            {
+                **_payload(),
+                "use_external_market_context": True,
+                "input_variables": {
+                    "cost_per_day": {
+                        "type": "external_market_context",
+                        "metric_name": "usd_mxn_fix",
+                    }
+                },
+            },
+            {"id": 1, "allowed_cartridges": ["sap_successfactors"]},
+        )
+
+    assert exc.value.status_code == 403
+    assert "provider not allowed" in str(exc.value.detail)
+
+
 def test_mcp_monte_carlo_tool_exposes_external_market_opt_in():
     source = (REPO / "mcp-infra/app/tools/control_room.py").read_text(encoding="utf-8")
 

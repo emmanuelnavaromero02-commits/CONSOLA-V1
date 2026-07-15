@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -114,7 +115,8 @@ def _metric_name(variable: str, spec: dict[str, Any]) -> str:
 
 
 async def _load_metric(metric_name: str, user: dict | None) -> dict[str, Any]:
-    _provider, dataset = METRIC_SOURCES[metric_name]
+    provider, dataset = METRIC_SOURCES[metric_name]
+    _require_provider_scope(provider, user)
     rows = await query_gold_dataset_rows(dataset, user, limit=200)
     for row in rows:
         if str(row.get("metric_name") or "") != metric_name:
@@ -127,6 +129,18 @@ async def _load_metric(metric_name: str, user: dict | None) -> dict[str, Any]:
             raise HTTPException(422, f"market context metric confidence is too low: {metric_name}")
         return row
     raise HTTPException(404, f"market context metric not found: {metric_name}")
+
+
+def _require_provider_scope(provider: str, user: dict | None) -> None:
+    allowed = (user or {}).get("allowed_cartridges")
+    if not isinstance(allowed, list):
+        environment = os.environ.get("APP_ENV", "production").strip().lower()
+        if environment in {"production", "prod"}:
+            raise HTTPException(403, "market context provider scope is required")
+        return
+    allowed_set = {str(item).strip() for item in allowed if str(item).strip()}
+    if "*" not in allowed_set and provider not in allowed_set:
+        raise HTTPException(403, "market context provider not allowed")
 
 
 def _decimal(value: Any, label: str) -> Decimal:

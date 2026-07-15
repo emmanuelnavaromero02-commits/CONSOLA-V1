@@ -7,6 +7,8 @@ import {
   getControlRoomImpact,
   getControlRoomLessons,
   getControlRoomThresholds,
+  getMarketDecisionValidation,
+  runMarketDecisionValidation,
   getSuccessFactorsDecisionModel,
   getSuccessFactorsGoldKpis,
   getSuccessFactorsTalentAnomalies,
@@ -89,6 +91,21 @@ describe("control-room client", () => {
     expect(apiMock.post).toHaveBeenCalledWith(
       "/api/control-room/sap-successfactors/talent/actions/preview",
       { action_id: "talent_calibration_sensitivity", box_id: "core" },
+    );
+  });
+
+  it("uses scoped market validation read and run endpoints", async () => {
+    apiMock.get.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
+    apiMock.post.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
+
+    await getMarketDecisionValidation();
+    await runMarketDecisionValidation();
+
+    expect(apiMock.get).toHaveBeenCalledWith(
+      "/api/control-room/sap-successfactors/market-validation",
+    );
+    expect(apiMock.post).toHaveBeenCalledWith(
+      "/api/control-room/sap-successfactors/market-validation/run",
     );
   });
 });

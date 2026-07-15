@@ -13,6 +13,7 @@ from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
+from app.services.intelligence import market_decision_validation
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context, verify_signed_security_context
 
@@ -219,6 +220,12 @@ async def _control_room_internal_view(
             user,
             lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
         )
+    if view == "sap_successfactors_market_validation":
+        return await _control_room_cache_get_or_set(
+            "sap-successfactors-market-validation",
+            user,
+            lambda: market_decision_validation.get_validation(user),
+        )
     if view == "banxico_readiness":
         from app.services.banxico_readiness import banxico_readiness
 
@@ -372,6 +379,35 @@ async def control_room_sap_successfactors_talent_action_preview(
         user,
         body if isinstance(body, dict) else {},
     )
+
+
+@router.get(
+    "/sap-successfactors/market-validation",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_market_validation(
+    user: dict = Depends(require_authenticated),
+):
+    return await _control_room_cache_get_or_set(
+        "sap-successfactors-market-validation",
+        user,
+        lambda: market_decision_validation.get_validation(user),
+    )
+
+
+@router.post(
+    "/sap-successfactors/market-validation/run",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
+)
+async def control_room_sap_successfactors_market_validation_run(
+    user: dict = Depends(require_authenticated),
+):
+    result = await market_decision_validation.run_validation(user)
+    _control_room_cache_invalidate(user)
+    return result
 
 
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
