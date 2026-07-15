@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - diagnose
+          - repair-ssm
           - safe-cleanup
 
 permissions:
@@ -66,20 +67,26 @@ jobs:
           import os
 
           operation = os.environ["OPERATION"]
-          if operation not in {"diagnose", "safe-cleanup"}:
+          if operation not in {"diagnose", "repair-ssm", "safe-cleanup"}:
               raise SystemExit("unsupported maintenance operation")
 
-          commands = [
-              "set -u",
-              "echo OMEGA_MAINTENANCE_START",
-              "date -u",
-              "df -h / /var/lib/docker 2>/dev/null || df -h /",
-              "df -ih / /var/lib/docker 2>/dev/null || df -ih /",
-              "sudo systemctl is-active amazon-ssm-agent || true",
-              "sudo systemctl is-active docker || true",
-              "sudo docker system df || true",
-              "sudo docker ps --format 'table {{.Names}}\\t{{.Status}}' || true",
-          ]
+          if operation == "repair-ssm":
+              commands = [
+                  "sudo sysctl -w fs.inotify.max_user_instances=8192",
+                  "printf 'fs.inotify.max_user_instances=8192\\n' | sudo tee /etc/sysctl.d/99-omega-ssm.conf",
+              ]
+          else:
+              commands = [
+                  "set -u",
+                  "echo OMEGA_MAINTENANCE_START",
+                  "date -u",
+                  "df -h / /var/lib/docker 2>/dev/null || df -h /",
+                  "df -ih / /var/lib/docker 2>/dev/null || df -ih /",
+                  "sudo systemctl is-active amazon-ssm-agent || true",
+                  "sudo systemctl is-active docker || true",
+                  "sudo docker system df || true",
+                  "sudo docker ps --format 'table {{.Names}}\\t{{.Status}}' || true",
+              ]
           if operation == "safe-cleanup":
               commands.extend([
                   "sudo rm -f /tmp/omega-deploy.log",
