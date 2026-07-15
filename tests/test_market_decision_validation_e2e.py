@@ -52,7 +52,7 @@ async def test_validation_runs_governed_flow_without_actions_or_fake_observation
         return [_source()]
 
     async def invoke(server, tool, args, *, user):
-        assert (server, tool) == ("mcp-infra", "market_context_read")
+        assert (server, tool) == ("infra", "market_context_read")
         assert args["usable_only"] is True
         return {
             "context": [
