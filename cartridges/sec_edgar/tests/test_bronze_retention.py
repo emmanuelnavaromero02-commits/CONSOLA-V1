@@ -36,6 +36,7 @@ def test_retention_dry_run_reports_only_complete_duplicate_and_debug_batches():
     report = build_retention_dry_run(storage, tenant_id="tenant-a", workspace_id="workspace-a")
 
     assert report["dry_run"] is True
+    assert len(report["plan_hash"]) == 64
     assert report["delete_object_count"] == 0
     assert report["candidate_count"] == 2
     by_run = {item["run_id"]: item for item in report["candidates"]}
@@ -64,6 +65,21 @@ def test_retention_dry_run_rejects_unknown_entities():
         build_retention_dry_run(storage, tenant_id="tenant-a", workspace_id="workspace-a", entities=["bad"])
     except ValueError as exc:
         assert "unsupported SEC EDGAR entities" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_retention_dry_run_rejects_unsafe_scope():
+    storage = MemoryStorage()
+
+    try:
+        build_retention_dry_run(
+            storage,
+            tenant_id="tenant-a/other",
+            workspace_id="workspace-a",
+        )
+    except ValueError as exc:
+        assert "invalid tenant_id" in str(exc)
     else:
         raise AssertionError("expected ValueError")
 
