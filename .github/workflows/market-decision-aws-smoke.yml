@@ -1,0 +1,50 @@
+name: Market Decision AWS Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "Authorized tenant UUID."
+        required: true
+        type: string
+      workspace_id:
+        description: "Authorized workspace UUID."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: market-decision-aws-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Governed market decision smoke
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
+      AWS_APP_INSTANCE_ID: ${{ vars.AWS_APP_INSTANCE_ID || secrets.AWS_APP_INSTANCE_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run governed validation through SSM
+        env:
+          TENANT_ID: ${{ inputs.tenant_id }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+        run: |
+          python scripts/market_decision_aws_smoke.py \
+            --tenant-id "$TENANT_ID" \
+            --workspace-id "$WORKSPACE_ID"
