@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - inspect-recent
           - diagnose
           - repair-ssm
           - safe-cleanup
@@ -59,6 +60,7 @@ jobs:
           echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
 
       - name: Build fixed maintenance command
+        if: inputs.operation != 'inspect-recent'
         env:
           OPERATION: ${{ inputs.operation }}
         run: |
@@ -103,6 +105,7 @@ jobs:
           PY
 
       - name: Run maintenance command through SSM
+        if: inputs.operation != 'inspect-recent'
         env:
           INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
         run: |
@@ -137,3 +140,15 @@ jobs:
           done
           echo "::error::SSM maintenance command did not finish before timeout"
           exit 1
+
+      - name: Inspect recent SSM command status
+        if: inputs.operation == 'inspect-recent'
+        env:
+          INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
+        run: |
+          aws ssm list-command-invocations \
+            --instance-id "$INSTANCE_ID" \
+            --details \
+            --max-results 10 \
+            --query 'CommandInvocations[].{CommandId:CommandId,DocumentName:DocumentName,Status:Status,StatusDetails:StatusDetails,RequestedDateTime:RequestedDateTime,Plugins:CommandPlugins[].{Name:Name,Status:Status,ResponseCode:ResponseCode}}' \
+            --output json
