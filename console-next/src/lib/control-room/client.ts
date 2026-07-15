@@ -6,6 +6,7 @@ import type {
   Dashboard,
   ImpactPayload,
   LessonsPayload,
+  MarketDecisionValidationPayload,
   SfDecisionModelPayload,
   SfGoldKpisPayload,
   SfTalentActionPreviewPayload,
@@ -30,6 +31,8 @@ export const CONTROL_ROOM_PATHS = {
   sfTalentAnomalies: "/api/control-room/sap-successfactors/talent/anomalies",
   sfTalentMetadataReadiness: "/api/control-room/sap-successfactors/talent/metadata-readiness",
   sfTalentActionPreview: "/api/control-room/sap-successfactors/talent/actions/preview",
+  sfMarketValidation: "/api/control-room/sap-successfactors/market-validation",
+  sfMarketValidationRun: "/api/control-room/sap-successfactors/market-validation/run",
   sfDecisionModel: "/api/semantic?cartridge=sap_successfactors",
 } as const;
 
@@ -124,5 +127,19 @@ export async function previewSuccessFactorsTalentAction(payload: {
 
 export async function getSuccessFactorsDecisionModel(): Promise<SfDecisionModelPayload> {
   const response = await api.get<SfDecisionModelPayload>(CONTROL_ROOM_PATHS.sfDecisionModel);
+  return response.data;
+}
+
+export async function getMarketDecisionValidation(): Promise<MarketDecisionValidationPayload> {
+  const response = await api.get<MarketDecisionValidationPayload>(
+    CONTROL_ROOM_PATHS.sfMarketValidation,
+  );
+  return response.data;
+}
+
+export async function runMarketDecisionValidation(): Promise<MarketDecisionValidationPayload> {
+  const response = await api.post<MarketDecisionValidationPayload>(
+    CONTROL_ROOM_PATHS.sfMarketValidationRun,
+  );
   return response.data;
 }

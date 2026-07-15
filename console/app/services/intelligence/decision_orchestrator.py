@@ -470,7 +470,20 @@ def build_decision_plan(
     engine_route: dict[str, Any],
 ) -> dict[str, Any]:
     problem_type = str(classification["problem_type"])
-    action_recommended = problem_type == "simple_action" and classification["confidence"] >= 0.5
+    constraints = (
+        normalized.get("constraints")
+        if isinstance(normalized.get("constraints"), dict)
+        else {}
+    )
+    recommendation_only = bool(
+        constraints.get("recommendation_only")
+        or constraints.get("no_external_writeback")
+    )
+    action_recommended = (
+        not recommendation_only
+        and problem_type == "simple_action"
+        and classification["confidence"] >= 0.5
+    )
     steps = [
         "Review linked evidence in the active workspace.",
         "Run recommended engines manually if more quantitative evidence is required.",
@@ -481,6 +494,8 @@ def build_decision_plan(
         steps.append("Create a sandbox external action proposal for human approval.")
     if problem_type == "insufficient_data":
         steps = ["Collect missing evidence before proposing any action."]
+    elif recommendation_only:
+        steps.append("Keep the result advisory; external action proposals are disabled.")
     refs = normalized.get("evidence_refs") or []
     evidence_metadata = external_evidence_metadata(refs)
     plan = {
@@ -494,6 +509,7 @@ def build_decision_plan(
             else "review_or_collect_more_evidence"
         ),
         "action_recommended": action_recommended,
+        "recommendation_only": recommendation_only,
     }
     if evidence_metadata:
         plan.update(evidence_metadata)
@@ -516,6 +532,8 @@ def build_orchestration_plan(payload: dict[str, Any], source: dict[str, Any]) ->
     ]
     if decision_plan["action_recommended"]:
         safety_notes.append("Any external action proposal requires human approval.")
+    if decision_plan.get("recommendation_only"):
+        safety_notes.append("Recommendation-only constraints disable external action proposals.")
     if evidence_metadata:
         safety_notes.append("External market context is treated as evidence only, not as automatic truth.")
     return {

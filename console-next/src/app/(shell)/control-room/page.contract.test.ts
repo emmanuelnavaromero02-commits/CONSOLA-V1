@@ -17,6 +17,7 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("getSuccessFactorsTalentKpis");
     expect(pageSource).toContain("getSuccessFactorsDecisionModel");
     expect(pageSource).toContain("SuccessFactorsGoldPanel");
+    expect(pageSource).toContain("MarketDecisionEvidencePanel");
     expect(pageSource).toContain("SourceInventoryPanel");
   });
 
