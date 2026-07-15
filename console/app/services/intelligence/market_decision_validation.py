@@ -19,6 +19,7 @@ SOURCE_DATASET = "sap_successfactors_talent_simulation_inputs"
 SOURCE_ID = "WB-TALENTO"
 MARKET_PROVIDER = "banxico"
 MARKET_METRIC = "usd_mxn_fix"
+MARKET_SERVER = "infra"
 MODEL_VERSION = "sf_market_validation.v1"
 CALIBRATION_GROUP = "sap_successfactors:talent_readiness"
 CALIBRATION_MODEL = "bayesian_calibration.v1"
@@ -76,7 +77,7 @@ async def _optional_source_snapshot(user: dict) -> dict[str, Any] | None:
 
 async def _market_snapshot(user: dict) -> dict[str, Any]:
     result = await mcp_registry.invoke(
-        "mcp-infra",
+        MARKET_SERVER,
         "market_context_read",
         {
             "provider": MARKET_PROVIDER,
