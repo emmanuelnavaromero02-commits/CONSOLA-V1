@@ -179,6 +179,34 @@ async def test_validation_stops_when_successfactors_inputs_are_not_ready(monkeyp
     assert "not ready" in str(exc.value.detail)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [404, 503])
+async def test_read_report_degrades_missing_gold_to_insufficient_data(
+    monkeypatch, status_code
+):
+    async def missing_source(*args, **kwargs):
+        raise HTTPException(status_code, "source unavailable")
+
+    async def empty_result(*args, **kwargs):
+        return {"simulations": [], "states": []}
+
+    async def empty_states(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(market_decision_validation, "_source_snapshot", missing_source)
+    monkeypatch.setattr(
+        market_decision_validation.monte_carlo_service,
+        "list_simulations",
+        empty_result,
+    )
+    monkeypatch.setattr(market_decision_validation, "_bayes_states", empty_states)
+
+    result = await market_decision_validation.get_validation(USER)
+
+    assert result["status"] == "insufficient_data"
+    assert result["source"]["input_status"] == "missing"
+
+
 def test_recommendation_only_constraint_disables_action_proposals():
     plan = decision_orchestrator.build_decision_plan(
         {
@@ -238,7 +266,7 @@ async def test_validation_requires_explicit_workspace_cartridge_scope_in_product
     monkeypatch.setenv("APP_ENV", "production")
 
     with pytest.raises(HTTPException) as exc:
-        await market_decision_validation._source_snapshot(  # noqa: SLF001
+        await market_decision_validation._optional_source_snapshot(  # noqa: SLF001
             {
                 "id": 7,
                 "active_tenant_id": "tenant-a",
