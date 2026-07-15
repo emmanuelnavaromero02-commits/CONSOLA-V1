@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -8,6 +10,9 @@ from omega_lakehouse import LakehouseStorage
 
 SEC_ENTITIES = ("company_metadata", "company_facts")
 DEBUG_MARKERS = ("debug", "tmp", "test")
+_SCOPE_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_LOAD_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
 
 
 def build_retention_dry_run(
@@ -18,8 +23,7 @@ def build_retention_dry_run(
     entities: str | list[str] | tuple[str, ...] | None = None,
     keep_latest_per_group: int = 1,
 ) -> dict[str, Any]:
-    if not tenant_id or not workspace_id:
-        raise ValueError("tenant_id and workspace_id are required")
+    _validate_scope(tenant_id, workspace_id)
     if keep_latest_per_group < 1:
         raise ValueError("keep_latest_per_group must be >= 1")
     selected = _selected_entities(entities)
@@ -52,7 +56,7 @@ def build_retention_dry_run(
             _add_candidate(candidates, item, "duplicate_complete_batch")
 
     ordered_candidates = sorted(candidates.values(), key=lambda item: (item["entity"], item["load_date"], item["run_id"]))
-    return {
+    report = {
         "dry_run": True,
         "cartridge_id": "sec_edgar",
         "tenant_id": tenant_id,
@@ -67,6 +71,37 @@ def build_retention_dry_run(
         "group_count": len(groups),
         "complete_manifest_count": sum(len(items) for items in groups.values()),
     }
+    report["plan_hash"] = retention_plan_hash(report)
+    return report
+
+
+def retention_plan_hash(report: dict[str, Any]) -> str:
+    payload = {
+        "cartridge_id": "sec_edgar",
+        "tenant_id": report.get("tenant_id"),
+        "workspace_id": report.get("workspace_id"),
+        "entities": report.get("entities") or [],
+        "keep_latest_per_group": report.get("keep_latest_per_group"),
+        "candidates": [
+            {
+                "manifest_key": item.get("manifest_key"),
+                "final_prefix": item.get("final_prefix"),
+                "request_hash": item.get("request_hash"),
+                "payload_hash": item.get("payload_hash"),
+                "reasons": item.get("reasons") or [],
+            }
+            for item in report.get("candidates") or []
+        ],
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _validate_scope(tenant_id: str, workspace_id: str) -> None:
+    if not _SCOPE_RE.fullmatch(tenant_id or ""):
+        raise ValueError("invalid tenant_id")
+    if not _SCOPE_RE.fullmatch(workspace_id or ""):
+        raise ValueError("invalid workspace_id")
 
 
 def _selected_entities(entities: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -76,7 +111,7 @@ def _selected_entities(entities: str | list[str] | tuple[str, ...] | None) -> tu
     invalid = sorted(set(selected) - set(SEC_ENTITIES))
     if invalid:
         raise ValueError(f"unsupported SEC EDGAR entities: {', '.join(invalid)}")
-    return selected
+    return tuple(dict.fromkeys(selected))
 
 
 def _load_manifest(storage: LakehouseStorage, key: str) -> Any:
@@ -106,7 +141,12 @@ def _invalid_reason(
         return "wrong_scope"
     if any(not manifest.get(field) for field in required):
         return "missing_required_field"
-    if not final_prefix.startswith(expected_prefix) or not final_prefix.endswith("/"):
+    load_date = str(manifest.get("load_date") or "")
+    run_id = str(manifest.get("run_id") or "")
+    if not _LOAD_DATE_RE.fullmatch(load_date) or not _RUN_ID_RE.fullmatch(run_id):
+        return "unsafe_batch_identity"
+    expected_final = f"{expected_prefix}load_date={load_date}/batch_id={run_id}/"
+    if final_prefix != expected_final:
         return "unsafe_final_prefix"
     if key != f"{final_prefix}manifest.json":
         return "manifest_key_mismatch"
