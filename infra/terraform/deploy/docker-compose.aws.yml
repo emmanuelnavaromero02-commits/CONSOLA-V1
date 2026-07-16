@@ -699,6 +699,7 @@ services:
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
       FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
+      AIRFLOW_URL:                          http://airflow:8080/airflow
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
       AIRFLOW__WEBSERVER__BASE_URL:         "${AIRFLOW_PUBLIC_URL:-http://airflow:8080}"
       AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX: "True"
@@ -797,6 +798,7 @@ services:
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
       FIELD_ENCRYPTION_KEY:                 ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for cartridge DAGs}
+      AIRFLOW_URL:                          http://airflow:8080/airflow
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
