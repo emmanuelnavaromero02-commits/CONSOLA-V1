@@ -27,12 +27,14 @@ from datetime import datetime, timedelta, timezone
 import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from entity_scheduler_record import record_scheduler_run
+from entity_scheduler_trigger import (
+    AirflowTriggerError,
+    require_all_succeeded,
+    trigger_dag_run,
+)
 
 
-# ── Config ───────────────────────────────────────────────────────────────────
-
-CARTRIDGE_ID  = "platform"
-ENTITY        = "EntityScheduler"
 AIRFLOW_URL   = os.environ.get("AIRFLOW_URL", "http://airflow:8080")
 # The container exposes AIRFLOW_ADMIN_USER/PASSWORD (set by docker-compose);
 # AIRFLOW_USER/PASSWORD are kept as fallback for legacy installs.
@@ -213,14 +215,7 @@ def trigger_each(**context):
         # doesn't create a duplicate run.
         ts_id = it["fire_time"].replace(":", "").replace("-", "").replace("+", "_")
         run_id = f"sched_{it['cartridge_id']}_{it['entity']}_{ts_id}"
-        url = f"{AIRFLOW_URL}/api/v1/dags/{it['dag_id']}/dagRuns"
         try:
-            requests.patch(
-                f"{AIRFLOW_URL}/api/v1/dags/{it['dag_id']}",
-                auth=(AIRFLOW_USER, AIRFLOW_PASS),
-                json={"is_paused": False},
-                timeout=30,
-            )
             conf = {
                 "entity":       it["entity"],
                 "mode":         it["mode"],
@@ -236,39 +231,47 @@ def trigger_each(**context):
             # never let them clobber the canonical fields above.
             for k, v in (it.get("dag_params") or {}).items():
                 conf.setdefault(k, v)
-            r = requests.post(
-                url,
-                auth=(AIRFLOW_USER, AIRFLOW_PASS),
-                json={"dag_run_id": run_id, "conf": conf},
-                timeout=30,
+            status_code = trigger_dag_run(
+                base_url=AIRFLOW_URL,
+                dag_id=it["dag_id"],
+                run_id=run_id,
+                conf=conf,
+                username=AIRFLOW_USER,
+                password=AIRFLOW_PASS,
             )
-            ok = r.status_code in (200, 201, 409)  # 409 = already exists, count as ok (idempotent)
             results.append({
                 "cartridge_id": it["cartridge_id"], "entity": it["entity"],
-                "dag_id": it["dag_id"], "status": r.status_code,
-                "ok": ok, "fire_time": it["fire_time"],
+                "dag_id": it["dag_id"], "status": status_code,
+                "ok": True, "fire_time": it["fire_time"],
             })
-            if ok:
-                # Mark scheduled so the next window doesn't re-trigger
-                conn = _pg()
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE entity_config SET last_scheduled_at = %s::timestamptz "
-                            "WHERE cartridge_id = %s AND entity = %s",
-                            (it["fire_time"], it["cartridge_id"], it["entity"]),
-                        )
-                    conn.commit()
-                finally:
-                    conn.close()
+            # Mark scheduled only after Airflow accepted or already had the run.
+            conn = _pg()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE entity_config SET last_scheduled_at = %s::timestamptz "
+                        "WHERE cartridge_id = %s AND entity = %s",
+                        (it["fire_time"], it["cartridge_id"], it["entity"]),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except AirflowTriggerError as exc:
+            results.append({
+                "cartridge_id": it["cartridge_id"], "entity": it["entity"],
+                "dag_id": it["dag_id"], "status": exc.status_code or "request_error",
+                "stage": exc.stage, "ok": False,
+            })
         except Exception as exc:                                   # noqa: BLE001
             results.append({
                 "cartridge_id": it["cartridge_id"], "entity": it["entity"],
-                "status": "exception", "error": str(exc),
+                "dag_id": it["dag_id"], "status": "exception",
+                "error_type": type(exc).__name__, "ok": False,
             })
 
     ok_count = sum(1 for r in results if r.get("ok"))
     print(f"[entity_scheduler] triggered {ok_count}/{len(results)}: {results}")
+    require_all_succeeded(results)
     return {"triggered": ok_count, "results": results}
 
 
@@ -276,43 +279,15 @@ def trigger_each(**context):
 
 def record_run(**context):
     inv = context["ti"].xcom_pull(task_ids="trigger_each") or {}
-    started = context["logical_date"].isoformat()
-    ended   = datetime.now(timezone.utc).isoformat()
-    triggered = int(inv.get("triggered") or 0)
-    results = inv.get("results") or []
-    total = len(results)
-    status = "success" if total == triggered else "partial" if triggered else "failed"
-    if total == 0:
-        status = "success"
-    payload = {
-        "tool": "pipeline_run_save",
-        "args": {
-            "dag_id":       "entity_scheduler",
-            "cartridge_id": CARTRIDGE_ID,
-            "entity":       ENTITY,
-            "run_id":       f"entity_scheduler:{context['run_id']}",
-            "airflow_dag_run_id": context["run_id"],
-            "mode":         "scheduled",
-            "status":       status,
-            "started_at":   started,
-            "finished_at":  ended,
-            "extra":        inv,
-        },
-    }
     try:
-        r = requests.post(
-            f"{MCP_INFRA_URL}/mcp/invoke",
+        record_scheduler_run(
+            context=context,
+            invocation=inv,
+            mcp_url=MCP_INFRA_URL,
             headers=_mcp_headers(),
-            json=payload,
-            timeout=15,
         )
-        print(f"[entity_scheduler] pipeline_run_save → {r.status_code}: {r.text[:200]}")
-        r.raise_for_status()
-        body = r.json()
-        if body.get("error"):
-            raise RuntimeError(str(body["error"]))
     except Exception as exc:                                       # noqa: BLE001
-        print(f"[entity_scheduler] pipeline_run_save failed: {exc}")
+        print(f"[entity_scheduler] pipeline_run_save failed: {type(exc).__name__}")
         raise
 
 
