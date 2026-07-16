@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 from airflow.decorators import dag, task
+from market_security_context import security_context_from_conf
 
 CARTRIDGE_URL = os.environ.get("SEC_EDGAR_URL", "http://sec-edgar:8217")
 DEFAULT_CONN_ID = "default"
@@ -81,9 +82,8 @@ def sec_edgar_extract():
         }
         conn_id = str(conf.get("conn_id") or DEFAULT_CONN_ID).strip()
         headers = {"X-Api-Key": _internal_key(), "X-Internal-Service": "airflow"}
-        security_context = conf.get("security_context") if isinstance(conf.get("security_context"), dict) else None
-        if security_context:
-            headers["X-Security-Context"] = json.dumps(security_context, ensure_ascii=False)
+        security_context = security_context_from_conf(conf, "sec_edgar")
+        headers["X-Security-Context"] = json.dumps(security_context, ensure_ascii=False)
         with httpx.Client(timeout=900) as client:
             response = client.post(
                 f"{CARTRIDGE_URL}/skills/{endpoint}/company_facts",
