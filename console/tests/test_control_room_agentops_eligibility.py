@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -84,6 +85,38 @@ class RecordingConnection:
         return []
 
 
+class MixedSimulationConnection:
+    async def fetch(self, sql: str, *args):
+        assert "simulation.source_id = ANY($2::text[])" in sql
+        assert "option.signal_id = ANY($2::text[])" in sql
+        eligible_ids = set(args[1])
+        option_signals = {
+            "option-good": "signal-good",
+            "option-technical": "signal-technical",
+        }
+        simulations = [
+            ("signal", "signal-good"),
+            ("signal", "signal-technical"),
+            ("decision_option", "option-good"),
+            ("decision_option", "option-technical"),
+            ("wisdom_bit", "WB-TALENTO"),
+            ("manual_fixture", "fixture-without-lineage"),
+        ]
+        counts: dict[str, int] = {}
+        for source_type, source_id in simulations:
+            direct = source_type == "signal" and source_id in eligible_ids
+            via_option = (
+                source_type == "decision_option"
+                and option_signals.get(source_id) in eligible_ids
+            )
+            if direct or via_option:
+                counts[source_type] = counts.get(source_type, 0) + 1
+        return [
+            {"source_type": source_type, "total": total, "latest_at": None}
+            for source_type, total in sorted(counts.items())
+        ]
+
+
 @pytest.mark.asyncio
 async def test_agent_alert_orchestration_and_execution_queries_are_id_bounded():
     conn = RecordingConnection()
@@ -115,3 +148,84 @@ async def test_agent_alert_orchestration_and_execution_queries_are_id_bounded():
     assert "JOIN decision_orchestration_runs" in conn.calls[2][0]
     assert "run.source_id = ANY($2::text[])" in conn.calls[2][0]
     assert "'intelligence_signal'" in conn.calls[2][0]
+
+
+@pytest.mark.asyncio
+async def test_agentops_monte_carlo_counts_only_demonstrable_business_lineage():
+    conn = RecordingConnection()
+
+    await control_room_service._agentops_monte_carlo_rows(
+        conn,
+        workspace_id="workspace-A",
+        table_exists={"monte_carlo_simulations": True},
+        eligible_item_ids=["signal-good"],
+    )
+
+    sql, args = conn.calls[0]
+    assert "simulation.source_type = 'signal'" in sql
+    assert "simulation.source_id = ANY($2::text[])" in sql
+    assert "simulation.source_type = 'decision_option'" in sql
+    assert "FROM decision_options option" in sql
+    assert "option.signal_id = ANY($2::text[])" in sql
+    assert "manual_fixture" not in sql
+    assert "backtest_case" not in sql
+    assert "wisdom_bit" not in sql
+    assert args == ("workspace-A", ["signal-good"])
+
+
+@pytest.mark.asyncio
+async def test_agentops_mixed_simulations_count_only_eligible_business_sources():
+    rows = await control_room_service._agentops_monte_carlo_rows(
+        MixedSimulationConnection(),
+        workspace_id="workspace-A",
+        table_exists={"monte_carlo_simulations": True},
+        eligible_item_ids=["signal-good"],
+    )
+
+    assert sum(row["total"] for row in rows) == 2
+    assert {row["source_type"] for row in rows} == {"signal", "decision_option"}
+
+
+def test_agentops_global_calibration_is_operational_diagnostic_not_business_count():
+    now = datetime(2026, 7, 17, tzinfo=UTC)
+    raw = {
+        "agents": [],
+        "runs": [],
+        "alert_rows": [],
+        "origin_rows": [],
+        "monte_carlo_rows": [
+            {"source_type": "signal", "total": 2, "latest_at": now}
+        ],
+        "operational_calibration_rows": [
+            {"total": 3, "sample_count": 21, "latest_at": now}
+        ],
+        "orchestration_rows": [],
+        "execution_rows": [],
+    }
+
+    payload = control_room_service._agentops_payload_from_raw(
+        raw,
+        tenant_id="tenant-A",
+        workspace_id="workspace-A",
+    )
+
+    assert payload["summary"]["monte_carlo_simulations"] == 2
+    assert payload["summary"]["bayesian_calibration_states"] == 0
+    assert payload["summary"]["bayesian_calibration_samples"] == 0
+    calibration = next(
+        engine
+        for engine in payload["engines"]
+        if engine["engine"] == "bayesian_calibration"
+    )
+    assert calibration["evidence_count"] == 0
+    assert calibration["sample_count"] == 0
+    assert payload["operational_diagnostics"] == [
+        {
+            "diagnostic": "bayesian_calibration_global",
+            "scope": "workspace",
+            "state_count": 3,
+            "sample_count": 21,
+            "latest_at": now.isoformat(),
+            "included_in_business_counters": False,
+        }
+    ]

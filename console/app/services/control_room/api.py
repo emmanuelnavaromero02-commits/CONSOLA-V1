@@ -5648,8 +5648,10 @@ def _agentops_runtime_metrics(
     run_payloads: list[dict[str, Any]],
     alerts_by_agent: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    calibration_row = dict(raw["calibration_rows"][0]) if raw["calibration_rows"] else {}
     orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
+    calibration = _agentops_calibration_projection(
+        raw["operational_calibration_rows"]
+    )
     return {
         "failed_recent": sum(1 for run in run_payloads if str(run.get("status")) == "error"),
         "open_alerts": sum(row.get("open", 0) for row in alerts_by_agent.values()),
@@ -5659,9 +5661,7 @@ def _agentops_runtime_metrics(
             (row["latest_at"] for row in raw["monte_carlo_rows"] if row["latest_at"]),
             default=None,
         ),
-        "calibration_total": int(calibration_row.get("total") or 0),
-        "calibration_samples": int(calibration_row.get("sample_count") or 0),
-        "calibration_latest": calibration_row.get("latest_at"),
+        **calibration,
         "orchestration_total": int(orchestration_row.get("total") or 0),
         "orchestration_latest": orchestration_row.get("latest_at"),
     }
@@ -5720,6 +5720,7 @@ def _agentops_snapshot_payload(
     summary: dict[str, Any],
     tool_usage: dict[str, int],
     origin_rows: Iterable[Any],
+    operational_diagnostics: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -5731,6 +5732,7 @@ def _agentops_snapshot_payload(
         "engines": engines_payload,
         "tools_used": _agentops_tools_used_payload(tool_usage),
         "origins": _agentops_origins_payload(origin_rows),
+        "operational_diagnostics": operational_diagnostics,
     }
 
 
@@ -5839,49 +5841,6 @@ async def _agentops_base_rows(
 
 
 @_bind_to_core
-async def _agentops_monte_carlo_rows(
-    conn: Any,
-    *,
-    workspace_id: str,
-    table_exists: dict[str, bool],
-) -> list[Any]:
-    if table_exists["monte_carlo_simulations"]:
-        return await conn.fetch(
-            """
-            SELECT source_type,
-                   COUNT(*)::int AS total,
-                   MAX(updated_at) AS latest_at
-              FROM monte_carlo_simulations
-             WHERE workspace_id = $1::uuid
-             GROUP BY source_type
-            """,
-            workspace_id,
-        )
-    return []
-
-
-@_bind_to_core
-async def _agentops_calibration_rows(
-    conn: Any,
-    *,
-    workspace_id: str,
-    table_exists: dict[str, bool],
-) -> list[Any]:
-    if table_exists["calibration_states"]:
-        return await conn.fetch(
-            """
-            SELECT COUNT(*)::int AS total,
-                   COALESCE(SUM(sample_count), 0)::int AS sample_count,
-                   MAX(updated_at) AS latest_at
-              FROM calibration_states
-             WHERE workspace_id = $1::uuid
-            """,
-            workspace_id,
-        )
-    return []
-
-
-@_bind_to_core
 async def _agentops_intelligence_rows(
     conn: Any,
     *,
@@ -5894,8 +5853,9 @@ async def _agentops_intelligence_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
+            eligible_item_ids=eligible_item_ids,
         ),
-        "calibration_rows": await _agentops_calibration_rows(
+        "operational_calibration_rows": await _agentops_calibration_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
@@ -5999,6 +5959,7 @@ def _agentops_payload_from_raw(
         summary=summary,
         tool_usage=tool_usage,
         origin_rows=raw["origin_rows"],
+        operational_diagnostics=runtime["operational_diagnostics"],
     )
 
 
