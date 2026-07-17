@@ -74,7 +74,7 @@ def decision_list_query(
             "status = 'open' AND commitment_date IS NOT NULL AND commitment_date < CURRENT_DATE"
         )
     sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
-    sql += " ORDER BY created_at DESC LIMIT 500"
+    sql += " ORDER BY created_at DESC, id DESC"
     return sql, params
 
 

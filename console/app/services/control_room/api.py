@@ -2518,6 +2518,7 @@ def _base_item(
 ) -> dict[str, Any]:
     severity = _severity(row.get("severity"))
     details = _details(row.get("details"))
+    metadata = _details(row.get("metadata"))
     detected_at = str(
         row.get("detected_at") or row.get("mes") or row.get("semana") or ""
     )
@@ -2536,6 +2537,8 @@ def _base_item(
             }
         ),
         "kind": source.kind,
+        "item_kind": row.get("item_kind") or metadata.get("item_kind") or source.kind,
+        "metadata": metadata,
         "domain": source.domain,
         "module": source.module_label,
         "module_id": source.visible_module_id,
@@ -2555,6 +2558,24 @@ def _base_item(
         "decision_id": None,
         "thresholds_applied": [],
         "threshold_state": "default",
+        **{
+            key: row.get(key)
+            for key in (
+                "data_status",
+                "data_readiness",
+                "evaluation_status",
+                "readiness_status",
+                "source_status",
+                "parent_item_id",
+                "source_item_id",
+                "derived_from",
+                *BUSINESS_OBSERVATION_FIELDS,
+                *BUSINESS_MATERIALIZATION_FIELDS,
+                *BUSINESS_EVIDENCE_FIELDS,
+            )
+            if key in row
+        },
+        **({"lineage": row["lineage"]} if "lineage" in row else {}),
     }
 
 
@@ -3984,6 +4005,7 @@ def _persisted_item_identity_fields(
     return {
         "id": str(public_row.get("item_id") or ""),
         "kind": kind,
+        "item_kind": metadata.get("item_kind") or kind,
         "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
         "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
         "domain": public_row.get("domain") or "Operacion",
@@ -4001,19 +4023,22 @@ def _persisted_item_identity_fields(
         "gold_table": metadata.get("gold_table"),
         "freshness_at": metadata.get("freshness_at"),
         "freshness_field": metadata.get("freshness_field"),
-        "data_status": metadata.get("data_status") or "gold_ready",
+        "data_status": metadata.get("data_status"),
         "data_readiness": metadata.get("data_readiness"),
         "evaluation_status": metadata.get("evaluation_status"),
         "readiness_status": metadata.get("readiness_status"),
         "source_status": metadata.get("source_status"),
         **{
             key: metadata.get(key)
-            for key in BUSINESS_OBSERVATION_FIELDS
+            for key in (
+                *BUSINESS_OBSERVATION_FIELDS,
+                *BUSINESS_MATERIALIZATION_FIELDS,
+                "parent_item_id",
+                "source_item_id",
+                "derived_from",
+            )
             if key in metadata
         },
-        "parent_item_id": metadata.get("parent_item_id"),
-        "source_item_id": metadata.get("source_item_id"),
-        "derived_from": metadata.get("derived_from"),
         "lineage": metadata.get("lineage")
         if isinstance(metadata.get("lineage"), dict)
         else {},
@@ -4031,9 +4056,7 @@ def _persisted_item_identity_fields(
         "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
         "severity": severity,
         "severity_weight": SEVERITY_WEIGHT[severity],
-        "detected_at": public_row.get("last_seen_at")
-        or public_row.get("first_seen_at")
-        or "",
+        "detected_at": metadata.get("detected_at") or "",
     }
 
 
@@ -4226,6 +4249,7 @@ async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
             params.append(tenant_id)
             tenant_clause = f"AND tenant_id::text = ${len(params)}"
         owner_clause = ""
+        owner_id = None
         if not _can_read_workspace_wide(user):
             owner_id = _actor_id((user or {}).get("id"))
             if owner_id is None:
@@ -4233,8 +4257,10 @@ async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
             params.append(owner_id)
             owner_clause = f"AND owner_user_id = ${len(params)}"
         pool = await auth.pool()
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
-            return await conn.fetch(
+        async def _load(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> tuple[list[Any], list[Any]]:
+            rows = await conn.fetch(
                 f"""
                 SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
                        severity, status, decision_id, entity_kind, entity_id,
@@ -4245,12 +4271,22 @@ async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
                  WHERE workspace_id = $1
                    {tenant_clause}
                    {owner_clause}
+                   AND item_kind IN ('intelligence_signal', 'agent_alert')
                  ORDER BY priority_score DESC, last_seen_at DESC
+                 LIMIT 200
                 """,
                 *params,
             )
+            lineage_rows = await fetch_lineage_rows(
+                conn,
+                workspace_id=workspace_id,
+                parent_ids=lineage_parent_ids(rows),
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+            )
+            return list(rows), lineage_rows
 
-        rows = await _run_with_db_scope(pool, user or {}, _load)
+        rows, lineage_rows = await _run_with_db_scope(pool, user or {}, _load)
     except Exception:
         return []
     # Defense-in-depth: hide the pre-#475 generic-Gold garbage class (stale rows
@@ -4267,11 +4303,20 @@ async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
         ):
             continue
         kept.append(row)
-    items = filter_business_items(
-        [_persisted_intelligence_payload(row) for row in kept]
-    )
-    business_ids = eligible_item_ids(items)
-    return [_with_omega(item, eligible_parent_ids=business_ids) for item in items]
+    seed_items = [_persisted_intelligence_payload(row) for row in kept]
+    seed_ids = {str(item.get("id") or "") for item in seed_items}
+    lineage_items = [
+        item
+        for row in lineage_rows
+        if (item := _persisted_intelligence_payload(row)).get("id") not in seed_ids
+    ]
+    eligible = filter_business_items([*lineage_items, *seed_items])
+    business_ids = eligible_item_ids(eligible)
+    return [
+        _with_omega(item, eligible_parent_ids=business_ids)
+        for item in seed_items
+        if str(item.get("id") or "") in business_ids
+    ]
 
 
 @_bind_to_core
@@ -4790,6 +4835,8 @@ async def _dashboard_items_with_persisted(
 ) -> list[dict[str, Any]]:
     known_ids = {str(item.get("id")) for item in items}
     for item in await _persisted_business_items(user):
+        if not item_kinds(item) & {"intelligence_signal", "agent_alert"}:
+            continue
         item_cartridge = str(item.get("cartridge") or "").strip()
         if item_cartridge != "platform" and item_cartridge not in active_cartridges:
             continue
@@ -5452,18 +5499,13 @@ def _ops_summary_payload(
 
 @_bind_to_core
 async def ops_summary(user: dict | None) -> dict[str, Any]:
-    """Lightweight operational summary for the active workspace.
+    """Operational summary for the active workspace.
 
-    Reads persisted item rows once, then scopes aggregate execution queries
-    to eligible item IDs. It never runs the dataset-fetch path used by
-    ``dashboard``. Workspace-scoped and secret-free.
-
-    Note: the live alert queue and source states are computed from datasets
-    in ``dashboard``; here open persisted business items are the proxy for
-    alert pressure.
+    Business counters use the exact eligible item projection returned by the
+    dashboard. Aggregate operational queries are then scoped to those IDs.
     """
     tenant_id, workspace_id = _workspace_scope(user)
-    business_items = await _persisted_business_items(user)
+    business_items = filter_business_items((await dashboard(user)).get("items", []))
     counts = await _ops_summary_counts(
         user,
         workspace_id=workspace_id,
@@ -5848,59 +5890,13 @@ async def _agentops_run_rows(
 
 
 @_bind_to_core
-async def _agentops_alert_rows(
-    conn: Any,
-    *,
-    workspace_id: str,
-    allowed_param: list[str] | None,
-) -> list[Any]:
-    return await conn.fetch(
-        """
-        SELECT metadata->>'agent_id' AS agent_id,
-               COUNT(*)::int AS total,
-               COUNT(*) FILTER (WHERE status = 'open')::int AS open,
-               MAX(last_seen_at) AS last_seen_at
-          FROM control_room_items
-         WHERE workspace_id = $1::uuid
-           AND item_kind = 'agent_alert'
-           AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
-         GROUP BY metadata->>'agent_id'
-        """,
-        workspace_id,
-        allowed_param,
-    )
-
-
-@_bind_to_core
-async def _agentops_origin_rows(
-    conn: Any,
-    *,
-    workspace_id: str,
-    allowed_param: list[str] | None,
-) -> list[Any]:
-    return await conn.fetch(
-        """
-        SELECT COALESCE(metadata->>'origin', metadata->'analysis_evidence'->>'engine', metadata->>'source', 'unknown') AS origin,
-               COUNT(*)::int AS total
-          FROM control_room_items
-         WHERE workspace_id = $1::uuid
-           AND item_kind = 'agent_alert'
-           AND ($2::text[] IS NULL OR cartridge_id = ANY($2::text[]) OR cartridge_id = 'platform')
-         GROUP BY 1
-         ORDER BY 2 DESC, 1
-        """,
-        workspace_id,
-        allowed_param,
-    )
-
-
-@_bind_to_core
 async def _agentops_base_rows(
     conn: Any,
     *,
     workspace_id: str,
     tenant_id: str | None,
     allowed_param: list[str] | None,
+    eligible_alert_ids: list[str],
     limit: int,
 ) -> dict[str, Any]:
     return {
@@ -5920,11 +5916,13 @@ async def _agentops_base_rows(
             conn,
             workspace_id=workspace_id,
             allowed_param=allowed_param,
+            eligible_alert_ids=eligible_alert_ids,
         ),
         "origin_rows": await _agentops_origin_rows(
             conn,
             workspace_id=workspace_id,
             allowed_param=allowed_param,
+            eligible_alert_ids=eligible_alert_ids,
         ),
     }
 
@@ -5973,54 +5971,12 @@ async def _agentops_calibration_rows(
 
 
 @_bind_to_core
-async def _agentops_orchestration_rows(
-    conn: Any,
-    *,
-    workspace_id: str,
-    table_exists: dict[str, bool],
-) -> list[Any]:
-    if table_exists["decision_orchestration_runs"]:
-        return await conn.fetch(
-            """
-            SELECT COUNT(*)::int AS total,
-                   MAX(updated_at) AS latest_at
-              FROM decision_orchestration_runs
-             WHERE workspace_id = $1::uuid
-            """,
-            workspace_id,
-        )
-    return []
-
-
-@_bind_to_core
-async def _agentops_execution_rows(
-    conn: Any,
-    *,
-    workspace_id: str,
-    table_exists: dict[str, bool],
-) -> list[Any]:
-    if table_exists["decision_orchestration_executions"]:
-        return await conn.fetch(
-            """
-            SELECT engine_name,
-                   execution_status,
-                   COUNT(*)::int AS total,
-                   MAX(updated_at) AS latest_at
-              FROM decision_orchestration_executions
-             WHERE workspace_id = $1::uuid
-             GROUP BY engine_name, execution_status
-            """,
-            workspace_id,
-        )
-    return []
-
-
-@_bind_to_core
 async def _agentops_intelligence_rows(
     conn: Any,
     *,
     workspace_id: str,
     table_exists: dict[str, bool],
+    eligible_item_ids: list[str],
 ) -> dict[str, Any]:
     return {
         "monte_carlo_rows": await _agentops_monte_carlo_rows(
@@ -6037,11 +5993,13 @@ async def _agentops_intelligence_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
+            eligible_item_ids=eligible_item_ids,
         ),
         "execution_rows": await _agentops_execution_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
+            eligible_item_ids=eligible_item_ids,
         ),
     }
 
@@ -6053,6 +6011,8 @@ async def _agentops_load_snapshot(
     tenant_id: str | None,
     workspace_id: str,
     allowed_param: list[str] | None,
+    eligible_item_ids: list[str],
+    eligible_alert_ids: list[str],
     limit: int,
 ) -> dict[str, Any]:
     table_exists = await _agentops_table_presence(conn)
@@ -6062,12 +6022,14 @@ async def _agentops_load_snapshot(
             workspace_id=workspace_id,
             tenant_id=tenant_id,
             allowed_param=allowed_param,
+            eligible_alert_ids=eligible_alert_ids,
             limit=limit,
         ),
         **await _agentops_intelligence_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
+            eligible_item_ids=eligible_item_ids,
         ),
     }
 
@@ -6131,11 +6093,9 @@ def _agentops_payload_from_raw(
 
 @_bind_to_core
 async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
-    """Persisted AgentOps snapshot for Control Room.
+    """AgentOps snapshot scoped by the canonical dashboard projection.
 
-    This intentionally reads only agents, agent_runs and persisted
-    control_room_items; it never starts agents or simulations from the
-    dashboard polling path.
+    It reads operational state only and never starts agents or simulations.
     """
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
@@ -6150,6 +6110,16 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
+    business_items = filter_business_items((await dashboard(user)).get("items", []))
+    business_ids = sorted(eligible_item_ids(business_items))
+    business_id_set = set(business_ids)
+    alert_ids = sorted(
+        str(item["id"])
+        for item in business_items
+        if str(item.get("id") or "") in business_id_set
+        if str(item.get("kind") or item.get("item_kind") or "").lower()
+        == "agent_alert"
+    )
 
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
         return await _agentops_load_snapshot(
@@ -6157,6 +6127,8 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
             tenant_id=_tenant_id,
             workspace_id=_workspace_id,
             allowed_param=allowed_param,
+            eligible_item_ids=business_ids,
+            eligible_alert_ids=alert_ids,
             limit=limit,
         )
 

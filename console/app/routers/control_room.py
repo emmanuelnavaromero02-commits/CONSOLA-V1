@@ -412,7 +412,7 @@ async def control_room_sap_successfactors_market_validation_run(
 
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
-    """Lightweight, pollable operational summary (persisted state only)."""
+    """Pollable operational summary over the canonical business projection."""
     return await control_room_service.ops_summary(user)
 
 

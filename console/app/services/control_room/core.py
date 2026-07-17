@@ -22,21 +22,37 @@ from app.services.db_scope import SET_SCOPE_SQL, run_with_db_scope
 from app.services.control_room.readiness_manifest import dataset_readiness_registry
 from app.services.control_room.business_eligibility import (
     BUSINESS_EVIDENCE_FIELDS,
+    BUSINESS_MATERIALIZATION_FIELDS,
     BUSINESS_OBSERVATION_FIELDS,
     BusinessEligibilityError,
     EligibilityReason,
     classify_business_item,
     require_business_eligible,
 )
+from app.services.control_room.business_agentops import (
+    _agentops_alert_rows,
+    _agentops_execution_rows,
+    _agentops_orchestration_rows,
+    _agentops_origin_rows,
+)
+from app.services.control_room.business_lineage import item_kinds, parent_references
 from app.services.control_room.business_projection import (
     business_parent_context,
     diagnostic_items,
+    duplicate_item_ids,
     eligible_item_ids,
     evolve_business_item,
     filter_business_items,
     filter_by_eligible_parent,
+    lineage_parent_ids,
     project_business_item,
     strip_business_fields,
+)
+from app.services.control_room.business_repository import (
+    decision_provenance,
+    fetch_lineage_rows,
+    link_control_room_decision,
+    persist_item_rows,
 )
 from app.services.security_context import build_security_context, rls_user_context
 

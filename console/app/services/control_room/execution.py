@@ -698,7 +698,7 @@ async def create_decision_for_item(
         "label": "Estado OMEGA",
         "value": item.get("status") or "open",
         "source": "control_room",
-    }]
+    }, decision_provenance("control_room", item_id=item["id"])]
     pool = await auth.pool()
 
     async def _write(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
@@ -722,23 +722,19 @@ async def create_decision_for_item(
             item["recommendation"],
             user.get("email") or "user",
         )
-        await _ensure_item_row(conn, user=user, item=item, status="decision_created")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'decision_created',
-                       decision_id = $1,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                row["id"],
-                scoped_workspace_id,
-                item["id"],
-            )
-        except Exception:
-            pass
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status="decision_created",
+            critical=True,
+        )
+        await link_control_room_decision(
+            conn,
+            workspace_id=scoped_workspace_id,
+            item_id=item["id"],
+            decision_id=row["id"],
+        )
         await _record_item_event(
             conn,
             user=user,

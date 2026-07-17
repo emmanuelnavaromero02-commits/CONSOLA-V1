@@ -945,13 +945,17 @@ def _alert_state(item: dict[str, Any]) -> dict[str, Any]:
 
 @_bind_to_core
 def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str, Any]:
+    existing = _details(item.get("metadata"))
+    existing_details = _details(existing.get("details"))
+    item_details = _details(item.get("details"))
     metadata = {
+        **existing,
         "module": item.get("module"),
         "description": item.get("description"),
         "recommendation": item.get("recommendation"),
         "root_cause": item.get("root_cause"),
         "impact": item.get("impact"),
-        "details": item.get("details") if isinstance(item.get("details"), dict) else {},
+        "details": {**existing_details, **item_details},
         "sql": item.get("sql"),
         "impact_payload": impact,
         "thresholds_applied": item.get("thresholds_applied") or [],
@@ -964,6 +968,7 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
         "freshness_at",
         "freshness_field",
         "data_status",
+        "item_kind",
         "data_readiness",
         "evaluation_status",
         "readiness_status",
@@ -976,8 +981,12 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
         "hypothesis",
         "expected_outcome",
         *BUSINESS_OBSERVATION_FIELDS,
+        *BUSINESS_MATERIALIZATION_FIELDS,
     ):
-        if item.get(key) is not None:
+        if key in item and not (
+            key == "item_kind"
+            and str(metadata.get(key) or "").strip().lower() == "source_state"
+        ):
             metadata[key] = item.get(key)
     for key in (
         "capabilities",
@@ -1204,13 +1213,18 @@ def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 @_bind_to_core
 def _diagnostic_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    existing = strip_business_fields(_details(item.get("metadata")))
+    existing_details = strip_business_fields(_details(existing.get("details")))
+    item_details = strip_business_fields(_details(item.get("details")))
     metadata = {
+        **existing,
         "module": item.get("module"),
-        "details": item.get("details") if isinstance(item.get("details"), dict) else {},
+        "details": {**existing_details, **item_details},
         "source_system": item.get("source_system"),
     }
     for key in (
         "data_status",
+        "item_kind",
         "data_readiness",
         "evaluation_status",
         "readiness_status",
@@ -1219,8 +1233,12 @@ def _diagnostic_metadata(item: dict[str, Any]) -> dict[str, Any]:
         "source_item_id",
         "derived_from",
         *BUSINESS_OBSERVATION_FIELDS,
+        *BUSINESS_MATERIALIZATION_FIELDS,
     ):
-        if item.get(key) is not None:
+        if key in item and not (
+            key == "item_kind"
+            and str(metadata.get(key) or "").strip().lower() == "source_state"
+        ):
             metadata[key] = item.get(key)
     if isinstance(item.get("lineage"), dict):
         metadata["lineage"] = item["lineage"]
@@ -1237,77 +1255,69 @@ async def _persist_item_state(items: list[dict[str, Any]], user: dict | None) ->
         return
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
-    business_ids = eligible_item_ids(items)
+    duplicate_ids = duplicate_item_ids(items)
+    unique_items = {
+        str(item.get("id") or "").strip(): item
+        for item in items
+        if str(item.get("id") or "").strip()
+    }
+    ordered_items = list(unique_items.values())
+    business_ids = eligible_item_ids(
+        item
+        for item in ordered_items
+        if str(item.get("id") or "") not in duplicate_ids
+    )
+    rows: list[dict[str, Any]] = []
+    for item in ordered_items:
+        item_id = str(item.get("id") or "")
+        eligible = item_id in business_ids
+        persisted_item = (
+            {**item, "data_status": "invalid_schema"}
+            if item_id in duplicate_ids
+            else item
+        )
+        impact = (
+            _impact_for_item(persisted_item, eligible_parent_ids=business_ids)
+            if eligible
+            else {}
+        )
+        metadata = (
+            _metadata_for_item(persisted_item, impact)
+            if eligible
+            else _diagnostic_metadata(persisted_item)
+        )
+        rows.append(
+            {
+                "tenant_id": tenant_id or "",
+                "workspace_id": workspace_id,
+                "item_id": item_id,
+                "cartridge_id": item["cartridge"],
+                "domain": item["domain"],
+                "source_dataset": item.get("source_dataset"),
+                "item_kind": item["kind"],
+                "title": item["title"],
+                "severity": item["severity"],
+                "entity_kind": item.get("entity_kind"),
+                "entity_id": item.get("entity_id"),
+                "entity_label": item.get("entity_label"),
+                "anomaly_type": item.get("anomaly_type"),
+                "metadata": metadata,
+                "impact_estimate": impact.get("estimate"),
+                "impact_currency": impact.get("currency")
+                or ("USD" if eligible else None),
+                "confidence": impact.get("confidence"),
+                "priority_score": impact.get("priority_score") or 0,
+                "selected_option_id": (
+                    item.get("selected_option_id") if eligible else None
+                ),
+                "execution_status": (
+                    item.get("execution_status") if eligible else "not_started"
+                ),
+            }
+        )
 
     async def _upsert(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
-        for item in items:
-            eligible = str(item.get("id") or "") in business_ids
-            impact = (
-                _impact_for_item(item, eligible_parent_ids=business_ids)
-                if eligible
-                else {}
-            )
-            metadata = (
-                _metadata_for_item(item, impact)
-                if eligible
-                else _diagnostic_metadata(item)
-            )
-            await conn.execute(
-                """
-                INSERT INTO control_room_items (
-                    tenant_id, workspace_id, item_id, cartridge_id, domain,
-                    source_dataset, item_kind, title, severity, status,
-                    entity_kind, entity_id, entity_label, anomaly_type, metadata,
-                    impact_estimate, impact_currency, confidence, priority_score,
-                    selected_option_id, execution_status,
-                    first_seen_at, last_seen_at
-                )
-                VALUES (
-                    $1, $2, $3, $4, $5,
-                    $6, $7, $8, $9, 'open',
-                    $10, $11, $12, $13, $14::jsonb,
-                    $15, $16, $17, $18, $19, $20,
-                    NOW(), NOW()
-                )
-                ON CONFLICT (workspace_id, item_id) DO UPDATE
-                SET cartridge_id = EXCLUDED.cartridge_id,
-                    domain = EXCLUDED.domain,
-                    source_dataset = EXCLUDED.source_dataset,
-                    item_kind = EXCLUDED.item_kind,
-                    title = EXCLUDED.title,
-                    severity = EXCLUDED.severity,
-                    entity_kind = EXCLUDED.entity_kind,
-                    entity_id = EXCLUDED.entity_id,
-                    entity_label = EXCLUDED.entity_label,
-                    anomaly_type = EXCLUDED.anomaly_type,
-                    metadata = control_room_items.metadata || EXCLUDED.metadata,
-                    impact_estimate = EXCLUDED.impact_estimate,
-                    impact_currency = EXCLUDED.impact_currency,
-                    confidence = EXCLUDED.confidence,
-                    priority_score = EXCLUDED.priority_score,
-                    last_seen_at = NOW()
-                """,
-                tenant_id,
-                workspace_id,
-                item["id"],
-                item["cartridge"],
-                item["domain"],
-                item["source_dataset"],
-                item["kind"],
-                item["title"],
-                item["severity"],
-                item.get("entity_kind"),
-                item.get("entity_id"),
-                item.get("entity_label"),
-                item.get("anomaly_type"),
-                json.dumps(metadata, default=str),
-                impact.get("estimate"),
-                impact.get("currency") or ("USD" if eligible else None),
-                impact.get("confidence"),
-                impact.get("priority_score") or 0,
-                item.get("selected_option_id") if eligible else None,
-                item.get("execution_status") if eligible else "not_started",
-            )
+        await persist_item_rows(conn, rows)
 
     await _run_with_db_scope(pool, user or {}, _upsert)
 
@@ -1435,29 +1445,26 @@ async def _persisted_item_for_mutation(
             return None
         params.append(owner_id)
         owner_clause = f"AND owner_user_id = ${len(params)}"
-    try:
-        pool = await auth.pool()
+    pool = await auth.pool()
 
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
-            return await conn.fetchrow(
-                f"""
-                SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
-                       severity, status, decision_id, entity_kind, entity_id,
-                       entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
-                       resolved_at, dismissed_at, impact_estimate, impact_currency,
-                       confidence, priority_score, selected_option_id, execution_status
-                  FROM control_room_items
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                   {tenant_clause}
-                   {owner_clause}
-                """,
-                *params,
-            )
+    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
+        return await conn.fetchrow(
+            f"""
+            SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
+                   severity, status, decision_id, entity_kind, entity_id,
+                   entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
+                   resolved_at, dismissed_at, impact_estimate, impact_currency,
+                   confidence, priority_score, selected_option_id, execution_status
+              FROM control_room_items
+             WHERE workspace_id = $1
+               AND item_id = $2
+               {tenant_clause}
+               {owner_clause}
+            """,
+            *params,
+        )
 
-        row = await _run_with_db_scope(pool, user, _load)
-    except Exception:
-        return None
+    row = await _run_with_db_scope(pool, user, _load)
     if not row:
         return None
     try:
@@ -1489,6 +1496,7 @@ async def _persisted_item_for_mutation(
     item = {
         "id": public_row["item_id"],
         "kind": public_row["item_kind"],
+        "item_kind": metadata.get("item_kind") or public_row["item_kind"],
         "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
         "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
         "domain": public_row["domain"],
@@ -1501,19 +1509,22 @@ async def _persisted_item_for_mutation(
         "gold_table": metadata.get("gold_table"),
         "freshness_at": metadata.get("freshness_at"),
         "freshness_field": metadata.get("freshness_field"),
-        "data_status": metadata.get("data_status") or "gold_ready",
+        "data_status": metadata.get("data_status"),
         "data_readiness": metadata.get("data_readiness"),
         "evaluation_status": metadata.get("evaluation_status"),
         "readiness_status": metadata.get("readiness_status"),
         "source_status": metadata.get("source_status"),
         **{
             key: metadata.get(key)
-            for key in BUSINESS_OBSERVATION_FIELDS
+            for key in (
+                *BUSINESS_OBSERVATION_FIELDS,
+                *BUSINESS_MATERIALIZATION_FIELDS,
+                "parent_item_id",
+                "source_item_id",
+                "derived_from",
+            )
             if key in metadata
         },
-        "parent_item_id": metadata.get("parent_item_id"),
-        "source_item_id": metadata.get("source_item_id"),
-        "derived_from": metadata.get("derived_from"),
         "lineage": metadata.get("lineage")
         if isinstance(metadata.get("lineage"), dict)
         else {},
@@ -1529,7 +1540,7 @@ async def _persisted_item_for_mutation(
         "anomaly_type": public_row["anomaly_type"] or "control_room_item",
         "severity": severity,
         "severity_weight": SEVERITY_WEIGHT[severity],
-        "detected_at": "",
+        "detected_at": metadata.get("detected_at") or "",
         "details": metadata.get("details")
         if isinstance(metadata.get("details"), dict)
         else {},
@@ -1598,17 +1609,14 @@ async def _item_for_mutation(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
+    eligible_parent_ids: set[str] = set()
     item = await _persisted_item_for_mutation(item_id, user)
-    eligible_parent_ids: set[str] | None = None
-    if item is not None and (
-        item.get("parent_item_id")
-        or item.get("source_item_id")
-        or item.get("derived_from")
-        or item.get("lineage")
-    ):
-        eligible_parent_ids = eligible_item_ids(
-            await _persisted_business_items(user)
-        )
+    if item is not None and not item_kinds(item) & {
+        "agent_alert",
+        "intelligence_signal",
+        "source_state",
+    }:
+        item = None
     if item is None:
         collected = await _collect_items(
             user,
@@ -1627,6 +1635,28 @@ async def _item_for_mutation(
             ),
             None,
         )
+    elif parent_references(item).ids:
+        refs = parent_references(item)
+        tenant_id, workspace_id = _workspace_scope(user)
+        owner_id = (
+            None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
+        )
+        pool = await auth.pool()
+
+        async def _load_lineage(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> list[Any]:
+            return await fetch_lineage_rows(
+                conn,
+                workspace_id=workspace_id,
+                parent_ids=refs.ids,
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+            )
+
+        lineage_rows = await _run_with_db_scope(pool, user, _load_lineage)
+        lineage_items = [_persisted_intelligence_payload(row) for row in lineage_rows]
+        eligible_parent_ids = eligible_item_ids(lineage_items)
     if item is None:
         raise HTTPException(404, "control room item not found")
     try:
@@ -1653,28 +1683,7 @@ async def _item_for_read(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    persisted = await _persisted_item_for_mutation(item_id, user)
-    if persisted is not None:
-        eligible_parent_ids: set[str] | None = None
-        if (
-            persisted.get("parent_item_id")
-            or persisted.get("source_item_id")
-            or persisted.get("derived_from")
-            or persisted.get("lineage")
-        ):
-            eligible_parent_ids = eligible_item_ids(
-                await _persisted_business_items(user)
-            )
-        if classify_business_item(
-            persisted,
-            eligible_parent_ids=eligible_parent_ids,
-        ).eligible:
-            return _with_omega(
-                persisted,
-                eligible_parent_ids=eligible_parent_ids,
-            )
-        raise HTTPException(404, "control room item not found")
-    return await get_item(item_id, user, fetcher=fetcher)
+    return await _item_for_mutation(item_id, user, fetcher=fetcher)
 
 
 @_bind_to_core
@@ -1862,14 +1871,9 @@ async def get_item_activity(
             )
         return list(events), list(executions), list(decision_actions)
 
-    try:
-        event_rows, execution_rows, decision_action_rows = await _run_with_db_scope(
-            pool, user, _load_item_activity
-        )
-    except Exception:
-        event_rows = []
-        execution_rows = []
-        decision_action_rows = []
+    event_rows, execution_rows, decision_action_rows = await _run_with_db_scope(
+        pool, user, _load_item_activity
+    )
 
     async def _load_scoped_activity(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
@@ -1905,13 +1909,9 @@ async def get_item_activity(
         )
         return runs, outcomes
 
-    try:
-        action_run_rows, outcome_rows = await _run_with_db_scope(
-            pool, user, _load_scoped_activity
-        )
-    except Exception:
-        action_run_rows = []
-        outcome_rows = []
+    action_run_rows, outcome_rows = await _run_with_db_scope(
+        pool, user, _load_scoped_activity
+    )
 
     activity = [
         *(_event_to_activity(row) for row in event_rows),
