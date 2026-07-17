@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import AbstractAsyncContextManager
 from unittest.mock import AsyncMock, patch
 
@@ -88,6 +89,47 @@ class TransactionalPool:
         return _Context(self.connection)
 
 
+class LegacyTechnicalConnection(TransactionalConnection):
+    def __init__(self) -> None:
+        super().__init__(linked_item_id="business-1")
+        self.item_row = {
+            "item_id": "business-1",
+            "item_kind": "source_state",
+            "source_dataset": "diagnostic_sources",
+            "metadata": {"data_status": "missing", "legacy_note": "keep"},
+            "status": "open",
+        }
+        self.ensure_sql = ""
+
+    async def execute(self, sql: str, *args):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("INSERT INTO control_room_items"):
+            payload = json.loads(args[0])
+            self.ensure_sql = normalized
+            self.item_row.update(
+                {
+                    "item_kind": payload["item_kind"],
+                    "source_dataset": payload["source_dataset"],
+                    "metadata": {
+                        "legacy_note": self.item_row["metadata"]["legacy_note"],
+                        **payload["metadata"],
+                    },
+                }
+            )
+        return None
+
+    async def fetchrow(self, sql: str, *args):
+        normalized = " ".join(sql.split()).upper()
+        if normalized.startswith("UPDATE CONTROL_ROOM_ITEMS"):
+            assert self.item_row["item_kind"] == "anomaly"
+            assert self.item_row["source_dataset"] == "gold_metrics"
+            assert self.item_row["metadata"]["data_status"] == "ready"
+            self.item_row["status"] = "decision_created"
+            self.item_row["decision_id"] = args[0]
+            return {"item_id": self.item_row["item_id"]}
+        return await super().fetchrow(sql, *args)
+
+
 @pytest.mark.asyncio
 async def test_control_room_decision_link_failure_rolls_back_and_skips_success_audit():
     connection = TransactionalConnection(linked_item_id=None)
@@ -159,3 +201,36 @@ async def test_control_room_decision_creation_commits_only_after_exact_link():
     assert connection.committed is True
     assert connection.rolled_back is False
     audit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_legacy_technical_row_is_semantically_upserted_before_atomic_link():
+    connection = LegacyTechnicalConnection()
+    item = {**_item(), "data_status": "ready"}
+    audit = AsyncMock()
+    with (
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=item),
+        ),
+        patch.object(
+            control_room_service.auth,
+            "pool",
+            new=AsyncMock(return_value=TransactionalPool(connection)),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", audit),
+    ):
+        result = await control_room_service.create_decision_for_item(
+            "business-1",
+            USER,
+        )
+
+    assert result["decision"]["id"] == 42
+    assert connection.committed is True
+    assert connection.item_row["status"] == "decision_created"
+    assert connection.item_row["decision_id"] == 42
+    assert connection.item_row["metadata"]["legacy_note"] == "keep"
+    assert "item_kind = EXCLUDED.item_kind" in connection.ensure_sql
+    assert "source_dataset = EXCLUDED.source_dataset" in connection.ensure_sql
+    assert "control_room_items.metadata - $2::text[]" in connection.ensure_sql

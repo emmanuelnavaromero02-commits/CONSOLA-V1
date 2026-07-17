@@ -5,12 +5,11 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_lineage import (
-    MAX_LINEAGE_DEPTH,
     item_identity,
     parent_references,
 )
+from app.services.control_room.business_resolution import resolve_business_lineage
 
 
 BUSINESS_ONLY_FIELDS = frozenset(
@@ -37,18 +36,20 @@ BUSINESS_ONLY_FIELDS = frozenset(
 class ProjectedBusinessItem(dict[str, Any]):
     """Dictionary payload with non-serializable lineage context."""
 
-    __slots__ = ("_eligible_parent_ids",)
+    __slots__ = ("_eligible_parent_ids", "_lineage_depth")
 
     def __init__(
         self,
         item: Mapping[str, Any],
         *,
         eligible_parent_ids: set[str] | None = None,
+        lineage_depth: int | None = None,
     ) -> None:
         super().__init__(item)
         self._eligible_parent_ids = (
             frozenset(eligible_parent_ids) if eligible_parent_ids is not None else None
         )
+        self._lineage_depth = lineage_depth
 
 
 def business_parent_context(item: Mapping[str, Any]) -> set[str] | None:
@@ -56,17 +57,28 @@ def business_parent_context(item: Mapping[str, Any]) -> set[str] | None:
     return set(context) if context is not None else None
 
 
+def business_lineage_depth(item: Mapping[str, Any]) -> int | None:
+    depth = getattr(item, "_lineage_depth", None)
+    return depth if isinstance(depth, int) and not isinstance(depth, bool) else None
+
+
 def project_business_item(
     item: Mapping[str, Any],
     *,
     eligible_parent_ids: set[str] | None = None,
+    lineage_depth: int | None = None,
 ) -> ProjectedBusinessItem:
     context = (
         eligible_parent_ids
         if eligible_parent_ids is not None
         else business_parent_context(item)
     )
-    return ProjectedBusinessItem(item, eligible_parent_ids=context)
+    depth = lineage_depth if lineage_depth is not None else business_lineage_depth(item)
+    return ProjectedBusinessItem(
+        item,
+        eligible_parent_ids=context,
+        lineage_depth=depth,
+    )
 
 
 def evolve_business_item(
@@ -76,58 +88,16 @@ def evolve_business_item(
     return project_business_item(
         {**item, **updates},
         eligible_parent_ids=business_parent_context(item),
+        lineage_depth=business_lineage_depth(item),
     )
 
 
 def _business_mask(items: list[Mapping[str, Any]]) -> set[int]:
-    identities = [item_identity(item) for item in items]
-    counts = Counter(item_id for item_id in identities if item_id)
-    by_id = {
-        item_id: item
-        for item_id, item in zip(identities, items, strict=True)
-        if item_id
+    return {
+        index
+        for index, result in enumerate(resolve_business_lineage(items))
+        if result.eligible
     }
-    duplicate_ids = {item_id for item_id, count in counts.items() if count > 1}
-    eligible_by_id: dict[str, bool] = {}
-    visiting: set[str] = set()
-
-    def _eligible(item: Mapping[str, Any], depth: int) -> bool:
-        item_id = item_identity(item)
-        if item_id and item_id in eligible_by_id:
-            return eligible_by_id[item_id]
-        if depth > MAX_LINEAGE_DEPTH or item_id in duplicate_ids:
-            return False
-        if item_id and item_id in visiting:
-            return False
-        if item_id:
-            visiting.add(item_id)
-        refs = parent_references(item)
-        validated_context = business_parent_context(item) or set()
-        parent_ids: set[str] = set()
-        parents_valid = not refs.malformed
-        for parent_id in refs.ids:
-            parent = by_id.get(parent_id)
-            if parent is None:
-                if parent_id not in validated_context:
-                    parents_valid = False
-                    break
-            elif not _eligible(parent, depth + 1):
-                parents_valid = False
-                break
-            parent_ids.add(parent_id)
-        result = (
-            parents_valid
-            and classify_business_item(
-                item,
-                eligible_parent_ids=parent_ids if refs.ids else set(),
-            ).eligible
-        )
-        if item_id:
-            visiting.discard(item_id)
-            eligible_by_id[item_id] = result
-        return result
-
-    return {index for index, item in enumerate(items) if _eligible(item, 0)}
 
 
 def strip_business_fields(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -138,7 +108,8 @@ def strip_business_fields(item: Mapping[str, Any]) -> dict[str, Any]:
 
 def filter_business_items(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     rows = list(items)
-    eligible = _business_mask(rows)
+    resolutions = resolve_business_lineage(rows)
+    eligible = {index for index, result in enumerate(resolutions) if result.eligible}
     eligible_ids = {
         item_id
         for index, item_id in enumerate(item_identity(item) for item in rows)
@@ -150,7 +121,13 @@ def filter_business_items(items: Iterable[Mapping[str, Any]]) -> list[dict[str, 
             continue
         context = business_parent_context(item) or set()
         context.update(parent_references(item).ids & eligible_ids)
-        projected.append(project_business_item(item, eligible_parent_ids=context))
+        projected.append(
+            project_business_item(
+                item,
+                eligible_parent_ids=context,
+                lineage_depth=resolutions[index].depth,
+            )
+        )
     return projected
 
 

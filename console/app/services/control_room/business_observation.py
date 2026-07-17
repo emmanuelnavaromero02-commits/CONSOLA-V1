@@ -1,11 +1,22 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from enum import StrEnum
 from typing import Any
+
+from app.services.control_room.business_evidence import EVIDENCE_FIELDS, has_evidence
+from app.services.control_room.business_observation_codec import INVALID_ENVELOPE_FIELD
+from app.services.control_room.business_semantic_slots import (
+    MetricKind,
+    ResolvedNumber,
+    SemanticSlots,
+    finite_number,
+    resolve_metric_kind,
+    resolve_observation_flag,
+    resolve_semantic_slots,
+    semantic_maps,
+)
 
 
 SUCCESSFUL_EVALUATION_STATES = frozenset(
@@ -17,23 +28,14 @@ OBSERVATION_DATE_FIELDS = (
     "detected_at",
     "as_of",
 )
-EVIDENCE_FIELDS = (
-    "analysis_evidence",
-    "evidence",
-    "evidence_pack",
-    "evidence_refs",
+_OBSERVED_ONLY_KINDS = frozenset(
+    {
+        MetricKind.RATE,
+        MetricKind.PERCENTAGE,
+        MetricKind.AVERAGE,
+        MetricKind.DIVISION,
+    }
 )
-
-
-class MetricKind(StrEnum):
-    COUNT = "count"
-    RATE = "rate"
-    PERCENTAGE = "percentage"
-    AVERAGE = "average"
-    DIVISION = "division"
-    AMOUNT = "amount"
-    SCALAR = "scalar"
-    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
@@ -52,30 +54,6 @@ class ObservationAssessment:
         )
 
 
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def semantic_maps(item: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-    details = _mapping(item.get("details"))
-    metadata = _mapping(item.get("metadata"))
-    metadata_details = _mapping(metadata.get("details"))
-    intelligence = _mapping(item.get("intelligence"))
-    signal = _mapping(intelligence.get("signal"))
-    observation = _mapping(item.get("observation"))
-    persisted_observation = _mapping(metadata.get("business_observation"))
-    return (
-        item,
-        observation,
-        details,
-        metadata,
-        metadata_details,
-        persisted_observation,
-        intelligence,
-        signal,
-    )
-
-
 def semantic_states(item: Mapping[str, Any]) -> set[str]:
     states: set[str] = set()
     for values in semantic_maps(item):
@@ -90,14 +68,6 @@ def semantic_states(item: Mapping[str, Any]) -> set[str]:
             if value:
                 states.add(value)
     return states
-
-
-def _first_present(item: Mapping[str, Any], keys: tuple[str, ...]) -> tuple[bool, Any]:
-    for values in semantic_maps(item):
-        for key in keys:
-            if key in values:
-                return True, values.get(key)
-    return False, None
 
 
 def _valid_datetime(value: Any) -> bool:
@@ -132,148 +102,103 @@ def has_observation_date(item: Mapping[str, Any]) -> bool:
     return bool(values) and all(_valid_datetime(value) for value in values)
 
 
-def has_evidence(item: Mapping[str, Any]) -> bool:
-    for values in semantic_maps(item):
-        for key in EVIDENCE_FIELDS:
-            evidence = values.get(key)
-            if isinstance(evidence, Mapping) and evidence:
-                return True
-            if isinstance(evidence, (list, tuple)) and evidence:
-                return True
-    return False
+def _first_value(*slots: ResolvedNumber) -> float | None:
+    for slot in slots:
+        if slot.declared:
+            return slot.value
+    return None
 
 
-def _metric_kind(item: Mapping[str, Any]) -> MetricKind:
-    _, raw = _first_present(
-        item,
-        ("metric_type", "metric_kind", "aggregation_type", "value_type"),
-    )
-    value = str(raw or "").strip().lower()
-    aliases = {
-        "counter": MetricKind.COUNT,
-        "number": MetricKind.COUNT,
-        "percent": MetricKind.PERCENTAGE,
-        "ratio": MetricKind.RATE,
-        "mean": MetricKind.AVERAGE,
-        "currency": MetricKind.AMOUNT,
-        "numeric": MetricKind.SCALAR,
-    }
-    if value in aliases:
-        return aliases[value]
-    try:
-        return MetricKind(value)
-    except ValueError:
-        return MetricKind.UNKNOWN
-
-
-def _measurement(item: Mapping[str, Any], kind: MetricKind) -> tuple[bool, bool, Any]:
+def _selected_value(kind: MetricKind, slots: SemanticSlots) -> float | None:
+    if kind in _OBSERVED_ONLY_KINDS:
+        return _first_value(slots.observed_value)
     if kind is MetricKind.COUNT:
-        keys = (
-            "count",
-            "affected_count",
-            "observed_value",
-            "metric_value",
-            "actual_value",
-            "value",
-            "source_row_count",
+        return _first_value(slots.observed_value, slots.affected_count)
+    if kind in {MetricKind.AMOUNT, MetricKind.SCALAR}:
+        return _first_value(slots.observed_value)
+    return _first_value(
+        slots.observed_value,
+        slots.affected_count,
+        slots.source_rows,
+    )
+
+
+def _measurement(item: Mapping[str, Any]) -> tuple[bool, bool, float | None]:
+    invalid_envelope = any(
+        values.get(INVALID_ENVELOPE_FIELD) is True for values in semantic_maps(item)
+    )
+    metric_kind = resolve_metric_kind(item)
+    slots = resolve_semantic_slots(item)
+    observation_flag = resolve_observation_flag(item)
+    kind = metric_kind.value if metric_kind.valid else MetricKind.UNKNOWN
+    value = _selected_value(kind, slots)
+    required_value_missing = (
+        metric_kind.declared
+        and metric_kind.valid
+        and kind in _OBSERVED_ONLY_KINDS
+        and not slots.observed_value.declared
+    )
+    candidate_declared = any(
+        slot.declared
+        for slot in (
+            slots.observed_value,
+            slots.affected_count,
+            slots.source_rows,
         )
-    else:
-        keys = (
-            "observed_value",
-            "metric_value",
-            "actual_value",
-            "value",
-            "count",
-            "affected_count",
-            "source_row_count",
-        )
-    declared = False
-    invalid = False
-    values: list[tuple[Any, float]] = []
-    for semantic in semantic_maps(item):
-        for key in keys:
-            if key not in semantic:
-                continue
-            declared = True
-            value = semantic.get(key)
-            number = _number(value)
-            if number is None:
-                invalid = True
-            else:
-                values.append((value, number))
-        for key in ("value_observed", "is_observed", "observation_valid"):
-            if key in semantic:
-                declared = True
-                invalid = invalid or semantic.get(key) is not True
-    if invalid or not values or len({number for _value, number in values}) != 1:
+    )
+    declared = (
+        candidate_declared
+        or observation_flag.declared
+        or required_value_missing
+        or invalid_envelope
+        or not metric_kind.valid
+        or not slots.valid
+    )
+    invalid = (
+        not metric_kind.valid
+        or invalid_envelope
+        or not slots.valid
+        or not observation_flag.valid
+        or (observation_flag.declared and observation_flag.value is not True)
+        or required_value_missing
+    )
+    if invalid or value is None:
         return declared, False, None
-    return declared, True, values[0][0]
+    return declared, True, value
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+def _known_population(slots: SemanticSlots) -> float | None:
+    return _first_value(slots.population, slots.source_rows)
 
 
-def _known_population(item: Mapping[str, Any]) -> float | None:
-    present, value = _first_present(
-        item,
-        (
-            "population",
-            "population_count",
-            "sample_count",
-            "total_count",
-            "source_row_count",
-        ),
-    )
-    return _number(value) if present else None
-
-
-def _denominator(item: Mapping[str, Any]) -> float | None:
-    present, value = _first_present(
-        item,
-        (
-            "denominator",
-            "denominator_count",
-            "population",
-            "population_count",
-            "sample_count",
-            "total_count",
-        ),
-    )
-    return _number(value) if present else None
+def _denominator(slots: SemanticSlots) -> float | None:
+    return _first_value(slots.denominator, slots.population)
 
 
 def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
     states = semantic_states(item)
     if not states & SUCCESSFUL_EVALUATION_STATES or not has_observation_date(item):
         return False
+    slots = resolve_semantic_slots(item)
+    if not slots.valid:
+        return False
     if kind is MetricKind.COUNT:
-        population = _known_population(item)
+        population = _known_population(slots)
         return population is not None and population >= 0
-    if kind in {
-        MetricKind.RATE,
-        MetricKind.PERCENTAGE,
-        MetricKind.AVERAGE,
-        MetricKind.DIVISION,
-    }:
-        denominator = _denominator(item)
+    if kind in _OBSERVED_ONLY_KINDS:
+        denominator = _denominator(slots)
         return denominator is not None and denominator > 0
     if kind in {MetricKind.AMOUNT, MetricKind.SCALAR}:
-        population = _known_population(item)
+        population = _known_population(slots)
         return population is not None and population >= 0
     return False
 
 
 def assess_observation(item: Mapping[str, Any]) -> ObservationAssessment:
-    kind = _metric_kind(item)
-    declared, measured, value = _measurement(item, kind)
-    number = _number(value) if measured else None
+    metric_kind = resolve_metric_kind(item)
+    kind = metric_kind.value if metric_kind.valid else MetricKind.UNKNOWN
+    declared, measured, value = _measurement(item)
+    number = finite_number(value) if measured else None
     is_zero = number == 0.0 if number is not None else False
     return ObservationAssessment(
         has_observation_date=has_observation_date(item),
@@ -283,3 +208,17 @@ def assess_observation(item: Mapping[str, Any]) -> ObservationAssessment:
         is_zero=is_zero,
         zero_valid=not is_zero or _zero_is_valid(item, kind),
     )
+
+
+__all__ = (
+    "EVIDENCE_FIELDS",
+    "MetricKind",
+    "OBSERVATION_DATE_FIELDS",
+    "ObservationAssessment",
+    "SUCCESSFUL_EVALUATION_STATES",
+    "assess_observation",
+    "has_evidence",
+    "has_observation_date",
+    "semantic_maps",
+    "semantic_states",
+)

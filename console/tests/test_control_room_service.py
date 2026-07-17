@@ -1649,9 +1649,16 @@ async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching
 @pytest.mark.asyncio
 async def test_summary_counts_and_scopes_open_decisions_to_active_workspace():
     mock_pool = AsyncMock()
-    mock_pool.fetchval.return_value = 5
+    open_decisions = AsyncMock(return_value=5)
 
-    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "count_open_business_decisions",
+            new=open_decisions,
+        ),
+    ):
         result = await control_room_service.summary(USER, fetcher=sample_fetcher)
 
     assert result["total_anomalies"] == 3
@@ -1662,11 +1669,7 @@ async def test_summary_counts_and_scopes_open_decisions_to_active_workspace():
         "sap_successfactors": 1,
     }
     assert result["open_decisions"] == 5
-    sql, workspace_id, business_item_ids = mock_pool.fetchval.call_args[0]
-    assert "workspace_id = $1" in sql
-    assert "i.item_id = ANY($2::text[])" in sql
-    assert workspace_id == "workspace-A"
-    assert len(business_item_ids) == 3
+    open_decisions.assert_awaited_once_with(mock_pool, USER)
 
 
 @pytest.mark.asyncio

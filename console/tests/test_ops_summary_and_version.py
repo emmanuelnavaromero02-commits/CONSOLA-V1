@@ -107,17 +107,28 @@ def _ops_dashboard() -> dict:
     return payload
 
 
+def _ops_projection() -> list[dict]:
+    return [
+        item for item in _ops_dashboard()["items"] if item["kind"] != "source_state"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ops_summary_shape_and_counts():
+    forbidden_dashboard = AsyncMock(
+        side_effect=AssertionError("ops polling must not fetch datasets")
+    )
     with (
         patch.object(control_room_service.auth, "pool", return_value=_ops_pool()),
         patch.object(
             control_room_service,
-            "dashboard",
-            new=AsyncMock(return_value=_ops_dashboard()),
+            "persisted_business_projection",
+            new=AsyncMock(return_value=_ops_projection()),
         ),
+        patch.object(control_room_service, "dashboard", new=forbidden_dashboard),
     ):
         out = await control_room_service.ops_summary(USER)
+    forbidden_dashboard.assert_not_awaited()
     assert out["active_workspace"] == "workspace-A"
     assert out["version"] == app_version()
     assert "app_env" in out
@@ -149,8 +160,8 @@ async def test_ops_summary_write_back_reflects_real_flag(monkeypatch):
         patch.object(control_room_service.auth, "pool", return_value=_ops_pool()),
         patch.object(
             control_room_service,
-            "dashboard",
-            new=AsyncMock(return_value=_ops_dashboard()),
+            "persisted_business_projection",
+            new=AsyncMock(return_value=_ops_projection()),
         ),
     ):
         out = await control_room_service.ops_summary(USER)
@@ -164,8 +175,8 @@ async def test_ops_summary_write_back_reflects_real_flag(monkeypatch):
         patch.object(control_room_service.auth, "pool", return_value=_ops_pool()),
         patch.object(
             control_room_service,
-            "dashboard",
-            new=AsyncMock(return_value=_ops_dashboard()),
+            "persisted_business_projection",
+            new=AsyncMock(return_value=_ops_projection()),
         ),
     ):
         out = await control_room_service.ops_summary(USER)
@@ -181,8 +192,8 @@ async def test_ops_summary_exposes_no_secrets():
         patch.object(control_room_service.auth, "pool", return_value=_ops_pool()),
         patch.object(
             control_room_service,
-            "dashboard",
-            new=AsyncMock(return_value=_ops_dashboard()),
+            "persisted_business_projection",
+            new=AsyncMock(return_value=_ops_projection()),
         ),
     ):
         out = await control_room_service.ops_summary(USER)

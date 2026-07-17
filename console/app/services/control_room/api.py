@@ -2210,13 +2210,7 @@ def _copy_for(anomaly_type: str) -> dict[str, str]:
 
 @_bind_to_core
 def _workspace_scope(user: dict | None) -> tuple[str | None, str]:
-    workspace_id = (user or {}).get("active_workspace_id") or (user or {}).get(
-        "workspace_id"
-    )
-    tenant_id = (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id")
-    if not workspace_id:
-        raise HTTPException(400, "active workspace is required")
-    return (str(tenant_id) if tenant_id else None), str(workspace_id)
+    return business_workspace_scope(user)
 
 
 @_bind_to_core
@@ -2226,27 +2220,12 @@ def _workspace_id(user: dict | None) -> str:
 
 @_bind_to_core
 def _actor_id(value: Any) -> int | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    text = str(value).strip()
-    if not text.isdigit():
-        return None
-    parsed = int(text)
-    return parsed if parsed > 0 else None
+    return business_actor_id(value)
 
 
 @_bind_to_core
 def _can_read_workspace_wide(user: dict | None) -> bool:
-    role = str((user or {}).get("role") or "").strip()
-    scoped = str(
-        (user or {}).get("workspace_role") or (user or {}).get("platform_role") or ""
-    ).strip()
-    return role in {"admin", "owner", "super_admin"} or scoped in {
-        "workspace_admin",
-        "tenant_admin",
-    }
+    return business_can_read_workspace_wide(user)
 
 
 @_bind_to_core
@@ -2575,7 +2554,8 @@ def _base_item(
             )
             if key in row
         },
-        **({"lineage": row["lineage"]} if "lineage" in row else {}),
+        **nonempty_mapping_fields(row, ("observation", "intelligence")),
+        **nonempty_mapping_fields(row, ("lineage",)),
     }
 
 
@@ -4028,6 +4008,7 @@ def _persisted_item_identity_fields(
         "evaluation_status": metadata.get("evaluation_status"),
         "readiness_status": metadata.get("readiness_status"),
         "source_status": metadata.get("source_status"),
+        "metadata": metadata,
         **{
             key: metadata.get(key)
             for key in (
@@ -4039,13 +4020,8 @@ def _persisted_item_identity_fields(
             )
             if key in metadata
         },
-        "lineage": metadata.get("lineage")
-        if isinstance(metadata.get("lineage"), dict)
-        else {},
+        **nonempty_mapping_fields(metadata, ("lineage", "evidence_pack")),
         "evidence_pack_id": metadata.get("evidence_pack_id"),
-        "evidence_pack": metadata.get("evidence_pack")
-        if isinstance(metadata.get("evidence_pack"), dict)
-        else {},
         "evidence": metadata.get("evidence"),
         "evidence_refs": metadata.get("evidence_refs"),
         "entity_kind": public_row.get("entity_kind") or "Entidad",
@@ -4241,82 +4217,40 @@ def _persisted_intelligence_payload(row: Any) -> dict[str, Any]:
 
 @_bind_to_core
 async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
-    try:
-        tenant_id, workspace_id = _workspace_scope(user)
-        params: list[Any] = [workspace_id]
-        tenant_clause = ""
-        if tenant_id:
-            params.append(tenant_id)
-            tenant_clause = f"AND tenant_id::text = ${len(params)}"
-        owner_clause = ""
-        owner_id = None
-        if not _can_read_workspace_wide(user):
-            owner_id = _actor_id((user or {}).get("id"))
-            if owner_id is None:
-                return []
-            params.append(owner_id)
-            owner_clause = f"AND owner_user_id = ${len(params)}"
-        pool = await auth.pool()
-        async def _load(
-            conn: Any, _tenant_id: str | None, _workspace_id: str
-        ) -> tuple[list[Any], list[Any]]:
-            rows = await conn.fetch(
-                f"""
-                SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
-                       severity, status, decision_id, entity_kind, entity_id,
-                       entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
-                       resolved_at, dismissed_at, impact_estimate, impact_currency,
-                       confidence, priority_score, selected_option_id, execution_status
-                  FROM control_room_items
-                 WHERE workspace_id = $1
-                   {tenant_clause}
-                   {owner_clause}
-                   AND item_kind IN ('intelligence_signal', 'agent_alert')
-                 ORDER BY priority_score DESC, last_seen_at DESC
-                 LIMIT 200
-                """,
-                *params,
-            )
-            lineage_rows = await fetch_lineage_rows(
-                conn,
-                workspace_id=workspace_id,
-                parent_ids=lineage_parent_ids(rows),
-                tenant_id=tenant_id,
-                owner_id=owner_id,
-            )
-            return list(rows), lineage_rows
-
-        rows, lineage_rows = await _run_with_db_scope(pool, user or {}, _load)
-    except Exception:
-        return []
-    # Defense-in-depth: hide the pre-#475 generic-Gold garbage class (stale rows
-    # like "Gold metric user_id: <tenant-uuid> ...") from the decision surface.
-    # #475 stops NEW ones; this suppresses residual until the purge removes them,
-    # without touching legitimate intelligence items or real generic KPI signals.
     from app.services.intelligence.gold_control_room import is_stale_generic_signal
 
-    scope_ids = (tenant_id, workspace_id)
-    kept: list[Any] = []
-    for row in rows:
-        if is_stale_generic_signal(
-            row.get("anomaly_type"), row.get("entity_id"), scope_ids
-        ):
-            continue
-        kept.append(row)
-    seed_items = [_persisted_intelligence_payload(row) for row in kept]
-    seed_ids = {str(item.get("id") or "") for item in seed_items}
-    lineage_items = [
-        item
-        for row in lineage_rows
-        if (item := _persisted_intelligence_payload(row)).get("id") not in seed_ids
-    ]
-    eligible = filter_business_items([*lineage_items, *seed_items])
-    business_ids = eligible_item_ids(eligible)
-    return [
-        _with_omega(item, eligible_parent_ids=business_ids)
-        for item in seed_items
-        if str(item.get("id") or "") in business_ids
-    ]
+    try:
+        tenant_id, workspace_id = _workspace_scope(user)
+        owner_id = (
+            None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
+        )
+        if not _can_read_workspace_wide(user) and owner_id is None:
+            return []
+        pool = await auth.pool()
+
+        async def _load(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> list[dict[str, Any]]:
+            return await fetch_eligible_persisted_items(
+                conn,
+                workspace_id=workspace_id,
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+                kinds=("intelligence_signal", "agent_alert"),
+                row_to_item=_persisted_intelligence_payload,
+                discard=lambda row: is_stale_generic_signal(
+                    row.get("anomaly_type"),
+                    row.get("entity_id"),
+                    (tenant_id, workspace_id),
+                ),
+                limit=200,
+            )
+
+        items = await _run_with_db_scope(pool, user or {}, _load)
+    except Exception:
+        return []
+    business_ids = eligible_item_ids(items)
+    return [_with_omega(item, eligible_parent_ids=business_ids) for item in items]
 
 
 @_bind_to_core
@@ -4863,35 +4797,11 @@ def _dashboard_item_counts(
 async def _dashboard_open_decisions(
     user: dict | None,
     workspace_id: str,
-    business_item_ids: set[str],
+    _business_item_ids: set[str],
 ) -> int:
-    if not business_item_ids:
-        return 0
     pool = await auth.pool()
     try:
-
-        async def _count_decisions(
-            conn: Any, _tenant_id: str | None, _workspace_id: str
-        ) -> int:
-            return int(
-                await conn.fetchval(
-                    """
-                    SELECT COUNT(DISTINCT d.id)
-                      FROM decisions d
-                      JOIN control_room_items i
-                        ON i.workspace_id = d.workspace_id
-                       AND i.decision_id = d.id
-                     WHERE d.workspace_id = $1
-                       AND d.status = 'open'
-                       AND i.item_id = ANY($2::text[])
-                    """,
-                    workspace_id,
-                    sorted(business_item_ids),
-                )
-                or 0
-            )
-
-        return await _run_with_db_scope(pool, user or {}, _count_decisions)
+        return await count_open_business_decisions(pool, user)
     except Exception:
         return 0
 
@@ -5501,11 +5411,12 @@ def _ops_summary_payload(
 async def ops_summary(user: dict | None) -> dict[str, Any]:
     """Operational summary for the active workspace.
 
-    Business counters use the exact eligible item projection returned by the
-    dashboard. Aggregate operational queries are then scoped to those IDs.
+    Business counters exhaust the paginated persisted eligible projection.
+    Aggregate operational queries are then scoped to those IDs.
     """
     tenant_id, workspace_id = _workspace_scope(user)
-    business_items = filter_business_items((await dashboard(user)).get("items", []))
+    pool = await auth.pool()
+    business_items = await persisted_business_projection(pool, user)
     counts = await _ops_summary_counts(
         user,
         workspace_id=workspace_id,
@@ -6093,7 +6004,7 @@ def _agentops_payload_from_raw(
 
 @_bind_to_core
 async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
-    """AgentOps snapshot scoped by the canonical dashboard projection.
+    """AgentOps snapshot scoped by the persisted business projection.
 
     It reads operational state only and never starts agents or simulations.
     """
@@ -6110,7 +6021,7 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     # "cartridge_id = ANY($2::text[])"; "cartridge_id = 'platform'"
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
-    business_items = filter_business_items((await dashboard(user)).get("items", []))
+    business_items = await persisted_business_projection(pool, user)
     business_ids = sorted(eligible_item_ids(business_items))
     business_id_set = set(business_ids)
     alert_ids = sorted(

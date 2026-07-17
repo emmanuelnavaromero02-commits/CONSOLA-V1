@@ -734,6 +734,7 @@ async def create_decision_for_item(
             workspace_id=scoped_workspace_id,
             item_id=item["id"],
             decision_id=row["id"],
+            owner_user_id=expected_business_item_owner(item, user),
         )
         await _record_item_event(
             conn,

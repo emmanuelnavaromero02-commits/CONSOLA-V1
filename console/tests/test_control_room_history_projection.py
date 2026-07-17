@@ -80,9 +80,10 @@ async def test_persisted_dashboard_loader_is_kind_scoped_and_bounded():
 
     loader = next(query for query in pool.queries if "FROM control_room_items" in query)
     assert "workspace_id = $1" in loader
-    assert "tenant_id::text = $2" in loader
-    assert "item_kind IN ('intelligence_signal', 'agent_alert')" in loader
-    assert "LIMIT 200" in loader
+    assert "item_kind = ANY($2::text[])" in loader
+    assert "tenant_id::text = $3" in loader
+    assert "ORDER BY COALESCE(priority_score, 0) DESC" in loader
+    assert "item_id DESC LIMIT $4" in loader
 
 
 def test_dataset_item_preserves_nested_policy_metadata_and_item_kind():

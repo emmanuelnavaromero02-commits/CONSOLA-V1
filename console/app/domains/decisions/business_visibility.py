@@ -13,7 +13,6 @@ from app.services.control_room.business_repository import fetch_lineage_rows
 
 MAX_VISIBLE_DECISIONS = 500
 DECISION_BATCH_SIZE = 500
-MAX_SCANNED_DECISIONS = 5000
 CONTROL_ROOM_ACTION = "Decision creada desde Sala de Control"
 
 
@@ -46,6 +45,7 @@ async def _linked_rows(
     workspace_id: str,
     decision_ids: Sequence[int],
     tenant_id: str | None = None,
+    owner_id: int | None = None,
 ) -> tuple[list[Any], list[Any], set[int]]:
     if not decision_ids:
         return [], [], set()
@@ -54,6 +54,10 @@ async def _linked_rows(
     if tenant_id:
         params.append(tenant_id)
         tenant_clause = f"AND tenant_id::text = ${len(params)}"
+    owner_clause = ""
+    if owner_id is not None:
+        params.append(owner_id)
+        owner_clause = f"AND owner_user_id = ${len(params)}"
     linked = await conn.fetch(
         f"""
         SELECT decision_id, item_id, item_kind, source_dataset, metadata
@@ -61,6 +65,7 @@ async def _linked_rows(
          WHERE workspace_id = $1
            AND decision_id = ANY($2::bigint[])
            {tenant_clause}
+           {owner_clause}
         """,
         *params,
     )
@@ -69,6 +74,7 @@ async def _linked_rows(
         workspace_id=workspace_id,
         parent_ids=lineage_parent_ids(linked),
         tenant_id=tenant_id,
+        owner_id=owner_id,
     )
     origins = await conn.fetch(
         """
@@ -92,6 +98,7 @@ async def filter_decision_rows(
     workspace_id: str,
     rows: Sequence[Mapping[str, Any]],
     tenant_id: str | None = None,
+    owner_id: int | None = None,
 ) -> list[dict[str, Any]]:
     decisions = [dict(row) for row in rows]
     decision_ids = [int(row["id"]) for row in decisions if row.get("id") is not None]
@@ -100,6 +107,7 @@ async def filter_decision_rows(
         workspace_id=workspace_id,
         decision_ids=decision_ids,
         tenant_id=tenant_id,
+        owner_id=owner_id,
     )
     candidates = [
         {
@@ -125,14 +133,14 @@ async def fetch_business_decisions(
     params: Sequence[Any],
     workspace_id: str,
     tenant_id: str | None = None,
+    owner_id: int | None = None,
     limit: int = MAX_VISIBLE_DECISIONS,
 ) -> list[dict[str, Any]]:
     target = max(1, min(int(limit), MAX_VISIBLE_DECISIONS))
     visible: list[dict[str, Any]] = []
-    scanned = 0
     cursor: tuple[Any, int] | None = None
-    while len(visible) < target and scanned < MAX_SCANNED_DECISIONS:
-        page_limit = min(DECISION_BATCH_SIZE, MAX_SCANNED_DECISIONS - scanned)
+    while len(visible) < target:
+        page_limit = DECISION_BATCH_SIZE
         if cursor is None:
             limit_param = len(params) + 1
             page_sql = f"{sql} LIMIT ${limit_param}"
@@ -162,9 +170,9 @@ async def fetch_business_decisions(
                 workspace_id=workspace_id,
                 rows=batch,
                 tenant_id=tenant_id,
+                owner_id=owner_id,
             )
         )
-        scanned += len(batch)
         last = batch[-1]
         if last.get("created_at") is None or last.get("id") is None:
             break
@@ -172,3 +180,51 @@ async def fetch_business_decisions(
         if len(batch) < page_limit:
             break
     return visible[:target]
+
+
+async def count_business_decisions(
+    conn: Any,
+    *,
+    sql: str,
+    params: Sequence[Any],
+    workspace_id: str,
+    tenant_id: str | None = None,
+    owner_id: int | None = None,
+) -> int:
+    total = 0
+    cursor: tuple[Any, int] | None = None
+    while True:
+        if cursor is None:
+            page_sql = f"{sql} LIMIT ${len(params) + 1}"
+            page_params = [*params, DECISION_BATCH_SIZE]
+        else:
+            created_param = len(params) + 1
+            id_param = created_param + 1
+            limit_param = id_param + 1
+            page_sql = (
+                f"SELECT * FROM ({sql}) AS decision_page "
+                "WHERE (decision_page.created_at, decision_page.id) "
+                f"< (${created_param}, ${id_param}) "
+                "ORDER BY decision_page.created_at DESC, decision_page.id DESC "
+                f"LIMIT ${limit_param}"
+            )
+            page_params = [*params, cursor[0], cursor[1], DECISION_BATCH_SIZE]
+        batch = list(await conn.fetch(page_sql, *page_params))
+        if not batch:
+            break
+        total += len(
+            await filter_decision_rows(
+                conn,
+                workspace_id=workspace_id,
+                rows=batch,
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+            )
+        )
+        last = batch[-1]
+        if last.get("created_at") is None or last.get("id") is None:
+            break
+        cursor = (last["created_at"], int(last["id"]))
+        if len(batch) < DECISION_BATCH_SIZE:
+            break
+    return total

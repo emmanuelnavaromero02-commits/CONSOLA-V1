@@ -55,6 +55,7 @@ async def eligible_orchestrator_source(
     source_type: str,
     tenant_id: str | None,
     workspace_id: str,
+    owner_id: int | None = None,
 ) -> dict[str, Any] | None:
     item = normalize_orchestrator_source(source, source_type=source_type)
     refs = parent_references(item)
@@ -63,6 +64,7 @@ async def eligible_orchestrator_source(
         workspace_id=workspace_id,
         parent_ids=refs.ids,
         tenant_id=tenant_id,
+        owner_id=owner_id,
     )
     lineage = [normalize_persisted_business_item(row) for row in lineage_rows]
     eligible_ids = eligible_item_ids([*lineage, item])

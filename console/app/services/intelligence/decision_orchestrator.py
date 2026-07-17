@@ -9,6 +9,10 @@ from typing import Any
 
 from app.services import auth, external_actions
 from app.services.control_room.business_orchestrator import eligible_orchestrator_source
+from app.services.control_room.business_access import (
+    can_read_workspace_wide,
+    owner_scope_id,
+)
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence.evidence_refs import (
     external_evidence_metadata,
@@ -578,6 +582,7 @@ async def _load_source(
     source_type: str,
     source_id: str,
     payload: dict[str, Any],
+    owner_id: int | None = None,
 ) -> dict[str, Any]:
     if source_type == "manual_fixture":
         if not _manual_fixture_allowed():
@@ -597,19 +602,22 @@ async def _load_source(
         clause = "AND item_kind = 'agent_alert'" if source_type == "agent_alert" else ""
         row = await conn.fetchrow(
             f"""
-            SELECT tenant_id, workspace_id, item_id AS source_id, item_kind,
+            SELECT tenant_id, workspace_id, owner_user_id,
+                   item_id AS source_id, item_kind,
                    title, severity, status, domain, source_dataset,
                    entity_kind, entity_id, entity_label, anomaly_type, metadata
               FROM control_room_items
              WHERE workspace_id = $1
                AND item_id = $2
                AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+               AND ($4::bigint IS NULL OR owner_user_id = $4)
                {clause}
              LIMIT 1
             """,
             workspace_id,
             source_id,
             tenant_id,
+            owner_id,
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
@@ -619,6 +627,7 @@ async def _load_source(
             source_type=source_type,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
+            owner_id=owner_id,
         )
         if source is None:
             raise DecisionOrchestratorError(409, "item_not_business_eligible")
@@ -626,7 +635,7 @@ async def _load_source(
     if source_type == "intelligence_signal":
         row = await conn.fetchrow(
             """
-            SELECT signal.tenant_id, signal.workspace_id,
+            SELECT signal.tenant_id, signal.workspace_id, signal.owner_user_id,
                    signal.signal_id AS source_id, signal.domain,
                    signal.dataset, signal.entity_kind, signal.entity_id,
                    signal.entity_label, signal.metric, signal.actual_value,
@@ -641,14 +650,17 @@ async def _load_source(
                 ON item.workspace_id = signal.workspace_id
                AND item.item_id = signal.signal_id
                AND item.tenant_id IS NOT DISTINCT FROM signal.tenant_id
+               AND ($4::bigint IS NULL OR item.owner_user_id = $4)
              WHERE signal.workspace_id = $1
                AND signal.signal_id = $2
                AND ($3::uuid IS NULL OR signal.tenant_id = $3::uuid)
+               AND ($4::bigint IS NULL OR signal.owner_user_id = $4)
              LIMIT 1
             """,
             workspace_id,
             source_id,
             tenant_id,
+            owner_id,
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
@@ -658,6 +670,7 @@ async def _load_source(
             source_type=source_type,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
+            owner_id=owner_id,
         )
         if source is None:
             raise DecisionOrchestratorError(409, "item_not_business_eligible")
@@ -805,6 +818,9 @@ async def orchestrate(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
 
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        source_owner_id = owner_scope_id(user)
+        if not can_read_workspace_wide(user) and source_owner_id is None:
+            raise DecisionOrchestratorError(404, "orchestrator source not found")
         source = await _load_source(
             conn,
             tenant_id=tenant_id,
@@ -812,6 +828,7 @@ async def orchestrate(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             source_type=source_type,
             source_id=source_id,
             payload=body,
+            owner_id=source_owner_id,
         )
         plan = build_orchestration_plan(body, source)
         orchestration_id = _orchestration_id(

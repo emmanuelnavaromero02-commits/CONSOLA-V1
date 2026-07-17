@@ -9,16 +9,14 @@ from app.services.control_room.business_observation import has_evidence, semanti
 
 MAX_LINEAGE_DEPTH = 16
 DERIVED_KINDS = frozenset({"agent_alert", "derived", "intelligence_signal"})
+REFERENCE_FIELDS = ("parent_item_id", "source_item_id", "derived_from")
+LINEAGE_ROOT_FIELDS = ("source_dataset", "dataset", "root_source")
 
 
 @dataclass(frozen=True)
 class ParentReferences:
     ids: frozenset[str]
     malformed: bool = False
-
-
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
 
 
 def item_identity(item: Mapping[str, Any]) -> str:
@@ -57,13 +55,16 @@ def _reference_value(value: Any) -> tuple[set[str], bool]:
             if key not in value:
                 continue
             found = True
-            clean = str(value.get(key) or "").strip()
+            raw = value.get(key)
+            clean = raw.strip() if isinstance(raw, str) else ""
             if clean:
                 ids.add(clean)
             else:
                 malformed = True
         return ids, malformed or not found
     if isinstance(value, (list, tuple, set, frozenset)):
+        if not value:
+            return set(), True
         ids: set[str] = set()
         malformed = False
         for entry in value:
@@ -77,25 +78,47 @@ def _reference_value(value: Any) -> tuple[set[str], bool]:
 def parent_references(item: Mapping[str, Any]) -> ParentReferences:
     ids: set[str] = set()
     malformed = False
+    values_by_role: dict[str, set[frozenset[str]]] = {
+        key: set() for key in REFERENCE_FIELDS
+    }
+
+    def _record(role: str, value: Any) -> None:
+        nonlocal malformed
+        parsed, invalid = _reference_value(value)
+        ids.update(parsed)
+        values_by_role[role].add(frozenset(parsed))
+        malformed = malformed or invalid
+
     for values in semantic_maps(item):
-        for key in ("parent_item_id", "source_item_id", "derived_from"):
+        for key in REFERENCE_FIELDS:
             if key not in values:
                 continue
-            parsed, invalid = _reference_value(values.get(key))
-            ids.update(parsed)
-            malformed = malformed or invalid
+            _record(key, values.get(key))
         if "lineage" not in values:
             continue
         lineage = values.get("lineage")
         if not isinstance(lineage, Mapping):
             malformed = True
             continue
-        for key in ("parent_item_id", "source_item_id"):
+        declared = False
+        for key in REFERENCE_FIELDS:
             if key not in lineage:
                 continue
-            parsed, invalid = _reference_value(lineage.get(key))
-            ids.update(parsed)
-            malformed = malformed or invalid
+            declared = True
+            _record(key, lineage.get(key))
+        for key in LINEAGE_ROOT_FIELDS:
+            if key not in lineage:
+                continue
+            declared = True
+            value = lineage.get(key)
+            malformed = malformed or not (
+                isinstance(value, str) and bool(value.strip())
+            )
+        malformed = malformed or not declared
+
+    malformed = malformed or any(
+        len(role_values) > 1 for role_values in values_by_role.values()
+    )
     return ParentReferences(frozenset(ids), malformed)
 
 

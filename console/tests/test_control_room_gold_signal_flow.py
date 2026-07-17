@@ -564,10 +564,12 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
         items = await control_room_service._persisted_intelligence_items(REPLICON_USER)
 
     _assert_scope_call(conn)
-    sql, workspace_arg, tenant_arg = conn.fetch.await_args.args
+    sql, workspace_arg, kinds, tenant_arg, page_size = conn.fetch.await_args.args
     assert "tenant_id::text" in sql
     assert workspace_arg == WORKSPACE_A
+    assert kinds == ["intelligence_signal", "agent_alert"]
     assert tenant_arg == TENANT_A
+    assert page_size == 200
     assert len(items) == 1
     item = items[0]
     assert item["tenant_id"] == TENANT_A
@@ -593,15 +595,24 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
 
 @pytest.mark.asyncio
 async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_workspace():
-    async def scoped_fetch(query: str, workspace_id: str, tenant_id: str):
+    async def scoped_fetch(
+        query: str,
+        workspace_id: str,
+        kinds: list[str],
+        tenant_id: str,
+        _page_size: int,
+    ):
         assert "workspace_id = $1" in query
-        assert "tenant_id::text = $2" in query
+        assert "item_kind = ANY($2::text[])" in query
+        assert "tenant_id::text = $3" in query
+        assert kinds == ["intelligence_signal", "agent_alert"]
         if workspace_id == WORKSPACE_A and tenant_id == TENANT_A:
             return [
                 {
                     "item_id": "intel:a",
                     "metadata": {"evidence_refs": ["evidence:intel:a"]},
                     "item_kind": "intelligence_signal",
+                    "source_dataset": "gold_metrics",
                 }
             ]
         return []
@@ -629,18 +640,35 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
         workspace_id=WORKSPACE_B,
         call_index=1,
     )
-    assert conn.fetch.await_args_list[0].args[1:] == (WORKSPACE_A, TENANT_A)
-    assert conn.fetch.await_args_list[1].args[1:] == (WORKSPACE_B, TENANT_B)
+    assert conn.fetch.await_args_list[0].args[1:] == (
+        WORKSPACE_A,
+        ["intelligence_signal", "agent_alert"],
+        TENANT_A,
+        200,
+    )
+    assert conn.fetch.await_args_list[1].args[1:] == (
+        WORKSPACE_B,
+        ["intelligence_signal", "agent_alert"],
+        TENANT_B,
+        200,
+    )
 
 
 @pytest.mark.asyncio
 async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin():
     async def scoped_fetch(
-        query: str, workspace_id: str, tenant_id: str, owner_id: int
+        query: str,
+        workspace_id: str,
+        kinds: list[str],
+        tenant_id: str,
+        owner_id: int,
+        _page_size: int,
     ):
         assert "workspace_id = $1" in query
-        assert "tenant_id::text = $2" in query
-        assert "owner_user_id = $3" in query
+        assert "item_kind = ANY($2::text[])" in query
+        assert "tenant_id::text = $3" in query
+        assert "owner_user_id = $4" in query
+        assert kinds == ["intelligence_signal", "agent_alert"]
         assert workspace_id == WORKSPACE_A
         assert tenant_id == TENANT_A
         assert owner_id == 11
@@ -649,6 +677,7 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
                 "item_id": "intel:owned",
                 "metadata": {"evidence_refs": ["evidence:intel:owned"]},
                 "item_kind": "intelligence_signal",
+                "source_dataset": "gold_metrics",
             }
         ]
 
@@ -666,7 +695,13 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
 
     assert [item["id"] for item in items] == ["intel:owned"]
     _assert_scope_call(conn)
-    assert conn.fetch.await_args.args[1:] == (WORKSPACE_A, TENANT_A, 11)
+    assert conn.fetch.await_args.args[1:] == (
+        WORKSPACE_A,
+        ["intelligence_signal", "agent_alert"],
+        TENANT_A,
+        11,
+        200,
+    )
 
 
 @pytest.mark.asyncio

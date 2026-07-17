@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services import control_room_service
+from app.services.control_room.business_projection import filter_business_items
 
 
 USER = {
@@ -38,6 +39,9 @@ async def test_agentops_uses_canonical_business_ids_for_executive_counters():
         ),
     ]
     snapshot = AsyncMock(return_value={"raw": True})
+    forbidden_dashboard = AsyncMock(
+        side_effect=AssertionError("agent polling must not fetch datasets")
+    )
 
     async def scoped(_pool, _user, work):
         return await work(object(), "tenant-A", "workspace-A")
@@ -45,9 +49,10 @@ async def test_agentops_uses_canonical_business_ids_for_executive_counters():
     with (
         patch.object(
             control_room_service,
-            "dashboard",
-            new=AsyncMock(return_value={"items": items}),
+            "persisted_business_projection",
+            new=AsyncMock(return_value=filter_business_items(items)),
         ),
+        patch.object(control_room_service, "dashboard", new=forbidden_dashboard),
         patch.object(
             control_room_service.auth, "pool", new=AsyncMock(return_value=object())
         ),
@@ -62,6 +67,7 @@ async def test_agentops_uses_canonical_business_ids_for_executive_counters():
         result = await control_room_service.agents_ops(USER)
 
     assert result == {"raw": True}
+    forbidden_dashboard.assert_not_awaited()
     assert snapshot.await_args.kwargs["eligible_item_ids"] == [
         "alert-good",
         "signal-good",
