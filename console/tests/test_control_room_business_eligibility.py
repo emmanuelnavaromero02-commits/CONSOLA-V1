@@ -137,7 +137,6 @@ def test_metric_value_zero_uses_the_same_zero_policy():
     [
         {"intelligence": {"signal": {"actual_value": 0}}},
         {"intelligence": {"signal": {"affected_count": 0}}},
-        {"source_row_count": 0},
     ],
 )
 def test_nested_and_count_zeros_cannot_bypass_population_policy(measurement):
@@ -146,6 +145,12 @@ def test_nested_and_count_zeros_cannot_bypass_population_policy(measurement):
     assert (
         classify_business_item(item).reason is EligibilityReason.ZERO_WITHOUT_POPULATION
     )
+
+
+def test_source_row_count_zero_is_not_a_business_measurement():
+    item = _business_item(data_status="ready", population_count=0, source_row_count=0)
+
+    assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
 def test_nested_zero_is_valid_with_success_population_and_date():

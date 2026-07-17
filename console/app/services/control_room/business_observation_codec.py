@@ -70,6 +70,7 @@ _STRUCTURED_POLICY_FIELDS = frozenset(
         "lineage",
     }
 )
+LEGACY_FLAT_ENVELOPE_FIELDS = POLICY_FIELDS
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -120,7 +121,19 @@ def _valid_claim(claim: Mapping[str, Any]) -> bool:
     return True
 
 
+def _legacy_flat_claim(envelope: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    if not envelope or any(key not in LEGACY_FLAT_ENVELOPE_FIELDS for key in envelope):
+        return None
+    claim = _claim(envelope)
+    return claim if _valid_claim(claim) else None
+
+
 def persisted_claims(item: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    """Read canonical v1 envelopes and one strict legacy flat policy claim.
+
+    Flat envelopes are accepted only for persisted compatibility. They cannot contain
+    wrappers or unknown fields, and writers always emit the canonical versioned form.
+    """
     claims: list[Mapping[str, Any]] = []
     for container in (item, _mapping(item.get("metadata"))):
         if ENVELOPE_KEY not in container:
@@ -130,13 +143,8 @@ def persisted_claims(item: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
             claims.append({INVALID_ENVELOPE_FIELD: True})
             continue
         if "version" not in envelope:
-            if "claims" in envelope or any(
-                key not in POLICY_FIELDS for key in envelope
-            ):
-                claims.append({INVALID_ENVELOPE_FIELD: True})
-                continue
-            legacy = _claim(envelope)
-            if _valid_claim(legacy):
+            legacy = _legacy_flat_claim(envelope)
+            if legacy is not None:
                 claims.append(legacy)
             else:
                 claims.append({INVALID_ENVELOPE_FIELD: True})
@@ -198,6 +206,7 @@ __all__ = (
     "ENVELOPE_KEY",
     "ENVELOPE_VERSION",
     "INVALID_ENVELOPE_FIELD",
+    "LEGACY_FLAT_ENVELOPE_FIELDS",
     "nonempty_mapping_fields",
     "observation_envelope",
     "persisted_claims",

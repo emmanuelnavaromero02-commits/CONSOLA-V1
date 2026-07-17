@@ -11,6 +11,12 @@ MAX_LINEAGE_DEPTH = 16
 DERIVED_KINDS = frozenset({"agent_alert", "derived", "intelligence_signal"})
 REFERENCE_FIELDS = ("parent_item_id", "source_item_id", "derived_from")
 LINEAGE_ROOT_FIELDS = ("source_dataset", "dataset", "root_source")
+_ROOT_SOURCE_ROLES = {
+    "dataset": ("source_dataset", "dataset"),
+    "gold_table": ("gold_table",),
+    "root_source": ("root_source",),
+    "source_system": ("source_system",),
+}
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,9 @@ def parent_references(item: Mapping[str, Any]) -> ParentReferences:
     values_by_role: dict[str, set[frozenset[str]]] = {
         key: set() for key in REFERENCE_FIELDS
     }
+    root_values_by_role: dict[str, set[str]] = {
+        role: set() for role in _ROOT_SOURCE_ROLES
+    }
 
     def _record(role: str, value: Any) -> None:
         nonlocal malformed
@@ -89,7 +98,18 @@ def parent_references(item: Mapping[str, Any]) -> ParentReferences:
         values_by_role[role].add(frozenset(parsed))
         malformed = malformed or invalid
 
+    def _record_roots(values: Mapping[str, Any]) -> None:
+        for role, fields in _ROOT_SOURCE_ROLES.items():
+            for key in fields:
+                if key not in values:
+                    continue
+                value = values.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                root_values_by_role[role].add(value.strip())
+
     for values in semantic_maps(item):
+        _record_roots(values)
         for key in REFERENCE_FIELDS:
             if key not in values:
                 continue
@@ -100,6 +120,7 @@ def parent_references(item: Mapping[str, Any]) -> ParentReferences:
         if not isinstance(lineage, Mapping):
             malformed = True
             continue
+        _record_roots(lineage)
         declared = False
         for key in REFERENCE_FIELDS:
             if key not in lineage:
@@ -118,6 +139,9 @@ def parent_references(item: Mapping[str, Any]) -> ParentReferences:
 
     malformed = malformed or any(
         len(role_values) > 1 for role_values in values_by_role.values()
+    )
+    malformed = malformed or any(
+        len(role_values) > 1 for role_values in root_values_by_role.values()
     )
     return ParentReferences(frozenset(ids), malformed)
 

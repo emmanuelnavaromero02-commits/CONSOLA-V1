@@ -28,12 +28,15 @@ OBSERVATION_DATE_FIELDS = (
     "detected_at",
     "as_of",
 )
-_OBSERVED_ONLY_KINDS = frozenset(
+_OBSERVED_VALUE_KINDS = frozenset(
     {
         MetricKind.RATE,
         MetricKind.PERCENTAGE,
         MetricKind.AVERAGE,
         MetricKind.DIVISION,
+        MetricKind.AMOUNT,
+        MetricKind.SCALAR,
+        MetricKind.UNKNOWN,
     }
 )
 
@@ -109,18 +112,32 @@ def _first_value(*slots: ResolvedNumber) -> float | None:
     return None
 
 
-def _selected_value(kind: MetricKind, slots: SemanticSlots) -> float | None:
-    if kind in _OBSERVED_ONLY_KINDS:
-        return _first_value(slots.observed_value)
+def _selected_value(
+    kind: MetricKind,
+    slots: SemanticSlots,
+    *,
+    metric_declared: bool,
+) -> float | None:
     if kind is MetricKind.COUNT:
         return _first_value(slots.observed_value, slots.affected_count)
-    if kind in {MetricKind.AMOUNT, MetricKind.SCALAR}:
+    if not metric_declared:
+        return _first_value(slots.observed_value, slots.affected_count)
+    if kind in _OBSERVED_VALUE_KINDS:
         return _first_value(slots.observed_value)
-    return _first_value(
-        slots.observed_value,
-        slots.affected_count,
-        slots.source_rows,
-    )
+    return None
+
+
+def _required_value_missing(
+    kind: MetricKind,
+    slots: SemanticSlots,
+    *,
+    metric_declared: bool,
+) -> bool:
+    if not metric_declared:
+        return False
+    if kind is MetricKind.COUNT:
+        return not (slots.observed_value.declared or slots.affected_count.declared)
+    return not slots.observed_value.declared
 
 
 def _measurement(item: Mapping[str, Any]) -> tuple[bool, bool, float | None]:
@@ -131,21 +148,13 @@ def _measurement(item: Mapping[str, Any]) -> tuple[bool, bool, float | None]:
     slots = resolve_semantic_slots(item)
     observation_flag = resolve_observation_flag(item)
     kind = metric_kind.value if metric_kind.valid else MetricKind.UNKNOWN
-    value = _selected_value(kind, slots)
-    required_value_missing = (
-        metric_kind.declared
-        and metric_kind.valid
-        and kind in _OBSERVED_ONLY_KINDS
-        and not slots.observed_value.declared
+    value = _selected_value(kind, slots, metric_declared=metric_kind.declared)
+    required_value_missing = metric_kind.valid and _required_value_missing(
+        kind,
+        slots,
+        metric_declared=metric_kind.declared,
     )
-    candidate_declared = any(
-        slot.declared
-        for slot in (
-            slots.observed_value,
-            slots.affected_count,
-            slots.source_rows,
-        )
-    )
+    candidate_declared = slots.declared
     declared = (
         candidate_declared
         or observation_flag.declared
@@ -185,7 +194,12 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
     if kind is MetricKind.COUNT:
         population = _known_population(slots)
         return population is not None and population >= 0
-    if kind in _OBSERVED_ONLY_KINDS:
+    if kind in {
+        MetricKind.RATE,
+        MetricKind.PERCENTAGE,
+        MetricKind.AVERAGE,
+        MetricKind.DIVISION,
+    }:
         denominator = _denominator(slots)
         return denominator is not None and denominator > 0
     if kind in {MetricKind.AMOUNT, MetricKind.SCALAR}:
