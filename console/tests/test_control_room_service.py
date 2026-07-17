@@ -953,6 +953,7 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(mo
         "description": "Should be hidden without scoped connection.",
         "recommendation": "Hidden",
         "status": "open",
+        "evidence_refs": ["evidence:hubspot"],
     }
     active_item = {
         **stale_item,
@@ -1446,7 +1447,7 @@ async def test_dashboard_workspace_threshold_can_suppress_default_signal():
 
 
 @pytest.mark.asyncio
-async def test_dashboard_surfaces_persisted_lessons_by_pattern():
+async def test_dashboard_does_not_attach_lessons_from_historical_ordinary_parent():
     lesson_row = {
         "id": 31,
         "item_id": "historic-item",
@@ -1504,12 +1505,12 @@ async def test_dashboard_surfaces_persisted_lessons_by_pattern():
         result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
 
     item = next(item for item in result["items"] if item["anomaly_type"] == "terminated_but_active")
-    assert item["lesson_count"] == 1
-    assert item["related_lessons"][0]["source_decision_id"] == 42
-    assert "bloquear acceso" in item["omega"]["lessons"]["rules"][0]
-    assert result["summary"]["lessons"]["total"] == 1
-    assert result["summary"]["lessons"]["by_cartridge"] == {"sap_hcm": 1}
-    assert result["summary"]["lessons"]["top_patterns"][0]["anomaly_type"] == "terminated_but_active"
+    assert item["lesson_count"] == 0
+    assert item["related_lessons"] == []
+    assert all(
+        "bloquear acceso" not in rule for rule in item["omega"]["lessons"]["rules"]
+    )
+    assert result["summary"]["lessons"]["total"] == 0
 
 
 @pytest.mark.asyncio
@@ -1679,7 +1680,9 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
     }
     action_row = {"id": 99, "decision_id": 42}
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[None, decision_row, action_row])
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=[None, decision_row, action_row, {"item_id": anomaly["id"]}]
+    )
     mock_pool.fetch.return_value = []
 
     with (
@@ -1706,13 +1709,16 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
         )
 
     assert result["decision"]["id"] == 42
-    assert mock_pool.fetchrow.call_count == 3
+    assert mock_pool.fetchrow.call_count == 4
     insert_sql = mock_pool.fetchrow.call_args_list[1].args[0]
     assert "INSERT INTO decisions" in insert_sql
     assert "workspace_id" in insert_sql
     assert mock_pool.fetchrow.call_args_list[1].args[-1] == "workspace-A"
     action_sql = mock_pool.fetchrow.call_args_list[2].args[0]
     assert "INSERT INTO decision_actions" in action_sql
+    link_sql = mock_pool.fetchrow.call_args_list[3].args[0]
+    assert "UPDATE control_room_items" in link_sql
+    assert "RETURNING item_id" in link_sql
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.decision.create"
     assert audit_event.await_args.kwargs["metadata"]["decision_id"] == 42
@@ -1887,7 +1893,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "cartridge_id": "replicon",
         "domain": "Finanzas",
         "source_dataset": "pnl_mensual",
-        "item_kind": "anomaly",
+        "item_kind": "intelligence_signal",
         "title": "Margen bajo",
         "severity": "high",
         "status": "approved",
@@ -1901,6 +1907,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
             "recommendation": "Revisar billing",
             "root_cause": "Costo mayor al esperado",
             "impact": "Riesgo de margen",
+            "evidence_refs": ["evidence:item-activity"],
         },
         "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
         "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
@@ -1944,7 +1951,9 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
     }]
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = persisted_item
-    mock_pool.fetch = AsyncMock(side_effect=[event_rows, execution_rows, decision_rows])
+    mock_pool.fetch = AsyncMock(
+        side_effect=[event_rows, execution_rows, decision_rows, [], []]
+    )
 
     with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
         result = await control_room_service.get_item_activity("item-activity", USER)
@@ -1966,6 +1975,24 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
     assert "workspace_id = $1" in event_sql
     assert workspace_id == "workspace-A"
     assert item_id == "item-activity"
+
+
+@pytest.mark.asyncio
+async def test_get_item_activity_propagates_database_failures():
+    item = {"id": "item-activity", "decision_id": None}
+    mock_pool = AsyncMock()
+    mock_pool.fetch = AsyncMock(side_effect=RuntimeError("activity lookup down"))
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_item_for_read",
+            new=AsyncMock(return_value=item),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="activity lookup down"):
+            await control_room_service.get_item_activity("item-activity", USER)
 
 
 @pytest.mark.asyncio
@@ -3322,7 +3349,23 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = [lesson_row]
 
-    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_persisted_business_items",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "item-1",
+                        "kind": "intelligence_signal",
+                        "source_dataset": "pnl_mensual",
+                        "evidence_refs": ["evidence:item-1"],
+                    }
+                ]
+            ),
+        ),
+    ):
         result = await control_room_service.list_lessons(
             USER,
             cartridge_id="replicon",

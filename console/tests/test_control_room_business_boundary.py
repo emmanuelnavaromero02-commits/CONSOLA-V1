@@ -149,6 +149,20 @@ async def test_mutation_lookup_returns_404_for_wrong_scope():
     assert exc.value.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_mutation_lookup_propagates_database_failures():
+    with patch.object(
+        control_room_service.auth,
+        "pool",
+        new=AsyncMock(side_effect=RuntimeError("database unavailable")),
+    ):
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await control_room_service._persisted_item_for_mutation(
+                "business-1",
+                USER,
+            )
+
+
 COMMAND_CASES = (
     ("create_decision_for_item", ("source-state-1", USER), {}),
     ("select_item_option", ("source-state-1", "remediate", USER), {}),

@@ -348,6 +348,7 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
         cartridge="sap_successfactors",
         row=row,
         user=user,
+        persist_control_room_state=True,
     )
 
     assert result["control_room_ready"] is True
@@ -831,7 +832,10 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
     async def fetch(**_kwargs):
         return dict(stored)
 
-    async def build_status(*, cartridge, row, user=None):
+    async def build_status(
+        *, cartridge, row, user=None, persist_control_room_state=False
+    ):
+        assert persist_control_room_state is True
         return console_main._sync_public_payload(row, row["extra"])
 
     async def trigger(dag_id, conf, user_arg, dag_run_id=None):
@@ -1165,7 +1169,10 @@ async def test_sync_now_continues_after_active_run_reconciles_terminal(
     async def fetch(**_kwargs):
         return dict(stored)
 
-    async def build_status(*, cartridge, row, user=None):
+    async def build_status(
+        *, cartridge, row, user=None, persist_control_room_state=False
+    ):
+        assert persist_control_room_state is True
         if row["run_id"] == old_row["run_id"]:
             return {"run_id": row["run_id"], "status": "failed"}
         return console_main._sync_public_payload(row, row["extra"])
@@ -1353,6 +1360,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
         cartridge="sap_successfactors",
         row=row,
         user=user,
+        persist_control_room_state=True,
     )
 
     assert agentops_calls == [

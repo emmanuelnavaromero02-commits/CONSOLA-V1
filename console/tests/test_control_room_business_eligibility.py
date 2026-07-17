@@ -104,10 +104,13 @@ def test_partial_rejects_descriptive_signal_without_measured_fact():
 def test_real_zero_requires_success_population_and_observation_date():
     valid = _business_item(
         data_status="gold_ready",
+        metric_type="count",
         observed_value=0,
-        population_count=25,
+        population_count=0,
     )
-    no_population = {**valid, "population_count": 0}
+    no_population = {
+        key: value for key, value in valid.items() if key != "population_count"
+    }
 
     assert classify_business_item(valid).eligible is True
     assert (
@@ -119,6 +122,7 @@ def test_real_zero_requires_success_population_and_observation_date():
 def test_metric_value_zero_uses_the_same_zero_policy():
     item = _business_item(
         data_status="ready",
+        metric_type="rate",
         metric_value=0,
         population_count=0,
     )
@@ -147,6 +151,7 @@ def test_nested_and_count_zeros_cannot_bypass_population_policy(measurement):
 def test_nested_zero_is_valid_with_success_population_and_date():
     item = _business_item(
         data_status="ready",
+        metric_type="count",
         population_count=20,
         intelligence={"signal": {"actual_value": 0}},
     )
@@ -229,8 +234,10 @@ def test_persisted_item_kind_source_state_is_rejected():
 def test_invalid_zero_remains_ineligible_after_metadata_round_trip():
     item = _business_item(
         data_status="ready",
+        metric_type="rate",
         observed_value=0,
         population_count=0,
+        evidence_pack={"items": [{"source": "gold"}]},
     )
     metadata = control_room_service._metadata_for_item(item, {})
     reloaded = control_room_service._persisted_intelligence_payload(

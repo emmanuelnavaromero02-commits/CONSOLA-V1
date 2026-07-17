@@ -147,6 +147,8 @@ class _FakePool:
 
     async def fetch(self, sql, *params):
         self.calls.append(("fetch", sql, params))
+        if "FROM control_room_items" in sql or "FROM decision_actions" in sql:
+            return []
         return self._fetch_result
 
     async def execute(self, sql, *params):
@@ -351,6 +353,8 @@ async def test_decision_routes_hide_historical_source_state_rows(
                         "metadata": {"data_status": "missing"},
                     }
                 ]
+            if "FROM decision_actions" in sql:
+                return []
             return [decision]
 
     fake = _HistoricalPool(fetchrow_result=decision)

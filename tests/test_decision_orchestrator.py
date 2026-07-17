@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from datetime import UTC, datetime
@@ -97,10 +98,9 @@ class FakeOrchestratorDB:
     def _visible(self, row: dict[str, Any] | None) -> bool:
         if not row or not self.current_workspace_id:
             return False
-        return (
-            str(row["workspace_id"]) == str(self.current_workspace_id)
-            and str(row.get("tenant_id") or "") == str(self.current_tenant_id or "")
-        )
+        return str(row["workspace_id"]) == str(self.current_workspace_id) and str(
+            row.get("tenant_id") or ""
+        ) == str(self.current_tenant_id or "")
 
     async def execute(self, query: str, *args):
         if "set_config('app.tenant_id'" in query:
@@ -114,17 +114,25 @@ class FakeOrchestratorDB:
         q = " ".join(query.split())
         if "FROM control_room_items" in q:
             workspace_id, source_id = str(args[0]), str(args[1])
-            source_type = "agent_alert" if "item_kind = 'agent_alert'" in q else "control_room_item"
+            source_type = (
+                "agent_alert"
+                if "item_kind = 'agent_alert'" in q
+                else "control_room_item"
+            )
             row = self.sources.get((workspace_id, source_type, source_id))
             return row if self._visible(row) else None
         if "FROM intelligence_signals" in q:
             row = self.sources.get((str(args[0]), "intelligence_signal", str(args[1])))
             return row if self._visible(row) else None
         if "FROM monte_carlo_simulations" in q:
-            row = self.sources.get((str(args[0]), "monte_carlo_simulation", str(args[1])))
+            row = self.sources.get(
+                (str(args[0]), "monte_carlo_simulation", str(args[1]))
+            )
             return row if self._visible(row) else None
         if "FROM calibration_observations" in q:
-            row = self.sources.get((str(args[0]), "calibration_observation", str(args[1])))
+            row = self.sources.get(
+                (str(args[0]), "calibration_observation", str(args[1]))
+            )
             return row if self._visible(row) else None
         if q.startswith("INSERT INTO decision_orchestration_runs"):
             (
@@ -175,7 +183,11 @@ class FakeOrchestratorDB:
             self.runs[key] = row
             return row
         if q.startswith("UPDATE decision_orchestration_runs SET external_action_id"):
-            workspace_id, orchestration_id, action_id = str(args[0]), str(args[1]), str(args[2])
+            workspace_id, orchestration_id, action_id = (
+                str(args[0]),
+                str(args[1]),
+                str(args[2]),
+            )
             row = self.runs.get((workspace_id, orchestration_id))
             if not self._visible(row):
                 return None
@@ -189,6 +201,34 @@ class FakeOrchestratorDB:
 
     async def fetch(self, query: str, *args):
         q = " ".join(query.split())
+        if q.startswith("WITH RECURSIVE lineage AS"):
+            workspace_id = str(args[0])
+            pending = list(args[1])
+            rows: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            while pending:
+                item_id = str(pending.pop())
+                if item_id in seen:
+                    continue
+                seen.add(item_id)
+                row = self.sources.get((workspace_id, "control_room_item", item_id))
+                if not self._visible(row):
+                    continue
+                rows.append(row)
+                metadata = row.get("metadata") or {}
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                lineage = metadata.get("lineage") or {}
+                for parent_id in (
+                    metadata.get("parent_item_id"),
+                    metadata.get("source_item_id"),
+                    metadata.get("derived_from"),
+                    lineage.get("parent_item_id"),
+                    lineage.get("source_item_id"),
+                ):
+                    if isinstance(parent_id, str) and parent_id:
+                        pending.append(parent_id)
+            return rows
         if q.startswith("SELECT * FROM decision_orchestration_runs"):
             workspace_id = str(args[0])
             rows = [
@@ -257,6 +297,14 @@ def test_decision_orchestrator_migration_and_router_contracts():
 
     assert "decision-orchestrator-aws-probe:" in makefile
     assert "scripts/aws_decision_orchestrator_probe.py" in makefile
+
+
+def test_canonical_signal_metadata_overrides_historical_item_metadata(orchestrator):
+    source = inspect.getsource(orchestrator._load_source)
+    item_metadata = "COALESCE(item.metadata, '{}'::jsonb)"
+    signal_metadata = "COALESCE(signal.metadata, '{}'::jsonb)"
+
+    assert source.index(item_metadata) < source.index(signal_metadata)
 
 
 def test_classifier_routes_available_and_candidate_engines(orchestrator):
@@ -356,7 +404,10 @@ def test_orchestrator_preserves_market_context_evidence_without_execution(orches
         "type": "market_context",
         "id": "banxico:usd_mxn_fix:2026-07-10:abc123",
     } in refs
-    assert plan["decision_plan"]["external_evidence"]["market_context_policy"] == "evidence_only"
+    assert (
+        plan["decision_plan"]["external_evidence"]["market_context_policy"]
+        == "evidence_only"
+    )
     assert plan["engine_plan"]["external_evidence"]["market_context_ref_count"] == 1
     assert plan["engine_plan"]["available_engines_executed"] is False
     assert plan["action_recommended"] is False
@@ -396,7 +447,9 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
         user_a["active_workspace_id"],
     )
 
-    listed = await orchestrator.list_orchestrations(user_a, source_type="control_room_item")
+    listed = await orchestrator.list_orchestrations(
+        user_a, source_type="control_room_item"
+    )
     assert listed["orchestrations"][0]["orchestration_id"] == run["orchestration_id"]
     detail = await orchestrator.get_orchestration(user_a, run["orchestration_id"])
     assert detail["orchestration"]["orchestration_id"] == run["orchestration_id"]
@@ -466,6 +519,72 @@ async def test_orchestrator_rejects_technical_agent_alert_with_json_metadata(
 
     assert exc.value.status_code == 409
     assert db.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_ineligible_intelligence_signal(
+    orchestrator,
+    monkeypatch,
+):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(131)
+    db.sources[
+        (
+            user["active_workspace_id"],
+            "intelligence_signal",
+            "technical-signal",
+        )
+    ] = {
+        "tenant_id": user["active_tenant_id"],
+        "workspace_id": user["active_workspace_id"],
+        "source_id": "technical-signal",
+        "dataset": "gold_metrics",
+        "title": "Technical signal",
+        "summary": "Source state only",
+        "metadata": {"item_kind": "source_state", "data_status": "missing"},
+    }
+
+    with pytest.raises(orchestrator.DecisionOrchestratorError) as exc:
+        await orchestrator.orchestrate(
+            user,
+            {"source_type": "intelligence_signal", "source_id": "technical-signal"},
+        )
+
+    assert exc.value.status_code == 409
+    assert db.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_accepts_canonical_intelligence_signal_metadata(
+    orchestrator,
+    monkeypatch,
+):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(132)
+    db.sources[(user["active_workspace_id"], "intelligence_signal", "signal-1")] = {
+        "tenant_id": user["active_tenant_id"],
+        "workspace_id": user["active_workspace_id"],
+        "source_id": "signal-1",
+        "item_kind": "intelligence_signal",
+        "dataset": "gold_metrics",
+        "source_dataset": "gold_metrics",
+        "actual_value": 7,
+        "summary": "Observed workforce deviation",
+        "metadata": {
+            "data_status": "gold_ready",
+            "evidence_pack": {"id": 17, "items": [{"id": "evidence-1"}]},
+        },
+    }
+
+    result = await orchestrator.orchestrate(
+        user,
+        {"source_type": "intelligence_signal", "source_id": "signal-1"},
+    )
+
+    assert result["orchestration"]["source_id"] == "signal-1"
+    assert db.runs
 
 
 @pytest.mark.asyncio
@@ -615,7 +734,9 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
         workspace_id=user["active_workspace_id"],
         item_id="action-source",
         title="Notify owner and create task",
-        metadata={},
+        metadata={
+            "evidence_refs": [{"type": "control_room_item", "id": "action-source"}]
+        },
     )
     propose_calls: list[dict[str, Any]] = []
 

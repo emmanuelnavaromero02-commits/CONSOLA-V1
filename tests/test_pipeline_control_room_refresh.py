@@ -121,6 +121,7 @@ async def test_control_room_status_marks_successfactors_ready_with_kpis():
         control_room_gold_refresh={"status": "success"},
         user={"sub": "user-1"},
         control_room_service=FakeControlRoomService(),
+        persist_dashboard_state=True,
     )
 
     assert status["ready"] is True
@@ -163,6 +164,7 @@ async def test_control_room_status_reports_error_step_safely():
         control_room_gold_refresh={},
         user=None,
         control_room_service=BrokenControlRoomService(),
+        persist_dashboard_state=True,
     )
 
     assert status["ready"] is False
@@ -170,3 +172,61 @@ async def test_control_room_status_reports_error_step_safely():
     assert status["snapshot"] == {}
     assert status["update"]["status"] == "partial"
     assert "dashboard offline" in status["update"]["error"]
+
+
+@pytest.mark.anyio
+async def test_generic_cartridge_uses_explicit_dashboard_writer():
+    class FakeControlRoomService:
+        def __init__(self):
+            self.users = []
+
+        async def refresh_dashboard_state(self, user):
+            self.users.append(user)
+            return {
+                "meta": {"source_count": 2, "item_count": 3},
+                "summary": {"total_items": 3, "data_ready_sources": 2},
+            }
+
+    service = FakeControlRoomService()
+    user = {"sub": "user-1"}
+    status = await run_sync_control_room_status(
+        cartridge="banxico",
+        bronze_ready=1,
+        silver_ready=1,
+        gold_ready=1,
+        running_children=False,
+        control_room_gold_refresh={"status": "success"},
+        user=user,
+        control_room_service=service,
+        persist_dashboard_state=True,
+    )
+
+    assert service.users == [user]
+    assert status["ready"] is True
+    assert status["checked_at"]
+    assert status["snapshot"]["item_count"] == 3
+
+
+@pytest.mark.anyio
+async def test_generic_cartridge_status_is_read_only_by_default():
+    class FakeControlRoomService:
+        async def dashboard(self, user):
+            assert user == {"sub": "user-1"}
+            return {"meta": {"source_count": 1, "item_count": 2}}
+
+        async def refresh_dashboard_state(self, _user):
+            raise AssertionError("read status must not persist dashboard state")
+
+    status = await run_sync_control_room_status(
+        cartridge="banxico",
+        bronze_ready=1,
+        silver_ready=1,
+        gold_ready=1,
+        running_children=False,
+        control_room_gold_refresh={"status": "success"},
+        user={"sub": "user-1"},
+        control_room_service=FakeControlRoomService(),
+    )
+
+    assert status["ready"] is True
+    assert status["snapshot"]["item_count"] == 2

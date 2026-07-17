@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+from contextlib import AbstractAsyncContextManager
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.services import control_room_service
+
+
+USER = {
+    "id": 7,
+    "email": "ops@example.com",
+    "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "active_workspace_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+}
+
+
+def _item() -> dict:
+    return {
+        "id": "business-1",
+        "kind": "anomaly",
+        "title": "Anomalia valida",
+        "entity_label": "Entidad 1",
+        "description": "Descripcion",
+        "recommendation": "Revisar",
+        "source_dataset": "gold_metrics",
+        "cartridge": "sap_hcm",
+        "severity": "high",
+        "status": "open",
+    }
+
+
+class _Context(AbstractAsyncContextManager):
+    def __init__(self, value, on_exit=None) -> None:
+        self.value = value
+        self.on_exit = on_exit
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        if self.on_exit:
+            self.on_exit(exc_type)
+        return False
+
+
+class TransactionalConnection:
+    def __init__(self, linked_item_id: str | None) -> None:
+        self.linked_item_id = linked_item_id
+        self.fetchrow_calls = 0
+        self.committed = False
+        self.rolled_back = False
+
+    def transaction(self):
+        def finish(exc_type):
+            self.rolled_back = exc_type is not None
+            self.committed = exc_type is None
+
+        return _Context(self, finish)
+
+    async def execute(self, _sql: str, *_args):
+        return None
+
+    async def fetchrow(self, sql: str, *_args):
+        self.fetchrow_calls += 1
+        normalized = " ".join(sql.split()).upper()
+        if normalized.startswith("INSERT INTO DECISIONS"):
+            return {"id": 42, "title": "Anomalia valida"}
+        if normalized.startswith("INSERT INTO DECISION_ACTIONS"):
+            return {"id": 8}
+        if normalized.startswith("UPDATE CONTROL_ROOM_ITEMS"):
+            return (
+                {"item_id": self.linked_item_id}
+                if self.linked_item_id is not None
+                else None
+            )
+        raise AssertionError(normalized)
+
+
+class TransactionalPool:
+    __module__ = "asyncpg.pool"
+
+    def __init__(self, connection: TransactionalConnection) -> None:
+        self.connection = connection
+
+    def acquire(self):
+        return _Context(self.connection)
+
+
+@pytest.mark.asyncio
+async def test_control_room_decision_link_failure_rolls_back_and_skips_success_audit():
+    connection = TransactionalConnection(linked_item_id=None)
+    audit = AsyncMock()
+    with (
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=_item()),
+        ),
+        patch.object(
+            control_room_service.auth,
+            "pool",
+            new=AsyncMock(return_value=TransactionalPool(connection)),
+        ),
+        patch.object(
+            control_room_service,
+            "_ensure_item_row",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            control_room_service,
+            "_record_item_event",
+            new=AsyncMock(),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", audit),
+    ):
+        with pytest.raises(RuntimeError, match="decision link was not persisted"):
+            await control_room_service.create_decision_for_item("business-1", USER)
+
+    assert connection.rolled_back is True
+    assert connection.committed is False
+    audit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_control_room_decision_creation_commits_only_after_exact_link():
+    connection = TransactionalConnection(linked_item_id="business-1")
+    audit = AsyncMock()
+    with (
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=_item()),
+        ),
+        patch.object(
+            control_room_service.auth,
+            "pool",
+            new=AsyncMock(return_value=TransactionalPool(connection)),
+        ),
+        patch.object(
+            control_room_service,
+            "_ensure_item_row",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            control_room_service,
+            "_record_item_event",
+            new=AsyncMock(),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", audit),
+    ):
+        result = await control_room_service.create_decision_for_item(
+            "business-1",
+            USER,
+        )
+
+    assert result["decision"]["id"] == 42
+    assert connection.committed is True
+    assert connection.rolled_back is False
+    audit.assert_awaited_once()

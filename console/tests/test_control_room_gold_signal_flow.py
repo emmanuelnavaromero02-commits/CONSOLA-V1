@@ -383,7 +383,9 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
     assert metadata["decision_intelligence"] == decision
     assert metadata["intelligence"]["decision_intelligence"] == decision
     assert metadata["control_origin"] == "intelligence_signal"
-    assert metadata["math_provenance"]["ruleset_version"] == "control_room_gold_signal.v1"
+    assert (
+        metadata["math_provenance"]["ruleset_version"] == "control_room_gold_signal.v1"
+    )
     assert metadata["priority"]["score"] == 91
     assert metadata["priority"]["drivers"]["severity"] == 26
     assert metadata["monte_carlo"]["mode"] == "derived_mode"
@@ -598,7 +600,7 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
             return [
                 {
                     "item_id": "intel:a",
-                    "metadata": {},
+                    "metadata": {"evidence_refs": ["evidence:intel:a"]},
                     "item_kind": "intelligence_signal",
                 }
             ]
@@ -645,7 +647,7 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
         return [
             {
                 "item_id": "intel:owned",
-                "metadata": {},
+                "metadata": {"evidence_refs": ["evidence:intel:owned"]},
                 "item_kind": "intelligence_signal",
             }
         ]
