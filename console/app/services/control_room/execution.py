@@ -154,8 +154,20 @@ def _impact_payload(
 
 
 @_bind_to_core
-def _priority_payload(item: dict[str, Any], impact: dict[str, Any] | None = None) -> dict[str, Any]:
-    impact = impact or _impact_for_item(item)
+def _priority_payload(
+    item: dict[str, Any],
+    impact: dict[str, Any] | None = None,
+    *,
+    eligible_parent_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+        return {
+            "score": 0,
+            "band": "diagnostic",
+            "drivers": [],
+            "formula": "not_business_eligible",
+        }
+    impact = impact or _impact_for_item(item, eligible_parent_ids=eligible_parent_ids)
     score = int(impact.get("priority_score") or 0)
     drivers: list[dict[str, Any]] = [
         {
@@ -180,22 +192,6 @@ def _priority_payload(item: dict[str, Any], impact: dict[str, Any] | None = None
         drivers.append({"label": "Umbral", "value": threshold_state, "points": threshold_points})
         score += threshold_points
 
-    source_status = ""
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
-    if item.get("kind") == "source_state":
-        source_status = str(details.get("source_status") or item.get("status") or "")
-    source_points = {
-        "invalid_schema": 24,
-        "unavailable": 22,
-        "missing": 20,
-        "blocked": 18,
-        "no_permission": 18,
-        "empty": 8,
-    }.get(source_status, 0)
-    if source_points:
-        drivers.append({"label": "Salud fuente", "value": source_status, "points": source_points})
-        score += source_points
-
     lesson_count = int(item.get("lesson_count") or 0)
     lesson_points = min(12, lesson_count * 4)
     if lesson_points:
@@ -212,23 +208,27 @@ def _priority_payload(item: dict[str, Any], impact: dict[str, Any] | None = None
         "score": score,
         "band": band,
         "drivers": drivers,
-        "formula": "severity + impact + confidence + thresholds + source_health + learned_patterns",
+        "formula": "severity + impact + confidence + thresholds + learned_patterns",
     }
 
 
 @_bind_to_core
-def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
+def _impact_for_item(
+    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
+) -> dict[str, Any]:
+    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+        return {
+            "item_id": item.get("id"),
+            "status": "not_business_eligible",
+            "estimate": None,
+            "currency": None,
+            "confidence": 0.0,
+            "priority_score": 0,
+            "drivers": [],
+            "formula": "not_business_eligible",
+            "explanation": "Diagnostic items do not receive business impact estimates.",
+        }
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
-    if item.get("kind") == "source_state":
-        return _impact_payload(
-            item=item,
-            estimate=None,
-            status="unavailable",
-            confidence=0.2,
-            drivers=[{"label": "Estado fuente", "value": details.get("source_status") or item.get("status")}],
-            formula="Sin impacto monetario hasta restaurar materializacion.",
-            explanation="La fuente no entrega datos suficientes para calcular dinero sin inventar cifras.",
-        )
 
     stored = _num(item.get("impact_estimate"))
     if stored is not None and stored > 0:
@@ -422,12 +422,14 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
+def _template_ids_for_item(
+    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
+) -> list[str]:
+    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+        return []
     anomaly_type = str(item.get("anomaly_type") or "")
     cartridge = str(item.get("cartridge") or "")
     module_id = str(item.get("module_id") or "")
-    if item.get("kind") == "source_state":
-        return ["restore_data_source", "create_followup_task", "request_owner_review"]
     if cartridge == "replicon":
         if anomaly_type in {"low_margin", "wip_variance", "non_billable_ratio"}:
             return ["prepare_billing_review", "prepare_replicon_adjustment", "create_followup_task"]
@@ -452,17 +454,29 @@ def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
 
 
 @_bind_to_core
-def _action_templates_for_item(item: dict[str, Any]) -> list[dict[str, Any]]:
+def _action_templates_for_item(
+    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
+) -> list[dict[str, Any]]:
+    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+        return []
     return [
         _template_with_writeback(ACTION_TEMPLATES[template_id])
-        for template_id in _template_ids_for_item(item)
+        for template_id in _template_ids_for_item(
+            item, eligible_parent_ids=eligible_parent_ids
+        )
         if template_id in ACTION_TEMPLATES
     ]
 
 
 @_bind_to_core
-def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    templates = _action_templates_for_item(item)
+def _primary_template_for_item(
+    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
+) -> dict[str, Any]:
+    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+        return {}
+    templates = _action_templates_for_item(
+        item, eligible_parent_ids=eligible_parent_ids
+    )
     return templates[0] if templates else dict(ACTION_TEMPLATES["request_owner_review"])
 
 
@@ -747,7 +761,11 @@ async def create_decision_for_item(
         metadata={"decision_id": row["id"], "item": item},
         critical=True,
     )
-    item = {**item, "decision_id": row["id"], "status": "decision_created"}
+    item = evolve_business_item(
+        item,
+        decision_id=row["id"],
+        status="decision_created",
+    )
     return {"decision": dict(row), "item": _with_omega(item), "anomaly": _with_omega(item)}
 
 
@@ -816,7 +834,13 @@ async def select_item_option(
         metadata={"option_id": option_id, "item": item},
         critical=False,
     )
-    item = _with_omega({**item, "selected_option_id": option_id, "status": "in_review"})
+    item = _with_omega(
+        evolve_business_item(
+            item,
+            selected_option_id=option_id,
+            status="in_review",
+        )
+    )
     return {"selected": True, "option_id": option_id, "item": item, "anomaly": item}
 
 
@@ -827,7 +851,7 @@ async def get_item_impact(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     return _impact_for_item(item)
 
 
@@ -1007,7 +1031,13 @@ async def update_item_control(
         },
         critical=True,
     )
-    public_item = _with_omega({**item, "status": target_status, "control_state": next_state})
+    public_item = _with_omega(
+        evolve_business_item(
+            item,
+            status=target_status,
+            control_state=next_state,
+        )
+    )
     updated_control = next(
         row for row in public_item.get("omega", {}).get("control", {}).get("items", [])
         if str(row.get("id")) == control_key
@@ -1107,12 +1137,17 @@ async def create_item_lesson(
             "metadata": {"manual": True},
             "created_at": datetime.now(UTC).isoformat(),
         }]
-    public_item = _with_omega({
-        **item,
-        "related_lessons": lessons[:5],
-        "lesson_count": len(lessons),
-        "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule),
-    })
+    public_item = _with_omega(
+        evolve_business_item(
+            item,
+            related_lessons=lessons[:5],
+            lesson_count=len(lessons),
+            learned_rules=_merge_rule(
+                item.get("omega", {}).get("lessons", {}).get("rules"),
+                rule,
+            ),
+        )
+    )
     return {
         "created": True,
         "lesson": lessons[0],
@@ -1230,14 +1265,20 @@ async def apply_item_lesson(
         critical=True,
     )
     related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[:5]
-    public_item = _with_omega({
-        **item,
-        "status": target_status,
-        "related_lessons": related,
-        "lesson_count": max(len(related), int(item.get("lesson_count") or 0), 1),
-        "learned_rules": learned_rules,
-        "lesson_applications": applications,
-    })
+    public_item = _with_omega(
+        evolve_business_item(
+            item,
+            status=target_status,
+            related_lessons=related,
+            lesson_count=max(
+                len(related),
+                int(item.get("lesson_count") or 0),
+                1,
+            ),
+            learned_rules=learned_rules,
+            lesson_applications=applications,
+        )
+    )
     return {
         "applied": True,
         "lesson": lesson,
@@ -1676,7 +1717,9 @@ async def action_preview(
         metadata={"template_id": template["template_id"], "payload": payload},
         critical=True,
     )
-    public_item = _with_omega({**item, "execution_status": "preview_generated"})
+    public_item = _with_omega(
+        evolve_business_item(item, execution_status="preview_generated")
+    )
     return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
 
 
@@ -1793,7 +1836,9 @@ async def action_dry_run(
         metadata={"template_id": template["template_id"], "result": result, "action_run_id": action_run.get("id")},
         critical=True,
     )
-    public_item = _with_omega({**item, "execution_status": execution_status})
+    public_item = _with_omega(
+        evolve_business_item(item, execution_status=execution_status)
+    )
     return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
 
 
@@ -1804,7 +1849,7 @@ async def list_item_action_runs(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
@@ -1857,7 +1902,7 @@ async def list_item_outcomes(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
     async def _load(conn: Any, _tenant_id: str | None, workspace_id: str) -> Any:
         return await conn.fetch(
@@ -2027,7 +2072,7 @@ async def record_item_outcome(
         "recorded": True,
         "outcome": outcome,
         "lesson_recorded": bool(learned_rule),
-        "item": _with_omega({**item, "last_outcome": outcome}),
+        "item": _with_omega(evolve_business_item(item, last_outcome=outcome)),
     }
 
 
@@ -2425,7 +2470,9 @@ async def _execute_internal_followup_task_tx(
     )
     if existing:
         existing_result = _details(existing.get("result"))
-        public_item = _with_omega({**item, "execution_status": "executed"})
+        public_item = _with_omega(
+            evolve_business_item(item, execution_status="executed")
+        )
         return {
             "executed": True,
             "idempotent": True,
@@ -2588,7 +2635,9 @@ async def _execute_internal_followup_task_tx(
             "after": after,
         },
     )
-    public_item = _with_omega({**item, "execution_status": "executed"})
+    public_item = _with_omega(
+        evolve_business_item(item, execution_status="executed")
+    )
     return {
         "executed": True,
         "idempotent": False,
@@ -2695,7 +2744,9 @@ async def _execute_internal_investigation_note(
             "side_effect": side_effect,
         },
     )
-    public_item = _with_omega({**item, "execution_status": "executed"})
+    public_item = _with_omega(
+        evolve_business_item(item, execution_status="executed")
+    )
     return {
         "executed": True,
         "idempotent": False,
@@ -2821,7 +2872,13 @@ async def _execute_internal_decision_monitoring(
             "side_effect": side_effect,
         },
     )
-    public_item = _with_omega({**item, "execution_status": "executed", "decision_monitoring": monitoring_state})
+    public_item = _with_omega(
+        evolve_business_item(
+            item,
+            execution_status="executed",
+            decision_monitoring=monitoring_state,
+        )
+    )
     return {
         "executed": True,
         "idempotent": False,
@@ -3388,11 +3445,13 @@ async def _execute_external_writeback(
         template_type=template_type,
     )
     suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
-    public_item = _with_omega({
-        **item,
-        "execution_status": "executed",
-        "suggested_actions": suggested_actions,
-    })
+    public_item = _with_omega(
+        evolve_business_item(
+            item,
+            execution_status="executed",
+            suggested_actions=suggested_actions,
+        )
+    )
     return {
         "executed": True,
         "idempotent": False,
@@ -3562,7 +3621,9 @@ async def execute_item(
         raise HTTPException(503, "execution idempotency lookup failed") from exc
     if existing:
         existing_result = _details(existing.get("result"))
-        public_item = _with_omega({**item, "execution_status": "executed"})
+        public_item = _with_omega(
+            evolve_business_item(item, execution_status="executed")
+        )
         return {
             "executed": True,
             "idempotent": True,
@@ -3818,7 +3879,14 @@ async def approve_item(
     public_action = dict(action)
     if hasattr(public_action.get("ts"), "isoformat"):
         public_action["ts"] = public_action["ts"].isoformat()
-    item = _with_omega({**item, "decision_id": decision_id, "status": "approved", "lessons": lessons})
+    item = _with_omega(
+        evolve_business_item(
+            item,
+            decision_id=decision_id,
+            status="approved",
+            lessons=lessons,
+        )
+    )
     return {
         "approved": True,
         "decision_id": decision_id,
@@ -3899,7 +3967,10 @@ async def dismiss_item(
         metadata={"reason": reason or "", "item": item},
         critical=True,
     )
-    return {"dismissed": True, "item": _with_omega({**item, "status": "dismissed"})}
+    return {
+        "dismissed": True,
+        "item": _with_omega(evolve_business_item(item, status="dismissed")),
+    }
 
 
 @_bind_to_core
@@ -3955,7 +4026,12 @@ async def reopen_item(
         metadata={"reason": reason or "", "item": item},
         critical=True,
     )
-    return {"reopened": True, "item": _with_omega({**item, "status": "open", "decision_id": None})}
+    return {
+        "reopened": True,
+        "item": _with_omega(
+            evolve_business_item(item, status="open", decision_id=None)
+        ),
+    }
 
 
 @_bind_to_core
@@ -4076,7 +4152,13 @@ async def _operate_alert(
         metadata={"alert_state": alert_state, "item": item},
         critical=next_state == "false_positive",
     )
-    public_item = _with_omega({**item, "status": target_status, "alert_state": alert_state})
+    public_item = _with_omega(
+        evolve_business_item(
+            item,
+            status=target_status,
+            alert_state=alert_state,
+        )
+    )
     return {
         "ok": True,
         "alert": _alert_for_item(public_item),

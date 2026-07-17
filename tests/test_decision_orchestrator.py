@@ -74,7 +74,7 @@ class FakeOrchestratorDB:
         item_id: str,
         item_kind: str = "intelligence_signal",
         title: str = "Forecast risk",
-        metadata: dict[str, Any] | None = None,
+        metadata: Any = None,
     ) -> None:
         self.sources[(workspace_id, "control_room_item", item_id)] = {
             "tenant_id": tenant_id,
@@ -412,6 +412,141 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             {"source_type": "control_room_item", "source_id": "missing"},
         )
     assert missing.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_diagnostic_control_room_source(
+    orchestrator,
+    monkeypatch,
+):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(12)
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="source-state-1",
+        item_kind="source_state",
+        title="Source unavailable",
+        metadata={"data_status": "missing"},
+    )
+
+    with pytest.raises(orchestrator.DecisionOrchestratorError) as exc:
+        await orchestrator.orchestrate(
+            user,
+            {"source_type": "control_room_item", "source_id": "source-state-1"},
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "item_not_business_eligible"
+    assert db.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_technical_agent_alert_with_json_metadata(
+    orchestrator,
+    monkeypatch,
+):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(13)
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="technical-alert",
+        item_kind="agent_alert",
+        metadata=json.dumps({"data_status": "missing"}),
+    )
+
+    with pytest.raises(orchestrator.DecisionOrchestratorError) as exc:
+        await orchestrator.orchestrate(
+            user,
+            {"source_type": "agent_alert", "source_id": "technical-alert"},
+        )
+
+    assert exc.value.status_code == 409
+    assert db.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_requires_an_eligible_parent(orchestrator, monkeypatch):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(14)
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="technical-parent",
+        item_kind="source_state",
+        metadata={"data_status": "missing"},
+    )
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="derived-alert",
+        item_kind="agent_alert",
+        metadata={"parent_item_id": "technical-parent", "data_status": "ready"},
+    )
+
+    with pytest.raises(orchestrator.DecisionOrchestratorError) as exc:
+        await orchestrator.orchestrate(
+            user,
+            {"source_type": "agent_alert", "source_id": "derived-alert"},
+        )
+
+    assert exc.value.status_code == 409
+    assert db.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_a_missing_parent(orchestrator, monkeypatch):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(15)
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="orphan-alert",
+        item_kind="agent_alert",
+        metadata={"parent_item_id": "missing-parent", "data_status": "ready"},
+    )
+
+    with pytest.raises(orchestrator.DecisionOrchestratorError) as exc:
+        await orchestrator.orchestrate(
+            user,
+            {"source_type": "agent_alert", "source_id": "orphan-alert"},
+        )
+
+    assert exc.value.status_code == 409
+    assert db.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch):
+    db = FakeOrchestratorDB()
+    _patch_pool(orchestrator, monkeypatch, db)
+    user = _user(16)
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="business-parent",
+        item_kind="anomaly",
+        metadata={"data_status": "ready"},
+    )
+    db.add_control_room_item(
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        item_id="business-alert",
+        item_kind="agent_alert",
+        metadata={"parent_item_id": "business-parent", "data_status": "ready"},
+    )
+
+    result = await orchestrator.orchestrate(
+        user,
+        {"source_type": "agent_alert", "source_id": "business-alert"},
+    )
+
+    assert result["orchestration"]["source_id"] == "business-alert"
 
 
 @pytest.mark.asyncio

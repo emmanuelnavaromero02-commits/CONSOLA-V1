@@ -141,6 +141,27 @@ def test_real_control_room_execute_route_rejects_roles_before_service_call():
         execute_item.assert_not_awaited()
 
 
+def test_write_permission_returns_403_before_diagnostic_lookup():
+    analyst = {
+        "id": 5,
+        "email": "analyst@example.com",
+        "role": "user",
+        "workspace_role": "analyst",
+    }
+    with patch.object(
+        control_room_service,
+        "create_decision_for_item",
+        new=AsyncMock(),
+    ) as create_decision:
+        response = _build_real_control_room_router_client(analyst).post(
+            "/api/control-room/items/source-state-1/decision",
+            headers={"authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 403
+    create_decision.assert_not_awaited()
+
+
 def test_real_control_room_execute_route_requires_csrf_for_cookie_session():
     user = {
         "id": 4,

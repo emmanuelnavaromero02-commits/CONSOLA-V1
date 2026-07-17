@@ -90,7 +90,7 @@ async def run_sync_control_room_status(
                 from app.services import control_room_service as service
 
                 control_room_service = service
-            dashboard_payload = await control_room_service.dashboard(user, persist=True)
+            dashboard_payload = await control_room_service.refresh_dashboard_state(user)
             gold_kpis = (
                 await control_room_service.sap_successfactors_gold_kpis(user)
                 if gold_ready

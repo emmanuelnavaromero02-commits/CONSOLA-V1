@@ -4002,10 +4002,27 @@ def _persisted_item_identity_fields(
         "freshness_at": metadata.get("freshness_at"),
         "freshness_field": metadata.get("freshness_field"),
         "data_status": metadata.get("data_status") or "gold_ready",
+        "data_readiness": metadata.get("data_readiness"),
+        "evaluation_status": metadata.get("evaluation_status"),
+        "readiness_status": metadata.get("readiness_status"),
+        "source_status": metadata.get("source_status"),
+        **{
+            key: metadata.get(key)
+            for key in BUSINESS_OBSERVATION_FIELDS
+            if key in metadata
+        },
+        "parent_item_id": metadata.get("parent_item_id"),
+        "source_item_id": metadata.get("source_item_id"),
+        "derived_from": metadata.get("derived_from"),
+        "lineage": metadata.get("lineage")
+        if isinstance(metadata.get("lineage"), dict)
+        else {},
         "evidence_pack_id": metadata.get("evidence_pack_id"),
         "evidence_pack": metadata.get("evidence_pack")
         if isinstance(metadata.get("evidence_pack"), dict)
         else {},
+        "evidence": metadata.get("evidence"),
+        "evidence_refs": metadata.get("evidence_refs"),
         "entity_kind": public_row.get("entity_kind") or "Entidad",
         "entity_id": public_row.get("entity_id") or "",
         "entity_label": public_row.get("entity_label")
@@ -4200,7 +4217,7 @@ def _persisted_intelligence_payload(row: Any) -> dict[str, Any]:
 
 
 @_bind_to_core
-async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any]]:
+async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
     try:
         tenant_id, workspace_id = _workspace_scope(user)
         params: list[Any] = [workspace_id]
@@ -4216,9 +4233,6 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
             params.append(owner_id)
             owner_clause = f"AND owner_user_id = ${len(params)}"
         pool = await auth.pool()
-        # Contract: persisted Intelligence items remain scoped as
-        # item_kind = 'intelligence_signal'; agent monitor alerts are added
-        # advisory-only without replacing the Intelligence signal surface.
         async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
             return await conn.fetch(
                 f"""
@@ -4231,9 +4245,7 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
                  WHERE workspace_id = $1
                    {tenant_clause}
                    {owner_clause}
-                   AND item_kind IN ('intelligence_signal', 'agent_alert')
                  ORDER BY priority_score DESC, last_seen_at DESC
-                 LIMIT 200
                 """,
                 *params,
             )
@@ -4250,68 +4262,25 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
     scope_ids = (tenant_id, workspace_id)
     kept: list[Any] = []
     for row in rows:
-        if is_stale_generic_signal(row.get("anomaly_type"), row.get("entity_id"), scope_ids):
+        if is_stale_generic_signal(
+            row.get("anomaly_type"), row.get("entity_id"), scope_ids
+        ):
             continue
         kept.append(row)
-    items = [_persisted_intelligence_payload(row) for row in kept]
-    return [_with_omega(item) for item in items]
+    items = filter_business_items(
+        [_persisted_intelligence_payload(row) for row in kept]
+    )
+    business_ids = eligible_item_ids(items)
+    return [_with_omega(item, eligible_parent_ids=business_ids) for item in items]
 
 
 @_bind_to_core
-async def _cleanup_obsolete_source_state_items(
-    user: dict | None,
-    sources: list[dict[str, Any]],
-    current_items: list[dict[str, Any]],
-) -> None:
-    by_cartridge: dict[str, set[str]] = {}
-    for source in sources:
-        cartridge_id = str(
-            source.get("cartridge") or source.get("connector_id") or ""
-        ).strip()
-        dataset = str(source.get("dataset") or "").strip()
-        if cartridge_id and dataset:
-            by_cartridge.setdefault(cartridge_id, set()).add(dataset)
-    if not by_cartridge:
-        return
-
-    state_ids_by_cartridge: dict[str, set[str]] = {
-        cartridge_id: set() for cartridge_id in by_cartridge
-    }
-    for item in current_items:
-        if item.get("kind") != "source_state":
-            continue
-        cartridge_id = str(
-            item.get("cartridge") or item.get("connector_id") or ""
-        ).strip()
-        item_id = str(item.get("id") or "").strip()
-        if cartridge_id in state_ids_by_cartridge and item_id:
-            state_ids_by_cartridge[cartridge_id].add(item_id)
-
-    _, workspace_id = _workspace_scope(user)
-    try:
-        pool = await auth.pool()
-        async def _delete_obsolete(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
-            for cartridge_id, datasets in by_cartridge.items():
-                await conn.execute(
-                    """
-                    DELETE FROM control_room_items
-                     WHERE workspace_id = $1
-                       AND cartridge_id = $2
-                       AND item_kind = 'source_state'
-                       AND (
-                           NOT (source_dataset = ANY($3::text[]))
-                           OR NOT (item_id = ANY($4::text[]))
-                       )
-                    """,
-                    workspace_id,
-                    cartridge_id,
-                    sorted(datasets),
-                    sorted(state_ids_by_cartridge.get(cartridge_id, set())),
-                )
-
-        await _run_with_db_scope(pool, user or {}, _delete_obsolete)
-    except Exception:
-        return
+async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in await _persisted_business_items(user)
+        if item.get("kind") in {"intelligence_signal", "agent_alert"}
+    ]
 
 
 @_bind_to_core
@@ -4554,16 +4523,21 @@ async def _collect_items(
     persist: bool = False,
     use_catalog: bool = True,
 ) -> dict[str, Any]:
-    installations, installation_by_cartridge, active, modules = (
-        await _collect_module_inventory(user, use_catalog=use_catalog)
-    )
+    if persist:
+        raise ValueError("use refresh_dashboard_state() for explicit persistence")
+    (
+        installations,
+        installation_by_cartridge,
+        active,
+        modules,
+    ) = await _collect_module_inventory(user, use_catalog=use_catalog)
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
     threshold_rows = (
         await _load_threshold_rows(user)
-        if use_catalog and (persist or include_source_state_items)
+        if use_catalog and include_source_state_items
         else []
     )
     thresholds = _threshold_map(threshold_rows)
@@ -4582,9 +4556,13 @@ async def _collect_items(
             include_source_state_items=include_source_state_items,
         )
 
-    items = await _overlay_item_state(items, user, persist=persist)
+    diagnostics = diagnostic_items(items)
+    items = await _overlay_item_state(filter_business_items(items), user)
+    diagnostics.extend(diagnostic_items(items))
+    items = filter_business_items(items)
     return {
         "items": items,
+        "diagnostics": diagnostics,
         "sources": sources,
         "installations": installations,
         "modules": modules,
@@ -4809,20 +4787,16 @@ async def _dashboard_items_with_persisted(
     user: dict | None,
     items: list[dict[str, Any]],
     active_cartridges: set[str],
-    *,
-    persist: bool,
 ) -> list[dict[str, Any]]:
-    if not persist:
-        return items
     known_ids = {str(item.get("id")) for item in items}
-    for item in await _persisted_intelligence_items(user):
+    for item in await _persisted_business_items(user):
         item_cartridge = str(item.get("cartridge") or "").strip()
         if item_cartridge != "platform" and item_cartridge not in active_cartridges:
             continue
         if str(item.get("id")) not in known_ids:
             items.append(item)
             known_ids.add(str(item.get("id")))
-    return items
+    return filter_business_items(items)
 
 
 @_bind_to_core
@@ -4839,14 +4813,33 @@ def _dashboard_item_counts(
 
 
 @_bind_to_core
-async def _dashboard_open_decisions(user: dict | None, workspace_id: str) -> int:
+async def _dashboard_open_decisions(
+    user: dict | None,
+    workspace_id: str,
+    business_item_ids: set[str],
+) -> int:
+    if not business_item_ids:
+        return 0
     pool = await auth.pool()
     try:
-        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
+
+        async def _count_decisions(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> int:
             return int(
                 await conn.fetchval(
-                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
+                    """
+                    SELECT COUNT(DISTINCT d.id)
+                      FROM decisions d
+                      JOIN control_room_items i
+                        ON i.workspace_id = d.workspace_id
+                       AND i.decision_id = d.id
+                     WHERE d.workspace_id = $1
+                       AND d.status = 'open'
+                       AND i.item_id = ANY($2::text[])
+                    """,
                     workspace_id,
+                    sorted(business_item_ids),
                 )
                 or 0
             )
@@ -5081,22 +5074,19 @@ def _dashboard_summary_payload(
 async def _dashboard_items_and_insights(
     user: dict | None,
     items: list[dict[str, Any]],
-    sources: list[dict[str, Any]],
     active_cartridges: set[str],
-    *,
-    persist: bool,
 ) -> dict[str, Any]:
-    lesson_rows = await _load_lesson_rows(user, limit=200)
-    lesson_summary = _lesson_insights(lesson_rows)
-    items = _attach_lessons_to_items(items, lesson_rows)
-    if persist:
-        await _cleanup_obsolete_source_state_items(user, sources, items)
     items = await _dashboard_items_with_persisted(
         user,
         items,
         active_cartridges,
-        persist=persist,
     )
+    lesson_rows = filter_by_eligible_parent(
+        await _load_lesson_rows(user, limit=200),
+        eligible_item_ids(items),
+    )
+    lesson_summary = _lesson_insights(lesson_rows)
+    items = filter_business_items(_attach_lessons_to_items(items, lesson_rows))
     alerts_payload = _alert_payload(items)
     return {
         "items": items,
@@ -5141,21 +5131,11 @@ def _dashboard_workspace_payload(
 
 
 @_bind_to_core
-async def dashboard(
+async def _dashboard_from_collection(
     user: dict | None,
-    *,
-    fetcher: DatasetFetcher = query_dataset_rows,
-    limit_per_source: int = 1000,
-    persist: bool = True,
+    payload: dict[str, Any],
+    generated_at: datetime,
 ) -> dict[str, Any]:
-    generated_at = datetime.now(UTC)
-    payload = await _collect_items(
-        user,
-        fetcher=fetcher,
-        limit_per_source=limit_per_source,
-        include_source_state_items=True,
-        persist=persist,
-    )
     items = payload["items"]
     sources = payload["sources"]
     modules = payload["modules"]
@@ -5166,16 +5146,18 @@ async def dashboard(
     enriched = await _dashboard_items_and_insights(
         user,
         items,
-        sources,
         active_cartridges,
-        persist=persist,
     )
-    items = enriched["items"]
+    items = filter_business_items(enriched["items"])
 
     by_severity, by_cartridge, by_domain = _dashboard_item_counts(items)
 
     workspace_id = _workspace_id(user)
-    open_decisions = await _dashboard_open_decisions(user, workspace_id)
+    open_decisions = await _dashboard_open_decisions(
+        user,
+        workspace_id,
+        eligible_item_ids(items),
+    )
     modules_for_payload = _dashboard_modules_for_payload(modules, sources, items)
     cartridges = _dashboard_cartridges_payload(
         modules_for_payload,
@@ -5212,6 +5194,44 @@ async def dashboard(
 
 
 @_bind_to_core
+async def dashboard(
+    user: dict | None,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+    limit_per_source: int = 1000,
+) -> dict[str, Any]:
+    generated_at = datetime.now(UTC)
+    payload = await _collect_items(
+        user,
+        fetcher=fetcher,
+        limit_per_source=limit_per_source,
+        include_source_state_items=True,
+    )
+    return await _dashboard_from_collection(user, payload, generated_at)
+
+
+@_bind_to_core
+async def refresh_dashboard_state(
+    user: dict | None,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+    limit_per_source: int = 1000,
+) -> dict[str, Any]:
+    generated_at = datetime.now(UTC)
+    payload = await _collect_items(
+        user,
+        fetcher=fetcher,
+        limit_per_source=limit_per_source,
+        include_source_state_items=True,
+    )
+    await _persist_item_state(
+        [*payload["items"], *payload.get("diagnostics", [])],
+        user,
+    )
+    return await _dashboard_from_collection(user, payload, generated_at)
+
+
+@_bind_to_core
 async def list_anomalies(
     user: dict | None,
     *,
@@ -5223,7 +5243,6 @@ async def list_anomalies(
         fetcher=fetcher,
         limit_per_source=limit_per_source,
         include_source_state_items=False,
-        persist=False,
         use_catalog=True,
     )
     anomalies = [item for item in payload["items"] if item["kind"] == "anomaly"]
@@ -5238,7 +5257,6 @@ async def summary(
         user,
         fetcher=fetcher,
         include_source_state_items=False,
-        persist=False,
         use_catalog=True,
     )
     items = [item for item in collected["items"] if item["kind"] == "anomaly"]
@@ -5248,21 +5266,16 @@ async def summary(
     for item in items:
         by_cartridge[item["cartridge"]] = by_cartridge.get(item["cartridge"], 0) + 1
         by_domain[item["domain"]] = by_domain.get(item["domain"], 0) + 1
-    pool = await auth.pool()
     workspace_id = _workspace_id(user)
-    open_decisions = 0
-    if workspace_id:
-        async def _count_decisions(conn: Any, _tenant_id: str | None, _workspace_id: str) -> int:
-            return int(
-                await conn.fetchval(
-                    "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
-                    workspace_id,
-                )
-                or 0
-            )
-
-        open_decisions = await _run_with_db_scope(pool, user or {}, _count_decisions)
-    lesson_rows = await _load_lesson_rows(user, limit=100)
+    open_decisions = await _dashboard_open_decisions(
+        user,
+        workspace_id,
+        eligible_item_ids(items),
+    )
+    lesson_rows = filter_by_eligible_parent(
+        await _load_lesson_rows(user, limit=100),
+        eligible_item_ids(items),
+    )
     items = _attach_lessons_to_items(items, lesson_rows)
     alert_summary = _alert_payload(items)["summary"]
     return {
@@ -5300,36 +5313,59 @@ async def _ops_summary_counts(
     user: dict | None,
     *,
     workspace_id: str,
+    business_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     pool = await auth.pool()
+    business_ids = sorted(eligible_item_ids(business_items))
+    status_counts: dict[str, int] = {}
+    severity_counts: dict[str, int] = {}
+    for item in business_items:
+        status = str(item.get("status") or "open")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status == "open":
+            severity = str(item.get("severity") or "low")
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+    status_rows = [
+        {"status": status, "n": count} for status, count in status_counts.items()
+    ]
+    severity_rows = [
+        {"severity": severity, "n": count}
+        for severity, count in severity_counts.items()
+    ]
 
     async def _load_counts(
         conn: Any,
         _tenant_id: str | None,
         _workspace_id: str,
     ) -> dict[str, Any]:
-        status_rows = await conn.fetch(
-            "SELECT status, COUNT(*) AS n FROM control_room_items "
-            "WHERE workspace_id = $1 GROUP BY status",
-            workspace_id,
-        )
-        severity_rows = await conn.fetch(
-            "SELECT severity, COUNT(*) AS n FROM control_room_items "
-            "WHERE workspace_id = $1 AND status = 'open' GROUP BY severity",
-            workspace_id,
-        )
-        exec_rows = await conn.fetch(
-            "SELECT status, COUNT(*) AS n FROM control_room_action_executions "
-            "WHERE workspace_id = $1 GROUP BY status",
-            workspace_id,
-        )
-        lessons_total = int(
-            await conn.fetchval(
-                "SELECT COUNT(*) FROM control_room_lessons WHERE workspace_id = $1",
+        exec_rows = []
+        if business_ids:
+            exec_rows = await conn.fetch(
+                """
+                SELECT status, COUNT(*) AS n
+                  FROM control_room_action_executions
+                 WHERE workspace_id = $1
+                   AND item_id = ANY($2::text[])
+                 GROUP BY status
+                """,
                 workspace_id,
+                business_ids,
             )
-            or 0
-        )
+        lessons_total = 0
+        if business_ids:
+            lessons_total = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                      FROM control_room_lessons
+                     WHERE workspace_id = $1
+                       AND item_id = ANY($2::text[])
+                    """,
+                    workspace_id,
+                    business_ids,
+                )
+                or 0
+            )
         thresholds_total = int(
             await conn.fetchval(
                 "SELECT COUNT(*) FROM control_room_thresholds WHERE workspace_id = $1 AND enabled = TRUE",
@@ -5337,9 +5373,9 @@ async def _ops_summary_counts(
             )
             or 0
         )
-        last_item_at = await conn.fetchval(
-            "SELECT MAX(last_seen_at) FROM control_room_items WHERE workspace_id = $1",
-            workspace_id,
+        seen_at = [item.get("last_seen_at") for item in business_items]
+        last_item_at = max(
+            (value for value in seen_at if value is not None), default=None
         )
         return {
             "status_rows": status_rows,
@@ -5396,7 +5432,13 @@ def _ops_summary_payload(
         "action_executions": executions_by_status,
         "lessons": counts["lessons_total"],
         "thresholds_active": counts["thresholds_total"],
-        "last_item_seen_at": last_item_at.isoformat() if last_item_at else None,
+        "last_item_seen_at": (
+            last_item_at.isoformat()
+            if hasattr(last_item_at, "isoformat")
+            else str(last_item_at)
+            if last_item_at
+            else None
+        ),
         "execution_mode": "supervised_execution",
         "supervised_execution_enabled": True,
         "external_writeback_enabled": writeback_enabled,
@@ -5412,18 +5454,21 @@ def _ops_summary_payload(
 async def ops_summary(user: dict | None) -> dict[str, Any]:
     """Lightweight operational summary for the active workspace.
 
-    Reads ONLY the persisted control-room tables with cheap COUNT/GROUP BY
-    queries — it never runs the heavy dataset-fetch path that ``dashboard``
-    does, so it is safe to poll. Workspace-scoped, no secrets. Useful to
-    answer "does this workspace have data, alert pressure, lessons and
-    action executions?" without rendering the whole cockpit.
+    Reads persisted item rows once, then scopes aggregate execution queries
+    to eligible item IDs. It never runs the dataset-fetch path used by
+    ``dashboard``. Workspace-scoped and secret-free.
 
     Note: the live alert queue and source states are computed from datasets
-    in ``dashboard`` — here ``items_by_severity`` (open items) is the cheap,
-    persisted proxy for alert pressure.
+    in ``dashboard``; here open persisted business items are the proxy for
+    alert pressure.
     """
     tenant_id, workspace_id = _workspace_scope(user)
-    counts = await _ops_summary_counts(user, workspace_id=workspace_id)
+    business_items = await _persisted_business_items(user)
+    counts = await _ops_summary_counts(
+        user,
+        workspace_id=workspace_id,
+        business_items=business_items,
+    )
     return _ops_summary_payload(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
@@ -6127,7 +6172,7 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
 async def get_item(
     item_id: str, user: dict | None, *, fetcher: DatasetFetcher = query_dataset_rows
 ) -> dict[str, Any]:
-    payload = await dashboard(user, fetcher=fetcher, persist=True)
+    payload = await dashboard(user, fetcher=fetcher)
     for item in payload["items"]:
         if item["id"] == item_id:
             return item
@@ -6207,7 +6252,7 @@ async def list_alerts(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    payload = await dashboard(user, fetcher=fetcher, persist=True)
+    payload = await dashboard(user, fetcher=fetcher)
     return {
         "alerts": payload.get("alerts") or [],
         "summary": payload.get("summary", {}).get("alerts")
@@ -6259,6 +6304,7 @@ __all__ = (
     "_source_rollup_status",
     "_domain_payload",
     "dashboard",
+    "refresh_dashboard_state",
     "list_anomalies",
     "summary",
     "ops_summary",

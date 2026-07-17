@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.services import auth, external_actions
+from app.services.control_room.business_eligibility import classify_business_item
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence.evidence_refs import (
     external_evidence_metadata,
@@ -609,7 +610,43 @@ async def _load_source(
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
-        return _row_dict(row)
+        source = _row_dict(row)
+        source["metadata"] = _json_obj(source.get("metadata"))
+        metadata = source["metadata"]
+        lineage = _json_obj(metadata.get("lineage"))
+        parent_id = str(
+            metadata.get("parent_item_id")
+            or metadata.get("source_item_id")
+            or lineage.get("parent_item_id")
+            or ""
+        ).strip()
+        eligible_parent_ids: set[str] | None = None
+        if parent_id:
+            parent_row = await conn.fetchrow(
+                """
+                SELECT tenant_id, workspace_id, item_id AS source_id, item_kind,
+                       title, severity, status, domain, source_dataset,
+                       entity_kind, entity_id, entity_label, anomaly_type, metadata
+                  FROM control_room_items
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                 LIMIT 1
+                """,
+                workspace_id,
+                parent_id,
+            )
+            parent = _row_dict(parent_row)
+            parent["metadata"] = _json_obj(parent.get("metadata"))
+            eligible_parent_ids = (
+                {parent_id}
+                if parent_row and classify_business_item(parent).eligible
+                else set()
+            )
+        if not classify_business_item(
+            source, eligible_parent_ids=eligible_parent_ids
+        ).eligible:
+            raise DecisionOrchestratorError(409, "item_not_business_eligible")
+        return source
     if source_type == "intelligence_signal":
         row = await conn.fetchrow(
             """

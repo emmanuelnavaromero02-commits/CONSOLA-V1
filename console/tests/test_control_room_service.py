@@ -122,34 +122,8 @@ def test_replicon_timesheet_normalizer_accepts_monthly_gold_shape():
     assert "2026-08-01" in item["description"]
 
 
-@pytest.mark.asyncio
-async def test_cleanup_obsolete_source_state_items_only_removes_stale_source_states():
-    mock_pool = AsyncMock()
-
-    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
-        await control_room_service._cleanup_obsolete_source_state_items(  # noqa: SLF001
-            USER,
-            sources=[
-                {"cartridge": "replicon", "dataset": "consultor_mensual"},
-                {"cartridge": "replicon", "dataset": "pnl_mensual"},
-            ],
-            current_items=[
-                {
-                    "kind": "source_state",
-                    "cartridge": "replicon",
-                    "source_dataset": "pnl_mensual",
-                    "id": "current-source-state",
-                }
-            ],
-        )
-
-    sql, workspace_id, cartridge_id, datasets, item_ids = mock_pool.execute.await_args.args
-    assert "DELETE FROM control_room_items" in sql
-    assert "item_kind = 'source_state'" in sql
-    assert workspace_id == USER["active_workspace_id"]
-    assert cartridge_id == "replicon"
-    assert datasets == ["consultor_mensual", "pnl_mensual"]
-    assert item_ids == ["current-source-state"]
+def test_source_state_cleanup_is_not_exposed_on_read_service():
+    assert not hasattr(control_room_service, "_cleanup_obsolete_source_state_items")
 
 
 async def sample_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
@@ -394,7 +368,7 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
             ]),
         ),
     ):
-        result = await control_room_service.dashboard(USER, fetcher=fetcher, persist=False)
+        result = await control_room_service.dashboard(USER, fetcher=fetcher)
 
     signal_items = [
         item
@@ -1008,11 +982,11 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(mo
         ),
         patch.object(
             control_room_service,
-            "_persisted_intelligence_items",
+            "_persisted_business_items",
             new=AsyncMock(return_value=[stale_item, active_item]),
         ),
     ):
-        result = await control_room_service.dashboard(USER, fetcher=fetcher, persist=True)
+        result = await control_room_service.dashboard(USER, fetcher=fetcher)
 
     assert {item["cartridge"] for item in result["items"]} == {"sap_successfactors"}
     assert {alert["cartridge"] for alert in result["alerts"]} == {"sap_successfactors"}
@@ -1133,8 +1107,7 @@ async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready(
     assert summary["partial_modules"] >= 1
     assert summary["stub_modules"] >= 1
     assert summary["data_ready_modules"] < summary["active_modules"]
-    source_state_types = {item["anomaly_type"] for item in result["items"] if item["kind"] == "source_state"}
-    assert {"source_partial", "source_stub"} <= source_state_types
+    assert all(item["kind"] != "source_state" for item in result["items"])
 
 
 @pytest.mark.asyncio
@@ -1485,8 +1458,27 @@ async def test_dashboard_surfaces_persisted_lessons_by_pattern():
         "metadata": {"source_dataset": "employees_anomalies"},
         "created_at": datetime(2026, 5, 21, 9, 30, 0),
     }
+    persisted_parent = {
+        "id": "historic-item",
+        "kind": "anomaly",
+        "cartridge": "sap_hcm",
+        "module": "SAP HCM",
+        "domain": "Recursos Humanos",
+        "source_dataset": "employees_anomalies",
+        "anomaly_type": "terminated_but_active",
+        "severity": "high",
+        "severity_weight": 3,
+        "entity_kind": "Empleado",
+        "entity_id": "historic-employee",
+        "entity_label": "Historic employee",
+        "title": "Historic terminated employee",
+        "description": "Historic business anomaly",
+        "recommendation": "Review",
+        "detected_at": "2026-05-21T09:30:00Z",
+        "status": "resolved",
+    }
     mock_pool = AsyncMock()
-    mock_pool.fetch = AsyncMock(side_effect=[[], [], [lesson_row]])
+    mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
     with (
@@ -1496,9 +1488,19 @@ async def test_dashboard_surfaces_persisted_lessons_by_pattern():
             "_installed_cartridges",
             new=AsyncMock(return_value=[
                 {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
-        ),
-    ):
+                ]),
+            ),
+            patch.object(
+                control_room_service,
+                "_persisted_business_items",
+                new=AsyncMock(return_value=[persisted_parent]),
+            ),
+            patch.object(
+                control_room_service,
+                "_load_lesson_rows",
+                new=AsyncMock(return_value=[lesson_row]),
+            ),
+        ):
         result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
 
     item = next(item for item in result["items"] if item["anomaly_type"] == "terminated_but_active")
@@ -1533,7 +1535,7 @@ async def test_dashboard_keeps_active_empty_cartridges_visible_and_creates_sourc
     assert {"sap_hcm", "replicon"} <= cartridge_ids
     replicon = next(item for item in result["cartridges"] if item["id"] == "replicon")
     assert replicon["source_status"] == "empty"
-    assert any(item["kind"] == "source_state" and item["cartridge"] == "replicon" for item in result["items"])
+    assert all(item["kind"] != "source_state" for item in result["items"])
     assert result["omega_steps"][0]["label"] == "Senales"
     assert result["meta"]["live_mode"] == "polling"
     assert result["meta"]["refresh_interval_seconds"] == 30
@@ -1653,11 +1655,17 @@ async def test_summary_counts_and_scopes_open_decisions_to_active_workspace():
 
     assert result["total_anomalies"] == 3
     assert result["by_severity"] == {"critical": 1, "high": 1, "medium": 1, "low": 0}
-    assert result["by_cartridge"] == {"sap_hcm": 1, "sap_s4hana": 1, "sap_successfactors": 1}
+    assert result["by_cartridge"] == {
+        "sap_hcm": 1,
+        "sap_s4hana": 1,
+        "sap_successfactors": 1,
+    }
     assert result["open_decisions"] == 5
-    sql, workspace_id = mock_pool.fetchval.call_args[0]
+    sql, workspace_id, business_item_ids = mock_pool.fetchval.call_args[0]
     assert "workspace_id = $1" in sql
+    assert "i.item_id = ANY($2::text[])" in sql
     assert workspace_id == "workspace-A"
+    assert len(business_item_ids) == 3
 
 
 @pytest.mark.asyncio
@@ -2796,7 +2804,22 @@ async def test_get_suggested_actions_reads_autonomous_learning_lessons():
         "created_at": datetime(2026, 5, 20, 10, 2, 1),
     }
 
-    with patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(side_effect=[[lesson], []])):
+    with (
+        patch.object(
+            control_room_service,
+            "_load_lesson_rows",
+            new=AsyncMock(side_effect=[[lesson], []]),
+        ),
+        patch.object(
+            control_room_service,
+            "_persisted_business_items",
+            new=AsyncMock(return_value=[{
+                "id": "item-old",
+                "kind": "anomaly",
+                "source_dataset": "employees_anomalies",
+            }]),
+        ),
+    ):
         result = await control_room_service.ControlRoomService().get_suggested_actions(USER, item)
 
     assert result["suggested_actions"][0]["template_id"] == "prepare_hcm_access_review"
@@ -3309,7 +3332,7 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
     assert result["lessons"][0]["cartridge_id"] == "replicon"
     assert result["summary"]["total"] == 1
     assert result["summary"]["top_patterns"][0]["avg_confidence"] == 0.9
-    sql, *args = mock_pool.fetch.call_args.args
+    sql, *args = mock_pool.fetch.await_args_list[0].args
     assert "workspace_id = $1" in sql
     assert "cartridge_id = $2" in sql
     assert "anomaly_type = $3" in sql

@@ -764,4 +764,4 @@ async def test_control_room_production_reports_known_non_ready_sources_without_f
     assert readiness_by_source["sap_successfactors_recruitment_funnel"] == "partial"
     assert readiness_by_source["sap_successfactors_recruitment_pipeline"] == "partial"
     assert readiness_by_source["sap_successfactors_compensation_distribution"] == "stub"
-    assert any(item["kind"] == "source_state" for item in result["items"])
+    assert all(item["kind"] != "source_state" for item in result["items"])

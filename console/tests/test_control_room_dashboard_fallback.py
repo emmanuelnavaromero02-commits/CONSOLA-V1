@@ -182,7 +182,7 @@ async def test_control_room_scoped_dashboard_omits_empty_domains(monkeypatch):
             ]),
         ),
     ):
-        result = await control_room_service.dashboard(user, fetcher=fetcher, persist=False)
+        result = await control_room_service.dashboard(user, fetcher=fetcher)
 
     assert [domain["label"] for domain in result["domains"]] == ["Recursos Humanos"]
     assert all(domain["modules"] for domain in result["domains"])

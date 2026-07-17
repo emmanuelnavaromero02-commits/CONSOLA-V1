@@ -305,7 +305,7 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
             "skipped": [],
         }
 
-    async def dashboard(user=None, persist=False):
+    async def refresh_dashboard_state(user=None):
         return {
             "meta": {"source_count": 1, "item_count": 1},
             "summary": {"total_items": 1, "data_ready_sources": 1},
@@ -318,7 +318,7 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
         return {"talent": True}
 
     control_room_stub = _module(
-        dashboard=dashboard,
+        refresh_dashboard_state=refresh_dashboard_state,
         sap_successfactors_gold_kpis=gold_kpis,
         sap_successfactors_talent_kpis=talent_kpis,
     )
@@ -1302,7 +1302,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
             ]
         }
 
-    async def dashboard(user=None, persist=False):
+    async def refresh_dashboard_state(user=None):
         return {
             "meta": {"source_count": 3, "item_count": 7},
             "summary": {"total_items": 7, "data_ready_sources": 3},
@@ -1312,7 +1312,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
         return {"row_count": 7}
 
     control_room_stub = _module(
-        dashboard=dashboard,
+        refresh_dashboard_state=refresh_dashboard_state,
         sap_successfactors_gold_kpis=sf_kpis,
         sap_successfactors_talent_kpis=sf_kpis,
     )

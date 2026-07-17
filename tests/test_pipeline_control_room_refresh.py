@@ -97,9 +97,8 @@ async def test_control_room_gold_refresh_persists_intelligence_payload():
 @pytest.mark.anyio
 async def test_control_room_status_marks_successfactors_ready_with_kpis():
     class FakeControlRoomService:
-        async def dashboard(self, user, persist=False):
+        async def refresh_dashboard_state(self, user):
             assert user == {"sub": "user-1"}
-            assert persist is True
             return {
                 "meta": {"source_count": 1, "item_count": 1},
                 "summary": {"total_items": 1, "data_ready_sources": 1},
@@ -152,7 +151,7 @@ async def test_control_room_status_waits_for_successfactors_materialization():
 @pytest.mark.anyio
 async def test_control_room_status_reports_error_step_safely():
     class BrokenControlRoomService:
-        async def dashboard(self, *_args, **_kwargs):
+        async def refresh_dashboard_state(self, *_args, **_kwargs):
             raise RuntimeError("dashboard offline")
 
     status = await run_sync_control_room_status(

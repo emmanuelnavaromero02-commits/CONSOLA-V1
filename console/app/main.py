@@ -157,6 +157,10 @@ from app.domains.decisions.payloads import (
     decision_update_sql_and_params as _decision_update_sql_and_params_impl,
     decision_row_to_dict as _dec_row_to_dict_impl,
 )
+from app.services.control_room.business_projection import (
+    filter_business_decisions as _filter_business_decisions_impl,
+    lineage_parent_ids as _lineage_parent_ids_impl,
+)
 from app.domains.iam.roles import (
     GLOBAL_ASSIGNABLE_ROLES as _IAM_GLOBAL_ASSIGNABLE_ROLES,
     WORKSPACE_ASSIGNABLE_ROLES as _IAM_WORKSPACE_ASSIGNABLE_ROLES,
@@ -6644,6 +6648,46 @@ def _dec_list_query(
     )
 
 
+async def _dec_filter_business_rows(
+    conn: Any,
+    *,
+    workspace_id: str,
+    rows: list[Any],
+) -> list[dict[str, Any]]:
+    decisions = [dict(row) for row in rows]
+    decision_ids = [row["id"] for row in decisions if row.get("id") is not None]
+    if not decision_ids:
+        return decisions
+    linked = await conn.fetch(
+        """
+        SELECT decision_id, item_id, item_kind, source_dataset, metadata
+          FROM control_room_items
+         WHERE workspace_id = $1
+           AND decision_id = ANY($2::bigint[])
+        """,
+        workspace_id,
+        decision_ids,
+    )
+    parent_ids = sorted(_lineage_parent_ids_impl(linked))
+    lineage = []
+    if parent_ids:
+        lineage = await conn.fetch(
+            """
+            SELECT item_id, item_kind, source_dataset, metadata
+              FROM control_room_items
+             WHERE workspace_id = $1
+               AND item_id = ANY($2::text[])
+            """,
+            workspace_id,
+            parent_ids,
+        )
+    return _filter_business_decisions_impl(
+        decisions,
+        linked,
+        lineage_items=lineage,
+    )
+
+
 async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None:
     # Sprint v1.37: no active workspace -> no decisions are visible.
     # Short-circuit BEFORE opening the pool so an unauthorized caller
@@ -6660,7 +6704,14 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         row = await conn.fetchrow(sql, *params)
-    return dict(row) if row else None
+        if not row:
+            return None
+        visible = await _dec_filter_business_rows(
+            conn,
+            workspace_id=workspace_id,
+            rows=[row],
+        )
+    return visible[0] if visible else None
 
 
 def _dec_can_edit(row: dict, user: dict) -> bool:
@@ -6695,6 +6746,11 @@ async def api_decisions_list(
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         rows = await conn.fetch(sql, *params)
+        rows = await _dec_filter_business_rows(
+            conn,
+            workspace_id=workspace_id,
+            rows=list(rows),
+        )
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 

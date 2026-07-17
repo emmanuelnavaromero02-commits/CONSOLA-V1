@@ -285,8 +285,9 @@ def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     state = read("console/app/services/control_room/state.py")
     router = read("console/app/routers/control_room.py")
     ui = read("console-next/src/app/(shell)/control-room/page.tsx")
-    assert "item_kind = 'intelligence_signal'" in service
+    assert "async def _persisted_business_items" in service
     assert "_persisted_intelligence_items" in service
+    assert '"intelligence_signal", "agent_alert"' in service
     assert '"decision_intelligence": decision_intelligence' in state
     assert '"omega":' in state
     assert '"intelligence_signal"' in ui

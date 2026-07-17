@@ -704,3 +704,50 @@ async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_
         TENANT_A,
         11,
     )
+
+
+@pytest.mark.asyncio
+async def test_persisted_derived_item_keeps_state_until_parent_validation():
+    row = {
+        "tenant_id": TENANT_A,
+        "workspace_id": WORKSPACE_A,
+        "item_id": "derived-1",
+        "cartridge_id": "replicon",
+        "domain": "Operacion",
+        "source_dataset": "gold_workforce",
+        "item_kind": "agent_alert",
+        "title": "Derived alert",
+        "severity": "high",
+        "status": "in_review",
+        "decision_id": 42,
+        "entity_kind": "employee",
+        "entity_id": "7",
+        "entity_label": "Employee 7",
+        "anomaly_type": "capacity_risk",
+        "metadata": {"parent_item_id": "parent-1", "data_status": "ready"},
+        "first_seen_at": None,
+        "last_seen_at": None,
+        "resolved_at": None,
+        "dismissed_at": None,
+        "impact_estimate": 12,
+        "impact_currency": "USD",
+        "confidence": 0.9,
+        "priority_score": 88,
+        "selected_option_id": "review",
+        "execution_status": "dry_run_validated",
+    }
+    conn = _ScopedConnection(fetchrow_return=row)
+
+    with patch.object(
+        control_room_service.auth,
+        "pool",
+        return_value=_ScopedPool(conn),
+    ):
+        item = await control_room_service._persisted_item_for_mutation(
+            "derived-1", REPLICON_USER
+        )
+
+    assert item["decision_id"] == 42
+    assert item["selected_option_id"] == "review"
+    assert item["execution_status"] == "dry_run_validated"
+    assert item["priority_score"] == 88

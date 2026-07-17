@@ -57,17 +57,64 @@ def test_system_info_and_healthz_share_one_version_source():
 def _ops_pool() -> AsyncMock:
     pool = AsyncMock()
     pool.fetch = AsyncMock(side_effect=[
-        # items by status
-        [{"status": "open", "n": 3}, {"status": "approved", "n": 1}],
-        # open items by severity
-        [{"severity": "high", "n": 2}, {"severity": "low", "n": 1}],
-        # action executions by status
-        [{"status": "dry_run_validated", "n": 4}, {"status": "preview", "n": 1}],
+            [
+                {
+                    "item_id": "business-1",
+                    "item_kind": "anomaly",
+                    "source_dataset": "gold_ops",
+                    "title": "One",
+                    "severity": "high",
+                    "status": "open",
+                    "metadata": {},
+                    "last_seen_at": datetime(2026, 5, 27, 10, 0, tzinfo=timezone.utc),
+                },
+                {
+                    "item_id": "business-2",
+                    "item_kind": "anomaly",
+                    "source_dataset": "gold_ops",
+                    "title": "Two",
+                    "severity": "high",
+                    "status": "open",
+                    "metadata": {},
+                    "last_seen_at": datetime(2026, 5, 27, 11, 0, tzinfo=timezone.utc),
+                },
+                {
+                    "item_id": "business-3",
+                    "item_kind": "anomaly",
+                    "source_dataset": "gold_ops",
+                    "title": "Three",
+                    "severity": "low",
+                    "status": "open",
+                    "metadata": {},
+                    "last_seen_at": datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc),
+                },
+                {
+                    "item_id": "business-4",
+                    "item_kind": "anomaly",
+                    "source_dataset": "gold_ops",
+                    "title": "Four",
+                    "severity": "medium",
+                    "status": "approved",
+                    "metadata": {},
+                    "last_seen_at": datetime(2026, 5, 27, 9, 0, tzinfo=timezone.utc),
+                },
+                {
+                    "item_id": "diagnostic-1",
+                    "item_kind": "source_state",
+                    "source_dataset": "gold_missing",
+                    "title": "Missing",
+                    "severity": "critical",
+                    "status": "open",
+                    "metadata": {"data_status": "missing"},
+                    "last_seen_at": datetime(2026, 5, 27, 13, 0, tzinfo=timezone.utc),
+                },
+            ],
+            # action executions by status
+            [{"status": "dry_run_validated", "n": 4}, {"status": "preview", "n": 1}],
     ])
     pool.fetchval = AsyncMock(side_effect=[
         5,  # lessons
         2,  # thresholds active
-        datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc),  # last_item_seen_at
     ])
     return pool
 
