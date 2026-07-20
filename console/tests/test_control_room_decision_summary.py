@@ -5,6 +5,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domains.decisions.business_visibility import count_business_decisions
+from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+    DECISION_PROVENANCE_KEY,
+    business_observation_fingerprint,
+    decision_eligibility_provenance,
+)
 
 
 class _DecisionConnection:
@@ -34,6 +40,19 @@ class _DecisionConnection:
                 "metadata": {"data_status": "missing"},
             },
         ]
+        business = {
+            "id": "business-2",
+            "kind": "anomaly",
+            "source_dataset": "gold_metrics",
+            "metadata": {"data_status": "ready"},
+        }
+        fingerprint = business_observation_fingerprint(business)
+        self.items[0]["metadata"].update(
+            {
+                CURRENT_ELIGIBILITY_FINGERPRINT_KEY: fingerprint,
+                DECISION_PROVENANCE_KEY: decision_eligibility_provenance(business),
+            }
+        )
 
     async def fetch(self, query: str, *_args):
         normalized = " ".join(query.split())

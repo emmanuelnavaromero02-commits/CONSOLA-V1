@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services import control_room_service
 from app.services.control_room.business_item_persistence import (
@@ -106,7 +107,7 @@ class ConflictConnection:
 
     async def fetchrow(self, sql: str, *args):
         assert "owner_user_id IS NOT DISTINCT FROM $5" in sql
-        assert args[-1] == 7
+        assert args[4] == 7
         return None
 
 
@@ -123,15 +124,23 @@ async def test_owner_conflict_aborts_upsert_and_decision_link():
             item_id="business-1",
             decision_id=42,
             owner_user_id=7,
+            item={
+                "id": "business-1",
+                "kind": "anomaly",
+                "source_dataset": "gold_metrics",
+                "observed_value": 1,
+                "observation_date": "2026-07-20",
+                "evidence_refs": ["gold_metrics:business-1"],
+            },
         )
 
 
 @pytest.mark.asyncio
-async def test_persisted_lookup_applies_owner_scope_and_returns_not_found():
+async def test_persisted_lookup_applies_tenant_workspace_scope_and_returns_not_found():
     class PersistedConnection:
         async def fetchrow(self, sql: str, *args):
-            assert "owner_user_id = $4" in sql
-            assert args == ("workspace-a", "business-1", "tenant-a", 7)
+            assert "owner_user_id =" not in sql
+            assert args == ("workspace-a", "business-1", "tenant-a")
             return None
 
     async def scoped(_pool, _user, work):
@@ -148,3 +157,27 @@ async def test_persisted_lookup_applies_owner_scope_and_returns_not_found():
         )
 
     assert item is None
+
+
+@pytest.mark.asyncio
+async def test_foreign_owner_is_not_found_before_live_collection():
+    class PersistedConnection:
+        async def fetchrow(self, _sql: str, *_args):
+            return {"item_id": "business-1", "owner_user_id": 9}
+
+    async def scoped(_pool, _user, work):
+        return await work(PersistedConnection(), "tenant-a", "workspace-a")
+
+    collector = AsyncMock(return_value={"items": [], "diagnostics": []})
+    with (
+        patch.object(
+            control_room_service.auth, "pool", new=AsyncMock(return_value=object())
+        ),
+        patch.object(control_room_service, "_run_with_db_scope", new=scoped),
+        patch.object(control_room_service, "_collect_items", new=collector),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await control_room_service._item_for_mutation("business-1", USER)
+
+    assert exc_info.value.status_code == 404
+    collector.assert_not_awaited()

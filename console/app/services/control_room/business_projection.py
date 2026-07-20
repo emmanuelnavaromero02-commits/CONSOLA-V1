@@ -10,6 +10,9 @@ from app.services.control_room.business_lineage import (
     parent_references,
 )
 from app.services.control_room.business_resolution import resolve_business_lineage
+from app.services.control_room.business_workflow_provenance import (
+    workflow_has_eligible_provenance,
+)
 
 
 BUSINESS_ONLY_FIELDS = frozenset(
@@ -231,7 +234,15 @@ def filter_business_decisions(
     eligible_decision_ids = {
         decision_id
         for decision_id, rows in linked_by_decision.items()
-        if rows and all(row.get("id") in eligible_ids for row in rows)
+        if rows
+        and all(
+            row.get("id") in eligible_ids
+            and workflow_has_eligible_provenance(
+                row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {},
+                row,
+            )
+            for row in rows
+        )
     }
 
     def _origin(row: Mapping[str, Any]) -> str:

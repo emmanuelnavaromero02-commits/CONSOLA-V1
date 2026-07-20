@@ -707,16 +707,15 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
 @pytest.mark.asyncio
 async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_admin():
     async def scoped_fetchrow(
-        query: str, workspace_id: str, item_id: str, tenant_id: str, owner_id: int
+        query: str, workspace_id: str, item_id: str, tenant_id: str
     ):
         assert "workspace_id = $1" in query
         assert "item_id = $2" in query
         assert "tenant_id::text = $3" in query
-        assert "owner_user_id = $4" in query
+        assert "owner_user_id =" not in query
         assert workspace_id == WORKSPACE_A
         assert item_id == "intel:other"
         assert tenant_id == TENANT_A
-        assert owner_id == 11
         return None
 
     conn = _ScopedConnection(fetchrow_side_effect=scoped_fetchrow)
@@ -739,7 +738,6 @@ async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_
         WORKSPACE_A,
         "intel:other",
         TENANT_A,
-        11,
     )
 
 

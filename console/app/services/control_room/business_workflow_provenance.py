@@ -86,7 +86,14 @@ def decision_eligibility_provenance(
     *,
     decision_id: int | None = None,
 ) -> dict[str, Any]:
-    eligibility = classify_business_item(item)
+    parent_context = getattr(item, "_eligible_parent_ids", None)
+    eligible_parent_ids = (
+        {str(value) for value in parent_context} if parent_context is not None else None
+    )
+    eligibility = classify_business_item(
+        item,
+        eligible_parent_ids=eligible_parent_ids,
+    )
     if not eligibility.eligible:
         raise ValueError("cannot link decision to non-business control room item")
     payload = {
@@ -106,9 +113,13 @@ def workflow_has_eligible_provenance(
     metadata: Mapping[str, Any] | None,
     item: Mapping[str, Any],
 ) -> bool:
-    value = dict(metadata or {}).get(DECISION_PROVENANCE_KEY)
+    current_metadata = dict(metadata or {})
+    value = current_metadata.get(DECISION_PROVENANCE_KEY)
     if not isinstance(value, Mapping):
         return False
+    current_fingerprint = str(
+        current_metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or ""
+    ).strip() or business_observation_fingerprint(item)
     return (
         value.get("eligible_at_link") is True
         and value.get("policy_version") == ELIGIBILITY_POLICY_VERSION
@@ -116,8 +127,7 @@ def workflow_has_eligible_provenance(
         == _identity_value(item, "id", "item_id")
         and str(value.get("kind") or "").strip().lower()
         == _identity_value(item, "kind", "item_kind").lower()
-        and str(value.get("fingerprint") or "").strip()
-        == business_observation_fingerprint(item)
+        and str(value.get("fingerprint") or "").strip() == current_fingerprint
     )
 
 

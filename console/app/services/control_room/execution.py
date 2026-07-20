@@ -3796,25 +3796,15 @@ async def approve_item(
             user.get("email") or "user",
         )
         await _ensure_item_row(conn, user=user, item=item, status="approved")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'approved',
-                       decision_id = $1,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                       resolved_at = COALESCE(resolved_at, NOW()),
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                decision_id,
-                scoped_workspace_id,
-                item["id"],
-                json.dumps({"lessons": lessons}),
-            )
-        except Exception:
-            pass
+        await approve_control_room_decision(
+            conn,
+            workspace_id=scoped_workspace_id,
+            item_id=item["id"],
+            decision_id=decision_id,
+            owner_user_id=expected_business_item_owner(item, user),
+            item=item,
+            lessons=lessons,
+        )
         await _record_item_event(
             conn,
             user=user,

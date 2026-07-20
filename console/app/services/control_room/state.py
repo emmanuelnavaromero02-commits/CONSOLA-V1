@@ -1142,7 +1142,6 @@ async def _overlay_item_state(
         return []
     tenant_id, workspace_id = _workspace_scope(user)
     item_ids = [item["id"] for item in items]
-    business_ids = eligible_item_ids(items)
     owner_id = None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
 
     async def _load(
@@ -1150,25 +1149,13 @@ async def _overlay_item_state(
     ) -> dict[str, dict[str, Any]]:
         if not _can_read_workspace_wide(user) and owner_id is None:
             return {}
-        params: list[Any] = [workspace_id, item_ids]
-        clauses = ["workspace_id = $1", "item_id = ANY($2::text[])"]
-        if tenant_id:
-            params.append(tenant_id)
-            clauses.append(f"tenant_id::text = ${len(params)}")
-        if owner_id is not None:
-            params.append(owner_id)
-            clauses.append(f"owner_user_id = ${len(params)}")
-        rows = await conn.fetch(
-            f"""
-            SELECT item_id, owner_user_id, status, decision_id, metadata, first_seen_at, last_seen_at,
-                   resolved_at, dismissed_at, impact_estimate, impact_currency,
-                   confidence, priority_score, selected_option_id, execution_status
-              FROM control_room_items
-             WHERE {' AND '.join(clauses)}
-            """,
-            *params,
+        return await load_overlay_state(
+            conn,
+            workspace_id=workspace_id,
+            item_ids=item_ids,
+            tenant_id=tenant_id,
+            owner_id=owner_id,
         )
-        return {row["item_id"]: _row_to_public(row) for row in rows}
 
     try:
         pool = await auth.pool()
@@ -1176,78 +1163,13 @@ async def _overlay_item_state(
     except Exception:
         state_by_id = {}
 
-    merged = []
-    for item in items:
-        state = state_by_id.get(item["id"], {})
-        metadata = _details(state.get("metadata"))
-        status = str(state.get("status") or item.get("status") or "open")
-        if status not in ITEM_STATUSES:
-            status = "open"
-        intelligence = (
-            metadata.get("intelligence")
-            if isinstance(metadata.get("intelligence"), dict)
-            else item.get("intelligence")
-        )
-        if not isinstance(intelligence, dict):
-            intelligence = {}
-        decision_intelligence = metadata.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = intelligence.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = (
-                item.get("decision_intelligence")
-                if isinstance(item.get("decision_intelligence"), dict)
-                else {}
-            )
-        if decision_intelligence:
-            intelligence = {
-                **intelligence,
-                "decision_intelligence": decision_intelligence,
-            }
-        merged.append(
-            _with_omega(
-                {
-                    **item,
-                    **business_owner_projection(item, state),
-                    "status": status,
-                    "decision_id": state.get("decision_id") or item.get("decision_id"),
-                    "impact_estimate": state.get("impact_estimate"),
-                    "impact_currency": state.get("impact_currency"),
-                    "confidence": state.get("confidence"),
-                    "priority_score": state.get("priority_score"),
-                    "selected_option_id": state.get("selected_option_id")
-                    or metadata.get("selected_option_id"),
-                    "execution_status": state.get("execution_status")
-                    or metadata.get("execution_status"),
-                    "thresholds_applied": metadata.get("thresholds_applied")
-                    or item.get("thresholds_applied")
-                    or [],
-                    "threshold_state": metadata.get("threshold_state")
-                    or item.get("threshold_state")
-                    or "default",
-                    "alert_state": metadata.get("alert_state")
-                    if isinstance(metadata.get("alert_state"), dict)
-                    else item.get("alert_state"),
-                    "control_state": metadata.get("control_state")
-                    if isinstance(metadata.get("control_state"), dict)
-                    else item.get("control_state"),
-                    "lessons": metadata.get("lessons"),
-                    "learned_rules": metadata.get("learned_rules"),
-                    "lesson_applications": metadata.get("lesson_applications")
-                    if isinstance(metadata.get("lesson_applications"), list)
-                    else [],
-                    "decision_intelligence": decision_intelligence,
-                    "intelligence": intelligence,
-                    "first_seen_at": state.get("first_seen_at"),
-                    "last_seen_at": state.get("last_seen_at"),
-                    "resolved_at": state.get("resolved_at"),
-                    "dismissed_at": state.get("dismissed_at"),
-                },
-                eligible_parent_ids=business_ids,
-            )
-        )
-    merged.sort(key=_status_sort_key)
-    return merged
+    return overlay_business_state(
+        items,
+        state_by_id,
+        item_statuses=ITEM_STATUSES,
+        projector=_with_omega,
+        sort_key=_status_sort_key,
+    )
 
 
 @_bind_to_core
@@ -1260,13 +1182,11 @@ async def _persisted_item_for_mutation(
     if tenant_id:
         params.append(tenant_id)
         tenant_clause = f"AND tenant_id::text = ${len(params)}"
-    owner_clause = ""
+    owner_id = None
     if not _can_read_workspace_wide(user):
         owner_id = _actor_id((user or {}).get("id"))
         if owner_id is None:
             return None
-        params.append(owner_id)
-        owner_clause = f"AND owner_user_id = ${len(params)}"
     pool = await auth.pool()
 
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
@@ -1281,7 +1201,6 @@ async def _persisted_item_for_mutation(
              WHERE workspace_id = $1
                AND item_id = $2
                {tenant_clause}
-               {owner_clause}
             """,
             *params,
         )
@@ -1289,6 +1208,9 @@ async def _persisted_item_for_mutation(
     row = await _run_with_db_scope(pool, user, _load)
     if not row:
         return None
+    persisted_owner = _actor_id(row.get("owner_user_id"))
+    if owner_id is not None and persisted_owner not in {None, owner_id}:
+        raise HTTPException(404, "control room item not found")
     return persisted_business_item(
         row,
         expected_item_id=item_id,

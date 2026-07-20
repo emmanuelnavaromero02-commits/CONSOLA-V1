@@ -166,24 +166,77 @@ async def link_control_room_decision(
     item_id: str,
     decision_id: int,
     owner_user_id: int | None,
-    item: Mapping[str, Any] | None = None,
+    item: Mapping[str, Any],
 ) -> None:
-    provenance = (
-        decision_eligibility_provenance(item, decision_id=decision_id)
-        if item is not None
-        else {
+    await _set_control_room_decision_link(
+        conn,
+        workspace_id=workspace_id,
+        item_id=item_id,
+        decision_id=decision_id,
+        owner_user_id=owner_user_id,
+        item=item,
+        status="decision_created",
+        resolved=False,
+        extra_metadata={},
+    )
+
+
+async def approve_control_room_decision(
+    conn: Any,
+    *,
+    workspace_id: str,
+    item_id: str,
+    decision_id: int,
+    owner_user_id: int | None,
+    item: Mapping[str, Any],
+    lessons: Sequence[str],
+) -> None:
+    await _set_control_room_decision_link(
+        conn,
+        workspace_id=workspace_id,
+        item_id=item_id,
+        decision_id=decision_id,
+        owner_user_id=owner_user_id,
+        item=item,
+        status="approved",
+        resolved=True,
+        extra_metadata={"lessons": list(lessons)},
+    )
+
+
+async def _set_control_room_decision_link(
+    conn: Any,
+    *,
+    workspace_id: str,
+    item_id: str,
+    decision_id: int,
+    owner_user_id: int | None,
+    item: Mapping[str, Any],
+    status: str,
+    resolved: bool,
+    extra_metadata: Mapping[str, Any],
+) -> None:
+    provenance = decision_eligibility_provenance(item, decision_id=decision_id)
+    metadata = {
+        **dict(extra_metadata),
+        "decision_provenance": {
             "version": 1,
             "origin": "control_room",
             "decision_id": decision_id,
             "item_id": item_id,
-        }
-    )
+        },
+        DECISION_PROVENANCE_KEY: provenance,
+    }
     linked = await conn.fetchrow(
         """
         UPDATE control_room_items
-           SET status = 'decision_created',
+           SET status = $6,
                decision_id = $1,
                metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+               resolved_at = CASE
+                   WHEN $7::boolean THEN COALESCE(resolved_at, NOW())
+                   ELSE resolved_at
+               END,
                last_seen_at = NOW()
          WHERE workspace_id = $2
            AND item_id = $3
@@ -193,18 +246,10 @@ async def link_control_room_decision(
         decision_id,
         workspace_id,
         item_id,
-        dumps_jsonb(
-            {
-                "decision_provenance": {
-                    "version": 1,
-                    "origin": "control_room",
-                    "decision_id": decision_id,
-                    "item_id": item_id,
-                },
-                DECISION_PROVENANCE_KEY: provenance,
-            }
-        ),
+        dumps_jsonb(metadata),
         owner_user_id,
+        status,
+        resolved,
     )
     if not linked or str(linked["item_id"]) != str(item_id):
         raise RuntimeError("control room decision link was not persisted")

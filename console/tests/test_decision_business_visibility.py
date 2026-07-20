@@ -7,6 +7,30 @@ from app.domains.decisions.business_visibility import (
     preserve_control_room_provenance,
 )
 from app.services.control_room.business_projection import filter_business_decisions
+from app.services.control_room.business_projection import (
+    normalize_persisted_business_item,
+)
+from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+    DECISION_PROVENANCE_KEY,
+    ELIGIBILITY_POLICY_VERSION,
+    business_observation_fingerprint,
+)
+
+
+def _with_eligible_provenance(row):
+    item = normalize_persisted_business_item(row)
+    fingerprint = business_observation_fingerprint(item)
+    metadata = dict(item.get("metadata") or {})
+    metadata[CURRENT_ELIGIBILITY_FINGERPRINT_KEY] = fingerprint
+    metadata[DECISION_PROVENANCE_KEY] = {
+        "policy_version": ELIGIBILITY_POLICY_VERSION,
+        "eligible_at_link": True,
+        "item_id": item["id"],
+        "kind": item["kind"],
+        "fingerprint": fingerprint,
+    }
+    return {**row, "metadata": metadata}
 
 
 def test_historical_decisions_are_filtered_through_linked_business_items():
@@ -26,13 +50,15 @@ def test_historical_decisions_are_filtered_through_linked_business_items():
             "source_dataset": "gold_a",
             "metadata": '{"parent_item_id":"technical-parent"}',
         },
-        {
-            "decision_id": 3,
-            "item_id": "business",
-            "item_kind": "anomaly",
-            "source_dataset": "gold_a",
-            "metadata": {"data_status": "ready"},
-        },
+        _with_eligible_provenance(
+            {
+                "decision_id": 3,
+                "item_id": "business",
+                "item_kind": "anomaly",
+                "source_dataset": "gold_a",
+                "metadata": {"data_status": "ready"},
+            }
+        ),
     ]
     lineage = [
         {
@@ -84,23 +110,27 @@ def test_decision_linked_to_business_and_diagnostic_items_fails_closed():
 
 def test_lineage_row_duplicated_by_linked_seed_does_not_hide_valid_decision():
     decision = {"id": 1}
-    root = {
-        "decision_id": 1,
-        "item_id": "root",
-        "item_kind": "anomaly",
-        "source_dataset": "gold_a",
-        "metadata": {"data_status": "ready"},
-    }
-    child = {
-        "decision_id": 1,
-        "item_id": "child",
-        "item_kind": "intelligence_signal",
-        "source_dataset": "gold_a",
-        "metadata": {
-            "parent_item_id": "root",
-            "evidence_refs": ["evidence:child"],
-        },
-    }
+    root = _with_eligible_provenance(
+        {
+            "decision_id": 1,
+            "item_id": "root",
+            "item_kind": "anomaly",
+            "source_dataset": "gold_a",
+            "metadata": {"data_status": "ready"},
+        }
+    )
+    child = _with_eligible_provenance(
+        {
+            "decision_id": 1,
+            "item_id": "child",
+            "item_kind": "intelligence_signal",
+            "source_dataset": "gold_a",
+            "metadata": {
+                "parent_item_id": "root",
+                "evidence_refs": ["evidence:child"],
+            },
+        }
+    )
 
     assert filter_business_decisions(
         [decision], [root, child], lineage_items=[root]

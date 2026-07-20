@@ -3402,6 +3402,7 @@ async def test_approve_persists_lessons_to_lessons_table():
                 "actor": "ops@example.com",
                 "ts": datetime(2026, 5, 20, 10, 1, 0),
             },
+            {"item_id": anomaly["id"]},
         ]
     )
     mock_pool.fetch.return_value = []
@@ -3443,6 +3444,7 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
                 "actor": "ops@example.com",
                 "ts": datetime(2026, 5, 20, 10, 1, 0),
             },
+            {"item_id": anomaly["id"]},
         ]
     )
     mock_pool.fetch.return_value = []
@@ -3478,6 +3480,11 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     assert "workspace_id = $2" in visible_sql
     assert decision_id == 42
     assert workspace_id == "workspace-A"
+    link_args = mock_pool.fetchrow.call_args_list[3].args
+    link_sql = link_args[0]
+    assert "owner_user_id IS NOT DISTINCT FROM $5" in link_sql
+    assert "RETURNING item_id" in link_sql
+    assert "decision_eligibility_provenance" in link_args[4]
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.approve"
     assert audit_event.await_args.kwargs["resource_type"] == "control_room_item"
