@@ -113,10 +113,19 @@ def test_diagnostic_never_invokes_business_builders():
     [USER, {**USER, "role": "super_admin", "include_unready": True}],
 )
 async def test_mutation_lookup_returns_409_for_visible_diagnostic(user):
-    with patch.object(
-        control_room_service,
-        "_persisted_item_for_mutation",
-        new=AsyncMock(return_value=_diagnostic_item()),
+    with (
+        patch.object(
+            control_room_service,
+            "_persisted_item_for_mutation",
+            new=AsyncMock(return_value=_diagnostic_item()),
+        ),
+        patch.object(
+            control_room_service,
+            "_collect_items",
+            new=AsyncMock(
+                return_value={"items": [], "diagnostics": [_diagnostic_item()]}
+            ),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service._item_for_mutation("source-state-1", user)

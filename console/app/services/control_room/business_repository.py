@@ -6,6 +6,10 @@ from typing import Any
 from app.services.control_room.business_item_persistence import persist_item_rows
 from app.services.control_room.business_lineage import MAX_LINEAGE_DEPTH
 from app.services.control_room.business_serialization import dumps_jsonb
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    decision_eligibility_provenance,
+)
 
 
 _ITEM_COLUMN_NAMES = (
@@ -162,7 +166,18 @@ async def link_control_room_decision(
     item_id: str,
     decision_id: int,
     owner_user_id: int | None,
+    item: Mapping[str, Any] | None = None,
 ) -> None:
+    provenance = (
+        decision_eligibility_provenance(item, decision_id=decision_id)
+        if item is not None
+        else {
+            "version": 1,
+            "origin": "control_room",
+            "decision_id": decision_id,
+            "item_id": item_id,
+        }
+    )
     linked = await conn.fetchrow(
         """
         UPDATE control_room_items
@@ -185,7 +200,8 @@ async def link_control_room_decision(
                     "origin": "control_room",
                     "decision_id": decision_id,
                     "item_id": item_id,
-                }
+                },
+                DECISION_PROVENANCE_KEY: provenance,
             }
         ),
         owner_user_id,

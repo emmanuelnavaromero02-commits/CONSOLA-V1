@@ -22,7 +22,8 @@ class RecordingPool:
     async def execute(self, sql: str, *args):
         self.calls.append((" ".join(sql.split()), args))
         if sql.lstrip().upper().startswith("INSERT INTO CONTROL_ROOM_ITEMS"):
-            return "INSERT 0 1000"
+            payload = json.loads(args[0]) if args else []
+            return f"INSERT 0 {len(payload)}"
         return None
 
 

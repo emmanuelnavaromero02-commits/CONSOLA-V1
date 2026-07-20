@@ -9,6 +9,7 @@ from app.services.control_room.business_projection import (
     filter_business_items,
     lineage_parent_ids,
 )
+from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_lineage import item_kinds, parent_references
 from app.services.control_room.business_access import (
     can_read_workspace_wide,
@@ -164,7 +165,13 @@ async def resolve_business_item_lookup(
     if item is not None and not item_kinds(item) & _PERSISTED_COMMAND_KINDS:
         item = None
 
-    if item is None:
+    persisted_item = item
+    persisted_eligible = (
+        classify_business_item(persisted_item).eligible
+        if persisted_item is not None
+        else False
+    )
+    if item is None or not persisted_eligible:
         collected = await collect_items()
         business_items = [
             dict(candidate)
@@ -177,7 +184,7 @@ async def resolve_business_item_lookup(
             if isinstance(candidate, Mapping)
         ]
         eligible_parent_ids = eligible_item_ids(business_items)
-        item = next(
+        live_item = next(
             (
                 candidate
                 for candidate in [*business_items, *diagnostics]
@@ -185,6 +192,18 @@ async def resolve_business_item_lookup(
             ),
             None,
         )
+        if (
+            live_item is not None
+            and classify_business_item(
+                live_item,
+                eligible_parent_ids=eligible_parent_ids,
+            ).eligible
+        ):
+            item = live_item
+        elif persisted_item is not None:
+            item = persisted_item
+        else:
+            item = live_item
     elif refs := parent_references(item).ids:
         lineage_rows = await load_lineage(sorted(refs))
         eligible_parent_ids = eligible_item_ids(

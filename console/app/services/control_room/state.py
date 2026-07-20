@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import types
 
 from app.services.control_room import core as _core
@@ -1236,24 +1238,20 @@ def _diagnostic_metadata(item: dict[str, Any]) -> dict[str, Any]:
 
 @_bind_to_core
 async def _persist_item_state(items: list[dict[str, Any]], user: dict | None) -> None:
-    if not items:
-        return
     tenant_id, workspace_id = _workspace_scope(user)
-    pool = await auth.pool()
-    rows = state_rows(
+    await persist_refresh_items(
         items,
+        user=user or {},
         tenant_id=tenant_id,
         workspace_id=workspace_id,
-        owner_user_id=_actor_id((user or {}).get("id")),
+        actor_id=_actor_id((user or {}).get("id")),
+        workspace_wide=_can_read_workspace_wide(user),
+        pool_factory=auth.pool,
+        run_scoped=_run_with_db_scope,
         impact_builder=_impact_for_item,
         metadata_builder=_metadata_for_item,
         diagnostic_builder=_diagnostic_metadata,
     )
-
-    async def _upsert(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
-        await persist_item_rows(conn, rows)
-
-    await _run_with_db_scope(pool, user or {}, _upsert)
 
 
 @_bind_to_core

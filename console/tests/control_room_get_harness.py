@@ -30,7 +30,10 @@ ITEM_ID = routes.control_room_service._encode_id(
     }
 )
 _REQUEST_ID: ContextVar[str] = ContextVar("purity_request_id", default="")
-_MUTATING_SQL = re.compile(r"\b(?:INSERT|UPDATE|DELETE|MERGE|CALL)\b", re.I)
+_MUTATING_SQL = re.compile(
+    r"\b(?:INSERT|UPDATE|DELETE|MERGE|CALL|TRUNCATE|CREATE|ALTER|DROP|COPY)\b",
+    re.I,
+)
 
 
 class MutationSentinel:
@@ -101,7 +104,7 @@ class MutationSentinel:
             ],
         }
         self.mutation_attempts: list[str] = []
-        self.scope_calls: list[tuple[str, str]] = []
+        self.scope_calls: list[tuple[str, str, str]] = []
 
     def snapshot(self) -> dict[str, list[dict[str, Any]]]:
         return deepcopy(self.tables)
@@ -120,7 +123,7 @@ class MutationSentinel:
     async def execute(self, query: str, *args):
         statement = self._reject_mutation(query)
         if statement.upper().startswith("SELECT SET_CONFIG"):
-            self.scope_calls.append((str(args[0]), str(args[1])))
+            self.scope_calls.append((_REQUEST_ID.get(), str(args[0]), str(args[1])))
         return None
 
     async def fetch(self, query: str, *args):

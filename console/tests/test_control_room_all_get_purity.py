@@ -10,6 +10,8 @@ from app.routers import control_room as routes
 from control_room_get_edges import installed_read_edges
 from control_room_get_harness import (
     ITEM_ID,
+    TENANT_ID,
+    WORKSPACE_ID,
     ConcurrencyProbe,
     MutationSentinel,
     build_app,
@@ -86,6 +88,16 @@ GET_PATHS = {
     ),
 }
 
+GET_CASES = tuple(
+    {
+        "route": route,
+        "path": path,
+        "status": 200,
+        "invariant": lambda payload: payload is not None,
+    }
+    for route, path in GET_PATHS.items()
+)
+
 
 def _stable_response(value):
     if isinstance(value, dict):
@@ -124,17 +136,24 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
     routes._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
     transport = httpx.ASGITransport(app=app)
 
+    seen_paths: list[str] = []
     with installed_read_edges(sentinel, probe):
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://test",
         ) as client:
-            for path in GET_PATHS.values():
+            for case in GET_CASES:
+                path = case["path"]
                 first = await client.get(path)
                 second = await client.get(path)
-                assert first.status_code < 500, (path, first.text)
+                seen_paths.append(path)
+                assert first.status_code == case["status"], (path, first.text)
                 assert second.status_code == first.status_code
-                assert _stable_response(first.json()) == _stable_response(second.json())
+                first_payload = first.json()
+                assert case["invariant"](first_payload), path
+                assert _stable_response(first_payload) == _stable_response(
+                    second.json()
+                )
 
             probe.enabled = True
             first, second = await asyncio.gather(
@@ -150,7 +169,10 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
 
     assert first.status_code == 200
     assert second.status_code == 200
+    assert len(seen_paths) == 29
     assert probe.max_in_flight >= 2
     assert sentinel.snapshot() == before
     assert sentinel.mutation_attempts == []
-    assert sentinel.scope_calls
+    request_ids = {entry[0] for entry in sentinel.scope_calls}
+    assert {"request-a", "request-b"}.issubset(request_ids)
+    assert all(entry[1:] == (TENANT_ID, WORKSPACE_ID) for entry in sentinel.scope_calls)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import types
 
 from app.services.control_room import core as _core
@@ -735,6 +737,7 @@ async def create_decision_for_item(
             item_id=item["id"],
             decision_id=row["id"],
             owner_user_id=expected_business_item_owner(item, user),
+            item=item,
         )
         await _record_item_event(
             conn,

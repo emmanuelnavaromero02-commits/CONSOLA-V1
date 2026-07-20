@@ -1,0 +1,55 @@
+name: Control Room PostgreSQL RLS
+
+on:
+  pull_request:
+    paths:
+      - "console/app/services/control_room/**"
+      - "console/tests/test_control_room*.py"
+      - "tests/test_control_room_live_postgres_transitions.py"
+      - "tests/test_operational_rls_console_refinement.py"
+      - "tests/test_operational_rls_policy_guard.py"
+      - ".github/workflows/control-room-postgres-rls.yml"
+
+jobs:
+  control-room-postgres-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run focal Control Room tests
+        env:
+          PYTHONPATH: .:console
+        run: |
+          pytest -q console/tests/test_control_room*.py console/tests/test_scoped_surface_hardening.py
+
+      - name: Run live PostgreSQL/RLS tests
+        env:
+          PYTHONPATH: .:console
+        run: |
+          pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
+            tests/test_operational_rls_console_refinement.py \
+            tests/test_operational_rls_policy_guard.py \
+            tests/test_control_room_live_postgres_transitions.py
+
+      - name: Fail if live PostgreSQL/RLS tests skipped
+        if: always()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          path = "/tmp/control-room-postgres-rls.xml"
+          root = ET.parse(path).getroot()
+          skipped = root.findall(".//skipped")
+          if skipped:
+              messages = [node.attrib.get("message", "skipped") for node in skipped]
+              raise SystemExit("Live PostgreSQL/RLS tests skipped: " + "; ".join(messages))
+          PY

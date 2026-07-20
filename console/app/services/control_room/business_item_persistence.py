@@ -3,56 +3,44 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.services.control_room.business_policy_metadata import REPLACED_POLICY_KEYS
 from app.services.control_room.business_serialization import dumps_jsonb
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    ELIGIBILITY_POLICY_VERSION,
+    quarantine_workflow_metadata,
+)
 
 
 class OwnerScopeConflict(RuntimeError):
     pass
 
 
-REPLACED_POLICY_KEYS = (
-    "actual_value",
-    "affected_count",
-    "aggregation_type",
-    "analysis_evidence",
-    "as_of",
-    "business_observation",
-    "count",
-    "data_readiness",
-    "data_status",
-    "denominator",
-    "denominator_count",
-    "derived_from",
-    "detected_at",
-    "evaluation_status",
-    "evidence",
-    "evidence_pack",
-    "evidence_refs",
-    "intelligence",
-    "is_observed",
-    "lineage",
-    "metric_kind",
-    "metric_type",
-    "metric_value",
-    "observation",
-    "observation_date",
-    "observation_valid",
-    "observed_at",
-    "observed_value",
-    "parent_item_id",
-    "population",
-    "population_count",
-    "readiness_status",
-    "sample_count",
-    "source_item_id",
-    "source_row_count",
-    "source_status",
-    "total_count",
-    "value",
-    "value_observed",
-    "value_type",
-)
+class PersistenceCountMismatch(RuntimeError):
+    pass
 
+
+_TECHNICAL_STATES = (
+    "'missing','blocked','stub','error','no_permission','empty','schema_only',"
+    "'unavailable','invalid_schema','insufficient_data'"
+)
+_WAS_DIAGNOSTIC = (
+    "control_room_items.item_kind = 'source_state' "
+    "OR control_room_items.metadata->>'item_kind' = 'source_state' "
+    "OR control_room_items.metadata->>'kind' = 'source_state' "
+    f"OR control_room_items.metadata->>'data_status' IN ({_TECHNICAL_STATES})"
+)
+_BECOMES_BUSINESS = (
+    "EXCLUDED.item_kind <> 'source_state' "
+    f"AND COALESCE(EXCLUDED.metadata->>'data_status', 'ready') NOT IN ({_TECHNICAL_STATES})"
+)
+_PROVEN_WORKFLOW = (
+    f"control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'policy_version' = $3 "
+    f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'eligible_at_link' = 'true'"
+)
+_RESET_WORKFLOW = (
+    f"{_WAS_DIAGNOSTIC} AND {_BECOMES_BUSINESS} AND NOT ({_PROVEN_WORKFLOW})"
+)
 
 _ROW_COLUMNS = """
     tenant_id text, workspace_id text, owner_user_id bigint, item_id text,
@@ -63,8 +51,7 @@ _ROW_COLUMNS = """
     priority_score integer, selected_option_id text, execution_status text
 """
 
-
-_SEMANTIC_UPDATE = """
+_SEMANTIC_UPDATE = f"""
     cartridge_id = EXCLUDED.cartridge_id,
     domain = EXCLUDED.domain,
     source_dataset = EXCLUDED.source_dataset,
@@ -75,19 +62,38 @@ _SEMANTIC_UPDATE = """
     entity_id = EXCLUDED.entity_id,
     entity_label = EXCLUDED.entity_label,
     anomaly_type = EXCLUDED.anomaly_type,
-    metadata = (control_room_items.metadata - $2::text[]) || EXCLUDED.metadata,
+    metadata = (
+        CASE WHEN {_RESET_WORKFLOW}
+             THEN $4::jsonb
+             ELSE control_room_items.metadata - $2::text[]
+        END
+    ) || EXCLUDED.metadata,
     impact_estimate = EXCLUDED.impact_estimate,
     impact_currency = EXCLUDED.impact_currency,
     confidence = EXCLUDED.confidence,
     priority_score = EXCLUDED.priority_score,
     owner_user_id = COALESCE(control_room_items.owner_user_id, EXCLUDED.owner_user_id),
+    decision_id = CASE WHEN {_RESET_WORKFLOW}
+                       THEN NULL ELSE control_room_items.decision_id END,
     last_seen_at = NOW()
 """
 
 _OWNER_CONFLICT_GUARD = """
 WHERE control_room_items.owner_user_id IS NULL
    OR control_room_items.owner_user_id = EXCLUDED.owner_user_id
+   OR $6::boolean
 """
+
+
+def parse_command_tag(result: Any, command: str) -> int | None:
+    text = str(result or "").strip()
+    parts = text.split()
+    if len(parts) < 2 or parts[0].upper() != command.upper():
+        return None
+    try:
+        return int(parts[-1])
+    except ValueError:
+        return None
 
 
 PERSIST_ITEMS_SQL = f"""
@@ -106,10 +112,15 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
        x.execution_status, NOW(), NOW()
   FROM jsonb_to_recordset($1::jsonb) AS x({_ROW_COLUMNS})
 ON CONFLICT (workspace_id, item_id) DO UPDATE
-SET {_SEMANTIC_UPDATE}
+SET {_SEMANTIC_UPDATE},
+    status = CASE WHEN {_RESET_WORKFLOW}
+                  THEN 'open' ELSE control_room_items.status END,
+    selected_option_id = CASE WHEN {_RESET_WORKFLOW}
+                              THEN NULL ELSE control_room_items.selected_option_id END,
+    execution_status = CASE WHEN {_RESET_WORKFLOW}
+                            THEN 'not_started' ELSE control_room_items.execution_status END
 {_OWNER_CONFLICT_GUARD}
 """
-
 
 ENSURE_ITEM_SQL = f"""
 INSERT INTO control_room_items (
@@ -129,30 +140,49 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
-        WHEN control_room_items.status = ANY($3::text[])
-        THEN control_room_items.status
+        WHEN {_RESET_WORKFLOW} THEN EXCLUDED.status
+        WHEN control_room_items.status = ANY($5::text[]) THEN control_room_items.status
         ELSE EXCLUDED.status
     END,
-    selected_option_id = COALESCE(
-        EXCLUDED.selected_option_id, control_room_items.selected_option_id
-    ),
-    execution_status = COALESCE(
-        EXCLUDED.execution_status, control_room_items.execution_status
-    )
+    selected_option_id = CASE
+        WHEN {_RESET_WORKFLOW} THEN NULL
+        ELSE COALESCE(EXCLUDED.selected_option_id, control_room_items.selected_option_id)
+    END,
+    execution_status = CASE
+        WHEN {_RESET_WORKFLOW} THEN 'not_started'
+        ELSE COALESCE(EXCLUDED.execution_status, control_room_items.execution_status)
+    END
 {_OWNER_CONFLICT_GUARD}
 """
+
+
+def _assert_count(result: Any, *, expected: int) -> None:
+    affected = parse_command_tag(result, "INSERT")
+    if affected is not None and affected != expected:
+        raise PersistenceCountMismatch(
+            f"control room item persistence affected {affected}/{expected} rows"
+        )
 
 
 async def persist_item_rows(
     conn: Any,
     rows: Sequence[Mapping[str, Any]],
+    *,
+    owner_scope_id: int | None = None,
+    workspace_wide: bool = False,
 ) -> None:
-    if rows:
-        await conn.execute(
-            PERSIST_ITEMS_SQL,
-            dumps_jsonb(list(rows)),
-            list(REPLACED_POLICY_KEYS),
-        )
+    if not rows:
+        return
+    result = await conn.execute(
+        PERSIST_ITEMS_SQL,
+        dumps_jsonb(list(rows)),
+        list(REPLACED_POLICY_KEYS),
+        ELIGIBILITY_POLICY_VERSION,
+        dumps_jsonb(quarantine_workflow_metadata({})),
+        list(()),
+        bool(workspace_wide),
+    )
+    _assert_count(result, expected=len(rows))
 
 
 async def ensure_item_row(
@@ -160,14 +190,19 @@ async def ensure_item_row(
     row: Mapping[str, Any],
     *,
     terminal_statuses: Sequence[str],
+    owner_scope_id: int | None = None,
+    workspace_wide: bool = False,
 ) -> None:
     result = await conn.execute(
         ENSURE_ITEM_SQL,
         dumps_jsonb(dict(row)),
         list(REPLACED_POLICY_KEYS),
+        ELIGIBILITY_POLICY_VERSION,
+        dumps_jsonb(quarantine_workflow_metadata({})),
         list(terminal_statuses),
+        bool(workspace_wide),
     )
-    if isinstance(result, str) and result.rsplit(" ", 1)[-1] == "0":
+    if parse_command_tag(result, "INSERT") == 0:
         raise OwnerScopeConflict("control room item owner scope mismatch")
 
 
@@ -175,6 +210,7 @@ __all__ = (
     "ENSURE_ITEM_SQL",
     "OwnerScopeConflict",
     "PERSIST_ITEMS_SQL",
+    "PersistenceCountMismatch",
     "REPLACED_POLICY_KEYS",
     "ensure_item_row",
     "persist_item_rows",

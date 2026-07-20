@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -35,14 +36,15 @@ class MutationSentinelPool:
     def _statement(query: str) -> str:
         return " ".join(str(query).split()).upper()
 
-    async def execute(self, query: str, *_args):
+    async def execute(self, query: str, *args):
         statement = self._statement(query)
         if statement.startswith("SELECT SET_CONFIG"):
             return None
         if statement.startswith(("INSERT ", "UPDATE ", "DELETE ")):
             self.mutation_attempts.append(statement)
             if self.allow_insert and statement.startswith("INSERT "):
-                return "INSERT 0 1"
+                payload = json.loads(args[0]) if args else []
+                return f"INSERT 0 {len(payload)}"
             raise AssertionError(f"DML attempted from read path: {statement[:80]}")
         raise AssertionError(f"unexpected execute: {statement[:80]}")
 

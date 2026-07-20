@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from app.services.control_room.business_policy_metadata import business_policy_metadata
 from app.services.control_room.business_projection import eligible_item_ids
 
 
@@ -80,6 +81,7 @@ def state_rows(
     impact_builder: ImpactBuilder,
     metadata_builder: MetadataBuilder,
     diagnostic_builder: DiagnosticBuilder,
+    owner_by_item: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     selected, duplicate_ids = canonical_items(items)
     business_ids = eligible_item_ids(
@@ -100,10 +102,11 @@ def state_rows(
             else {}
         )
         metadata = (
-            metadata_builder(persisted, impact)
+            business_policy_metadata(metadata_builder(persisted, impact), persisted)
             if eligible
             else diagnostic_builder(persisted)
         )
+        row_owner_id = dict(owner_by_item or {}).get(item_id, owner_user_id)
         rows.append(
             _row(
                 (
@@ -117,7 +120,7 @@ def state_rows(
                 ),
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
-                owner_user_id=owner_user_id,
+                owner_user_id=row_owner_id,
                 metadata=metadata,
                 impact=impact,
             )
