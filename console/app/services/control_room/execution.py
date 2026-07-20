@@ -166,13 +166,11 @@ def _priority_payload(
     *,
     eligible_parent_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
-        return {
-            "score": 0,
-            "band": "diagnostic",
-            "drivers": [],
-            "formula": "not_business_eligible",
-        }
+    blocked = blocked_priority_payload(
+        item, eligible_parent_ids=eligible_parent_ids
+    )
+    if blocked is not None:
+        return blocked
     impact = impact or _impact_for_item(item, eligible_parent_ids=eligible_parent_ids)
     score = int(impact.get("priority_score") or 0)
     drivers: list[dict[str, Any]] = [
@@ -222,18 +220,9 @@ def _priority_payload(
 def _impact_for_item(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> dict[str, Any]:
-    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
-        return {
-            "item_id": item.get("id"),
-            "status": "not_business_eligible",
-            "estimate": None,
-            "currency": None,
-            "confidence": 0.0,
-            "priority_score": 0,
-            "drivers": [],
-            "formula": "not_business_eligible",
-            "explanation": "Diagnostic items do not receive business impact estimates.",
-        }
+    blocked = blocked_impact_payload(item, eligible_parent_ids=eligible_parent_ids)
+    if blocked is not None:
+        return blocked
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
 
     stored = _num(item.get("impact_estimate"))
@@ -431,7 +420,7 @@ def _impact_for_item(
 def _template_ids_for_item(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> list[str]:
-    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
         return []
     anomaly_type = str(item.get("anomaly_type") or "")
     cartridge = str(item.get("cartridge") or "")
@@ -463,7 +452,7 @@ def _template_ids_for_item(
 def _action_templates_for_item(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> list[dict[str, Any]]:
-    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
         return []
     return [
         _template_with_writeback(ACTION_TEMPLATES[template_id])
@@ -478,7 +467,7 @@ def _action_templates_for_item(
 def _primary_template_for_item(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> dict[str, Any]:
-    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
         return {}
     templates = _action_templates_for_item(
         item, eligible_parent_ids=eligible_parent_ids

@@ -283,27 +283,3 @@ def test_validated_parent_context_survives_builders_without_serializing():
     assert template["template_id"]
     assert metadata["parent_item_id"] == "parent-1"
     assert "eligible_parent" not in json.dumps(projected)
-
-
-@pytest.mark.asyncio
-async def test_lessons_exclude_ineligible_historical_parent():
-    lessons = [
-        {"id": 1, "item_id": "source-state-1", "rule": "technical"},
-        {"id": 2, "item_id": "business-1", "rule": "business"},
-    ]
-    with (
-        patch.object(
-            control_room_service,
-            "_load_lesson_rows",
-            new=AsyncMock(return_value=lessons),
-        ),
-        patch.object(
-            control_room_service,
-            "_persisted_business_items",
-            new=AsyncMock(return_value=[_business_item()]),
-        ),
-    ):
-        result = await control_room_service.list_lessons(USER)
-
-    assert [lesson["id"] for lesson in result["lessons"]] == [2]
-    assert result["summary"]["total"] == 1

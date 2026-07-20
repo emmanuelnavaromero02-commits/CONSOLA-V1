@@ -180,3 +180,35 @@ def test_physical_parent_context_survives_a_second_projection():
     projected_child = next(item for item in first if item["id"] == "child")
 
     assert filter_business_items([projected_child]) == [dict(projected_child)]
+
+
+@pytest.mark.asyncio
+async def test_lessons_exclude_ineligible_historical_parent():
+    lessons = [
+        {"id": 1, "item_id": "source-state-1", "rule": "technical"},
+        {"id": 2, "item_id": "business-1", "rule": "business"},
+    ]
+    business_item = {
+        "id": "business-1",
+        "kind": "anomaly",
+        "source_dataset": "employees_anomalies",
+        "observed_value": 1,
+        "observation_date": "2026-07-16",
+        "evidence_refs": ["employees_anomalies:business-1"],
+    }
+    with (
+        patch.object(
+            control_room_service,
+            "_load_lesson_rows",
+            new=AsyncMock(return_value=lessons),
+        ),
+        patch.object(
+            control_room_service,
+            "_persisted_business_items",
+            new=AsyncMock(return_value=[business_item]),
+        ),
+    ):
+        result = await control_room_service.list_lessons(USER)
+
+    assert [lesson["id"] for lesson in result["lessons"]] == [2]
+    assert result["summary"]["total"] == 1

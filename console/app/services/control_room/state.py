@@ -594,12 +594,9 @@ def _decision_intelligence_for_item(item: dict[str, Any]) -> dict[str, Any]:
 def _with_omega(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> dict[str, Any]:
-    if eligible_parent_ids is None:
-        eligible_parent_ids = business_parent_context(item)
-    if not classify_business_item(
-        item, eligible_parent_ids=eligible_parent_ids
-    ).eligible:
-        return strip_business_fields(item)
+    eligible_parent_ids = projection_context(item, eligible_parent_ids)
+    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
+        return diagnostic_projection(item)
     decision_id = item.get("decision_id")
     status = item.get("status") or "open"
     approved = status == "approved"
@@ -936,99 +933,11 @@ def _alert_state(item: dict[str, Any]) -> dict[str, Any]:
 
 @_bind_to_core
 def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str, Any]:
-    existing = _details(item.get("metadata"))
-    existing_details = _details(existing.get("details"))
-    item_details = _details(item.get("details"))
-    metadata = {
-        **existing,
-        "module": item.get("module"),
-        "description": item.get("description"),
-        "recommendation": item.get("recommendation"),
-        "root_cause": item.get("root_cause"),
-        "impact": item.get("impact"),
-        "details": {**existing_details, **item_details},
-        "sql": item.get("sql"),
-        "impact_payload": impact,
-        "thresholds_applied": item.get("thresholds_applied") or [],
-        "threshold_state": item.get("threshold_state") or "default",
-    }
-    for key in (
-        "source_system",
-        "dataset",
-        "gold_table",
-        "freshness_at",
-        "freshness_field",
-        "data_status",
-        "item_kind",
-        "data_readiness",
-        "evaluation_status",
-        "readiness_status",
-        "source_status",
-        "parent_item_id",
-        "source_item_id",
-        "derived_from",
-        "control_origin",
-        "advisory",
-        "hypothesis",
-        "expected_outcome",
-        *BUSINESS_OBSERVATION_FIELDS,
-        *BUSINESS_MATERIALIZATION_FIELDS,
-    ):
-        if key in item and not (
-            key == "item_kind"
-            and str(metadata.get(key) or "").strip().lower() == "source_state"
-        ):
-            metadata[key] = item.get(key)
-    for key in (
-        "capabilities",
-        "priority",
-        "math_provenance",
-        "monte_carlo",
-        "bayesian_calibration",
-        "lineage",
-    ):
-        value = item.get(key)
-        if isinstance(value, dict) and value:
-            metadata[key] = value
-    for key in BUSINESS_EVIDENCE_FIELDS:
-        value = item.get(key)
-        if isinstance(value, (dict, list, tuple)) and value:
-            metadata[key] = value
-    alert_state = (
-        item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    return business_item_metadata(
+        item,
+        impact,
+        decision_intelligence=_decision_intelligence_for_item,
     )
-    if alert_state:
-        metadata["alert_state"] = alert_state
-    control_state = (
-        item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
-    )
-    if control_state:
-        metadata["control_state"] = control_state
-    learned_rules = (
-        item.get("learned_rules") if isinstance(item.get("learned_rules"), list) else []
-    )
-    if learned_rules:
-        metadata["learned_rules"] = learned_rules[:10]
-    lessons = item.get("lessons") if isinstance(item.get("lessons"), list) else []
-    if lessons:
-        metadata["lessons"] = lessons[:10]
-    lesson_applications = (
-        item.get("lesson_applications")
-        if isinstance(item.get("lesson_applications"), list)
-        else []
-    )
-    if lesson_applications:
-        metadata["lesson_applications"] = lesson_applications[:20]
-    intelligence = (
-        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
-    )
-    decision_intelligence = _decision_intelligence_for_item(item)
-    if decision_intelligence:
-        metadata["decision_intelligence"] = decision_intelligence
-        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
-    if intelligence:
-        metadata["intelligence"] = intelligence
-    return with_observation_envelope(metadata, item)
 
 
 @_bind_to_core
@@ -1054,7 +963,7 @@ def _alert_message(item: dict[str, Any], alert_type: str) -> str:
 def _alert_for_item(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> dict[str, Any] | None:
-    if not classify_business_item(item, eligible_parent_ids=eligible_parent_ids).eligible:
+    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
         return None
     if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
         return None
@@ -1380,138 +1289,12 @@ async def _persisted_item_for_mutation(
     row = await _run_with_db_scope(pool, user, _load)
     if not row:
         return None
-    try:
-        row_item_id = row["item_id"]
-    except Exception:
-        return None
-    if row_item_id != item_id:
-        return None
-    public_row = _row_to_public(row)
-    metadata = _details(public_row.get("metadata"))
-    severity = _severity(public_row["severity"])
-    status = str(public_row["status"] or "open")
-    if status not in ITEM_STATUSES:
-        status = "open"
-    escaped_item_id = item_id.replace("'", "''")
-    intelligence = (
-        metadata.get("intelligence")
-        if isinstance(metadata.get("intelligence"), dict)
-        else {}
+    return persisted_business_item(
+        row,
+        expected_item_id=item_id,
+        item_statuses=ITEM_STATUSES,
+        severity_weights=SEVERITY_WEIGHT,
     )
-    decision_intelligence = metadata.get("decision_intelligence")
-    if not isinstance(decision_intelligence, dict):
-        decision_intelligence = intelligence.get("decision_intelligence")
-    if not isinstance(decision_intelligence, dict):
-        decision_intelligence = {}
-    if decision_intelligence:
-        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
-    item = {
-        "id": public_row["item_id"],
-        "kind": public_row["item_kind"],
-        "item_kind": metadata.get("item_kind") or public_row["item_kind"],
-        "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
-        "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
-        "owner_user_id": public_row.get("owner_user_id"),
-        "domain": public_row["domain"],
-        "module": metadata.get("module") or public_row["cartridge_id"],
-        "cartridge": public_row["cartridge_id"],
-        "source_dataset": public_row["source_dataset"],
-        "source_system": metadata.get("source_system")
-        or public_row["cartridge_id"],
-        "dataset": metadata.get("dataset") or public_row["source_dataset"],
-        "gold_table": metadata.get("gold_table"),
-        "freshness_at": metadata.get("freshness_at"),
-        "freshness_field": metadata.get("freshness_field"),
-        "data_status": metadata.get("data_status"),
-        "data_readiness": metadata.get("data_readiness"),
-        "evaluation_status": metadata.get("evaluation_status"),
-        "readiness_status": metadata.get("readiness_status"),
-        "source_status": metadata.get("source_status"),
-        **{
-            key: metadata.get(key)
-            for key in (
-                *BUSINESS_OBSERVATION_FIELDS,
-                *BUSINESS_MATERIALIZATION_FIELDS,
-                "parent_item_id",
-                "source_item_id",
-                "derived_from",
-            )
-            if key in metadata
-        },
-        "metadata": metadata,
-        **nonempty_mapping_fields(metadata, ("lineage",)),
-        "evidence": metadata.get("evidence"),
-        "evidence_pack": metadata.get("evidence_pack"),
-        "evidence_refs": metadata.get("evidence_refs"),
-        "entity_kind": public_row["entity_kind"] or "Entidad",
-        "entity_id": public_row["entity_id"] or "",
-        "entity_label": public_row["entity_label"]
-        or public_row["entity_id"]
-        or public_row["source_dataset"]
-        or "Entidad",
-        "anomaly_type": public_row["anomaly_type"] or "control_room_item",
-        "severity": severity,
-        "severity_weight": SEVERITY_WEIGHT[severity],
-        "detected_at": metadata.get("detected_at") or "",
-        "details": metadata.get("details")
-        if isinstance(metadata.get("details"), dict)
-        else {},
-        "title": public_row["title"],
-        "description": metadata.get("description") or public_row["title"],
-        "recommendation": metadata.get("recommendation")
-        or "Revisar, decidir y registrar evidencia.",
-        "root_cause": metadata.get("root_cause")
-        or "Senal persistida en Sala de Control.",
-        "impact": metadata.get("impact") or "Riesgo operativo.",
-        "sql": metadata.get("sql")
-        or f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'",
-        "status": status,
-        "decision_id": public_row["decision_id"],
-        "impact_estimate": public_row.get("impact_estimate"),
-        "impact_currency": public_row.get("impact_currency"),
-        "confidence": public_row.get("confidence"),
-        "priority_score": public_row.get("priority_score"),
-        "thresholds_applied": metadata.get("thresholds_applied") or [],
-        "threshold_state": metadata.get("threshold_state") or "default",
-        "control_origin": metadata.get("control_origin"),
-        "capabilities": metadata.get("capabilities")
-        if isinstance(metadata.get("capabilities"), dict)
-        else {},
-        "math_provenance": metadata.get("math_provenance")
-        if isinstance(metadata.get("math_provenance"), dict)
-        else {},
-        "monte_carlo": metadata.get("monte_carlo")
-        if isinstance(metadata.get("monte_carlo"), dict)
-        else {},
-        "bayesian_calibration": metadata.get("bayesian_calibration")
-        if isinstance(metadata.get("bayesian_calibration"), dict)
-        else {},
-        "priority": metadata.get("priority")
-        if isinstance(metadata.get("priority"), dict)
-        else {},
-        "selected_option_id": public_row.get("selected_option_id")
-        or metadata.get("selected_option_id"),
-        "execution_status": public_row.get("execution_status")
-        or metadata.get("execution_status"),
-        "alert_state": metadata.get("alert_state")
-        if isinstance(metadata.get("alert_state"), dict)
-        else {},
-        "control_state": metadata.get("control_state")
-        if isinstance(metadata.get("control_state"), dict)
-        else {},
-        "lessons": metadata.get("lessons"),
-        "learned_rules": metadata.get("learned_rules"),
-        "lesson_applications": metadata.get("lesson_applications")
-        if isinstance(metadata.get("lesson_applications"), list)
-        else [],
-        "decision_intelligence": decision_intelligence,
-        "intelligence": intelligence,
-        "first_seen_at": public_row.get("first_seen_at"),
-        "last_seen_at": public_row.get("last_seen_at"),
-        "resolved_at": public_row.get("resolved_at"),
-        "dismissed_at": public_row.get("dismissed_at"),
-    }
-    return project_business_item(item)
 
 
 @_bind_to_core
