@@ -71,27 +71,41 @@ _STRUCTURED_POLICY_FIELDS = frozenset(
     }
 )
 LEGACY_FLAT_ENVELOPE_FIELDS = POLICY_FIELDS
+EXPLICIT_SEMANTIC_SURFACE_PATHS = (
+    (),
+    ("details",),
+    ("metadata",),
+    ("metadata", "details"),
+    ("observation",),
+    ("metadata", "observation"),
+    ("intelligence",),
+    ("intelligence", "signal"),
+    ("metadata", "intelligence"),
+    ("metadata", "intelligence", "signal"),
+)
+METADATA_SEMANTIC_SURFACE_PATHS = tuple(
+    path[1:]
+    for path in EXPLICIT_SEMANTIC_SURFACE_PATHS
+    if path and path[0] == "metadata"
+)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _surface_at_path(
+    item: Mapping[str, Any], path: tuple[str, ...]
+) -> Mapping[str, Any]:
+    surface = item
+    for key in path:
+        surface = _mapping(surface.get(key))
+    return surface
+
+
 def _explicit_surfaces(item: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-    metadata = _mapping(item.get("metadata"))
-    intelligence = _mapping(item.get("intelligence"))
-    metadata_intelligence = _mapping(metadata.get("intelligence"))
-    return (
-        item,
-        _mapping(item.get("details")),
-        metadata,
-        _mapping(metadata.get("details")),
-        _mapping(item.get("observation")),
-        _mapping(metadata.get("observation")),
-        intelligence,
-        _mapping(intelligence.get("signal")),
-        metadata_intelligence,
-        _mapping(metadata_intelligence.get("signal")),
+    return tuple(
+        _surface_at_path(item, path) for path in EXPLICIT_SEMANTIC_SURFACE_PATHS
     )
 
 
@@ -205,8 +219,10 @@ def nonempty_mapping_fields(
 __all__ = (
     "ENVELOPE_KEY",
     "ENVELOPE_VERSION",
+    "EXPLICIT_SEMANTIC_SURFACE_PATHS",
     "INVALID_ENVELOPE_FIELD",
     "LEGACY_FLAT_ENVELOPE_FIELDS",
+    "METADATA_SEMANTIC_SURFACE_PATHS",
     "nonempty_mapping_fields",
     "observation_envelope",
     "persisted_claims",

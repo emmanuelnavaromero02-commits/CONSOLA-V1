@@ -5,6 +5,7 @@ from typing import Any
 
 from app.services.control_room.business_observation_codec import (
     ENVELOPE_KEY,
+    METADATA_SEMANTIC_SURFACE_PATHS,
     POLICY_FIELDS,
     with_observation_envelope,
 )
@@ -36,8 +37,58 @@ def _without_policy_fields(values: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _clean_surface_path(
+    values: Mapping[str, Any], path: tuple[str, ...]
+) -> dict[str, Any]:
+    if not path:
+        return _without_policy_fields(values)
+    clean = dict(values)
+    child = values.get(path[0])
+    if isinstance(child, Mapping):
+        clean[path[0]] = _clean_surface_path(child, path[1:])
+    return clean
+
+
+def _clean_metadata_surfaces(values: Mapping[str, Any]) -> dict[str, Any]:
+    clean = dict(values)
+    for path in METADATA_SEMANTIC_SURFACE_PATHS:
+        clean = _clean_surface_path(clean, path)
+    return clean
+
+
+def _jsonb_path(path: tuple[str, ...]) -> str:
+    return "'{" + ",".join(path) + "}'"
+
+
+def _clean_jsonb_surface(
+    column: str, path: tuple[str, ...], keys_parameter: str
+) -> str:
+    source = column if not path else f"({column} #> {_jsonb_path(path)})"
+    clean = f"({source} - {keys_parameter}::text[])"
+    children = sorted(
+        {
+            candidate[len(path)]
+            for candidate in METADATA_SEMANTIC_SURFACE_PATHS
+            if len(candidate) > len(path) and candidate[: len(path)] == path
+        }
+    )
+    for child in children:
+        child_path = (*path, child)
+        original_child = f"({column} #> {_jsonb_path(child_path)})"
+        cleaned_child = _clean_jsonb_surface(column, child_path, keys_parameter)
+        replacement = (
+            f"CASE WHEN jsonb_typeof({original_child}) = 'object' "
+            f"THEN {cleaned_child} ELSE COALESCE({original_child}, 'null'::jsonb) END"
+        )
+        clean = f"jsonb_set({clean}, {_jsonb_path((child,))}, {replacement}, false)"
+    return clean
+
+
 def diagnostic_policy_sql(column: str) -> str:
-    surfaces = (column, f"{column}->'details'")
+    surfaces = tuple(
+        column if not path else f"({column} #> {_jsonb_path(path)})"
+        for path in METADATA_SEMANTIC_SURFACE_PATHS
+    )
     states = ",".join(f"'{value}'" for value in sorted(TECHNICAL_STATES))
     checks = [
         f"lower(COALESCE({surface}->>'{field}', '')) = 'source_state'"
@@ -53,13 +104,7 @@ def diagnostic_policy_sql(column: str) -> str:
 
 
 def policy_metadata_without_fields_sql(column: str, keys_parameter: str) -> str:
-    top = f"({column} - {keys_parameter}::text[])"
-    details = f"(({column}->'details') - {keys_parameter}::text[])"
-    return (
-        f"(CASE WHEN jsonb_typeof({column}->'details') = 'object' "
-        f"THEN ({top} - 'details') || jsonb_build_object('details', {details}) "
-        f"ELSE {top} END)"
-    )
+    return _clean_jsonb_surface(column, (), keys_parameter)
 
 
 def business_policy_metadata(
@@ -67,10 +112,7 @@ def business_policy_metadata(
     item: Mapping[str, Any],
 ) -> dict[str, Any]:
     original = dict(metadata or {})
-    clean = _without_policy_fields(original)
-    existing_details = original.get("details")
-    if isinstance(existing_details, Mapping):
-        clean["details"] = _without_policy_fields(existing_details)
+    clean = _clean_metadata_surfaces(original)
     for key in POLICY_METADATA_FIELDS:
         if key not in item:
             continue

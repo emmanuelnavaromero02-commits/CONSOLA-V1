@@ -1,12 +1,14 @@
 from app.services.control_room.business_observation_codec import (
     ENVELOPE_KEY,
     INVALID_ENVELOPE_FIELD,
+    METADATA_SEMANTIC_SURFACE_PATHS,
     POLICY_FIELDS,
 )
 from app.services.control_room.business_policy_metadata import (
     REPLACED_POLICY_KEYS,
     business_policy_metadata,
     diagnostic_policy_sql,
+    policy_metadata_without_fields_sql,
 )
 
 
@@ -80,6 +82,42 @@ def test_nested_technical_metadata_is_replaced_but_safe_details_survive():
     assert not POLICY_FIELDS.intersection(clean["details"])
 
 
+def test_all_nested_semantic_surfaces_are_cleaned_without_erasing_safe_content():
+    metadata = {
+        "observation": {
+            "item_kind": "source_state",
+            "data_status": "missing",
+            "safe_observation": "keep",
+        },
+        "intelligence": {
+            "kind": "source_state",
+            "source_status": "blocked",
+            "safe_intelligence": "keep",
+            "signal": {
+                "item_kind": "source_state",
+                "readiness_status": "insufficient_data",
+                "safe_signal": "keep",
+            },
+        },
+    }
+
+    clean = business_policy_metadata(metadata, _business_item())
+
+    assert clean["observation"] == {"safe_observation": "keep"}
+    assert clean["intelligence"] == {
+        "safe_intelligence": "keep",
+        "signal": {"safe_signal": "keep"},
+    }
+    surfaces = (
+        clean["observation"],
+        clean["intelligence"],
+        clean["intelligence"]["signal"],
+    )
+    assert all(not POLICY_FIELDS.intersection(surface) for surface in surfaces)
+    assert clean["kind"] == "anomaly"
+    assert clean.get("item_kind") != "source_state"
+
+
 def test_diagnostic_sql_covers_canonical_top_level_and_nested_surfaces():
     sql = diagnostic_policy_sql("items.metadata")
 
@@ -92,5 +130,19 @@ def test_diagnostic_sql_covers_canonical_top_level_and_nested_surfaces():
         "readiness_status",
         "source_status",
     ):
-        assert f"items.metadata->>'{field}'" in sql
-        assert f"items.metadata->'details'->>'{field}'" in sql
+        for path in METADATA_SEMANTIC_SURFACE_PATHS:
+            surface = (
+                "items.metadata"
+                if not path
+                else f"(items.metadata #> '{{{','.join(path)}}}')"
+            )
+            assert f"{surface}->>'{field}'" in sql
+
+
+def test_cleanup_sql_covers_every_nested_metadata_semantic_surface():
+    sql = policy_metadata_without_fields_sql("items.metadata", "$2")
+
+    for path in METADATA_SEMANTIC_SURFACE_PATHS:
+        if path:
+            assert f"items.metadata #> '{{{','.join(path)}}}'" in sql
+    assert "$2::text[]" in sql

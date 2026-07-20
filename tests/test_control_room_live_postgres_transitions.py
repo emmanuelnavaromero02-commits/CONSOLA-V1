@@ -135,6 +135,21 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             json.dumps(
                 {
                     ENVELOPE_KEY: {"version": 99, "claims": []},
+                    "observation": {
+                        "item_kind": "source_state",
+                        "data_status": "missing",
+                        "safe_observation": "keep",
+                    },
+                    "intelligence": {
+                        "kind": "source_state",
+                        "source_status": "blocked",
+                        "safe_intelligence": "keep",
+                        "signal": {
+                            "item_kind": "source_state",
+                            "readiness_status": "insufficient_data",
+                            "safe_signal": "keep",
+                        },
+                    },
                     "details": {
                         INVALID_ENVELOPE_FIELD: True,
                         "count": 0,
@@ -196,6 +211,11 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         assert "details" not in transitioned_metadata
         assert transitioned_metadata["kind"] == "anomaly"
         assert transitioned_metadata["source_dataset"] == "gold_people"
+        assert transitioned_metadata["observation"] == {"safe_observation": "keep"}
+        assert transitioned_metadata["intelligence"] == {
+            "safe_intelligence": "keep",
+            "signal": {"safe_signal": "keep"},
+        }
         assert transitioned_metadata[ENVELOPE_KEY]["version"] == 1
         assert INVALID_ENVELOPE_FIELD not in {
             key
