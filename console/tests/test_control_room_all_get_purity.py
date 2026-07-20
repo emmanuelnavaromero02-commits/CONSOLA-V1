@@ -131,7 +131,7 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
     sentinel = MutationSentinel()
     before = sentinel.snapshot()
     probe = ConcurrencyProbe()
-    app = build_app()
+    app = build_app(probe)
     routes._CONTROL_ROOM_READ_CACHE.clear()
     routes._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
     transport = httpx.ASGITransport(app=app)
@@ -142,10 +142,14 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
             transport=transport,
             base_url="http://test",
         ) as client:
-            for case in GET_CASES:
+            for index, case in enumerate(GET_CASES):
                 path = case["path"]
-                first = await client.get(path)
-                second = await client.get(path)
+                first = await client.get(
+                    path, headers={"x-purity-request": f"route-{index}-sequential-a"}
+                )
+                second = await client.get(
+                    path, headers={"x-purity-request": f"route-{index}-sequential-b"}
+                )
                 seen_paths.append(path)
                 assert first.status_code == case["status"], (path, first.text)
                 assert second.status_code == first.status_code
@@ -154,25 +158,41 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
                 assert _stable_response(first_payload) == _stable_response(
                     second.json()
                 )
+                routes._CONTROL_ROOM_READ_CACHE.clear()
+                routes._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
+                probe.reset()
+                probe.enabled = True
+                concurrent_a, concurrent_b = await asyncio.gather(
+                    client.get(
+                        path,
+                        headers={"x-purity-request": f"route-{index}-concurrent-a"},
+                    ),
+                    client.get(
+                        path,
+                        headers={"x-purity-request": f"route-{index}-concurrent-b"},
+                    ),
+                )
+                probe.enabled = False
+                assert concurrent_a.status_code == case["status"], (
+                    path,
+                    concurrent_a.text,
+                )
+                assert concurrent_b.status_code == case["status"], (
+                    path,
+                    concurrent_b.text,
+                )
+                assert case["invariant"](concurrent_a.json()), path
+                assert _stable_response(concurrent_a.json()) == _stable_response(
+                    concurrent_b.json()
+                )
+                assert probe.max_in_flight >= 2, path
 
-            probe.enabled = True
-            first, second = await asyncio.gather(
-                client.get(
-                    "/api/control-room/dashboard",
-                    headers={"x-purity-request": "request-a"},
-                ),
-                client.get(
-                    "/api/control-room/dashboard",
-                    headers={"x-purity-request": "request-b"},
-                ),
-            )
-
-    assert first.status_code == 200
-    assert second.status_code == 200
     assert len(seen_paths) == 29
-    assert probe.max_in_flight >= 2
     assert sentinel.snapshot() == before
     assert sentinel.mutation_attempts == []
-    request_ids = {entry[0] for entry in sentinel.scope_calls}
-    assert {"request-a", "request-b"}.issubset(request_ids)
+    scoped_request_ids = {entry[0] for entry in sentinel.scope_calls}
     assert all(entry[1:] == (TENANT_ID, WORKSPACE_ID) for entry in sentinel.scope_calls)
+    assert sentinel.query_calls
+    for request_id, statement, query_scope in sentinel.query_calls:
+        assert request_id in scoped_request_ids, statement
+        assert query_scope == (TENANT_ID, WORKSPACE_ID), (request_id, statement)

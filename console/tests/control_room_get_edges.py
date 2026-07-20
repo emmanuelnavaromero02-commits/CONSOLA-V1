@@ -33,7 +33,6 @@ def _async_value(value):
 @contextmanager
 def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
     async def dataset_fetcher(dataset: str, _user, _limit: int):
-        await probe.checkpoint()
         if dataset == "employees_anomalies":
             return [
                 {

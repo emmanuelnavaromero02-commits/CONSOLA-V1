@@ -30,6 +30,9 @@ ITEM_ID = routes.control_room_service._encode_id(
     }
 )
 _REQUEST_ID: ContextVar[str] = ContextVar("purity_request_id", default="")
+_QUERY_SCOPE: ContextVar[tuple[str, str] | None] = ContextVar(
+    "purity_query_scope", default=None
+)
 _MUTATING_SQL = re.compile(
     r"\b(?:INSERT|UPDATE|DELETE|MERGE|CALL|TRUNCATE|CREATE|ALTER|DROP|COPY)\b",
     re.I,
@@ -105,6 +108,7 @@ class MutationSentinel:
         }
         self.mutation_attempts: list[str] = []
         self.scope_calls: list[tuple[str, str, str]] = []
+        self.query_calls: list[tuple[str, str, tuple[str, str] | None]] = []
 
     def snapshot(self) -> dict[str, list[dict[str, Any]]]:
         return deepcopy(self.tables)
@@ -120,14 +124,22 @@ class MutationSentinel:
             raise AssertionError(f"mutation attempted from GET: {statement[:120]}")
         return statement
 
+    def _record_query(self, statement: str) -> None:
+        self.query_calls.append((_REQUEST_ID.get(), statement, _QUERY_SCOPE.get()))
+
     async def execute(self, query: str, *args):
         statement = self._reject_mutation(query)
         if statement.upper().startswith("SELECT SET_CONFIG"):
-            self.scope_calls.append((_REQUEST_ID.get(), str(args[0]), str(args[1])))
+            scope = (str(args[0]), str(args[1]))
+            _QUERY_SCOPE.set(scope)
+            self.scope_calls.append((_REQUEST_ID.get(), *scope))
+        else:
+            self._record_query(statement)
         return None
 
     async def fetch(self, query: str, *args):
         statement = self._reject_mutation(query)
+        self._record_query(statement)
         if "FROM cartridge_installations ci" in statement:
             return [
                 {
@@ -161,6 +173,7 @@ class MutationSentinel:
 
     async def fetchrow(self, query: str, *args):
         statement = self._reject_mutation(query)
+        self._record_query(statement)
         if "FROM intelligence_runs" in statement:
             return deepcopy(self.tables["intelligence_runs"][0])
         rows = await self.fetch(query, *args)
@@ -168,6 +181,7 @@ class MutationSentinel:
 
     async def fetchval(self, query: str, *_args):
         statement = self._reject_mutation(query)
+        self._record_query(statement)
         if "COUNT" in statement.upper():
             return 0
         return None
@@ -212,6 +226,11 @@ class ConcurrencyProbe:
         self.max_in_flight = 0
         self.release = asyncio.Event()
 
+    def reset(self) -> None:
+        self.active_requests.clear()
+        self.max_in_flight = 0
+        self.release = asyncio.Event()
+
     async def checkpoint(self) -> None:
         if not self.enabled:
             return
@@ -225,16 +244,20 @@ class ConcurrencyProbe:
         self.active_requests.discard(request_id)
 
 
-def build_app() -> FastAPI:
+def build_app(probe: ConcurrencyProbe | None = None) -> FastAPI:
     app = FastAPI()
 
     @app.middleware("http")
     async def _identity(request: Request, call_next):
         request.state.user = USER
         token = _REQUEST_ID.set(request.headers.get("x-purity-request", "sequential"))
+        scope_token = _QUERY_SCOPE.set(None)
         try:
+            if probe is not None:
+                await probe.checkpoint()
             return await call_next(request)
         finally:
+            _QUERY_SCOPE.reset(scope_token)
             _REQUEST_ID.reset(token)
 
     app.include_router(routes.router)
