@@ -193,9 +193,7 @@ def test_agentops_global_calibration_is_operational_diagnostic_not_business_coun
         "runs": [],
         "alert_rows": [],
         "origin_rows": [],
-        "monte_carlo_rows": [
-            {"source_type": "signal", "total": 2, "latest_at": now}
-        ],
+        "monte_carlo_rows": [{"source_type": "signal", "total": 2, "latest_at": now}],
         "operational_calibration_rows": [
             {"total": 3, "sample_count": 21, "latest_at": now}
         ],
