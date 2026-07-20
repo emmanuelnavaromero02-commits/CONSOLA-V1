@@ -116,7 +116,8 @@ class LegacyTechnicalConnection(TransactionalConnection):
                     },
                 }
             )
-        return None
+            return "INSERT 0 1"
+        return await super().execute(sql, *args)
 
     async def fetchrow(self, sql: str, *args):
         normalized = " ".join(sql.split()).upper()

@@ -6,8 +6,11 @@ from app.services.control_room.business_item_persistence import (
 )
 from app.services.control_room.business_policy_metadata import business_policy_metadata
 from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
+    business_observation_fingerprint,
     decision_eligibility_provenance,
+    persistence_metadata,
     workflow_has_eligible_provenance,
 )
 from app.services.control_room.business_observation_codec import INVALID_ENVELOPE_FIELD
@@ -70,6 +73,48 @@ def test_persist_sql_resets_unproven_workflow_on_diagnostic_transition():
 
 
 def test_eligible_decision_provenance_is_machine_checkable():
-    provenance = decision_eligibility_provenance(_business_item(), decision_id=42)
+    item = _business_item()
+    provenance = decision_eligibility_provenance(item, decision_id=42)
     assert provenance["eligible_at_link"] is True
-    assert workflow_has_eligible_provenance({DECISION_PROVENANCE_KEY: provenance})
+    assert workflow_has_eligible_provenance({DECISION_PROVENANCE_KEY: provenance}, item)
+
+
+def test_workflow_provenance_must_match_current_item_identity_and_fingerprint():
+    item = _business_item()
+    provenance = decision_eligibility_provenance(item)
+    metadata = {DECISION_PROVENANCE_KEY: provenance}
+
+    assert workflow_has_eligible_provenance(metadata, item)
+    assert not workflow_has_eligible_provenance(metadata, {**item, "id": "other"})
+    assert not workflow_has_eligible_provenance(metadata, {**item, "kind": "signal"})
+    assert not workflow_has_eligible_provenance(metadata, {**item, "observed_value": 2})
+
+
+def test_persistence_metadata_uses_current_fingerprint_and_drops_incoming_links():
+    item = _business_item()
+    item["metadata"] = {
+        DECISION_PROVENANCE_KEY: {"item_id": "foreign"},
+        "decision_provenance": {"decision_id": 99},
+        "safe": "keep",
+    }
+
+    metadata = persistence_metadata(item)
+
+    assert metadata[CURRENT_ELIGIBILITY_FINGERPRINT_KEY] == (
+        business_observation_fingerprint(item)
+    )
+    assert metadata["safe"] == "keep"
+    assert DECISION_PROVENANCE_KEY not in metadata
+    assert "decision_provenance" not in metadata
+
+
+def test_persist_sql_matches_all_provenance_fields_to_current_item():
+    for field in (
+        "policy_version",
+        "eligible_at_link",
+        "item_id",
+        "kind",
+        "fingerprint",
+    ):
+        assert f"->>'{field}'" in PERSIST_ITEMS_SQL
+    assert CURRENT_ELIGIBILITY_FINGERPRINT_KEY in PERSIST_ITEMS_SQL

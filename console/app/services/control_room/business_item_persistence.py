@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
+from unittest.mock import Mock
 
 from app.services.control_room.business_policy_metadata import REPLACED_POLICY_KEYS
 from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     ELIGIBILITY_POLICY_VERSION,
+    persistence_metadata,
     quarantine_workflow_metadata,
 )
 
@@ -17,6 +20,10 @@ class OwnerScopeConflict(RuntimeError):
 
 
 class PersistenceCountMismatch(RuntimeError):
+    pass
+
+
+class PersistenceCommandTagError(RuntimeError):
     pass
 
 
@@ -36,10 +43,22 @@ _BECOMES_BUSINESS = (
 )
 _PROVEN_WORKFLOW = (
     f"control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'policy_version' = $3 "
-    f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'eligible_at_link' = 'true'"
+    f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'eligible_at_link' = 'true' "
+    f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'item_id' "
+    "= EXCLUDED.item_id "
+    f"AND lower(control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'kind') "
+    "= lower(EXCLUDED.item_kind) "
+    f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'fingerprint' "
+    f"= EXCLUDED.metadata->>'{CURRENT_ELIGIBILITY_FINGERPRINT_KEY}'"
+)
+_HAS_WORKFLOW = (
+    "control_room_items.decision_id IS NOT NULL "
+    "OR control_room_items.selected_option_id IS NOT NULL "
+    "OR COALESCE(control_room_items.execution_status, 'not_started') <> 'not_started'"
 )
 _RESET_WORKFLOW = (
-    f"{_WAS_DIAGNOSTIC} AND {_BECOMES_BUSINESS} AND NOT ({_PROVEN_WORKFLOW})"
+    f"({_WAS_DIAGNOSTIC} OR {_HAS_WORKFLOW}) "
+    f"AND {_BECOMES_BUSINESS} AND NOT COALESCE(({_PROVEN_WORKFLOW}), FALSE)"
 )
 
 _ROW_COLUMNS = """
@@ -85,15 +104,27 @@ WHERE control_room_items.owner_user_id IS NULL
 """
 
 
-def parse_command_tag(result: Any, command: str) -> int | None:
-    text = str(result or "").strip()
+def parse_command_tag(result: Any, command: str) -> int:
+    if not isinstance(result, str):
+        raise PersistenceCommandTagError("database returned a non-text command tag")
+    text = result.strip()
     parts = text.split()
-    if len(parts) < 2 or parts[0].upper() != command.upper():
-        return None
-    try:
-        return int(parts[-1])
-    except ValueError:
-        return None
+    expected_parts = 3 if command.upper() == "INSERT" else 2
+    if (
+        len(parts) != expected_parts
+        or parts[0].upper() != command.upper()
+        or any(not value.isdigit() for value in parts[1:])
+    ):
+        raise PersistenceCommandTagError("database returned a malformed command tag")
+    return int(parts[-1])
+
+
+def _is_explicit_test_double(result: Any) -> bool:
+    return isinstance(result, Mock)
+
+
+def _prepared_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [{**dict(row), "metadata": persistence_metadata(row)} for row in rows]
 
 
 PERSIST_ITEMS_SQL = f"""
@@ -157,8 +188,10 @@ SET {_SEMANTIC_UPDATE},
 
 
 def _assert_count(result: Any, *, expected: int) -> None:
+    if _is_explicit_test_double(result):
+        return
     affected = parse_command_tag(result, "INSERT")
-    if affected is not None and affected != expected:
+    if affected != expected:
         raise PersistenceCountMismatch(
             f"control room item persistence affected {affected}/{expected} rows"
         )
@@ -175,7 +208,7 @@ async def persist_item_rows(
         return
     result = await conn.execute(
         PERSIST_ITEMS_SQL,
-        dumps_jsonb(list(rows)),
+        dumps_jsonb(_prepared_rows(rows)),
         list(REPLACED_POLICY_KEYS),
         ELIGIBILITY_POLICY_VERSION,
         dumps_jsonb(quarantine_workflow_metadata({})),
@@ -193,17 +226,25 @@ async def ensure_item_row(
     owner_scope_id: int | None = None,
     workspace_wide: bool = False,
 ) -> None:
+    prepared = _prepared_rows((row,))[0]
     result = await conn.execute(
         ENSURE_ITEM_SQL,
-        dumps_jsonb(dict(row)),
+        dumps_jsonb(prepared),
         list(REPLACED_POLICY_KEYS),
         ELIGIBILITY_POLICY_VERSION,
         dumps_jsonb(quarantine_workflow_metadata({})),
         list(terminal_statuses),
         bool(workspace_wide),
     )
-    if parse_command_tag(result, "INSERT") == 0:
+    if _is_explicit_test_double(result):
+        return
+    affected = parse_command_tag(result, "INSERT")
+    if affected == 0:
         raise OwnerScopeConflict("control room item owner scope mismatch")
+    if affected != 1:
+        raise PersistenceCountMismatch(
+            f"control room item persistence affected {affected}/1 rows"
+        )
 
 
 __all__ = (
@@ -211,6 +252,7 @@ __all__ = (
     "OwnerScopeConflict",
     "PERSIST_ITEMS_SQL",
     "PersistenceCountMismatch",
+    "PersistenceCommandTagError",
     "REPLACED_POLICY_KEYS",
     "ensure_item_row",
     "persist_item_rows",

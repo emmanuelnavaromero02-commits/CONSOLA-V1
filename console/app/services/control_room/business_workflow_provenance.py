@@ -8,30 +8,75 @@ from typing import Any
 
 from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_lineage import parent_references
+from app.services.control_room.business_observation_codec import (
+    POLICY_FIELDS,
+    semantic_surfaces,
+)
 
 
 ELIGIBILITY_POLICY_VERSION = "control-room-business-v1"
 DECISION_PROVENANCE_KEY = "decision_eligibility_provenance"
 WORKFLOW_QUARANTINE_KEY = "workflow_quarantine"
+CURRENT_ELIGIBILITY_FINGERPRINT_KEY = "business_eligibility_fingerprint"
+
+_IDENTITY_FIELDS = frozenset({"kind", "item_kind"})
+_ROOT_FIELDS = frozenset(
+    {"dataset", "gold_table", "root_source", "source_dataset", "source_system"}
+)
+_STATUS_FIELDS = frozenset(
+    {
+        "data_readiness",
+        "data_status",
+        "evaluation_status",
+        "readiness_status",
+        "source_status",
+    }
+)
 
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, default=str, separators=(",", ":"), sort_keys=True)
 
 
+def _identity_value(item: Mapping[str, Any], *keys: str) -> str:
+    metadata = item.get("metadata")
+    for source in (item, metadata if isinstance(metadata, Mapping) else {}):
+        for key in keys:
+            value = str(source.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _semantic_fingerprint_values(item: Mapping[str, Any]) -> dict[str, list[str]]:
+    values: dict[str, set[str]] = {}
+    excluded = _IDENTITY_FIELDS | _ROOT_FIELDS | _STATUS_FIELDS
+    for surface in semantic_surfaces(item):
+        for key in POLICY_FIELDS - excluded:
+            if key not in surface or surface[key] in (None, ""):
+                continue
+            values.setdefault(key, set()).add(_canonical(surface[key]))
+    return {key: sorted(entries) for key, entries in sorted(values.items())}
+
+
+def _root_values(item: Mapping[str, Any]) -> list[str]:
+    values = {
+        str(surface[key]).strip()
+        for surface in semantic_surfaces(item)
+        for key in _ROOT_FIELDS
+        if key in surface and str(surface[key] or "").strip()
+    }
+    return sorted(values)
+
+
 def business_observation_fingerprint(item: Mapping[str, Any]) -> str:
     refs = parent_references(item)
     payload = {
-        "item_id": item.get("id") or item.get("item_id"),
-        "kind": item.get("kind") or item.get("item_kind"),
-        "observation": item.get("business_observation")
-        or item.get("observation")
-        or item.get("details"),
+        "item_id": _identity_value(item, "id", "item_id"),
+        "kind": _identity_value(item, "kind", "item_kind").lower(),
+        "observation": _semantic_fingerprint_values(item),
         "lineage": sorted(refs.ids),
-        "root": item.get("source_dataset")
-        or item.get("dataset")
-        or item.get("gold_table")
-        or item.get("source_system"),
+        "root": _root_values(item),
     }
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
@@ -46,8 +91,8 @@ def decision_eligibility_provenance(
         raise ValueError("cannot link decision to non-business control room item")
     payload = {
         "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "item_id": str(item.get("id") or item.get("item_id") or ""),
-        "kind": str(item.get("kind") or item.get("item_kind") or ""),
+        "item_id": _identity_value(item, "id", "item_id"),
+        "kind": _identity_value(item, "kind", "item_kind").lower(),
         "fingerprint": business_observation_fingerprint(item),
         "eligible_at_link": True,
         "linked_at": datetime.now(UTC).isoformat(),
@@ -57,16 +102,38 @@ def decision_eligibility_provenance(
     return payload
 
 
-def workflow_has_eligible_provenance(metadata: Mapping[str, Any] | None) -> bool:
+def workflow_has_eligible_provenance(
+    metadata: Mapping[str, Any] | None,
+    item: Mapping[str, Any],
+) -> bool:
     value = dict(metadata or {}).get(DECISION_PROVENANCE_KEY)
     if not isinstance(value, Mapping):
         return False
     return (
         value.get("eligible_at_link") is True
         and value.get("policy_version") == ELIGIBILITY_POLICY_VERSION
-        and bool(str(value.get("item_id") or "").strip())
-        and bool(str(value.get("fingerprint") or "").strip())
+        and str(value.get("item_id") or "").strip()
+        == _identity_value(item, "id", "item_id")
+        and str(value.get("kind") or "").strip().lower()
+        == _identity_value(item, "kind", "item_kind").lower()
+        and str(value.get("fingerprint") or "").strip()
+        == business_observation_fingerprint(item)
     )
+
+
+def persistence_metadata(item: Mapping[str, Any]) -> dict[str, Any]:
+    value = item.get("metadata")
+    metadata = dict(value) if isinstance(value, Mapping) else {}
+    for key in (
+        DECISION_PROVENANCE_KEY,
+        WORKFLOW_QUARANTINE_KEY,
+        "decision_provenance",
+    ):
+        metadata.pop(key, None)
+    metadata[CURRENT_ELIGIBILITY_FINGERPRINT_KEY] = business_observation_fingerprint(
+        item
+    )
+    return metadata
 
 
 def quarantine_workflow_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -81,10 +148,12 @@ def quarantine_workflow_metadata(metadata: Mapping[str, Any] | None) -> dict[str
 
 __all__ = (
     "DECISION_PROVENANCE_KEY",
+    "CURRENT_ELIGIBILITY_FINGERPRINT_KEY",
     "ELIGIBILITY_POLICY_VERSION",
     "WORKFLOW_QUARANTINE_KEY",
     "business_observation_fingerprint",
     "decision_eligibility_provenance",
+    "persistence_metadata",
     "quarantine_workflow_metadata",
     "workflow_has_eligible_provenance",
 )

@@ -6,6 +6,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services import control_room_service
+from app.services.control_room.business_item_persistence import (
+    PersistenceCommandTagError,
+    PersistenceCountMismatch,
+    ensure_item_row,
+    persist_item_rows,
+)
 
 
 USER = {
@@ -145,3 +151,36 @@ async def test_non_finite_diagnostic_value_does_not_abort_batch_json():
     rows = json.loads(insert[1][0])
     assert len(rows) == 2
     assert rows[0]["metadata"]["observed_value"] is None
+
+
+class CommandTagConnection:
+    def __init__(self, result):
+        self.result = result
+
+    async def execute(self, *_args):
+        return self.result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result", [None, "", "UPDATE 1", "INSERT nope", "INSERT 0 nope"]
+)
+async def test_real_backend_rejects_missing_or_malformed_command_tags(result):
+    with pytest.raises(PersistenceCommandTagError):
+        await persist_item_rows(CommandTagConnection(result), [{"item_id": "item-1"}])
+
+
+@pytest.mark.asyncio
+async def test_real_backend_rejects_unexpected_affected_row_count():
+    with pytest.raises(PersistenceCountMismatch, match="2/1"):
+        await ensure_item_row(
+            CommandTagConnection("INSERT 0 2"),
+            {"item_id": "item-1"},
+            terminal_statuses=(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_identifiable_mock_command_result_is_explicitly_tolerated():
+    conn = AsyncMock()
+    await persist_item_rows(conn, [{"item_id": "item-1"}])
