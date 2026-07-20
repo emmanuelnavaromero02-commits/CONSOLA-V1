@@ -5,9 +5,14 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.business_alert_projection import build_business_alert
 from app.services.control_room.business_command_item import (
     load_persisted_command_item,
     resolve_command_item,
+)
+from app.services.control_room.business_omega_projection import (
+    OmegaProjectionRuntime,
+    build_omega_projection,
 )
 from app.services.control_room.business_state_rows import (
     diagnostic_metadata as _business_diagnostic_metadata,
@@ -27,7 +32,10 @@ for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
 _core.__dict__.setdefault("business_diagnostic_metadata", _business_diagnostic_metadata)
+_core.__dict__.setdefault("build_business_alert", build_business_alert)
+_core.__dict__.setdefault("build_omega_projection", build_omega_projection)
 _core.__dict__.setdefault("load_persisted_command_item", load_persisted_command_item)
+_core.__dict__.setdefault("OmegaProjectionRuntime", OmegaProjectionRuntime)
 _core.__dict__.setdefault("resolve_command_item", resolve_command_item)
 
 
@@ -600,284 +608,24 @@ def _decision_intelligence_for_item(item: dict[str, Any]) -> dict[str, Any]:
 def _with_omega(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> dict[str, Any]:
-    eligible_parent_ids = projection_context(item, eligible_parent_ids)
-    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
-        return diagnostic_projection(item)
-    decision_id = item.get("decision_id")
-    status = item.get("status") or "open"
-    approved = status == "approved"
-    primary_system = item.get("cartridge") or "platform"
-    impact = _impact_for_item(item, eligible_parent_ids=eligible_parent_ids)
-    action_templates = _action_templates_for_item(
-        item, eligible_parent_ids=eligible_parent_ids
-    )
-    execution_status = str(item.get("execution_status") or "not_started")
-    if execution_status not in EXECUTION_STATUSES:
-        execution_status = "not_started"
-    option_label = "Remediar dato/proceso"
-    action_label = "Validar owner y remediacion"
-    selected_option_id = str(item.get("selected_option_id") or "remediate")
-    impact_money = (
-        f"${impact['estimate']:,.0f} {impact['currency']} en revision"
-        if impact.get("status") == "ok" and impact.get("estimate") is not None
-        else "Impacto no calculable"
-    )
-    options = [
-        {
-            "id": "remediate",
-            "label": option_label,
-            "action": option_label,
-            "money": impact_money,
-            "time": "1-2 ciclos",
-            "score": 92,
-            "risk": "Bajo",
-            "auto": True,
-            "recommendation": item.get("recommendation"),
-            "selected": False,
-        },
-        {
-            "id": "exception",
-            "label": "Aprobar excepcion temporal",
-            "action": "Aprobar excepcion temporal",
-            "money": "Costo medio",
-            "time": "Mismo dia",
-            "score": 68,
-            "risk": "Medio",
-            "auto": False,
-            "recommendation": "Usar solo con responsable y fecha de control.",
-            "selected": False,
-        },
-        {
-            "id": "monitor",
-            "label": "Monitorear sin cambio inmediato",
-            "action": "Monitorear sin cambio inmediato",
-            "money": "Sin gasto inmediato",
-            "time": "Siguiente refresh",
-            "score": 45,
-            "risk": "Alto",
-            "auto": False,
-            "recommendation": "No recomendado para severidad alta o critica.",
-            "selected": False,
-        },
-    ]
-    intelligence = (
-        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
-    )
-    decision_intelligence = _decision_intelligence_for_item(item)
-    if decision_intelligence:
-        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
-    intelligence_options = (
-        intelligence.get("options")
-        if isinstance(intelligence.get("options"), list)
-        else []
-    )
-    if intelligence_options:
-        options = [
-            {
-                "id": str(
-                    option.get("option_id") or option.get("id") or f"option_{index + 1}"
-                ),
-                "label": str(option.get("label") or "Opcion supervisada"),
-                "action": str(
-                    option.get("action_kind")
-                    or option.get("label")
-                    or "accion_supervisada"
-                ),
-                "money": f"${float(option.get('impact_expected') or 0):,.0f} USD esperado",
-                "time": f"{float(option.get('time_cost') or 0):,.0f} puntos tiempo",
-                "score": int(round(float(option.get("score") or 0))),
-                "risk": f"{float(option.get('risk') or 0):,.0f}",
-                "auto": False,
-                "recommendation": str(
-                    option.get("score_explanation") or item.get("recommendation") or ""
-                ),
-                "selected": bool(option.get("selected")),
-            }
-            for index, option in enumerate(intelligence_options[:3])
-            if isinstance(option, dict)
-        ] or options
-    if selected_option_id not in {option["id"] for option in options}:
-        selected_option_id = options[0]["id"] if options else "remediate"
-    for option in options:
-        option["selected"] = option["id"] == selected_option_id
-    lessons = _lessons_for_item(item)
-    lesson_count = int(item.get("lesson_count") or 0)
-    persisted_priority = item.get("priority") if isinstance(item.get("priority"), dict) else {}
-    if persisted_priority.get("score") is not None:
-        score = max(0, min(100, int(persisted_priority.get("score") or 0)))
-        band = persisted_priority.get("band") or (
-            "critical"
-            if score >= 90
-            else "high"
-            if score >= 75
-            else "medium"
-            if score >= 55
-            else "low"
-        )
-        raw_drivers = persisted_priority.get("drivers")
-        if isinstance(raw_drivers, dict):
-            drivers = [
-                {
-                    "label": str(key).replace("_", " ").title(),
-                    "value": value,
-                    "points": value,
-                }
-                for key, value in raw_drivers.items()
-            ]
-        elif isinstance(raw_drivers, list):
-            drivers = raw_drivers
-        else:
-            drivers = []
-        priority = {
-            **persisted_priority,
-            "score": score,
-            "band": band,
-            "drivers": drivers,
-        }
-    else:
-        priority = _priority_payload(
-            {**item, "lesson_count": lesson_count},
-            impact,
-            eligible_parent_ids=eligible_parent_ids,
-        )
-    alert_state = _alert_state(item)
-    control_items = _control_items_for_item(
+    return build_omega_projection(
         item,
-        status=status,
-        decision_id=decision_id,
-        approved=approved,
+        eligible_parent_ids=eligible_parent_ids,
+        runtime=OmegaProjectionRuntime(
+            impact_builder=_impact_for_item,
+            action_templates_builder=_action_templates_for_item,
+            decision_intelligence_builder=_decision_intelligence_for_item,
+            lessons_builder=_lessons_for_item,
+            priority_builder=_priority_payload,
+            alert_state_builder=_alert_state,
+            control_state_builder=_control_state,
+            control_items_builder=_control_items_for_item,
+            external_writeback_enabled=_external_writeback_enabled,
+            execution_statuses=EXECUTION_STATUSES,
+            terminal_statuses=TERMINAL_ITEM_STATUSES,
+            supported_writeback_templates=SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES,
+        ),
     )
-    control_closed = all(
-        str(control.get("status")) == "closed" for control in control_items
-    )
-    return project_business_item({
-        **item,
-        "alert_state": alert_state,
-        "control_state": _control_state(item),
-        "impact_estimate": impact.get("estimate"),
-        "impact_currency": impact.get("currency"),
-        "impact_status": impact.get("status"),
-        "confidence": impact.get("confidence"),
-        "priority_score": priority["score"],
-        "priority": priority,
-        "impact_drivers": impact.get("drivers"),
-        "impact_formula": impact.get("formula"),
-        "impact_explanation": impact.get("explanation"),
-        "thresholds_applied": item.get("thresholds_applied") or [],
-        "threshold_state": item.get("threshold_state") or "default",
-        "selected_option_id": selected_option_id,
-        "execution_status": execution_status,
-        "action_templates": action_templates,
-        "related_lessons": item.get("related_lessons") or [],
-        "lesson_count": lesson_count,
-        "lesson_applications": item.get("lesson_applications")
-        if isinstance(item.get("lesson_applications"), list)
-        else [],
-        "decision_intelligence": decision_intelligence,
-        "intelligence": intelligence,
-        "omega": {
-            "signals": {
-                "source": item.get("source_dataset"),
-                "severity": item.get("severity"),
-                "detected_at": item.get("detected_at"),
-                "status": status,
-                "priority_score": priority["score"],
-                "priority_band": priority["band"],
-                "threshold_state": item.get("threshold_state") or "default",
-            },
-            "investigation": {
-                "root_cause": item.get("root_cause"),
-                "impact": item.get("impact"),
-                "evidence": item.get("details") or {},
-                "money": impact,
-                "thresholds": item.get("thresholds_applied") or [],
-            },
-            "options": options,
-            "decision": {
-                "decision_id": decision_id,
-                "status": status,
-                "label": f"Decision #{decision_id}" if decision_id else "Pendiente",
-            },
-            "execution": {
-                "status": execution_status,
-                "external_writeback_enabled": _external_writeback_enabled(),
-                "supervised_execution_enabled": True,
-                "execution_contract": "supervised_execution",
-                "supported_writeback_templates": sorted(
-                    SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES
-                ),
-                "templates": action_templates,
-                "actions": [
-                    {
-                        "id": "preview",
-                        "sys": "omega",
-                        "act": "Generar preview de accion",
-                        "label": "Preview seguro",
-                        "done": execution_status
-                        in {"preview_generated", "dry_run_validated", "executed"},
-                        "approved": execution_status
-                        in {"preview_generated", "dry_run_validated", "executed"},
-                        "auto": True,
-                    },
-                    {
-                        "id": "dry_run",
-                        "sys": primary_system,
-                        "act": "Validar dry-run sin write-back",
-                        "label": "Dry-run seguro",
-                        "done": execution_status in {"dry_run_validated", "executed"},
-                        "approved": execution_status
-                        in {"dry_run_validated", "executed"},
-                        "auto": True,
-                    },
-                    {
-                        "id": "owner_review",
-                        "sys": primary_system,
-                        "act": action_label,
-                        "label": action_label,
-                        "done": approved,
-                        "approved": approved,
-                        "auto": False,
-                    },
-                    {
-                        "id": "internal_writeback",
-                        "sys": "omega",
-                        "act": "Crear seguimiento operativo supervisado",
-                        "label": "Ejecucion supervisada",
-                        "done": execution_status == "executed",
-                        "approved": execution_status == "executed",
-                        "auto": False,
-                    },
-                    {
-                        "id": "audit_log",
-                        "sys": "omega",
-                        "act": "Registrar bitacora y evidencia",
-                        "label": "Registrar bitacora y evidencia",
-                        "done": bool(decision_id),
-                        "approved": bool(decision_id),
-                        "auto": True,
-                    },
-                ],
-            },
-            "control": {
-                "owner": item.get("module") or item.get("cartridge"),
-                "cadence": "Proximo refresh operativo",
-                "status": "cerrado" if control_closed else "abierto",
-                "items": control_items,
-            },
-            "lessons": {
-                "rules": lessons,
-                "applied": item.get("lesson_applications")
-                if isinstance(item.get("lesson_applications"), list)
-                else [],
-                "suggested_actions": item.get("suggested_actions")
-                if isinstance(item.get("suggested_actions"), list)
-                else [],
-            },
-            "decision_intelligence": decision_intelligence,
-            "intelligence": intelligence,
-        },
-    }, eligible_parent_ids=eligible_parent_ids)
-
 
 @_bind_to_core
 def _status_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str, str]:
@@ -969,106 +717,17 @@ def _alert_message(item: dict[str, Any], alert_type: str) -> str:
 def _alert_for_item(
     item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
 ) -> dict[str, Any] | None:
-    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
-        return None
-    if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
-        return None
-    alert_state = _alert_state(item)
-    alert_status = str(alert_state.get("state") or "open")
-    if alert_status == "false_positive":
-        return None
-    priority = (
-        item.get("priority")
-        if isinstance(item.get("priority"), dict)
-        else _priority_payload(item, eligible_parent_ids=eligible_parent_ids)
+    return build_business_alert(
+        item,
+        eligible_parent_ids=eligible_parent_ids,
+        terminal_statuses=TERMINAL_ITEM_STATUSES,
+        severity_weights=ALERT_SEVERITY_WEIGHT,
+        alert_state_builder=_alert_state,
+        priority_builder=_priority_payload,
+        alert_type_builder=_alert_type_for_item,
+        alert_message_builder=_alert_message,
+        external_delivery_enabled=_external_delivery_enabled,
     )
-    score = int(priority.get("score") or item.get("priority_score") or 0)
-    alert_type = _alert_type_for_item(item)
-    threshold_state = str(item.get("threshold_state") or "default")
-    is_agent_alert = item.get("kind") == "agent_alert" or item.get("source") == "agent"
-    should_alert = (
-        is_agent_alert
-        or alert_type in {"source_health", "threshold_breach", "learned_pattern"}
-        or item.get("severity") in {"critical", "high"}
-        or score >= 55
-    )
-    if not should_alert:
-        return None
-    severity = str(priority.get("band") or item.get("severity") or "medium")
-    if severity not in ALERT_SEVERITY_WEIGHT:
-        severity = "medium"
-    delivery_status = {
-        "open": "not_configured",
-        "acknowledged": "acknowledged",
-        "assigned": "assigned",
-        "snoozed": "snoozed",
-    }.get(alert_status, "not_configured")
-    delivery_enabled = _external_delivery_enabled()
-    push_ready = delivery_enabled and alert_status == "open"
-    delivery_reason = (
-        "Push externo habilitado para conectores de delivery."
-        if push_ready
-        else "Push externo deshabilitado en V1 hasta configurar conectores de delivery."
-    )
-    return {
-        "id": f"alert:{item.get('id')}",
-        "item_id": item.get("id"),
-        "alert_type": alert_type,
-        "source": item.get("source") or "system",
-        "advisory": bool(item.get("advisory")),
-        "agent_id": item.get("agent_id"),
-        "agent_run_id": item.get("agent_run_id"),
-        "analysis_type": item.get("analysis_type"),
-        "engine": item.get("engine"),
-        "engine_run_id": item.get("engine_run_id"),
-        "analysis_evidence": item.get("analysis_evidence")
-        if isinstance(item.get("analysis_evidence"), dict)
-        else {},
-        "deduped": bool(item.get("deduped")),
-        "occurrence_count": int(item.get("occurrence_count") or 1),
-        "hypothesis": item.get("hypothesis"),
-        "expected_outcome": item.get("expected_outcome"),
-        "severity": severity,
-        "priority_score": score,
-        "domain": item.get("domain"),
-        "module": item.get("module"),
-        "module_id": item.get("module_id") or item.get("cartridge"),
-        "cartridge": item.get("cartridge"),
-        "connector_id": item.get("connector_id") or item.get("cartridge"),
-        "source_dataset": item.get("source_dataset"),
-        "title": item.get("title"),
-        "message": _alert_message(item, alert_type),
-        "status": alert_status,
-        "owner": alert_state.get("owner"),
-        "note": alert_state.get("note"),
-        "reason": alert_state.get("reason"),
-        "acknowledged_at": alert_state.get("acknowledged_at"),
-        "assigned_at": alert_state.get("assigned_at"),
-        "snoozed_until": alert_state.get("snoozed_until"),
-        "threshold_state": threshold_state,
-        "lesson_count": int(item.get("lesson_count") or 0),
-        "impact_estimate": item.get("impact_estimate"),
-        "impact_currency": item.get("impact_currency") or "USD",
-        "recommended_action": item.get("recommendation"),
-        "drivers": priority.get("drivers") or [],
-        "route_key": f"{item.get('cartridge')}:{item.get('anomaly_type')}:{item.get('module_id') or item.get('cartridge')}",
-        "push_ready": push_ready,
-        "delivery": {
-            "status": delivery_status,
-            "channels": ["email", "slack", "teams"],
-            "enabled": delivery_enabled,
-            "reason": delivery_reason
-            if alert_status == "open"
-            else f"Alerta en estado {alert_status}; {delivery_reason}",
-        },
-        "created_at": item.get("first_seen_at")
-        or item.get("detected_at")
-        or datetime.now(UTC).isoformat(),
-        "updated_at": alert_state.get("updated_at")
-        or item.get("last_seen_at")
-        or datetime.now(UTC).isoformat(),
-    }
-
 
 @_bind_to_core
 def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
