@@ -164,11 +164,11 @@ def test_dataset_refresh_chain_notifies_console_after_pipeline_save_only_for_gol
     source = read("airflow/dags/dataset_refresh_chain.py")
     assert "CONSOLE_INTERNAL_URL" in source
     assert "CONSOLE_URL" in source
-    assert 'INTERNAL_API_KEY_AIRFLOW_TO_{target}' in source
+    assert "INTERNAL_API_KEY_AIRFLOW_TO_{target}" in source
     assert "/internal/intelligence/gold-refresh" in source
     assert "pipeline_run_id = f\"dataset_refresh_chain:{ctx['run_id']}\"" in source
     assert "_successful_materialized_datasets(results)" in source
-    assert "status == \"success\" or (status == \"partial\" and allow_partial)" in source
+    assert 'status == "success" or (status == "partial" and allow_partial)' in source
     pipeline_save_pos = source.index('"tool": "pipeline_run_save"')
     trigger_pos = source.rindex("_trigger_gold_refresh_intelligence(")
     assert pipeline_save_pos < trigger_pos
@@ -283,13 +283,17 @@ def test_console_user_vault_calls_do_not_bypass_security_context():
 def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     service = read("console/app/services/control_room/api.py")
     state = read("console/app/services/control_room/state.py")
+    omega_projection = read(
+        "console/app/services/control_room/business_omega_projection.py"
+    )
     router = read("console/app/routers/control_room.py")
     ui = read("console-next/src/app/(shell)/control-room/page.tsx")
     assert "async def _persisted_business_items" in service
     assert "_persisted_intelligence_items" in service
     assert '"intelligence_signal", "agent_alert"' in service
-    assert '"decision_intelligence": decision_intelligence' in state
-    assert '"omega":' in state
+    assert "build_omega_projection(" in state
+    assert '"decision_intelligence": decision_intelligence' in omega_projection
+    assert '"omega":' in omega_projection
     assert '"intelligence_signal"' in ui
     assert "function IntelligencePanel" in ui
     assert "function DecisionIntelligencePanel" in ui
