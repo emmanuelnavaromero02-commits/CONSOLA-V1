@@ -106,7 +106,7 @@ def test_real_zero_requires_success_population_and_observation_date():
         data_status="gold_ready",
         metric_type="count",
         observed_value=0,
-        population_count=0,
+        population_count=10,
     )
     no_population = {
         key: value for key, value in valid.items() if key != "population_count"

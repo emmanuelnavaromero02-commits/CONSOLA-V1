@@ -115,6 +115,10 @@ def test_allowlisted_evidence_ids_and_references_are_substantive(evidence):
     [
         {"metadata": {"source_dataset": "gold_other"}},
         {"metadata": {"dataset": "gold_other"}},
+        {"gold_table": "gold_other"},
+        {"details": {"gold_table": "gold_other"}},
+        {"metadata": {"gold_table": "gold_other"}},
+        {"metadata": {"details": {"gold_table": "gold_other"}}},
         {"metadata": {"source_system": "other_system"}, "source_system": "sap"},
         {"lineage": {"source_dataset": "gold_other"}},
     ],
@@ -131,6 +135,18 @@ def test_matching_root_sources_and_distinct_source_system_remain_valid():
             observed_value=1,
             source_system="sap",
             metadata={"source_dataset": "gold_metrics", "source_system": "sap"},
+        )
+    )
+
+    assert result.eligible is True
+
+
+def test_logical_dataset_matches_prefixed_gold_table():
+    result = classify_business_item(
+        _item(
+            observed_value=1,
+            source_dataset="metrics",
+            metadata={"details": {"gold_table": "gold_metrics"}},
         )
     )
 

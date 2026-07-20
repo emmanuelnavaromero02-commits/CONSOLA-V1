@@ -35,16 +35,21 @@ def _round_trip(item: dict) -> dict:
     )
 
 
-def test_observed_count_zero_with_empty_known_population_is_eligible():
+def test_observed_count_zero_with_empty_population_is_rejected():
     result = classify_business_item(
         _item(metric_type="count", count=0, population_count=0)
     )
 
-    assert result.eligible is True
+    assert result.reason is EligibilityReason.ZERO_WITHOUT_POPULATION
 
 
 def test_observed_rate_zero_requires_positive_denominator():
-    valid = _item(metric_type="rate", observed_value=0, denominator=20)
+    valid = _item(
+        metric_type="rate",
+        observed_value=0,
+        denominator=20,
+        population_count=20,
+    )
     invalid = {**valid, "denominator": 0}
 
     assert classify_business_item(valid).eligible is True
@@ -219,7 +224,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
                 population_count=0,
                 evidence_refs=["evidence:1"],
             ),
-            EligibilityReason.ELIGIBLE,
+            EligibilityReason.ZERO_WITHOUT_POPULATION,
         ),
         (
             _item(data_status=None, metric_type="count", count=None),

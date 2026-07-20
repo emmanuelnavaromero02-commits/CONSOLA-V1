@@ -12,8 +12,7 @@ DERIVED_KINDS = frozenset({"agent_alert", "derived", "intelligence_signal"})
 REFERENCE_FIELDS = ("parent_item_id", "source_item_id", "derived_from")
 LINEAGE_ROOT_FIELDS = ("source_dataset", "dataset", "root_source")
 _ROOT_SOURCE_ROLES = {
-    "dataset": ("source_dataset", "dataset"),
-    "gold_table": ("gold_table",),
+    "dataset": ("source_dataset", "dataset", "gold_table"),
     "root_source": ("root_source",),
     "source_system": ("source_system",),
 }
@@ -81,6 +80,13 @@ def _reference_value(value: Any) -> tuple[set[str], bool]:
     return set(), True
 
 
+def _root_identity(role: str, value: str) -> str:
+    clean = value.strip()
+    if role == "dataset" and clean.startswith("gold_"):
+        return clean.removeprefix("gold_")
+    return clean
+
+
 def parent_references(item: Mapping[str, Any]) -> ParentReferences:
     ids: set[str] = set()
     malformed = False
@@ -106,7 +112,7 @@ def parent_references(item: Mapping[str, Any]) -> ParentReferences:
                 value = values.get(key)
                 if not isinstance(value, str) or not value.strip():
                     continue
-                root_values_by_role[role].add(value.strip())
+                root_values_by_role[role].add(_root_identity(role, value))
 
     for values in semantic_maps(item):
         _record_roots(values)

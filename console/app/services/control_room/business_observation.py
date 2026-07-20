@@ -176,10 +176,6 @@ def _measurement(item: Mapping[str, Any]) -> tuple[bool, bool, float | None]:
     return declared, True, value
 
 
-def _known_population(slots: SemanticSlots) -> float | None:
-    return _first_value(slots.population, slots.source_rows)
-
-
 def _denominator(slots: SemanticSlots) -> float | None:
     return _first_value(slots.denominator, slots.population)
 
@@ -191,9 +187,11 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
     slots = resolve_semantic_slots(item)
     if not slots.valid:
         return False
+    population = slots.population.value if slots.population.declared else None
+    if population is None or population <= 0:
+        return False
     if kind is MetricKind.COUNT:
-        population = _known_population(slots)
-        return population is not None and population >= 0
+        return True
     if kind in {
         MetricKind.RATE,
         MetricKind.PERCENTAGE,
@@ -203,8 +201,7 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
         denominator = _denominator(slots)
         return denominator is not None and denominator > 0
     if kind in {MetricKind.AMOUNT, MetricKind.SCALAR}:
-        population = _known_population(slots)
-        return population is not None and population >= 0
+        return True
     return False
 
 

@@ -178,10 +178,48 @@ def test_observation_flag_contradiction_fails_closed():
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
-def test_count_zero_with_empty_population_remains_eligible():
+def test_count_zero_requires_positive_population():
     item = _item(metric_type="count", count=0, population_count=0)
 
-    assert classify_business_item(item).eligible is True
+    assert (
+        classify_business_item(item).reason is EligibilityReason.ZERO_WITHOUT_POPULATION
+    )
+
+
+@pytest.mark.parametrize(
+    ("metric_type", "measurement"),
+    [
+        ("count", {"count": 0}),
+        ("rate", {"observed_value": 0, "denominator": 10}),
+        ("percentage", {"observed_value": 0, "denominator": 10}),
+        ("average", {"observed_value": 0, "denominator": 10}),
+        ("division", {"observed_value": 0, "denominator": 10}),
+        ("amount", {"observed_value": 0}),
+        ("scalar", {"observed_value": 0}),
+    ],
+)
+def test_real_zero_requires_positive_population_for_each_metric_kind(
+    metric_type,
+    measurement,
+):
+    valid = _item(metric_type=metric_type, population_count=10, **measurement)
+    empty_population = {**valid, "population_count": 0}
+
+    assert classify_business_item(valid).eligible is True
+    assert (
+        classify_business_item(empty_population).reason
+        is EligibilityReason.ZERO_WITHOUT_POPULATION
+    )
+
+
+@pytest.mark.parametrize("missing", ["data_status", "observation_date"])
+def test_real_zero_requires_successful_evaluation_and_date(missing):
+    item = _item(metric_type="count", count=0, population_count=10)
+    item.pop(missing)
+
+    assert (
+        classify_business_item(item).reason is EligibilityReason.ZERO_WITHOUT_POPULATION
+    )
 
 
 @pytest.mark.parametrize(
