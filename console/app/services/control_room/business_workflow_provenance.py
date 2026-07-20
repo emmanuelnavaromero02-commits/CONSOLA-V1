@@ -112,14 +112,19 @@ def decision_eligibility_provenance(
 def workflow_has_eligible_provenance(
     metadata: Mapping[str, Any] | None,
     item: Mapping[str, Any],
+    *,
+    use_stored_fingerprint: bool = False,
 ) -> bool:
     current_metadata = dict(metadata or {})
     value = current_metadata.get(DECISION_PROVENANCE_KEY)
     if not isinstance(value, Mapping):
         return False
-    current_fingerprint = str(
-        current_metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or ""
-    ).strip() or business_observation_fingerprint(item)
+    current_fingerprint = business_observation_fingerprint(item)
+    if use_stored_fingerprint:
+        current_fingerprint = (
+            str(current_metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
+            or current_fingerprint
+        )
     return (
         value.get("eligible_at_link") is True
         and value.get("policy_version") == ELIGIBILITY_POLICY_VERSION
