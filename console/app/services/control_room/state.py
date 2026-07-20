@@ -1176,44 +1176,11 @@ async def _overlay_item_state(
 async def _persisted_item_for_mutation(
     item_id: str, user: dict
 ) -> dict[str, Any] | None:
-    tenant_id, workspace_id = _workspace_scope(user)
-    params: list[Any] = [workspace_id, item_id]
-    tenant_clause = ""
-    if tenant_id:
-        params.append(tenant_id)
-        tenant_clause = f"AND tenant_id::text = ${len(params)}"
-    owner_id = None
-    if not _can_read_workspace_wide(user):
-        owner_id = _actor_id((user or {}).get("id"))
-        if owner_id is None:
-            return None
-    pool = await auth.pool()
-
-    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
-        return await conn.fetchrow(
-            f"""
-            SELECT tenant_id, workspace_id, owner_user_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
-                   severity, status, decision_id, entity_kind, entity_id,
-                   entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
-                   resolved_at, dismissed_at, impact_estimate, impact_currency,
-                   confidence, priority_score, selected_option_id, execution_status
-              FROM control_room_items
-             WHERE workspace_id = $1
-               AND item_id = $2
-               {tenant_clause}
-            """,
-            *params,
-        )
-
-    row = await _run_with_db_scope(pool, user, _load)
-    if not row:
-        return None
-    persisted_owner = _actor_id(row.get("owner_user_id"))
-    if owner_id is not None and persisted_owner not in {None, owner_id}:
-        raise HTTPException(404, "control room item not found")
-    return persisted_business_item(
-        row,
-        expected_item_id=item_id,
+    return await load_persisted_command_item(
+        item_id,
+        user,
+        pool_factory=auth.pool,
+        run_scoped=_run_with_db_scope,
         item_statuses=ITEM_STATUSES,
         severity_weights=SEVERITY_WEIGHT,
     )
@@ -1226,8 +1193,9 @@ async def _item_for_mutation(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item, eligible_parent_ids = await resolve_scoped_business_item_lookup(
+    return await resolve_command_item(
         item_id,
+        user,
         load_persisted=lambda target: _persisted_item_for_mutation(target, user),
         collect_items=lambda: _collect_items(
             user,
@@ -1237,25 +1205,8 @@ async def _item_for_mutation(
         normalize_lineage=_persisted_intelligence_payload,
         pool_factory=auth.pool,
         run_scoped=_run_with_db_scope,
-        user=user,
+        projector=_with_omega,
     )
-    if item is None:
-        raise HTTPException(404, "control room item not found")
-    try:
-        require_business_eligible(
-            item,
-            eligible_parent_ids=eligible_parent_ids,
-        )
-    except BusinessEligibilityError as exc:
-        raise HTTPException(
-            409,
-            detail={
-                "code": exc.code,
-                "message": "Control Room item is diagnostic-only.",
-                "reason": exc.result.reason.value,
-            },
-        ) from None
-    return _with_omega(item, eligible_parent_ids=eligible_parent_ids)
 
 
 @_bind_to_core
