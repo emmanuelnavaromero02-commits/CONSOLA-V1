@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import base64
 import hashlib
 import inspect
@@ -57,10 +59,6 @@ from app.services.control_room.business_builder_policy import (
     diagnostic_projection,
     projection_context,
 )
-from app.services.control_room.business_command_item import (
-    load_persisted_command_item,
-    resolve_command_item,
-)
 from app.services.control_room.business_lineage import item_kinds, parent_references
 from app.services.control_room.business_projection import (
     business_parent_context,
@@ -79,8 +77,12 @@ from app.services.control_room.business_item_persistence import (
     ensure_item_row as ensure_business_item_row,
     persist_item_rows,
 )
-from app.services.control_room.business_item_reader import fetch_eligible_persisted_items
+from app.services.control_room.business_item_reader import (
+    fetch_eligible_persisted_items,
+    resolve_scoped_business_item_lookup,
+)
 from app.services.control_room.business_metadata import business_item_metadata
+from app.services.control_room.business_persisted_row import persisted_business_item
 from app.services.control_room.business_repository import (
     approve_control_room_decision,
     decision_provenance,

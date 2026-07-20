@@ -5,6 +5,10 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.business_command_item import (
+    load_persisted_command_item,
+    resolve_command_item,
+)
 from app.services.control_room.business_state_rows import (
     diagnostic_metadata as _business_diagnostic_metadata,
 )
@@ -23,6 +27,8 @@ for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
 _core.__dict__.setdefault("business_diagnostic_metadata", _business_diagnostic_metadata)
+_core.__dict__.setdefault("load_persisted_command_item", load_persisted_command_item)
+_core.__dict__.setdefault("resolve_command_item", resolve_command_item)
 
 
 def _bind_to_core(fn):
