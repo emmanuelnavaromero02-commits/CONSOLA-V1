@@ -5,12 +5,16 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.business_projection import (
+    project_public_business_item as _project_public_business_item,
+)
 
 
 _RESERVED_GLOBALS = {"__name__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__"}
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
+_core.__dict__.setdefault("project_public_business_item", _project_public_business_item)
 
 
 def _bind_to_core(fn):
@@ -761,12 +765,13 @@ async def create_decision_for_item(
         metadata={"decision_id": row["id"], "item": item},
         critical=True,
     )
-    item = evolve_business_item(
+    item = project_public_business_item(
         item,
+        _with_omega,
         decision_id=row["id"],
         status="decision_created",
     )
-    return {"decision": dict(row), "item": _with_omega(item), "anomaly": _with_omega(item)}
+    return {"decision": dict(row), "item": item, "anomaly": item}
 
 
 @_bind_to_core
@@ -834,12 +839,11 @@ async def select_item_option(
         metadata={"option_id": option_id, "item": item},
         critical=False,
     )
-    item = _with_omega(
-        evolve_business_item(
-            item,
-            selected_option_id=option_id,
-            status="in_review",
-        )
+    item = project_public_business_item(
+        item,
+        _with_omega,
+        selected_option_id=option_id,
+        status="in_review",
     )
     return {"selected": True, "option_id": option_id, "item": item, "anomaly": item}
 
@@ -1031,12 +1035,11 @@ async def update_item_control(
         },
         critical=True,
     )
-    public_item = _with_omega(
-        evolve_business_item(
-            item,
-            status=target_status,
-            control_state=next_state,
-        )
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        status=target_status,
+        control_state=next_state,
     )
     updated_control = next(
         row for row in public_item.get("omega", {}).get("control", {}).get("items", [])
@@ -1137,16 +1140,15 @@ async def create_item_lesson(
             "metadata": {"manual": True},
             "created_at": datetime.now(UTC).isoformat(),
         }]
-    public_item = _with_omega(
-        evolve_business_item(
-            item,
-            related_lessons=lessons[:5],
-            lesson_count=len(lessons),
-            learned_rules=_merge_rule(
-                item.get("omega", {}).get("lessons", {}).get("rules"),
-                rule,
-            ),
-        )
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        related_lessons=lessons[:5],
+        lesson_count=len(lessons),
+        learned_rules=_merge_rule(
+            item.get("omega", {}).get("lessons", {}).get("rules"),
+            rule,
+        ),
     )
     return {
         "created": True,
@@ -1265,19 +1267,18 @@ async def apply_item_lesson(
         critical=True,
     )
     related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[:5]
-    public_item = _with_omega(
-        evolve_business_item(
-            item,
-            status=target_status,
-            related_lessons=related,
-            lesson_count=max(
-                len(related),
-                int(item.get("lesson_count") or 0),
-                1,
-            ),
-            learned_rules=learned_rules,
-            lesson_applications=applications,
-        )
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        status=target_status,
+        related_lessons=related,
+        lesson_count=max(
+            len(related),
+            int(item.get("lesson_count") or 0),
+            1,
+        ),
+        learned_rules=learned_rules,
+        lesson_applications=applications,
     )
     return {
         "applied": True,
@@ -1717,8 +1718,10 @@ async def action_preview(
         metadata={"template_id": template["template_id"], "payload": payload},
         critical=True,
     )
-    public_item = _with_omega(
-        evolve_business_item(item, execution_status="preview_generated")
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        execution_status="preview_generated",
     )
     return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
 
@@ -1836,8 +1839,10 @@ async def action_dry_run(
         metadata={"template_id": template["template_id"], "result": result, "action_run_id": action_run.get("id")},
         critical=True,
     )
-    public_item = _with_omega(
-        evolve_business_item(item, execution_status=execution_status)
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        execution_status=execution_status,
     )
     return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
 
@@ -2072,7 +2077,7 @@ async def record_item_outcome(
         "recorded": True,
         "outcome": outcome,
         "lesson_recorded": bool(learned_rule),
-        "item": _with_omega(evolve_business_item(item, last_outcome=outcome)),
+        "item": project_public_business_item(item, _with_omega, last_outcome=outcome),
     }
 
 
@@ -2470,8 +2475,10 @@ async def _execute_internal_followup_task_tx(
     )
     if existing:
         existing_result = _details(existing.get("result"))
-        public_item = _with_omega(
-            evolve_business_item(item, execution_status="executed")
+        public_item = project_public_business_item(
+            item,
+            _with_omega,
+            execution_status="executed",
         )
         return {
             "executed": True,
@@ -2635,8 +2642,10 @@ async def _execute_internal_followup_task_tx(
             "after": after,
         },
     )
-    public_item = _with_omega(
-        evolve_business_item(item, execution_status="executed")
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        execution_status="executed",
     )
     return {
         "executed": True,
@@ -2744,8 +2753,10 @@ async def _execute_internal_investigation_note(
             "side_effect": side_effect,
         },
     )
-    public_item = _with_omega(
-        evolve_business_item(item, execution_status="executed")
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        execution_status="executed",
     )
     return {
         "executed": True,
@@ -2872,12 +2883,11 @@ async def _execute_internal_decision_monitoring(
             "side_effect": side_effect,
         },
     )
-    public_item = _with_omega(
-        evolve_business_item(
-            item,
-            execution_status="executed",
-            decision_monitoring=monitoring_state,
-        )
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        execution_status="executed",
+        decision_monitoring=monitoring_state,
     )
     return {
         "executed": True,
@@ -3445,12 +3455,11 @@ async def _execute_external_writeback(
         template_type=template_type,
     )
     suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
-    public_item = _with_omega(
-        evolve_business_item(
-            item,
-            execution_status="executed",
-            suggested_actions=suggested_actions,
-        )
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        execution_status="executed",
+        suggested_actions=suggested_actions,
     )
     return {
         "executed": True,
@@ -3621,8 +3630,10 @@ async def execute_item(
         raise HTTPException(503, "execution idempotency lookup failed") from exc
     if existing:
         existing_result = _details(existing.get("result"))
-        public_item = _with_omega(
-            evolve_business_item(item, execution_status="executed")
+        public_item = project_public_business_item(
+            item,
+            _with_omega,
+            execution_status="executed",
         )
         return {
             "executed": True,
@@ -3879,13 +3890,12 @@ async def approve_item(
     public_action = dict(action)
     if hasattr(public_action.get("ts"), "isoformat"):
         public_action["ts"] = public_action["ts"].isoformat()
-    item = _with_omega(
-        evolve_business_item(
-            item,
-            decision_id=decision_id,
-            status="approved",
-            lessons=lessons,
-        )
+    item = project_public_business_item(
+        item,
+        _with_omega,
+        decision_id=decision_id,
+        status="approved",
+        lessons=lessons,
     )
     return {
         "approved": True,
@@ -3969,7 +3979,7 @@ async def dismiss_item(
     )
     return {
         "dismissed": True,
-        "item": _with_omega(evolve_business_item(item, status="dismissed")),
+        "item": project_public_business_item(item, _with_omega, status="dismissed"),
     }
 
 
@@ -4028,8 +4038,11 @@ async def reopen_item(
     )
     return {
         "reopened": True,
-        "item": _with_omega(
-            evolve_business_item(item, status="open", decision_id=None)
+        "item": project_public_business_item(
+            item,
+            _with_omega,
+            status="open",
+            decision_id=None,
         ),
     }
 
@@ -4152,12 +4165,11 @@ async def _operate_alert(
         metadata={"alert_state": alert_state, "item": item},
         critical=next_state == "false_positive",
     )
-    public_item = _with_omega(
-        evolve_business_item(
-            item,
-            status=target_status,
-            alert_state=alert_state,
-        )
+    public_item = project_public_business_item(
+        item,
+        _with_omega,
+        status=target_status,
+        alert_state=alert_state,
     )
     return {
         "ok": True,

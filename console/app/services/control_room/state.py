@@ -5,6 +5,9 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.business_state_rows import (
+    diagnostic_metadata as _business_diagnostic_metadata,
+)
 
 
 _RESERVED_GLOBALS = {
@@ -19,6 +22,7 @@ _RESERVED_GLOBALS = {
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
+_core.__dict__.setdefault("business_diagnostic_metadata", _business_diagnostic_metadata)
 
 
 def _bind_to_core(fn):
@@ -1200,40 +1204,7 @@ def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 @_bind_to_core
 def _diagnostic_metadata(item: dict[str, Any]) -> dict[str, Any]:
-    existing = strip_business_fields(_details(item.get("metadata")))
-    existing_details = strip_business_fields(_details(existing.get("details")))
-    item_details = strip_business_fields(_details(item.get("details")))
-    metadata = {
-        **existing,
-        "module": item.get("module"),
-        "details": {**existing_details, **item_details},
-        "source_system": item.get("source_system"),
-    }
-    for key in (
-        "data_status",
-        "item_kind",
-        "data_readiness",
-        "evaluation_status",
-        "readiness_status",
-        "source_status",
-        "parent_item_id",
-        "source_item_id",
-        "derived_from",
-        *BUSINESS_OBSERVATION_FIELDS,
-        *BUSINESS_MATERIALIZATION_FIELDS,
-    ):
-        if key in item and not (
-            key == "item_kind"
-            and str(metadata.get(key) or "").strip().lower() == "source_state"
-        ):
-            metadata[key] = item.get(key)
-    if isinstance(item.get("lineage"), dict) and item["lineage"]:
-        metadata["lineage"] = item["lineage"]
-    for key in BUSINESS_EVIDENCE_FIELDS:
-        value = item.get(key)
-        if isinstance(value, (dict, list, tuple)) and value:
-            metadata[key] = value
-    return with_observation_envelope(metadata, item)
+    return business_diagnostic_metadata(item)
 
 
 @_bind_to_core

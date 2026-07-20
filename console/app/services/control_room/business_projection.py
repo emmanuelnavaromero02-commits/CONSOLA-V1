@@ -92,6 +92,14 @@ def evolve_business_item(
     )
 
 
+def project_public_business_item(
+    item: Mapping[str, Any],
+    projector: Any,
+    **updates: Any,
+) -> dict[str, Any]:
+    return projector(evolve_business_item(item, **updates))
+
+
 def _business_mask(items: list[Mapping[str, Any]]) -> set[int]:
     return {
         index

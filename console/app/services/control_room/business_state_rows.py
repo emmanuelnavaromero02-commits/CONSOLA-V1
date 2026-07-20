@@ -5,13 +5,28 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from app.services.control_room.business_eligibility import (
+    BUSINESS_EVIDENCE_FIELDS,
+    BUSINESS_MATERIALIZATION_FIELDS,
+    BUSINESS_OBSERVATION_FIELDS,
+)
+from app.services.control_room.business_observation_codec import (
+    with_observation_envelope,
+)
 from app.services.control_room.business_policy_metadata import business_policy_metadata
-from app.services.control_room.business_projection import eligible_item_ids
+from app.services.control_room.business_projection import (
+    eligible_item_ids,
+    strip_business_fields,
+)
 
 
 MetadataBuilder = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 DiagnosticBuilder = Callable[[dict[str, Any]], dict[str, Any]]
 ImpactBuilder = Callable[..., dict[str, Any]]
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _stable_payload(item: Mapping[str, Any]) -> str:
@@ -128,6 +143,43 @@ def state_rows(
     return rows
 
 
+def diagnostic_metadata(item: Mapping[str, Any]) -> dict[str, Any]:
+    existing = strip_business_fields(_mapping(item.get("metadata")))
+    existing_details = strip_business_fields(_mapping(existing.get("details")))
+    item_details = strip_business_fields(_mapping(item.get("details")))
+    metadata = {
+        **existing,
+        "module": item.get("module"),
+        "details": {**existing_details, **item_details},
+        "source_system": item.get("source_system"),
+    }
+    for key in (
+        "data_status",
+        "item_kind",
+        "data_readiness",
+        "evaluation_status",
+        "readiness_status",
+        "source_status",
+        "parent_item_id",
+        "source_item_id",
+        "derived_from",
+        *BUSINESS_OBSERVATION_FIELDS,
+        *BUSINESS_MATERIALIZATION_FIELDS,
+    ):
+        if key in item and not (
+            key == "item_kind"
+            and str(metadata.get(key) or "").strip().lower() == "source_state"
+        ):
+            metadata[key] = item.get(key)
+    if isinstance(item.get("lineage"), Mapping) and item["lineage"]:
+        metadata["lineage"] = item["lineage"]
+    for key in BUSINESS_EVIDENCE_FIELDS:
+        value = item.get(key)
+        if isinstance(value, (dict, list, tuple)) and value:
+            metadata[key] = value
+    return with_observation_envelope(metadata, item)
+
+
 def ensured_row(
     item: Mapping[str, Any],
     *,
@@ -149,4 +201,4 @@ def ensured_row(
     )
 
 
-__all__ = ("canonical_items", "ensured_row", "state_rows")
+__all__ = ("canonical_items", "diagnostic_metadata", "ensured_row", "state_rows")
