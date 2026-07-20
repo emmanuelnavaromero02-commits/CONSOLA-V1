@@ -6,6 +6,7 @@ from app.services.control_room.business_observation_codec import (
 from app.services.control_room.business_policy_metadata import (
     REPLACED_POLICY_KEYS,
     business_policy_metadata,
+    diagnostic_policy_sql,
 )
 
 
@@ -64,3 +65,32 @@ def test_technical_metadata_is_replaced_from_the_canonical_policy_schema():
     assert INVALID_ENVELOPE_FIELD not in {
         key for claim in clean[ENVELOPE_KEY]["claims"] for key in claim
     }
+
+
+def test_nested_technical_metadata_is_replaced_but_safe_details_survive():
+    metadata = {
+        "details": {**LEGACY_FIELDS, "safe_nested_note": "keep"},
+        "safe_note": "keep",
+    }
+
+    clean = business_policy_metadata(metadata, _business_item())
+
+    assert clean["details"] == {"safe_nested_note": "keep"}
+    assert clean["safe_note"] == "keep"
+    assert not POLICY_FIELDS.intersection(clean["details"])
+
+
+def test_diagnostic_sql_covers_canonical_top_level_and_nested_surfaces():
+    sql = diagnostic_policy_sql("items.metadata")
+
+    for field in (
+        "data_readiness",
+        "data_status",
+        "evaluation_status",
+        "item_kind",
+        "kind",
+        "readiness_status",
+        "source_status",
+    ):
+        assert f"items.metadata->>'{field}'" in sql
+        assert f"items.metadata->'details'->>'{field}'" in sql

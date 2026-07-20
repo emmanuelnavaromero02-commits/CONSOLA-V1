@@ -122,7 +122,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
                 item_kind, title, severity, status, decision_id, metadata,
                 selected_option_id, execution_status, first_seen_at, last_seen_at
             ) VALUES
-            ($1, $2, 7, $3, 'sap_hcm', 'old_gold', 'source_state', 'Old', 'critical',
+            ($1, $2, 7, $3, 'sap_hcm', 'old_gold', 'anomaly', 'Old', 'critical',
              'decision_created', 42, $5::jsonb,
              'repair', 'executed', NOW(), NOW()),
             ($1, $2, 7, $4, 'sap_hcm', 'gold_people', 'anomaly', 'Legit', 'medium',
@@ -135,25 +135,27 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             json.dumps(
                 {
                     ENVELOPE_KEY: {"version": 99, "claims": []},
-                    INVALID_ENVELOPE_FIELD: True,
-                    "count": 0,
-                    "data_status": "missing",
-                    "dataset": "old_gold",
-                    "derived_from": "technical-parent",
-                    "evaluation_status": "blocked",
-                    "evidence_id": "technical-evidence",
-                    "evidence_pack_id": "technical-pack",
-                    "gold_table": "old_gold",
-                    "item_kind": "source_state",
-                    "kind": "source_state",
-                    "numerator": 0,
-                    "numerator_count": 0,
-                    "parent_item_id": "technical-parent",
-                    "readiness_status": "insufficient_data",
-                    "source_dataset": "old_gold",
-                    "source_item_id": "technical-source",
-                    "source_status": "missing",
-                    "source_system": "technical",
+                    "details": {
+                        INVALID_ENVELOPE_FIELD: True,
+                        "count": 0,
+                        "data_status": "missing",
+                        "dataset": "old_gold",
+                        "derived_from": "technical-parent",
+                        "evaluation_status": "blocked",
+                        "evidence_id": "technical-evidence",
+                        "evidence_pack_id": "technical-pack",
+                        "gold_table": "old_gold",
+                        "item_kind": "source_state",
+                        "kind": "source_state",
+                        "numerator": 0,
+                        "numerator_count": 0,
+                        "parent_item_id": "technical-parent",
+                        "readiness_status": "insufficient_data",
+                        "source_dataset": "old_gold",
+                        "source_item_id": "technical-source",
+                        "source_status": "missing",
+                        "source_system": "technical",
+                    },
                 }
             ),
             json.dumps({DECISION_PROVENANCE_KEY: provenance}),
@@ -191,6 +193,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         assert transitioned_metadata.get("item_kind") != "source_state"
         assert transitioned_metadata.get(WORKFLOW_QUARANTINE_KEY)
         assert not LEGACY_RESIDUAL_FIELDS.intersection(transitioned_metadata)
+        assert "details" not in transitioned_metadata
         assert transitioned_metadata["kind"] == "anomaly"
         assert transitioned_metadata["source_dataset"] == "gold_people"
         assert transitioned_metadata[ENVELOPE_KEY]["version"] == 1

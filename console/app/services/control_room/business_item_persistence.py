@@ -4,7 +4,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from unittest.mock import Mock
 
-from app.services.control_room.business_policy_metadata import REPLACED_POLICY_KEYS
+from app.services.control_room.business_policy_metadata import (
+    REPLACED_POLICY_KEYS,
+    diagnostic_policy_sql,
+    policy_metadata_without_fields_sql,
+)
 from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
@@ -27,19 +31,13 @@ class PersistenceCommandTagError(RuntimeError):
     pass
 
 
-_TECHNICAL_STATES = (
-    "'missing','blocked','stub','error','no_permission','empty','schema_only',"
-    "'unavailable','invalid_schema','insufficient_data'"
-)
 _WAS_DIAGNOSTIC = (
     "control_room_items.item_kind = 'source_state' "
-    "OR control_room_items.metadata->>'item_kind' = 'source_state' "
-    "OR control_room_items.metadata->>'kind' = 'source_state' "
-    f"OR control_room_items.metadata->>'data_status' IN ({_TECHNICAL_STATES})"
+    f"OR {diagnostic_policy_sql('control_room_items.metadata')}"
 )
 _BECOMES_BUSINESS = (
     "EXCLUDED.item_kind <> 'source_state' "
-    f"AND COALESCE(EXCLUDED.metadata->>'data_status', 'ready') NOT IN ({_TECHNICAL_STATES})"
+    f"AND NOT {diagnostic_policy_sql('EXCLUDED.metadata')}"
 )
 _PROVEN_WORKFLOW = (
     f"control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'policy_version' = $3 "
@@ -59,6 +57,9 @@ _HAS_WORKFLOW = (
 _RESET_WORKFLOW = (
     f"({_WAS_DIAGNOSTIC} OR {_HAS_WORKFLOW}) "
     f"AND {_BECOMES_BUSINESS} AND NOT COALESCE(({_PROVEN_WORKFLOW}), FALSE)"
+)
+_CLEAN_EXISTING_METADATA = policy_metadata_without_fields_sql(
+    "control_room_items.metadata", "$2"
 )
 
 _ROW_COLUMNS = """
@@ -84,7 +85,7 @@ _SEMANTIC_UPDATE = f"""
     metadata = (
         CASE WHEN {_RESET_WORKFLOW}
              THEN $4::jsonb
-             ELSE control_room_items.metadata - $2::text[]
+             ELSE {_CLEAN_EXISTING_METADATA}
         END
     ) || EXCLUDED.metadata,
     impact_estimate = EXCLUDED.impact_estimate,
