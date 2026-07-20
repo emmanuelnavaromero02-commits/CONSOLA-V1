@@ -52,6 +52,16 @@ def _business() -> dict:
     }
 
 
+def _derived_business() -> dict:
+    return {
+        **_business(),
+        "id": "derived-1",
+        "kind": "intelligence_signal",
+        "item_kind": "intelligence_signal",
+        "parent_item_id": "parent-1",
+    }
+
+
 @pytest.mark.asyncio
 async def test_diagnostic_persisted_yields_live_business_item():
     item, parents = await resolve_business_item_lookup(
@@ -67,6 +77,27 @@ async def test_diagnostic_persisted_yields_live_business_item():
     assert item["kind"] == "anomaly"
     assert item["id"] == "item-1"
     assert parents == {"item-1"}
+
+
+@pytest.mark.asyncio
+async def test_persisted_derived_item_uses_eligible_persisted_parent():
+    parent = {**_business(), "id": "parent-1"}
+    collect_items = AsyncMock()
+    load_lineage = AsyncMock(return_value=[parent])
+
+    item, parents = await resolve_business_item_lookup(
+        "derived-1",
+        load_persisted=AsyncMock(return_value=_derived_business()),
+        collect_items=collect_items,
+        load_lineage=load_lineage,
+        normalize_lineage=dict,
+    )
+
+    assert item["id"] == "derived-1"
+    assert item["kind"] == "intelligence_signal"
+    assert parents == {"parent-1"}
+    load_lineage.assert_awaited_once_with(["parent-1"])
+    collect_items.assert_not_awaited()
 
 
 class DecisionConn:

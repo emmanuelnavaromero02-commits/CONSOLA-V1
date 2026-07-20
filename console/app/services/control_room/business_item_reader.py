@@ -166,8 +166,16 @@ async def resolve_business_item_lookup(
         item = None
 
     persisted_item = item
+    if persisted_item is not None and (refs := parent_references(persisted_item).ids):
+        lineage_rows = await load_lineage(sorted(refs))
+        eligible_parent_ids = eligible_item_ids(
+            normalize_lineage(row) for row in lineage_rows
+        )
     persisted_eligible = (
-        classify_business_item(persisted_item).eligible
+        classify_business_item(
+            persisted_item,
+            eligible_parent_ids=eligible_parent_ids,
+        ).eligible
         if persisted_item is not None
         else False
     )
@@ -204,11 +212,6 @@ async def resolve_business_item_lookup(
             item = persisted_item
         else:
             item = live_item
-    elif refs := parent_references(item).ids:
-        lineage_rows = await load_lineage(sorted(refs))
-        eligible_parent_ids = eligible_item_ids(
-            normalize_lineage(row) for row in lineage_rows
-        )
     return item, eligible_parent_ids
 
 

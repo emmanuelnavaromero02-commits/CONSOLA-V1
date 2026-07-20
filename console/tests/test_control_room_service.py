@@ -1733,6 +1733,7 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
     mock_pool.fetchval.return_value = 0
 
     with (
@@ -3487,6 +3488,7 @@ async def test_dismiss_item_persists_state_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -3518,6 +3520,7 @@ async def test_reopen_item_resets_terminal_state_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -3550,6 +3553,7 @@ async def test_acknowledge_alert_persists_alert_state_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -3594,6 +3598,7 @@ async def test_snooze_and_assign_alert_update_delivery_contract():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -3638,6 +3643,7 @@ async def test_false_positive_alert_dismisses_item_and_removes_alert():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
