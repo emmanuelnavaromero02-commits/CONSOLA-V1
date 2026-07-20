@@ -68,14 +68,9 @@ async def _agentops_orchestration_rows(
         """
         SELECT COUNT(*)::int AS total,
                MAX(updated_at) AS latest_at
-          FROM decision_orchestration_runs
+         FROM decision_orchestration_runs
          WHERE workspace_id = $1::uuid
-           AND (
-                source_type NOT IN (
-                    'control_room_item', 'agent_alert', 'intelligence_signal'
-                )
-                OR source_id = ANY($2::text[])
-           )
+           AND source_id = ANY($2::text[])
         """,
         workspace_id,
         list(eligible_item_ids),
@@ -98,16 +93,11 @@ async def _agentops_execution_rows(
                COUNT(*)::int AS total,
                MAX(execution.updated_at) AS latest_at
           FROM decision_orchestration_executions execution
-          JOIN decision_orchestration_runs run
+         JOIN decision_orchestration_runs run
             ON run.workspace_id = execution.workspace_id
            AND run.orchestration_id = execution.orchestration_id
          WHERE execution.workspace_id = $1::uuid
-           AND (
-                run.source_type NOT IN (
-                    'control_room_item', 'agent_alert', 'intelligence_signal'
-                )
-                OR run.source_id = ANY($2::text[])
-           )
+           AND run.source_id = ANY($2::text[])
          GROUP BY execution.engine_name, execution.execution_status
         """,
         workspace_id,

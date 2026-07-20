@@ -85,6 +85,46 @@ class RecordingConnection:
         return []
 
 
+class MixedOrchestrationConnection:
+    runs = [
+        ("run-valid", "control_room_item", "item-valid"),
+        ("run-technical", "intelligence_signal", "item-technical"),
+        ("run-manual", "manual", "manual-without-lineage"),
+        ("run-unknown", "custom_source", "unknown-without-lineage"),
+        ("run-linked-unknown", "custom_source", "item-valid"),
+    ]
+
+    async def fetch(self, sql: str, *args):
+        assert "source_id = ANY($2::text[])" in sql
+        assert "source_type NOT IN" not in sql
+        eligible_ids = set(args[1])
+        linked_runs = {
+            run_id for run_id, _, source_id in self.runs if source_id in eligible_ids
+        }
+        if "JOIN decision_orchestration_runs" not in sql:
+            return [{"total": len(linked_runs), "latest_at": None}]
+        executions = [
+            ("run-valid", "monte_carlo", "completed"),
+            ("run-technical", "monte_carlo", "completed"),
+            ("run-manual", "rules", "completed"),
+            ("run-unknown", "rules", "failed"),
+            ("run-linked-unknown", "rules", "completed"),
+        ]
+        counts: dict[tuple[str, str], int] = {}
+        for run_id, engine, status in executions:
+            if run_id in linked_runs:
+                counts[(engine, status)] = counts.get((engine, status), 0) + 1
+        return [
+            {
+                "engine_name": engine,
+                "execution_status": status,
+                "total": total,
+                "latest_at": None,
+            }
+            for (engine, status), total in sorted(counts.items())
+        ]
+
+
 class MixedSimulationConnection:
     async def fetch(self, sql: str, *args):
         assert "simulation.source_id = ANY($2::text[])" in sql
@@ -143,11 +183,34 @@ async def test_agent_alert_orchestration_and_execution_queries_are_id_bounded():
     assert "item_id = ANY($3::text[])" in conn.calls[0][0]
     assert conn.calls[0][1][2] == ["alert-good"]
     assert "source_id = ANY($2::text[])" in conn.calls[1][0]
-    assert "'intelligence_signal'" in conn.calls[1][0]
     assert conn.calls[1][1][1] == ["alert-good", "signal-good"]
     assert "JOIN decision_orchestration_runs" in conn.calls[2][0]
     assert "run.source_id = ANY($2::text[])" in conn.calls[2][0]
-    assert "'intelligence_signal'" in conn.calls[2][0]
+    assert "source_type NOT IN" not in conn.calls[1][0]
+    assert "source_type NOT IN" not in conn.calls[2][0]
+
+
+@pytest.mark.asyncio
+async def test_agentops_mixed_orchestrations_require_demonstrable_business_lineage():
+    conn = MixedOrchestrationConnection()
+    eligible_ids = ["item-valid"]
+
+    runs = await control_room_service._agentops_orchestration_rows(
+        conn,
+        workspace_id="workspace-A",
+        table_exists={"decision_orchestration_runs": True},
+        eligible_item_ids=eligible_ids,
+    )
+    executions = await control_room_service._agentops_execution_rows(
+        conn,
+        workspace_id="workspace-A",
+        table_exists={"decision_orchestration_executions": True},
+        eligible_item_ids=eligible_ids,
+    )
+
+    assert runs == [{"total": 2, "latest_at": None}]
+    assert sum(row["total"] for row in executions) == 2
+    assert {row["engine_name"] for row in executions} == {"monte_carlo", "rules"}
 
 
 @pytest.mark.asyncio
