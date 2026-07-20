@@ -16,6 +16,14 @@ for _name, _value in _core.__dict__.items():
         globals()[_name] = _value
 _core.__dict__.setdefault("_project_public_item", _project_public_business_item)
 
+from app.services.control_room.business_builder_policy import (
+    business_action_templates_builder,
+    business_impact_builder,
+    business_primary_template_builder,
+    business_priority_builder,
+    business_template_ids_builder,
+)
+
 
 def _bind_to_core(fn):
     rebound = types.FunctionType(
@@ -160,18 +168,12 @@ def _impact_payload(
 
 
 @_bind_to_core
+@business_priority_builder
 def _priority_payload(
     item: dict[str, Any],
     impact: dict[str, Any] | None = None,
-    *,
-    eligible_parent_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    blocked = blocked_priority_payload(
-        item, eligible_parent_ids=eligible_parent_ids
-    )
-    if blocked is not None:
-        return blocked
-    impact = impact or _impact_for_item(item, eligible_parent_ids=eligible_parent_ids)
+    impact = impact or _impact_for_item(item)
     score = int(impact.get("priority_score") or 0)
     drivers: list[dict[str, Any]] = [
         {
@@ -217,12 +219,8 @@ def _priority_payload(
 
 
 @_bind_to_core
-def _impact_for_item(
-    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
-) -> dict[str, Any]:
-    blocked = blocked_impact_payload(item, eligible_parent_ids=eligible_parent_ids)
-    if blocked is not None:
-        return blocked
+@business_impact_builder
+def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
 
     stored = _num(item.get("impact_estimate"))
@@ -417,11 +415,8 @@ def _impact_for_item(
 
 
 @_bind_to_core
-def _template_ids_for_item(
-    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
-) -> list[str]:
-    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
-        return []
+@business_template_ids_builder
+def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
     anomaly_type = str(item.get("anomaly_type") or "")
     cartridge = str(item.get("cartridge") or "")
     module_id = str(item.get("module_id") or "")
@@ -449,29 +444,19 @@ def _template_ids_for_item(
 
 
 @_bind_to_core
-def _action_templates_for_item(
-    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
-) -> list[dict[str, Any]]:
-    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
-        return []
+@business_action_templates_builder
+def _action_templates_for_item(item: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         _template_with_writeback(ACTION_TEMPLATES[template_id])
-        for template_id in _template_ids_for_item(
-            item, eligible_parent_ids=eligible_parent_ids
-        )
+        for template_id in _template_ids_for_item(item)
         if template_id in ACTION_TEMPLATES
     ]
 
 
 @_bind_to_core
-def _primary_template_for_item(
-    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
-) -> dict[str, Any]:
-    if not business_builder_allowed(item, eligible_parent_ids=eligible_parent_ids):
-        return {}
-    templates = _action_templates_for_item(
-        item, eligible_parent_ids=eligible_parent_ids
-    )
+@business_primary_template_builder
+def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
+    templates = _action_templates_for_item(item)
     return templates[0] if templates else dict(ACTION_TEMPLATES["request_owner_review"])
 
 
