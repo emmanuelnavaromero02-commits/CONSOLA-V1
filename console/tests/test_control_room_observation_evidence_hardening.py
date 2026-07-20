@@ -99,10 +99,26 @@ def test_administrative_ids_and_placeholders_are_not_evidence(evidence):
 @pytest.mark.parametrize(
     "evidence",
     [
+        {"evidence": "looks valid"},
+        {"analysis_evidence": "analysis complete"},
+        {"evidence_refs": ["looks valid"]},
+        {"evidence_pack": "supporting narrative"},
+        {"evidence": {"summary": "looks valid"}},
+    ],
+)
+def test_narrative_text_is_not_verifiable_evidence(evidence):
+    assert has_evidence(_item(**evidence)) is False
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
         {"evidence_id": "evidence-17"},
         {"evidence_pack": {"id": "pack-17"}},
         {"evidence_pack": {"artifact_id": "artifact-17"}},
         {"evidence_refs": ["s3://bucket/evidence/17.json"]},
+        {"evidence_refs": ["ref-17"]},
+        {"analysis_evidence": {"uri": "gs://bucket/evidence/17.json"}},
         {"evidence_pack": {"items": [{"source_ref": "gold_metrics:17"}]}},
     ],
 )

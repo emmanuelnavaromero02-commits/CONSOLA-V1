@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -75,6 +76,12 @@ _PLACEHOLDER_REFERENCES = frozenset(
         "unknown",
     }
 )
+_NAMESPACED_REFERENCE = re.compile(r"^[a-z0-9][a-z0-9._-]*:[^\s]+$", re.IGNORECASE)
+_PATH_REFERENCE = re.compile(r"^[^\s/]+/[^\s]+$")
+_REFERENCE_ID = re.compile(
+    r"^(?:artifact|document|evidence|pack|record|ref|source|wb)-[a-z0-9._:-]+$",
+    re.IGNORECASE,
+)
 
 
 def _stable_reference(value: Any) -> bool:
@@ -88,6 +95,17 @@ def _stable_reference(value: Any) -> bool:
     if isinstance(value, float):
         return math.isfinite(value) and value > 0
     return False
+
+
+def _structured_reference(value: Any) -> bool:
+    if not isinstance(value, str) or not _stable_reference(value):
+        return False
+    normalized = value.strip()
+    return bool(
+        _NAMESPACED_REFERENCE.fullmatch(normalized)
+        or _PATH_REFERENCE.fullmatch(normalized)
+        or _REFERENCE_ID.fullmatch(normalized)
+    )
 
 
 def _is_id_field(key: Any, *, allow_generic_id: bool) -> bool:
@@ -174,7 +192,7 @@ def _has_substantive_reference(
             )
         finally:
             seen.remove(identity)
-    return scalar_is_reference and _stable_reference(value)
+    return scalar_is_reference and _structured_reference(value)
 
 
 def _evidence_pack_is_substantive(value: Any) -> bool:
