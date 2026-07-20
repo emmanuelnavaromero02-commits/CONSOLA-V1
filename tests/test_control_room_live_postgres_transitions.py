@@ -52,6 +52,10 @@ def _diagnostic(item):
     }
 
 
+def _jsonb(value):
+    return json.loads(value) if isinstance(value, str) else value
+
+
 @pytest.mark.asyncio
 async def test_postgres_transition_cleans_technical_semantics_and_preserves_owner(
     postgres_with_real_init_schema: str,
@@ -125,19 +129,21 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         )
         by_id = {row["item_id"]: dict(row) for row in records}
         transitioned = by_id[technical_id]
+        transitioned_metadata = _jsonb(transitioned["metadata"])
         assert transitioned["owner_user_id"] == 7
         assert transitioned["item_kind"] == "anomaly"
         assert transitioned["decision_id"] is None
         assert transitioned["selected_option_id"] is None
         assert transitioned["execution_status"] == "not_started"
-        assert transitioned["metadata"].get("item_kind") != "source_state"
-        assert transitioned["metadata"].get(WORKFLOW_QUARANTINE_KEY)
-        assert filter_business_items([{"id": technical_id, **transitioned["metadata"]}])
+        assert transitioned_metadata.get("item_kind") != "source_state"
+        assert transitioned_metadata.get(WORKFLOW_QUARANTINE_KEY)
+        assert filter_business_items([{"id": technical_id, **transitioned_metadata}])
 
         kept = by_id[legitimate_id]
+        kept_metadata = _jsonb(kept["metadata"])
         assert kept["decision_id"] == 77
         assert kept["selected_option_id"] == "review"
         assert kept["execution_status"] == "executed"
-        assert kept["metadata"][DECISION_PROVENANCE_KEY]["eligible_at_link"] is True
+        assert kept_metadata[DECISION_PROVENANCE_KEY]["eligible_at_link"] is True
     finally:
         await conn.close()
