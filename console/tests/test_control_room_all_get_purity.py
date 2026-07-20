@@ -88,15 +88,113 @@ GET_PATHS = {
     ),
 }
 
-GET_CASES = tuple(
-    {
-        "route": route,
-        "path": path,
-        "status": 200,
-        "invariant": lambda payload: payload is not None,
-    }
-    for route, path in GET_PATHS.items()
-)
+READINESS_SHAPE = {"cartridge_id": str, "series": list, "usable_count": int}
+ITEM_SHAPE = {"id": ITEM_ID, "kind": str, "omega": dict}
+PAYLOAD_SHAPES = {
+    "/api/control-room/summary": {"total_anomalies": int, "sources": list},
+    "/api/control-room/dashboard": {
+        "workspace": dict,
+        "items": list,
+        "summary": dict,
+    },
+    "/api/control-room/sap-successfactors/gold-kpis": {
+        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
+        "widgets": list,
+    },
+    "/api/control-room/sap-successfactors/talent-kpis": {
+        "readiness": dict,
+        "widgets": list,
+        "signals": list,
+    },
+    "/api/control-room/sap-successfactors/talent/overview": {
+        "metadata_readiness": dict,
+        "nine_box": dict,
+        "anomalies": dict,
+    },
+    "/api/control-room/sap-successfactors/talent/9box": {
+        "status": str,
+        "cells": list,
+        "totals": dict,
+    },
+    "/api/control-room/sap-successfactors/talent/9box/{box_id}": {
+        "box": dict,
+        "count": int,
+        "roster": list,
+    },
+    "/api/control-room/sap-successfactors/talent/anomalies": {
+        "status": str,
+        "items": list,
+        "summary": dict,
+    },
+    "/api/control-room/sap-successfactors/talent/metadata-readiness": {
+        "status": str,
+        "entities": list,
+        "live_preflight": dict,
+    },
+    "/api/control-room/banxico/readiness": READINESS_SHAPE,
+    "/api/control-room/inegi/readiness": READINESS_SHAPE,
+    "/api/control-room/sec-edgar/readiness": READINESS_SHAPE,
+    "/api/control-room/sap-successfactors/market-validation": {
+        "status": str,
+        "policy": dict,
+        "market_context": dict,
+    },
+    "/api/control-room/ops/summary": {
+        "tenant": str,
+        "items": dict,
+        "action_executions": dict,
+    },
+    "/api/control-room/agents/ops": {
+        "agents": list,
+        "summary": dict,
+        "operational_diagnostics": list,
+    },
+    "/api/control-room/decision-intelligence/runs": {"runs": list},
+    "/api/control-room/decision-intelligence/runs/{run_id}": {
+        "run": dict,
+        "snapshots": list,
+    },
+    "/api/control-room/decision-intelligence/history": {"history": list},
+    "/api/control-room/decision-intelligence/calibration": {
+        "status": str,
+        "total_snapshots": int,
+        "calibration_buckets": list,
+    },
+    "/api/control-room/alerts": {"alerts": list, "summary": dict},
+    "/api/control-room/anomalies": {"anomalies": list, "sources": list},
+    "/api/control-room/items/{item_id}": ITEM_SHAPE,
+    "/api/control-room/items/{item_id}/impact": {
+        "item_id": ITEM_ID,
+        "estimate": float,
+        "drivers": list,
+    },
+    "/api/control-room/items/{item_id}/activity": {
+        "item_id": ITEM_ID,
+        "activity": list,
+        "counts": dict,
+    },
+    "/api/control-room/items/{item_id}/action-runs": {
+        "item_id": ITEM_ID,
+        "action_runs": list,
+    },
+    "/api/control-room/items/{item_id}/outcomes": {
+        "item_id": ITEM_ID,
+        "outcomes": list,
+    },
+    "/api/control-room/anomalies/{anomaly_id}": ITEM_SHAPE,
+    "/api/control-room/thresholds": {"thresholds": list, "summary": dict},
+    "/api/control-room/lessons": {"lessons": list, "summary": dict},
+}
+
+
+def _matches_shape(payload, shape) -> bool:
+    return isinstance(payload, dict) and all(
+        isinstance(payload.get(key), expected)
+        if isinstance(expected, type)
+        else payload.get(key) == expected
+        for key, expected in shape.items()
+    )
 
 
 def _stable_response(value):
@@ -142,8 +240,8 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
             transport=transport,
             base_url="http://test",
         ) as client:
-            for index, case in enumerate(GET_CASES):
-                path = case["path"]
+            for index, (route, path) in enumerate(GET_PATHS.items()):
+                shape = PAYLOAD_SHAPES[route]
                 first = await client.get(
                     path, headers={"x-purity-request": f"route-{index}-sequential-a"}
                 )
@@ -151,10 +249,10 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
                     path, headers={"x-purity-request": f"route-{index}-sequential-b"}
                 )
                 seen_paths.append(path)
-                assert first.status_code == case["status"], (path, first.text)
+                assert first.status_code == 200, (path, first.text)
                 assert second.status_code == first.status_code
                 first_payload = first.json()
-                assert case["invariant"](first_payload), path
+                assert _matches_shape(first_payload, shape), path
                 assert _stable_response(first_payload) == _stable_response(
                     second.json()
                 )
@@ -173,15 +271,15 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
                     ),
                 )
                 probe.enabled = False
-                assert concurrent_a.status_code == case["status"], (
+                assert concurrent_a.status_code == 200, (
                     path,
                     concurrent_a.text,
                 )
-                assert concurrent_b.status_code == case["status"], (
+                assert concurrent_b.status_code == 200, (
                     path,
                     concurrent_b.text,
                 )
-                assert case["invariant"](concurrent_a.json()), path
+                assert _matches_shape(concurrent_a.json(), shape), path
                 assert _stable_response(concurrent_a.json()) == _stable_response(
                     concurrent_b.json()
                 )

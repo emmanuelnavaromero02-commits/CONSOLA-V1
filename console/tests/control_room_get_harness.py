@@ -37,6 +37,30 @@ _MUTATING_SQL = re.compile(
     r"\b(?:INSERT|UPDATE|DELETE|MERGE|CALL|TRUNCATE|CREATE|ALTER|DROP|COPY)\b",
     re.I,
 )
+_SQL_FUNCTION_CALL = re.compile(r"\b([a-z_][a-z0-9_.]*)\s*\(", re.I)
+_ALLOWED_GET_SQL_FUNCTIONS = {
+    "any",
+    "array_agg",
+    "avg",
+    "coalesce",
+    "count",
+    "date_trunc",
+    "exists",
+    "json_agg",
+    "json_build_object",
+    "jsonb_agg",
+    "jsonb_build_object",
+    "lower",
+    "max",
+    "min",
+    "nullif",
+    "set_config",
+    "sum",
+    "to_char",
+    "to_regclass",
+    "upper",
+}
+_SQL_PAREN_KEYWORDS = frozenset({"and", "filter", "or", "over", "where"})
 
 
 class MutationSentinel:
@@ -122,6 +146,15 @@ class MutationSentinel:
         if _MUTATING_SQL.search(statement):
             self.mutation_attempts.append(statement)
             raise AssertionError(f"mutation attempted from GET: {statement[:120]}")
+        calls = {
+            match.rsplit(".", 1)[-1].lower()
+            for match in _SQL_FUNCTION_CALL.findall(statement)
+        }
+        unsafe_calls = calls - _ALLOWED_GET_SQL_FUNCTIONS - _SQL_PAREN_KEYWORDS
+        if statement.upper().startswith(("SELECT ", "WITH ")) and unsafe_calls:
+            self.mutation_attempts.append(statement)
+            names = ", ".join(sorted(unsafe_calls))
+            raise AssertionError(f"unapproved SQL function from GET: {names}")
         return statement
 
     def _record_query(self, statement: str) -> None:
