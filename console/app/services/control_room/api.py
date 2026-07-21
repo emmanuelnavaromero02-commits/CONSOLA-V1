@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import types
 
 from app.services.control_room import core as _core

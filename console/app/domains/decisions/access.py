@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+# fmt: off
+
 from collections.abc import Mapping
 from typing import Any
 

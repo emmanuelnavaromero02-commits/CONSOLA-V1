@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import importlib
 import sys
 import types

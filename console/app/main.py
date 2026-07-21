@@ -6,6 +6,8 @@ UI minimalista: chat con asistente + estado de servidores MCP.
 
 from __future__ import annotations
 
+# fmt: off
+
 import asyncio
 import json
 import logging

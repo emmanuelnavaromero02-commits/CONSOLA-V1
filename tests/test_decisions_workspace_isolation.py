@@ -15,7 +15,10 @@ endpoints (``GET/POST /api/decisions``, ``GET/PATCH/DELETE
 /api/decisions/{id}`` and ``POST /api/decisions/{id}/actions``) all
 scope by the active workspace.
 """
+
 from __future__ import annotations
+
+# fmt: off
 
 import importlib
 import os

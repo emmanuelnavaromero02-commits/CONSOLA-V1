@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, patch

@@ -10,7 +10,10 @@ surfaces fall back to the installed catalog so they are never dead; as soon
 as a real connection exists the view scopes down to it automatically. The
 scoping guarantee itself is still covered by test_control_room_service.py.
 """
+
 from __future__ import annotations
+
+# fmt: off
 
 from unittest.mock import AsyncMock, patch
 

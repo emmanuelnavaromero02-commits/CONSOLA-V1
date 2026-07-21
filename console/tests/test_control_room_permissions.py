@@ -1,3 +1,5 @@
+# fmt: off
+
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 

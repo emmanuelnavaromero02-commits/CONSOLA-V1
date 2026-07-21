@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import re
 from typing import Any
 
