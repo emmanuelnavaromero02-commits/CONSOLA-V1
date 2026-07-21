@@ -135,7 +135,7 @@ def structured_id(value: Any, excluded: frozenset[str]) -> bool:
     if isinstance(value, bool) or value is None:
         return False
     if isinstance(value, int):
-        return value >= 0
+        return value >= 0 and not contains_excluded(value, excluded)
     return bool(
         stable_text(value)
         and _ID_TOKEN.fullmatch(value.strip())

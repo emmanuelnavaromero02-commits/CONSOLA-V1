@@ -64,6 +64,17 @@ def test_administrative_id_in_sibling_reference_cannot_be_reused_as_evidence():
     assert has_evidence(_item(evidence_refs=evidence)) is False
 
 
+def test_numeric_administrative_id_cannot_be_reused_as_typed_evidence():
+    evidence = {
+        "type": "dataset_row",
+        "source_dataset": "gold_metrics",
+        "source_record_id": 7,
+        "owner_user_id": 7,
+    }
+
+    assert has_evidence(_item(evidence_refs=[evidence])) is False
+
+
 @pytest.mark.parametrize(
     "reference",
     [
