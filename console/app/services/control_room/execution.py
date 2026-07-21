@@ -29,6 +29,17 @@ from app.services.control_room.business_builder_policy import (
     business_priority_builder,
     business_template_ids_builder,
 )
+from app.services.control_room.business_decision_persistence import (
+    create_and_link_decision as _create_and_link_business_decision,
+    persist_option_selection as _persist_business_option_selection,
+)
+
+_core.__dict__.setdefault(
+    "_create_and_link_business_decision", _create_and_link_business_decision
+)
+_core.__dict__.setdefault(
+    "_persist_business_option_selection", _persist_business_option_selection
+)
 
 
 def _bind_to_core(fn):
@@ -846,79 +857,19 @@ async def create_decision_for_item(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    workspace_id = _workspace_id(user)
-    title = f"{item['title']} - {item['entity_label']}"
-    description = (
-        f"{item['description']}\n\n"
-        f"Recomendacion OMEGA: {item['recommendation']}\n\n"
-        f"Fuente: {item['source_dataset']} ({item['cartridge']})."
-    )
-    kpis = [
-        {
-            "label": "Severidad",
-            "value": item["severity"],
-            "source": item["source_dataset"],
-        },
-        {
-            "label": "Entidad",
-            "value": item["entity_label"],
-            "source": item["cartridge"],
-        },
-        {
-            "label": "Estado OMEGA",
-            "value": item.get("status") or "open",
-            "source": "control_room",
-        },
-        decision_provenance("control_room", item_id=item["id"]),
-    ]
     pool = await auth.pool()
 
     async def _write(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> Any:
-        row = await conn.fetchrow(
-            """INSERT INTO decisions
-                  (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-               VALUES ($1, $2, CURRENT_DATE + 7, $3::jsonb, $4, NULL, 'shared', $5)
-               RETURNING *""",
-            title,
-            description,
-            json.dumps(kpis),
-            user["id"],
-            scoped_workspace_id,
-        )
-        await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            row["id"],
-            "Decision creada desde Sala de Control",
-            item["recommendation"],
-            user.get("email") or "user",
-        )
-        await _ensure_item_row(
+        return await _create_and_link_business_decision(
             conn,
             user=user,
             item=item,
-            status="decision_created",
-            critical=True,
-        )
-        await link_control_room_decision(
-            conn,
             workspace_id=scoped_workspace_id,
-            item_id=item["id"],
-            decision_id=row["id"],
-            owner_user_id=expected_business_item_owner(item, user),
-            item=item,
+            ensure_item_row=_ensure_item_row,
+            record_item_event=_record_item_event,
         )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="decision_created",
-            metadata={"decision_id": row["id"]},
-        )
-        return row
 
     row = await _run_with_db_scope(pool, user, _write)
     await audit_service.record_event(
@@ -962,35 +913,15 @@ async def select_item_option(
     async def _write_selection(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status="in_review")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = CASE
-                           WHEN status = ANY($4::text[]) THEN status
-                           ELSE 'in_review'
-                       END,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                       selected_option_id = $5,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                json.dumps({"selected_option_id": option_id}),
-                scoped_workspace_id,
-                item["id"],
-                sorted(TERMINAL_ITEM_STATUSES),
-                option_id,
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+        await _persist_business_option_selection(
             conn,
             user=user,
             item=item,
-            event_type="option_selected",
-            metadata={"option_id": option_id},
+            workspace_id=scoped_workspace_id,
+            option_id=option_id,
+            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+            ensure_item_row=_ensure_item_row,
+            record_item_event=_record_item_event,
         )
 
     await _run_with_db_scope(pool, user, _write_selection)
