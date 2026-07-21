@@ -162,9 +162,16 @@ async def test_live_refresh_backfills_only_demonstrable_legacy_workflow(
 
         quarantined = rows[technical["id"]]
         quarantine_meta = json.loads(quarantined["metadata"])
-        assert quarantined["decision_id"] == ids["technical"]
+        assert quarantined["status"] == "open"
+        assert quarantined["decision_id"] is None
+        assert quarantined["selected_option_id"] is None
+        assert quarantined["execution_status"] == "not_started"
         assert quarantine_meta.get(WORKFLOW_QUARANTINE_KEY)
         assert DECISION_PROVENANCE_KEY not in quarantine_meta
+        assert await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM decisions WHERE id=$1)",
+            ids["technical"],
+        )
     finally:
         await conn.close()
 
