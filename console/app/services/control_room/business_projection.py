@@ -182,6 +182,9 @@ def normalize_persisted_business_item(row: Mapping[str, Any]) -> dict[str, Any]:
     item["metadata"] = dict(metadata)
     item["id"] = str(item.get("item_id") or "").strip()
     item["kind"] = str(item.get("item_kind") or "").strip()
+    for field in ("tenant_id", "workspace_id"):
+        if item.get(field) is not None:
+            item[field] = str(item[field])
     item["cartridge"] = item.get("cartridge_id") or metadata.get("cartridge")
     item["source_system"] = metadata.get("source_system") or item.get("cartridge")
     return item

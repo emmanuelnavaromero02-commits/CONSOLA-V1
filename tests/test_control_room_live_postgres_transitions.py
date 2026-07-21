@@ -241,7 +241,8 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
 
         records = await conn.fetch(
             """
-            SELECT item_id, owner_user_id, item_kind, status, decision_id,
+            SELECT tenant_id, workspace_id, item_id, owner_user_id, item_kind,
+                   status, decision_id,
                    selected_option_id, execution_status, metadata
               FROM control_room_items
              WHERE workspace_id = $1
@@ -274,6 +275,8 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             for key in claim
         }
         normalized = normalize_persisted_business_item(transitioned)
+        assert normalized["tenant_id"] == tenant_id
+        assert normalized["workspace_id"] == workspace_id
         projected = filter_business_items([normalized])
         assert [item["id"] for item in projected] == [technical_id]
 
