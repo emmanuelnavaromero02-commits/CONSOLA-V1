@@ -41,6 +41,9 @@ class ZeroRowPool:
         self.update_tag = update_tag
         self.calls: list[str] = []
 
+    async def fetchrow(self, _sql: str, *_args):
+        return {"metadata": {}}
+
     async def execute(self, sql: str, *_args):
         command = sql.lstrip().split(maxsplit=1)[0].upper()
         self.calls.append(command)
