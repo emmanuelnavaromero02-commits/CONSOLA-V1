@@ -94,6 +94,21 @@ def test_nested_surface_is_removed_when_only_technical_metadata_remains():
     assert "details" not in clean
 
 
+def test_business_intelligence_artifacts_never_survive_policy_transition():
+    clean = business_policy_metadata(
+        {
+            "intelligence": {
+                "risk_score": 99,
+                "options": [{"id": "legacy-action"}],
+                "priority": "critical",
+            }
+        },
+        _business_item(),
+    )
+
+    assert "intelligence" not in clean
+
+
 def test_empty_incoming_details_do_not_replace_existing_safe_metadata():
     item = {**_business_item(), "details": LEGACY_FIELDS}
 
@@ -102,7 +117,7 @@ def test_empty_incoming_details_do_not_replace_existing_safe_metadata():
     assert clean["details"] == {"safe": "keep"}
 
 
-def test_all_nested_semantic_surfaces_are_cleaned_without_erasing_safe_content():
+def test_nested_observation_is_cleaned_and_intelligence_is_discarded():
     metadata = {
         "observation": {
             "item_kind": "source_state",
@@ -124,16 +139,8 @@ def test_all_nested_semantic_surfaces_are_cleaned_without_erasing_safe_content()
     clean = business_policy_metadata(metadata, _business_item())
 
     assert clean["observation"] == {"safe_observation": "keep"}
-    assert clean["intelligence"] == {
-        "safe_intelligence": "keep",
-        "signal": {"safe_signal": "keep"},
-    }
-    surfaces = (
-        clean["observation"],
-        clean["intelligence"],
-        clean["intelligence"]["signal"],
-    )
-    assert all(not POLICY_FIELDS.intersection(surface) for surface in surfaces)
+    assert "intelligence" not in clean
+    assert not POLICY_FIELDS.intersection(clean["observation"])
     assert clean["kind"] == "anomaly"
     assert clean.get("item_kind") != "source_state"
 

@@ -28,6 +28,7 @@ BUSINESS_ARTIFACT_FIELDS = frozenset(
         "impact_drivers",
         "impact_estimate",
         "impact_formula",
+        "intelligence",
         "monte_carlo",
         "omega",
         "options",

@@ -250,10 +250,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         assert transitioned_metadata["kind"] == "anomaly"
         assert transitioned_metadata["source_dataset"] == "gold_people"
         assert transitioned_metadata["observation"] == {"safe_observation": "keep"}
-        assert transitioned_metadata["intelligence"] == {
-            "safe_intelligence": "keep",
-            "signal": {"safe_signal": "keep"},
-        }
+        assert "intelligence" not in transitioned_metadata
         assert transitioned_metadata[ENVELOPE_KEY]["version"] == 1
         assert INVALID_ENVELOPE_FIELD not in {
             key
