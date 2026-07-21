@@ -54,6 +54,16 @@ def test_structured_evidence_source_must_match_item_source():
     assert has_evidence(_item(evidence_refs=[evidence])) is False
 
 
+def test_typed_evidence_source_cannot_match_by_prefix():
+    evidence = {
+        "type": "dataset_row",
+        "source_dataset": "gold_metrics:forged",
+        "source_record_id": "record-17",
+    }
+
+    assert has_evidence(_item(evidence_refs=[evidence])) is False
+
+
 def test_unknown_structured_evidence_type_is_rejected():
     evidence = {
         "type": "narrative_note",

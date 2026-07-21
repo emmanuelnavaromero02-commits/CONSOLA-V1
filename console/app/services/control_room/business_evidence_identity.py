@@ -195,7 +195,7 @@ def typed_reference(
         return False
     has_source = any(
         str(key).strip().lower() in SOURCE_FIELDS
-        and source_matches(value, canonical_source_values)
+        and reference_token(value) in canonical_source_values
         for key, value in values.items()
     )
     has_id = any(
