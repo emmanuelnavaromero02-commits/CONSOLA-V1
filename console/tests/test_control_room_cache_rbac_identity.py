@@ -8,6 +8,7 @@ import pytest
 
 from app.routers import control_room
 from app.services import permissions
+from app.services.control_room import authorization_cache
 
 
 BASE_USER = {
@@ -156,4 +157,82 @@ async def test_inflight_downgrade_never_caches_admin_payload_for_analyst(
     assert await control_room.control_room_dashboard(user) == {
         "workspace_role": "analyst"
     }
+    assert loader.await_count == 2
+
+
+def test_authorization_identity_is_complete_ordered_and_stable():
+    first = _user(
+        role="admin",
+        workspace_role="admin",
+        allowed_cartridges=["sec_edgar", "banxico", "sec_edgar"],
+        _effective_permissions=[
+            "datasets.read",
+            "control_room.write",
+            "datasets.read",
+        ],
+        access_revision={"workspace": 9, "tenant": 3},
+    )
+    second = _user(
+        role="admin",
+        workspace_role="workspace_admin",
+        allowed_cartridges=["banxico", "sec_edgar"],
+        _effective_permissions=["control_room.write", "datasets.read"],
+        access_revision={"tenant": 3, "workspace": 9},
+    )
+
+    first_identity = authorization_cache.authorization_cache_identity(first)
+    second_identity = authorization_cache.authorization_cache_identity(second)
+
+    assert first_identity == second_identity
+    assert first_identity.tenant_id == "tenant-a"
+    assert first_identity.workspace_id == "workspace-a"
+    assert first_identity.user_id == "17"
+    assert first_identity.global_role == "admin"
+    assert first_identity.workspace_role == "workspace_admin"
+    assert first_identity.effective_permissions == (
+        "control_room.write",
+        "datasets.read",
+    )
+    assert first_identity.allowed_cartridges == ("banxico", "sec_edgar")
+    assert first_identity.access_revisions == (
+        ("access_revision", '{"tenant":3,"workspace":9}'),
+    )
+
+
+@pytest.mark.asyncio
+async def test_global_role_permission_and_cartridge_mutations_miss_cache(monkeypatch):
+    loader = _dashboard_loader(monkeypatch)
+    user = _user(
+        role="user",
+        workspace_role="analyst",
+        _effective_permissions=["datasets.read"],
+    )
+
+    await control_room.control_room_dashboard(user)
+    user["role"] = "admin"
+    await control_room.control_room_dashboard(user)
+    user["_effective_permissions"] = ["control_room.write", "datasets.read"]
+    await control_room.control_room_dashboard(user)
+    user["allowed_cartridges"] = ["banxico", "sap_successfactors"]
+    await control_room.control_room_dashboard(user)
+
+    assert loader.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_active_ttl_reuses_then_expires_authorized_payload(monkeypatch):
+    clock = {"now": 100.0}
+    monkeypatch.setattr(
+        authorization_cache.time,
+        "monotonic",
+        lambda: clock["now"],
+    )
+    loader = AsyncMock(side_effect=[{"version": 1}, {"version": 2}])
+    monkeypatch.setattr(control_room.control_room_service, "dashboard", loader)
+
+    assert await control_room.control_room_dashboard(_user()) == {"version": 1}
+    clock["now"] = 159.0
+    assert await control_room.control_room_dashboard(_user()) == {"version": 1}
+    clock["now"] = 161.0
+    assert await control_room.control_room_dashboard(_user()) == {"version": 2}
     assert loader.await_count == 2
