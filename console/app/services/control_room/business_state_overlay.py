@@ -4,14 +4,11 @@ from collections.abc import Callable, Mapping, Sequence, Set
 from typing import Any
 
 from app.services.control_room.business_access import owner_projection
-from app.services.control_room.business_eligibility import classify_business_item
+from app.services.control_room.business_artifact_overlay import (
+    artifact_overlay_allowed,
+)
 from app.services.control_room.business_projection import eligible_item_ids
 from app.services.control_room.business_workflow_provenance import (
-    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
-    DECISION_PROVENANCE_KEY,
-    ELIGIBILITY_POLICY_VERSION,
-    ELIGIBILITY_POLICY_VERSION_KEY,
-    business_observation_fingerprint,
     workflow_has_eligible_provenance,
 )
 
@@ -108,36 +105,6 @@ def _workflow_state(
     }
 
 
-def _artifact_overlay_allowed(
-    item: Mapping[str, Any],
-    state: Mapping[str, Any],
-    metadata: Mapping[str, Any],
-) -> bool:
-    fingerprint = str(metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
-    if not fingerprint or fingerprint != business_observation_fingerprint(item):
-        return False
-    explicit_version = str(metadata.get(ELIGIBILITY_POLICY_VERSION_KEY) or "").strip()
-    if explicit_version != ELIGIBILITY_POLICY_VERSION:
-        return False
-    provenance = metadata.get(DECISION_PROVENANCE_KEY)
-    if isinstance(provenance, Mapping):
-        version = str(provenance.get("policy_version") or "").strip()
-        if version and version != ELIGIBILITY_POLICY_VERSION:
-            return False
-    persisted = dict(metadata)
-    for key in (
-        "data_status",
-        "item_kind",
-        "kind",
-        "readiness_status",
-        "source_dataset",
-        "source_status",
-    ):
-        if key in state:
-            persisted[key] = state[key]
-    return classify_business_item(persisted).eligible
-
-
 def overlay_business_state(
     items: Sequence[Mapping[str, Any]],
     state_by_id: Mapping[str, Mapping[str, Any]],
@@ -155,7 +122,7 @@ def overlay_business_state(
         workflow = _workflow_state(item, state, metadata)
         if str(workflow["status"]) not in item_statuses:
             workflow["status"] = "open"
-        overlay_artifacts = _artifact_overlay_allowed(item, state, metadata)
+        overlay_artifacts = artifact_overlay_allowed(item, state, metadata)
         intelligence = _mapping(
             (metadata.get("intelligence") if overlay_artifacts else None)
             or item.get("intelligence")

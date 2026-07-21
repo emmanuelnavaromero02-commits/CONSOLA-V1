@@ -8,6 +8,13 @@ from fastapi import HTTPException
 import pytest
 
 from app.services import control_room_service, intelligence_engine
+from app.services.control_room.business_projection import project_business_item
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    WorkflowStage,
+    persistence_metadata,
+    workflow_eligibility_provenance,
+)
 from app.services.intelligence import persistence as intelligence_persistence
 
 
@@ -757,6 +764,32 @@ async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_
 
 @pytest.mark.asyncio
 async def test_persisted_derived_item_keeps_state_until_parent_validation():
+    policy_metadata = {
+        "parent_item_id": "parent-1",
+        "data_status": "ready",
+        "source_system": "replicon",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "observation_date": "2026-07-20",
+        "evidence_refs": ["gold_workforce:derived-1"],
+    }
+    business_item = project_business_item(
+        {
+            "id": "derived-1",
+            "kind": "agent_alert",
+            "workspace_id": WORKSPACE_A,
+            "source_dataset": "gold_workforce",
+            "metadata": policy_metadata,
+        },
+        eligible_parent_ids={"parent-1"},
+    )
+    metadata = persistence_metadata(business_item)
+    metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
+        business_item,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id=WORKSPACE_A,
+        decision_id=42,
+    )
     row = {
         "tenant_id": TENANT_A,
         "workspace_id": WORKSPACE_A,
@@ -764,6 +797,7 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
         "cartridge_id": "replicon",
         "domain": "Operacion",
         "source_dataset": "gold_workforce",
+        "source_system": "replicon",
         "item_kind": "agent_alert",
         "title": "Derived alert",
         "severity": "high",
@@ -773,7 +807,7 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
         "entity_id": "7",
         "entity_label": "Employee 7",
         "anomaly_type": "capacity_risk",
-        "metadata": {"parent_item_id": "parent-1", "data_status": "ready"},
+        "metadata": metadata,
         "first_seen_at": None,
         "last_seen_at": None,
         "resolved_at": None,

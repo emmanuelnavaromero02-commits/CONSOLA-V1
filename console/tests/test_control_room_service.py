@@ -11,6 +11,7 @@ from app.services import control_room_service
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
+    persistence_metadata,
     workflow_eligibility_provenance,
 )
 
@@ -58,12 +59,12 @@ def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
     )
     decision = {"id": 42, "created_by_id": 7, "kpis": []}
     item_row = {
-            "item_id": item_id,
-            "decision_id": 42,
-            "owner_user_id": 7,
-            "item_kind": "anomaly",
-            "metadata": {DECISION_PROVENANCE_KEY: provenance},
-        }
+        "item_id": item_id,
+        "decision_id": 42,
+        "owner_user_id": 7,
+        "item_kind": "anomaly",
+        "metadata": {DECISION_PROVENANCE_KEY: provenance},
+    }
     return [
         decision,
         item_row,
@@ -2484,6 +2485,33 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
 
 @pytest.mark.asyncio
 async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trail():
+    policy_metadata = {
+        "description": "Margen menor a umbral",
+        "recommendation": "Revisar billing",
+        "root_cause": "Costo mayor al esperado",
+        "impact": "Riesgo de margen",
+        "data_status": "ready",
+        "source_system": "replicon",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "observation_date": "2026-05-20T10:00:00Z",
+        "evidence_refs": ["pnl_mensual:item-activity"],
+    }
+    business_item = {
+        "id": "item-activity",
+        "kind": "intelligence_signal",
+        "workspace_id": "workspace-A",
+        "source_dataset": "pnl_mensual",
+        "source_system": "replicon",
+        "metadata": policy_metadata,
+    }
+    metadata = persistence_metadata(business_item)
+    metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
+        business_item,
+        stage=WorkflowStage.APPROVED,
+        workspace_id="workspace-A",
+        decision_id=77,
+    )
     persisted_item = {
         "item_id": "item-activity",
         "cartridge_id": "replicon",
@@ -2499,17 +2527,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "entity_id": "P-1",
         "entity_label": "Proyecto Norte",
         "anomaly_type": "low_margin",
-        "metadata": {
-            "description": "Margen menor a umbral",
-            "recommendation": "Revisar billing",
-            "root_cause": "Costo mayor al esperado",
-            "impact": "Riesgo de margen",
-            "data_status": "ready",
-            "metric_type": "scalar",
-            "observed_value": 1,
-            "observation_date": "2026-05-20T10:00:00Z",
-            "evidence_refs": ["pnl_mensual:item-activity"],
-        },
+        "metadata": metadata,
         "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
         "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
         "resolved_at": None,

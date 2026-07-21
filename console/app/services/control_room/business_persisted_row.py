@@ -4,6 +4,9 @@ import json
 from collections.abc import Mapping, Set
 from typing import Any
 
+from app.services.control_room.business_artifact_overlay import (
+    artifact_overlay_allowed,
+)
 from app.services.control_room.business_eligibility import (
     BUSINESS_EVIDENCE_FIELDS,
     BUSINESS_MATERIALIZATION_FIELDS,
@@ -13,7 +16,9 @@ from app.services.control_room.business_observation_codec import (
     nonempty_mapping_fields,
 )
 from app.services.control_room.business_projection import project_business_item
+from app.services.control_room.business_policy_metadata import strip_business_artifacts
 from app.services.control_room.business_workflow_provenance import (
+    workflow_has_eligible_provenance,
     workflow_is_quarantined,
 )
 
@@ -57,6 +62,18 @@ def persisted_business_item(
     status = str(public.get("status") or "open")
     if status not in item_statuses:
         status = "open"
+    policy_item = {
+        "id": public["item_id"],
+        "kind": public.get("item_kind"),
+        "item_kind": metadata.get("item_kind") or public.get("item_kind"),
+        "tenant_id": public.get("tenant_id") or metadata.get("tenant_id"),
+        "workspace_id": public.get("workspace_id") or metadata.get("workspace_id"),
+        "source_dataset": public.get("source_dataset"),
+        "metadata": metadata,
+    }
+    overlay_artifacts = artifact_overlay_allowed(policy_item, public, metadata)
+    stored_metadata = metadata
+    metadata = metadata if overlay_artifacts else strip_business_artifacts(metadata)
     intelligence = _metadata(metadata.get("intelligence"))
     decision_intelligence = _metadata(metadata.get("decision_intelligence"))
     if not decision_intelligence:
@@ -101,10 +118,10 @@ def persisted_business_item(
         or f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'",
         "status": status,
         "decision_id": public.get("decision_id"),
-        "impact_estimate": public.get("impact_estimate"),
-        "impact_currency": public.get("impact_currency"),
-        "confidence": public.get("confidence"),
-        "priority_score": public.get("priority_score"),
+        "impact_estimate": public.get("impact_estimate") if overlay_artifacts else None,
+        "impact_currency": public.get("impact_currency") if overlay_artifacts else None,
+        "confidence": public.get("confidence") if overlay_artifacts else None,
+        "priority_score": public.get("priority_score") if overlay_artifacts else None,
         "thresholds_applied": metadata.get("thresholds_applied") or [],
         "threshold_state": metadata.get("threshold_state") or "default",
         "control_origin": metadata.get("control_origin"),
@@ -117,8 +134,12 @@ def persisted_business_item(
         or metadata.get("selected_option_id"),
         "execution_status": public.get("execution_status")
         or metadata.get("execution_status"),
-        "alert_state": _metadata(metadata.get("alert_state")),
-        "control_state": _metadata(metadata.get("control_state")),
+        "alert_state": (
+            _metadata(metadata.get("alert_state")) if overlay_artifacts else None
+        ),
+        "control_state": (
+            _metadata(metadata.get("control_state")) if overlay_artifacts else None
+        ),
         "lessons": metadata.get("lessons"),
         "learned_rules": metadata.get("learned_rules"),
         "lesson_applications": metadata.get("lesson_applications")
@@ -149,8 +170,27 @@ def persisted_business_item(
         if key in metadata:
             item[key] = metadata.get(key)
     item.update(nonempty_mapping_fields(metadata, ("lineage",)))
-    if workflow_is_quarantined(item):
-        if item["status"] in {"decision_created", "approved", "resolved"}:
+    has_workflow = bool(
+        public.get("decision_id") is not None
+        or public.get("selected_option_id") is not None
+        or str(public.get("execution_status") or "not_started") != "not_started"
+        or status in {"decision_created", "approved", "resolved"}
+    )
+    workflow_allowed = not has_workflow or (
+        overlay_artifacts
+        and workflow_has_eligible_provenance(
+            stored_metadata,
+            item,
+            decision_id=public.get("decision_id"),
+        )
+    )
+    quarantined = workflow_is_quarantined(item)
+    if quarantined or not workflow_allowed:
+        if not workflow_allowed or item["status"] in {
+            "decision_created",
+            "approved",
+            "resolved",
+        }:
             item["status"] = "open"
         item.update(
             decision_id=None,
