@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import os
-import time
-from copy import deepcopy
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -11,6 +7,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from app.dependencies import require_authenticated
 from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
+from app.services.control_room.authorization_cache import (
+    READ_CACHE as _CONTROL_ROOM_READ_CACHE,
+    READ_CACHE_LOCKS as _CONTROL_ROOM_READ_CACHE_LOCKS,
+    authorization_cache_identity as _control_room_cache_identity,
+    cache_get_or_set as _control_room_cache_get_or_set,
+    cache_invalidate as _control_room_cache_invalidate,
+)
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
@@ -22,101 +25,6 @@ from app.services.security_context import (
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
-_CONTROL_ROOM_READ_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
-_CONTROL_ROOM_READ_CACHE_LOCKS: dict[tuple[Any, ...], asyncio.Lock] = {}
-
-
-def _control_room_cache_ttl() -> float:
-    raw = os.environ.get("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "15")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return 15.0
-    return max(0.0, min(value, 300.0))
-
-
-def _control_room_cache_identity(user: dict | None) -> tuple[Any, ...]:
-    ctx = build_security_context(user)
-    allowed = tuple(
-        sorted(
-            str(item).strip()
-            for item in (ctx.get("allowed_cartridges") or [])
-            if str(item).strip()
-        )
-    )
-    return (
-        str(
-            ctx.get("tenant_id")
-            or (user or {}).get("active_tenant_id")
-            or (user or {}).get("tenant_id")
-            or ""
-        ).strip(),
-        str(
-            ctx.get("workspace_id")
-            or (user or {}).get("active_workspace_id")
-            or (user or {}).get("workspace_id")
-            or ""
-        ).strip(),
-        str(ctx.get("role") or (user or {}).get("role") or "").strip(),
-        str((user or {}).get("id") or ctx.get("sub") or "").strip(),
-        allowed,
-    )
-
-
-def _control_room_cache_key(namespace: str, user: dict | None) -> tuple[Any, ...]:
-    return (namespace, _control_room_cache_identity(user))
-
-
-def _control_room_cache_get(namespace: str, user: dict | None) -> Any | None:
-    ttl = _control_room_cache_ttl()
-    if ttl <= 0:
-        return None
-    key = _control_room_cache_key(namespace, user)
-    cached = _CONTROL_ROOM_READ_CACHE.get(key)
-    if not cached:
-        return None
-    expires_at, value = cached
-    if expires_at <= time.monotonic():
-        _CONTROL_ROOM_READ_CACHE.pop(key, None)
-        return None
-    return deepcopy(value)
-
-
-def _control_room_cache_set(namespace: str, user: dict | None, value: Any) -> Any:
-    ttl = _control_room_cache_ttl()
-    if ttl > 0:
-        _CONTROL_ROOM_READ_CACHE[_control_room_cache_key(namespace, user)] = (
-            time.monotonic() + ttl,
-            deepcopy(value),
-        )
-    return value
-
-
-async def _control_room_cache_get_or_set(
-    namespace: str, user: dict | None, loader
-) -> Any:
-    cached = _control_room_cache_get(namespace, user)
-    if cached is not None:
-        return cached
-    ttl = _control_room_cache_ttl()
-    if ttl <= 0:
-        return await loader()
-    key = _control_room_cache_key(namespace, user)
-    lock = _CONTROL_ROOM_READ_CACHE_LOCKS.setdefault(key, asyncio.Lock())
-    async with lock:
-        cached = _control_room_cache_get(namespace, user)
-        if cached is not None:
-            return cached
-        return _control_room_cache_set(namespace, user, await loader())
-
-
-def _control_room_cache_invalidate(user: dict | None) -> None:
-    identity = _control_room_cache_identity(user)
-    keys = [
-        key for key in _CONTROL_ROOM_READ_CACHE if len(key) == 2 and key[1] == identity
-    ]
-    for key in keys:
-        _CONTROL_ROOM_READ_CACHE.pop(key, None)
 
 
 async def _invalidate_after_write(user: dict, operation: Any) -> Any:
@@ -166,6 +74,7 @@ def _control_room_internal_user(
         "active_tenant_id": tenant_id,
         "active_workspace_id": workspace_id,
         "allowed_cartridges": list(ctx.get("allowed_cartridges") or []),
+        "_effective_permissions": sorted(permissions),
         "agent_id": ctx.get("agent_id"),
         "agent_slug": ctx.get("agent_slug"),
         "agent_run_id": ctx.get("agent_run_id"),
