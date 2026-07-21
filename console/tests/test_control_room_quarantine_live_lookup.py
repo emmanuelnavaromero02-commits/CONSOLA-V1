@@ -22,6 +22,9 @@ USER = {
 def _quarantined_diagnostic() -> dict:
     return {
         "id": "item-1",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "owner_user_id": 7,
         "kind": "source_state",
         "item_kind": "source_state",
         "source_dataset": "gold_people",
@@ -33,6 +36,9 @@ def _quarantined_diagnostic() -> dict:
 def _live_business_item() -> dict:
     return {
         "id": "item-1",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "owner_user_id": 7,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
         "source_dataset": "gold_people",
