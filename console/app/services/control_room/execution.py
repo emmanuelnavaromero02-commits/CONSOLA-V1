@@ -3270,7 +3270,7 @@ async def _record_adapter_success_lesson(
     result: dict[str, Any],
     adapter_name: str,
     template_type: str,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     cartridge_id = str(
         item.get("cartridge") or template.get("cartridge_id") or "platform"
@@ -3299,27 +3299,25 @@ async def _record_adapter_success_lesson(
             "adapter": adapter_name,
         },
     }
-    try:
-        await pool.execute(
-            """
-            INSERT INTO control_room_lessons (
-                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
-                rule, source_decision_id, confidence, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-            """,
-            tenant_id,
-            workspace_id,
-            item["id"],
-            cartridge_id,
-            anomaly_type,
-            rule,
-            decision_id,
-            confidence,
-            json.dumps(metadata),
+    insert_result = await pool.execute(
+        """
+        INSERT INTO control_room_lessons (
+            tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+            rule, source_decision_id, confidence, metadata
         )
-    except Exception:
-        return None
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        """,
+        tenant_id,
+        workspace_id,
+        item["id"],
+        cartridge_id,
+        anomaly_type,
+        rule,
+        decision_id,
+        confidence,
+        json.dumps(metadata),
+    )
+    _require_exact_count(insert_result, "INSERT")
     return {
         "item_id": item["id"],
         "cartridge_id": cartridge_id,

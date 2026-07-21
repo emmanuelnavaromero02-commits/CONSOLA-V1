@@ -56,6 +56,11 @@ class MissingActionRunPool:
         return None
 
 
+class FailingLessonPool:
+    async def execute(self, _sql: str, *_args):
+        raise ConnectionError("lesson storage unavailable")
+
+
 async def _run_scoped_with(connection, _pool, user, operation):
     return await operation(
         connection,
@@ -111,6 +116,84 @@ async def test_persist_lessons_rejects_zero_row_insert():
         )
 
     assert pool.calls == ["INSERT"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_success_lesson_rejects_zero_row_insert():
+    pool = ZeroRowPool(insert_tag="INSERT 0 0")
+
+    with pytest.raises(RuntimeError, match="insert affected unexpected rows"):
+        await control_room_service._record_adapter_success_lesson(
+            pool,
+            user=USER,
+            item=_item(),
+            template={"template_id": "notify_manager", "label": "Notify manager"},
+            execution={"id": 42},
+            result={"status": "completed"},
+            adapter_name="SuccessAdapter",
+            template_type="notification",
+        )
+
+    assert pool.calls == ["INSERT"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_success_lesson_propagates_storage_failure():
+    with pytest.raises(ConnectionError, match="lesson storage unavailable"):
+        await control_room_service._record_adapter_success_lesson(
+            FailingLessonPool(),
+            user=USER,
+            item=_item(),
+            template={"template_id": "notify_manager", "label": "Notify manager"},
+            execution={"id": 42},
+            result={"status": "completed"},
+            adapter_name="SuccessAdapter",
+            template_type="notification",
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_writeback_does_not_return_success_after_lesson_insert_zero():
+    pool = ZeroRowPool(insert_tag="INSERT 0 0")
+    adapter = AsyncMock()
+    adapter.execute.return_value = {"ok": True, "status": "executed"}
+
+    with (
+        patch.object(
+            control_room_service.WriteBackAdapterFactory,
+            "get_adapter",
+            return_value=adapter,
+        ),
+        patch.object(
+            control_room_service, "_record_writeback_audit_event", AsyncMock()
+        ),
+        patch.object(
+            control_room_service,
+            "_record_action_execution",
+            AsyncMock(return_value={"id": 41}),
+        ),
+        patch.object(
+            control_room_service,
+            "_record_action_run",
+            AsyncMock(return_value={"id": 42}),
+        ),
+        patch.object(control_room_service, "_set_execution_status", AsyncMock()),
+        patch.object(control_room_service, "_record_item_event", AsyncMock()),
+        patch.object(control_room_service, "_project_public_item") as project_item,
+    ):
+        with pytest.raises(RuntimeError, match="insert affected unexpected rows"):
+            await control_room_service._execute_external_writeback(
+                pool,
+                user=USER,
+                item=_item(),
+                template={"template_id": "notify_manager", "cartridge_id": "sap_hcm"},
+                payload={},
+                idempotency_key="lesson-zero",
+                ip=None,
+                user_agent=None,
+            )
+
+    project_item.assert_not_called()
 
 
 @pytest.mark.asyncio
