@@ -26,7 +26,7 @@ EVIDENCE_ID_FIELDS = ("evidence_pack_id", "evidence_id")
 def has_evidence(item: Mapping[str, Any]) -> bool:
     surfaces = semantic_maps(item)
     sources = canonical_sources(surfaces)
-    require_scope_binding = bool(sources.get("tenant") and sources.get("workspace"))
+    require_scope_binding = bool(sources.get("tenant") or sources.get("workspace"))
     excluded = administrative_references(surfaces)
     for values in surfaces:
         if (

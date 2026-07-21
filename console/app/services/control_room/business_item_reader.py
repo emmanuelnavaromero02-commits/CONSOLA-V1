@@ -16,13 +16,13 @@ from app.services.control_room.business_access import (
     can_read_workspace_wide,
     owner_projection,
     owner_scope_id,
-    workspace_scope,
 )
 from app.services.control_room.business_repository import fetch_lineage_rows
 from app.services.control_room.business_workflow_provenance import (
     WORKFLOW_QUARANTINE_KEY,
     workflow_is_quarantined,
 )
+from app.services.control_room.business_source_scope import command_scope_boundary
 
 
 RowConverter = Callable[[Mapping[str, Any]], dict[str, Any]]
@@ -241,12 +241,17 @@ async def resolve_scoped_business_item_lookup(
     pool_factory: Callable[[], Awaitable[Any]],
     run_scoped: Callable[..., Awaitable[Any]],
 ) -> tuple[dict[str, Any] | None, set[str]]:
-    tenant_id, workspace_id = workspace_scope(user)
+    scope = command_scope_boundary(user, item_id)
+    if scope.diagnostic is not None:
+        return scope.diagnostic, set()
+    tenant_id, workspace_id = scope.tenant_id, scope.workspace_id
     owner_id = owner_scope_id(user)
     if not can_read_workspace_wide(user) and owner_id is None:
         return None, set()
 
     persisted = await load_persisted(item_id)
+    if persisted is not None and not scope.matches(persisted):
+        return None, set()
     if (
         persisted is not None
         and owner_id is not None

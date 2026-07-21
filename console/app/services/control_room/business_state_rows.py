@@ -14,6 +14,7 @@ from app.services.control_room.business_observation_codec import (
     with_observation_envelope,
 )
 from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_source_scope import canonical_scoped_item
 from app.services.control_room.business_projection import (
     eligible_item_ids,
     strip_business_fields,
@@ -99,6 +100,14 @@ def state_rows(
     owner_by_item: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     selected, duplicate_ids = canonical_items(items)
+    selected = [
+        canonical_scoped_item(
+            item,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
+        for item in selected
+    ]
     business_ids = eligible_item_ids(
         item for item in selected if str(item.get("id") or "") not in duplicate_ids
     )

@@ -113,6 +113,8 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
         raise HTTPException(503, "gold database unavailable")
     table = _gold_table(dataset)
     tenant_id, workspace_id = workspace_scope(user)
+    if not tenant_id:
+        raise HTTPException(403, "gold dataset requires complete tenant/workspace scope")
     safe_limit = max(1, min(int(limit or 5000), 5000))
     cache_key = (str(dataset), str(tenant_id or ""), str(workspace_id), safe_limit)
     cached = _gold_cache_get(cache_key)
@@ -137,19 +139,14 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
                 columns = await _table_columns(conn, table)
                 if "workspace_id" not in columns:
                     raise HTTPException(403, f"dataset is not workspace scoped: {dataset}")
-                if "tenant_id" in columns and tenant_id:
-                    rows = await conn.fetch(
-                        f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT $3',
-                        workspace_id,
-                        tenant_id,
-                        safe_limit,
-                    )
-                else:
-                    rows = await conn.fetch(
-                        f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 LIMIT $2',
-                        workspace_id,
-                        safe_limit,
-                    )
+                if "tenant_id" not in columns:
+                    raise HTTPException(403, f"dataset is not tenant scoped: {dataset}")
+                rows = await conn.fetch(
+                    f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT $3',
+                    workspace_id,
+                    tenant_id,
+                    safe_limit,
+                )
             return _gold_cache_set(cache_key, [dict(row) for row in rows])
         finally:
             await conn.close()

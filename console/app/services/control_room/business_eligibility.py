@@ -18,6 +18,7 @@ from app.services.control_room.business_observation import (
     has_qualitative_anomaly_observation,
     semantic_states,
 )
+from app.services.control_room.business_source_scope import has_partial_scope
 
 
 TECHNICAL_STATES = frozenset(
@@ -29,6 +30,7 @@ TECHNICAL_STATES = frozenset(
         "failure",
         "insufficient_data",
         "invalid_schema",
+        "invalid_scope",
         "missing",
         "no_permission",
         "not_ready",
@@ -114,6 +116,9 @@ def classify_business_item(
 
     if is_source_state(item):
         return BusinessEligibility(False, EligibilityReason.SOURCE_STATE)
+
+    if has_partial_scope(item):
+        return BusinessEligibility(False, EligibilityReason.TECHNICAL_STATE)
 
     states = semantic_states(item)
     if states & TECHNICAL_STATES:

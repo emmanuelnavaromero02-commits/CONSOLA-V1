@@ -17,6 +17,10 @@ from app.services.control_room.business_cartridge_scope import (
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
+from app.services.control_room.business_source_scope import (
+    scoped_runtime_evidence_fields,
+    scoped_source_row,
+)
 from app.services.control_room.business_talent_preview import (
     build_talent_action_preview,
 )
@@ -37,6 +41,8 @@ for _name, _value in _core.__dict__.items():
 _core.__dict__.setdefault("agentops_source_ids", agentops_source_ids)
 _core.__dict__.setdefault("allowed_business_cartridges", allowed_business_cartridges)
 _core.__dict__.setdefault("runtime_row_evidence_fields", runtime_row_evidence_fields)
+_core.__dict__.setdefault("scoped_runtime_evidence_fields", scoped_runtime_evidence_fields)
+_core.__dict__.setdefault("scoped_source_row", scoped_source_row)
 _core.__dict__.setdefault("_build_talent_action_preview", build_talent_action_preview)
 
 
@@ -2525,20 +2531,17 @@ def _base_item(
             },
             **nonempty_mapping_fields(row, ("observation",)),
             **nonempty_mapping_fields(row, ("lineage",)),
-            **runtime_row_evidence_fields(
+            **scoped_runtime_evidence_fields(
+                row,
                 source_dataset=source.dataset,
                 source_system=source.cartridge,
                 cartridge=source.cartridge,
-                tenant_id=row.get("tenant_id"),
-                workspace_id=str(row.get("workspace_id") or ""),
-                source_row=row,
                 locator_field=(
                     source.entity_id_field
                     if row.get(source.entity_id_field) is not None
                     else source.entity_label_field
                 ),
                 observed_at=detected_at,
-                existing_refs=row.get("evidence_refs"),
             ),
         }
     )
@@ -4379,7 +4382,11 @@ def _append_normalized_source_rows(
     for row in rows:
         item = _normalize_row(
             source,
-            {**row, "tenant_id": tenant_id, "workspace_id": workspace_id},
+            scoped_source_row(
+                row,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            ),
             thresholds,
         )
         if item:

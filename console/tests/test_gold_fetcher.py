@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.intelligence import gold_fetcher
 
@@ -85,6 +87,51 @@ async def test_gold_fetcher_scopes_text_or_uuid_gold_columns(monkeypatch):
             "headcount": 1288,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_gold_fetcher_rejects_partial_runtime_scope_before_connect(monkeypatch):
+    connect = AsyncMock()
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")
+    monkeypatch.setattr(gold_fetcher.asyncpg, "connect", connect)
+
+    with pytest.raises(HTTPException) as error:
+        await gold_fetcher.query_gold_dataset_rows(
+            "sap_successfactors_headcount_by_company",
+            {"workspace_id": "workspace-a"},
+            20,
+        )
+
+    assert error.value.status_code == 403
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gold_fetcher_rejects_table_without_tenant_scope(monkeypatch):
+    class WorkspaceOnlyConn(_FakeConn):
+        async def fetch(self, sql: str, *args: object):
+            self.fetch_calls.append((sql, args))
+            if "information_schema.columns" in sql:
+                return [{"column_name": "workspace_id"}, {"column_name": "headcount"}]
+            raise AssertionError("data rows must not be fetched without tenant scope")
+
+    conn = WorkspaceOnlyConn()
+
+    async def fake_connect(_dsn: str, command_timeout: int):
+        return conn
+
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")
+    monkeypatch.setattr(gold_fetcher.asyncpg, "connect", fake_connect)
+
+    with pytest.raises(HTTPException) as error:
+        await gold_fetcher.query_gold_dataset_rows(
+            "sap_successfactors_headcount_by_company",
+            {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+            20,
+        )
+
+    assert error.value.status_code == 403
+    assert "tenant scoped" in str(error.value.detail)
 
 
 @pytest.mark.asyncio
