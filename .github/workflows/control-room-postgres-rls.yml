@@ -3,9 +3,13 @@ name: Control Room PostgreSQL RLS
 on:
   pull_request:
     paths:
+      - "console/app/main.py"
+      - "console/app/routers/control_room.py"
+      - "console/app/domains/decisions/**"
+      - "console/app/services/intelligence/decision_orchestrator.py"
       - "console/app/services/control_room/**"
       - "console/tests/test_control_room*.py"
-      - "tests/test_control_room_live_postgres_transitions.py"
+      - "tests/test_control_room*.py"
       - "tests/test_operational_rls_console_refinement.py"
       - "tests/test_operational_rls_policy_guard.py"
       - ".github/workflows/control-room-postgres-rls.yml"
@@ -41,7 +45,7 @@ jobs:
           pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
-            tests/test_control_room_live_postgres_transitions.py
+            tests/test_control_room_live_postgres*.py
 
       - name: Fail if live PostgreSQL/RLS tests skipped
         if: always()
@@ -54,8 +58,15 @@ jobs:
           if not Path(path).is_file():
               raise SystemExit("Live PostgreSQL/RLS report missing; tests did not complete")
           root = ET.parse(path).getroot()
-          skipped = root.findall(".//skipped")
-          if skipped:
-              messages = [node.attrib.get("message", "skipped") for node in skipped]
-              raise SystemExit("Live PostgreSQL/RLS tests skipped: " + "; ".join(messages))
+          suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
+          counts = {
+              name: sum(int(suite.attrib.get(name, 0)) for suite in suites)
+              for name in ("tests", "skipped", "failures", "errors")
+          }
+          tests = counts["tests"]
+          if tests < 9:
+              raise SystemExit(f"Live PostgreSQL/RLS collected only {tests} tests; expected >= 9")
+          bad = {name: counts[name] for name in ("skipped", "failures", "errors")}
+          if any(bad.values()):
+              raise SystemExit(f"Live PostgreSQL/RLS JUnit is not clean: {bad}")
           PY
