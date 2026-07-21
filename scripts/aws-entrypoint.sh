@@ -86,8 +86,11 @@ required_secrets=(
 )
 
 optional_secrets=(
-  CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
   SMTP_PASSWORD
+)
+
+required_if_configured_secrets=(
+  CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
 )
 
 tmp_file="$(mktemp)"
@@ -274,6 +277,20 @@ for secret_name in "${required_secrets[@]}"; do
   fi
   secret_value="$(fetch_secret "$secret_name" "$arn")" || {
     echo "[aws-entrypoint] unable to fetch required secret: $secret_name"
+    exit 1
+  }
+  write_env "$secret_name" "$secret_value"
+done
+
+for secret_name in "${required_if_configured_secrets[@]}"; do
+  arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
+  arn="${!arn_var:-}"
+  if [[ -z "$arn" ]]; then
+    write_env "$secret_name" ""
+    continue
+  fi
+  secret_value="$(fetch_secret "$secret_name" "$arn")" || {
+    echo "[aws-entrypoint] unable to fetch configured secret: $secret_name" >&2
     exit 1
   }
   write_env "$secret_name" "$secret_value"

@@ -89,6 +89,36 @@ secret_value() {
   python3 -c 'import base64,json,sys; payload=json.load(sys.stdin).get("payload",{}).get("data",""); sys.exit(1) if not payload else print(base64.b64decode(payload).decode())' <<<"$${response}"
 }
 
+set_env() {
+  python3 - "$1" "$2" infra/.env <<'PY'
+import pathlib
+import sys
+
+key, value, path = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
+lines = path.read_text().splitlines() if path.exists() else []
+prefix = f"{key}="
+for i, line in enumerate(lines):
+    if line.startswith(prefix):
+        lines[i] = f"{key}={value}"
+        break
+else:
+    lines.append(f"{key}={value}")
+path.write_text("\n".join(lines) + "\n")
+PY
+}
+
+load_required_secret() {
+  local secret_name="$1"
+  local env_name="$2"
+  local value
+  if ! value="$(secret_value "$${secret_name}")"; then
+    echo "[omega-startup] required Secret Manager value unavailable: $${secret_name}" >&2
+    exit 1
+  fi
+  printf -v "$${env_name}" '%s' "$${value}"
+  export "$${env_name}"
+}
+
 mkdir -p "$${APP_ROOT}/releases"
 EXISTING_ENV=""
 if [[ -f "$${SHARED_ENV}" ]]; then
@@ -109,12 +139,18 @@ mkdir -p "$(dirname "$${SHARED_ENV}")"
 if [[ -n "$${EXISTING_ENV}" ]]; then
   cp "$${EXISTING_ENV}" infra/.env
 fi
-if [[ -f infra/.env ]]; then
-  bash infra/bootstrap-keys.sh infra/.env
-else
-  bash infra/bootstrap.sh || true
-  bash infra/bootstrap-keys.sh infra/.env
+
+load_required_secret control_room_evidence_signing_key_id CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID
+load_required_secret control_room_evidence_signing_key CONTROL_ROOM_EVIDENCE_SIGNING_KEY
+load_required_secret control_room_evidence_signing_previous_keys CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
+
+if [[ ! -f infra/.env ]]; then
+  bash infra/bootstrap.sh
 fi
+set_env CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID "$${CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID}"
+set_env CONTROL_ROOM_EVIDENCE_SIGNING_KEY "$${CONTROL_ROOM_EVIDENCE_SIGNING_KEY}"
+set_env CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS "$${CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS}"
+bash infra/bootstrap-keys.sh infra/.env
 chmod 600 infra/.env
 cp infra/.env "$${SHARED_ENV}"
 chmod 600 "$${SHARED_ENV}"
@@ -122,24 +158,6 @@ mkdir -p data/lakehouse
 mkdir -p airflow/dags airflow/logs/scheduler airflow/plugins
 chown -R 50000:0 airflow/dags airflow/logs airflow/plugins
 chmod -R 775 airflow/dags airflow/logs airflow/plugins
-
-set_env() {
-  python3 - "$1" "$2" infra/.env <<'PY'
-import pathlib
-import sys
-
-key, value, path = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
-lines = path.read_text().splitlines() if path.exists() else []
-prefix = f"{key}="
-for i, line in enumerate(lines):
-    if line.startswith(prefix):
-        lines[i] = f"{key}={value}"
-        break
-else:
-    lines.append(f"{key}={value}")
-path.write_text("\n".join(lines) + "\n")
-PY
-}
 
 set_env APP_ENV production
 set_env COOKIE_SECURE "$${COOKIE_SECURE}"
