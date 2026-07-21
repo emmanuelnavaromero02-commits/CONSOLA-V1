@@ -17,6 +17,7 @@ from app.services.control_room.business_action_mutations import (
     _record_event,
 )
 from app.services.control_room.business_workflow_provenance import (
+    WORKFLOW_QUARANTINE_KEY,
     workflow_has_eligible_provenance,
 )
 
@@ -88,6 +89,13 @@ async def require_approvable_decision(
     if existing_link is not None and int(existing_link) != decision_id:
         raise HTTPException(409, "control room item has another decision")
     metadata = item_row.get("metadata") if item_row else {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            metadata = {}
+    if isinstance(metadata, Mapping) and metadata.get(WORKFLOW_QUARANTINE_KEY):
+        raise HTTPException(409, "control room item has quarantined workflow")
     eligible_provenance = workflow_has_eligible_provenance(
         metadata if isinstance(metadata, Mapping) else {},
         item,
