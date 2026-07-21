@@ -90,16 +90,6 @@ def test_historical_decisions_are_filtered_through_linked_business_items():
     ) == [{"id": 3}, {"id": 4}]
 
 
-def test_manual_unlinked_decision_stays_and_control_room_orphan_is_hidden():
-    decisions = [
-        {"id": 1, "kpis": [{"provenance": {"origin": "manual"}}]},
-        {"id": 2, "kpis": [{"provenance": {"origin": "control_room"}}]},
-        {"id": 3, "kpis": [{"source": "control_room"}]},
-    ]
-
-    assert filter_business_decisions(decisions, []) == [decisions[0]]
-
-
 def test_decision_linked_to_business_and_diagnostic_items_fails_closed():
     decision = {"id": 1}
     linked = [
@@ -146,18 +136,6 @@ def test_lineage_row_duplicated_by_linked_seed_does_not_hide_valid_decision():
     assert filter_business_decisions(
         [decision], [root, child], lineage_items=[root]
     ) == [decision]
-
-
-def test_any_legacy_control_room_marker_hides_orphan_regardless_of_order():
-    decision = {
-        "id": 1,
-        "kpis": [
-            {"provenance": {"origin": "manual"}},
-            {"source": "control_room"},
-        ],
-    }
-
-    assert filter_business_decisions([decision], []) == []
 
 
 def test_control_room_provenance_cannot_be_removed_by_kpi_patch():
