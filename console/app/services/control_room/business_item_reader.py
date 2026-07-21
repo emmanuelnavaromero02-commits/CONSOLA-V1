@@ -20,6 +20,7 @@ from app.services.control_room.business_access import (
 )
 from app.services.control_room.business_repository import fetch_lineage_rows
 from app.services.control_room.business_workflow_provenance import (
+    WORKFLOW_QUARANTINE_KEY,
     workflow_is_quarantined,
 )
 
@@ -217,6 +218,11 @@ async def resolve_business_item_lookup(
             item = {
                 **live_item,
                 **owner_projection(live_item, loaded_persisted or {}),
+                **(
+                    {WORKFLOW_QUARANTINE_KEY: True}
+                    if workflow_is_quarantined(persisted_item)
+                    else {}
+                ),
             }
         elif persisted_item is not None:
             item = persisted_item
