@@ -176,7 +176,6 @@ async def lock_authoritative_business_item(
     ):
         raise HTTPException(404, "control room item not found")
     _validate_owner(locked, item, user)
-    _validate_mutation_state(locked, item)
     if not classify_business_item(item).eligible:
         raise _changed()
     normalized = normalize_persisted_business_item(locked)
@@ -184,6 +183,7 @@ async def lock_authoritative_business_item(
         if not allow_diagnostic_transition or not workflow_columns_unlinked(locked):
             raise _changed()
         return locked
+    _validate_mutation_state(locked, item)
     metadata = _metadata(locked.get("metadata"))
     current_fingerprint = business_observation_fingerprint(item)
     persisted_fingerprint = str(

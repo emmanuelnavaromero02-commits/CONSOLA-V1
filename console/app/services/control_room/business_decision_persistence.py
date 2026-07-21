@@ -12,6 +12,7 @@ from app.services.control_room.business_repository import (
     link_control_room_decision,
 )
 from app.services.control_room.business_workflow_provenance import (
+    WorkflowStage,
     workflow_has_eligible_provenance,
 )
 from app.services.control_room.business_workflow_stage_cas import (
@@ -65,11 +66,17 @@ async def create_and_link_decision(
     ensure_item_row: ItemWriter,
     record_item_event: ItemWriter,
 ) -> Any:
+    initial_item = {
+        **dict(item),
+        "decision_id": None,
+        "selected_option_id": None,
+        "execution_status": "not_started",
+    }
     await ensure_item_row(
         conn,
         user=dict(user),
-        item=dict(item),
-        status="decision_created",
+        item=initial_item,
+        status=str(item.get("status") or "open"),
         critical=True,
         allow_diagnostic_transition=True,
     )
@@ -118,7 +125,26 @@ async def create_and_link_decision(
             raise HTTPException(409, "control room decision link is invalid")
         return existing
 
-    if locked.get("metadata") and not workflow_columns_unlinked(locked):
+    decision_item = {
+        **dict(item),
+        "selected_option_id": locked.get("selected_option_id"),
+    }
+    valid_option_stage = bool(
+        locked.get("selected_option_id")
+        and str(locked.get("execution_status") or "not_started") == "not_started"
+        and str(locked.get("status") or "open") in {"open", "in_review"}
+        and workflow_has_eligible_provenance(
+            locked.get("metadata"),
+            decision_item,
+            decision_id=None,
+            allowed_stages=(WorkflowStage.OPTION_SELECTED,),
+        )
+    )
+    if (
+        locked.get("metadata")
+        and not workflow_columns_unlinked(locked)
+        and not valid_option_stage
+    ):
         raise HTTPException(409, "previous control room workflow is not unlinked")
 
     title, description, kpis = _decision_fields(item)
@@ -148,7 +174,7 @@ async def create_and_link_decision(
         item_id=str(item["id"]),
         decision_id=row["id"],
         owner_user_id=owner_user_id,
-        item=item,
+        item=decision_item,
     )
     await record_item_event(
         conn,

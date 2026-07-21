@@ -58,6 +58,12 @@ def _persisted_policy_item(
     persisted_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     item = dict(persisted_metadata)
+    item_id = persisted_state.get("item_id")
+    if item_id is not None:
+        item["id"] = item_id
+        item["item_id"] = item_id
+    if persisted_state.get("entity_id") is not None:
+        item["entity_id"] = persisted_state["entity_id"]
     if persisted_state.get("cartridge_id") is not None:
         item["cartridge"] = persisted_state["cartridge_id"]
     for key in _PERSISTED_POLICY_FIELDS:

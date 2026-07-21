@@ -199,3 +199,27 @@ async def test_execution_status_changed_after_lookup_rejects() -> None:
         await lock_authoritative_business_item(conn, user=_user(), item=item)
 
     assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_unlinked_diagnostic_transition_ignores_projected_option_default() -> (
+    None
+):
+    item = {**_item(3), "selected_option_id": "remediate"}
+    row = {
+        **_persisted(item),
+        "item_kind": "source_state",
+        "selected_option_id": None,
+        "metadata": {"item_kind": "source_state", "data_status": "missing"},
+    }
+    conn = GuardConnection(row)
+
+    locked = await lock_authoritative_business_item(
+        conn,
+        user=_user(),
+        item=item,
+        allow_diagnostic_transition=True,
+    )
+
+    assert locked == row
+    assert len(conn.statements) == 1

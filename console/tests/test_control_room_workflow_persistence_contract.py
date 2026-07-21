@@ -236,7 +236,10 @@ async def test_decision_creation_locks_item_before_inserting_decision():
             raise AssertionError(normalized)
 
     async def ensure(*_args, **kwargs):
-        assert kwargs["status"] == "decision_created"
+        assert kwargs["status"] == "open"
+        assert kwargs["item"]["decision_id"] is None
+        assert kwargs["item"]["selected_option_id"] is None
+        assert kwargs["item"]["execution_status"] == "not_started"
         calls.append("ensure")
 
     await create_and_link_decision(
