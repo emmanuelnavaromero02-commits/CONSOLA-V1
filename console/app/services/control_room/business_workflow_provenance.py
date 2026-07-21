@@ -205,7 +205,8 @@ def workflow_has_eligible_provenance(
         value.get("eligible_at_link") is True
         and value.get("policy_version") == ELIGIBILITY_POLICY_VERSION
         and bool(stored_workspace)
-        and (not expected_workspace or stored_workspace == expected_workspace)
+        and bool(expected_workspace)
+        and stored_workspace == expected_workspace
         and str(value.get("item_id") or "").strip()
         == _identity_value(item, "id", "item_id")
         and str(value.get("kind") or "").strip().lower()

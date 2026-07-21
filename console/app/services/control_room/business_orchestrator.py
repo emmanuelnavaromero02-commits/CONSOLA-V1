@@ -11,6 +11,9 @@ from app.services.control_room.business_projection import (
     normalize_persisted_business_item,
 )
 from app.services.control_room.business_repository import fetch_lineage_rows
+from app.services.control_room.business_workflow_provenance import (
+    workflow_is_quarantined,
+)
 
 
 def _metadata(value: Any) -> dict[str, Any]:
@@ -58,6 +61,8 @@ async def eligible_orchestrator_source(
     owner_id: int | None = None,
 ) -> dict[str, Any] | None:
     item = normalize_orchestrator_source(source, source_type=source_type)
+    if workflow_is_quarantined(item):
+        return None
     refs = parent_references(item)
     lineage_rows = await fetch_lineage_rows(
         conn,
@@ -66,7 +71,13 @@ async def eligible_orchestrator_source(
         tenant_id=tenant_id,
         owner_id=owner_id,
     )
-    lineage = [normalize_persisted_business_item(row) for row in lineage_rows]
+    lineage = [
+        normalized
+        for row in lineage_rows
+        if not workflow_is_quarantined(
+            normalized := normalize_persisted_business_item(row)
+        )
+    ]
     eligible_ids = eligible_item_ids([*lineage, item])
     return item if item_identity(item) in eligible_ids else None
 

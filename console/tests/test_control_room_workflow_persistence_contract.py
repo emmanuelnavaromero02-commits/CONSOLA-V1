@@ -36,6 +36,7 @@ def _item() -> dict:
     return {
         "id": "business-1",
         "kind": "anomaly",
+        "workspace_id": "workspace-a",
         "title": "Valid anomaly",
         "entity_label": "Employee",
         "description": "Measured anomaly",

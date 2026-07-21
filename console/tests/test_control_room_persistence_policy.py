@@ -20,6 +20,7 @@ def _business_item() -> dict:
     return {
         "id": "item-1",
         "kind": "anomaly",
+        "workspace_id": "workspace-a",
         "source_dataset": "gold_people",
         "observed_value": 1,
         "metric_type": "count",

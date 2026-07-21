@@ -6,10 +6,12 @@ from typing import Any
 from app.services.control_room.business_access import owner_projection
 from app.services.control_room.business_artifact_overlay import (
     artifact_overlay_allowed,
+    scoped_overlay_item,
 )
 from app.services.control_room.business_projection import eligible_item_ids
 from app.services.control_room.business_workflow_provenance import (
     workflow_has_eligible_provenance,
+    workflow_is_quarantined,
 )
 
 
@@ -39,7 +41,8 @@ async def load_overlay_state(
         clauses.append(f"owner_user_id = ${len(params)}")
     rows = await conn.fetch(
         f"""
-        SELECT item_id, owner_user_id, status, decision_id, metadata,
+        SELECT item_id, tenant_id, workspace_id, owner_user_id,
+               status, decision_id, metadata,
                source_dataset, item_kind,
                first_seen_at, last_seen_at, resolved_at, dismissed_at,
                impact_estimate, impact_currency, confidence, priority_score,
@@ -70,11 +73,19 @@ def _workflow_state(
     item: Mapping[str, Any],
     state: Mapping[str, Any],
     metadata: Mapping[str, Any],
+    scoped_item: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    trusted = not _has_linked_workflow(state) or workflow_has_eligible_provenance(
-        metadata,
-        item,
-        decision_id=state.get("decision_id"),
+    trusted = (
+        scoped_item is not None
+        and not workflow_is_quarantined(state)
+        and (
+            not _has_linked_workflow(state)
+            or workflow_has_eligible_provenance(
+                metadata,
+                scoped_item,
+                decision_id=state.get("decision_id"),
+            )
+        )
     )
     if trusted:
         return {
@@ -119,7 +130,8 @@ def overlay_business_state(
         item = dict(raw)
         state = dict(state_by_id.get(str(item.get("id") or ""), {}))
         metadata = _mapping(state.get("metadata"))
-        workflow = _workflow_state(item, state, metadata)
+        scoped_item = scoped_overlay_item(item, state)
+        workflow = _workflow_state(item, state, metadata, scoped_item)
         if str(workflow["status"]) not in item_statuses:
             workflow["status"] = "open"
         overlay_artifacts = artifact_overlay_allowed(item, state, metadata)

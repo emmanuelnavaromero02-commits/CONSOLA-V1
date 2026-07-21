@@ -15,6 +15,7 @@ def _item() -> dict:
     return {
         "id": "business-1",
         "kind": "anomaly",
+        "workspace_id": "workspace-a",
         "status": "open",
         "source_dataset": "gold_metrics",
         "metric_type": "scalar",

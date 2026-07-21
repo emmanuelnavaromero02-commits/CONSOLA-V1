@@ -44,7 +44,7 @@ def _with_eligible_provenance(row):
         "kind": item["kind"],
         "fingerprint": fingerprint,
     }
-    return {**row, "metadata": metadata}
+    return {**row, "workspace_id": "workspace-A", "metadata": metadata}
 
 
 def test_historical_decisions_are_filtered_through_linked_business_items():
