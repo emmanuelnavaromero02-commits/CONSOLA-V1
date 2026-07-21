@@ -10,6 +10,7 @@ from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     ELIGIBILITY_POLICY_VERSION,
+    ELIGIBILITY_POLICY_VERSION_KEY,
     business_observation_fingerprint,
     workflow_has_eligible_provenance,
 )
@@ -115,8 +116,8 @@ def _artifact_overlay_allowed(
     fingerprint = str(metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
     if not fingerprint or fingerprint != business_observation_fingerprint(item):
         return False
-    explicit_version = str(metadata.get("eligibility_policy_version") or "").strip()
-    if explicit_version and explicit_version != ELIGIBILITY_POLICY_VERSION:
+    explicit_version = str(metadata.get(ELIGIBILITY_POLICY_VERSION_KEY) or "").strip()
+    if explicit_version != ELIGIBILITY_POLICY_VERSION:
         return False
     provenance = metadata.get(DECISION_PROVENANCE_KEY)
     if isinstance(provenance, Mapping):

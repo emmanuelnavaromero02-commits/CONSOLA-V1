@@ -140,6 +140,14 @@ def test_explicit_old_policy_version_does_not_overlay_artifacts():
     _assert_no_persisted_artifacts(projected)
 
 
+def test_missing_policy_version_does_not_overlay_artifacts():
+    item = _item()
+    state = _state_for(item)
+    state["metadata"].pop("eligibility_policy_version")
+
+    _assert_no_persisted_artifacts(_overlay(item, state))
+
+
 def test_stale_runtime_with_same_observation_preserves_artifacts():
     item = _item(data_status="stale")
 

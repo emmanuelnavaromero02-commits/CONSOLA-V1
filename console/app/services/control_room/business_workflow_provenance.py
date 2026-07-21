@@ -19,6 +19,7 @@ ELIGIBILITY_POLICY_VERSION = "control-room-business-v2"
 DECISION_PROVENANCE_KEY = "decision_eligibility_provenance"
 WORKFLOW_QUARANTINE_KEY = "workflow_quarantine"
 CURRENT_ELIGIBILITY_FINGERPRINT_KEY = "business_eligibility_fingerprint"
+ELIGIBILITY_POLICY_VERSION_KEY = "eligibility_policy_version"
 
 
 class WorkflowStage(StrEnum):
@@ -232,6 +233,7 @@ def persistence_metadata(item: Mapping[str, Any]) -> dict[str, Any]:
     metadata[CURRENT_ELIGIBILITY_FINGERPRINT_KEY] = business_observation_fingerprint(
         item
     )
+    metadata[ELIGIBILITY_POLICY_VERSION_KEY] = ELIGIBILITY_POLICY_VERSION
     return metadata
 
 
@@ -249,6 +251,7 @@ __all__ = (
     "DECISION_PROVENANCE_KEY",
     "CURRENT_ELIGIBILITY_FINGERPRINT_KEY",
     "ELIGIBILITY_POLICY_VERSION",
+    "ELIGIBILITY_POLICY_VERSION_KEY",
     "WORKFLOW_QUARANTINE_KEY",
     "WorkflowStage",
     "business_observation_fingerprint",
