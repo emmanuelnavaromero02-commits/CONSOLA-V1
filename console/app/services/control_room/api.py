@@ -2490,6 +2490,9 @@ def _base_item(
             "cartridge": source.cartridge,
             "connector_id": source.cartridge,
             "source_dataset": source.dataset,
+            "source_system": source.cartridge,
+            "tenant_id": row.get("tenant_id"),
+            "workspace_id": row.get("workspace_id"),
             "entity_kind": source.entity_kind,
             "entity_id": entity_id,
             "entity_label": label,
@@ -2524,6 +2527,10 @@ def _base_item(
             **nonempty_mapping_fields(row, ("lineage",)),
             **runtime_row_evidence_fields(
                 source_dataset=source.dataset,
+                source_system=source.cartridge,
+                cartridge=source.cartridge,
+                tenant_id=row.get("tenant_id"),
+                workspace_id=str(row.get("workspace_id") or ""),
                 source_row=row,
                 locator_field=(
                     source.entity_id_field
@@ -4366,9 +4373,15 @@ def _append_normalized_source_rows(
     source: ControlRoomSource,
     rows: list[dict[str, Any]],
     thresholds: dict[str, dict[str, Any]],
+    user: dict | None,
 ) -> None:
+    tenant_id, workspace_id = _workspace_scope(user)
     for row in rows:
-        item = _normalize_row(source, row, thresholds)
+        item = _normalize_row(
+            source,
+            {**row, "tenant_id": tenant_id, "workspace_id": workspace_id},
+            thresholds,
+        )
         if item:
             items.append(item)
 
@@ -4437,7 +4450,7 @@ async def _collect_active_source(
         include_source_state_items=include_source_state_items,
     )
     if source_status["status"] == "ok":
-        _append_normalized_source_rows(items, source, rows, thresholds)
+        _append_normalized_source_rows(items, source, rows, thresholds, user)
 
 
 @_bind_to_core

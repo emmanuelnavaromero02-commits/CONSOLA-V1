@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from app.services.control_room.business_runtime_evidence import (
+    runtime_scope_binding,
     verified_runtime_row_reference,
 )
 
@@ -31,6 +32,19 @@ SOURCE_FIELD_ROLES = {
     "table": "dataset",
     "source_system": "system",
 }
+_CONTEXT_FIELD_ROLES = {
+    **SOURCE_FIELD_ROLES,
+    "cartridge": "cartridge",
+    "cartridge_id": "cartridge",
+    "connector_id": "cartridge",
+    "tenant_id": "tenant",
+    "workspace_id": "workspace",
+}
+_ATTESTED_CONTEXT_FIELDS = (
+    "source_dataset",
+    "source_system",
+    "cartridge",
+)
 _EVIDENCE_ID_FIELDS = frozenset(
     {
         "artifact_id",
@@ -85,7 +99,7 @@ def canonical_sources(
     sources: dict[str, set[str]] = {}
     for values in surfaces:
         for key, value in values.items():
-            role = SOURCE_FIELD_ROLES.get(str(key).strip().lower())
+            role = _CONTEXT_FIELD_ROLES.get(str(key).strip().lower())
             if role and stable_text(value):
                 sources.setdefault(role, set()).add(reference_token(value))
     return {role: frozenset(values) for role, values in sources.items()}
@@ -247,10 +261,17 @@ def typed_reference(
         for key, value in values.items()
     )
     if id_fields & _SERVER_VERIFIED_ID_FIELDS:
-        has_source = _source_matches(
-            "source_dataset",
-            values.get("source_dataset"),
-            canonical_sources_by_role,
+        tenants = canonical_sources_by_role.get("tenant", frozenset())
+        workspaces = canonical_sources_by_role.get("workspace", frozenset())
+        has_source = all(
+            reference_token(values.get(field))
+            in canonical_sources_by_role.get(_CONTEXT_FIELD_ROLES[field], frozenset())
+            for field in _ATTESTED_CONTEXT_FIELDS
+        ) and (
+            len(tenants) == 1
+            and len(workspaces) == 1
+            and values.get("scope_binding")
+            == runtime_scope_binding(next(iter(tenants)), next(iter(workspaces)))
         )
         has_id = verified_runtime_row_reference(values) and not contains_excluded(
             values.get("source_record_id") or values.get("record_id"),

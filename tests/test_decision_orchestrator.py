@@ -149,6 +149,10 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             "observed_value": 1,
             **runtime_row_evidence_fields(
                 source_dataset="gold_metrics",
+                source_system="sap_hcm",
+                cartridge="sap_hcm",
+                tenant_id=user_a["active_tenant_id"],
+                workspace_id=user_a["active_workspace_id"],
                 source_row={"item_id": "item-a"},
                 locator_field="item_id",
                 observed_at="2026-07-10T00:00:00Z",
@@ -262,6 +266,10 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
             "observed_value": 1,
             **runtime_row_evidence_fields(
                 source_dataset="gold_metrics",
+                source_system="sap_hcm",
+                cartridge="sap_hcm",
+                tenant_id=user["active_tenant_id"],
+                workspace_id=user["active_workspace_id"],
                 source_row={"item_id": "action-source"},
                 locator_field="item_id",
                 observed_at="2026-07-10T00:00:00Z",

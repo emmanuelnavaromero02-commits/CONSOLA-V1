@@ -17,6 +17,10 @@ def _item(**overrides):
         "id": "metric-hardening-1",
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
+        "source_system": "sap",
+        "cartridge": "sap",
+        "tenant_id": "tenant-7",
+        "workspace_id": "workspace-17",
         "data_status": "ready",
         "observation_date": "2026-07-16",
     }
@@ -231,6 +235,10 @@ def test_top_level_source_and_evidence_id_pair_is_evidence():
 def test_runtime_row_source_and_record_pair_remains_evidence():
     evidence = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
+        source_system="sap",
+        cartridge="sap",
+        tenant_id="tenant-7",
+        workspace_id="workspace-17",
         source_row={"entity_id": "entity-17"},
         locator_field="entity_id",
         observed_at="2026-07-16T10:00:00Z",

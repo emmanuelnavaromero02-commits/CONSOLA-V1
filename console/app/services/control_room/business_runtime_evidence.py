@@ -9,11 +9,14 @@ from typing import Any
 from app.services.security_context import sign_server_payload
 
 
-_ATTESTATION_VERSION = "hmac-sha256-v1"
+_ATTESTATION_VERSION = "hmac-sha256-v2"
 _ATTESTATION_PURPOSE = "control-room-runtime-evidence-v1"
 _SIGNED_FIELDS = (
     "type",
     "source_dataset",
+    "source_system",
+    "cartridge",
+    "scope_binding",
     "source_record_id",
     "source_locator",
     "source_row_hash",
@@ -41,6 +44,14 @@ def _row_hash(row: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def runtime_scope_binding(tenant_id: str, workspace_id: str) -> str:
+    scope = "\x1f".join(
+        " ".join(str(value or "").strip().casefold().split())
+        for value in (tenant_id, workspace_id)
+    )
+    return hashlib.sha256(scope.encode("utf-8")).hexdigest()
+
+
 def _attestation_payload(reference: Mapping[str, Any]) -> bytes:
     return json.dumps(
         {field: reference.get(field) for field in _SIGNED_FIELDS},
@@ -65,6 +76,9 @@ def verified_runtime_row_reference(value: Mapping[str, Any]) -> bool:
     locator_value = str(locator.get("value") or "").strip()
     required = (
         str(value.get("source_dataset") or "").strip(),
+        str(value.get("source_system") or "").strip(),
+        str(value.get("cartridge") or "").strip(),
+        str(value.get("scope_binding") or "").strip(),
         record_id,
         str(locator.get("relation") or "").strip(),
         str(locator.get("field") or "").strip(),
@@ -91,6 +105,10 @@ def verified_runtime_row_reference(value: Mapping[str, Any]) -> bool:
 def runtime_row_evidence_fields(
     *,
     source_dataset: str,
+    source_system: str,
+    cartridge: str,
+    tenant_id: str | None,
+    workspace_id: str,
     source_row: Mapping[str, Any],
     locator_field: str,
     observed_at: str,
@@ -99,6 +117,10 @@ def runtime_row_evidence_fields(
 ) -> dict[str, Any]:
     """Attest a locator taken from a row already retrieved by the server."""
     dataset = str(source_dataset or "").strip()
+    system = str(source_system or "").strip()
+    cartridge_id = str(cartridge or "").strip()
+    tenant = str(tenant_id or "").strip()
+    workspace = str(workspace_id or "").strip()
     field = str(locator_field or "").strip()
     relation = str(locator_relation or dataset).strip()
     observation = str(observed_at or "").strip()
@@ -110,12 +132,27 @@ def runtime_row_evidence_fields(
     ):
         return {}
     locator_value = str(raw_record_id if raw_record_id is not None else "").strip()
-    if not all((dataset, relation, field, locator_value, observation)):
+    if not all(
+        (
+            dataset,
+            system,
+            cartridge_id,
+            tenant,
+            workspace,
+            relation,
+            field,
+            locator_value,
+            observation,
+        )
+    ):
         return {}
     record_id = f"record-{locator_value}"
     runtime_ref = {
         "type": "dataset_row",
         "source_dataset": dataset,
+        "source_system": system,
+        "cartridge": cartridge_id,
+        "scope_binding": runtime_scope_binding(tenant, workspace),
         "source_record_id": record_id,
         "source_locator": {
             "relation": relation,
@@ -133,4 +170,8 @@ def runtime_row_evidence_fields(
     return {"evidence_refs": [*_existing_refs(existing_refs), runtime_ref]}
 
 
-__all__ = ("runtime_row_evidence_fields", "verified_runtime_row_reference")
+__all__ = (
+    "runtime_row_evidence_fields",
+    "runtime_scope_binding",
+    "verified_runtime_row_reference",
+)

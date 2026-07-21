@@ -86,6 +86,7 @@ class FakeOrchestratorDB:
             "severity": "high",
             "status": "open",
             "domain": "Operacion",
+            "cartridge_id": "sap_hcm",
             "source_dataset": source_dataset,
             "metadata": metadata or {},
         }

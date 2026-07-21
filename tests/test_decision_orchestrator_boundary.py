@@ -255,6 +255,10 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_value": 1,
             **runtime_row_evidence_fields(
                 source_dataset="gold_metrics",
+                source_system="sap_hcm",
+                cartridge="sap_hcm",
+                tenant_id=user["active_tenant_id"],
+                workspace_id=user["active_workspace_id"],
                 source_row={"item_id": "business-parent"},
                 locator_field="item_id",
                 observed_at="2026-07-10T00:00:00Z",
@@ -275,6 +279,10 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_value": 1,
             **runtime_row_evidence_fields(
                 source_dataset="gold_metrics",
+                source_system="sap_hcm",
+                cartridge="sap_hcm",
+                tenant_id=user["active_tenant_id"],
+                workspace_id=user["active_workspace_id"],
                 source_row={"item_id": "business-alert"},
                 locator_field="item_id",
                 observed_at="2026-07-10T00:00:00Z",

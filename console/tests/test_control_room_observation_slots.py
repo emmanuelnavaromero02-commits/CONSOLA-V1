@@ -36,6 +36,10 @@ def _item(**overrides):
         "id": "metric-slots-1",
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
+        "source_system": "sap",
+        "cartridge": "sap",
+        "tenant_id": "tenant-7",
+        "workspace_id": "workspace-17",
         "data_status": "ready",
         "observation_date": "2026-07-16",
         "evidence_refs": ["gold_metrics:row:metric-slots-1"],
@@ -261,6 +265,10 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
         {
             **runtime_row_evidence_fields(
                 source_dataset="gold_metrics",
+                source_system="sap",
+                cartridge="sap",
+                tenant_id="tenant-7",
+                workspace_id="workspace-17",
                 source_row={"metric_id": "record-17"},
                 locator_field="metric_id",
                 observed_at="2026-07-20",

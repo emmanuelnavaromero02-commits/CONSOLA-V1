@@ -15,6 +15,7 @@ def _item(**overrides):
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
         "source_system": "sap_successfactors",
+        "cartridge": "sap_successfactors",
         "tenant_id": "tenant-11111111-1111-1111-1111-111111111111",
         "workspace_id": "22222222-2222-2222-2222-222222222222",
         **overrides,
@@ -141,6 +142,10 @@ def test_runtime_evidence_is_typed_source_bound_and_accepted():
     }
     fields = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
         source_row=source_row,
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
@@ -161,6 +166,10 @@ def test_runtime_evidence_is_typed_source_bound_and_accepted():
 def test_runtime_attestation_cannot_be_reused_for_a_fabricated_record_id():
     fields = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
         source_row={"employee_id": "employee-17"},
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
@@ -174,6 +183,10 @@ def test_runtime_attestation_cannot_be_reused_for_a_fabricated_record_id():
 def test_runtime_attestation_cannot_be_rebound_by_unsigned_source_alias():
     fields = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
         source_row={"employee_id": "employee-17"},
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
@@ -186,9 +199,45 @@ def test_runtime_attestation_cannot_be_rebound_by_unsigned_source_alias():
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("tenant_id", "tenant-other"),
+        ("workspace_id", "33333333-3333-3333-3333-333333333333"),
+        ("source_system", "other-system"),
+        ("cartridge", "other-cartridge"),
+    ],
+)
+def test_runtime_attestation_cannot_cross_context_with_same_dataset(field, value):
+    fields = runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+        source_row={"employee_id": "employee-17"},
+        locator_field="employee_id",
+        observed_at="2026-07-20T10:00:00Z",
+    )
+
+    assert (
+        has_evidence(
+            _item(
+                **{field: value},
+                evidence_refs=fields["evidence_refs"],
+            )
+        )
+        is False
+    )
+
+
 def test_missing_signing_key_fails_closed_without_breaking_runtime_reads(monkeypatch):
     fields = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
         source_row={"employee_id": "employee-17"},
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",

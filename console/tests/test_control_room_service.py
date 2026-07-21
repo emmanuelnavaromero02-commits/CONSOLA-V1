@@ -219,7 +219,12 @@ def test_runtime_source_row_becomes_typed_business_evidence():
         if source.dataset == "employees_anomalies"
     )
     item = control_room_service._normalize_standard_anomaly(  # noqa: SLF001
-        source, SAMPLE_ROWS["employees_anomalies"][0]
+        source,
+        {
+            **SAMPLE_ROWS["employees_anomalies"][0],
+            "tenant_id": "tenant-A",
+            "workspace_id": "workspace-A",
+        },
     )
 
     assert item["evidence_refs"][0]["type"] == "dataset_row"

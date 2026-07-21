@@ -28,6 +28,10 @@ def canonical_signal_metadata(
     ).strip()
     evidence = runtime_row_evidence_fields(
         source_dataset=source_dataset,
+        source_system=str(metadata.get("source_system") or ""),
+        cartridge=str(metadata.get("cartridge") or ""),
+        tenant_id=str(metadata.get("tenant_id") or ""),
+        workspace_id=str(metadata.get("workspace_id") or ""),
         source_row=signal,
         locator_field="signal_id",
         locator_relation="intelligence_signals",

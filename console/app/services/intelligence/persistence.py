@@ -518,6 +518,7 @@ async def publish_control_room_item(
     metadata = {
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
+        "cartridge": signal.get("cartridge_id"),
         "source_system": source_system,
         "source_dataset": source_dataset,
         "dataset": signal.get("dataset"),

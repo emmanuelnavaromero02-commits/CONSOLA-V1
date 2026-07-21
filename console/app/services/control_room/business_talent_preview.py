@@ -29,7 +29,9 @@ def _count(value: Any) -> int:
         return 0
 
 
-def _gold_item(row: Mapping[str, Any]) -> dict[str, Any]:
+def _gold_item(
+    row: Mapping[str, Any], *, tenant_id: str | None, workspace_id: str | None
+) -> dict[str, Any]:
     action_id = str(row.get("action_id") or "").strip()
     generated_at = row.get("generated_at")
     return {
@@ -41,6 +43,8 @@ def _gold_item(row: Mapping[str, Any]) -> dict[str, Any]:
         "connector_id": "sap_successfactors",
         "source_dataset": _DATASET,
         "source_system": "sap_successfactors",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "entity_kind": "Accion recomendada",
         "entity_id": action_id,
         "entity_label": row.get("title") or action_id,
@@ -55,6 +59,10 @@ def _gold_item(row: Mapping[str, Any]) -> dict[str, Any]:
         ),
         **runtime_row_evidence_fields(
             source_dataset=_DATASET,
+            source_system="sap_successfactors",
+            cartridge="sap_successfactors",
+            tenant_id=tenant_id,
+            workspace_id=str(workspace_id or ""),
             source_row=row,
             locator_field="action_id",
             observed_at=str(generated_at or ""),
@@ -68,14 +76,18 @@ async def _resolve_item(
     *,
     load_item: ItemLoader,
     load_gold_rows: GoldLoader,
+    resolve_scope: ScopeResolver,
 ) -> dict[str, Any]:
     rows = await load_gold_rows(_DATASET, user, 100)
     row = next(
         (entry for entry in rows if str(entry.get("action_id") or "") == action_id),
         None,
     )
+    tenant_id, workspace_id = resolve_scope(user)
     item = (
-        _gold_item(row) if row is not None else await load_item(action_id, user or {})
+        _gold_item(row, tenant_id=tenant_id, workspace_id=workspace_id)
+        if row is not None
+        else await load_item(action_id, user or {})
     )
     try:
         require_business_eligible(item)
@@ -109,6 +121,7 @@ async def build_talent_action_preview(
         user,
         load_item=load_item,
         load_gold_rows=load_gold_rows,
+        resolve_scope=resolve_scope,
     )
     if (
         str(item.get("cartridge") or "") != "sap_successfactors"

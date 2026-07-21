@@ -606,7 +606,7 @@ async def _load_source(
             f"""
             SELECT tenant_id, workspace_id, owner_user_id,
                    item_id AS source_id, item_kind,
-                   title, severity, status, domain, source_dataset,
+                   title, severity, status, domain, cartridge_id, source_dataset,
                    entity_kind, entity_id, entity_label, anomaly_type, metadata
               FROM control_room_items
              WHERE workspace_id = $1

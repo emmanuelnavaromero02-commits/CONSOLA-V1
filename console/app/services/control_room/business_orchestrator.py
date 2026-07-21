@@ -47,6 +47,10 @@ def normalize_orchestrator_source(
     item.setdefault("kind", item.get("item_kind") or source_type)
     item.setdefault("item_kind", item.get("kind") or source_type)
     item.setdefault("source_dataset", item.get("dataset"))
+    item.setdefault("cartridge", item.get("cartridge_id") or metadata.get("cartridge"))
+    item.setdefault(
+        "source_system", metadata.get("source_system") or item.get("cartridge")
+    )
     item.setdefault("id", item_identity(item))
     return item
 

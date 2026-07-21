@@ -19,6 +19,9 @@ def _item(**overrides):
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
         "source_system": "sap",
+        "cartridge": "sap",
+        "tenant_id": "tenant-7",
+        "workspace_id": "workspace-17",
         "metric_type": "scalar",
         "observed_value": 3,
         "observation_date": "2026-07-20",
@@ -123,6 +126,10 @@ def test_structured_evidence_source_must_match_the_same_source_role(evidence):
 def test_runtime_reference_is_typed_and_verifiable():
     evidence = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
+        source_system="sap",
+        cartridge="sap",
+        tenant_id="tenant-7",
+        workspace_id="workspace-17",
         source_row={"employee_id": "employee-7"},
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",

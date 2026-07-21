@@ -63,6 +63,8 @@ def artifact_overlay_allowed(
         ):
             return False
     persisted_item = dict(persisted_metadata)
+    if persisted_state.get("cartridge_id") is not None:
+        persisted_item["cartridge"] = persisted_state["cartridge_id"]
     for key in (
         "data_status",
         "item_kind",
