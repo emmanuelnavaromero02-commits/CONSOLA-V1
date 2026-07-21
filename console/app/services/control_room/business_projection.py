@@ -16,6 +16,7 @@ from app.services.control_room.business_policy_metadata import (
 from app.services.control_room.business_resolution import resolve_business_lineage
 from app.services.control_room.business_workflow_provenance import (
     workflow_has_eligible_provenance,
+    workflow_is_quarantined,
 )
 
 
@@ -226,6 +227,7 @@ def filter_business_decisions(
         if rows
         and all(
             row.get("id") in eligible_ids
+            and not workflow_is_quarantined(row)
             and workflow_has_eligible_provenance(
                 row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {},
                 row,

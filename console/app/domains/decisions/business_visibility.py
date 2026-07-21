@@ -44,7 +44,8 @@ async def _linked_rows(
         owner_clause = f"AND owner_user_id = ${len(params)}"
     linked = await conn.fetch(
         f"""
-        SELECT decision_id, item_id, item_kind, source_dataset, metadata
+        SELECT decision_id, item_id, item_kind, source_dataset, metadata,
+               tenant_id, workspace_id, owner_user_id
           FROM control_room_items
          WHERE workspace_id = $1
            AND decision_id = ANY($2::bigint[])
