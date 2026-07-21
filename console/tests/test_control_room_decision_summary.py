@@ -16,6 +16,14 @@ from app.services.control_room.business_workflow_provenance import (
 class _DecisionConnection:
     def __init__(self):
         now = datetime.now(UTC)
+        business_metadata = {
+            "data_status": "ready",
+            "metric_type": "count",
+            "observed_value": 1,
+            "population_count": 1,
+            "observation_date": "2026-07-16",
+            "evidence_refs": ["evidence:business-2"],
+        }
         self.decisions = [
             {
                 "id": decision_id,
@@ -30,7 +38,7 @@ class _DecisionConnection:
                 "item_id": "business-2",
                 "item_kind": "anomaly",
                 "source_dataset": "gold_metrics",
-                "metadata": {"data_status": "ready"},
+                "metadata": dict(business_metadata),
             },
             {
                 "decision_id": 3,
@@ -44,7 +52,7 @@ class _DecisionConnection:
             "id": "business-2",
             "kind": "anomaly",
             "source_dataset": "gold_metrics",
-            "metadata": {"data_status": "ready"},
+            "metadata": dict(business_metadata),
         }
         fingerprint = business_observation_fingerprint(business)
         self.items[0]["metadata"].update(

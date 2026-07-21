@@ -18,6 +18,17 @@ from app.services.control_room.business_workflow_provenance import (
 )
 
 
+def _eligible_metadata(item_id: str, **updates) -> dict:
+    return {
+        "data_status": "ready",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "observation_date": "2026-07-17T10:00:00Z",
+        "evidence_refs": [f"evidence:{item_id}"],
+        **updates,
+    }
+
+
 def _with_eligible_provenance(row):
     item = normalize_persisted_business_item(row)
     fingerprint = business_observation_fingerprint(item)
@@ -25,6 +36,8 @@ def _with_eligible_provenance(row):
     metadata[CURRENT_ELIGIBILITY_FINGERPRINT_KEY] = fingerprint
     metadata[DECISION_PROVENANCE_KEY] = {
         "policy_version": ELIGIBILITY_POLICY_VERSION,
+        "stage": "decision_created",
+        "workspace_id": "workspace-A",
         "eligible_at_link": True,
         "decision_id": str(row["decision_id"]),
         "item_id": item["id"],
@@ -57,7 +70,7 @@ def test_historical_decisions_are_filtered_through_linked_business_items():
                 "item_id": "business",
                 "item_kind": "anomaly",
                 "source_dataset": "gold_a",
-                "metadata": {"data_status": "ready"},
+                "metadata": _eligible_metadata("business"),
             }
         ),
     ]
@@ -95,7 +108,7 @@ def test_decision_linked_to_business_and_diagnostic_items_fails_closed():
             "item_id": "business",
             "item_kind": "anomaly",
             "source_dataset": "gold_a",
-            "metadata": {"data_status": "ready"},
+            "metadata": _eligible_metadata("business"),
         },
         {
             "decision_id": 1,
@@ -117,7 +130,7 @@ def test_lineage_row_duplicated_by_linked_seed_does_not_hide_valid_decision():
             "item_id": "root",
             "item_kind": "anomaly",
             "source_dataset": "gold_a",
-            "metadata": {"data_status": "ready"},
+            "metadata": _eligible_metadata("root"),
         }
     )
     child = _with_eligible_provenance(
@@ -126,10 +139,7 @@ def test_lineage_row_duplicated_by_linked_seed_does_not_hide_valid_decision():
             "item_id": "child",
             "item_kind": "intelligence_signal",
             "source_dataset": "gold_a",
-            "metadata": {
-                "parent_item_id": "root",
-                "evidence_refs": ["evidence:child"],
-            },
+            "metadata": _eligible_metadata("child", parent_item_id="root"),
         }
     )
 

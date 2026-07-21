@@ -125,8 +125,19 @@ class DecisionConn:
         self.link_metadata: dict | None = None
         self.link_owner: int | None = None
         self.committed = False
+        self.lock_owner: int | None = None
 
     async def fetchrow(self, sql: str, *args):
+        if "FOR UPDATE" in sql:
+            if len(args) > 2:
+                self.lock_owner = args[2]
+            return {
+                "item_id": "item-1",
+                "owner_user_id": self.lock_owner,
+                "decision_id": None,
+                "selected_option_id": None,
+                "metadata": {},
+            }
         if "INSERT INTO decisions" in sql:
             return {"id": 42, "title": "Decision"}
         if "INSERT INTO decision_actions" in sql:

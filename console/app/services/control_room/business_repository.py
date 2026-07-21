@@ -3,12 +3,18 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.services.control_room.business_item_persistence import persist_item_rows
+from fastapi import HTTPException
+
+from app.services.control_room.business_item_persistence import (
+    parse_command_tag,
+    persist_item_rows,
+)
 from app.services.control_room.business_lineage import MAX_LINEAGE_DEPTH
 from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
-    decision_eligibility_provenance,
+    WorkflowStage,
+    workflow_eligibility_provenance,
 )
 
 
@@ -178,6 +184,7 @@ async def link_control_room_decision(
         status="decision_created",
         resolved=False,
         extra_metadata={},
+        stage=WorkflowStage.DECISION_CREATED,
     )
 
 
@@ -201,6 +208,7 @@ async def approve_control_room_decision(
         status="approved",
         resolved=True,
         extra_metadata={"lessons": list(lessons)},
+        stage=WorkflowStage.APPROVED,
     )
 
 
@@ -215,8 +223,34 @@ async def _set_control_room_decision_link(
     status: str,
     resolved: bool,
     extra_metadata: Mapping[str, Any],
+    stage: WorkflowStage,
 ) -> None:
-    provenance = decision_eligibility_provenance(item, decision_id=decision_id)
+    current = await conn.fetchrow(
+        """SELECT item_id, owner_user_id, decision_id
+             FROM control_room_items
+            WHERE workspace_id = $1 AND item_id = $2
+            FOR UPDATE""",
+        workspace_id,
+        item_id,
+    )
+    if not current or current.get("owner_user_id") != owner_user_id:
+        raise HTTPException(404, "control room item not found")
+    linked_decision_id = current.get("decision_id")
+    if stage is WorkflowStage.APPROVED and linked_decision_id != decision_id:
+        raise HTTPException(409, "decision is not linked to control room item")
+    if (
+        stage is WorkflowStage.DECISION_CREATED
+        and linked_decision_id is not None
+        and linked_decision_id != decision_id
+    ):
+        raise HTTPException(409, "control room item already has another decision")
+    provenance = workflow_eligibility_provenance(
+        {**dict(item), "workspace_id": workspace_id},
+        stage=stage,
+        workspace_id=workspace_id,
+        decision_id=decision_id,
+        option_id=str(item.get("selected_option_id") or "") or None,
+    )
     metadata = {
         **dict(extra_metadata),
         "decision_provenance": {
@@ -241,6 +275,7 @@ async def _set_control_room_decision_link(
          WHERE workspace_id = $2
            AND item_id = $3
            AND owner_user_id IS NOT DISTINCT FROM $5
+           AND (decision_id IS NULL OR decision_id = $1)
          RETURNING item_id
         """,
         decision_id,
@@ -253,14 +288,3 @@ async def _set_control_room_decision_link(
     )
     if not linked or str(linked["item_id"]) != str(item_id):
         raise RuntimeError("control room decision link was not persisted")
-
-
-def parse_command_tag(result: Any, command: str) -> int:
-    text = str(result or "").strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0].upper() != command.upper():
-        return 0
-    try:
-        return int(parts[-1])
-    except ValueError:
-        return 0

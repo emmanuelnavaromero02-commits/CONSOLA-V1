@@ -29,6 +29,11 @@ def _item() -> dict:
         "cartridge": "sap_hcm",
         "severity": "high",
         "status": "open",
+        "metric_type": "count",
+        "observed_value": 1,
+        "population_count": 10,
+        "observation_date": "2026-07-20",
+        "evidence_refs": ["gold_metrics:business-1"],
     }
 
 
@@ -66,6 +71,14 @@ class TransactionalConnection:
     async def fetchrow(self, sql: str, *_args):
         self.fetchrow_calls += 1
         normalized = " ".join(sql.split()).upper()
+        if "FOR UPDATE" in normalized:
+            return {
+                "item_id": "business-1",
+                "decision_id": None,
+                "selected_option_id": None,
+                "owner_user_id": 7,
+                "metadata": {},
+            }
         if normalized.startswith("INSERT INTO DECISIONS"):
             return {"id": 42, "title": "Anomalia valida"}
         if normalized.startswith("INSERT INTO DECISION_ACTIONS"):
@@ -121,6 +134,13 @@ class LegacyTechnicalConnection(TransactionalConnection):
 
     async def fetchrow(self, sql: str, *args):
         normalized = " ".join(sql.split()).upper()
+        if "FOR UPDATE" in normalized:
+            return {
+                **self.item_row,
+                "decision_id": self.item_row.get("decision_id"),
+                "selected_option_id": self.item_row.get("selected_option_id"),
+                "owner_user_id": 7,
+            }
         if normalized.startswith("UPDATE CONTROL_ROOM_ITEMS"):
             assert self.item_row["item_kind"] == "anomaly"
             assert self.item_row["source_dataset"] == "gold_metrics"
