@@ -162,16 +162,21 @@ def test_narrative_text_is_not_verifiable_evidence(evidence):
     "evidence",
     [
         {"evidence_pack": {"items": [{"source_ref": "gold_metrics:17"}]}},
-        {
-            "evidence_pack": {
-                "source_dataset": "gold_metrics",
-                "source_record_id": "record-17",
-            }
-        },
     ],
 )
 def test_source_bound_evidence_ids_and_references_are_substantive(evidence):
     assert has_evidence(_item(**evidence)) is True
+
+
+def test_unattested_source_record_pair_is_not_substantive_evidence():
+    evidence = {
+        "evidence_pack": {
+            "source_dataset": "gold_metrics",
+            "source_record_id": "record-17",
+        }
+    }
+
+    assert has_evidence(_item(**evidence)) is False
 
 
 def test_evidence_id_without_source_identity_is_not_evidence():
@@ -226,8 +231,8 @@ def test_top_level_source_and_evidence_id_pair_is_evidence():
 def test_runtime_row_source_and_record_pair_remains_evidence():
     evidence = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
-        entity_id="entity-17",
-        item_type="anomaly",
+        source_row={"entity_id": "entity-17"},
+        locator_field="entity_id",
         observed_at="2026-07-16T10:00:00Z",
     )
 

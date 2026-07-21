@@ -12,6 +12,9 @@ from app.services.control_room.business_projection import (
     filter_business_items,
     filter_by_eligible_parent,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 
 
 USER = {
@@ -64,13 +67,12 @@ def _business_item() -> dict:
         "severity_weight": 4,
         "status": "open",
         "detected_at": "2026-07-16T10:00:00Z",
-        "evidence_refs": [
-            {
-                "type": "dataset_row",
-                "source_dataset": "employees_anomalies",
-                "source_record_id": "record-business-1",
-            }
-        ],
+        **runtime_row_evidence_fields(
+            source_dataset="employees_anomalies",
+            source_row={"business_id": "record-business-1"},
+            locator_field="business_id",
+            observed_at="2026-07-16T10:00:00Z",
+        ),
         "details": {"salary_monthly_usd": 1000},
     }
 

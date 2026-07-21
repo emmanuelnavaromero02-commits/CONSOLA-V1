@@ -36,7 +36,7 @@ def _short_text(value: Any, *, field: str, max_length: int) -> str:
     return text
 
 
-def _normalized_reference(item: dict[str, Any]) -> dict[str, str]:
+def _normalized_reference(item: dict[str, Any]) -> dict[str, Any]:
     evidence_type = _short_text(
         item.get("type"), field="evidence_refs.type", max_length=64
     )
@@ -67,17 +67,43 @@ def _normalized_reference(item: dict[str, Any]) -> dict[str, str]:
             field="evidence_refs.observed_at",
             max_length=64,
         )
+    locator = item.get("source_locator")
+    if isinstance(locator, dict):
+        normalized["source_locator"] = {
+            "relation": _short_text(
+                locator.get("relation"),
+                field="evidence_refs.source_locator.relation",
+                max_length=256,
+            ),
+            "field": _short_text(
+                locator.get("field"),
+                field="evidence_refs.source_locator.field",
+                max_length=128,
+            ),
+            "value": _short_text(
+                locator.get("value"),
+                field="evidence_refs.source_locator.value",
+                max_length=256,
+            ),
+        }
+    for key in ("source_row_hash", "attestation_version", "server_attestation"):
+        if item.get(key):
+            normalized[key] = _short_text(
+                item.get(key),
+                field=f"evidence_refs.{key}",
+                max_length=128,
+            )
     return normalized
 
 
-def normalize_evidence_refs(value: Any, *, max_items: int = 20) -> list[dict[str, str]]:
+def normalize_evidence_refs(value: Any, *, max_items: int = 20) -> list[dict[str, Any]]:
     if value is None:
         return []
     if not isinstance(value, list) or len(value) > max_items:
         raise HTTPException(
             422, f"evidence_refs must be a list with at most {max_items} items"
         )
-    refs: list[dict[str, str]] = []
+    refs: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
             raise HTTPException(422, "evidence_refs entries must be objects")
@@ -87,8 +113,8 @@ def normalize_evidence_refs(value: Any, *, max_items: int = 20) -> list[dict[str
     return refs
 
 
-def merge_evidence_refs(*values: Any, max_items: int = 20) -> list[dict[str, str]]:
-    merged: list[dict[str, str]] = []
+def merge_evidence_refs(*values: Any, max_items: int = 20) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for value in values:
         for ref in normalize_evidence_refs(value, max_items=max_items):
@@ -104,7 +130,7 @@ def merge_evidence_refs(*values: Any, max_items: int = 20) -> list[dict[str, str
     return merged
 
 
-def market_context_refs(refs: Any) -> list[dict[str, str]]:
+def market_context_refs(refs: Any) -> list[dict[str, Any]]:
     return [
         ref
         for ref in normalize_evidence_refs(refs)

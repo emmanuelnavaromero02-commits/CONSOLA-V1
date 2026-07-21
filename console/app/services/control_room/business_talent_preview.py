@@ -10,6 +10,9 @@ from app.services.control_room.business_eligibility import (
     BusinessEligibilityError,
     require_business_eligible,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 
 
 ItemLoader = Callable[[str, dict], Awaitable[dict[str, Any]]]
@@ -50,10 +53,12 @@ def _gold_item(row: Mapping[str, Any]) -> dict[str, Any]:
             if str(row.get("status") or "").lower() == "blocked"
             else "success"
         ),
-        "evidence": {
-            "source_dataset": _DATASET,
-            "record_id": f"source:{action_id}",
-        },
+        **runtime_row_evidence_fields(
+            source_dataset=_DATASET,
+            source_row=row,
+            locator_field="action_id",
+            observed_at=str(generated_at or ""),
+        ),
     }
 
 

@@ -10,6 +10,9 @@ from app.services.control_room.business_observation import (
     assess_observation,
     has_evidence,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_semantic_slots import (
     SemanticSlot,
     resolve_semantic_slots,
@@ -256,10 +259,12 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
         {"evidence_pack_id": "pack-17"},
         {"evidence_refs": ["gold_metrics:row:17"]},
         {
-            "evidence_pack": {
-                "source_dataset": "gold_metrics",
-                "source_record_id": "record-17",
-            }
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_row={"metric_id": "record-17"},
+                locator_field="metric_id",
+                observed_at="2026-07-20",
+            )
         },
     ],
 )

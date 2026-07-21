@@ -4,6 +4,10 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from app.services.control_room.business_runtime_evidence import (
+    verified_runtime_row_reference,
+)
+
 
 ADMINISTRATIVE_ID_FIELDS = frozenset(
     {"account_id", "owner_user_id", "tenant_id", "user_id", "workspace_id"}
@@ -38,6 +42,7 @@ _EVIDENCE_ID_FIELDS = frozenset(
         "source_record_id",
     }
 )
+_SERVER_VERIFIED_ID_FIELDS = frozenset({"record_id", "source_record_id"})
 _PLACEHOLDERS = frozenset(
     {
         "-",
@@ -193,9 +198,10 @@ def legacy_scalar_reference(
 
 def _is_id_field(key: Any, *, allow_generic_id: bool) -> bool:
     normalized = str(key).strip().lower()
-    return normalized in _EVIDENCE_ID_FIELDS or (
-        allow_generic_id and normalized == "id"
-    )
+    return (
+        normalized in _EVIDENCE_ID_FIELDS
+        and normalized not in _SERVER_VERIFIED_ID_FIELDS
+    ) or (allow_generic_id and normalized == "id")
 
 
 def source_and_id_pair(
@@ -240,6 +246,11 @@ def typed_reference(
         str(key).strip().lower() in id_fields and structured_id(value, local_exclusions)
         for key, value in values.items()
     )
+    if id_fields & _SERVER_VERIFIED_ID_FIELDS:
+        has_id = verified_runtime_row_reference(values) and not contains_excluded(
+            values.get("source_record_id") or values.get("record_id"),
+            local_exclusions,
+        )
     return has_source and has_id
 
 

@@ -123,8 +123,8 @@ def test_structured_evidence_source_must_match_the_same_source_role(evidence):
 def test_runtime_reference_is_typed_and_verifiable():
     evidence = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
-        entity_id="employee-7",
-        item_type="anomaly",
+        source_row={"employee_id": "employee-7"},
+        locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
     )
 

@@ -28,8 +28,9 @@ def canonical_signal_metadata(
     ).strip()
     evidence = runtime_row_evidence_fields(
         source_dataset=source_dataset,
-        entity_id=str(signal.get("entity_id") or ""),
-        item_type=item_kind,
+        source_row=signal,
+        locator_field="signal_id",
+        locator_relation="intelligence_signals",
         observed_at=observed_at,
     )
     observation = {

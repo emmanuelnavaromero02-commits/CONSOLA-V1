@@ -7,6 +7,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.services import control_room_service
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from test_control_room_permissions import _build_real_control_room_router_client
 
 
@@ -34,10 +37,12 @@ def _talent_item() -> dict:
         "detected_at": "2026-07-16T10:00:00Z",
         "metric_type": "count",
         "evaluation_status": "success",
-        "evidence": {
-            "source_dataset": "sap_successfactors_talent_action_candidates",
-            "source_record_id": "talent-action-1",
-        },
+        **runtime_row_evidence_fields(
+            source_dataset="sap_successfactors_talent_action_candidates",
+            source_row={"action_id": "talent-action-1"},
+            locator_field="action_id",
+            observed_at="2026-07-16T10:00:00Z",
+        ),
     }
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.services import control_room_service
 from app.services.control_room.business_evidence import has_evidence
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
@@ -105,6 +106,17 @@ def test_unknown_structured_evidence_type_is_rejected():
     assert has_evidence(_item(evidence_refs=[evidence])) is False
 
 
+def test_fabricated_source_record_id_is_not_server_verified_evidence():
+    evidence = {
+        "type": "dataset_row",
+        "source_dataset": "gold_metrics",
+        "source_record_id": f"record-{'0' * 64}",
+        "observed_at": "2026-07-20T10:00:00Z",
+    }
+
+    assert has_evidence(_item(evidence_refs=[evidence])) is False
+
+
 @pytest.mark.parametrize(
     "evidence",
     [
@@ -122,22 +134,77 @@ def test_empty_incomplete_or_placeholder_evidence_is_rejected(evidence):
 
 
 def test_runtime_evidence_is_typed_source_bound_and_accepted():
+    source_row = {
+        "employee_id": "employee-17",
+        "anomaly_type": "anomaly",
+        "detected_at": "2026-07-20T10:00:00Z",
+    }
     fields = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
-        entity_id="employee-17",
-        item_type="anomaly",
+        source_row=source_row,
+        locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
     )
 
     reference = fields["evidence_refs"][0]
-    assert reference == {
-        "type": "dataset_row",
-        "source_dataset": "gold_metrics",
-        "source_record_id": reference["source_record_id"],
-        "observed_at": "2026-07-20T10:00:00Z",
+    assert reference["source_record_id"] == "record-employee-17"
+    assert reference["source_locator"] == {
+        "relation": "gold_metrics",
+        "field": "employee_id",
+        "value": "employee-17",
     }
-    assert reference["source_record_id"].startswith("record-")
+    assert reference["source_row_hash"]
+    assert reference["server_attestation"]
     assert has_evidence(_item(**fields)) is True
+
+
+def test_runtime_attestation_cannot_be_reused_for_a_fabricated_record_id():
+    fields = runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_row={"employee_id": "employee-17"},
+        locator_field="employee_id",
+        observed_at="2026-07-20T10:00:00Z",
+    )
+    reference = fields["evidence_refs"][0]
+    forged = {**reference, "source_record_id": "employee-forged"}
+
+    assert has_evidence(_item(evidence_refs=[forged])) is False
+
+
+def test_missing_signing_key_fails_closed_without_breaking_runtime_reads(monkeypatch):
+    fields = runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_row={"employee_id": "employee-17"},
+        locator_field="employee_id",
+        observed_at="2026-07-20T10:00:00Z",
+    )
+    monkeypatch.delenv("SECURITY_CONTEXT_SIGNING_KEY", raising=False)
+
+    assert has_evidence(_item(**fields)) is False
+
+    source = control_room_service.ControlRoomSource(
+        dataset="gold_metrics",
+        cartridge="sap_successfactors",
+        domain="People",
+        module_label="Workforce",
+        entity_kind="Employee",
+        entity_id_field="employee_id",
+        entity_label_field="employee_name",
+    )
+    item = control_room_service._base_item(
+        source,
+        {
+            "employee_id": "employee-17",
+            "employee_name": "Employee 17",
+            "detected_at": "2026-07-20T10:00:00Z",
+        },
+        "anomaly",
+        "employee-17",
+        "Employee 17",
+    )
+
+    assert item.get("evidence_refs") in (None, [])
+    assert has_evidence(item) is False
 
 
 def test_matching_legacy_scalar_reference_remains_narrowly_compatible():

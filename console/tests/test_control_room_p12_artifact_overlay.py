@@ -3,6 +3,9 @@ from __future__ import annotations
 from copy import deepcopy
 
 from app.services.control_room.business_persisted_row import persisted_business_item
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_state_overlay import overlay_business_state
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
@@ -21,13 +24,12 @@ def _item(**overrides):
         "metric_type": "scalar",
         "observed_value": 2,
         "observation_date": "2026-07-20",
-        "evidence_refs": [
-            {
-                "type": "dataset_row",
-                "source_dataset": "gold_metrics",
-                "source_record_id": "record-1",
-            }
-        ],
+        **runtime_row_evidence_fields(
+            source_dataset="gold_metrics",
+            source_row={"metric_id": "record-1"},
+            locator_field="metric_id",
+            observed_at="2026-07-20",
+        ),
     }
     return {**item, **overrides}
 

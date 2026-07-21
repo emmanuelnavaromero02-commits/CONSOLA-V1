@@ -2524,8 +2524,12 @@ def _base_item(
             **nonempty_mapping_fields(row, ("lineage",)),
             **runtime_row_evidence_fields(
                 source_dataset=source.dataset,
-                entity_id=entity_id or label,
-                item_type=item_type,
+                source_row=row,
+                locator_field=(
+                    source.entity_id_field
+                    if row.get(source.entity_id_field) is not None
+                    else source.entity_label_field
+                ),
                 observed_at=detected_at,
                 existing_refs=row.get("evidence_refs"),
             ),
