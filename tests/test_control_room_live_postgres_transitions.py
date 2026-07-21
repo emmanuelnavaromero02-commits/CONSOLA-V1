@@ -198,9 +198,10 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             owner_by_item={technical_id: 7, legitimate_id: 7},
         )
         await persist_item_rows(conn, rows, workspace_wide=True)
+        technical_row = next(row for row in rows if row["item_id"] == technical_id)
         await ensure_item_row(
             conn,
-            {**rows[0], "status": "open"},
+            {**technical_row, "status": "open"},
             terminal_statuses=("approved", "dismissed", "resolved"),
             workspace_wide=True,
         )
