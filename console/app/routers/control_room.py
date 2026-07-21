@@ -168,6 +168,7 @@ async def _control_room_internal_view(
     if view == "banxico_readiness":
         from app.services.banxico_readiness import banxico_readiness
 
+        _require_readiness_cartridge(user, "banxico")
         return await _control_room_cache_get_or_set(
             "banxico-readiness",
             user,
@@ -176,6 +177,7 @@ async def _control_room_internal_view(
     if view == "inegi_readiness":
         from app.services.inegi_readiness import inegi_readiness
 
+        _require_readiness_cartridge(user, "inegi")
         return await _control_room_cache_get_or_set(
             "inegi-readiness",
             user,
@@ -184,6 +186,7 @@ async def _control_room_internal_view(
     if view == "sec_edgar_readiness":
         from app.services.sec_edgar_readiness import sec_edgar_readiness
 
+        _require_readiness_cartridge(user, "sec_edgar")
         return await _control_room_cache_get_or_set(
             "sec-edgar-readiness",
             user,

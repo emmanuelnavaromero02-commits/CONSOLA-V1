@@ -104,3 +104,84 @@ async def test_readiness_rejects_unauthorized_cartridge_before_query(
 
     assert exc.value.status_code == 403
     query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module_name,function_name,view",
+    [
+        ("app.services.banxico_readiness", "banxico_readiness", "banxico_readiness"),
+        ("app.services.inegi_readiness", "inegi_readiness", "inegi_readiness"),
+        (
+            "app.services.sec_edgar_readiness",
+            "sec_edgar_readiness",
+            "sec_edgar_readiness",
+        ),
+    ],
+)
+async def test_internal_readiness_rejects_unauthorized_cartridge_before_query(
+    monkeypatch,
+    module_name,
+    function_name,
+    view,
+):
+    service_module = importlib.import_module(module_name)
+    query = AsyncMock(return_value={"status": "ready"})
+    monkeypatch.setattr(service_module, function_name, query)
+    routes._CONTROL_ROOM_READ_CACHE.clear()
+
+    rejection = None
+    try:
+        await routes._control_room_internal_view(
+            view,
+            _user(["sap_successfactors"]),
+            {},
+        )
+    except HTTPException as exc:
+        rejection = exc
+
+    query.assert_not_awaited()
+    assert rejection is not None
+    assert rejection.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module_name,function_name,view,cartridge",
+    [
+        (
+            "app.services.banxico_readiness",
+            "banxico_readiness",
+            "banxico_readiness",
+            "banxico",
+        ),
+        (
+            "app.services.inegi_readiness",
+            "inegi_readiness",
+            "inegi_readiness",
+            "inegi",
+        ),
+        (
+            "app.services.sec_edgar_readiness",
+            "sec_edgar_readiness",
+            "sec_edgar_readiness",
+            "sec_edgar",
+        ),
+    ],
+)
+async def test_internal_readiness_allows_authorized_cartridge(
+    monkeypatch,
+    module_name,
+    function_name,
+    view,
+    cartridge,
+):
+    service_module = importlib.import_module(module_name)
+    query = AsyncMock(return_value={"status": "ready"})
+    monkeypatch.setattr(service_module, function_name, query)
+    routes._CONTROL_ROOM_READ_CACHE.clear()
+
+    result = await routes._control_room_internal_view(view, _user([cartridge]), {})
+
+    assert result == {"status": "ready"}
+    query.assert_awaited_once()
