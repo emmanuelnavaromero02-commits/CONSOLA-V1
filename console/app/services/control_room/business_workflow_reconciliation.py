@@ -125,9 +125,15 @@ async def workflow_metadata_patches(
         existing = dict(raw)
         key = (str(existing.get("workspace_id") or ""), str(existing["item_id"]))
         current = incoming.get(key)
-        if current is None or not _has_workflow(existing):
+        if current is None:
             continue
         metadata = _mapping(existing.get("metadata"))
+        quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
+        if quarantine:
+            patches[key] = {WORKFLOW_QUARANTINE_KEY: quarantine}
+            continue
+        if not _has_workflow(existing):
+            continue
         decision_id = existing.get("decision_id")
         has_modern_marker = any(
             key in metadata
@@ -148,10 +154,10 @@ async def workflow_metadata_patches(
             patches[key] = {DECISION_PROVENANCE_KEY: metadata[DECISION_PROVENANCE_KEY]}
             continue
         if has_modern_marker:
-            quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
             patches[key] = {
-                WORKFLOW_QUARANTINE_KEY: quarantine
-                or quarantine_workflow_metadata({})[WORKFLOW_QUARANTINE_KEY]
+                WORKFLOW_QUARANTINE_KEY: quarantine_workflow_metadata({})[
+                    WORKFLOW_QUARANTINE_KEY
+                ]
             }
             continue
         if (
@@ -170,10 +176,10 @@ async def workflow_metadata_patches(
                 )
             }
             continue
-        quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
         patches[key] = {
-            WORKFLOW_QUARANTINE_KEY: quarantine
-            or quarantine_workflow_metadata({})[WORKFLOW_QUARANTINE_KEY]
+            WORKFLOW_QUARANTINE_KEY: quarantine_workflow_metadata({})[
+                WORKFLOW_QUARANTINE_KEY
+            ]
         }
     return patches
 
