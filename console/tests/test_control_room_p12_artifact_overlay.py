@@ -114,6 +114,48 @@ def test_different_observation_fingerprint_cannot_overlay_artifacts():
     _assert_no_persisted_artifacts(_overlay(item, state))
 
 
+def test_technical_state_cannot_overlay_unlinked_workflow_artifacts():
+    item = _item()
+    state = _state(
+        item,
+        fingerprint=business_observation_fingerprint(item),
+        policy_version=ELIGIBILITY_POLICY_VERSION,
+        technical=True,
+    )
+    state["metadata"].update(
+        lessons={"summary": "diagnostic lesson"},
+        learned_rules=["diagnostic rule"],
+        lesson_applications=[{"id": "diagnostic-application"}],
+    )
+
+    projected = _overlay(item, state)
+
+    assert projected.get("lessons") is None
+    assert projected.get("learned_rules") is None
+    assert projected.get("lesson_applications") == []
+
+
+def test_changed_observation_cannot_overlay_unlinked_workflow_artifacts():
+    item = _item(observed_value=2)
+    old = _item(observed_value=1)
+    state = _state(
+        old,
+        fingerprint=business_observation_fingerprint(old),
+        policy_version=ELIGIBILITY_POLICY_VERSION,
+    )
+    state["metadata"].update(
+        lessons={"summary": "old observation"},
+        learned_rules=["old rule"],
+        lesson_applications=[{"id": "old-application"}],
+    )
+
+    projected = _overlay(item, state)
+
+    assert projected.get("lessons") is None
+    assert projected.get("learned_rules") is None
+    assert projected.get("lesson_applications") == []
+
+
 def test_matching_business_observation_preserves_legitimate_artifacts():
     item = _item()
     state = _state(
@@ -129,15 +171,42 @@ def test_matching_business_observation_preserves_legitimate_artifacts():
     assert projected["intelligence"]["options"][0]["id"] == "persisted-option"
 
 
-def test_stale_same_observation_preserves_legitimate_artifacts():
-    item = _item(data_status="stale")
+def test_scoped_runtime_evidence_preserves_matching_business_artifacts():
+    item = _item()
     state = _state(
         item,
         fingerprint=business_observation_fingerprint(item),
         policy_version=ELIGIBILITY_POLICY_VERSION,
     )
+    state.update(
+        tenant_id=item["tenant_id"],
+        workspace_id=item["workspace_id"],
+        cartridge_id=item["cartridge"],
+    )
+    state["metadata"].pop("cartridge")
+    state["metadata"].pop("tenant_id")
+    state["metadata"].pop("workspace_id")
 
-    assert _overlay(item, state)["impact_estimate"] == 999
+    projected = _overlay(item, state)
+
+    assert projected["impact_estimate"] == 999
+    assert projected["priority_score"] == 100
+    assert projected["intelligence"]["options"][0]["id"] == "persisted-option"
+
+
+def test_stale_same_observation_preserves_legitimate_artifacts():
+    persisted_item = _item(data_status="ready")
+    runtime_item = _item(data_status="stale")
+    state = _state(
+        persisted_item,
+        fingerprint=business_observation_fingerprint(persisted_item),
+        policy_version=ELIGIBILITY_POLICY_VERSION,
+    )
+
+    assert business_observation_fingerprint(persisted_item) == (
+        business_observation_fingerprint(runtime_item)
+    )
+    assert _overlay(runtime_item, state)["impact_estimate"] == 999
 
 
 def test_overlay_is_repeatable_and_does_not_mutate_persisted_state():

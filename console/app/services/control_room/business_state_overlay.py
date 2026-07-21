@@ -6,6 +6,7 @@ from typing import Any
 from app.services.control_room.business_access import owner_projection
 from app.services.control_room.business_artifact_overlay import (
     artifact_overlay_allowed,
+    persisted_state_is_diagnostic,
     scoped_overlay_item,
 )
 from app.services.control_room.business_projection import eligible_item_ids
@@ -41,7 +42,7 @@ async def load_overlay_state(
         clauses.append(f"owner_user_id = ${len(params)}")
     rows = await conn.fetch(
         f"""
-        SELECT item_id, tenant_id, workspace_id, owner_user_id,
+        SELECT item_id, tenant_id, workspace_id, owner_user_id, cartridge_id,
                status, decision_id, metadata,
                source_dataset, item_kind,
                first_seen_at, last_seen_at, resolved_at, dismissed_at,
@@ -74,13 +75,19 @@ def _workflow_state(
     state: Mapping[str, Any],
     metadata: Mapping[str, Any],
     scoped_item: Mapping[str, Any] | None,
+    *,
+    overlay_artifacts: bool,
+    persisted_diagnostic: bool,
 ) -> dict[str, Any]:
+    linked_workflow = _has_linked_workflow(state)
     trusted = (
         scoped_item is not None
+        and not persisted_diagnostic
         and not workflow_is_quarantined(state)
         and (
-            not _has_linked_workflow(state)
-            or workflow_has_eligible_provenance(
+            overlay_artifacts
+            if not linked_workflow
+            else workflow_has_eligible_provenance(
                 metadata,
                 scoped_item,
                 decision_id=state.get("decision_id"),
@@ -131,10 +138,18 @@ def overlay_business_state(
         state = dict(state_by_id.get(str(item.get("id") or ""), {}))
         metadata = _mapping(state.get("metadata"))
         scoped_item = scoped_overlay_item(item, state)
-        workflow = _workflow_state(item, state, metadata, scoped_item)
+        overlay_artifacts = artifact_overlay_allowed(item, state, metadata)
+        persisted_diagnostic = persisted_state_is_diagnostic(state, metadata)
+        workflow = _workflow_state(
+            item,
+            state,
+            metadata,
+            scoped_item,
+            overlay_artifacts=overlay_artifacts,
+            persisted_diagnostic=persisted_diagnostic,
+        )
         if str(workflow["status"]) not in item_statuses:
             workflow["status"] = "open"
-        overlay_artifacts = artifact_overlay_allowed(item, state, metadata)
         intelligence = _mapping(
             (metadata.get("intelligence") if overlay_artifacts else None)
             or item.get("intelligence")

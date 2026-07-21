@@ -3,8 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.services.control_room.business_eligibility import classify_business_item
+from app.services.control_room.business_eligibility import (
+    TECHNICAL_STATES,
+    classify_business_item,
+)
 from app.services.control_room.business_lineage import parent_references
+from app.services.control_room.business_lineage import is_source_state
+from app.services.control_room.business_observation import semantic_states
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -17,6 +22,16 @@ from app.services.control_room.business_workflow_provenance import (
 
 
 _SCOPE_FIELDS = ("tenant_id", "workspace_id", "owner_user_id")
+_PERSISTED_POLICY_FIELDS = (
+    "data_status",
+    "item_kind",
+    "kind",
+    "readiness_status",
+    "source_dataset",
+    "source_status",
+    "tenant_id",
+    "workspace_id",
+)
 
 
 def scoped_overlay_item(
@@ -36,6 +51,27 @@ def scoped_overlay_item(
         if persisted is not None:
             scoped[field] = persisted
     return scoped
+
+
+def _persisted_policy_item(
+    persisted_state: Mapping[str, Any],
+    persisted_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    item = dict(persisted_metadata)
+    if persisted_state.get("cartridge_id") is not None:
+        item["cartridge"] = persisted_state["cartridge_id"]
+    for key in _PERSISTED_POLICY_FIELDS:
+        if key in persisted_state:
+            item[key] = persisted_state[key]
+    return item
+
+
+def persisted_state_is_diagnostic(
+    persisted_state: Mapping[str, Any],
+    persisted_metadata: Mapping[str, Any],
+) -> bool:
+    item = _persisted_policy_item(persisted_state, persisted_metadata)
+    return is_source_state(item) or bool(semantic_states(item) & TECHNICAL_STATES)
 
 
 def artifact_overlay_allowed(
@@ -62,19 +98,7 @@ def artifact_overlay_allowed(
             decision_id=persisted_state.get("decision_id"),
         ):
             return False
-    persisted_item = dict(persisted_metadata)
-    if persisted_state.get("cartridge_id") is not None:
-        persisted_item["cartridge"] = persisted_state["cartridge_id"]
-    for key in (
-        "data_status",
-        "item_kind",
-        "kind",
-        "readiness_status",
-        "source_dataset",
-        "source_status",
-    ):
-        if key in persisted_state:
-            persisted_item[key] = persisted_state[key]
+    persisted_item = _persisted_policy_item(persisted_state, persisted_metadata)
     refs = parent_references(persisted_item)
     parent_context = set(refs.ids) if refs.ids and not refs.malformed else None
     return classify_business_item(
@@ -83,4 +107,8 @@ def artifact_overlay_allowed(
     ).eligible
 
 
-__all__ = ("artifact_overlay_allowed", "scoped_overlay_item")
+__all__ = (
+    "artifact_overlay_allowed",
+    "persisted_state_is_diagnostic",
+    "scoped_overlay_item",
+)
