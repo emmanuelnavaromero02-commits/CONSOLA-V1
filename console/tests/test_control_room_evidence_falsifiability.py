@@ -242,7 +242,7 @@ def test_missing_signing_key_fails_closed_without_breaking_runtime_reads(monkeyp
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
     )
-    monkeypatch.delenv("SECURITY_CONTEXT_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("CONTROL_ROOM_EVIDENCE_SIGNING_KEY", raising=False)
 
     assert has_evidence(_item(**fields)) is False
 

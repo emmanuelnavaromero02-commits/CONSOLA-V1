@@ -16,6 +16,7 @@ ENV_FILE="${1:-infra/.env}"
 
 KEYS=(
   "SECURITY_CONTEXT_SIGNING_KEY"
+  "CONTROL_ROOM_EVIDENCE_SIGNING_KEY"
   "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT"
   "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE"
   "INTERNAL_API_KEY_CONSOLE_TO_VAULT"
@@ -93,6 +94,16 @@ for key in "${KEYS[@]}"; do
     added=$((added + 1))
   fi
 done
+
+if ! grep -q '^CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID=' "${ENV_FILE}"; then
+  printf 'CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID=evidence-%s\n' \
+    "$(date -u +%Y%m%d%H%M%S)" >> "${ENV_FILE}"
+  added=$((added + 1))
+fi
+if ! grep -q '^CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS=' "${ENV_FILE}"; then
+  printf 'CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS={}\n' >> "${ENV_FILE}"
+  added=$((added + 1))
+fi
 
 for key in "${DB_KEYS[@]}"; do
   if grep -q "^${key}=" "${ENV_FILE}"; then

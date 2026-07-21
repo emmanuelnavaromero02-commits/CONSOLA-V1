@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.services.security_context import sign_server_payload
+from .business_evidence_signing import (
+    active_evidence_signing_key_id,
+    sign_control_room_evidence,
+    verify_control_room_evidence,
+)
 
 
-_ATTESTATION_VERSION = "hmac-sha256-v2"
+_ATTESTATION_VERSION = "hmac-sha256-v3"
 _ATTESTATION_PURPOSE = "control-room-runtime-evidence-v1"
 _SIGNED_FIELDS = (
     "type",
@@ -22,6 +25,8 @@ _SIGNED_FIELDS = (
     "source_row_hash",
     "observed_at",
     "attestation_version",
+    "attestation_purpose",
+    "attestation_key_id",
 )
 
 
@@ -62,9 +67,10 @@ def _attestation_payload(reference: Mapping[str, Any]) -> bytes:
 
 
 def _attestation(reference: Mapping[str, Any]) -> str:
-    return sign_server_payload(
+    return sign_control_room_evidence(
         _attestation_payload(reference),
         purpose=_ATTESTATION_PURPOSE,
+        key_id=str(reference.get("attestation_key_id") or ""),
     )
 
 
@@ -85,21 +91,23 @@ def verified_runtime_row_reference(value: Mapping[str, Any]) -> bool:
         locator_value,
         str(value.get("source_row_hash") or "").strip(),
         str(value.get("observed_at") or "").strip(),
+        str(value.get("attestation_key_id") or "").strip(),
         str(value.get("server_attestation") or "").strip(),
     )
     if (
         value.get("type") != "dataset_row"
         or value.get("attestation_version") != _ATTESTATION_VERSION
+        or value.get("attestation_purpose") != _ATTESTATION_PURPOSE
         or not all(required)
         or record_id != f"record-{locator_value}"
     ):
         return False
-    try:
-        return hmac.compare_digest(
-            str(value["server_attestation"]), _attestation(value)
-        )
-    except RuntimeError:
-        return False
+    return verify_control_room_evidence(
+        _attestation_payload(value),
+        purpose=_ATTESTATION_PURPOSE,
+        key_id=str(value["attestation_key_id"]),
+        signature=str(value["server_attestation"]),
+    )
 
 
 def canonical_runtime_row_reference(value: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -156,23 +164,25 @@ def runtime_row_evidence_fields(
     ):
         return {}
     record_id = f"record-{locator_value}"
-    runtime_ref = {
-        "type": "dataset_row",
-        "source_dataset": dataset,
-        "source_system": system,
-        "cartridge": cartridge_id,
-        "scope_binding": runtime_scope_binding(tenant, workspace),
-        "source_record_id": record_id,
-        "source_locator": {
-            "relation": relation,
-            "field": field,
-            "value": locator_value,
-        },
-        "source_row_hash": _row_hash(source_row),
-        "observed_at": observation,
-        "attestation_version": _ATTESTATION_VERSION,
-    }
     try:
+        runtime_ref = {
+            "type": "dataset_row",
+            "source_dataset": dataset,
+            "source_system": system,
+            "cartridge": cartridge_id,
+            "scope_binding": runtime_scope_binding(tenant, workspace),
+            "source_record_id": record_id,
+            "source_locator": {
+                "relation": relation,
+                "field": field,
+                "value": locator_value,
+            },
+            "source_row_hash": _row_hash(source_row),
+            "observed_at": observation,
+            "attestation_version": _ATTESTATION_VERSION,
+            "attestation_purpose": _ATTESTATION_PURPOSE,
+            "attestation_key_id": active_evidence_signing_key_id(),
+        }
         runtime_ref["server_attestation"] = _attestation(runtime_ref)
     except RuntimeError:
         return {}
