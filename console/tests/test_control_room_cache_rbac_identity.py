@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from unittest.mock import AsyncMock
 
@@ -126,4 +127,33 @@ async def test_access_revision_change_uses_a_distinct_cache_key(monkeypatch):
     second = await control_room.control_room_dashboard(_user(access_revision="42"))
 
     assert first == second
+    assert loader.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_inflight_downgrade_never_caches_admin_payload_for_analyst(
+    monkeypatch,
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def response(user):
+        role_at_authorization = user["workspace_role"]
+        started.set()
+        await release.wait()
+        return {"workspace_role": role_at_authorization}
+
+    loader = AsyncMock(side_effect=response)
+    monkeypatch.setattr(control_room.control_room_service, "dashboard", loader)
+    user = _user(workspace_role="workspace_admin")
+
+    admin_request = asyncio.create_task(control_room.control_room_dashboard(user))
+    await started.wait()
+    user["workspace_role"] = "analyst"
+    release.set()
+
+    assert await admin_request == {"workspace_role": "workspace_admin"}
+    assert await control_room.control_room_dashboard(user) == {
+        "workspace_role": "analyst"
+    }
     assert loader.await_count == 2

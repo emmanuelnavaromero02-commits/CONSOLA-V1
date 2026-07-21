@@ -104,10 +104,7 @@ def cache_key(namespace: str, user: dict | None) -> CacheKey:
     return namespace, authorization_cache_identity(user)
 
 
-def cache_get(namespace: str, user: dict | None) -> Any | None:
-    if cache_ttl() <= 0:
-        return None
-    key = cache_key(namespace, user)
+def _cache_get_key(key: CacheKey) -> Any | None:
     cached = READ_CACHE.get(key)
     if not cached:
         return None
@@ -118,14 +115,24 @@ def cache_get(namespace: str, user: dict | None) -> Any | None:
     return deepcopy(value)
 
 
-def cache_set(namespace: str, user: dict | None, value: Any) -> Any:
-    ttl = cache_ttl()
+def _cache_set_key(key: CacheKey, value: Any, ttl: float) -> Any:
     if ttl > 0:
-        READ_CACHE[cache_key(namespace, user)] = (
+        READ_CACHE[key] = (
             time.monotonic() + ttl,
             deepcopy(value),
         )
     return value
+
+
+def cache_get(namespace: str, user: dict | None) -> Any | None:
+    if cache_ttl() <= 0:
+        return None
+    return _cache_get_key(cache_key(namespace, user))
+
+
+def cache_set(namespace: str, user: dict | None, value: Any) -> Any:
+    ttl = cache_ttl()
+    return _cache_set_key(cache_key(namespace, user), value, ttl)
 
 
 async def cache_get_or_set(
@@ -133,18 +140,19 @@ async def cache_get_or_set(
     user: dict | None,
     loader: Loader,
 ) -> Any:
-    cached = cache_get(namespace, user)
-    if cached is not None:
-        return cached
-    if cache_ttl() <= 0:
+    ttl = cache_ttl()
+    if ttl <= 0:
         return await loader()
     key = cache_key(namespace, user)
+    cached = _cache_get_key(key)
+    if cached is not None:
+        return cached
     lock = READ_CACHE_LOCKS.setdefault(key, asyncio.Lock())
     async with lock:
-        cached = cache_get(namespace, user)
+        cached = _cache_get_key(key)
         if cached is not None:
             return cached
-        return cache_set(namespace, user, await loader())
+        return _cache_set_key(key, await loader(), ttl)
 
 
 def cache_invalidate(user: dict | None) -> None:
