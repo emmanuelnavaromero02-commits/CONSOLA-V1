@@ -33,6 +33,15 @@ from app.services.control_room.business_decision_persistence import (
     create_and_link_decision as _create_and_link_business_decision,
     persist_option_selection as _persist_business_option_selection,
 )
+from app.services.control_room.business_action_approval import (
+    approve_business_item as _approve_business_item,
+)
+from app.services.control_room.business_action_mutations import (
+    persist_alert_state as _persist_alert_state,
+    persist_control as _persist_control,
+    persist_status_transition as _persist_status_transition,
+    persist_step as _persist_step,
+)
 
 _core.__dict__.setdefault(
     "_create_and_link_business_decision", _create_and_link_business_decision
@@ -40,6 +49,11 @@ _core.__dict__.setdefault(
 _core.__dict__.setdefault(
     "_persist_business_option_selection", _persist_business_option_selection
 )
+_core.__dict__.setdefault("_approve_business_item", _approve_business_item)
+_core.__dict__.setdefault("_persist_alert_state", _persist_alert_state)
+_core.__dict__.setdefault("_persist_control", _persist_control)
+_core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
+_core.__dict__.setdefault("_persist_step", _persist_step)
 
 
 def _bind_to_core(fn):
@@ -979,20 +993,16 @@ async def record_item_step(
     }
 
     async def _write_step(
-        conn: Any, _tenant_id: str | None, _workspace_id: str
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> None:
-        await _ensure_item_row(
+        await _persist_step(
             conn,
             user=user,
             item=item,
-            status=item.get("status") or "open",
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
+            workspace_id=scoped_workspace_id,
             event_type=event_type,
             metadata=metadata,
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_step)
@@ -1091,40 +1101,23 @@ async def update_item_control(
     async def _write_control(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status=target_status)
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = CASE
-                           WHEN status = ANY($4::text[]) THEN status
-                           ELSE $5::text
-                       END,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                json.dumps({"control_state": next_state}),
-                scoped_workspace_id,
-                item["id"],
-                sorted(TERMINAL_ITEM_STATUSES),
-                target_status,
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+        await _persist_control(
             conn,
             user=user,
             item=item,
+            workspace_id=scoped_workspace_id,
+            target_status=target_status,
+            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+            control_state=next_state,
             event_type=event_type,
-            metadata={
+            event_metadata={
                 "control_id": control_key,
                 "control_status": next_status,
                 "owner": owner,
                 "due_at": due_at,
                 "note": note,
             },
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_control)
@@ -4165,54 +4158,18 @@ async def approve_item(
     async def _write_approval(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> Any:
-        visible = await conn.fetchrow(
-            "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
-            decision_id,
-            scoped_workspace_id,
-        )
-        if not visible:
-            raise HTTPException(404, "decision not found")
-        action = await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            decision_id,
-            f"Aprobacion de recomendacion OMEGA: {item['title']}",
-            item["recommendation"],
-            user.get("email") or "user",
-        )
-        await _ensure_item_row(conn, user=user, item=item, status="approved")
-        await approve_control_room_decision(
+        return await _approve_business_item(
             conn,
+            user=user,
+            item=item,
             workspace_id=scoped_workspace_id,
-            item_id=item["id"],
-            decision_id=decision_id,
-            owner_user_id=expected_business_item_owner(item, user),
-            item=item,
-            lessons=lessons,
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="approved",
-            metadata={"decision_id": decision_id, "action_id": dict(action).get("id")},
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="lesson_recorded",
-            metadata={"decision_id": decision_id, "lessons": lessons},
-        )
-        await _persist_lessons(
-            conn,
-            user=user,
-            item=item,
             decision_id=decision_id,
             lessons=lessons,
+            confidence=float(_impact_for_item(item).get("confidence") or 0.7),
+            ensure_item_row=_ensure_item_row,
+            link_decision=link_control_room_decision,
+            approve_link=approve_control_room_decision,
         )
-        return action
 
     action = await _run_with_db_scope(pool, user, _write_approval)
     await audit_service.record_event(
@@ -4282,28 +4239,15 @@ async def dismiss_item(
     async def _write_dismissed(
         conn: Any, _tenant_id: str | None, workspace_id: str
     ) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status="dismissed")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'dismissed',
-                       dismissed_at = COALESCE(dismissed_at, NOW()),
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                """,
-                workspace_id,
-                item["id"],
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+        await _persist_status_transition(
             conn,
             user=user,
             item=item,
+            workspace_id=workspace_id,
+            target_status="dismissed",
             event_type="dismissed",
-            metadata={"reason": reason or ""},
+            reason=reason or "",
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_dismissed)
@@ -4341,30 +4285,15 @@ async def reopen_item(
     async def _write_reopened(
         conn: Any, _tenant_id: str | None, workspace_id: str
     ) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status="open")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'open',
-                       decision_id = NULL,
-                       resolved_at = NULL,
-                       dismissed_at = NULL,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                """,
-                workspace_id,
-                item["id"],
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+        await _persist_status_transition(
             conn,
             user=user,
             item=item,
+            workspace_id=workspace_id,
+            target_status="open",
             event_type="reopened",
-            metadata={"reason": reason or ""},
+            reason=reason or "",
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_reopened)
@@ -4471,39 +4400,18 @@ async def _operate_alert(
     async def _write_alert_state(
         conn: Any, _tenant_id: str | None, workspace_id: str
     ) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status=target_status)
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = CASE
-                           WHEN $5::text = 'dismissed' THEN 'dismissed'
-                           WHEN status = ANY($4::text[]) THEN status
-                           ELSE $5::text
-                       END,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                       dismissed_at = CASE
-                           WHEN $5::text = 'dismissed' THEN COALESCE(dismissed_at, NOW())
-                           ELSE dismissed_at
-                       END,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                json.dumps({"alert_state": alert_state}),
-                workspace_id,
-                item["id"],
-                sorted(TERMINAL_ITEM_STATUSES),
-                target_status,
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+        await _persist_alert_state(
             conn,
             user=user,
             item=item,
+            workspace_id=workspace_id,
+            target_status=target_status,
+            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+            alert_state=alert_state,
             event_type=event_type,
-            metadata={"alert_state": alert_state, "note": note, "reason": reason},
+            note=note,
+            reason=reason,
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_alert_state)

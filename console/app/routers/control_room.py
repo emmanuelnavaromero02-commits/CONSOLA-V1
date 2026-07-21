@@ -447,16 +447,16 @@ async def control_room_sec_edgar_readiness(user: dict = Depends(require_authenti
 
 @router.post(
     "/sap-successfactors/talent/actions/preview",
-    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_sap_successfactors_talent_action_preview(
-    body: dict = Body(default_factory=dict),
-    user: dict = Depends(require_authenticated),
+    body: dict = Body(default_factory=dict), user: dict = Depends(require_authenticated)
 ):
-    return await control_room_service.sap_successfactors_talent_action_preview(
-        user,
-        body if isinstance(body, dict) else {},
-    )
+    preview = control_room_service.sap_successfactors_talent_action_preview
+    return await preview(user, body if isinstance(body, dict) else {})
 
 
 @router.get(

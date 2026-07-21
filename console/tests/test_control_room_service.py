@@ -19,6 +19,47 @@ USER = {
 }
 
 
+def _successful_command_tag(query: object, *_args: object) -> str:
+    sql = " ".join(str(query).split()).upper()
+    for command in ("INSERT", "UPDATE", "DELETE"):
+        if sql.startswith(command) or f" {command} " in f" {sql} ":
+            return f"{command} 0 1" if command == "INSERT" else f"{command} 1"
+    return "SELECT 1"
+
+
+def _enable_successful_writes(mock_pool: AsyncMock) -> None:
+    mock_pool.execute = AsyncMock(side_effect=_successful_command_tag)
+
+
+def _observed_anomaly_fields(item_id: str) -> dict:
+    return {
+        "data_status": "ready",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "detected_at": "2026-06-07T00:00:00Z",
+        "evidence_refs": [f"evidence:{item_id}"],
+        "source_dataset": "gold_business_observations",
+        "entity_id": item_id,
+    }
+
+
+def _approval_fetchrows(item_id: str, action: dict) -> list[dict | None]:
+    return [
+        {"id": 42, "created_by_id": 7, "kpis": []},
+        {
+            "item_id": item_id,
+            "decision_id": 42,
+            "owner_user_id": 7,
+            "item_kind": "anomaly",
+            "metadata": {},
+        },
+        None,
+        action,
+        {"item_id": item_id, "owner_user_id": 7, "decision_id": 42},
+        {"item_id": item_id},
+    ]
+
+
 @pytest.fixture(autouse=True)
 def scoped_test_installations(monkeypatch):
     async def installed(user):
@@ -122,12 +163,50 @@ def test_replicon_timesheet_normalizer_accepts_monthly_gold_shape():
     assert "2026-08-01" in item["description"]
 
 
+def test_replicon_pnl_normalizer_types_margin_with_revenue_denominator():
+    source = next(
+        source
+        for source in control_room_service._all_sources()  # noqa: SLF001
+        if source.dataset == "pnl_mensual"
+    )
+
+    item = control_room_service._normalize_replicon_pnl(  # noqa: SLF001
+        source,
+        {
+            "mes": "2026-05-01",
+            "proyecto": "P-ZERO",
+            "revenue_usd": 100_000,
+            "margen_bruto_pct": 0,
+        },
+    )
+
+    assert item is not None
+    assert item["metric_type"] == "percentage"
+    assert item["observed_value"] == 0
+    assert item["denominator"] == 100_000
+
+
 def test_source_state_cleanup_is_not_exposed_on_read_service():
     assert not hasattr(control_room_service, "_cleanup_obsolete_source_state_items")
 
 
 async def sample_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
     return SAMPLE_ROWS[dataset]
+
+
+def test_runtime_source_row_becomes_typed_business_evidence():
+    source = next(
+        source
+        for source in control_room_service._all_sources()  # noqa: SLF001
+        if source.dataset == "employees_anomalies"
+    )
+    item = control_room_service._normalize_standard_anomaly(  # noqa: SLF001
+        source, SAMPLE_ROWS["employees_anomalies"][0]
+    )
+
+    assert item["evidence_refs"][0]["type"] == "dataset_row"
+    assert item["evidence_refs"][0]["source_dataset"] == "employees_anomalies"
+    assert item["evidence_refs"][0]["source_record_id"].startswith("record-")
 
 
 class _FakeDatasetResponse:
@@ -744,6 +823,7 @@ async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation
                     "recommendation": "Revisar calibracion.",
                     "status": "recommendation_only",
                     "method": "cut_sensitivity",
+                    "generated_at": "2026-07-16T10:00:00Z",
                 }
             ]
         return []
@@ -1120,6 +1200,7 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(
     mock_pool.fetchval.return_value = 0
 
     stale_item = {
+        **_observed_anomaly_fields("alert:hubspot:stale"),
         "id": "alert:hubspot:stale",
         "kind": "intelligence_signal",
         "domain": "Ventas",
@@ -1133,12 +1214,10 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(
         "anomaly_type": "forecast",
         "severity": "high",
         "severity_weight": 3,
-        "detected_at": "2026-06-07T00:00:00Z",
         "title": "HubSpot stale alert",
         "description": "Should be hidden without scoped connection.",
         "recommendation": "Hidden",
         "status": "open",
-        "evidence_refs": ["evidence:hubspot"],
     }
     active_item = {
         **stale_item,
@@ -1501,6 +1580,7 @@ async def test_dashboard_adds_real_impact_and_priority_without_inventing_money()
 
 def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
     hcm = {
+        **_observed_anomaly_fields("hcm-1"),
         "id": "hcm-1",
         "kind": "anomaly",
         "cartridge": "sap_hcm",
@@ -1510,6 +1590,7 @@ def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
         "details": {"salary_monthly_usd": 4200},
     }
     sf = {
+        **_observed_anomaly_fields("sf-1"),
         "id": "sf-1",
         "kind": "anomaly",
         "cartridge": "sap_successfactors",
@@ -1519,6 +1600,7 @@ def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
         "details": {"affected_employees": 8, "avg_monthly_cost_usd": 3000},
     }
     bp = {
+        **_observed_anomaly_fields("bp-1"),
         "id": "bp-1",
         "kind": "anomaly",
         "cartridge": "sap_s4hana",
@@ -1544,6 +1626,7 @@ def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
     cases = [
         (
             {
+                **_observed_anomaly_fields("hcm-template"),
                 "kind": "anomaly",
                 "cartridge": "sap_hcm",
                 "anomaly_type": "terminated_but_active",
@@ -1552,6 +1635,7 @@ def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
         ),
         (
             {
+                **_observed_anomaly_fields("sf-template"),
                 "kind": "anomaly",
                 "cartridge": "sap_successfactors",
                 "module_id": "sap_successfactors_recruiting",
@@ -1561,6 +1645,7 @@ def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
         ),
         (
             {
+                **_observed_anomaly_fields("bp-template"),
                 "kind": "anomaly",
                 "cartridge": "sap_s4hana",
                 "anomaly_type": "missing_address",
@@ -1569,6 +1654,7 @@ def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
         ),
         (
             {
+                **_observed_anomaly_fields("revenue-template"),
                 "kind": "anomaly",
                 "cartridge": "sap_s4hana",
                 "anomaly_type": "aged_sales_backlog",
@@ -1577,6 +1663,7 @@ def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
         ),
         (
             {
+                **_observed_anomaly_fields("procurement-template"),
                 "kind": "anomaly",
                 "cartridge": "sap_s4hana",
                 "anomaly_type": "supplier_spend_concentration",
@@ -2061,8 +2148,21 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
     }
     action_row = {"id": 99, "decision_id": 42}
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[None, decision_row, action_row, {"item_id": anomaly["id"]}]
+        side_effect=[
+            {
+                "item_id": anomaly["id"],
+                "decision_id": None,
+                "selected_option_id": None,
+                "owner_user_id": 7,
+                "metadata": {},
+            },
+            decision_row,
+            action_row,
+            {"item_id": anomaly["id"], "owner_user_id": 7, "decision_id": None},
+            {"item_id": anomaly["id"]},
+        ]
     )
     mock_pool.fetch.return_value = []
 
@@ -2092,6 +2192,11 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
             ),
         ),
         patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
         ) as audit_event,
     ):
@@ -2102,14 +2207,14 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
         )
 
     assert result["decision"]["id"] == 42
-    assert mock_pool.fetchrow.call_count == 4
+    assert mock_pool.fetchrow.call_count == 5
     insert_sql = mock_pool.fetchrow.call_args_list[1].args[0]
     assert "INSERT INTO decisions" in insert_sql
     assert "workspace_id" in insert_sql
     assert mock_pool.fetchrow.call_args_list[1].args[-1] == "workspace-A"
     action_sql = mock_pool.fetchrow.call_args_list[2].args[0]
     assert "INSERT INTO decision_actions" in action_sql
-    link_sql = mock_pool.fetchrow.call_args_list[3].args[0]
+    link_sql = mock_pool.fetchrow.call_args_list[4].args[0]
     assert "UPDATE control_room_items" in link_sql
     assert "RETURNING item_id" in link_sql
     audit_event.assert_awaited_once()
@@ -2124,8 +2229,9 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
-    mock_pool.fetchrow.return_value = None
+    mock_pool.fetchrow.return_value = {"item_id": anomaly["id"]}
     mock_pool.fetchval.return_value = 0
 
     with (
@@ -2144,6 +2250,11 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
             ),
         ),
         patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
         ) as audit_event,
     ):
@@ -2159,11 +2270,11 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
     assert result["item"]["status"] == "in_review"
     assert any(
         '"selected_option_id": "exception"' in str(call.args)
-        for call in mock_pool.execute.call_args_list
+        for call in mock_pool.fetchrow.call_args_list
     )
     assert any(
         "selected_option_id = $5" in call.args[0]
-        for call in mock_pool.execute.call_args_list
+        for call in mock_pool.fetchrow.call_args_list
     )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.option.select"
@@ -2182,6 +2293,7 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
         )
     )["items"][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
     mock_pool.fetchrow = AsyncMock(
@@ -2359,6 +2471,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "domain": "Finanzas",
         "source_dataset": "pnl_mensual",
         "item_kind": "intelligence_signal",
+        "owner_user_id": 7,
         "title": "Margen bajo",
         "severity": "high",
         "status": "approved",
@@ -2372,6 +2485,10 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
             "recommendation": "Revisar billing",
             "root_cause": "Costo mayor al esperado",
             "impact": "Riesgo de margen",
+            "data_status": "ready",
+            "metric_type": "scalar",
+            "observed_value": 1,
+            "observation_date": "2026-05-20T10:00:00Z",
             "evidence_refs": ["evidence:item-activity"],
         },
         "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
@@ -2478,6 +2595,7 @@ async def test_record_item_step_writes_operational_event_and_audit():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow.return_value = None
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -2496,6 +2614,11 @@ async def test_record_item_step_writes_operational_event_and_audit():
                     },
                 ]
             ),
+        ),
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
         ),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
@@ -2526,6 +2649,7 @@ async def test_update_item_control_persists_control_state_and_audits():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow.return_value = None
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -2544,6 +2668,11 @@ async def test_update_item_control_persists_control_state_and_audits():
                     },
                 ]
             ),
+        ),
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
         ),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
@@ -2839,6 +2968,7 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     )["items"]
     item = next(candidate for candidate in items if candidate["cartridge"] == "sap_hcm")
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
     mock_pool.fetchrow = AsyncMock(
@@ -3051,7 +3181,7 @@ class _TransactionalConn:
         self.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
         self.fetch = AsyncMock(return_value=[])
         self.fetchval = AsyncMock(return_value=0)
-        self.execute = AsyncMock()
+        self.execute = AsyncMock(side_effect=_successful_command_tag)
         self.acquired = False
         self.released = False
         self.transaction_entered = False
@@ -3067,7 +3197,7 @@ class _TransactionalPool:
         self.fetchrow = AsyncMock(side_effect=pool_fetchrow_side_effect)
         self.fetch = AsyncMock(return_value=[])
         self.fetchval = AsyncMock(return_value=0)
-        self.execute = AsyncMock()
+        self.execute = AsyncMock(side_effect=_successful_command_tag)
         self.conn = _TransactionalConn(conn_fetchrow_side_effect)
 
     def acquire(self):
@@ -3098,6 +3228,7 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
         "ts": datetime(2026, 5, 20, 10, 2, 0),
     }
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
             None,
@@ -3242,6 +3373,7 @@ async def test_execute_live_supported_followup_is_idempotent(monkeypatch):
         }
     )
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item))
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3287,6 +3419,7 @@ async def test_execute_live_idempotent_replay_still_requires_confirmation(monkey
     )["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3339,6 +3472,7 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
         }
     )
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
             _execution_row(
@@ -3429,6 +3563,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     )["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
             None,
@@ -3538,6 +3673,7 @@ async def test_get_suggested_actions_reads_autonomous_learning_lessons():
             new=AsyncMock(
                 return_value=[
                     {
+                        **_observed_anomaly_fields("item-old"),
                         "id": "item-old",
                         "kind": "anomaly",
                         "source_dataset": "employees_anomalies",
@@ -3755,6 +3891,7 @@ async def test_execute_live_requires_explicit_confirmation(monkeypatch):
     )["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3805,6 +3942,7 @@ async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypat
         }
     )
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[None, _execution_row(item, status="blocked")]
     )
@@ -3847,6 +3985,7 @@ async def test_execute_live_rejects_approved_terminal_item(monkeypatch):
     )["items"][0]
     item = _executed_item(base_item, status="approved")
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3888,6 +4027,7 @@ async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
     )["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
             None,
@@ -3941,6 +4081,7 @@ async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(
     )["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
             RuntimeError("lookup down"),
@@ -4139,10 +4280,10 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
             new=AsyncMock(
                 return_value=[
                     {
+                        **_observed_anomaly_fields("item-1"),
                         "id": "item-1",
                         "kind": "intelligence_signal",
                         "source_dataset": "pnl_mensual",
-                        "evidence_refs": ["evidence:item-1"],
                     }
                 ]
             ),
@@ -4169,21 +4310,18 @@ async def test_approve_persists_lessons_to_lessons_table():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
         "anomalies"
     ][0]
+    action = {
+        "id": 100,
+        "decision_id": 42,
+        "action_text": "approved",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 1, 0),
+    }
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            {"id": 42},
-            {
-                "id": 100,
-                "decision_id": 42,
-                "action_text": "approved",
-                "note": "ok",
-                "actor": "ops@example.com",
-                "ts": datetime(2026, 5, 20, 10, 1, 0),
-            },
-            {"item_id": anomaly["id"]},
-        ]
+        side_effect=_approval_fetchrows(anomaly["id"], action)
     )
     mock_pool.fetch.return_value = []
 
@@ -4201,6 +4339,11 @@ async def test_approve_persists_lessons_to_lessons_table():
                     },
                 ]
             ),
+        ),
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
         ),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
@@ -4224,21 +4367,18 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
         "anomalies"
     ][0]
+    action = {
+        "id": 100,
+        "decision_id": 42,
+        "action_text": "approved",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 1, 0),
+    }
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            {"id": 42},
-            {
-                "id": 100,
-                "decision_id": 42,
-                "action_text": "approved",
-                "note": "ok",
-                "actor": "ops@example.com",
-                "ts": datetime(2026, 5, 20, 10, 1, 0),
-            },
-            {"item_id": anomaly["id"]},
-        ]
+        side_effect=_approval_fetchrows(anomaly["id"], action)
     )
     mock_pool.fetch.return_value = []
 
@@ -4268,6 +4408,11 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
             ),
         ),
         patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
         ) as audit_event,
     ):
@@ -4281,11 +4426,11 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     assert result["approved"] is True
     assert result["decision_id"] == 42
     assert result["action"]["ts"] == "2026-05-20T10:01:00"
-    visible_sql, decision_id, workspace_id = mock_pool.fetchrow.call_args_list[1].args
+    visible_sql, decision_id, workspace_id = mock_pool.fetchrow.call_args_list[0].args
     assert "workspace_id = $2" in visible_sql
     assert decision_id == 42
     assert workspace_id == "workspace-A"
-    link_args = mock_pool.fetchrow.call_args_list[3].args
+    link_args = mock_pool.fetchrow.call_args_list[5].args
     link_sql = link_args[0]
     assert "owner_user_id IS NOT DISTINCT FROM $5" in link_sql
     assert "RETURNING item_id" in link_sql
@@ -4301,6 +4446,7 @@ async def test_dismiss_item_persists_state_and_records_audit_event():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchrow.return_value = None
 
@@ -4346,6 +4492,7 @@ async def test_reopen_item_resets_terminal_state_and_records_audit_event():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchrow.return_value = None
 
@@ -4392,6 +4539,7 @@ async def test_acknowledge_alert_persists_alert_state_and_records_audit_event():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchrow.return_value = None
 
@@ -4447,6 +4595,7 @@ async def test_snooze_and_assign_alert_update_delivery_contract():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchrow.return_value = None
 
@@ -4502,6 +4651,7 @@ async def test_false_positive_alert_dismisses_item_and_removes_alert():
         "anomalies"
     ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchrow.return_value = None
 

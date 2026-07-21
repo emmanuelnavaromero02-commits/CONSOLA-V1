@@ -4,6 +4,42 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 
+_SOURCE_TYPE_BY_KIND = {
+    "agent_alert": "agent_alert",
+    "intelligence_signal": "intelligence_signal",
+}
+
+
+def agentops_source_ids(
+    items: Sequence[Mapping[str, Any]],
+) -> dict[str, list[str]]:
+    typed: dict[str, set[str]] = {
+        "control_room_item": set(),
+        "agent_alert": set(),
+        "intelligence_signal": set(),
+    }
+    for item in items:
+        item_id = str(item.get("id") or item.get("item_id") or "").strip()
+        if not item_id:
+            continue
+        kind = str(item.get("kind") or item.get("item_kind") or "").lower()
+        typed[_SOURCE_TYPE_BY_KIND.get(kind, "control_room_item")].add(item_id)
+    return {source_type: sorted(ids) for source_type, ids in typed.items()}
+
+
+def _typed_ids(
+    eligible_source_ids: Mapping[str, Sequence[str]],
+) -> tuple[list[str], list[str], list[str]]:
+    return tuple(
+        sorted({str(value) for value in eligible_source_ids.get(source_type, ())})
+        for source_type in (
+            "control_room_item",
+            "agent_alert",
+            "intelligence_signal",
+        )
+    )
+
+
 async def _agentops_alert_rows(
     conn: Any,
     *,
@@ -60,20 +96,27 @@ async def _agentops_orchestration_rows(
     *,
     workspace_id: str,
     table_exists: Mapping[str, bool],
-    eligible_item_ids: Sequence[str],
+    eligible_source_ids: Mapping[str, Sequence[str]],
 ) -> list[Any]:
     if not table_exists["decision_orchestration_runs"]:
         return []
+    control_room_ids, alert_ids, signal_ids = _typed_ids(eligible_source_ids)
     return await conn.fetch(
         """
         SELECT COUNT(*)::int AS total,
                MAX(updated_at) AS latest_at
-         FROM decision_orchestration_runs
-         WHERE workspace_id = $1::uuid
-           AND source_id = ANY($2::text[])
+         FROM decision_orchestration_runs run
+         WHERE run.workspace_id = $1::uuid
+           AND (
+                (run.source_type = 'control_room_item' AND run.source_id = ANY($2::text[]))
+                OR (run.source_type = 'agent_alert' AND run.source_id = ANY($3::text[]))
+                OR (run.source_type = 'intelligence_signal' AND run.source_id = ANY($4::text[]))
+           )
         """,
         workspace_id,
-        list(eligible_item_ids),
+        control_room_ids,
+        alert_ids,
+        signal_ids,
     )
 
 
@@ -82,10 +125,11 @@ async def _agentops_execution_rows(
     *,
     workspace_id: str,
     table_exists: Mapping[str, bool],
-    eligible_item_ids: Sequence[str],
+    eligible_source_ids: Mapping[str, Sequence[str]],
 ) -> list[Any]:
     if not table_exists["decision_orchestration_executions"]:
         return []
+    control_room_ids, alert_ids, signal_ids = _typed_ids(eligible_source_ids)
     return await conn.fetch(
         """
         SELECT execution.engine_name,
@@ -97,11 +141,17 @@ async def _agentops_execution_rows(
             ON run.workspace_id = execution.workspace_id
            AND run.orchestration_id = execution.orchestration_id
          WHERE execution.workspace_id = $1::uuid
-           AND run.source_id = ANY($2::text[])
+           AND (
+                (run.source_type = 'control_room_item' AND run.source_id = ANY($2::text[]))
+                OR (run.source_type = 'agent_alert' AND run.source_id = ANY($3::text[]))
+                OR (run.source_type = 'intelligence_signal' AND run.source_id = ANY($4::text[]))
+           )
          GROUP BY execution.engine_name, execution.execution_status
         """,
         workspace_id,
-        list(eligible_item_ids),
+        control_room_ids,
+        alert_ids,
+        signal_ids,
     )
 
 
@@ -198,4 +248,5 @@ __all__ = (
     "_agentops_monte_carlo_rows",
     "_agentops_orchestration_rows",
     "_agentops_origin_rows",
+    "agentops_source_ids",
 )

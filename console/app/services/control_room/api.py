@@ -8,6 +8,13 @@ from app.services.control_room.talent_catalog import (
     TALENT_LIVE_COMPONENT_IDS,
     TALENT_METADATA_ENTITIES,
 )
+from app.services.control_room.business_agentops import agentops_source_ids
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
+from app.services.control_room.business_talent_preview import (
+    build_talent_action_preview,
+)
 
 
 _RESERVED_GLOBALS = {
@@ -22,6 +29,9 @@ _RESERVED_GLOBALS = {
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
+_core.__dict__.setdefault("agentops_source_ids", agentops_source_ids)
+_core.__dict__.setdefault("runtime_row_evidence_fields", runtime_row_evidence_fields)
+_core.__dict__.setdefault("_build_talent_action_preview", build_talent_action_preview)
 
 
 def _bind_to_core(fn):
@@ -2220,60 +2230,14 @@ async def sap_successfactors_talent_overview(user: dict | None) -> dict[str, Any
 async def sap_successfactors_talent_action_preview(
     user: dict | None, body: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    payload = body if isinstance(body, dict) else {}
-    action_id = str(payload.get("action_id") or payload.get("id") or "").strip()
-    if not action_id:
-        raise HTTPException(400, "action_id is required")
-    box_id = str(payload.get("box_id") or "").strip() or None
-    anomalies = await sap_successfactors_talent_anomalies(user)
-    selected = next(
-        (item for item in anomalies.get("items", []) if item.get("id") == action_id),
-        None,
-    ) or {
-        "id": action_id,
-        "title": "Preview Talento",
-        "recommendation": "Validar datos y generar accion supervisada.",
-        "severity": "medium",
-        "affected_count": 0,
-        "method": "manual_preview",
-    }
-    tenant_id, workspace_id = _workspace_scope(user)
-    return {
-        "generated_at": datetime.now(UTC).isoformat(),
-        "connection_id": "femsa_sf",
-        "tenant_id": tenant_id,
-        "workspace_id": workspace_id,
-        "status": "preview_only",
-        "action_id": action_id,
-        "box_id": box_id,
-        "title": selected.get("title"),
-        "severity": selected.get("severity"),
-        "affected_count": _sf_talent_int(selected.get("affected_count")),
-        "recommendation": selected.get("recommendation") or selected.get("detail"),
-        "method": selected.get("method"),
-        "recommendation_only": True,
-        "write_back_enabled": False,
-        "compensation_enabled": False,
-        "requires_approval": True,
-        "external_mutations": [],
-        "steps": [
-            {
-                "id": "validate_scope",
-                "label": "Validar C/P/A y blockers",
-                "status": "required",
-            },
-            {
-                "id": "review_roster",
-                "label": "Revisar roster enmascarado",
-                "status": "required",
-            },
-            {
-                "id": "open_decision",
-                "label": "Crear decision supervisada",
-                "status": "preview_only",
-            },
-        ],
-    }
+    return await _build_talent_action_preview(
+        user,
+        body,
+        load_item=_item_for_mutation,
+        load_gold_rows=query_dataset_rows,
+        resolve_template=_resolve_template,
+        resolve_scope=_workspace_scope,
+    )
 
 
 @_bind_to_core
@@ -2623,8 +2587,8 @@ def _base_item(
     label: str,
 ) -> dict[str, Any]:
     severity = _severity(row.get("severity"))
-    details = _details(row.get("details"))
-    metadata = _details(row.get("metadata"))
+    details = strip_business_fields(_details(row.get("details")))
+    metadata = strip_business_fields(_details(row.get("metadata")))
     detected_at = str(
         row.get("detected_at") or row.get("mes") or row.get("semana") or ""
     )
@@ -2634,56 +2598,67 @@ def _base_item(
         f"WHERE {source.entity_id_field} = '{escaped_entity}' "
         f"LIMIT 50"
     )
-    return {
-        "id": _encode_id(
-            {
-                "dataset": source.dataset,
-                "type": item_type,
-                "entity": entity_id or label,
-            }
-        ),
-        "kind": source.kind,
-        "item_kind": row.get("item_kind") or metadata.get("item_kind") or source.kind,
-        "metadata": metadata,
-        "domain": source.domain,
-        "module": source.module_label,
-        "module_id": source.visible_module_id,
-        "cartridge": source.cartridge,
-        "connector_id": source.cartridge,
-        "source_dataset": source.dataset,
-        "entity_kind": source.entity_kind,
-        "entity_id": entity_id,
-        "entity_label": label,
-        "anomaly_type": item_type,
-        "severity": severity,
-        "severity_weight": SEVERITY_WEIGHT[severity],
-        "detected_at": detected_at,
-        "details": details,
-        "sql": technical_sql,
-        "status": "open",
-        "decision_id": None,
-        "thresholds_applied": [],
-        "threshold_state": "default",
-        **{
-            key: row.get(key)
-            for key in (
-                "data_status",
-                "data_readiness",
-                "evaluation_status",
-                "readiness_status",
-                "source_status",
-                "parent_item_id",
-                "source_item_id",
-                "derived_from",
-                *BUSINESS_OBSERVATION_FIELDS,
-                *BUSINESS_MATERIALIZATION_FIELDS,
-                *BUSINESS_EVIDENCE_FIELDS,
-            )
-            if key in row
-        },
-        **nonempty_mapping_fields(row, ("observation", "intelligence")),
-        **nonempty_mapping_fields(row, ("lineage",)),
-    }
+    return project_business_item(
+        {
+            "id": _encode_id(
+                {
+                    "dataset": source.dataset,
+                    "type": item_type,
+                    "entity": entity_id or label,
+                }
+            ),
+            "kind": source.kind,
+            "item_kind": row.get("item_kind")
+            or metadata.get("item_kind")
+            or source.kind,
+            "metadata": metadata,
+            "domain": source.domain,
+            "module": source.module_label,
+            "module_id": source.visible_module_id,
+            "cartridge": source.cartridge,
+            "connector_id": source.cartridge,
+            "source_dataset": source.dataset,
+            "entity_kind": source.entity_kind,
+            "entity_id": entity_id,
+            "entity_label": label,
+            "anomaly_type": item_type,
+            "severity": severity,
+            "severity_weight": SEVERITY_WEIGHT[severity],
+            "detected_at": detected_at,
+            "details": details,
+            "sql": technical_sql,
+            "status": "open",
+            "decision_id": None,
+            "thresholds_applied": [],
+            "threshold_state": "default",
+            **{
+                key: row.get(key)
+                for key in (
+                    "data_status",
+                    "data_readiness",
+                    "evaluation_status",
+                    "readiness_status",
+                    "source_status",
+                    "parent_item_id",
+                    "source_item_id",
+                    "derived_from",
+                    *BUSINESS_OBSERVATION_FIELDS,
+                    *BUSINESS_MATERIALIZATION_FIELDS,
+                    *BUSINESS_EVIDENCE_FIELDS,
+                )
+                if key in row
+            },
+            **nonempty_mapping_fields(row, ("observation", "intelligence")),
+            **nonempty_mapping_fields(row, ("lineage",)),
+            **runtime_row_evidence_fields(
+                source_dataset=source.dataset,
+                entity_id=entity_id or label,
+                item_type=item_type,
+                observed_at=detected_at,
+                existing_refs=row.get("evidence_refs"),
+            ),
+        }
+    )
 
 
 @_bind_to_core
@@ -3062,8 +3037,15 @@ def _normalize_replicon_pnl(
         proyecto,
         str(row.get("project_name") or proyecto),
     )
+    measured_value = margin if state["item_type"] == "low_margin" else wip
+    metric_type = "percentage" if state["item_type"] == "low_margin" else "amount"
+    denominator = _num(row.get("revenue_usd"))
     item.update(
         {
+            "data_status": "ready",
+            "metric_type": metric_type,
+            "observed_value": measured_value,
+            **({"denominator": denominator} if denominator is not None else {}),
             "title": "Proyecto con margen o WIP fuera de control",
             "description": f"{proyecto} esta bajo {manager}; margen={margin if margin is not None else 'N/D'}%, WIP={wip:,.0f} USD.",
             "recommendation": "Revisar revenue, facturacion, costo hundido y compromiso de remediacion con finanzas.",
@@ -6027,14 +6009,14 @@ async def _agentops_intelligence_rows(
     *,
     workspace_id: str,
     table_exists: dict[str, bool],
-    eligible_item_ids: list[str],
+    eligible_source_ids: dict[str, list[str]],
 ) -> dict[str, Any]:
     return {
         "monte_carlo_rows": await _agentops_monte_carlo_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
-            eligible_item_ids=eligible_item_ids,
+            eligible_item_ids=eligible_source_ids["intelligence_signal"],
         ),
         "operational_calibration_rows": await _agentops_calibration_rows(
             conn,
@@ -6045,13 +6027,13 @@ async def _agentops_intelligence_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
-            eligible_item_ids=eligible_item_ids,
+            eligible_source_ids=eligible_source_ids,
         ),
         "execution_rows": await _agentops_execution_rows(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
-            eligible_item_ids=eligible_item_ids,
+            eligible_source_ids=eligible_source_ids,
         ),
     }
 
@@ -6063,7 +6045,7 @@ async def _agentops_load_snapshot(
     tenant_id: str | None,
     workspace_id: str,
     allowed_param: list[str] | None,
-    eligible_item_ids: list[str],
+    eligible_source_ids: dict[str, list[str]],
     eligible_alert_ids: list[str],
     limit: int,
 ) -> dict[str, Any]:
@@ -6081,7 +6063,7 @@ async def _agentops_load_snapshot(
             conn,
             workspace_id=workspace_id,
             table_exists=table_exists,
-            eligible_item_ids=eligible_item_ids,
+            eligible_source_ids=eligible_source_ids,
         ),
     }
 
@@ -6164,14 +6146,8 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     allowed_cartridges = _allowed_from_user(user)
     allowed_param = None if allowed_cartridges is None else sorted(allowed_cartridges)
     business_items = await persisted_business_projection(pool, user)
-    business_ids = sorted(eligible_item_ids(business_items))
-    business_id_set = set(business_ids)
-    alert_ids = sorted(
-        str(item["id"])
-        for item in business_items
-        if str(item.get("id") or "") in business_id_set
-        if str(item.get("kind") or item.get("item_kind") or "").lower() == "agent_alert"
-    )
+    business_source_ids = agentops_source_ids(business_items)
+    alert_ids = business_source_ids["agent_alert"]
 
     async def _load(
         conn: Any, _tenant_id: str | None, _workspace_id: str
@@ -6181,7 +6157,7 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
             tenant_id=_tenant_id,
             workspace_id=_workspace_id,
             allowed_param=allowed_param,
-            eligible_item_ids=business_ids,
+            eligible_source_ids=business_source_ids,
             eligible_alert_ids=alert_ids,
             limit=limit,
         )

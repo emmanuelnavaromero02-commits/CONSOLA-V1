@@ -22,6 +22,10 @@ def _item(item_id: str, kind: str, **overrides) -> dict:
         "id": item_id,
         "kind": kind,
         "source_dataset": "gold_metrics",
+        "data_status": "ready",
+        "observation_date": "2026-07-20",
+        "metric_type": "count",
+        "count": 1,
         "evidence_refs": [f"evidence:{item_id}"],
         **overrides,
     }
@@ -69,10 +73,11 @@ async def test_agentops_uses_canonical_business_ids_for_executive_counters():
 
     assert result == {"raw": True}
     forbidden_dashboard.assert_not_awaited()
-    assert snapshot.await_args.kwargs["eligible_item_ids"] == [
-        "alert-good",
-        "signal-good",
-    ]
+    assert snapshot.await_args.kwargs["eligible_source_ids"] == {
+        "control_room_item": [],
+        "agent_alert": ["alert-good"],
+        "intelligence_signal": ["signal-good"],
+    }
     assert snapshot.await_args.kwargs["eligible_alert_ids"] == ["alert-good"]
 
 
@@ -97,9 +102,15 @@ class MixedOrchestrationConnection:
     async def fetch(self, sql: str, *args):
         assert "source_id = ANY($2::text[])" in sql
         assert "source_type NOT IN" not in sql
-        eligible_ids = set(args[1])
+        eligible_by_type = {
+            "control_room_item": set(args[1]),
+            "agent_alert": set(args[2]),
+            "intelligence_signal": set(args[3]),
+        }
         linked_runs = {
-            run_id for run_id, _, source_id in self.runs if source_id in eligible_ids
+            run_id
+            for run_id, source_type, source_id in self.runs
+            if source_id in eligible_by_type.get(source_type, set())
         }
         if "JOIN decision_orchestration_runs" not in sql:
             return [{"total": len(linked_runs), "latest_at": None}]
@@ -171,19 +182,27 @@ async def test_agent_alert_orchestration_and_execution_queries_are_id_bounded():
         conn,
         workspace_id="workspace-A",
         table_exists={"decision_orchestration_runs": True},
-        eligible_item_ids=["alert-good", "signal-good"],
+        eligible_source_ids={
+            "control_room_item": [],
+            "agent_alert": ["alert-good"],
+            "intelligence_signal": ["signal-good"],
+        },
     )
     await control_room_service._agentops_execution_rows(
         conn,
         workspace_id="workspace-A",
         table_exists={"decision_orchestration_executions": True},
-        eligible_item_ids=["alert-good", "signal-good"],
+        eligible_source_ids={
+            "control_room_item": [],
+            "agent_alert": ["alert-good"],
+            "intelligence_signal": ["signal-good"],
+        },
     )
 
     assert "item_id = ANY($3::text[])" in conn.calls[0][0]
     assert conn.calls[0][1][2] == ["alert-good"]
     assert "source_id = ANY($2::text[])" in conn.calls[1][0]
-    assert conn.calls[1][1][1] == ["alert-good", "signal-good"]
+    assert conn.calls[1][1][1:] == ([], ["alert-good"], ["signal-good"])
     assert "JOIN decision_orchestration_runs" in conn.calls[2][0]
     assert "run.source_id = ANY($2::text[])" in conn.calls[2][0]
     assert "source_type NOT IN" not in conn.calls[1][0]
@@ -193,24 +212,28 @@ async def test_agent_alert_orchestration_and_execution_queries_are_id_bounded():
 @pytest.mark.asyncio
 async def test_agentops_mixed_orchestrations_require_demonstrable_business_lineage():
     conn = MixedOrchestrationConnection()
-    eligible_ids = ["item-valid"]
+    eligible_source_ids = {
+        "control_room_item": ["item-valid"],
+        "agent_alert": [],
+        "intelligence_signal": [],
+    }
 
     runs = await control_room_service._agentops_orchestration_rows(
         conn,
         workspace_id="workspace-A",
         table_exists={"decision_orchestration_runs": True},
-        eligible_item_ids=eligible_ids,
+        eligible_source_ids=eligible_source_ids,
     )
     executions = await control_room_service._agentops_execution_rows(
         conn,
         workspace_id="workspace-A",
         table_exists={"decision_orchestration_executions": True},
-        eligible_item_ids=eligible_ids,
+        eligible_source_ids=eligible_source_ids,
     )
 
-    assert runs == [{"total": 2, "latest_at": None}]
-    assert sum(row["total"] for row in executions) == 2
-    assert {row["engine_name"] for row in executions} == {"monte_carlo", "rules"}
+    assert runs == [{"total": 1, "latest_at": None}]
+    assert sum(row["total"] for row in executions) == 1
+    assert {row["engine_name"] for row in executions} == {"monte_carlo"}
 
 
 @pytest.mark.asyncio

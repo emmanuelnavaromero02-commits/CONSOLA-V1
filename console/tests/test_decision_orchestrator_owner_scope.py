@@ -32,7 +32,13 @@ def _source(source_type: str, *, owner_id: int, technical: bool = False) -> dict
         "domain": "Operacion",
         "source_dataset": "gold_metrics",
         "dataset": "gold_metrics",
-        "metadata": {"evidence_refs": ["gold_metrics:source-1"]},
+        "metadata": {
+            "data_status": "ready",
+            "metric_type": "scalar",
+            "observed_value": 1,
+            "observation_date": "2026-07-17T10:00:00Z",
+            "evidence_refs": ["gold_metrics:source-1"],
+        },
     }
 
 
