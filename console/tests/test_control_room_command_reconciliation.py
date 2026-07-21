@@ -44,10 +44,6 @@ def _diagnostic() -> dict:
     }
 
 
-def _owned_diagnostic(owner_user_id: int) -> dict:
-    return {**_diagnostic(), "owner_user_id": owner_user_id}
-
-
 def _business() -> dict:
     item = {
         "id": "item-1",
@@ -114,7 +110,7 @@ async def test_diagnostic_persisted_yields_live_business_item():
 async def test_live_business_reconciliation_preserves_persisted_owner():
     item, _parents = await resolve_business_item_lookup(
         "item-1",
-        load_persisted=AsyncMock(return_value=_owned_diagnostic(7)),
+        load_persisted=AsyncMock(return_value={**_diagnostic(), "owner_user_id": 7}),
         collect_items=AsyncMock(
             return_value={"items": [_business()], "diagnostics": []}
         ),
@@ -196,20 +192,6 @@ class DecisionConn:
         return "INSERT 0 1"
 
 
-class DecisionPool:
-    def __init__(self, conn: DecisionConn) -> None:
-        self.conn = conn
-
-    async def acquire(self):
-        return self
-
-    async def __aenter__(self):
-        return self.conn
-
-    async def __aexit__(self, *_args):
-        return None
-
-
 @pytest.mark.asyncio
 async def test_create_decision_uses_live_business_over_persisted_diagnostic():
     conn = DecisionConn()
@@ -233,7 +215,7 @@ async def test_create_decision_uses_live_business_over_persisted_diagnostic():
         patch.object(
             control_room_service.auth,
             "pool",
-            new=AsyncMock(return_value=DecisionPool(conn)),
+            new=AsyncMock(return_value=object()),
         ),
         patch.object(control_room_service, "_run_with_db_scope", new=scoped),
         patch.object(
@@ -260,7 +242,7 @@ async def test_admin_creates_decision_for_live_item_without_stealing_owner():
         patch.object(
             control_room_service,
             "_persisted_item_for_mutation",
-            new=AsyncMock(return_value=_owned_diagnostic(7)),
+            new=AsyncMock(return_value={**_diagnostic(), "owner_user_id": 7}),
         ),
         patch.object(
             control_room_service,
@@ -270,7 +252,7 @@ async def test_admin_creates_decision_for_live_item_without_stealing_owner():
         patch.object(
             control_room_service.auth,
             "pool",
-            new=AsyncMock(return_value=DecisionPool(conn)),
+            new=AsyncMock(return_value=object()),
         ),
         patch.object(control_room_service, "_run_with_db_scope", new=scoped),
         patch.object(
