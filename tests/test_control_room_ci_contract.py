@@ -78,7 +78,7 @@ def test_control_room_workflow_runs_all_related_contract_suites():
 def test_focal_junit_guard_requires_exact_current_minimum_and_zero_bad_results():
     text = _workflow_text()
     assert "--junitxml=/tmp/control-room-focal.xml" in text
-    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=868' in text
+    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=870' in text
 
 
 def test_postgres_junit_guard_requires_13_and_zero_bad_results():
