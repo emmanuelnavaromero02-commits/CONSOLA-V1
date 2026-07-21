@@ -104,6 +104,8 @@ def test_administrative_ids_and_placeholders_are_not_evidence(evidence):
         {"evidence_refs": ["looks valid"]},
         {"evidence_pack": "supporting narrative"},
         {"evidence": {"summary": "looks valid"}},
+        {"evidence": {"source": "analysis complete"}},
+        {"evidence_pack": {"items": [{"source": "gold"}]}},
     ],
 )
 def test_narrative_text_is_not_verifiable_evidence(evidence):

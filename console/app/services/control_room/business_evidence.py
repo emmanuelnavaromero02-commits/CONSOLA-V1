@@ -82,6 +82,10 @@ _REFERENCE_ID = re.compile(
     r"^(?:artifact|document|evidence|pack|record|ref|source|wb)-[a-z0-9._:-]+$",
     re.IGNORECASE,
 )
+_DATASET_REFERENCE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$", re.IGNORECASE)
+_DATASET_REFERENCE_FIELDS = frozenset(
+    {"dataset", "gold_table", "source_dataset", "source_ref", "table"}
+)
 
 
 def _stable_reference(value: Any) -> bool:
@@ -140,11 +144,16 @@ def _has_substantive_reference(
                 normalized = str(key).strip().lower()
                 if normalized in _ADMINISTRATIVE_ID_FIELDS:
                     continue
-                if (
-                    _is_id_field(key, allow_generic_id=allow_generic_id)
-                    or _is_reference_field(key)
-                ) and (
-                    _stable_reference(nested)
+                is_id_field = _is_id_field(key, allow_generic_id=allow_generic_id)
+                is_reference_field = _is_reference_field(key)
+                direct_reference = _stable_reference(nested) if is_id_field else False
+                if is_reference_field and isinstance(nested, str):
+                    direct_reference = _structured_reference(nested) or (
+                        normalized in _DATASET_REFERENCE_FIELDS
+                        and bool(_DATASET_REFERENCE.fullmatch(nested.strip()))
+                    )
+                if (is_id_field or is_reference_field) and (
+                    direct_reference
                     or _has_substantive_reference(
                         nested,
                         scalar_is_reference=True,

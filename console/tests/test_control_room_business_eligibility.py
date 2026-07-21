@@ -35,7 +35,7 @@ def test_source_state_is_never_business_eligible(status):
         kind="source_state",
         status=status,
         count=15,
-        evidence_pack={"items": [{"source": "gold"}]},
+        evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
         observed_value=7,
     )
 
@@ -72,7 +72,7 @@ def test_structured_technical_states_are_ineligible(state):
 def test_partial_requires_observation_evidence_date_and_useful_fact():
     incomplete = _business_item(
         data_status="partial",
-        evidence_pack={"items": [{"source": "gold"}]},
+        evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
         detected_at="",
         details={"affected_count": 2},
     )
@@ -91,7 +91,7 @@ def test_partial_requires_observation_evidence_date_and_useful_fact():
 def test_partial_rejects_descriptive_signal_without_measured_fact():
     item = _business_item(
         data_status="partial",
-        evidence_pack={"items": [{"source": "gold"}]},
+        evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
         intelligence={"signal": {"signal_type": "descriptive_only"}},
     )
 
@@ -167,7 +167,7 @@ def test_nested_zero_is_valid_with_success_population_and_date():
 def test_stale_valid_observation_remains_business_eligible():
     item = _business_item(
         data_status="stale",
-        evidence_pack={"items": [{"source": "gold"}]},
+        evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
         observed_value=4,
         population_count=10,
     )
@@ -242,7 +242,7 @@ def test_invalid_zero_remains_ineligible_after_metadata_round_trip():
         metric_type="rate",
         observed_value=0,
         population_count=0,
-        evidence_pack={"items": [{"source": "gold"}]},
+        evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
     )
     metadata = control_room_service._metadata_for_item(item, {})
     reloaded = control_room_service._persisted_intelligence_payload(

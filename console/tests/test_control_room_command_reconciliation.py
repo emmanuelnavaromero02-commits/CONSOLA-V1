@@ -32,6 +32,10 @@ def _diagnostic() -> dict:
     }
 
 
+def _owned_diagnostic(owner_user_id: int) -> dict:
+    return {**_diagnostic(), "owner_user_id": owner_user_id}
+
+
 def _business() -> dict:
     return {
         "id": "item-1",
@@ -80,6 +84,22 @@ async def test_diagnostic_persisted_yields_live_business_item():
 
 
 @pytest.mark.asyncio
+async def test_live_business_reconciliation_preserves_persisted_owner():
+    item, _parents = await resolve_business_item_lookup(
+        "item-1",
+        load_persisted=AsyncMock(return_value=_owned_diagnostic(7)),
+        collect_items=AsyncMock(
+            return_value={"items": [_business()], "diagnostics": []}
+        ),
+        load_lineage=AsyncMock(return_value=[]),
+        normalize_lineage=dict,
+    )
+
+    assert item["kind"] == "anomaly"
+    assert item["owner_user_id"] == 7
+
+
+@pytest.mark.asyncio
 async def test_persisted_derived_item_uses_eligible_persisted_parent():
     parent = {**_business(), "id": "parent-1"}
     collect_items = AsyncMock()
@@ -103,6 +123,7 @@ async def test_persisted_derived_item_uses_eligible_persisted_parent():
 class DecisionConn:
     def __init__(self) -> None:
         self.link_metadata: dict | None = None
+        self.link_owner: int | None = None
         self.committed = False
 
     async def fetchrow(self, sql: str, *args):
@@ -114,6 +135,7 @@ class DecisionConn:
             return {"item_id": "item-1"}
         if "UPDATE control_room_items" in sql and "decision_id" in sql:
             self.link_metadata = json.loads(args[3])
+            self.link_owner = args[4]
             return {"item_id": "item-1"}
         return {"id": 1}
 
@@ -171,3 +193,38 @@ async def test_create_decision_uses_live_business_over_persisted_diagnostic():
     assert conn.committed is True
     assert conn.link_metadata is not None
     assert conn.link_metadata[DECISION_PROVENANCE_KEY]["eligible_at_link"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_creates_decision_for_live_item_without_stealing_owner():
+    conn = DecisionConn()
+    admin = {**USER, "id": 9}
+
+    async def scoped(_pool, _user, work):
+        return await work(conn, "tenant-a", "workspace-a")
+
+    with (
+        patch.object(
+            control_room_service,
+            "_persisted_item_for_mutation",
+            new=AsyncMock(return_value=_owned_diagnostic(7)),
+        ),
+        patch.object(
+            control_room_service,
+            "_collect_items",
+            new=AsyncMock(return_value={"items": [_business()], "diagnostics": []}),
+        ),
+        patch.object(
+            control_room_service.auth,
+            "pool",
+            new=AsyncMock(return_value=DecisionPool(conn)),
+        ),
+        patch.object(control_room_service, "_run_with_db_scope", new=scoped),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ),
+    ):
+        result = await control_room_service.create_decision_for_item("item-1", admin)
+
+    assert result["decision"]["id"] == 42
+    assert conn.link_owner == 7

@@ -13,6 +13,7 @@ from app.services.control_room.business_eligibility import classify_business_ite
 from app.services.control_room.business_lineage import item_kinds, parent_references
 from app.services.control_room.business_access import (
     can_read_workspace_wide,
+    owner_projection,
     owner_scope_id,
     workspace_scope,
 )
@@ -207,7 +208,10 @@ async def resolve_business_item_lookup(
                 eligible_parent_ids=eligible_parent_ids,
             ).eligible
         ):
-            item = live_item
+            item = {
+                **live_item,
+                **owner_projection(live_item, persisted_item or {}),
+            }
         elif persisted_item is not None:
             item = persisted_item
         else:
