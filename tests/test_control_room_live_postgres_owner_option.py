@@ -35,7 +35,7 @@ async def test_live_option_selection_without_decision_survives_refresh(
     conn = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         tenant_id, workspace_id = await _scope(conn)
-        item = _item("option-only")
+        item = _item("option-only", tenant_id, workspace_id)
         row = _rows([item], tenant_id, workspace_id)[0]
         await persist_item_rows(conn, [row], owner_scope_id=7)
         await persist_option_selection(
@@ -82,7 +82,7 @@ async def test_live_legacy_null_owner_is_admin_managed_and_never_claimed(
     conn = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         tenant_id, workspace_id = await _scope(conn)
-        item = _item("legacy-null-owner")
+        item = _item("legacy-null-owner", tenant_id, workspace_id)
         row = _rows([item], tenant_id, workspace_id, owner=None)[0]
         await persist_item_rows(conn, [row], workspace_wide=True)
 

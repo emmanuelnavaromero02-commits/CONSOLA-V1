@@ -13,6 +13,9 @@ from app.services.control_room.business_decision_persistence import (
 from app.services.control_room.business_item_persistence import persist_item_rows
 from app.services.control_room.business_policy_metadata import business_policy_metadata
 from app.services.control_room.business_repository import decision_provenance
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_state_rows import state_rows
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
@@ -24,11 +27,14 @@ from tests.test_operational_rls_console_refinement import (
 )
 
 
-def _item(item_id: str) -> dict:
+def _item(item_id: str, tenant_id: str, workspace_id: str) -> dict:
     return {
         "id": item_id,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
+        "source_system": "sap_hcm",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "domain": "People",
         "source_dataset": "gold_people",
         "title": "Measured anomaly",
@@ -40,7 +46,16 @@ def _item(item_id: str) -> dict:
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
-        "evidence_refs": [f"gold_people:{item_id}"],
+        **runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            source_row={"item_id": item_id},
+            locator_field="item_id",
+            observed_at="2026-07-20",
+        ),
     }
 
 
@@ -90,8 +105,8 @@ async def test_live_refresh_backfills_only_demonstrable_legacy_workflow(
     conn = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         tenant_id, workspace_id = await _scope(conn)
-        legitimate = _item("legacy-legitimate")
-        technical = _item("legacy-technical")
+        legitimate = _item("legacy-legitimate", tenant_id, workspace_id)
+        technical = _item("legacy-technical", tenant_id, workspace_id)
         ids = {}
         for name, item in (("legitimate", legitimate), ("technical", technical)):
             row = await conn.fetchrow(
@@ -181,9 +196,9 @@ async def test_live_concurrent_decision_creation_is_idempotent(
     postgres_with_real_init_schema: str,
 ):
     setup = await asyncpg.connect(postgres_with_real_init_schema)
-    item = _item("concurrent-item")
     try:
         tenant_id, workspace_id = await _scope(setup)
+        item = _item("concurrent-item", tenant_id, workspace_id)
         await persist_item_rows(
             setup,
             _rows([item], tenant_id, workspace_id),

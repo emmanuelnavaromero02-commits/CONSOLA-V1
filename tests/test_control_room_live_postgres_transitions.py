@@ -21,6 +21,9 @@ from app.services.control_room.business_projection import (
     filter_business_items,
     normalize_persisted_business_item,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_state_rows import state_rows
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
@@ -52,11 +55,14 @@ LEGACY_RESIDUAL_FIELDS = frozenset(
 )
 
 
-def _business_item(item_id: str) -> dict:
+def _business_item(item_id: str, tenant_id: str, workspace_id: str) -> dict:
     return {
         "id": item_id,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
+        "source_system": "sap_hcm",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "domain": "People",
         "source_dataset": "gold_people",
         "title": "Valid anomaly",
@@ -67,7 +73,16 @@ def _business_item(item_id: str) -> dict:
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-16",
-        "evidence_refs": [f"gold_people:{item_id}"],
+        **runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            source_row={"item_id": item_id},
+            locator_field="item_id",
+            observed_at="2026-07-16",
+        ),
     }
 
 
@@ -101,7 +116,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         workspace_id = str(uuid.uuid4())
         technical_id = "same-id"
         legitimate_id = "legit-id"
-        legitimate = _business_item(legitimate_id)
+        legitimate = _business_item(legitimate_id, tenant_id, workspace_id)
         provenance = decision_eligibility_provenance(
             legitimate,
             decision_id=77,
@@ -195,7 +210,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             json.dumps({DECISION_PROVENANCE_KEY: provenance}),
         )
         rows = state_rows(
-            [_business_item(technical_id), legitimate],
+            [_business_item(technical_id, tenant_id, workspace_id), legitimate],
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             owner_user_id=9,
