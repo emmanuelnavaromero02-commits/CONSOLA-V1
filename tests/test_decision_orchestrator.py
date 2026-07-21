@@ -143,7 +143,13 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            "evidence_refs": [{"type": "runtime_observation", "id": "evidence-item-a"}],
+            "evidence_refs": [
+                {
+                    "type": "runtime_observation",
+                    "id": "evidence-item-a",
+                    "source_ref": "gold_metrics:record:item-a",
+                }
+            ],
         },
     )
 
@@ -251,7 +257,11 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
             "metric_type": "scalar",
             "observed_value": 1,
             "evidence_refs": [
-                {"type": "runtime_observation", "id": "evidence-action-source"}
+                {
+                    "type": "runtime_observation",
+                    "id": "evidence-action-source",
+                    "source_ref": "gold_metrics:record:action-source",
+                }
             ],
         },
     )

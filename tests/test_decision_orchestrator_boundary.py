@@ -168,9 +168,7 @@ async def test_orchestrator_accepts_canonical_intelligence_signal_metadata(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 7,
-            "evidence_pack": {
-                "items": [{"type": "runtime_observation", "id": "evidence-signal-1"}]
-            },
+            "evidence_pack": {"items": ["gold_metrics:record:signal-1"]},
         },
     }
 
@@ -252,7 +250,11 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "metric_type": "scalar",
             "observed_value": 1,
             "evidence_refs": [
-                {"type": "runtime_observation", "id": "evidence-business-parent"}
+                {
+                    "type": "runtime_observation",
+                    "id": "evidence-business-parent",
+                    "source_ref": "gold_metrics:record:business-parent",
+                }
             ],
         },
     )
@@ -268,7 +270,11 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "metric_type": "scalar",
             "observed_value": 1,
             "evidence_refs": [
-                {"type": "runtime_observation", "id": "evidence-business-alert"}
+                {
+                    "type": "runtime_observation",
+                    "id": "evidence-business-alert",
+                    "source_ref": "gold_metrics:record:business-alert",
+                }
             ],
         },
     )
