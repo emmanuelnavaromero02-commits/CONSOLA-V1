@@ -11,10 +11,8 @@ from app.services.control_room.business_item_persistence import parse_command_ta
 
 
 ItemWriter = Callable[..., Awaitable[None]]
-
-
-def command_count(result: Any, command: str) -> int:
-    return parse_command_tag(result, command)
+command_count = parse_command_tag
+_owner = expected_item_owner
 
 
 def _require_count(result: Any, command: str, expected: int = 1) -> None:
@@ -73,10 +71,6 @@ async def _ensure(
     )
 
 
-def _owner(item: Mapping[str, Any], user: Mapping[str, Any]) -> int | None:
-    return expected_item_owner(item, user)
-
-
 async def persist_step(
     conn: Any,
     *,
@@ -120,7 +114,9 @@ async def persist_control(
     workspace_id: str,
     target_status: str,
     terminal_statuses: Sequence[str],
-    control_state: Mapping[str, Any],
+    control_id: str,
+    baseline_control: Mapping[str, Any],
+    control_changes: Mapping[str, Any],
     event_type: str,
     event_metadata: Mapping[str, Any],
     ensure_item_row: ItemWriter,
@@ -135,14 +131,27 @@ async def persist_control(
     result = await conn.execute(
         """
         UPDATE control_room_items
-           SET status = CASE WHEN status = ANY($5::text[]) THEN status ELSE $6 END,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+           SET status = CASE WHEN status = ANY($7::text[]) THEN status ELSE $8 END,
+               metadata = jsonb_set(
+                   COALESCE(metadata, '{}'::jsonb),
+                   '{control_state}',
+                   COALESCE(metadata -> 'control_state', '{}'::jsonb)
+                   || jsonb_build_object(
+                       $1::text,
+                       $2::jsonb
+                       || COALESCE(metadata #> ARRAY['control_state', $1]::text[], '{}'::jsonb)
+                       || $3::jsonb
+                   ),
+                   true
+               ),
                last_seen_at = NOW()
-         WHERE workspace_id = $2
-           AND item_id = $3
-           AND owner_user_id IS NOT DISTINCT FROM $4
+         WHERE workspace_id = $4
+           AND item_id = $5
+           AND owner_user_id IS NOT DISTINCT FROM $6
         """,
-        json.dumps({"control_state": dict(control_state)}),
+        control_id,
+        json.dumps(dict(baseline_control)),
+        json.dumps(dict(control_changes)),
         workspace_id,
         item["id"],
         _owner(item, user),
@@ -215,7 +224,8 @@ async def persist_alert_state(
     workspace_id: str,
     target_status: str,
     terminal_statuses: Sequence[str],
-    alert_state: Mapping[str, Any],
+    alert_changes: Mapping[str, Any],
+    alert_defaults: Mapping[str, Any] | None,
     event_type: str,
     note: str,
     reason: str,
@@ -232,17 +242,25 @@ async def persist_alert_state(
         """
         UPDATE control_room_items
            SET status = CASE
-                   WHEN $6 = 'dismissed' THEN 'dismissed'
-                   WHEN status = ANY($5::text[]) THEN status ELSE $6
+                   WHEN $7 = 'dismissed' THEN 'dismissed'
+                   WHEN status = ANY($6::text[]) THEN status ELSE $7
                END,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-               dismissed_at = CASE WHEN $6 = 'dismissed'
+               metadata = jsonb_set(
+                   COALESCE(metadata, '{}'::jsonb),
+                   '{alert_state}',
+                   $1::jsonb
+                   || COALESCE(metadata -> 'alert_state', '{}'::jsonb)
+                   || $2::jsonb,
+                   true
+               ),
+               dismissed_at = CASE WHEN $7 = 'dismissed'
                    THEN COALESCE(dismissed_at, NOW()) ELSE dismissed_at END,
                last_seen_at = NOW()
-         WHERE workspace_id = $2 AND item_id = $3
-           AND owner_user_id IS NOT DISTINCT FROM $4
+         WHERE workspace_id = $3 AND item_id = $4
+           AND owner_user_id IS NOT DISTINCT FROM $5
         """,
-        json.dumps({"alert_state": dict(alert_state)}),
+        json.dumps(dict(alert_defaults or {})),
+        json.dumps(dict(alert_changes)),
         workspace_id,
         item["id"],
         _owner(item, user),
@@ -255,7 +273,11 @@ async def persist_alert_state(
         user=user,
         item=item,
         event_type=event_type,
-        metadata={"alert_state": dict(alert_state), "note": note, "reason": reason},
+        metadata={
+            "alert_state": {**dict(alert_defaults or {}), **dict(alert_changes)},
+            "note": note,
+            "reason": reason,
+        },
     )
 
 

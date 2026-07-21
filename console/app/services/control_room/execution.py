@@ -85,6 +85,12 @@ from app.services.control_room.business_execution_precondition import (
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
+from app.services.control_room.business_operational_state import (
+    locked_operational_metadata,
+    merged_alert_state,
+    merged_control_state,
+    merged_lesson_state,
+)
 from app.services.control_room.business_workflow_provenance import WorkflowStage
 
 _core.__dict__.setdefault(
@@ -104,7 +110,11 @@ for _helper in (
     acquire_guarded_action_reservation,
     complete_action_reservation,
     lock_authoritative_business_item,
+    locked_operational_metadata,
     lock_pending_action_reservation,
+    merged_alert_state,
+    merged_control_state,
+    merged_lesson_state,
     require_matching_dry_run,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
@@ -544,10 +554,7 @@ async def update_item_control(
     ).strip()
     note = str(body.get("note") or "").strip()[:500]
     now = datetime.now(UTC).isoformat()
-    existing_state = _control_state(item)
-    next_control = {
-        **control,
-        **existing_state.get(control_key, {}),
+    control_changes = {
         "id": control_key,
         "status": next_status,
         "st": CONTROL_ITEM_STATUS_LABELS[next_status],
@@ -556,10 +563,6 @@ async def update_item_control(
         "note": note,
         "updated_at": now,
         "updated_by": user.get("email") or "user",
-    }
-    next_state = {
-        **existing_state,
-        control_key: next_control,
     }
     item_status = str(item.get("status") or "open")
     target_status = (
@@ -578,7 +581,9 @@ async def update_item_control(
             workspace_id=scoped_workspace_id,
             target_status=target_status,
             terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
-            control_state=next_state,
+            control_id=control_key,
+            baseline_control=control,
+            control_changes=control_changes,
             event_type=event_type,
             event_metadata={
                 "control_id": control_key,
@@ -591,6 +596,12 @@ async def update_item_control(
         )
 
     await _run_with_db_scope(pool, user, _write_control)
+    next_state = merged_control_state(
+        {"control_state": _control_state(item)},
+        control_id=control_key,
+        baseline=control,
+        changes=control_changes,
+    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -779,17 +790,6 @@ async def apply_item_lesson(
     if note:
         application["note"] = note
 
-    applications = _lesson_applications(item)
-    applications = [
-        entry
-        for entry in applications
-        if int(entry.get("lesson_id") or 0) != int(lesson_id)
-    ]
-    applications.insert(0, application)
-    applications = applications[:20]
-    learned_rules = _merge_rule(
-        item.get("omega", {}).get("lessons", {}).get("rules"), rule
-    )
     target_status = (
         item.get("status")
         if item.get("status") in TERMINAL_ITEM_STATUSES
@@ -800,8 +800,19 @@ async def apply_item_lesson(
 
     async def _write_application(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
-    ) -> None:
+    ) -> tuple[list[str], list[dict[str, Any]]]:
         await _ensure_item_row(conn, user=user, item=item, status=target_status)
+        metadata = await locked_operational_metadata(
+            conn,
+            workspace_id=scoped_workspace_id,
+            item_id=str(item["id"]),
+            owner_user_id=expected_business_item_owner(item, user),
+        )
+        learned_rules, applications = merged_lesson_state(
+            metadata,
+            application=application,
+            rule=rule,
+        )
         update_result = await conn.execute(
             """
                 UPDATE control_room_items
@@ -842,8 +853,11 @@ async def apply_item_lesson(
                 "note": note,
             },
         )
+        return learned_rules, applications
 
-    await _run_with_db_scope(pool, user, _write_application)
+    learned_rules, applications = await _run_with_db_scope(
+        pool, user, _write_application
+    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1713,26 +1727,27 @@ async def record_item_outcome(
             expected_business_item_owner(item, user),
         )
         _require_exact_count(update_result, "UPDATE")
+        outcome = _outcome_public(row)
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="outcome_recorded",
+            metadata={
+                "outcome_id": outcome.get("id"),
+                "action_taken": action_taken,
+                "option_id": option_id,
+                "prediction_error": prediction_error,
+                "learned_rule": learned_rule,
+                "measured_impact": body.get("measured_impact"),
+                "action_run_id": body.get("action_run_id"),
+            },
+            critical=True,
+        )
         return row, tenant_id, workspace_id
 
     row, tenant_id, workspace_id = await _run_with_db_scope(pool, user, _write)
     outcome = _outcome_public(row)
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="outcome_recorded",
-        metadata={
-            "outcome_id": outcome.get("id"),
-            "action_taken": action_taken,
-            "option_id": option_id,
-            "prediction_error": prediction_error,
-            "learned_rule": learned_rule,
-            "measured_impact": body.get("measured_impact"),
-            "action_run_id": body.get("action_run_id"),
-        },
-        critical=True,
-    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1861,6 +1876,17 @@ async def run_auto_item(
     async def _record_auto_run(
         conn: Any, _tenant_id: str | None, _workspace_id: str
     ) -> None:
+        await lock_authoritative_business_item(
+            conn,
+            user=user,
+            item=item,
+            decision_id=int(item["decision_id"]),
+            allowed_stages={
+                WorkflowStage.DECISION_CREATED,
+                WorkflowStage.APPROVED,
+                WorkflowStage.EXECUTED,
+            },
+        )
         await _record_item_event(
             conn,
             user=user,
@@ -3752,35 +3778,32 @@ async def _operate_alert(
         raise HTTPException(404, "active alert not found")
 
     now = datetime.now(UTC).isoformat()
-    existing_state = (
-        item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
-    )
     owner_email = str(
         body.get("owner_email") or body.get("owner") or user.get("email") or ""
     ).strip()
     note = str(body.get("note") or "").strip()
     reason = str(body.get("reason") or "").strip()
-    alert_state = {
-        **existing_state,
+    alert_changes = {
         "state": next_state,
         "updated_at": now,
         "updated_by": user.get("email") or "user",
     }
+    alert_defaults: dict[str, Any] = {}
     if note:
-        alert_state["note"] = note
+        alert_changes["note"] = note
     if reason:
-        alert_state["reason"] = reason
+        alert_changes["reason"] = reason
     if next_state == "acknowledged":
-        alert_state["acknowledged_at"] = existing_state.get("acknowledged_at") or now
+        alert_defaults["acknowledged_at"] = now
     elif next_state == "snoozed":
-        alert_state["snoozed_until"] = _snoozed_until_from_body(body)
-        alert_state["snoozed_at"] = now
+        alert_changes["snoozed_until"] = _snoozed_until_from_body(body)
+        alert_changes["snoozed_at"] = now
     elif next_state == "assigned":
-        alert_state["owner"] = owner_email or "operaciones"
-        alert_state["assigned_at"] = now
+        alert_changes["owner"] = owner_email or "operaciones"
+        alert_changes["assigned_at"] = now
     elif next_state == "false_positive":
-        alert_state["false_positive_at"] = now
-        alert_state["reason"] = (
+        alert_changes["false_positive_at"] = now
+        alert_changes["reason"] = (
             reason or "Marcado como falso positivo desde Sala de Control"
         )
 
@@ -3801,7 +3824,8 @@ async def _operate_alert(
             workspace_id=workspace_id,
             target_status=target_status,
             terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
-            alert_state=alert_state,
+            alert_changes=alert_changes,
+            alert_defaults=alert_defaults,
             event_type=event_type,
             note=note,
             reason=reason,
@@ -3809,6 +3833,11 @@ async def _operate_alert(
         )
 
     await _run_with_db_scope(pool, user, _write_alert_state)
+    alert_state = merged_alert_state(
+        {"alert_state": item.get("alert_state")},
+        changes=alert_changes,
+        defaults=alert_defaults,
+    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
