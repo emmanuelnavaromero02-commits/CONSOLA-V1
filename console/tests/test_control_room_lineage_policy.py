@@ -202,6 +202,9 @@ async def test_lineage_repository_uses_one_recursive_scoped_query():
     assert "parent_item_id" in sql
     assert "source_item_id" in sql
     assert "derived_from" in sql
+    assert "business_observation" in sql
+    assert "claims" in sql
+    assert "jsonb_array_elements" in sql
     assert "seed.tenant_id::text = $3" in sql
     assert "seed.owner_user_id = $4" in sql
     assert args[:4] == (

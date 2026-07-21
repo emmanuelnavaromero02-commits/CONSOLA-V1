@@ -14,6 +14,7 @@ from app.services.control_room.business_item_persistence import (
     persist_item_rows,
 )
 from app.services.control_room.business_lineage import MAX_LINEAGE_DEPTH
+from app.services.control_room.business_lineage_query import lineage_reference_lateral
 from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
@@ -94,33 +95,7 @@ async def fetch_lineage_rows(
                    lineage.path || parent.item_id, lineage.depth + 1
               FROM lineage
               CROSS JOIN LATERAL (
-                  SELECT direct.parent_id
-                    FROM (VALUES
-                        (lineage.metadata->>'parent_item_id'),
-                        (lineage.metadata->>'source_item_id'),
-                        (CASE
-                            WHEN jsonb_typeof(lineage.metadata->'derived_from') = 'string'
-                            THEN lineage.metadata->>'derived_from'
-                         END),
-                        (lineage.metadata->'derived_from'->>'item_id'),
-                        (lineage.metadata->'derived_from'->>'id'),
-                        (lineage.metadata->'lineage'->>'parent_item_id'),
-                        (lineage.metadata->'lineage'->>'source_item_id')
-                    ) direct(parent_id)
-                  UNION ALL
-                  SELECT CASE jsonb_typeof(entry.value)
-                             WHEN 'string' THEN entry.value #>> '{{}}'
-                             WHEN 'object' THEN COALESCE(
-                                 entry.value->>'item_id', entry.value->>'id'
-                             )
-                         END
-                    FROM jsonb_array_elements(
-                        CASE
-                            WHEN jsonb_typeof(lineage.metadata->'derived_from') = 'array'
-                            THEN lineage.metadata->'derived_from'
-                            ELSE '[]'::jsonb
-                        END
-                    ) entry(value)
+                  {lineage_reference_lateral()}
               ) refs(parent_id)
               JOIN control_room_items parent
                 ON parent.workspace_id = $1
