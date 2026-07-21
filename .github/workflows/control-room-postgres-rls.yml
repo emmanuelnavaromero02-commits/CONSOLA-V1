@@ -24,7 +24,9 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install \
+            -r tests/requirements.txt \
+            -r console/requirements.txt
 
       - name: Run focal Control Room tests
         env:
@@ -46,7 +48,11 @@ jobs:
         run: |
           python - <<'PY'
           import xml.etree.ElementTree as ET
+          from pathlib import Path
+
           path = "/tmp/control-room-postgres-rls.xml"
+          if not Path(path).is_file():
+              raise SystemExit("Live PostgreSQL/RLS report missing; tests did not complete")
           root = ET.parse(path).getroot()
           skipped = root.findall(".//skipped")
           if skipped:
