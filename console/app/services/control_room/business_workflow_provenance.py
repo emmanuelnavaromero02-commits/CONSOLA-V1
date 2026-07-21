@@ -237,6 +237,15 @@ def persistence_metadata(item: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def workflow_is_quarantined(item: Mapping[str, Any] | None) -> bool:
+    current = item if isinstance(item, Mapping) else {}
+    metadata = _metadata_mapping(current.get("metadata"))
+    return bool(
+        current.get(WORKFLOW_QUARANTINE_KEY)
+        or metadata.get(WORKFLOW_QUARANTINE_KEY)
+    )
+
+
 def quarantine_workflow_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     clean = dict(metadata or {})
     clean[WORKFLOW_QUARANTINE_KEY] = {
@@ -259,5 +268,6 @@ __all__ = (
     "persistence_metadata",
     "quarantine_workflow_metadata",
     "workflow_has_eligible_provenance",
+    "workflow_is_quarantined",
     "workflow_eligibility_provenance",
 )

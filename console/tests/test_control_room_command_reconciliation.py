@@ -4,11 +4,13 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services import control_room_service
 from app.services.control_room.business_item_reader import resolve_business_item_lookup
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
+    WORKFLOW_QUARANTINE_KEY,
 )
 
 
@@ -239,3 +241,32 @@ async def test_admin_creates_decision_for_live_item_without_stealing_owner():
 
     assert result["decision"]["id"] == 42
     assert conn.link_owner == 7
+
+
+@pytest.mark.asyncio
+async def test_quarantined_persisted_workflow_without_live_item_is_not_actionable():
+    quarantined = {
+        **_business(),
+        "kind": "intelligence_signal",
+        "item_kind": "intelligence_signal",
+        "decision_id": 42,
+        "execution_status": "dry_run_validated",
+        "metadata": {WORKFLOW_QUARANTINE_KEY: {"reason": "fingerprint_mismatch"}},
+    }
+    with (
+        patch.object(
+            control_room_service,
+            "_persisted_item_for_mutation",
+            new=AsyncMock(return_value=quarantined),
+        ),
+        patch.object(
+            control_room_service,
+            "_collect_items",
+            new=AsyncMock(return_value={"items": [], "diagnostics": []}),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service._item_for_mutation("item-1", USER)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "item_workflow_quarantined"

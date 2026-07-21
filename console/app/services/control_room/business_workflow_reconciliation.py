@@ -10,6 +10,7 @@ from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
     WorkflowStage,
+    business_observation_fingerprint,
     quarantine_workflow_metadata,
     workflow_eligibility_provenance,
     workflow_has_eligible_provenance,
@@ -156,6 +157,8 @@ async def workflow_metadata_patches(
         if (
             _legacy_is_demonstrable(existing)
             and classify_business_item(current).eligible
+            and business_observation_fingerprint(_item(existing))
+            == business_observation_fingerprint(current)
         ):
             patches[key] = {
                 DECISION_PROVENANCE_KEY: workflow_eligibility_provenance(

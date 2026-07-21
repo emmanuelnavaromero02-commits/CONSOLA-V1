@@ -19,6 +19,9 @@ from app.services.control_room.business_access import (
     workspace_scope,
 )
 from app.services.control_room.business_repository import fetch_lineage_rows
+from app.services.control_room.business_workflow_provenance import (
+    workflow_is_quarantined,
+)
 
 
 RowConverter = Callable[[Mapping[str, Any]], dict[str, Any]]
@@ -175,7 +178,8 @@ async def resolve_business_item_lookup(
             normalize_lineage(row) for row in lineage_rows
         )
     persisted_eligible = (
-        classify_business_item(
+        not workflow_is_quarantined(persisted_item)
+        and classify_business_item(
             persisted_item,
             eligible_parent_ids=eligible_parent_ids,
         ).eligible

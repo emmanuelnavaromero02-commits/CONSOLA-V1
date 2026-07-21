@@ -13,6 +13,9 @@ from app.services.control_room.business_observation_codec import (
     nonempty_mapping_fields,
 )
 from app.services.control_room.business_projection import project_business_item
+from app.services.control_room.business_workflow_provenance import (
+    workflow_is_quarantined,
+)
 
 
 def _public(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -146,6 +149,16 @@ def persisted_business_item(
         if key in metadata:
             item[key] = metadata.get(key)
     item.update(nonempty_mapping_fields(metadata, ("lineage",)))
+    if workflow_is_quarantined(item):
+        if item["status"] in {"decision_created", "approved", "resolved"}:
+            item["status"] = "open"
+        item.update(
+            decision_id=None,
+            selected_option_id=None,
+            execution_status="not_started",
+            decision_intelligence={},
+            intelligence={},
+        )
     return project_business_item(item)
 
 

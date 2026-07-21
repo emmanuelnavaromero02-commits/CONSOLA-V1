@@ -18,6 +18,9 @@ from app.services.control_room.business_item_reader import (
     resolve_scoped_business_item_lookup,
 )
 from app.services.control_room.business_persisted_row import persisted_business_item
+from app.services.control_room.business_workflow_provenance import (
+    workflow_is_quarantined,
+)
 
 
 PoolFactory = Callable[[], Awaitable[Any]]
@@ -105,6 +108,14 @@ async def resolve_command_item(
     )
     if item is None:
         raise HTTPException(404, "control room item not found")
+    if workflow_is_quarantined(item):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "item_workflow_quarantined",
+                "message": "Control Room workflow is quarantined.",
+            },
+        )
     try:
         require_business_eligible(item, eligible_parent_ids=eligible_parent_ids)
     except BusinessEligibilityError as exc:
