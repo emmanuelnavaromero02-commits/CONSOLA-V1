@@ -138,6 +138,7 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
         workspace_id=user_a["active_workspace_id"],
         item_id="item-a",
         title="Forecast anomaly probability breach",
+        source_dataset="gold_metrics",
         metadata={
             "data_status": "ready",
             "observed_at": "2026-07-10T00:00:00Z",
@@ -145,9 +146,9 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             "observed_value": 1,
             "evidence_refs": [
                 {
-                    "type": "runtime_observation",
-                    "id": "evidence-item-a",
-                    "source_ref": "gold_metrics:record:item-a",
+                    "type": "dataset_row",
+                    "source_dataset": "gold_metrics",
+                    "source_record_id": "record-item-a",
                 }
             ],
         },
@@ -251,6 +252,7 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
         workspace_id=user["active_workspace_id"],
         item_id="action-source",
         title="Notify owner and create task",
+        source_dataset="gold_metrics",
         metadata={
             "data_status": "ready",
             "observed_at": "2026-07-10T00:00:00Z",
@@ -258,9 +260,9 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
             "observed_value": 1,
             "evidence_refs": [
                 {
-                    "type": "runtime_observation",
-                    "id": "evidence-action-source",
-                    "source_ref": "gold_metrics:record:action-source",
+                    "type": "dataset_row",
+                    "source_dataset": "gold_metrics",
+                    "source_record_id": "record-action-source",
                 }
             ],
         },

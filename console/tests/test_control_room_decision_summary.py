@@ -22,7 +22,7 @@ class _DecisionConnection:
             "observed_value": 1,
             "population_count": 1,
             "observation_date": "2026-07-16",
-            "evidence_refs": ["evidence:business-2"],
+            "evidence_refs": ["gold_metrics:business-2"],
         }
         self.decisions = [
             {

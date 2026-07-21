@@ -244,6 +244,7 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
         workspace_id=user["active_workspace_id"],
         item_id="business-parent",
         item_kind="anomaly",
+        source_dataset="gold_metrics",
         metadata={
             "data_status": "ready",
             "observed_at": "2026-07-10T00:00:00Z",
@@ -251,9 +252,9 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_value": 1,
             "evidence_refs": [
                 {
-                    "type": "runtime_observation",
-                    "id": "evidence-business-parent",
-                    "source_ref": "gold_metrics:record:business-parent",
+                    "type": "dataset_row",
+                    "source_dataset": "gold_metrics",
+                    "source_record_id": "record-business-parent",
                 }
             ],
         },
@@ -263,6 +264,7 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
         workspace_id=user["active_workspace_id"],
         item_id="business-alert",
         item_kind="agent_alert",
+        source_dataset="gold_metrics",
         metadata={
             "parent_item_id": "business-parent",
             "data_status": "ready",
@@ -271,9 +273,9 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_value": 1,
             "evidence_refs": [
                 {
-                    "type": "runtime_observation",
-                    "id": "evidence-business-alert",
-                    "source_ref": "gold_metrics:record:business-alert",
+                    "type": "dataset_row",
+                    "source_dataset": "gold_metrics",
+                    "source_record_id": "record-business-alert",
                 }
             ],
         },

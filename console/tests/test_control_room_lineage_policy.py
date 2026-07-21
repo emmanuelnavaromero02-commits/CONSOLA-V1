@@ -21,7 +21,7 @@ def _business(item_id: str = "root", **overrides):
         "observation_date": "2026-07-16",
         "metric_type": "scalar",
         "observed_value": 1,
-        "evidence_refs": [f"evidence:{item_id}"],
+        "evidence_refs": [f"gold_metrics:{item_id}"],
     }
     return {**item, **overrides}
 
@@ -111,7 +111,7 @@ def test_persisted_metadata_item_kind_cannot_hide_source_state():
             "data_status": "ready",
             "observation_date": "2026-07-16",
             "observed_value": 1,
-            "evidence_refs": ["evidence:signal-1"],
+            "evidence_refs": ["gold_metrics:signal-1"],
         },
     }
 

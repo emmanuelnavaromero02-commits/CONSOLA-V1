@@ -194,12 +194,23 @@ def test_nested_narrative_source_plus_evidence_id_is_not_evidence():
     )
 
 
-@pytest.mark.parametrize(
-    "source",
-    ["gold_metrics:row", "s3://bucket/evidence/17.json"],
-)
-def test_namespaced_source_plus_evidence_id_remains_evidence(source):
-    assert has_evidence({"source": source, "evidence_id": "evidence-17"}) is True
+def test_matching_namespaced_source_plus_evidence_id_remains_evidence():
+    assert (
+        has_evidence(_item(source="gold_metrics:row", evidence_id="evidence-17"))
+        is True
+    )
+
+
+def test_uri_source_plus_id_without_canonical_source_is_not_evidence():
+    assert (
+        has_evidence(
+            {
+                "source": "s3://bucket/evidence/17.json",
+                "evidence_id": "evidence-17",
+            }
+        )
+        is False
+    )
 
 
 def test_top_level_source_and_evidence_id_pair_is_evidence():

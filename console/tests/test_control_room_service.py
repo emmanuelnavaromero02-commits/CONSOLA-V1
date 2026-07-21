@@ -37,7 +37,7 @@ def _observed_anomaly_fields(item_id: str) -> dict:
         "metric_type": "scalar",
         "observed_value": 1,
         "detected_at": "2026-06-07T00:00:00Z",
-        "evidence_refs": [f"evidence:{item_id}"],
+        "evidence_refs": [f"gold_business_observations:{item_id}"],
         "source_dataset": "gold_business_observations",
         "entity_id": item_id,
     }
@@ -1208,6 +1208,7 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(
         "module_id": "hubspot",
         "cartridge": "hubspot",
         "source_dataset": "hubspot_deals",
+        "evidence_refs": ["hubspot_deals:alert:hubspot:stale"],
         "entity_kind": "Deal",
         "entity_id": "D-1",
         "entity_label": "Deal",
@@ -1227,6 +1228,7 @@ async def test_dashboard_filters_persisted_intelligence_to_active_connections(
         "module_id": "sap_successfactors",
         "cartridge": "sap_successfactors",
         "source_dataset": "sap_successfactors_employee_360",
+        "evidence_refs": ["sap_successfactors_employee_360:alert:sf:active"],
         "title": "SuccessFactors active alert",
     }
 
@@ -2489,7 +2491,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
             "metric_type": "scalar",
             "observed_value": 1,
             "observation_date": "2026-05-20T10:00:00Z",
-            "evidence_refs": ["evidence:item-activity"],
+            "evidence_refs": ["pnl_mensual:item-activity"],
         },
         "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
         "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
@@ -3679,6 +3681,7 @@ async def test_get_suggested_actions_reads_autonomous_learning_lessons():
                         "id": "item-old",
                         "kind": "anomaly",
                         "source_dataset": "employees_anomalies",
+                        "evidence_refs": ["employees_anomalies:item-old"],
                     }
                 ]
             ),
@@ -4286,6 +4289,7 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
                         "id": "item-1",
                         "kind": "intelligence_signal",
                         "source_dataset": "pnl_mensual",
+                        "evidence_refs": ["pnl_mensual:item-1"],
                     }
                 ]
             ),

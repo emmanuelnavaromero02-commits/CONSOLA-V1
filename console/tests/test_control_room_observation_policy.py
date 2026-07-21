@@ -105,7 +105,7 @@ def test_non_measurement_values_fail_closed(invalid_value):
         _item(
             data_status="partial",
             observed_value=invalid_value,
-            evidence_refs=["evidence:1"],
+            evidence_refs=["gold_metrics:1"],
         )
     )
 
@@ -125,7 +125,7 @@ def test_nested_null_cannot_be_hidden_by_top_level_observed_value():
         _item(
             data_status="partial",
             observed_value=2,
-            evidence_refs=["evidence:1"],
+            evidence_refs=["gold_metrics:1"],
             metadata={"details": {"observed_value": None}},
         )
     )
@@ -164,7 +164,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
         data_status="stale",
         metric_type="scalar",
         observed_value=4,
-        evidence_refs=["evidence:1"],
+        evidence_refs=["gold_metrics:1"],
     )
 
     assert classify_business_item(base).eligible is True
@@ -201,7 +201,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
                 observation_date=None,
                 generated_at="2026-07-16T12:00:00Z",
                 count=2,
-                evidence_refs=["evidence:1"],
+                evidence_refs=["gold_metrics:1"],
             ),
             EligibilityReason.PARTIAL_WITHOUT_OBSERVATION,
         ),
@@ -215,7 +215,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
                 observation_date=None,
                 last_seen_at="2026-07-16T12:00:00Z",
                 observed_value=2,
-                evidence_refs=["evidence:1"],
+                evidence_refs=["gold_metrics:1"],
             ),
             EligibilityReason.STALE_WITHOUT_OBSERVATION,
         ),
@@ -224,7 +224,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
                 metric_type="count",
                 count=0,
                 population_count=0,
-                evidence_refs=["evidence:1"],
+                evidence_refs=["gold_metrics:1"],
             ),
             EligibilityReason.ELIGIBLE,
         ),
@@ -250,7 +250,7 @@ def test_materialization_and_polling_dates_do_not_prove_observation():
         materialized_at="2026-07-16T12:01:00Z",
         polled_at="2026-07-16T12:02:00Z",
         count=1,
-        evidence_refs=["evidence:1"],
+        evidence_refs=["gold_metrics:1"],
     )
 
     assert (
@@ -264,7 +264,7 @@ def test_future_date_object_is_not_a_valid_stale_observation():
         data_status="stale",
         observation_date=date.today() + timedelta(days=1),
         observed_value=2,
-        evidence_refs=["evidence:1"],
+        evidence_refs=["gold_metrics:1"],
     )
 
     assert (
@@ -278,7 +278,7 @@ def test_future_date_string_is_not_a_valid_stale_observation():
         data_status="stale",
         observation_date=str(date.today() + timedelta(days=1)),
         observed_value=2,
-        evidence_refs=["evidence:1"],
+        evidence_refs=["gold_metrics:1"],
     )
 
     assert (

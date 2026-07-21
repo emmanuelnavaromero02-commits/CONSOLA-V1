@@ -45,7 +45,7 @@ def _item(**overrides):
         "execution_status": "not_started",
         "data_status": "ready",
         "detected_at": "2026-06-12T10:00:00Z",
-        "evidence_refs": ["evidence:signal-replicon-low-margin-1"],
+        "evidence_refs": ["gold_pnl_mensual:signal-replicon-low-margin-1"],
         "entity_kind": "project",
         "entity_id": "P-100",
         "entity_label": "Proyecto Beta",

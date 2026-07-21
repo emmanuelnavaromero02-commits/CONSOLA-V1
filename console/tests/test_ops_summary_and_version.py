@@ -87,7 +87,7 @@ def _ops_dashboard() -> dict:
                 "metric_type": "scalar",
                 "observed_value": index,
                 "observation_date": "2026-05-27T12:00:00Z",
-                "evidence_refs": [f"evidence:business-{index}"],
+                "evidence_refs": [f"gold_ops:business-{index}"],
                 "severity": severity,
                 "status": status,
                 "last_seen_at": datetime(2026, 5, 27, hour, 0, tzinfo=timezone.utc),

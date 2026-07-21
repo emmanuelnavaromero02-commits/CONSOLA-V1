@@ -22,7 +22,7 @@ def _root(item_id: str = "node-0", **overrides):
         "observation_date": "2026-07-17",
         "metric_type": "scalar",
         "observed_value": 1,
-        "evidence_refs": [f"evidence:{item_id}"],
+        "evidence_refs": [f"gold_metrics:{item_id}"],
     }
     return {**item, **overrides}
 

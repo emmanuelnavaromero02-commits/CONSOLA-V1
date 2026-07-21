@@ -4,8 +4,13 @@ from collections.abc import Callable, Mapping, Sequence, Set
 from typing import Any
 
 from app.services.control_room.business_access import owner_projection
+from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_projection import eligible_item_ids
 from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+    DECISION_PROVENANCE_KEY,
+    ELIGIBILITY_POLICY_VERSION,
+    business_observation_fingerprint,
     workflow_has_eligible_provenance,
 )
 
@@ -37,6 +42,7 @@ async def load_overlay_state(
     rows = await conn.fetch(
         f"""
         SELECT item_id, owner_user_id, status, decision_id, metadata,
+               source_dataset, item_kind,
                first_seen_at, last_seen_at, resolved_at, dismissed_at,
                impact_estimate, impact_currency, confidence, priority_score,
                selected_option_id, execution_status
@@ -101,6 +107,36 @@ def _workflow_state(
     }
 
 
+def _artifact_overlay_allowed(
+    item: Mapping[str, Any],
+    state: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> bool:
+    fingerprint = str(metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
+    if not fingerprint or fingerprint != business_observation_fingerprint(item):
+        return False
+    explicit_version = str(metadata.get("eligibility_policy_version") or "").strip()
+    if explicit_version and explicit_version != ELIGIBILITY_POLICY_VERSION:
+        return False
+    provenance = metadata.get(DECISION_PROVENANCE_KEY)
+    if isinstance(provenance, Mapping):
+        version = str(provenance.get("policy_version") or "").strip()
+        if version and version != ELIGIBILITY_POLICY_VERSION:
+            return False
+    persisted = dict(metadata)
+    for key in (
+        "data_status",
+        "item_kind",
+        "kind",
+        "readiness_status",
+        "source_dataset",
+        "source_status",
+    ):
+        if key in state:
+            persisted[key] = state[key]
+    return classify_business_item(persisted).eligible
+
+
 def overlay_business_state(
     items: Sequence[Mapping[str, Any]],
     state_by_id: Mapping[str, Mapping[str, Any]],
@@ -118,11 +154,13 @@ def overlay_business_state(
         workflow = _workflow_state(item, state, metadata)
         if str(workflow["status"]) not in item_statuses:
             workflow["status"] = "open"
+        overlay_artifacts = _artifact_overlay_allowed(item, state, metadata)
         intelligence = _mapping(
-            metadata.get("intelligence") or item.get("intelligence")
+            (metadata.get("intelligence") if overlay_artifacts else None)
+            or item.get("intelligence")
         )
         decision_intelligence = _mapping(
-            metadata.get("decision_intelligence")
+            (metadata.get("decision_intelligence") if overlay_artifacts else None)
             or intelligence.get("decision_intelligence")
             or item.get("decision_intelligence")
         )
@@ -137,21 +175,53 @@ def overlay_business_state(
                     **item,
                     **owner_projection(item, state),
                     **workflow,
-                    "impact_estimate": state.get("impact_estimate"),
-                    "impact_currency": state.get("impact_currency"),
-                    "confidence": state.get("confidence"),
-                    "priority_score": state.get("priority_score"),
-                    "thresholds_applied": metadata.get("thresholds_applied")
-                    or item.get("thresholds_applied")
-                    or [],
-                    "threshold_state": metadata.get("threshold_state")
-                    or item.get("threshold_state")
-                    or "default",
-                    "alert_state": metadata.get("alert_state")
-                    if isinstance(metadata.get("alert_state"), Mapping)
+                    "impact_estimate": (
+                        state.get("impact_estimate")
+                        if overlay_artifacts
+                        else item.get("impact_estimate")
+                    ),
+                    "impact_currency": (
+                        state.get("impact_currency")
+                        if overlay_artifacts
+                        else item.get("impact_currency")
+                    ),
+                    "confidence": (
+                        state.get("confidence")
+                        if overlay_artifacts
+                        else item.get("confidence")
+                    ),
+                    "priority_score": (
+                        state.get("priority_score")
+                        if overlay_artifacts
+                        else item.get("priority_score")
+                    ),
+                    "thresholds_applied": (
+                        metadata.get("thresholds_applied")
+                        or item.get("thresholds_applied")
+                        or []
+                    )
+                    if overlay_artifacts
+                    else (item.get("thresholds_applied") or []),
+                    "threshold_state": (
+                        metadata.get("threshold_state")
+                        or item.get("threshold_state")
+                        or "default"
+                    )
+                    if overlay_artifacts
+                    else (item.get("threshold_state") or "default"),
+                    "alert_state": (
+                        metadata.get("alert_state")
+                        if isinstance(metadata.get("alert_state"), Mapping)
+                        else item.get("alert_state")
+                    )
+                    if overlay_artifacts
                     else item.get("alert_state"),
-                    "control_state": metadata.get("control_state")
-                    if isinstance(metadata.get("control_state"), Mapping)
+                    "control_state": (
+                        metadata.get("control_state")
+                        if isinstance(metadata.get("control_state"), Mapping)
+                        else item.get("control_state")
+                    )
+                    if overlay_artifacts
                     else item.get("control_state"),
                     "decision_intelligence": decision_intelligence,
                     "intelligence": intelligence,

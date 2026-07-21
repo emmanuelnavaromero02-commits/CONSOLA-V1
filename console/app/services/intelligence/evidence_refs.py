@@ -36,23 +36,54 @@ def _short_text(value: Any, *, field: str, max_length: int) -> str:
     return text
 
 
+def _normalized_reference(item: dict[str, Any]) -> dict[str, str]:
+    evidence_type = _short_text(
+        item.get("type"), field="evidence_refs.type", max_length=64
+    )
+    if evidence_type != "dataset_row":
+        return {
+            "type": evidence_type,
+            "id": _short_text(item.get("id"), field="evidence_refs.id", max_length=256),
+        }
+
+    record_id = _short_text(
+        item.get("source_record_id") or item.get("record_id"),
+        field="evidence_refs.source_record_id",
+        max_length=256,
+    )
+    normalized = {
+        "type": evidence_type,
+        "id": record_id,
+        "source_dataset": _short_text(
+            item.get("source_dataset"),
+            field="evidence_refs.source_dataset",
+            max_length=256,
+        ),
+        "source_record_id": record_id,
+    }
+    if item.get("observed_at"):
+        normalized["observed_at"] = _short_text(
+            item.get("observed_at"),
+            field="evidence_refs.observed_at",
+            max_length=64,
+        )
+    return normalized
+
+
 def normalize_evidence_refs(value: Any, *, max_items: int = 20) -> list[dict[str, str]]:
     if value is None:
         return []
     if not isinstance(value, list) or len(value) > max_items:
-        raise HTTPException(422, f"evidence_refs must be a list with at most {max_items} items")
+        raise HTTPException(
+            422, f"evidence_refs must be a list with at most {max_items} items"
+        )
     refs: list[dict[str, str]] = []
     for item in value:
         if not isinstance(item, dict):
             raise HTTPException(422, "evidence_refs entries must be objects")
         if _forbidden_path(item):
             raise HTTPException(422, "evidence_refs cannot include scope fields")
-        refs.append(
-            {
-                "type": _short_text(item.get("type"), field="evidence_refs.type", max_length=64),
-                "id": _short_text(item.get("id"), field="evidence_refs.id", max_length=256),
-            }
-        )
+        refs.append(_normalized_reference(item))
     return refs
 
 
@@ -67,7 +98,9 @@ def merge_evidence_refs(*values: Any, max_items: int = 20) -> list[dict[str, str
             merged.append(ref)
             seen.add(key)
             if len(merged) > max_items:
-                raise HTTPException(422, f"evidence_refs must be a list with at most {max_items} items")
+                raise HTTPException(
+                    422, f"evidence_refs must be a list with at most {max_items} items"
+                )
     return merged
 
 

@@ -25,7 +25,7 @@ def _item(item_id: str, kind: str, **overrides) -> dict:
         "observation_date": "2026-07-20",
         "metric_type": "count",
         "count": 1,
-        "evidence_refs": [f"evidence:{item_id}"],
+        "evidence_refs": [f"gold_metrics:{item_id}"],
         **overrides,
     }
 

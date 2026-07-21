@@ -74,6 +74,7 @@ class FakeOrchestratorDB:
         item_id: str,
         item_kind: str = "intelligence_signal",
         title: str = "Forecast risk",
+        source_dataset: str = "intelligence_signals",
         metadata: Any = None,
     ) -> None:
         self.sources[(workspace_id, "control_room_item", item_id)] = {
@@ -85,7 +86,7 @@ class FakeOrchestratorDB:
             "severity": "high",
             "status": "open",
             "domain": "Operacion",
-            "source_dataset": "intelligence_signals",
+            "source_dataset": source_dataset,
             "metadata": metadata or {},
         }
         if item_kind == "agent_alert":

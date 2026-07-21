@@ -40,7 +40,7 @@ def _persisted_item(index: int, *, eligible: bool = False) -> dict:
                 "metric_type": "scalar",
                 "observed_value": index,
                 "observation_date": "2026-07-16",
-                "evidence_refs": [f"evidence:{index}"],
+                "evidence_refs": [f"gold_metrics:{index}"],
             }
             if eligible
             else {"data_status": "missing"}
@@ -106,7 +106,7 @@ class ParentAndChildPage:
             "metric_type": "scalar",
             "observed_value": 2,
             "observation_date": "2026-07-16",
-            "evidence_refs": ["evidence:child"],
+            "evidence_refs": ["gold_metrics:child"],
         }
 
     async def fetch(self, sql: str, *_args):
