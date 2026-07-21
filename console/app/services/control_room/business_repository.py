@@ -236,4 +236,10 @@ async def _set_control_room_decision_link(
         resolved,
     )
     if not linked or str(linked["item_id"]) != str(item_id):
-        raise RuntimeError("control room decision link was not persisted")
+        raise HTTPException(
+            409,
+            {
+                "code": "workflow_stage_changed",
+                "message": "control room workflow changed; reload before mutating",
+            },
+        )

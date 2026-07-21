@@ -86,6 +86,10 @@ async def test_approve_accepts_verified_decision_link_for_owned_item():
         patch.object(control_room_service.auth, "pool", AsyncMock(return_value=conn)),
         patch.object(control_room_service, "_run_with_db_scope", _scoped),
         patch.object(control_room_service, "_ensure_item_row", ensure),
+        patch(
+            "app.services.control_room.business_action_approval.lock_authoritative_business_item",
+            AsyncMock(),
+        ),
         patch.object(control_room_service, "link_control_room_decision", link_decision),
         patch.object(
             control_room_service, "approve_control_room_decision", approve_link
@@ -104,8 +108,7 @@ async def test_approve_accepts_verified_decision_link_for_owned_item():
         result = await control_room_service.approve_item("item-1", USER, decision_id=91)
 
     assert result["approved"] is True
-    ensure.assert_awaited_once()
-    assert ensure.await_args.kwargs["critical"] is True
+    ensure.assert_not_awaited()
     link_decision.assert_not_awaited()
     approve_link.assert_awaited_once()
     audit.assert_awaited_once()

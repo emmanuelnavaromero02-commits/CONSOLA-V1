@@ -11,11 +11,11 @@ from app.services.control_room.business_repository import (
     decision_provenance,
     link_control_room_decision,
 )
-from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
-    WorkflowStage,
-    workflow_eligibility_provenance,
     workflow_has_eligible_provenance,
+)
+from app.services.control_room.business_workflow_stage_cas import (
+    select_option_with_stage_cas,
 )
 from app.services.control_room.business_workflow_quarantine import (
     workflow_columns_unlinked,
@@ -170,54 +170,15 @@ async def persist_option_selection(
     ensure_item_row: ItemWriter,
     record_item_event: ItemWriter,
 ) -> None:
-    await ensure_item_row(
+    await select_option_with_stage_cas(
         conn,
-        user=dict(user),
-        item=dict(item),
-        status="in_review",
-    )
-    decision_id = item.get("decision_id")
-    stage = (
-        WorkflowStage.DECISION_CREATED
-        if decision_id is not None
-        else WorkflowStage.OPTION_SELECTED
-    )
-    provenance = workflow_eligibility_provenance(
-        {**dict(item), "workspace_id": workspace_id},
-        stage=stage,
+        user=user,
+        item=item,
         workspace_id=workspace_id,
-        decision_id=decision_id,
         option_id=option_id,
+        terminal_statuses=terminal_statuses,
+        ensure_item_row=ensure_item_row,
     )
-    updated = await conn.fetchrow(
-        """
-        UPDATE control_room_items
-           SET status = CASE
-                   WHEN status = ANY($4::text[]) THEN status
-                   ELSE 'in_review'
-               END,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-               selected_option_id = $5,
-               last_seen_at = NOW()
-         WHERE workspace_id = $2
-           AND item_id = $3
-           AND owner_user_id IS NOT DISTINCT FROM $6
-         RETURNING item_id
-        """,
-        dumps_jsonb(
-            {
-                "selected_option_id": option_id,
-                "decision_eligibility_provenance": provenance,
-            }
-        ),
-        workspace_id,
-        item["id"],
-        list(terminal_statuses),
-        option_id,
-        expected_item_owner(item, user),
-    )
-    if not updated or str(updated.get("item_id")) != str(item["id"]):
-        raise HTTPException(404, "control room item not found")
     await record_item_event(
         conn,
         user=dict(user),

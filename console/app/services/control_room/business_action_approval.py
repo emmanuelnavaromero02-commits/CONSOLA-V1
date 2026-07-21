@@ -16,6 +16,9 @@ from app.services.control_room.business_action_mutations import (
     command_count,
     _record_event,
 )
+from app.services.control_room.business_mutation_guard import (
+    lock_authoritative_business_item,
+)
 from app.services.control_room.business_workflow_provenance import (
     WORKFLOW_QUARANTINE_KEY,
     WorkflowStage,
@@ -167,19 +170,12 @@ async def approve_business_item(
         workspace_id=workspace_id,
         decision_id=decision_id,
     )
-    await ensure_item_row(
-        conn,
-        user=dict(user),
-        item=dict(item),
-        status="decision_created" if not approved.linked else "approved",
-        critical=True,
-    )
-    approved = await require_approvable_decision(
+    await lock_authoritative_business_item(
         conn,
         user=user,
         item=item,
-        workspace_id=workspace_id,
         decision_id=decision_id,
+        allowed_stages=(WorkflowStage.DECISION_CREATED,),
     )
     if not approved.linked:
         await link_decision(
