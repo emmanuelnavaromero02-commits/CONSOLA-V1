@@ -3,6 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
+FOCAL_MINIMUM = 882
+POSTGRES_MINIMUM = 13
 
 REQUIRED_PATHS = (
     "console/app/main.py",
@@ -32,6 +34,10 @@ REQUIRED_PATHS = (
     "tests/decision_orchestrator_harness.py",
     "tests/test_aws_beta_operations.py",
     "tests/test_intelligence_engine_contract.py",
+    "tests/test_operational_rls_console_refinement.py",
+    "tests/test_operational_rls_policy_guard.py",
+    "tests/test_control_room_live_postgres*.py",
+    ".github/workflows/control-room-postgres-rls.yml",
 )
 
 REQUIRED_RELATED_TESTS = (
@@ -52,6 +58,12 @@ FOCAL_TESTS = (
     "console/tests/test_control_room*.py",
     "console/tests/test_scoped_surface_hardening.py",
     *REQUIRED_RELATED_TESTS,
+)
+
+LIVE_POSTGRES_TESTS = (
+    "tests/test_operational_rls_console_refinement.py",
+    "tests/test_operational_rls_policy_guard.py",
+    "tests/test_control_room_live_postgres*.py",
 )
 
 
@@ -75,16 +87,31 @@ def test_control_room_workflow_runs_all_related_contract_suites():
         assert test_path in focal_step
 
 
-def test_focal_junit_guard_requires_exact_current_minimum_and_zero_bad_results():
+def test_control_room_workflow_runs_all_live_postgres_suites():
+    live_step = (
+        _workflow_text()
+        .split("- name: Run live", 1)[1]
+        .split("- name: Verify focal", 1)[0]
+    )
+    for test_path in LIVE_POSTGRES_TESTS:
+        assert test_path in live_step
+
+
+def test_focal_junit_guard_requires_current_minimum_and_zero_bad_results():
     text = _workflow_text()
     assert "--junitxml=/tmp/control-room-focal.xml" in text
-    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=874' in text
+    assert (
+        f'verify_junit("/tmp/control-room-focal.xml", minimum={FOCAL_MINIMUM}' in text
+    )
 
 
 def test_postgres_junit_guard_requires_13_and_zero_bad_results():
     text = _workflow_text()
     assert "--junitxml=/tmp/control-room-postgres-rls.xml" in text
-    assert 'verify_junit("/tmp/control-room-postgres-rls.xml", minimum=13' in text
+    assert (
+        f'verify_junit("/tmp/control-room-postgres-rls.xml", minimum={POSTGRES_MINIMUM}'
+        in text
+    )
 
 
 def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
