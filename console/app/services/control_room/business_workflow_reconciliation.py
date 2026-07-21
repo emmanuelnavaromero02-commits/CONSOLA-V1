@@ -74,6 +74,7 @@ def _legacy_is_demonstrable(existing: Mapping[str, Any]) -> bool:
         and str(existing.get("decision_workspace_id") or "")
         == str(existing.get("workspace_id") or "")
         and existing.get("has_control_room_action") is True
+        and existing.get("has_control_room_event") is True
     )
 
 
@@ -97,7 +98,14 @@ async def workflow_metadata_patches(
                    SELECT 1 FROM decision_actions a
                     WHERE a.decision_id=d.id
                       AND a.action_text=ANY($2::text[])
-               ) AS has_control_room_action
+               ) AS has_control_room_action,
+               EXISTS(
+                   SELECT 1 FROM control_room_item_events e
+                    WHERE e.workspace_id=c.workspace_id
+                      AND e.item_id=c.item_id
+                      AND e.event_type='decision_created'
+                      AND e.metadata->>'decision_id'=d.id::text
+               ) AS has_control_room_event
           FROM requested r
           JOIN control_room_items c
             ON c.workspace_id=r.workspace_id AND c.item_id=r.item_id

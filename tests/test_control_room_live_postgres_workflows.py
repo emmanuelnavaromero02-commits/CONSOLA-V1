@@ -126,6 +126,15 @@ async def test_live_refresh_backfills_only_demonstrable_legacy_workflow(
             json.dumps(business_policy_metadata({}, legitimate)),
             json.dumps({"kind": "source_state", "data_status": "missing"}),
         )
+        await conn.execute(
+            """INSERT INTO control_room_item_events(
+                   tenant_id, workspace_id, item_id, event_type, metadata)
+               VALUES ($1, $2, $3, 'decision_created', $4::jsonb)""",
+            tenant_id,
+            workspace_id,
+            legitimate["id"],
+            json.dumps({"decision_id": ids["legitimate"]}),
+        )
 
         await persist_item_rows(
             conn,
