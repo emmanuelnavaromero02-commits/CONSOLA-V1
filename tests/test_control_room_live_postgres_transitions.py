@@ -103,10 +103,10 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             f"tenant-{uuid.uuid4().hex[:8]}",
         )
         await conn.execute(
-            "INSERT INTO workspaces(id, tenant_id, name, slug) VALUES ($1, $2, 'WS', $3)",
+            "INSERT INTO workspaces(id, tenant_id, name) VALUES ($1, $2, $3)",
             workspace_id,
             tenant_id,
-            f"workspace-{uuid.uuid4().hex[:8]}",
+            f"WS {uuid.uuid4().hex[:8]}",
         )
         await conn.execute(
             """
