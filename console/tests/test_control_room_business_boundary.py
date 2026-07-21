@@ -177,24 +177,12 @@ async def test_mutation_lookup_returns_404_for_wrong_scope():
 
 
 COMMAND_CASES = (
-    (
-        "sap_successfactors_talent_action_preview",
-        (USER, {"action_id": "source-state-1"}),
-        {},
-    ),
+    ("sap_successfactors_talent_action_preview", (USER, {"action_id": "source-state-1"}), {}),
     ("create_decision_for_item", ("source-state-1", USER), {}),
     ("select_item_option", ("source-state-1", "remediate", USER), {}),
     ("record_item_step", ("source-state-1", "signals", USER), {}),
-    (
-        "update_item_control",
-        ("source-state-1", "control-1", {"status": "closed"}, USER),
-        {},
-    ),
-    (
-        "create_item_lesson",
-        ("source-state-1", {"rule": "Validate owner first"}, USER),
-        {},
-    ),
+    ("update_item_control", ("source-state-1", "control-1", {"status": "closed"}, USER), {}),
+    ("create_item_lesson", ("source-state-1", {"rule": "Validate owner first"}, USER), {}),
     ("apply_item_lesson", ("source-state-1", 1, {}, USER), {}),
     ("action_preview", ("source-state-1", USER), {}),
     ("action_dry_run", ("source-state-1", USER), {}),
@@ -214,10 +202,7 @@ COMMAND_CASES = (
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name,args,kwargs", COMMAND_CASES)
 async def test_commands_stop_at_business_guard(name, args, kwargs):
-    conflict = HTTPException(
-        409,
-        detail={"code": "item_not_business_eligible", "reason": "source_state"},
-    )
+    conflict = HTTPException(409, detail={"code": "item_not_business_eligible", "reason": "source_state"})
     guard = AsyncMock(side_effect=conflict)
     pool = AsyncMock(side_effect=AssertionError("database reached"))
     audit = AsyncMock(side_effect=AssertionError("audit reached"))
