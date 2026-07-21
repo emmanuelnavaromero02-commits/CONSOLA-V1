@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -52,8 +51,6 @@ class ZeroRowPool:
         if command == "UPDATE":
             return self.update_tag
         raise AssertionError(f"unexpected command: {command}")
-
-
 class MissingActionRunPool:
     def __init__(self):
         self.fetchval_calls = 0
@@ -61,21 +58,15 @@ class MissingActionRunPool:
     async def fetchval(self, _sql: str, *_args):
         self.fetchval_calls += 1
         return None
-
-
 class FailingLessonPool:
     async def execute(self, _sql: str, *_args):
         raise ConnectionError("lesson storage unavailable")
-
-
 async def _run_scoped_with(connection, _pool, user, operation):
     return await operation(
         connection,
         user["active_tenant_id"],
         user["active_workspace_id"],
     )
-
-
 @pytest.mark.asyncio
 async def test_record_item_event_rejects_zero_row_insert_when_critical():
     pool = ZeroRowPool()
@@ -91,8 +82,6 @@ async def test_record_item_event_rejects_zero_row_insert_when_critical():
         )
 
     assert pool.calls == ["INSERT"]
-
-
 @pytest.mark.asyncio
 async def test_set_execution_status_rejects_zero_row_update_when_critical():
     pool = ZeroRowPool()
@@ -107,8 +96,6 @@ async def test_set_execution_status_rejects_zero_row_update_when_critical():
         )
 
     assert pool.calls == ["UPDATE"]
-
-
 @pytest.mark.asyncio
 async def test_persist_lessons_rejects_zero_row_insert():
     pool = ZeroRowPool()
@@ -123,8 +110,6 @@ async def test_persist_lessons_rejects_zero_row_insert():
         )
 
     assert pool.calls == ["INSERT"]
-
-
 @pytest.mark.asyncio
 async def test_adapter_success_lesson_rejects_zero_row_insert():
     pool = ZeroRowPool(insert_tag="INSERT 0 0")
@@ -142,8 +127,6 @@ async def test_adapter_success_lesson_rejects_zero_row_insert():
         )
 
     assert pool.calls == ["INSERT"]
-
-
 @pytest.mark.asyncio
 async def test_adapter_success_lesson_propagates_storage_failure():
     with pytest.raises(ConnectionError, match="lesson storage unavailable"):
@@ -157,8 +140,6 @@ async def test_adapter_success_lesson_propagates_storage_failure():
             adapter_name="SuccessAdapter",
             template_type="notification",
         )
-
-
 @pytest.mark.asyncio
 async def test_external_writeback_does_not_return_success_after_lesson_insert_zero():
     pool = ZeroRowPool(insert_tag="INSERT 0 0")
