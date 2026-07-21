@@ -59,6 +59,8 @@ def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
         if dataset == "employees_anomalies":
             return [
                 {
+                    "tenant_id": TENANT_ID,
+                    "workspace_id": WORKSPACE_ID,
                     "pernr": "1001",
                     "full_name": "Ana Gomez",
                     "anomaly_type": "terminated_but_active",
