@@ -171,6 +171,21 @@ def test_runtime_attestation_cannot_be_reused_for_a_fabricated_record_id():
     assert has_evidence(_item(evidence_refs=[forged])) is False
 
 
+def test_runtime_attestation_cannot_be_rebound_by_unsigned_source_alias():
+    fields = runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_row={"employee_id": "employee-17"},
+        locator_field="employee_id",
+        observed_at="2026-07-20T10:00:00Z",
+    )
+    reference = {**fields["evidence_refs"][0], "dataset": "gold_other"}
+
+    assert (
+        has_evidence(_item(source_dataset="gold_other", evidence_refs=[reference]))
+        is False
+    )
+
+
 def test_missing_signing_key_fails_closed_without_breaking_runtime_reads(monkeypatch):
     fields = runtime_row_evidence_fields(
         source_dataset="gold_metrics",

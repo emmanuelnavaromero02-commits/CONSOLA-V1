@@ -247,6 +247,11 @@ def typed_reference(
         for key, value in values.items()
     )
     if id_fields & _SERVER_VERIFIED_ID_FIELDS:
+        has_source = _source_matches(
+            "source_dataset",
+            values.get("source_dataset"),
+            canonical_sources_by_role,
+        )
         has_id = verified_runtime_row_reference(values) and not contains_excluded(
             values.get("source_record_id") or values.get("record_id"),
             local_exclusions,
