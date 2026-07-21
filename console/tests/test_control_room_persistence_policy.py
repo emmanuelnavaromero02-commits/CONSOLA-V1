@@ -65,14 +65,14 @@ def test_business_policy_metadata_drops_legacy_source_state_semantics():
     assert clean.get("data_status") != "missing"
 
 
-def test_persist_sql_preserves_workflow_links_for_explicit_quarantine():
-    assert "decision_id = control_room_items.decision_id" in PERSIST_ITEMS_SQL
-    assert (
-        "selected_option_id = control_room_items.selected_option_id"
-        in PERSIST_ITEMS_SQL
-    )
-    assert "execution_status = control_room_items.execution_status" in PERSIST_ITEMS_SQL
-    assert "THEN NULL ELSE control_room_items.decision_id" not in PERSIST_ITEMS_SQL
+def test_persist_sql_unlinks_workflow_for_explicit_quarantine():
+    sql = " ".join(PERSIST_ITEMS_SQL.split())
+    marker = "EXCLUDED.metadata ? 'workflow_quarantine'"
+    assert marker in sql
+    assert "THEN NULL ELSE control_room_items.decision_id" in sql
+    assert "THEN NULL ELSE control_room_items.selected_option_id" in sql
+    assert "THEN 'not_started'" in sql
+    assert "THEN 'open'" in sql
 
 
 def test_eligible_decision_provenance_is_machine_checkable():

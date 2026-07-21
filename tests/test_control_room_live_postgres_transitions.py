@@ -240,9 +240,10 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         transitioned_metadata = _jsonb(transitioned["metadata"])
         assert transitioned["owner_user_id"] == 7
         assert transitioned["item_kind"] == "anomaly"
-        assert transitioned["decision_id"] == 42
-        assert transitioned["selected_option_id"] == "repair"
-        assert transitioned["execution_status"] == "executed"
+        assert transitioned["status"] == "open"
+        assert transitioned["decision_id"] is None
+        assert transitioned["selected_option_id"] is None
+        assert transitioned["execution_status"] == "not_started"
         assert transitioned_metadata.get("item_kind") != "source_state"
         assert transitioned_metadata.get(WORKFLOW_QUARANTINE_KEY)
         assert not LEGACY_RESIDUAL_FIELDS.intersection(transitioned_metadata)

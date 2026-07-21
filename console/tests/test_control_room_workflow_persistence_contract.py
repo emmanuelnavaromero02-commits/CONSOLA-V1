@@ -107,9 +107,10 @@ def test_owner_projection_preserves_explicit_legacy_null_owner():
     assert owner_projection(_item(), {"owner_user_id": None}) == {"owner_user_id": None}
 
 
-def test_refresh_preserves_ambiguous_legacy_links_for_quarantine():
-    assert "decision_id = control_room_items.decision_id" in PERSIST_ITEMS_SQL
-    assert "THEN NULL ELSE control_room_items.decision_id" not in PERSIST_ITEMS_SQL
+def test_refresh_unlinks_ambiguous_legacy_workflow_for_quarantine():
+    sql = " ".join(PERSIST_ITEMS_SQL.split())
+    assert "THEN NULL ELSE control_room_items.decision_id" in sql
+    assert "THEN NULL ELSE control_room_items.selected_option_id" in sql
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ _CLEAN_WORKFLOW_METADATA = (
     f"(({_CLEAN_EXISTING_METADATA} - '{DECISION_PROVENANCE_KEY}') "
     f"- '{WORKFLOW_QUARANTINE_KEY}')"
 )
+_QUARANTINED_WORKFLOW = f"EXCLUDED.metadata ? '{WORKFLOW_QUARANTINE_KEY}'"
 
 _SEMANTIC_UPDATE = f"""
     cartridge_id = EXCLUDED.cartridge_id,
@@ -43,7 +44,6 @@ _SEMANTIC_UPDATE = f"""
     confidence = EXCLUDED.confidence,
     priority_score = EXCLUDED.priority_score,
     owner_user_id = control_room_items.owner_user_id,
-    decision_id = control_room_items.decision_id,
     last_seen_at = NOW()
 """
 
@@ -76,9 +76,21 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
   FROM jsonb_to_recordset($1::jsonb) AS x({_ROW_COLUMNS})
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
-    status = control_room_items.status,
-    selected_option_id = control_room_items.selected_option_id,
-    execution_status = control_room_items.execution_status
+    status = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
+        ELSE control_room_items.status
+    END,
+    decision_id = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
+    END,
+    selected_option_id = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        ELSE control_room_items.selected_option_id
+    END,
+    execution_status = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
+        ELSE control_room_items.execution_status
+    END
 {_owner_conflict_guard(3, 4)}
 """
 
@@ -100,11 +112,21 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
         WHEN control_room_items.status = ANY($3::text[]) THEN control_room_items.status
         ELSE EXCLUDED.status
     END,
-    selected_option_id = control_room_items.selected_option_id,
-    execution_status = control_room_items.execution_status
+    decision_id = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
+    END,
+    selected_option_id = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        ELSE control_room_items.selected_option_id
+    END,
+    execution_status = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
+        ELSE control_room_items.execution_status
+    END
 {_owner_conflict_guard(4, 5)}
 """
 
