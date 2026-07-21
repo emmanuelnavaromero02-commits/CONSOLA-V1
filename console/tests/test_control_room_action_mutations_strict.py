@@ -10,6 +10,11 @@ from app.services.control_room.business_action_mutations import command_count
 from app.services.control_room.business_item_persistence import (
     PersistenceCommandTagError,
 )
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    WorkflowStage,
+    workflow_eligibility_provenance,
+)
 
 
 USER = {
@@ -46,6 +51,12 @@ def _item() -> dict:
         "recommendation": "Revisar baja.",
         "severity": "critical",
         "status": "open",
+        "data_status": "ready",
+        "metric_type": "count",
+        "observed_value": 1,
+        "population_count": 1,
+        "observation_date": "2026-07-16",
+        "evidence_refs": ["employees_anomalies:item-1"],
         "owner_user_id": 7,
         "detected_at": "2026-07-16T10:00:00Z",
         "omega": {
@@ -230,12 +241,18 @@ class _LinkedDecisionConnection:
         if "item_id <> $3" in sql:
             return None
         if "FROM control_room_items" in sql:
+            provenance = workflow_eligibility_provenance(
+                _item(),
+                stage=WorkflowStage.DECISION_CREATED,
+                workspace_id="workspace-A",
+                decision_id=91,
+            )
             return {
                 "item_id": "item-1",
                 "decision_id": 91,
                 "owner_user_id": 7,
                 "item_kind": "anomaly",
-                "metadata": {},
+                "metadata": {DECISION_PROVENANCE_KEY: provenance},
             }
         if "INSERT INTO decision_actions" in sql:
             return {"id": 3, "decision_id": 91, "ts": None}

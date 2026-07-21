@@ -8,6 +8,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    WorkflowStage,
+    workflow_eligibility_provenance,
+)
 
 
 USER = {
@@ -43,7 +48,14 @@ def _observed_anomaly_fields(item_id: str) -> dict:
     }
 
 
-def _approval_fetchrows(item_id: str, action: dict) -> list[dict | None]:
+def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
+    item_id = item["id"]
+    provenance = workflow_eligibility_provenance(
+        item,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-A",
+        decision_id=42,
+    )
     return [
         {"id": 42, "created_by_id": 7, "kpis": []},
         {
@@ -51,7 +63,7 @@ def _approval_fetchrows(item_id: str, action: dict) -> list[dict | None]:
             "decision_id": 42,
             "owner_user_id": 7,
             "item_kind": "anomaly",
-            "metadata": {},
+            "metadata": {DECISION_PROVENANCE_KEY: provenance},
         },
         None,
         action,
@@ -4326,9 +4338,7 @@ async def test_approve_persists_lessons_to_lessons_table():
     }
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(
-        side_effect=_approval_fetchrows(anomaly["id"], action)
-    )
+    mock_pool.fetchrow = AsyncMock(side_effect=_approval_fetchrows(anomaly, action))
     mock_pool.fetch.return_value = []
 
     with (
@@ -4383,9 +4393,7 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     }
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(
-        side_effect=_approval_fetchrows(anomaly["id"], action)
-    )
+    mock_pool.fetchrow = AsyncMock(side_effect=_approval_fetchrows(anomaly, action))
     mock_pool.fetch.return_value = []
 
     with (
