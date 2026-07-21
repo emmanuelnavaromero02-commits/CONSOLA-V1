@@ -38,13 +38,17 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 def _item(row: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _mapping(row.get("metadata"))
-    return {
+    item = {
         **metadata,
         **dict(row),
         "id": str(row.get("item_id") or row.get("id") or ""),
         "kind": str(row.get("item_kind") or row.get("kind") or ""),
         "metadata": metadata,
     }
+    for field in ("tenant_id", "workspace_id"):
+        if item.get(field) is not None:
+            item[field] = str(item[field])
+    return item
 
 
 def _has_workflow(row: Mapping[str, Any]) -> bool:
