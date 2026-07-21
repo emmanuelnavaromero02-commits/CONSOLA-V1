@@ -1089,6 +1089,8 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
     assert cohort["roster"][0]["performance_band_available"] == "high"
 
 
+# Keep assert messages lazy; Ruff 0.6.9 otherwise rewrites their evaluation order.
+# fmt: off
 def test_desempeno_module_rewired_to_real_performance_not_compensation():
     """Etapa 1 (Trabajo 1): el modulo Desempeno consume el dataset REAL de performance
     (talent_cpa_scores), no el stub de compensacion; Compensacion es un modulo SEPARADO."""
@@ -1170,6 +1172,7 @@ def test_no_module_mixes_compensation_and_performance():
     assert not any(t in comp_str for t in perf_terms), (
         "Compensacion no debe matchear desempeno"
     )
+# fmt: on
 
 
 @pytest.mark.asyncio

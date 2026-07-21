@@ -81,7 +81,9 @@ def verified_runtime_row_reference(value: Mapping[str, Any]) -> bool:
     ):
         return False
     try:
-        return hmac.compare_digest(str(value["server_attestation"]), _attestation(value))
+        return hmac.compare_digest(
+            str(value["server_attestation"]), _attestation(value)
+        )
     except RuntimeError:
         return False
 
