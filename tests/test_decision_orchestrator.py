@@ -5,6 +5,9 @@ from typing import Any
 
 import pytest
 
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from tests.decision_orchestrator_harness import (
     FakeOrchestratorDB,
     _patch_pool,
@@ -144,13 +147,12 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            "evidence_refs": [
-                {
-                    "type": "dataset_row",
-                    "source_dataset": "gold_metrics",
-                    "source_record_id": "record-item-a",
-                }
-            ],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_row={"item_id": "item-a"},
+                locator_field="item_id",
+                observed_at="2026-07-10T00:00:00Z",
+            ),
         },
     )
 
@@ -258,13 +260,12 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            "evidence_refs": [
-                {
-                    "type": "dataset_row",
-                    "source_dataset": "gold_metrics",
-                    "source_record_id": "record-action-source",
-                }
-            ],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_row={"item_id": "action-source"},
+                locator_field="item_id",
+                observed_at="2026-07-10T00:00:00Z",
+            ),
         },
     )
     propose_calls: list[dict[str, Any]] = []

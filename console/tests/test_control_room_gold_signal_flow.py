@@ -778,6 +778,7 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
             "id": "derived-1",
             "kind": "agent_alert",
             "workspace_id": WORKSPACE_A,
+            "cartridge": "replicon",
             "source_dataset": "gold_workforce",
             "metadata": policy_metadata,
         },

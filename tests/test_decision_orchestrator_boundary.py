@@ -5,6 +5,9 @@ import json
 
 import pytest
 
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from tests.decision_orchestrator_harness import (
     MIGRATION,
     REPO,
@@ -250,13 +253,12 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            "evidence_refs": [
-                {
-                    "type": "dataset_row",
-                    "source_dataset": "gold_metrics",
-                    "source_record_id": "record-business-parent",
-                }
-            ],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_row={"item_id": "business-parent"},
+                locator_field="item_id",
+                observed_at="2026-07-10T00:00:00Z",
+            ),
         },
     )
     db.add_control_room_item(
@@ -271,13 +273,12 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            "evidence_refs": [
-                {
-                    "type": "dataset_row",
-                    "source_dataset": "gold_metrics",
-                    "source_record_id": "record-business-alert",
-                }
-            ],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_row={"item_id": "business-alert"},
+                locator_field="item_id",
+                observed_at="2026-07-10T00:00:00Z",
+            ),
         },
     )
 

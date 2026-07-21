@@ -2504,6 +2504,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "id": "item-activity",
         "kind": "intelligence_signal",
         "workspace_id": "workspace-A",
+        "cartridge": "replicon",
         "source_dataset": "pnl_mensual",
         "source_system": "replicon",
         "metadata": policy_metadata,
