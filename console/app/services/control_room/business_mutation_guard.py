@@ -25,6 +25,9 @@ from app.services.control_room.business_workflow_provenance import (
     business_observation_fingerprint,
     workflow_has_eligible_provenance,
 )
+from app.services.control_room.business_workflow_quarantine import (
+    workflow_columns_unlinked,
+)
 
 
 _LOCK_ITEM_SQL = """
@@ -107,6 +110,20 @@ def _validate_owner(
         raise HTTPException(404, "control room item not found")
 
 
+def _validate_mutation_state(row: Mapping[str, Any], item: Mapping[str, Any]) -> None:
+    defaults = {"status": "open", "execution_status": "not_started"}
+    for field in ("decision_id", "selected_option_id", "status", "execution_status"):
+        if field not in item:
+            continue
+        persisted = row.get(field)
+        resolved = item.get(field)
+        if field in defaults:
+            persisted = persisted or defaults[field]
+            resolved = resolved or defaults[field]
+        if str(persisted or "") != str(resolved or ""):
+            raise _changed()
+
+
 def _validate_workflow(
     row: Mapping[str, Any],
     item: Mapping[str, Any],
@@ -118,7 +135,7 @@ def _validate_workflow(
     resolved_decision = item.get("decision_id")
     expected_decision = decision_id if decision_id is not None else resolved_decision
     if expected_decision is None:
-        if persisted_decision is not None and resolved_decision is not None:
+        if persisted_decision is not None:
             raise _changed()
         return
     if str(persisted_decision or "") != str(expected_decision):
@@ -139,6 +156,7 @@ async def lock_authoritative_business_item(
     user: Mapping[str, Any],
     item: Mapping[str, Any],
     allow_missing: bool = False,
+    allow_diagnostic_transition: bool = False,
     decision_id: int | None = None,
     allowed_stages: Collection[WorkflowStage | str] | None = None,
 ) -> dict[str, Any] | None:
@@ -158,9 +176,14 @@ async def lock_authoritative_business_item(
     ):
         raise HTTPException(404, "control room item not found")
     _validate_owner(locked, item, user)
+    _validate_mutation_state(locked, item)
+    if not classify_business_item(item).eligible:
+        raise _changed()
     normalized = normalize_persisted_business_item(locked)
     if not classify_business_item(normalized).eligible:
-        raise _changed()
+        if not allow_diagnostic_transition or not workflow_columns_unlinked(locked):
+            raise _changed()
+        return locked
     metadata = _metadata(locked.get("metadata"))
     current_fingerprint = business_observation_fingerprint(item)
     persisted_fingerprint = str(

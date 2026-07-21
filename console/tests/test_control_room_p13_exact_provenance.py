@@ -10,6 +10,9 @@ from app.domains.decisions.business_visibility import (
 )
 from app.domains.decisions.provenance import decision_kpis_with_provenance
 from app.services.control_room.business_action_approval import approve_business_item
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
@@ -27,19 +30,33 @@ USER = {
 
 
 def _item() -> dict:
-    return {
+    item = {
         "id": "business-1",
         "kind": "anomaly",
+        "tenant_id": "tenant-a",
         "workspace_id": "workspace-a",
         "title": "Measured anomaly",
         "recommendation": "Review",
         "source_dataset": "gold_people",
+        "source_system": "sap_hcm",
         "cartridge": "sap_hcm",
         "observed_value": 1,
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_people:business-1"],
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            source_row={"item_id": item["id"]},
+            locator_field="item_id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 

@@ -71,6 +71,7 @@ async def create_and_link_decision(
         item=dict(item),
         status="decision_created",
         critical=True,
+        allow_diagnostic_transition=True,
     )
     owner_user_id = expected_item_owner(item, user)
     locked = await conn.fetchrow(

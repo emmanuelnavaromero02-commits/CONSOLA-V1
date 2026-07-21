@@ -113,7 +113,9 @@ def _user() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_refresh_between_resolve_and_mutation_rejects_before_side_effect() -> None:
+async def test_refresh_between_resolve_and_mutation_rejects_before_side_effect() -> (
+    None
+):
     resolved = _item(3)
     refreshed = _item(4)
     conn = GuardConnection(_persisted(refreshed))
@@ -158,3 +160,42 @@ async def test_item_becoming_source_state_rejects_before_side_effect() -> None:
 
     assert error.value.status_code == 409
     assert len(conn.statements) == 1
+
+
+@pytest.mark.asyncio
+async def test_decision_linked_after_lookup_rejects_before_side_effect() -> None:
+    item = _item(3)
+    item["decision_id"] = None
+    row = _persisted(item)
+    row["decision_id"] = 42
+    conn = GuardConnection(row)
+
+    with pytest.raises(HTTPException) as error:
+        await lock_authoritative_business_item(conn, user=_user(), item=item)
+
+    assert error.value.status_code == 409
+    assert len(conn.statements) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_status_changed_after_lookup_rejects() -> None:
+    item = {**_item(3), "status": "in_review"}
+    row = {**_persisted(item), "status": "dismissed"}
+    conn = GuardConnection(row)
+
+    with pytest.raises(HTTPException) as error:
+        await lock_authoritative_business_item(conn, user=_user(), item=item)
+
+    assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_execution_status_changed_after_lookup_rejects() -> None:
+    item = {**_item(3), "execution_status": "dry_run_validated"}
+    row = {**_persisted(item), "execution_status": "executed"}
+    conn = GuardConnection(row)
+
+    with pytest.raises(HTTPException) as error:
+        await lock_authoritative_business_item(conn, user=_user(), item=item)
+
+    assert error.value.status_code == 409

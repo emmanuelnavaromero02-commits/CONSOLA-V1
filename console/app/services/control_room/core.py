@@ -73,17 +73,12 @@ from app.services.control_room.business_projection import (
     project_business_item,
     strip_business_fields,
 )
-from app.services.control_room.business_item_persistence import (
-    OwnerScopeConflict,
-    ensure_item_row as ensure_business_item_row,
-    persist_item_rows,
-)
+from app.services.control_room.business_item_persistence import persist_item_rows
 from app.services.control_room.business_item_reader import (
     fetch_eligible_persisted_items,
     resolve_scoped_business_item_lookup,
 )
 from app.services.control_room.business_metadata import business_item_metadata
-from app.services.control_room.business_mutation_guard import lock_authoritative_business_item
 from app.services.control_room.business_persisted_row import persisted_business_item
 from app.services.control_room.business_repository import (
     approve_control_room_decision,
@@ -91,7 +86,7 @@ from app.services.control_room.business_repository import (
     fetch_lineage_rows,
     link_control_room_decision,
 )
-from app.services.control_room.business_state_rows import ensured_row, state_rows
+from app.services.control_room.business_state_rows import state_rows
 from app.services.control_room.business_state_persistence import persist_refresh_items
 from app.services.control_room.business_state_overlay import (
     load_overlay_state,

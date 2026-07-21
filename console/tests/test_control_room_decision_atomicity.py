@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services import control_room_service
 from app.services.control_room.business_runtime_evidence import (
@@ -199,9 +200,11 @@ async def test_control_room_decision_link_failure_rolls_back_and_skips_success_a
         ),
         patch.object(control_room_service.audit_service, "record_event", audit),
     ):
-        with pytest.raises(RuntimeError, match="decision link was not persisted"):
+        with pytest.raises(HTTPException) as error:
             await control_room_service.create_decision_for_item("business-1", USER)
 
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "workflow_stage_changed"
     assert connection.rolled_back is True
     assert connection.committed is False
     audit.assert_not_awaited()

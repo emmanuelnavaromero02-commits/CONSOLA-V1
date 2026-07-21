@@ -9,6 +9,9 @@ from app.services.control_room.business_command_item import (
     load_persisted_command_item,
     resolve_command_item,
 )
+from app.services.control_room.business_item_ensure_command import (
+    ensure_authoritative_item_row,
+)
 from app.services.control_room.business_omega_projection import (
     OmegaProjectionRuntime,
     build_omega_projection,
@@ -37,6 +40,9 @@ _core.__dict__.setdefault("load_persisted_command_item", load_persisted_command_
 _core.__dict__.setdefault("OmegaProjectionRuntime", OmegaProjectionRuntime)
 _core.__dict__.setdefault("resolve_command_item", resolve_command_item)
 _core.__dict__.setdefault("require_exact_count", require_exact_count)
+_core.__dict__.setdefault(
+    "ensure_authoritative_item_row", ensure_authoritative_item_row
+)
 
 
 def _bind_to_core(fn):
@@ -1260,29 +1266,18 @@ async def _ensure_item_row(
     item: dict[str, Any],
     status: str = "open",
     critical: bool = False,
+    allow_diagnostic_transition: bool = False,
 ) -> None:
-    tenant_id, workspace_id = _workspace_scope(user)
-    await lock_authoritative_business_item(pool, user=user, item=item, allow_missing=True)
-    impact = _impact_for_item(item)
-    try:
-        row = ensured_row(
-            item,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-            owner_user_id=expected_business_item_owner(item, user),
-            status=status,
-            impact=impact,
-            metadata=_metadata_for_item(item, impact),
-        )
-        await ensure_business_item_row(
-            pool,
-            row,
-            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
-            owner_scope_id=owner_scope_id(user),
-            workspace_wide=_can_read_workspace_wide(user),
-        )
-    except OwnerScopeConflict:
-        raise HTTPException(404, "control room item not found") from None
+    await ensure_authoritative_item_row(
+        pool,
+        user=user,
+        item=item,
+        status=status,
+        allow_diagnostic_transition=allow_diagnostic_transition,
+        impact_builder=_impact_for_item,
+        metadata_builder=_metadata_for_item,
+        terminal_statuses=TERMINAL_ITEM_STATUSES,
+    )
 
 
 @_bind_to_core
