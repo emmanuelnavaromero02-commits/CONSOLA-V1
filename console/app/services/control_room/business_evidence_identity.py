@@ -243,12 +243,15 @@ def typed_reference(
     *,
     canonical_sources_by_role: Mapping[str, frozenset[str]],
     excluded_references: frozenset[str],
+    require_scope_binding: bool = False,
 ) -> bool | None:
     evidence_type = reference_token(values.get("type"))
     if not evidence_type:
         return None
     id_fields = _TYPED_EVIDENCE_IDS.get(evidence_type)
     if id_fields is None:
+        return False
+    if require_scope_binding and not id_fields & _SERVER_VERIFIED_ID_FIELDS:
         return False
     local_exclusions = excluded_references | administrative_references((values,))
     has_source = any(

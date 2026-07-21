@@ -7,6 +7,9 @@ from app.services.control_room.business_projection import (
     filter_business_decisions,
     normalize_persisted_business_item,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
@@ -20,17 +23,28 @@ def _linked_item(*, workspace_id: str = "workspace-a") -> dict:
         "decision_id": 42,
         "item_id": "business-1",
         "item_kind": "anomaly",
+        "cartridge_id": "sap_hcm",
         "source_dataset": "gold_people",
         "tenant_id": "tenant-a",
         "workspace_id": workspace_id,
         "owner_user_id": 7,
         "metadata": {
+            "source_system": "sap_hcm",
             "data_status": "ready",
             "metric_type": "count",
             "observed_value": 1,
             "population_count": 10,
             "observation_date": "2026-07-20",
-            "evidence_refs": ["gold_people:business-1"],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_people",
+                source_system="sap_hcm",
+                cartridge="sap_hcm",
+                tenant_id="tenant-a",
+                workspace_id=workspace_id,
+                source_row={"item_id": "business-1"},
+                locator_field="item_id",
+                observed_at="2026-07-20",
+            ),
         },
     }
     item = normalize_persisted_business_item(row)

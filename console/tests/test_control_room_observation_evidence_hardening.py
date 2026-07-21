@@ -17,10 +17,6 @@ def _item(**overrides):
         "id": "metric-hardening-1",
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
-        "source_system": "sap",
-        "cartridge": "sap",
-        "tenant_id": "tenant-7",
-        "workspace_id": "workspace-17",
         "data_status": "ready",
         "observation_date": "2026-07-16",
     }
@@ -244,4 +240,15 @@ def test_runtime_row_source_and_record_pair_remains_evidence():
         observed_at="2026-07-16T10:00:00Z",
     )
 
-    assert has_evidence(_item(**evidence)) is True
+    assert (
+        has_evidence(
+            _item(
+                source_system="sap",
+                cartridge="sap",
+                tenant_id="tenant-7",
+                workspace_id="workspace-17",
+                **evidence,
+            )
+        )
+        is True
+    )

@@ -26,13 +26,18 @@ EVIDENCE_ID_FIELDS = ("evidence_pack_id", "evidence_id")
 def has_evidence(item: Mapping[str, Any]) -> bool:
     surfaces = semantic_maps(item)
     sources = canonical_sources(surfaces)
+    require_scope_binding = bool(sources.get("tenant") and sources.get("workspace"))
     excluded = administrative_references(surfaces)
     for values in surfaces:
-        if any(key in values for key in EVIDENCE_ID_FIELDS) and source_and_id_pair(
-            values,
-            allow_generic_id=False,
-            canonical_sources_by_role=sources,
-            excluded_references=excluded,
+        if (
+            not require_scope_binding
+            and any(key in values for key in EVIDENCE_ID_FIELDS)
+            and source_and_id_pair(
+                values,
+                allow_generic_id=False,
+                canonical_sources_by_role=sources,
+                excluded_references=excluded,
+            )
         ):
             return True
         for key in EVIDENCE_FIELDS:
@@ -42,6 +47,7 @@ def has_evidence(item: Mapping[str, Any]) -> bool:
                 allow_generic_id=True,
                 canonical_sources_by_role=sources,
                 excluded_references=excluded,
+                require_scope_binding=require_scope_binding,
             ):
                 return True
     return False

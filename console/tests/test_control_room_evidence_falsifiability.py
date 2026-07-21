@@ -272,7 +272,16 @@ def test_missing_signing_key_fails_closed_without_breaking_runtime_reads(monkeyp
 
 
 def test_matching_legacy_scalar_reference_remains_narrowly_compatible():
-    assert has_evidence(_item(evidence_refs=["gold_metrics:record-17"])) is True
+    assert (
+        has_evidence(
+            _item(
+                tenant_id=None,
+                workspace_id=None,
+                evidence_refs=["gold_metrics:record-17"],
+            )
+        )
+        is True
+    )
 
 
 def test_legacy_scalar_source_must_match_item_source():

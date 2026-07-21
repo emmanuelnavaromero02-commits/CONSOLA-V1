@@ -42,6 +42,7 @@ def has_substantive_reference(
     canonical_sources_by_role: Mapping[str, frozenset[str]],
     allow_generic_id: bool = False,
     excluded_references: frozenset[str] = frozenset(),
+    require_scope_binding: bool = False,
     seen: set[int] | None = None,
 ) -> bool:
     if isinstance(value, Mapping):
@@ -60,10 +61,11 @@ def has_substantive_reference(
                 value,
                 canonical_sources_by_role=canonical_sources_by_role,
                 excluded_references=local_exclusions,
+                require_scope_binding=require_scope_binding,
             )
             if typed is not None:
                 return typed
-            if source_and_id_pair(
+            if not require_scope_binding and source_and_id_pair(
                 value,
                 allow_generic_id=allow_generic_id,
                 canonical_sources_by_role=canonical_sources_by_role,
@@ -74,10 +76,14 @@ def has_substantive_reference(
                 normalized = str(key).strip().lower()
                 if normalized in ADMINISTRATIVE_ID_FIELDS:
                     continue
-                if normalized in _LOCATOR_FIELDS and legacy_scalar_reference(
-                    nested,
-                    canonical_sources_by_role=canonical_sources_by_role,
-                    excluded_references=local_exclusions,
+                if (
+                    not require_scope_binding
+                    and normalized in _LOCATOR_FIELDS
+                    and legacy_scalar_reference(
+                        nested,
+                        canonical_sources_by_role=canonical_sources_by_role,
+                        excluded_references=local_exclusions,
+                    )
                 ):
                     return True
                 if normalized in _REFERENCE_CONTAINERS and has_substantive_reference(
@@ -86,6 +92,7 @@ def has_substantive_reference(
                     allow_generic_id=True,
                     canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
+                    require_scope_binding=require_scope_binding,
                     seen=seen,
                 ):
                     return True
@@ -95,6 +102,7 @@ def has_substantive_reference(
                         scalar_is_locator=False,
                         canonical_sources_by_role=canonical_sources_by_role,
                         excluded_references=local_exclusions,
+                        require_scope_binding=require_scope_binding,
                         seen=seen,
                     )
                 ):
@@ -121,6 +129,7 @@ def has_substantive_reference(
                     allow_generic_id=allow_generic_id,
                     canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
+                    require_scope_binding=require_scope_binding,
                     seen=seen,
                 )
                 for entry in value
@@ -129,6 +138,7 @@ def has_substantive_reference(
             seen.remove(identity)
     return bool(
         scalar_is_locator
+        and not require_scope_binding
         and legacy_scalar_reference(
             value,
             canonical_sources_by_role=canonical_sources_by_role,

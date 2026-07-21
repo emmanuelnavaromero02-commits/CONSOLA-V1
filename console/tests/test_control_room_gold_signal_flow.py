@@ -9,6 +9,9 @@ import pytest
 
 from app.services import control_room_service, intelligence_engine
 from app.services.control_room.business_projection import project_business_item
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
@@ -435,6 +438,16 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
                 }
             ],
         },
+        **runtime_row_evidence_fields(
+            source_dataset="consultor_mensual",
+            source_system="replicon",
+            cartridge="replicon",
+            tenant_id=TENANT_A,
+            workspace_id=WORKSPACE_A,
+            source_row={"signal_id": "intel:replicon-gold"},
+            locator_field="signal_id",
+            observed_at="2026-06-01",
+        ),
         "module": "Intelligence Engine",
         "description": "Horas facturables mensuales por consultor: Andrea Morales bajo baseline.",
         "recommendation": "Pedir seguimiento al manager",
@@ -771,12 +784,22 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
         "metric_type": "scalar",
         "observed_value": 1,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_workforce:derived-1"],
+        **runtime_row_evidence_fields(
+            source_dataset="gold_workforce",
+            source_system="replicon",
+            cartridge="replicon",
+            tenant_id=TENANT_A,
+            workspace_id=WORKSPACE_A,
+            source_row={"item_id": "derived-1"},
+            locator_field="item_id",
+            observed_at="2026-07-20",
+        ),
     }
     business_item = project_business_item(
         {
             "id": "derived-1",
             "kind": "agent_alert",
+            "tenant_id": TENANT_A,
             "workspace_id": WORKSPACE_A,
             "cartridge": "replicon",
             "source_dataset": "gold_workforce",

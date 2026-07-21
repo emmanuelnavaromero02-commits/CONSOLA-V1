@@ -8,6 +8,9 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
@@ -2503,11 +2506,21 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "metric_type": "scalar",
         "observed_value": 1,
         "observation_date": "2026-05-20T10:00:00Z",
-        "evidence_refs": ["pnl_mensual:item-activity"],
+        **runtime_row_evidence_fields(
+            source_dataset="pnl_mensual",
+            source_system="replicon",
+            cartridge="replicon",
+            tenant_id="tenant-A",
+            workspace_id="workspace-A",
+            source_row={"item_id": "item-activity"},
+            locator_field="item_id",
+            observed_at="2026-05-20T10:00:00Z",
+        ),
     }
     business_item = {
         "id": "item-activity",
         "kind": "intelligence_signal",
+        "tenant_id": "tenant-A",
         "workspace_id": "workspace-A",
         "cartridge": "replicon",
         "source_dataset": "pnl_mensual",

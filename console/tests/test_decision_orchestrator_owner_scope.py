@@ -8,6 +8,9 @@ from fastapi import FastAPI, Request
 
 from app.dependencies import require_authenticated
 from app.routers import intelligence as routes
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.csrf import require_csrf
 from app.services.intelligence import decision_orchestrator as orchestrator
 
@@ -30,14 +33,25 @@ def _source(source_type: str, *, owner_id: int, technical: bool = False) -> dict
         "severity": "high",
         "status": "open",
         "domain": "Operacion",
+        "cartridge_id": "sap_hcm",
         "source_dataset": "gold_metrics",
         "dataset": "gold_metrics",
         "metadata": {
+            "source_system": "sap_hcm",
             "data_status": "ready",
             "metric_type": "scalar",
             "observed_value": 1,
             "observation_date": "2026-07-17T10:00:00Z",
-            "evidence_refs": ["gold_metrics:source-1"],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_system="sap_hcm",
+                cartridge="sap_hcm",
+                tenant_id=TENANT_ID,
+                workspace_id=WORKSPACE_ID,
+                source_row={"source_id": f"{source_type}-1"},
+                locator_field="source_id",
+                observed_at="2026-07-17T10:00:00Z",
+            ),
         },
     }
 

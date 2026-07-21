@@ -9,6 +9,9 @@ from app.services.control_room.business_eligibility import (
     EligibilityReason,
     classify_business_item,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 
 
 def _base_item(**overrides):
@@ -16,12 +19,25 @@ def _base_item(**overrides):
         "id": "roundtrip-1",
         "kind": "intelligence_signal",
         "source_dataset": "gold_metrics",
+        "source_system": "sap",
+        "cartridge": "sap",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
         "data_status": "ready",
         "metric_type": "count",
         "count": 2,
         "population_count": 10,
         "observation_date": "2026-07-16",
-        "evidence_refs": ["gold_metrics:roundtrip-1"],
+        **runtime_row_evidence_fields(
+            source_dataset="gold_metrics",
+            source_system="sap",
+            cartridge="sap",
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            source_row={"item_id": "roundtrip-1"},
+            locator_field="item_id",
+            observed_at="2026-07-16",
+        ),
     }
     return {**item, **overrides}
 
@@ -39,6 +55,7 @@ def _persisted_round_trip(item: dict, *, diagnostic: bool = False) -> dict:
             "workspace_id": "workspace-a",
             "item_id": item["id"],
             "item_kind": item["kind"],
+            "cartridge_id": "sap",
             "source_dataset": item.get("source_dataset"),
             "metadata": stored_metadata,
         }

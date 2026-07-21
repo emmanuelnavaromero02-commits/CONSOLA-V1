@@ -18,6 +18,19 @@ from tests.decision_orchestrator_harness import (
 )
 
 
+def _runtime_evidence(user, item_id):
+    return runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_system="sap_hcm",
+        cartridge="sap_hcm",
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        source_row={"item_id": item_id},
+        locator_field="item_id",
+        observed_at="2026-07-10T00:00:00Z",
+    )
+
+
 def test_decision_orchestrator_migration_and_router_contracts():
     sql = MIGRATION.read_text(encoding="utf-8")
     router = (REPO / "console" / "app" / "routers" / "intelligence.py").read_text(
@@ -167,11 +180,13 @@ async def test_orchestrator_accepts_canonical_intelligence_signal_metadata(
         "actual_value": 7,
         "summary": "Observed workforce deviation",
         "metadata": {
+            "source_system": "sap_hcm",
+            "cartridge": "sap_hcm",
             "data_status": "gold_ready",
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 7,
-            "evidence_pack": {"items": ["gold_metrics:record:signal-1"]},
+            **_runtime_evidence(user, "signal-1"),
         },
     }
 
@@ -253,16 +268,7 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            **runtime_row_evidence_fields(
-                source_dataset="gold_metrics",
-                source_system="sap_hcm",
-                cartridge="sap_hcm",
-                tenant_id=user["active_tenant_id"],
-                workspace_id=user["active_workspace_id"],
-                source_row={"item_id": "business-parent"},
-                locator_field="item_id",
-                observed_at="2026-07-10T00:00:00Z",
-            ),
+            **_runtime_evidence(user, "business-parent"),
         },
     )
     db.add_control_room_item(
@@ -277,16 +283,7 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            **runtime_row_evidence_fields(
-                source_dataset="gold_metrics",
-                source_system="sap_hcm",
-                cartridge="sap_hcm",
-                tenant_id=user["active_tenant_id"],
-                workspace_id=user["active_workspace_id"],
-                source_row={"item_id": "business-alert"},
-                locator_field="item_id",
-                observed_at="2026-07-10T00:00:00Z",
-            ),
+            **_runtime_evidence(user, "business-alert"),
         },
     )
 
