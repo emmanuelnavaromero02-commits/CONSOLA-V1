@@ -3,8 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 890
-POSTGRES_MINIMUM = 13
+FOCAL_MINIMUM = 937
+POSTGRES_MINIMUM = 20
 
 REQUIRED_PATHS = (
     "console/app/main.py",
@@ -107,7 +107,7 @@ def test_focal_junit_guard_requires_current_minimum_and_zero_bad_results():
     )
 
 
-def test_postgres_junit_guard_requires_13_and_zero_bad_results():
+def test_postgres_junit_guard_requires_current_minimum_and_zero_bad_results():
     text = _workflow_text()
     assert "--junitxml=/tmp/control-room-postgres-rls.xml" in text
     assert (
