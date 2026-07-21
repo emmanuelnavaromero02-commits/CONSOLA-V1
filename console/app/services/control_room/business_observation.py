@@ -192,7 +192,8 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
         denominator = _denominator(slots)
         return denominator is not None and denominator > 0
     if kind in {MetricKind.AMOUNT, MetricKind.SCALAR}:
-        return True
+        population = slots.population.value if slots.population.declared else None
+        return population is not None and population > 0
     return False
 
 

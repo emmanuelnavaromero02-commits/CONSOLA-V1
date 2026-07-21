@@ -179,10 +179,12 @@ def test_observation_flag_contradiction_fails_closed():
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
-def test_count_zero_accepts_known_empty_population():
+def test_count_zero_rejects_known_empty_population():
     item = _item(metric_type="count", count=0, population_count=0)
 
-    assert classify_business_item(item).eligible is True
+    assert (
+        classify_business_item(item).reason is EligibilityReason.ZERO_WITHOUT_POPULATION
+    )
 
 
 @pytest.mark.parametrize(
@@ -205,7 +207,11 @@ def test_real_zero_uses_metric_specific_population_rules(
     empty_population = {**valid, "population_count": 0}
 
     assert classify_business_item(valid).eligible is True
-    assert classify_business_item(empty_population).eligible is True
+    empty = classify_business_item(empty_population)
+    if metric_type in {"rate", "percentage", "average", "division"}:
+        assert empty.eligible is True
+    else:
+        assert empty.reason is EligibilityReason.ZERO_WITHOUT_POPULATION
 
 
 @pytest.mark.parametrize("missing", ["data_status", "observation_date"])

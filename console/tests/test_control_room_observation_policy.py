@@ -36,12 +36,12 @@ def _round_trip(item: dict) -> dict:
     )
 
 
-def test_observed_count_zero_with_known_empty_population_is_eligible():
+def test_observed_count_zero_rejects_empty_population():
     result = classify_business_item(
         _item(metric_type="count", count=0, population_count=0)
     )
 
-    assert result.eligible is True
+    assert result.reason is EligibilityReason.ZERO_WITHOUT_POPULATION
 
 
 def test_observed_rate_zero_requires_positive_denominator():
@@ -226,7 +226,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
                 population_count=0,
                 evidence_refs=["gold_metrics:1"],
             ),
-            EligibilityReason.ELIGIBLE,
+            EligibilityReason.ZERO_WITHOUT_POPULATION,
         ),
         (
             _item(data_status=None, metric_type="count", count=None),

@@ -39,6 +39,7 @@ def _persisted_item(index: int, *, eligible: bool = False) -> dict:
                 "data_status": "ready",
                 "metric_type": "scalar",
                 "observed_value": index,
+                "population_count": 1,
                 "observation_date": "2026-07-16",
                 "evidence_refs": [f"gold_metrics:{index}"],
             }

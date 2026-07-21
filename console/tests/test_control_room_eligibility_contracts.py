@@ -76,9 +76,12 @@ def test_qualitative_anomaly_requires_runtime_source_identity_date_and_evidence(
         )
 
 
-def test_count_zero_accepts_known_empty_population_but_not_unknown_or_negative():
+def test_count_zero_rejects_empty_unknown_and_negative_population():
     known_empty = _metric(count=0, population_count=0)
-    assert classify_business_item(known_empty).eligible is True
+    assert (
+        classify_business_item(known_empty).reason
+        is EligibilityReason.ZERO_WITHOUT_POPULATION
+    )
 
     unknown = dict(known_empty)
     unknown.pop("population_count")
@@ -92,7 +95,7 @@ def test_count_zero_accepts_known_empty_population_but_not_unknown_or_negative()
     )
 
 
-def test_known_empty_count_survives_canonical_observation_round_trip():
+def test_empty_count_stays_ineligible_after_canonical_observation_round_trip():
     original = _metric(count=0, population_count=0)
     restored = {
         "id": original["id"],
@@ -101,7 +104,10 @@ def test_known_empty_count_survives_canonical_observation_round_trip():
         "metadata": {"business_observation": observation_envelope(original)},
     }
 
-    assert classify_business_item(restored).eligible is True
+    assert (
+        classify_business_item(restored).reason
+        is EligibilityReason.ZERO_WITHOUT_POPULATION
+    )
 
 
 @pytest.mark.parametrize("metric_type", ["rate", "percentage", "average", "division"])
@@ -195,7 +201,7 @@ def _contaminated_metadata():
 def test_nested_technical_workflow_artifacts_are_removed_recursively():
     sanitized = strip_business_fields({"metadata": _contaminated_metadata()})
 
-    assert sanitized == {"metadata": {"neutral": {"label": "kept"}, "intelligence": {}}}
+    assert sanitized == {"metadata": {"neutral": {"label": "kept"}}}
 
 
 def test_business_projection_does_not_revive_nested_historical_artifacts():
@@ -203,10 +209,7 @@ def test_business_projection_does_not_revive_nested_historical_artifacts():
 
     projected = filter_business_items([item])[0]
 
-    assert projected["metadata"] == {
-        "neutral": {"label": "kept"},
-        "intelligence": {},
-    }
+    assert projected["metadata"] == {"neutral": {"label": "kept"}}
     assert item["metadata"]["intelligence"]["workflow"]["decision_id"] == 42
 
 
