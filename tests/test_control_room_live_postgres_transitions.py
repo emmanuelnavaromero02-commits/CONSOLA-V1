@@ -110,22 +110,30 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         )
         await conn.execute(
             """
-            INSERT INTO users(id, email, hashed_password, is_active)
+            INSERT INTO users(id, email, password_hash, is_active)
             VALUES (7, 'owner@example.com', 'x', true), (9, 'admin@example.com', 'x', true)
             ON CONFLICT (id) DO NOTHING
             """
         )
         await conn.execute(
             """
+            INSERT INTO decisions(id, title, workspace_id)
+            VALUES (42, 'Technical legacy', $1), (77, 'Legitimate workflow', $1)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            workspace_id,
+        )
+        await conn.execute(
+            """
             INSERT INTO control_room_items (
-                tenant_id, workspace_id, owner_user_id, item_id, cartridge_id, source_dataset,
+                tenant_id, workspace_id, owner_user_id, item_id, cartridge_id, domain, source_dataset,
                 item_kind, title, severity, status, decision_id, metadata,
                 selected_option_id, execution_status, first_seen_at, last_seen_at
             ) VALUES
-            ($1, $2, 7, $3, 'sap_hcm', 'old_gold', 'anomaly', 'Old', 'critical',
+            ($1, $2, 7, $3, 'sap_hcm', 'People', 'old_gold', 'anomaly', 'Old', 'critical',
              'decision_created', 42, $5::jsonb,
              'repair', 'executed', NOW(), NOW()),
-            ($1, $2, 7, $4, 'sap_hcm', 'gold_people', 'anomaly', 'Legit', 'medium',
+            ($1, $2, 7, $4, 'sap_hcm', 'People', 'gold_people', 'anomaly', 'Legit', 'medium',
              'decision_created', 77, $6::jsonb, 'review', 'executed', NOW(), NOW());
             """,
             tenant_id,
