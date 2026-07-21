@@ -35,7 +35,13 @@ def _persisted_item(index: int, *, eligible: bool = False) -> dict:
         "entity_label": str(index),
         "anomaly_type": "metric",
         "metadata": (
-            {"evidence_refs": [f"evidence:{index}"]}
+            {
+                "data_status": "ready",
+                "metric_type": "scalar",
+                "observed_value": index,
+                "observation_date": "2026-07-16",
+                "evidence_refs": [f"evidence:{index}"],
+            }
             if eligible
             else {"data_status": "missing"}
         ),
@@ -96,6 +102,10 @@ class ParentAndChildPage:
         self.child = _persisted_item(2, eligible=True)
         self.child["metadata"] = {
             "parent_item_id": self.parent["item_id"],
+            "data_status": "ready",
+            "metric_type": "scalar",
+            "observed_value": 2,
+            "observation_date": "2026-07-16",
             "evidence_refs": ["evidence:child"],
         }
 

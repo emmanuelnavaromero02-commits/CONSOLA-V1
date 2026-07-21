@@ -13,7 +13,10 @@ from app.services.control_room.business_observation_codec import (
     INVALID_ENVELOPE_FIELD,
     POLICY_FIELDS,
 )
-from app.services.control_room.business_policy_metadata import REPLACED_POLICY_KEYS
+from app.services.control_room.business_policy_metadata import (
+    BUSINESS_ARTIFACT_FIELDS,
+    REPLACED_POLICY_KEYS,
+)
 from app.services.control_room.business_projection import (
     filter_business_items,
     normalize_persisted_business_item,
@@ -99,7 +102,11 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         technical_id = "same-id"
         legitimate_id = "legit-id"
         legitimate = _business_item(legitimate_id)
-        provenance = decision_eligibility_provenance(legitimate, decision_id=77)
+        provenance = decision_eligibility_provenance(
+            legitimate,
+            decision_id=77,
+            workspace_id=workspace_id,
+        )
         await conn.execute(
             "INSERT INTO tenants(id, name, slug) VALUES ($1, 'Tenant', $2)",
             tenant_id,
@@ -233,9 +240,9 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         transitioned_metadata = _jsonb(transitioned["metadata"])
         assert transitioned["owner_user_id"] == 7
         assert transitioned["item_kind"] == "anomaly"
-        assert transitioned["decision_id"] is None
-        assert transitioned["selected_option_id"] is None
-        assert transitioned["execution_status"] == "not_started"
+        assert transitioned["decision_id"] == 42
+        assert transitioned["selected_option_id"] == "repair"
+        assert transitioned["execution_status"] == "executed"
         assert transitioned_metadata.get("item_kind") != "source_state"
         assert transitioned_metadata.get(WORKFLOW_QUARANTINE_KEY)
         assert not LEGACY_RESIDUAL_FIELDS.intersection(transitioned_metadata)
@@ -269,4 +276,6 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
 
 
 def test_replaced_policy_keys_follow_the_canonical_policy_schema():
-    assert REPLACED_POLICY_KEYS == tuple(sorted(POLICY_FIELDS | {ENVELOPE_KEY}))
+    assert REPLACED_POLICY_KEYS == tuple(
+        sorted(POLICY_FIELDS | {ENVELOPE_KEY} | BUSINESS_ARTIFACT_FIELDS)
+    )

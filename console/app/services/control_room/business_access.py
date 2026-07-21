@@ -47,7 +47,9 @@ def expected_item_owner(
 
 def owner_projection(
     item: Mapping[str, Any], persisted: Mapping[str, Any]
-) -> dict[str, int]:
+) -> dict[str, int | None]:
+    if "owner_user_id" in persisted and persisted.get("owner_user_id") is None:
+        return {"owner_user_id": None}
     persisted_owner = actor_id(persisted.get("owner_user_id"))
     if persisted_owner is not None:
         return {"owner_user_id": persisted_owner}

@@ -46,6 +46,10 @@ async def test_overlay_state_is_scoped_by_tenant_workspace_and_owner():
         "title": "Business item",
         "source_dataset": "gold_metrics",
         "evidence_refs": ["gold_metrics:business-1"],
+        "metric_type": "count",
+        "observed_value": 1,
+        "population_count": 10,
+        "observation_date": "2026-07-20",
     }
     with (
         patch.object(
@@ -88,6 +92,10 @@ async def test_workspace_admin_overlay_preserves_persisted_owner():
         "title": "Business item",
         "source_dataset": "gold_metrics",
         "evidence_refs": ["gold_metrics:business-1"],
+        "metric_type": "count",
+        "observed_value": 1,
+        "population_count": 10,
+        "observation_date": "2026-07-20",
     }
     with (
         patch.object(
@@ -107,9 +115,8 @@ class ConflictConnection:
         return "INSERT 0 0"
 
     async def fetchrow(self, sql: str, *args):
-        assert "owner_user_id IS NOT DISTINCT FROM $5" in sql
-        assert args[4] == 7
-        return None
+        assert "FOR UPDATE" in sql
+        return {"item_id": "business-1", "owner_user_id": 9, "decision_id": None}
 
 
 @pytest.mark.asyncio
@@ -118,7 +125,7 @@ async def test_owner_conflict_aborts_upsert_and_decision_link():
     with pytest.raises(OwnerScopeConflict):
         await ensure_item_row(conn, {"item_id": "business-1"}, terminal_statuses=())
 
-    with pytest.raises(RuntimeError, match="decision link was not persisted"):
+    with pytest.raises(HTTPException) as exc_info:
         await link_control_room_decision(
             conn,
             workspace_id="workspace-a",
@@ -134,6 +141,7 @@ async def test_owner_conflict_aborts_upsert_and_decision_link():
                 "evidence_refs": ["gold_metrics:business-1"],
             },
         )
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio

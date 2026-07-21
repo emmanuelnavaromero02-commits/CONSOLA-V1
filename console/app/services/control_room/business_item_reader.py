@@ -12,6 +12,7 @@ from app.services.control_room.business_projection import (
 from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_lineage import item_kinds, parent_references
 from app.services.control_room.business_access import (
+    actor_id,
     can_read_workspace_wide,
     owner_projection,
     owner_scope_id,
@@ -162,7 +163,8 @@ async def resolve_business_item_lookup(
 ) -> tuple[dict[str, Any] | None, set[str]]:
     """Resolve a command item and its eligible lineage without HTTP concerns."""
     eligible_parent_ids: set[str] = set()
-    item = await load_persisted(item_id)
+    loaded_persisted = await load_persisted(item_id)
+    item = loaded_persisted
     if item is not None and not item_kinds(item) & _PERSISTED_COMMAND_KINDS:
         item = None
 
@@ -210,7 +212,7 @@ async def resolve_business_item_lookup(
         ):
             item = {
                 **live_item,
-                **owner_projection(live_item, persisted_item or {}),
+                **owner_projection(live_item, loaded_persisted or {}),
             }
         elif persisted_item is not None:
             item = persisted_item
@@ -234,6 +236,17 @@ async def resolve_scoped_business_item_lookup(
     if not can_read_workspace_wide(user) and owner_id is None:
         return None, set()
 
+    persisted = await load_persisted(item_id)
+    if (
+        persisted is not None
+        and owner_id is not None
+        and actor_id(persisted.get("owner_user_id")) != owner_id
+    ):
+        return None, set()
+
+    async def _load_scoped(target: str) -> dict[str, Any] | None:
+        return persisted if target == item_id else await load_persisted(target)
+
     async def _load_lineage(parent_ids: Sequence[str]) -> Sequence[Mapping[str, Any]]:
         pool = await pool_factory()
 
@@ -252,7 +265,7 @@ async def resolve_scoped_business_item_lookup(
 
     return await resolve_business_item_lookup(
         item_id,
-        load_persisted=load_persisted,
+        load_persisted=_load_scoped,
         collect_items=collect_items,
         load_lineage=_load_lineage,
         normalize_lineage=normalize_lineage,

@@ -163,7 +163,8 @@ class CommandTagConnection:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "result", [None, "", "UPDATE 1", "INSERT nope", "INSERT 0 nope"]
+    "result",
+    [None, "", "UPDATE 1", "INSERT nope", "INSERT 0 nope", "INSERT 99 1"],
 )
 async def test_real_backend_rejects_missing_or_malformed_command_tags(result):
     with pytest.raises(PersistenceCommandTagError):
@@ -186,10 +187,12 @@ async def test_real_backend_rejects_unexpected_affected_row_count():
 
 
 @pytest.mark.asyncio
-async def test_identifiable_mock_command_result_is_explicitly_tolerated():
+async def test_mock_without_postgres_command_tag_is_rejected():
     conn = AsyncMock()
-    await persist_item_rows(
-        conn,
-        [{"item_id": "item-1", "owner_user_id": 7}],
-        owner_scope_id=7,
-    )
+    conn.fetch.return_value = []
+    with pytest.raises(PersistenceCommandTagError):
+        await persist_item_rows(
+            conn,
+            [{"item_id": "item-1", "owner_user_id": 7}],
+            owner_scope_id=7,
+        )

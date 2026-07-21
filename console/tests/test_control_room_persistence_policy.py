@@ -64,12 +64,14 @@ def test_business_policy_metadata_drops_legacy_source_state_semantics():
     assert clean.get("data_status") != "missing"
 
 
-def test_persist_sql_resets_unproven_workflow_on_diagnostic_transition():
-    assert "decision_id = CASE WHEN" in PERSIST_ITEMS_SQL
-    assert "THEN NULL ELSE control_room_items.decision_id END" in PERSIST_ITEMS_SQL
+def test_persist_sql_preserves_workflow_links_for_explicit_quarantine():
+    assert "decision_id = control_room_items.decision_id" in PERSIST_ITEMS_SQL
     assert (
-        "workflow_quarantine" in PERSIST_ITEMS_SQL or "$4::jsonb" in PERSIST_ITEMS_SQL
+        "selected_option_id = control_room_items.selected_option_id"
+        in PERSIST_ITEMS_SQL
     )
+    assert "execution_status = control_room_items.execution_status" in PERSIST_ITEMS_SQL
+    assert "THEN NULL ELSE control_room_items.decision_id" not in PERSIST_ITEMS_SQL
 
 
 def test_eligible_decision_provenance_is_machine_checkable():
@@ -119,16 +121,7 @@ def test_persistence_metadata_uses_current_fingerprint_and_drops_incoming_links(
     assert "decision_provenance" not in metadata
 
 
-def test_persist_sql_matches_all_provenance_fields_to_current_item():
-    for field in (
-        "policy_version",
-        "eligible_at_link",
-        "item_id",
-        "kind",
-        "fingerprint",
-        "decision_id",
-    ):
-        assert f"->>'{field}'" in PERSIST_ITEMS_SQL
-    assert CURRENT_ELIGIBILITY_FINGERPRINT_KEY in PERSIST_ITEMS_SQL
-    assert "= control_room_items.decision_id::text" in PERSIST_ITEMS_SQL
-    assert "fingerprint'AND" not in PERSIST_ITEMS_SQL
+def test_persist_sql_replaces_reconciled_workflow_metadata_atomically():
+    assert f"- '{DECISION_PROVENANCE_KEY}'" in PERSIST_ITEMS_SQL
+    assert "|| EXCLUDED.metadata" in PERSIST_ITEMS_SQL
+    assert CURRENT_ELIGIBILITY_FINGERPRINT_KEY in persistence_metadata(_business_item())
