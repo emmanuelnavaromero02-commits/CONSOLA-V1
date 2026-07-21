@@ -15,18 +15,13 @@ from app.routers import control_room as routes
 
 TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 WORKSPACE_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+ALLOWED_CARTRIDGES = "banxico inegi sap_hcm sap_successfactors sec_edgar".split()
 USER = {
     "id": 7,
     "role": "super_admin",
     "active_tenant_id": TENANT_ID,
     "active_workspace_id": WORKSPACE_ID,
-    "allowed_cartridges": [
-        "banxico",
-        "inegi",
-        "sap_hcm",
-        "sap_successfactors",
-        "sec_edgar",
-    ],
+    "allowed_cartridges": ALLOWED_CARTRIDGES,
 }
 ITEM_ID = routes.control_room_service._encode_id(
     {
