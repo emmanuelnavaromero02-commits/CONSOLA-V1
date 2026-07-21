@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services import control_room_service
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 
 
 USER = {
@@ -18,7 +21,7 @@ USER = {
 
 
 def _item() -> dict:
-    return {
+    item = {
         "id": "business-1",
         "kind": "anomaly",
         "title": "Anomalia valida",
@@ -26,15 +29,30 @@ def _item() -> dict:
         "description": "Descripcion",
         "recommendation": "Revisar",
         "source_dataset": "gold_metrics",
+        "source_system": "sap_hcm",
         "cartridge": "sap_hcm",
+        "tenant_id": USER["active_tenant_id"],
+        "workspace_id": USER["active_workspace_id"],
         "severity": "high",
         "status": "open",
         "metric_type": "count",
         "observed_value": 1,
         "population_count": 10,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_metrics:business-1"],
     }
+    item.update(
+        runtime_row_evidence_fields(
+            source_dataset="gold_metrics",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id=USER["active_tenant_id"],
+            workspace_id=USER["active_workspace_id"],
+            source_row={"item_id": item["id"], "observed_value": 1},
+            locator_field="item_id",
+            observed_at="2026-07-20T00:00:00Z",
+        )
+    )
+    return item
 
 
 class _Context(AbstractAsyncContextManager):
@@ -110,6 +128,8 @@ class LegacyTechnicalConnection(TransactionalConnection):
             "item_id": "business-1",
             "item_kind": "source_state",
             "source_dataset": "diagnostic_sources",
+            "tenant_id": USER["active_tenant_id"],
+            "workspace_id": USER["active_workspace_id"],
             "metadata": {"data_status": "missing", "legacy_note": "keep"},
             "status": "open",
         }
