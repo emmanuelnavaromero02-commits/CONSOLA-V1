@@ -19,6 +19,7 @@ from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence.evidence_refs import (
     external_evidence_metadata,
     merge_evidence_refs,
+    normalize_evidence_refs,
 )
 from app.services.intelligence.utils import json_dumps, public_json, sample_hash
 
@@ -318,8 +319,15 @@ def normalize_signal(payload: dict[str, Any], source: dict[str, Any]) -> dict[st
     source_data = _source_summary(source)
     metadata = source_data["metadata"]
     evidence_refs = merge_evidence_refs(
-        metadata.get("evidence_refs"),
-        payload.get("evidence_refs"),
+        normalize_evidence_refs(
+            metadata.get("evidence_refs"),
+            allow_server_dataset_rows=True,
+        ),
+        normalize_evidence_refs(
+            payload.get("evidence_refs"),
+            allow_server_dataset_rows=False,
+        ),
+        allow_server_dataset_rows=True,
     )
     return {
         "source_type": payload.get("source_type"),

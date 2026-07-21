@@ -102,6 +102,15 @@ def verified_runtime_row_reference(value: Mapping[str, Any]) -> bool:
         return False
 
 
+def canonical_runtime_row_reference(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    if not verified_runtime_row_reference(value):
+        return None
+    canonical = {field: value[field] for field in _SIGNED_FIELDS}
+    canonical["source_locator"] = dict(value["source_locator"])
+    canonical["server_attestation"] = value["server_attestation"]
+    return canonical
+
+
 def runtime_row_evidence_fields(
     *,
     source_dataset: str,
@@ -171,6 +180,7 @@ def runtime_row_evidence_fields(
 
 
 __all__ = (
+    "canonical_runtime_row_reference",
     "runtime_row_evidence_fields",
     "runtime_scope_binding",
     "verified_runtime_row_reference",
