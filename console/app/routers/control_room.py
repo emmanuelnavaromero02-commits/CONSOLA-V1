@@ -16,6 +16,9 @@ from app.services.control_room.authorization_cache import (
     cache_get_or_set as _control_room_cache_get_or_set,
     cache_invalidate as _control_room_cache_invalidate,
 )
+from app.services.control_room.business_cartridge_scope import (
+    business_cartridge_allowed,
+)
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
@@ -24,6 +27,11 @@ from app.services.security_context import build_security_context, verify_signed_
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
+
+
+def _require_readiness_cartridge(user: dict, cartridge_id: str) -> None:
+    if not business_cartridge_allowed(user, cartridge_id):
+        raise HTTPException(403, "cartridge not allowed for active workspace")
 
 
 async def _invalidate_after_write(user: dict, operation: Any) -> Any:
@@ -281,6 +289,7 @@ async def control_room_sap_successfactors_talent_metadata_readiness(user: dict =
 async def control_room_banxico_readiness(user: dict = Depends(require_authenticated)):
     from app.services.banxico_readiness import banxico_readiness
 
+    _require_readiness_cartridge(user, "banxico")
     return await _control_room_cache_get_or_set("banxico-readiness", user, lambda: banxico_readiness(user))
 
 
@@ -288,6 +297,7 @@ async def control_room_banxico_readiness(user: dict = Depends(require_authentica
 async def control_room_inegi_readiness(user: dict = Depends(require_authenticated)):
     from app.services.inegi_readiness import inegi_readiness
 
+    _require_readiness_cartridge(user, "inegi")
     return await _control_room_cache_get_or_set("inegi-readiness", user, lambda: inegi_readiness(user))
 
 
@@ -295,6 +305,7 @@ async def control_room_inegi_readiness(user: dict = Depends(require_authenticate
 async def control_room_sec_edgar_readiness(user: dict = Depends(require_authenticated)):
     from app.services.sec_edgar_readiness import sec_edgar_readiness
 
+    _require_readiness_cartridge(user, "sec_edgar")
     return await _control_room_cache_get_or_set("sec-edgar-readiness", user, lambda: sec_edgar_readiness(user))
 
 

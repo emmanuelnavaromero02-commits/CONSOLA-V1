@@ -20,7 +20,13 @@ USER = {
     "role": "super_admin",
     "active_tenant_id": TENANT_ID,
     "active_workspace_id": WORKSPACE_ID,
-    "allowed_cartridges": ["sap_hcm", "sap_successfactors"],
+    "allowed_cartridges": [
+        "banxico",
+        "inegi",
+        "sap_hcm",
+        "sap_successfactors",
+        "sec_edgar",
+    ],
 }
 ITEM_ID = routes.control_room_service._encode_id(
     {

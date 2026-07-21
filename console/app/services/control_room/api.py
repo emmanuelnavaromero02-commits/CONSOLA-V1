@@ -11,6 +11,9 @@ from app.services.control_room.talent_catalog import (
     TALENT_METADATA_ENTITIES,
 )
 from app.services.control_room.business_agentops import agentops_source_ids
+from app.services.control_room.business_cartridge_scope import (
+    allowed_business_cartridges,
+)
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
@@ -32,6 +35,7 @@ for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
 _core.__dict__.setdefault("agentops_source_ids", agentops_source_ids)
+_core.__dict__.setdefault("allowed_business_cartridges", allowed_business_cartridges)
 _core.__dict__.setdefault("runtime_row_evidence_fields", runtime_row_evidence_fields)
 _core.__dict__.setdefault("_build_talent_action_preview", build_talent_action_preview)
 
@@ -2214,15 +2218,8 @@ def _all_sources() -> tuple[ControlRoomSource, ...]:
 
 @_bind_to_core
 def _allowed_from_user(user: dict | None) -> set[str] | None:
-    ctx = build_security_context(user)
-    allowed = {
-        str(item).strip()
-        for item in (ctx.get("allowed_cartridges") or [])
-        if str(item).strip()
-    }
-    if "*" in allowed:
-        return None
-    return allowed if allowed else None
+    allowed = allowed_business_cartridges(user)
+    return None if allowed is None else set(allowed)
 
 
 @_bind_to_core
