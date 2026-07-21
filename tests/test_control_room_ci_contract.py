@@ -54,10 +54,10 @@ def test_control_room_workflow_runs_all_related_contract_suites():
         assert test_path in focal_step
 
 
-def test_focal_junit_guard_requires_556_and_zero_bad_results():
+def test_focal_junit_guard_requires_757_and_zero_bad_results():
     text = _workflow_text()
     assert "--junitxml=/tmp/control-room-focal.xml" in text
-    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=556' in text
+    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=757' in text
 
 
 def test_postgres_junit_guard_requires_13_and_zero_bad_results():
