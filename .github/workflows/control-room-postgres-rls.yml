@@ -25,6 +25,7 @@ on:
       - "console/tests/test_control_room*.py"
       - "console/tests/test_decision*.py"
       - "console/tests/test_intelligence_control_room_canonical_persistence.py"
+      - "console/tests/test_intelligence_evidence_refs_attestation.py"
       - "console/tests/test_ops_summary_and_version.py"
       - "console/tests/test_pipeline_extract.py"
       - "console/tests/test_scoped_surface_hardening.py"
@@ -70,6 +71,7 @@ jobs:
             console/tests/test_scoped_surface_hardening.py \
             console/tests/test_decision*.py \
             console/tests/test_intelligence_control_room_canonical_persistence.py \
+            console/tests/test_intelligence_evidence_refs_attestation.py \
             console/tests/test_ops_summary_and_version.py \
             console/tests/test_pipeline_extract.py \
             tests/test_decision*.py \
@@ -118,6 +120,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=882, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=890, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=13, label="Live PostgreSQL/RLS")
           PY
