@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# fmt: off
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 
@@ -98,7 +96,9 @@ async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
 
     result = await console_main.api_bronze_query(
-        {"sql": "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 20"},
+        {
+            "sql": "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 20"
+        },
         USER,
     )
 
@@ -110,12 +110,20 @@ async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
         "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
         "workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/**/*.parquet"
     ) in sql
-    assert captured["payload"]["args"]["user_context"]["tenant_id"] == USER["active_tenant_id"]
-    assert captured["payload"]["args"]["user_context"]["workspace_id"] == USER["active_workspace_id"]
+    assert (
+        captured["payload"]["args"]["user_context"]["tenant_id"]
+        == USER["active_tenant_id"]
+    )
+    assert (
+        captured["payload"]["args"]["user_context"]["workspace_id"]
+        == USER["active_workspace_id"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_bronze_query_endpoint_infers_sources_from_packaged_silver_sql(monkeypatch):
+async def test_bronze_query_endpoint_infers_sources_from_packaged_silver_sql(
+    monkeypatch,
+):
     captured: dict = {}
 
     class FakeResponse:
@@ -224,26 +232,52 @@ async def test_apps_list_filters_to_active_scoped_vault_cartridges(monkeypatch):
             return None
 
         async def post(self, *_args, **_kwargs):
-            return FakeResponse({
-                "apps": [
-                    {"name": "sap_hcm_people_quality_dashboard", "cartridge": "sap_hcm"},
-                    {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"},
-                    {"name": "salesforce_pipeline", "cartridge": "salesforce"},
-                ]
-            })
+            return FakeResponse(
+                {
+                    "apps": [
+                        {
+                            "name": "sap_hcm_people_quality_dashboard",
+                            "cartridge": "sap_hcm",
+                        },
+                        {
+                            "name": "sap_successfactors_workforce_overview",
+                            "cartridge": "sap_successfactors",
+                        },
+                        {"name": "salesforce_pipeline", "cartridge": "salesforce"},
+                    ]
+                }
+            )
 
         async def get(self, url, **_kwargs):
             if str(url).endswith("/connections/sap_successfactors"):
-                return FakeResponse({"connections": [{"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"}]})
+                return FakeResponse(
+                    {
+                        "connections": [
+                            {
+                                "conn_id": "femsa_sf",
+                                "auth_method": "saml_bearer_assertion",
+                            }
+                        ]
+                    }
+                )
             return FakeResponse({"connections": []})
 
-    monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
+    monkeypatch.setattr(
+        console_main,
+        "_get_db_pool",
+        AsyncMock(
+            side_effect=AssertionError("vault_entries must not be read by Console")
+        ),
+    )
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
 
     result = await console_main.api_apps(USER)
 
     assert result["apps"] == [
-        {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"}
+        {
+            "name": "sap_successfactors_workforce_overview",
+            "cartridge": "sap_successfactors",
+        }
     ]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
 
@@ -253,23 +287,31 @@ async def test_workspace_app_proxy_redirects_inactive_cartridge_deep_links(monke
     async def fake_active(_user, _candidates=None):
         return {"sap_successfactors"}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
-    request = Request({
-        "type": "http",
-        "method": "GET",
-        "path": "/apps/sap_hcm_people_quality_dashboard",
-        "headers": [],
-    })
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/apps/sap_hcm_people_quality_dashboard",
+            "headers": [],
+        }
+    )
     request.state.user = USER
 
-    response = await console_main._proxy_workspace_app(request, "sap_hcm_people_quality_dashboard")
+    response = await console_main._proxy_workspace_app(
+        request, "sap_hcm_people_quality_dashboard"
+    )
 
     assert response.status_code == 303
     assert response.headers["location"] == "/apps-gallery"
 
 
 @pytest.mark.asyncio
-async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(monkeypatch):
+async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(
+    monkeypatch,
+):
     class FakeResponse:
         def __init__(self, payload, status_code=200):
             self._payload = payload
@@ -289,30 +331,46 @@ async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(mo
             return None
 
         async def post(self, *_args, **_kwargs):
-            return FakeResponse({
-                "apps": [
-                    {"name": "sap_hcm_people_quality_dashboard", "cartridge": "sap_hcm"},
-                    {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"},
-                    {"name": "salesforce_pipeline", "cartridge": "salesforce"},
-                ]
-            })
+            return FakeResponse(
+                {
+                    "apps": [
+                        {
+                            "name": "sap_hcm_people_quality_dashboard",
+                            "cartridge": "sap_hcm",
+                        },
+                        {
+                            "name": "sap_successfactors_workforce_overview",
+                            "cartridge": "sap_successfactors",
+                        },
+                        {"name": "salesforce_pipeline", "cartridge": "salesforce"},
+                    ]
+                }
+            )
 
         async def get(self, url, **_kwargs):
             if str(url).endswith("/connections/sap_successfactors"):
                 return FakeResponse({"connections": [{"conn_id": "femsa_sf"}]})
             return FakeResponse({"connections": []})
 
-    monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
+    monkeypatch.setattr(
+        console_main,
+        "_get_db_pool",
+        AsyncMock(
+            side_effect=AssertionError("vault_entries must not be read by Console")
+        ),
+    )
     monkeypatch.setattr(
         console_main,
         "_workspace_memberships",
-        AsyncMock(return_value=[
-            {
-                "workspace_id": USER["active_workspace_id"],
-                "tenant_id": USER["active_tenant_id"],
-                "workspace_role": "workspace_admin",
-            }
-        ]),
+        AsyncMock(
+            return_value=[
+                {
+                    "workspace_id": USER["active_workspace_id"],
+                    "tenant_id": USER["active_tenant_id"],
+                    "workspace_role": "workspace_admin",
+                }
+            ]
+        ),
     )
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
 
@@ -325,13 +383,18 @@ async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(mo
     result = await console_main.api_apps(unscoped_super_admin)
 
     assert result["apps"] == [
-        {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"}
+        {
+            "name": "sap_successfactors_workforce_overview",
+            "cartridge": "sap_successfactors",
+        }
     ]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
 
 
 @pytest.mark.asyncio
-async def test_apps_list_global_super_admin_uses_vault_service_for_scoped_connections(monkeypatch):
+async def test_apps_list_global_super_admin_uses_vault_service_for_scoped_connections(
+    monkeypatch,
+):
     class FakeResponse:
         def __init__(self, payload, status_code=200):
             self._payload = payload
@@ -351,42 +414,67 @@ async def test_apps_list_global_super_admin_uses_vault_service_for_scoped_connec
             return None
 
         async def post(self, *_args, **_kwargs):
-            return FakeResponse({
-                "apps": [
-                    {"name": "sap_hcm_people_quality_dashboard"},
-                    {"name": "sap_successfactors_workforce_overview"},
-                    {"name": "salesforce_pipeline"},
-                ]
-            })
+            return FakeResponse(
+                {
+                    "apps": [
+                        {"name": "sap_hcm_people_quality_dashboard"},
+                        {"name": "sap_successfactors_workforce_overview"},
+                        {"name": "salesforce_pipeline"},
+                    ]
+                }
+            )
 
         async def get(self, url, **_kwargs):
             if str(url).endswith("/connections/sap_successfactors"):
-                return FakeResponse({"connections": [{"conn_id": "femsa_sf", "auth_method": "saml_bearer_assertion"}]})
+                return FakeResponse(
+                    {
+                        "connections": [
+                            {
+                                "conn_id": "femsa_sf",
+                                "auth_method": "saml_bearer_assertion",
+                            }
+                        ]
+                    }
+                )
             return FakeResponse({"connections": []})
 
-    monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
-    monkeypatch.setattr(console_main, "_workspace_memberships", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        console_main,
+        "_get_db_pool",
+        AsyncMock(
+            side_effect=AssertionError("vault_entries must not be read by Console")
+        ),
+    )
+    monkeypatch.setattr(
+        console_main, "_workspace_memberships", AsyncMock(return_value=[])
+    )
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
 
-    result = await console_main.api_apps({
-        "id": USER["id"],
-        "email": USER["email"],
-        "role": "super_admin",
-        "active_tenant_id": USER["active_tenant_id"],
-        "active_workspace_id": USER["active_workspace_id"],
-        "allowed_cartridges": USER["allowed_cartridges"],
-    })
+    result = await console_main.api_apps(
+        {
+            "id": USER["id"],
+            "email": USER["email"],
+            "role": "super_admin",
+            "active_tenant_id": USER["active_tenant_id"],
+            "active_workspace_id": USER["active_workspace_id"],
+            "allowed_cartridges": USER["allowed_cartridges"],
+        }
+    )
 
     assert result["apps"] == [{"name": "sap_successfactors_workforce_overview"}]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
 
 
 @pytest.mark.asyncio
-async def test_pipeline_rejects_inactive_cartridge_when_scoped_connection_exists(monkeypatch):
+async def test_pipeline_rejects_inactive_cartridge_when_scoped_connection_exists(
+    monkeypatch,
+):
     async def fake_active(_user, _candidates=None):
         return {"sap_successfactors"}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
 
     with pytest.raises(HTTPException) as exc:
         await console_main.api_pipeline("replicon", USER)
@@ -396,11 +484,15 @@ async def test_pipeline_rejects_inactive_cartridge_when_scoped_connection_exists
 
 
 @pytest.mark.asyncio
-async def test_semantic_rejects_inactive_cartridge_when_scoped_connection_exists(monkeypatch):
+async def test_semantic_rejects_inactive_cartridge_when_scoped_connection_exists(
+    monkeypatch,
+):
     async def fake_active(_user, _candidates=None):
         return {"sap_successfactors"}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
 
     with pytest.raises(HTTPException) as exc:
         await console_main.api_semantic("replicon", USER)
@@ -422,7 +514,9 @@ async def test_catalog_defaults_to_active_scoped_cartridge(monkeypatch):
         captured["user"] = user
         return {"datasets": []}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
     monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
 
     result = await console_main.api_catalog_get(layer="gold", user=USER)
@@ -459,7 +553,9 @@ async def test_semantic_enrich_uses_direct_catalog_tools(monkeypatch):
             return {"updated": len(args["entries"])}
         raise AssertionError(f"unexpected tool {tool}")
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
     monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
 
     result = await console_main.api_semantic_enrich(
@@ -480,7 +576,9 @@ async def test_semantic_enrich_uses_direct_catalog_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_semantic_enrich_skips_when_catalog_has_no_missing_descriptions(monkeypatch):
+async def test_semantic_enrich_skips_when_catalog_has_no_missing_descriptions(
+    monkeypatch,
+):
     async def fake_active(_user, _candidates=None):
         return {"sap_successfactors"}
 
@@ -498,10 +596,14 @@ async def test_semantic_enrich_skips_when_catalog_has_no_missing_descriptions(mo
             }
         }
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
     monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
 
-    result = await console_main.api_semantic_enrich({"cartridge": "sap_successfactors"}, user=USER)
+    result = await console_main.api_semantic_enrich(
+        {"cartridge": "sap_successfactors"}, user=USER
+    )
 
     assert result["enriched"] == 0
     assert result["approval_required"] is False
@@ -519,10 +621,14 @@ async def test_catalog_cache_is_scoped_by_workspace(monkeypatch):
     calls: list[tuple[str | None, dict]] = []
 
     async def fake_refinement(_tool, args, user=None, **_kwargs):
-        calls.append((user.get("active_workspace_id") or user.get("workspace_id"), dict(args)))
+        calls.append(
+            (user.get("active_workspace_id") or user.get("workspace_id"), dict(args))
+        )
         return {"datasets": [{"workspace_id": calls[-1][0]}]}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
     monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
 
     first = await console_main.api_catalog_get(layer="gold", user=USER)
@@ -558,10 +664,14 @@ async def test_catalog_cache_singleflights_concurrent_cold_reads(monkeypatch):
         calls.append(dict(args))
         return {"datasets": [{"name": "sap_successfactors_employee_360"}]}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
     monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
 
-    results = await asyncio.gather(*(console_main.api_catalog_get(layer="gold", user=USER) for _ in range(8)))
+    results = await asyncio.gather(
+        *(console_main.api_catalog_get(layer="gold", user=USER) for _ in range(8))
+    )
 
     assert results == [{"datasets": [{"name": "sap_successfactors_employee_360"}]}] * 8
     assert calls == [{"layer": "gold", "cartridge": "sap_successfactors"}]
@@ -617,14 +727,20 @@ async def test_sources_cache_is_scoped_by_workspace(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_catalog_rejects_inactive_cartridge_when_scoped_connection_exists(monkeypatch):
+async def test_catalog_rejects_inactive_cartridge_when_scoped_connection_exists(
+    monkeypatch,
+):
     async def fake_active(_user, _candidates=None):
         return {"sap_successfactors"}
 
-    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(
+        console_main, "_active_scoped_connection_cartridges", fake_active
+    )
 
     with pytest.raises(HTTPException) as exc:
-        await console_main.api_catalog_get(layer="gold", cartridge="replicon", user=USER)
+        await console_main.api_catalog_get(
+            layer="gold", cartridge="replicon", user=USER
+        )
 
     assert exc.value.status_code == 403
     assert "active" in str(exc.value.detail)
@@ -632,7 +748,9 @@ async def test_catalog_rejects_inactive_cartridge_when_scoped_connection_exists(
 
 def test_explorer_allows_scoped_ancestors_but_rejects_foreign_objects():
     assert console_main._explorer_path_allowed("raw/sap_successfactors/", USER)
-    assert console_main._explorer_path_allowed("raw/sap_successfactors/PerPerson/", USER)
+    assert console_main._explorer_path_allowed(
+        "raw/sap_successfactors/PerPerson/", USER
+    )
     assert console_main._explorer_path_allowed(
         (
             "raw/sap_successfactors/PerPerson/"
@@ -658,7 +776,11 @@ async def test_apps_filter_blocks_catalog_fallback_when_no_connections(monkeypat
         status_code = 200
 
         def json(self):
-            return {"apps": [{"name": "sap_hcm_people_quality_dashboard", "cartridge": "sap_hcm"}]}
+            return {
+                "apps": [
+                    {"name": "sap_hcm_people_quality_dashboard", "cartridge": "sap_hcm"}
+                ]
+            }
 
     class FakeClient:
         def __init__(self, **_kwargs):
@@ -676,7 +798,13 @@ async def test_apps_filter_blocks_catalog_fallback_when_no_connections(monkeypat
         async def get(self, *_args, **_kwargs):
             return FakeResponse()
 
-    monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(side_effect=AssertionError("vault_entries must not be read by Console")))
+    monkeypatch.setattr(
+        console_main,
+        "_get_db_pool",
+        AsyncMock(
+            side_effect=AssertionError("vault_entries must not be read by Console")
+        ),
+    )
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
 
     result = await console_main.api_apps(USER)
@@ -698,10 +826,14 @@ async def test_control_room_query_prefers_scoped_gold_fetcher(monkeypatch):
 
     class RefinementMustNotBeCalled:
         def __init__(self, **_kwargs):
-            raise AssertionError("Control Room should use scoped Gold before Refinement")
+            raise AssertionError(
+                "Control Room should use scoped Gold before Refinement"
+            )
 
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", fake_gold_rows)
-    monkeypatch.setattr(control_room_service.httpx, "AsyncClient", RefinementMustNotBeCalled)
+    monkeypatch.setattr(
+        control_room_service.httpx, "AsyncClient", RefinementMustNotBeCalled
+    )
 
     rows = await control_room_service.query_dataset_rows(
         "sap_successfactors_headcount_by_department",
@@ -709,16 +841,22 @@ async def test_control_room_query_prefers_scoped_gold_fetcher(monkeypatch):
         10,
     )
 
-    assert rows == [{"department_id": "HR", "department_name": "People", "headcount": 1288}]
+    assert rows == [
+        {"department_id": "HR", "department_name": "People", "headcount": 1288}
+    ]
 
 
 @pytest.mark.asyncio
-async def test_control_room_production_reports_known_non_ready_sources_without_fetching(monkeypatch):
+async def test_control_room_production_reports_known_non_ready_sources_without_fetching(
+    monkeypatch,
+):
     monkeypatch.setenv("APP_ENV", "production")
 
     async def fetcher(dataset: str, _user: dict | None, _limit: int):
         if dataset == "sap_successfactors_headcount_by_department":
-            return [{"department_id": "HR", "department_name": "People", "headcount": 1288}]
+            return [
+                {"department_id": "HR", "department_name": "People", "headcount": 1288}
+            ]
         if dataset == "sap_successfactors_manager_hierarchy":
             return [{"manager_id": "M1", "direct_reports": 4}]
         if dataset == "sap_successfactors_org_structure":
@@ -734,14 +872,16 @@ async def test_control_room_production_reports_known_non_ready_sources_without_f
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "connection_id": "femsa_sf",
-                    "auth_method": "saml_bearer_assertion",
-                },
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "connection_id": "femsa_sf",
+                        "auth_method": "saml_bearer_assertion",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=fetcher)
@@ -757,7 +897,9 @@ async def test_control_room_production_reports_known_non_ready_sources_without_f
         "sap_successfactors_recruitment_pipeline",
         "sap_successfactors_compensation_distribution",
     }.issubset(source_names)
-    readiness_by_source = {source["dataset"]: source["data_readiness"] for source in result["sources"]}
+    readiness_by_source = {
+        source["dataset"]: source["data_readiness"] for source in result["sources"]
+    }
     assert readiness_by_source["sap_successfactors_headcount_by_department"] == "ready"
     assert readiness_by_source["sap_successfactors_manager_hierarchy"] == "ready"
     assert readiness_by_source["sap_successfactors_org_structure"] == "ready"

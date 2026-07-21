@@ -13,8 +13,6 @@ scoping guarantee itself is still covered by test_control_room_service.py.
 
 from __future__ import annotations
 
-# fmt: off
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -23,7 +21,12 @@ from app.routers import dashboard
 from app.services import control_room_service
 
 
-USER = {"id": 7, "email": "ops@example.com", "active_workspace_id": "ws-A", "tenant_id": "t-A"}
+USER = {
+    "id": 7,
+    "email": "ops@example.com",
+    "active_workspace_id": "ws-A",
+    "tenant_id": "t-A",
+}
 
 
 def _zero_pool() -> AsyncMock:
@@ -61,7 +64,9 @@ def test_control_room_domain_payload_hides_modules_without_runtime_data(monkeypa
         }
     ]
 
-    payload = control_room_service._domain_payload("Recursos Humanos", modules, [], sources)
+    payload = control_room_service._domain_payload(
+        "Recursos Humanos", modules, [], sources
+    )
 
     assert [module["id"] for module in payload["modules"]] == ["sap_successfactors_org"]
 
@@ -70,7 +75,9 @@ def test_control_room_domain_payload_hides_modules_without_runtime_data(monkeypa
 async def test_dashboard_kpis_tenant_without_active_connection_stays_empty():
     with (
         patch.object(dashboard.auth, "pool", new=AsyncMock(return_value=_zero_pool())),
-        patch.object(dashboard, "_active_scoped_cartridges", new=AsyncMock(return_value=())),
+        patch.object(
+            dashboard, "_active_scoped_cartridges", new=AsyncMock(return_value=())
+        ),
     ):
         result = await dashboard.dashboard_kpis(user=USER)
 
@@ -85,7 +92,9 @@ async def test_dashboard_kpis_platform_admin_falls_back_to_catalog_without_activ
     platform_user = {**USER, "role": "admin"}
     with (
         patch.object(dashboard.auth, "pool", new=AsyncMock(return_value=_zero_pool())),
-        patch.object(dashboard, "_active_scoped_cartridges", new=AsyncMock(return_value=())),
+        patch.object(
+            dashboard, "_active_scoped_cartridges", new=AsyncMock(return_value=())
+        ),
     ):
         result = await dashboard.dashboard_kpis(user=platform_user)
 
@@ -113,7 +122,11 @@ async def test_dashboard_kpis_scopes_to_active_connection_when_present():
 @pytest.mark.asyncio
 async def test_filter_installations_falls_back_to_catalog_without_connections():
     installations = [
-        {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+        {
+            "cartridge_id": "replicon",
+            "installation_status": "ready",
+            "label": "Replicon",
+        },
         {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
     ]
     with patch.object(
@@ -132,8 +145,16 @@ async def test_filter_installations_falls_back_to_catalog_without_connections():
 @pytest.mark.asyncio
 async def test_filter_installations_scopes_when_a_connection_exists():
     installations = [
-        {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-        {"cartridge_id": "sap_successfactors", "installation_status": "ready", "label": "SF"},
+        {
+            "cartridge_id": "replicon",
+            "installation_status": "ready",
+            "label": "Replicon",
+        },
+        {
+            "cartridge_id": "sap_successfactors",
+            "installation_status": "ready",
+            "label": "SF",
+        },
     ]
 
     async def connections(cartridge_id: str, _user):
@@ -169,20 +190,24 @@ async def test_control_room_scoped_dashboard_omits_empty_domains(monkeypatch):
         return []
 
     with (
-        patch.object(control_room_service.auth, "pool", new=AsyncMock(return_value=_zero_pool())),
+        patch.object(
+            control_room_service.auth, "pool", new=AsyncMock(return_value=_zero_pool())
+        ),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "connection_id": "femsa_sf",
-                    "connection_count": 1,
-                    "active_connection_ids": ["femsa_sf"],
-                    "auth_method": "saml_bearer_assertion",
-                }
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "connection_id": "femsa_sf",
+                        "connection_count": 1,
+                        "active_connection_ids": ["femsa_sf"],
+                        "auth_method": "saml_bearer_assertion",
+                    }
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(user, fetcher=fetcher)

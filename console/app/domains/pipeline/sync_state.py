@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# fmt: off
-
 import re
 from typing import Any
 
@@ -195,9 +193,7 @@ async def fetch_active_sync_run(
     pool = await get_db_pool()
     has_mode = await table_has_column("pipeline_runs", "mode", refresh=True)
     has_extra = await table_has_column("pipeline_runs", "extra", refresh=True)
-    has_started_at = await table_has_column(
-        "pipeline_runs", "started_at", refresh=True
-    )
+    has_started_at = await table_has_column("pipeline_runs", "started_at", refresh=True)
     lookup = active_sync_run_lookup_parts_func(
         cartridge=cartridge,
         mode=mode,

@@ -6,8 +6,6 @@ UI minimalista: chat con asistente + estado de servidores MCP.
 
 from __future__ import annotations
 
-# fmt: off
-
 import asyncio
 import json
 import logging
@@ -542,7 +540,9 @@ from app.services.readyz_dependencies import (
     READYZ_DEPENDENCY_CACHE as _READYZ_DEPENDENCY_CACHE,
     dependency_health as _readyz_dependency_health,
 )
-from app.services.readyz_data import control_room_data_check as _readyz_control_room_data_check
+from app.services.readyz_data import (
+    control_room_data_check as _readyz_control_room_data_check,
+)
 from app.services.runtime_calls import (
     call_with_optional_user as _call_with_optional_user,
     runtime_user as _runtime_user,
@@ -1254,11 +1254,7 @@ async def _enrich_session_workspace_user(
     active_workspace = workspaces[0]
     if requested_workspace_id:
         active_workspace = next(
-            (
-                w
-                for w in workspaces
-                if w["workspace_id"] == requested_workspace_id
-            ),
+            (w for w in workspaces if w["workspace_id"] == requested_workspace_id),
             None,
         )
         if not active_workspace:
@@ -1288,11 +1284,7 @@ async def _enrich_jwt_workspace_user(
     active_workspace = workspaces[0]
     if requested_workspace_id:
         active_workspace = next(
-            (
-                w
-                for w in workspaces
-                if w["workspace_id"] == requested_workspace_id
-            ),
+            (w for w in workspaces if w["workspace_id"] == requested_workspace_id),
             None,
         )
         if not active_workspace:
@@ -1312,7 +1304,9 @@ async def _enrich_jwt_workspace_user(
     return enriched_user
 
 
-def _auth_middleware_error_response(detail: str, status_code: int, path: str) -> Response:
+def _auth_middleware_error_response(
+    detail: str, status_code: int, path: str
+) -> Response:
     return _apply_security_headers(
         JSONResponse({"detail": detail}, status_code=status_code),
         path,
@@ -2070,13 +2064,17 @@ async def api_me_change_password(
 
 
 @app.get("/jobs", dependencies=[Depends(require_permission("monitor.read"))])
-async def list_jobs(limit: int = 20, user: dict = Depends(require_permission("monitor.read"))):
+async def list_jobs(
+    limit: int = 20, user: dict = Depends(require_permission("monitor.read"))
+):
     jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
     return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
-async def get_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
+async def get_job(
+    job_id: str, user: dict = Depends(require_permission("monitor.read"))
+):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
 
@@ -2168,24 +2166,36 @@ async def list_datasets(user: dict = Depends(require_permission("datasets.read")
     return _sanitize_datasets_payload_for_user(user, payload)
 
 
-@app.get("/datasets/{name}/schema", dependencies=[Depends(require_permission("datasets.read"))])
-async def dataset_schema(name: str, user: dict = Depends(require_permission("datasets.read"))):
+@app.get(
+    "/datasets/{name}/schema",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def dataset_schema(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
     return await _refinement_invoke("get_schema", {"name": name}, user=user)
 
 
 @app.get("/api/datasets", dependencies=[Depends(require_permission("datasets.read"))])
-async def api_list_datasets_alias(user: dict = Depends(require_permission("datasets.read"))):
+async def api_list_datasets_alias(
+    user: dict = Depends(require_permission("datasets.read")),
+):
     return await list_datasets(user)
 
 
-@app.get("/api/datasets/{name}/schema", dependencies=[Depends(require_permission("datasets.read"))])
+@app.get(
+    "/api/datasets/{name}/schema",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def api_dataset_schema_alias(
     name: str, user: dict = Depends(require_permission("datasets.read"))
 ):
     return await dataset_schema(name, user)
 
 
-@app.get("/datasets/{name}/data", dependencies=[Depends(require_permission("datasets.read"))])
+@app.get(
+    "/datasets/{name}/data", dependencies=[Depends(require_permission("datasets.read"))]
+)
 async def dataset_data(
     name: str,
     request: Request,
@@ -2249,20 +2259,31 @@ async def _refresh_pipeline_job_payloads(
 
 
 @app.get("/api/jobs", dependencies=[Depends(require_permission("monitor.read"))])
-async def api_jobs(limit: int = 50, user: dict = Depends(require_permission("monitor.read"))):
+async def api_jobs(
+    limit: int = 50, user: dict = Depends(require_permission("monitor.read"))
+):
     jobs = await _call_with_optional_user(job_service.list_recent, limit, user=user)
     return {"jobs": await _refresh_pipeline_job_payloads(jobs, user)}
 
 
-@app.get("/api/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
-async def api_job(job_id: str, user: dict = Depends(require_permission("monitor.read"))):
+@app.get(
+    "/api/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))]
+)
+async def api_job(
+    job_id: str, user: dict = Depends(require_permission("monitor.read"))
+):
     job = await job_service.get_scoped(job_id, user=user)
     return await _refresh_pipeline_job_payload(job, user)
 
 
-@app.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_permission("monitor.read"))])
+@app.get(
+    "/api/jobs/{job_id}/logs",
+    dependencies=[Depends(require_permission("monitor.read"))],
+)
 async def api_job_logs(
-    job_id: str, limit: int = 200, user: dict = Depends(require_permission("monitor.read"))
+    job_id: str,
+    limit: int = 200,
+    user: dict = Depends(require_permission("monitor.read")),
 ):
     return await _build_job_logs_payload_impl(
         job_id=job_id,
@@ -2273,7 +2294,9 @@ async def api_job_logs(
     )
 
 
-@app.get("/api/tools/manifest", dependencies=[Depends(require_permission("agents.read"))])
+@app.get(
+    "/api/tools/manifest", dependencies=[Depends(require_permission("agents.read"))]
+)
 async def api_tools_manifest(user: dict = Depends(require_permission("agents.read"))):
     """Sprint v1.41.0 (tornillo copilot): unified tool catalog with risk_level
     + requires_approval, sourced from every registered MCP server. The copilot
@@ -2409,7 +2432,9 @@ def _invalidate_data_platform_read_caches(user: dict | None) -> None:
 
 
 @app.get("/api/schema", dependencies=[Depends(require_permission("datasets.read"))])
-async def api_schema(source: str, user: dict = Depends(require_permission("datasets.read"))):
+async def api_schema(
+    source: str, user: dict = Depends(require_permission("datasets.read"))
+):
     _require_technical_source_access(user, source)
 
     async def load_schema() -> dict:
@@ -2473,8 +2498,13 @@ async def api_dataset_save(
     return r.json()
 
 
-@app.get("/api/datasets/{name}/detail", dependencies=[Depends(require_permission("datasets.read"))])
-async def api_dataset_detail(name: str, user: dict = Depends(require_permission("datasets.read"))):
+@app.get(
+    "/api/datasets/{name}/detail",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def api_dataset_detail(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
     definition = await _refinement_invoke(
         "get_dataset_definition", {"name": name}, user=user
     )
@@ -2540,8 +2570,13 @@ async def api_delete_dataset(
     return r.json()
 
 
-@app.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_permission("datasets.read"))])
-async def api_dataset_lineage(name: str, user: dict = Depends(require_permission("datasets.read"))):
+@app.get(
+    "/api/datasets/{name}/lineage",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def api_dataset_lineage(
+    name: str, user: dict = Depends(require_permission("datasets.read"))
+):
     try:
         async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
             r = await c.post(
@@ -2775,7 +2810,9 @@ async def api_lineage(
     if cartridge:
         _require_technical_cartridge_access(user, cartridge)
     payload = await _refinement_invoke("list_datasets", {}, timeout=15, user=user)
-    datasets = _sanitize_datasets_payload_for_user(user, payload or {}).get("datasets") or []
+    datasets = (
+        _sanitize_datasets_payload_for_user(user, payload or {}).get("datasets") or []
+    )
     if cartridge:
         datasets = [d for d in datasets if d.get("cartridge") == cartridge]
     allowed = _user_allowed_cartridges(user)
@@ -3063,7 +3100,9 @@ async def api_apps(
         Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
     ],
 )
-async def api_apps_delete(name: str, user: dict = Depends(require_permission("apps.write"))):
+async def api_apps_delete(
+    name: str, user: dict = Depends(require_permission("apps.write"))
+):
     """Delete a published analytic app by name."""
     return await _delete_refinement_app_payload_impl(
         name=name,
@@ -3075,7 +3114,9 @@ async def api_apps_delete(name: str, user: dict = Depends(require_permission("ap
     )
 
 
-@app.get("/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))])
+@app.get(
+    "/api/data/{dataset}", dependencies=[Depends(require_permission("datasets.read"))]
+)
 async def api_data(
     dataset: str,
     request: Request,
@@ -3108,9 +3149,14 @@ async def api_data(
     return data.get("data", data)
 
 
-@app.get("/api/data/{dataset}/options", dependencies=[Depends(require_permission("datasets.read"))])
+@app.get(
+    "/api/data/{dataset}/options",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def api_data_options(
-    dataset: str, columns: str = "", user: dict = Depends(require_permission("datasets.read"))
+    dataset: str,
+    columns: str = "",
+    user: dict = Depends(require_permission("datasets.read")),
 ):
     """Return distinct values per column for building filter selectors."""
     # SQL produced by _data_api_options_sql targets pggold.gold_<dataset> via Refinement.
@@ -3128,7 +3174,10 @@ async def api_data_options(
     )
 
 
-@app.post("/api/data/{dataset}/query", dependencies=[Depends(require_permission("datasets.read"))])
+@app.post(
+    "/api/data/{dataset}/query",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     """
     Execute a filtered query against a gold dataset.
@@ -3159,7 +3208,8 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     dependencies=[Depends(require_permission("vault.connections.read"))],
 )
 async def studio_cartridge_connections(
-    cartridge_id: str, user: dict = Depends(require_permission("vault.connections.read"))
+    cartridge_id: str,
+    user: dict = Depends(require_permission("vault.connections.read")),
 ):
     """Proxy to Vault — returns masked connection config for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
@@ -3222,7 +3272,9 @@ async def api_pipeline(
     )
 
 
-@app.get("/api/dag_templates", dependencies=[Depends(require_permission("pipelines.read"))])
+@app.get(
+    "/api/dag_templates", dependencies=[Depends(require_permission("pipelines.read"))]
+)
 async def api_dag_templates():
     from app.services import dag_templates
 
@@ -3230,7 +3282,8 @@ async def api_dag_templates():
 
 
 @app.get(
-    "/api/dag_templates/{template_id}", dependencies=[Depends(require_permission("pipelines.read"))]
+    "/api/dag_templates/{template_id}",
+    dependencies=[Depends(require_permission("pipelines.read"))],
 )
 async def api_dag_template_code(
     template_id: str, cartridge: str = "my_cartridge", entity: str = "MyEntity"
@@ -3245,7 +3298,9 @@ async def api_dag_template_code(
     )
 
 
-@app.get("/api/pipeline_runs", dependencies=[Depends(require_permission("pipelines.read"))])
+@app.get(
+    "/api/pipeline_runs", dependencies=[Depends(require_permission("pipelines.read"))]
+)
 async def api_pipeline_runs(
     cartridge: str = "replicon",
     entity: str = None,
@@ -3406,7 +3461,9 @@ def _pipeline_extract_dag_conf(
     metadata: dict,
     user: dict,
 ) -> dict:
-    extract_conf = _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body)
+    extract_conf = _build_dag_extract_conf(
+        cartridge, entity, metadata.get("mode"), body
+    )
     if not extract_conf.get("conn_id") and metadata.get("connection_id"):
         extract_conf["conn_id"] = _normalize_pipeline_conn_id(
             metadata.get("connection_id")
@@ -3562,7 +3619,9 @@ async def _trigger_pipeline_extract_dag_or_raise(
     slot: dict | None,
     user: dict,
 ) -> dict:
-    result = await _trigger_airflow_extract_dag(dag_id, conf, user, requested_dag_run_id)
+    result = await _trigger_airflow_extract_dag(
+        dag_id, conf, user, requested_dag_run_id
+    )
     if result.get("error"):
         await _handle_pipeline_extract_trigger_error(
             cartridge=cartridge,
@@ -3852,11 +3911,15 @@ def _sync_agentops_is_terminal(payload: Any) -> bool:
     return _agentops_sync_agentops_is_terminal(payload)
 
 
-def _sync_agentops_monitor_candidates(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _sync_agentops_monitor_candidates(
+    agents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     return _agentops_sync_agentops_monitor_candidates(agents)
 
 
-def _successfactors_talent_monitor_contract() -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+def _successfactors_talent_monitor_contract() -> (
+    tuple[list[str], dict[str, Any], dict[str, Any]]
+):
     return _agentops_successfactors_talent_monitor_contract()
 
 
@@ -3910,7 +3973,9 @@ async def _repair_successfactors_talent_monitor_list_if_needed(
     cartridge_id: str | None = None,
     include_inactive: bool = False,
 ) -> list[dict]:
-    if not any(_successfactors_talent_monitor_needs_runtime_repair(agent) for agent in agents):
+    if not any(
+        _successfactors_talent_monitor_needs_runtime_repair(agent) for agent in agents
+    ):
         return agents
     await _ensure_successfactors_talent_monitor(user)
     refreshed = await _agents.list_agents(
@@ -4565,7 +4630,11 @@ async def _continue_sync_now_after_reservation(
     steps: list[dict[str, Any]],
     user: dict,
 ) -> dict[str, Any]:
-    dataset_seed, steps, early_response = await _seed_sync_packaged_datasets_or_response(
+    (
+        dataset_seed,
+        steps,
+        early_response,
+    ) = await _seed_sync_packaged_datasets_or_response(
         cartridge=cartridge,
         mode=mode,
         target=target,
@@ -4578,15 +4647,18 @@ async def _continue_sync_now_after_reservation(
     if early_response is not None:
         return early_response
 
-    result, attempts, triggered_entities, errors = (
-        await _trigger_sync_extract_all_components(
-            cartridge=cartridge,
-            mode=mode,
-            target=target,
-            conn_id=conn_id,
-            run_id=run_id,
-            user=user,
-        )
+    (
+        result,
+        attempts,
+        triggered_entities,
+        errors,
+    ) = await _trigger_sync_extract_all_components(
+        cartridge=cartridge,
+        mode=mode,
+        target=target,
+        conn_id=conn_id,
+        run_id=run_id,
+        user=user,
     )
 
     steps, upsert_debug = await _persist_sync_extract_trigger_result(
@@ -5067,8 +5139,12 @@ async def studio_update_entity(
 # ── Studio — Cartridge management ────────────────────────────────────────────
 
 
-@app.get("/studio/cartridges", dependencies=[Depends(require_permission("cartridges.read"))])
-async def studio_list_cartridges(user: dict = Depends(require_permission("cartridges.read"))):
+@app.get(
+    "/studio/cartridges", dependencies=[Depends(require_permission("cartridges.read"))]
+)
+async def studio_list_cartridges(
+    user: dict = Depends(require_permission("cartridges.read")),
+):
     cartridges = await cartridge_service.list_cartridges()
     ctx = build_security_context(user)
     allowed = {
@@ -5174,7 +5250,8 @@ async def studio_create_cartridge(body: dict):
 
 
 @app.get(
-    "/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_permission("cartridges.read"))]
+    "/studio/cartridges/{cartridge_id}",
+    dependencies=[Depends(require_permission("cartridges.read"))],
 )
 async def studio_get_cartridge(
     cartridge_id: str, user: dict = Depends(require_permission("cartridges.read"))
@@ -5195,7 +5272,9 @@ async def studio_get_cartridge(
     ],
 )
 async def studio_update_cartridge(
-    cartridge_id: str, body: dict, user: dict = Depends(require_permission("cartridges.write"))
+    cartridge_id: str,
+    body: dict,
+    user: dict = Depends(require_permission("cartridges.write")),
 ):
     _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -5245,7 +5324,10 @@ def _require_cartridge_visible(
     if _is_security_admin_context(ctx):
         return
     if not _cartridge_visible_for_context(ctx, cartridge_id):
-        if allow_credential_bootstrap and cartridge_id in _CREDENTIAL_BOOTSTRAP_CARTRIDGES:
+        if (
+            allow_credential_bootstrap
+            and cartridge_id in _CREDENTIAL_BOOTSTRAP_CARTRIDGES
+        ):
             return
         raise HTTPException(403, "cartridge not allowed")
 
@@ -5279,7 +5361,8 @@ async def studio_export_cartridge(
     ],
 )
 async def studio_import_cartridge(
-    file: UploadFile = File(...), user: dict = Depends(require_permission("cartridges.write"))
+    file: UploadFile = File(...),
+    user: dict = Depends(require_permission("cartridges.write")),
 ):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
@@ -5301,7 +5384,9 @@ async def studio_import_cartridge(
         Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
     ],
 )
-async def studio_chat(body: dict, user: dict = Depends(require_permission("studio.write"))):
+async def studio_chat(
+    body: dict, user: dict = Depends(require_permission("studio.write"))
+):
     cartridge_id = body.get("cartridge_id")
     manifest = (
         await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
@@ -5324,7 +5409,9 @@ async def studio_chat(body: dict, user: dict = Depends(require_permission("studi
         Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
     ],
 )
-async def studio_chat_stream(body: dict, user: dict = Depends(require_permission("studio.write"))):
+async def studio_chat_stream(
+    body: dict, user: dict = Depends(require_permission("studio.write"))
+):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
     return await _studio_chat_stream_response_impl(
@@ -5416,9 +5503,7 @@ async def api_agents_list(
         cartridge_id=cartridge_id,
         include_inactive=include_inactive,
     )
-    return {
-        "agents": agents
-    }
+    return {"agents": agents}
 
 
 @app.get(
@@ -5531,7 +5616,9 @@ def _agent_invoke_background_response(agent: Any) -> dict:
     return _agent_invoke_background_response_impl(agent)
 
 
-def _start_agent_invoke_background(agent: Any, message: str, history: list, user: dict) -> None:
+def _start_agent_invoke_background(
+    agent: Any, message: str, history: list, user: dict
+) -> None:
     agent_id = str(getattr(agent, "id", "") or "")
     history_context = list(history or [])
     user_context = dict(user or {})
@@ -5641,8 +5728,12 @@ async def _load_scheduled_agent(agent_id: str, body: dict) -> Any:
         "tenant_id": str(body.get("tenant_id") or "").strip() or None,
         "workspace_id": str(body.get("workspace_id") or "").strip() or None,
     }
-    scheduled_user_context = scheduled_scope if scheduled_scope.get("workspace_id") else None
-    agent = await _agent_runtime.load_agent(agent_id, user_context=scheduled_user_context)
+    scheduled_user_context = (
+        scheduled_scope if scheduled_scope.get("workspace_id") else None
+    )
+    agent = await _agent_runtime.load_agent(
+        agent_id, user_context=scheduled_user_context
+    )
     if not agent:
         raise HTTPException(404, "agent not found")
     agent = await _repair_loaded_successfactors_talent_monitor_if_needed(
@@ -5682,7 +5773,9 @@ def _scheduled_agent_run_params(agent: Any, body: dict) -> tuple[Any, str, str |
         or not isinstance(monitor_contract, dict)
         or not monitor_contract
     ):
-        raise HTTPException(403, "scheduled agents require monitor role and monitor contract")
+        raise HTTPException(
+            403, "scheduled agents require monitor role and monitor contract"
+        )
     airflow_dag_run_id = str(body.get("airflow_dag_run_id") or "").strip() or None
     return scheduled_fire_at, schedule_key, airflow_dag_run_id
 
@@ -5921,7 +6014,9 @@ async def api_vault_reveal_connection(
     """Returns full credentials including token (not masked)."""
     _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
+    async with httpx.AsyncClient(
+        headers=_vault_headers_for_user(user, cartridge), timeout=5
+    ) as c:
         r = await c.get(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
         )
@@ -5966,7 +6061,9 @@ async def api_vault_upsert_connection(
 ):
     _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
+    async with httpx.AsyncClient(
+        headers=_vault_headers_for_user(user, cartridge), timeout=5
+    ) as c:
         r = await c.put(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}",
             json=body,
@@ -6006,7 +6103,9 @@ async def api_vault_delete_connection(
 ):
     _require_cartridge_visible(user, cartridge, allow_credential_bootstrap=True)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
-    async with httpx.AsyncClient(headers=_vault_headers_for_user(user, cartridge), timeout=5) as c:
+    async with httpx.AsyncClient(
+        headers=_vault_headers_for_user(user, cartridge), timeout=5
+    ) as c:
         r = await c.delete(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
         )
@@ -6169,8 +6268,12 @@ def _rag_headers_for_user(user: dict) -> dict[str, str]:
     }
 
 
-@app.get("/api/rag/sources", dependencies=[Depends(require_permission("datasets.read"))])
-async def api_rag_sources(kinds: str = "", user: dict = Depends(require_permission("datasets.read"))):
+@app.get(
+    "/api/rag/sources", dependencies=[Depends(require_permission("datasets.read"))]
+)
+async def api_rag_sources(
+    kinds: str = "", user: dict = Depends(require_permission("datasets.read"))
+):
     return await _rag_sources_payload_impl(
         kinds=kinds,
         user=user,
@@ -6204,7 +6307,9 @@ async def api_rag_delete_source(
     "/api/rag/search",
     dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
 )
-async def api_rag_search(body: dict, user: dict = Depends(require_permission("datasets.read"))):
+async def api_rag_search(
+    body: dict, user: dict = Depends(require_permission("datasets.read"))
+):
     return await _rag_search_payload_impl(
         body=body,
         user=user,
@@ -6224,7 +6329,9 @@ async def api_rag_search(body: dict, user: dict = Depends(require_permission("da
         Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
     ],
 )
-async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_rag_reindex(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     return await _rag_reindex_payload_impl(
         body=body,
         user=user,
@@ -6246,7 +6353,9 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_permission("d
         Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
     ],
 )
-async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_rag_ingest(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     return await _rag_ingest_payload_impl(
         body=body,
         user=user,
@@ -6259,9 +6368,12 @@ async def api_rag_ingest(body: dict, user: dict = Depends(require_permission("da
 
 
 @app.post(
-    "/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))]
+    "/api/rag/ask",
+    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
 )
-async def api_rag_ask(body: dict, user: dict = Depends(require_permission("datasets.read"))):
+async def api_rag_ask(
+    body: dict, user: dict = Depends(require_permission("datasets.read"))
+):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
 
@@ -6302,7 +6414,9 @@ async def api_semantic(
         return _semantic_manifest_response(
             cartridge=cartridge,
             manifest=manifest,
-            catalog_entities=await _gold_semantic_entities_from_catalog(cartridge, user),
+            catalog_entities=await _gold_semantic_entities_from_catalog(
+                cartridge, user
+            ),
         )
 
     # Fallback: Pattern A — invoke via MCP server
@@ -6371,7 +6485,9 @@ async def api_catalog_get(
         Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
     ],
 )
-async def api_catalog_upsert(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+async def api_catalog_upsert(
+    body: dict, user: dict = Depends(require_permission("datasets.write"))
+):
     return await _catalog_upsert_payload_impl(
         body=body,
         user=user,
@@ -6526,7 +6642,9 @@ async def monitoring_tools(user: dict = Depends(require_permission("monitor.read
     "/monitoring/invoke",
     dependencies=[Depends(require_csrf), Depends(require_permission("monitor.read"))],
 )
-async def monitoring_invoke(body: dict, user: dict = Depends(require_permission("monitor.read"))):
+async def monitoring_invoke(
+    body: dict, user: dict = Depends(require_permission("monitor.read"))
+):
     # Sprint v1.22: was reachable without any auth. monitoring tools
     # read job state and DAG metadata, which a session-less caller has
     # no business seeing. CSRF added because this is a state-shaped
@@ -6547,7 +6665,9 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_permission(
     "/api/dags/parse",
     dependencies=[Depends(require_csrf), Depends(require_permission("studio.read"))],
 )
-async def api_dag_parse(body: dict, user: dict = Depends(require_permission("studio.read"))):
+async def api_dag_parse(
+    body: dict, user: dict = Depends(require_permission("studio.read"))
+):
     # Sprint v1.22: parsing arbitrary Python source is non-trivial work
     # and an anonymous caller could DOS the parser. Auth + CSRF required.
     source = body.get("source", "")
@@ -6642,7 +6762,9 @@ def _dec_is_workspace_admin(user: dict) -> bool:
     )
 
 
-def _dec_load_query(decision_id: int, user: dict, workspace_id: str) -> tuple[str, list[Any]]:
+def _dec_load_query(
+    decision_id: int, user: dict, workspace_id: str
+) -> tuple[str, list[Any]]:
     return _dec_load_query_impl(
         decision_id=decision_id,
         user_id=user["id"],
@@ -6712,7 +6834,9 @@ def _dec_can_delete(row: dict, user: dict) -> bool:
 
 @app.get("/api/decisions", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_decisions_list(
-    status: str = "", overdue: str = "", user: dict = Depends(require_permission("datasets.read"))
+    status: str = "",
+    overdue: str = "",
+    user: dict = Depends(require_permission("datasets.read")),
 ):
     workspace_id = _current_workspace_id(user)
     if not workspace_id:
@@ -6737,9 +6861,14 @@ async def api_decisions_list(
 
 @app.post(
     "/api/decisions",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
-async def api_decisions_create(body: dict, user: dict = Depends(require_permission("control_room.write"))):
+async def api_decisions_create(
+    body: dict, user: dict = Depends(require_permission("control_room.write"))
+):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
@@ -6761,9 +6890,7 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
             title,
             body.get("description") or "",
             _coerce_date(body.get("commitment_date")),
-            _json_dec.dumps(
-                _decision_kpis_with_provenance(body.get("kpis"), "manual")
-            ),
+            _json_dec.dumps(_decision_kpis_with_provenance(body.get("kpis"), "manual")),
             user["id"],
             body.get("assignee_id"),
             body.get("visibility")
@@ -6774,7 +6901,10 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
     return _dec_row_to_dict(row)
 
 
-@app.get("/api/decisions/{decision_id}", dependencies=[Depends(require_permission("datasets.read"))])
+@app.get(
+    "/api/decisions/{decision_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def api_decisions_get(
     decision_id: int, user: dict = Depends(require_permission("datasets.read"))
 ):
@@ -6832,10 +6962,15 @@ async def _execute_decision_update(
 
 @app.patch(
     "/api/decisions/{decision_id}",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def api_decisions_update(
-    decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))
+    decision_id: int,
+    body: dict,
+    user: dict = Depends(require_permission("control_room.write")),
 ):
     """Patch any subset of: title, description, commitment_date, kpis, status, outcome,
     closed_at, follow_up_decision_id, assignee_id, visibility."""
@@ -6879,7 +7014,10 @@ async def api_decisions_update(
 
 @app.delete(
     "/api/decisions/{decision_id}",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def api_decisions_delete(
     decision_id: int, user: dict = Depends(require_permission("control_room.write"))
@@ -6904,10 +7042,15 @@ async def api_decisions_delete(
 
 @app.post(
     "/api/decisions/{decision_id}/actions",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def api_decisions_add_action(
-    decision_id: int, body: dict, user: dict = Depends(require_permission("control_room.write"))
+    decision_id: int,
+    body: dict,
+    user: dict = Depends(require_permission("control_room.write")),
 ):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
@@ -7072,7 +7215,10 @@ async def api_admin_users_list(
 
 @app.post(
     "/api/admin/users",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_create(
     body: dict,
@@ -7098,7 +7244,10 @@ async def api_admin_users_create(
 
 @app.patch(
     "/api/admin/users/{user_id}",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_update(
     user_id: int,
@@ -7125,7 +7274,10 @@ async def api_admin_users_update(
 
 @app.delete(
     "/api/admin/users/{user_id}",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_delete(
     user_id: int,
@@ -7205,7 +7357,10 @@ async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
 
 @app.post(
     "/api/admin/users/{user_id}/vpn-reissue",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_vpn_reissue(
     user_id: int,
@@ -7226,7 +7381,10 @@ async def api_admin_users_vpn_reissue(
 
 @app.post(
     "/api/admin/users/invite",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_invite(
     body: dict,
@@ -7260,7 +7418,10 @@ async def api_admin_users_invite(
 
 @app.post(
     "/api/admin/users/{user_id}/reinvite",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_reinvite(
     user_id: int,
@@ -7291,7 +7452,10 @@ async def api_admin_users_reinvite(
 
 @app.post(
     "/api/admin/users/{user_id}/send-reset",
-    dependencies=[Depends(require_csrf), Depends(require_permission("iam.users.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("iam.users.write")),
+    ],
 )
 async def api_admin_users_send_reset(
     user_id: int,

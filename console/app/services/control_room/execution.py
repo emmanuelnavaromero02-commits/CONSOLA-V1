@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# fmt: off
-
 import types
 
 from app.services.control_room import core as _core
@@ -10,7 +8,15 @@ from app.services.control_room.business_projection import (
 )
 
 
-_RESERVED_GLOBALS = {"__name__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__"}
+_RESERVED_GLOBALS = {
+    "__name__",
+    "__package__",
+    "__loader__",
+    "__spec__",
+    "__file__",
+    "__cached__",
+    "__builtins__",
+}
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
@@ -45,7 +51,9 @@ def _bind_to_core(fn):
 # Action preview, dry-run, execution, and operator workflows.
 @_bind_to_core
 def _external_writeback_enabled() -> bool:
-    return os.environ.get("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "false").strip().lower() in {
+    return os.environ.get(
+        "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "false"
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -55,7 +63,9 @@ def _external_writeback_enabled() -> bool:
 
 @_bind_to_core
 def _external_delivery_enabled() -> bool:
-    return os.environ.get("CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY", "false").strip().lower() in {
+    return os.environ.get(
+        "CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY", "false"
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -89,7 +99,9 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
             "requires_dry_run": True,
             "permission": "control_room.execute",
             "status": "supported",
-            "description": description_by_template.get(template_id, "Ejecuta una accion interna auditada; no escribe en ERP."),
+            "description": description_by_template.get(
+                template_id, "Ejecuta una accion interna auditada; no escribe en ERP."
+            ),
         }
     template_type = str(template.get("template_type") or template_id)
     has_adapter = WriteBackAdapterFactory.has_adapter(template_type)
@@ -147,12 +159,20 @@ def _impact_payload(
 ) -> dict[str, Any]:
     estimate_value = round(float(estimate or 0), 2) if estimate is not None else None
     severity_weight = SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2)
-    impact_points = 0 if estimate_value is None else min(42, int(abs(estimate_value) / 10_000))
+    impact_points = (
+        0 if estimate_value is None else min(42, int(abs(estimate_value) / 10_000))
+    )
     threshold_state = str(item.get("threshold_state") or "")
     threshold_points = {"critical": 12, "warning": 6}.get(threshold_state, 0)
     priority_score = min(
         100,
-        max(0, severity_weight * 14 + impact_points + int(confidence * 20) + threshold_points),
+        max(
+            0,
+            severity_weight * 14
+            + impact_points
+            + int(confidence * 20)
+            + threshold_points,
+        ),
     )
     return {
         "item_id": item.get("id"),
@@ -179,37 +199,62 @@ def _priority_payload(
         {
             "label": "Severidad",
             "value": item.get("severity") or "medium",
-            "points": SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2) * 14,
+            "points": SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2)
+            * 14,
         }
     ]
     if impact.get("status") == "ok" and impact.get("estimate") is not None:
-        drivers.append({
-            "label": "Impacto economico",
-            "value": impact.get("estimate"),
-            "currency": impact.get("currency") or "USD",
-            "points": min(42, int(abs(float(impact.get("estimate") or 0)) / 10_000)),
-        })
+        drivers.append(
+            {
+                "label": "Impacto economico",
+                "value": impact.get("estimate"),
+                "currency": impact.get("currency") or "USD",
+                "points": min(
+                    42, int(abs(float(impact.get("estimate") or 0)) / 10_000)
+                ),
+            }
+        )
     else:
-        drivers.append({"label": "Impacto economico", "value": "no disponible", "points": 0})
+        drivers.append(
+            {"label": "Impacto economico", "value": "no disponible", "points": 0}
+        )
 
     threshold_state = str(item.get("threshold_state") or "default")
     threshold_points = {"critical": 16, "warning": 8}.get(threshold_state, 0)
     if threshold_points:
-        drivers.append({"label": "Umbral", "value": threshold_state, "points": threshold_points})
+        drivers.append(
+            {"label": "Umbral", "value": threshold_state, "points": threshold_points}
+        )
         score += threshold_points
 
     lesson_count = int(item.get("lesson_count") or 0)
     lesson_points = min(12, lesson_count * 4)
     if lesson_points:
-        drivers.append({"label": "Patron aprendido", "value": lesson_count, "points": lesson_points})
+        drivers.append(
+            {
+                "label": "Patron aprendido",
+                "value": lesson_count,
+                "points": lesson_points,
+            }
+        )
         score += lesson_points
 
     if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
-        drivers.append({"label": "Estado cerrado", "value": item.get("status"), "points": -35})
+        drivers.append(
+            {"label": "Estado cerrado", "value": item.get("status"), "points": -35}
+        )
         score -= 35
 
     score = max(0, min(100, score))
-    band = "critical" if score >= 90 else "high" if score >= 75 else "medium" if score >= 55 else "low"
+    band = (
+        "critical"
+        if score >= 90
+        else "high"
+        if score >= 75
+        else "medium"
+        if score >= 55
+        else "low"
+    )
     return {
         "score": score,
         "band": band,
@@ -230,7 +275,13 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
             estimate=stored,
             status="ok",
             confidence=_num(item.get("confidence")) or 0.6,
-            drivers=[{"label": "Impacto persistido", "value": stored, "currency": item.get("impact_currency") or "USD"}],
+            drivers=[
+                {
+                    "label": "Impacto persistido",
+                    "value": stored,
+                    "currency": item.get("impact_currency") or "USD",
+                }
+            ],
             formula="Impacto persistido en control_room_items.",
             explanation="Estimacion recuperada del estado operativo persistido.",
             currency=str(item.get("impact_currency") or "USD"),
@@ -254,8 +305,16 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 status="ok",
                 confidence=0.78,
                 drivers=[
-                    {"label": "Brecha margen objetivo 20%", "value": round(margin_gap, 2), "currency": "USD"},
-                    {"label": "WIP bajo revision", "value": round(abs(wip), 2), "currency": "USD"},
+                    {
+                        "label": "Brecha margen objetivo 20%",
+                        "value": round(margin_gap, 2),
+                        "currency": "USD",
+                    },
+                    {
+                        "label": "WIP bajo revision",
+                        "value": round(abs(wip), 2),
+                        "currency": "USD",
+                    },
                 ],
                 formula="max(0, revenue_usd * 20% - margen_bruto_usd) + abs(wip_usd si >= 5000)",
                 explanation="Usa P&L Replicon materializado; no escribe en Replicon.",
@@ -277,7 +336,11 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 confidence=0.7,
                 drivers=[
                     {"label": "Horas no facturables", "value": round(hours, 2)},
-                    {"label": "Tarifa Replicon", "value": round(rate, 2), "currency": "USD"},
+                    {
+                        "label": "Tarifa Replicon",
+                        "value": round(rate, 2),
+                        "currency": "USD",
+                    },
                 ],
                 formula="horas_no_facturables * tarifa_replicon",
                 explanation="Calcula exposicion de horas no facturables con tarifa real disponible.",
@@ -291,7 +354,9 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 estimate=abs(revenue),
                 status="ok",
                 confidence=0.74,
-                drivers=[{"label": "Revenue negativo", "value": revenue, "currency": "USD"}],
+                drivers=[
+                    {"label": "Revenue negativo", "value": revenue, "currency": "USD"}
+                ],
                 formula="abs(revenue)",
                 explanation="Usa revenue materializado por cliente/periodo.",
             )
@@ -305,8 +370,16 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 status="ok",
                 confidence=0.62,
                 drivers=[
-                    {"label": "Backlog abierto", "value": round(open_value, 2), "currency": "USD"},
-                    {"label": "Antiguedad maxima", "value": _num(details.get("oldest_age_days")) or 0, "unit": "dias"},
+                    {
+                        "label": "Backlog abierto",
+                        "value": round(open_value, 2),
+                        "currency": "USD",
+                    },
+                    {
+                        "label": "Antiguedad maxima",
+                        "value": _num(details.get("oldest_age_days")) or 0,
+                        "unit": "dias",
+                    },
                 ],
                 formula="open_value",
                 explanation="Exposicion comercial, no perdida confirmada.",
@@ -320,12 +393,22 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 estimate=spend,
                 status="ok",
                 confidence=0.45,
-                drivers=[{"label": "Gasto concentrado", "value": round(spend, 2), "currency": "USD"}],
+                drivers=[
+                    {
+                        "label": "Gasto concentrado",
+                        "value": round(spend, 2),
+                        "currency": "USD",
+                    }
+                ],
                 formula="total_spend",
                 explanation="Exposicion de compras bajo revision, no ahorro garantizado.",
             )
 
-    if cartridge == "sap_s4hana" and anomaly_type in {"missing_address", "missing_tax_id", "duplicate_business_partner"}:
+    if cartridge == "sap_s4hana" and anomaly_type in {
+        "missing_address",
+        "missing_tax_id",
+        "duplicate_business_partner",
+    }:
         exposure = (
             _num(details.get("open_value"))
             or _num(details.get("balance_usd"))
@@ -339,7 +422,11 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 status="ok",
                 confidence=0.52,
                 drivers=[
-                    {"label": "Exposicion BP", "value": round(exposure, 2), "currency": "USD"},
+                    {
+                        "label": "Exposicion BP",
+                        "value": round(exposure, 2),
+                        "currency": "USD",
+                    },
                     {"label": "Tipo maestro", "value": anomaly_type},
                 ],
                 formula="open_value | balance_usd | exposure_usd | total_spend",
@@ -359,21 +446,36 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 status="ok",
                 confidence=0.66,
                 drivers=[
-                    {"label": "Costo mensual empleado", "value": round(monthly_cost, 2), "currency": "USD"},
+                    {
+                        "label": "Costo mensual empleado",
+                        "value": round(monthly_cost, 2),
+                        "currency": "USD",
+                    },
                     {"label": "Ventana control", "value": 3, "unit": "meses"},
                 ],
                 formula="monthly_cost_usd * 3 meses de exposicion",
                 explanation="Estima cola de costo/acceso para empleado terminado pero activo.",
             )
 
-    if cartridge == "sap_successfactors" and anomaly_type in {"missing_manager", "missing_department", "missing_job_code"}:
+    if cartridge == "sap_successfactors" and anomaly_type in {
+        "missing_manager",
+        "missing_department",
+        "missing_job_code",
+    }:
         affected = (
             _num(details.get("affected_employees"))
             or _num(details.get("direct_reports"))
             or _num(details.get("headcount"))
         )
-        monthly_cost = _num(details.get("avg_monthly_cost_usd")) or _num(details.get("salary_monthly_usd"))
-        if affected is not None and monthly_cost is not None and affected > 0 and monthly_cost > 0:
+        monthly_cost = _num(details.get("avg_monthly_cost_usd")) or _num(
+            details.get("salary_monthly_usd")
+        )
+        if (
+            affected is not None
+            and monthly_cost is not None
+            and affected > 0
+            and monthly_cost > 0
+        ):
             return _impact_payload(
                 item=item,
                 estimate=affected * monthly_cost * 0.15,
@@ -381,7 +483,11 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 confidence=0.48,
                 drivers=[
                     {"label": "Personas afectadas", "value": round(affected, 2)},
-                    {"label": "Costo mensual promedio", "value": round(monthly_cost, 2), "currency": "USD"},
+                    {
+                        "label": "Costo mensual promedio",
+                        "value": round(monthly_cost, 2),
+                        "currency": "USD",
+                    },
                 ],
                 formula="affected_employees * avg_monthly_cost_usd * 15%",
                 explanation="Proxy de riesgo operativo SF cuando hay base de costo y poblacion afectada.",
@@ -398,7 +504,13 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
             estimate=monthly_cost,
             status="ok",
             confidence=0.55,
-            drivers=[{"label": "Costo mensual", "value": round(monthly_cost, 2), "currency": "USD"}],
+            drivers=[
+                {
+                    "label": "Costo mensual",
+                    "value": round(monthly_cost, 2),
+                    "currency": "USD",
+                }
+            ],
             formula="monthly_cost_usd",
             explanation="Usa costo directo disponible en la fuente.",
         )
@@ -422,24 +534,70 @@ def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
     module_id = str(item.get("module_id") or "")
     if cartridge == "replicon":
         if anomaly_type in {"low_margin", "wip_variance", "non_billable_ratio"}:
-            return ["prepare_billing_review", "prepare_replicon_adjustment", "create_followup_task"]
-        return ["prepare_replicon_adjustment", "request_owner_review", "create_followup_task"]
+            return [
+                "prepare_billing_review",
+                "prepare_replicon_adjustment",
+                "create_followup_task",
+            ]
+        return [
+            "prepare_replicon_adjustment",
+            "request_owner_review",
+            "create_followup_task",
+        ]
     if cartridge == "sap_s4hana":
-        if anomaly_type in {"negative_revenue", "aged_sales_backlog"} or module_id == "sap_s4hana_sales":
-            return ["prepare_s4_revenue_review", "prepare_sap_review", "create_followup_task"]
-        if anomaly_type in {"missing_address", "missing_tax_id", "duplicate_business_partner"}:
-            return ["prepare_s4_business_partner_review", "prepare_sap_review", "create_followup_task"]
-        if anomaly_type == "supplier_spend_concentration" or module_id == "sap_s4hana_procurement":
-            return ["prepare_s4_procurement_review", "prepare_sap_review", "create_followup_task"]
+        if (
+            anomaly_type in {"negative_revenue", "aged_sales_backlog"}
+            or module_id == "sap_s4hana_sales"
+        ):
+            return [
+                "prepare_s4_revenue_review",
+                "prepare_sap_review",
+                "create_followup_task",
+            ]
+        if anomaly_type in {
+            "missing_address",
+            "missing_tax_id",
+            "duplicate_business_partner",
+        }:
+            return [
+                "prepare_s4_business_partner_review",
+                "prepare_sap_review",
+                "create_followup_task",
+            ]
+        if (
+            anomaly_type == "supplier_spend_concentration"
+            or module_id == "sap_s4hana_procurement"
+        ):
+            return [
+                "prepare_s4_procurement_review",
+                "prepare_sap_review",
+                "create_followup_task",
+            ]
         return ["prepare_sap_review", "request_owner_review", "create_followup_task"]
     if cartridge == "sap_hcm":
         if anomaly_type == "terminated_but_active":
-            return ["prepare_hcm_access_review", "request_owner_review", "create_followup_task"]
-        return ["prepare_hcm_org_review", "request_owner_review", "create_followup_task"]
+            return [
+                "prepare_hcm_access_review",
+                "request_owner_review",
+                "create_followup_task",
+            ]
+        return [
+            "prepare_hcm_org_review",
+            "request_owner_review",
+            "create_followup_task",
+        ]
     if cartridge == "sap_successfactors":
         if module_id == "sap_successfactors_recruiting":
-            return ["prepare_successfactors_recruiting_review", "prepare_successfactors_review", "create_followup_task"]
-        return ["prepare_successfactors_review", "request_owner_review", "create_followup_task"]
+            return [
+                "prepare_successfactors_recruiting_review",
+                "prepare_successfactors_review",
+                "create_followup_task",
+            ]
+        return [
+            "prepare_successfactors_review",
+            "request_owner_review",
+            "create_followup_task",
+        ]
     return ["request_owner_review", "create_followup_task"]
 
 
@@ -461,7 +619,9 @@ def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
+def _action_payload_for_template(
+    item: dict[str, Any], template: dict[str, Any]
+) -> dict[str, Any]:
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
     action_kind = str(template.get("action_kind") or "owner_review")
     writeback = _writeback_capability(template)
@@ -482,7 +642,9 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
         return {
             **base,
             "replicon": {
-                "project": details.get("project_name") or details.get("proyecto") or item.get("entity_label"),
+                "project": details.get("project_name")
+                or details.get("proyecto")
+                or item.get("entity_label"),
                 "revenue_manager": details.get("revenue_manager"),
                 "revenue_usd": _num(details.get("revenue_usd")),
                 "margin_pct": _num(details.get("margen_bruto_pct")),
@@ -499,7 +661,9 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
         return {
             **base,
             "replicon": {
-                "consultant": details.get("consultant_name") or details.get("consultor") or item.get("entity_label"),
+                "consultant": details.get("consultant_name")
+                or details.get("consultor")
+                or item.get("entity_label"),
                 "project": details.get("project_name") or details.get("proyecto"),
                 "allocation_pct": _num(details.get("pct_asignacion")),
                 "billable_hours": _num(details.get("billable_hours")),
@@ -514,7 +678,9 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
         return {
             **base,
             "note": {
-                "summary": item.get("root_cause") or item.get("description") or item.get("title"),
+                "summary": item.get("root_cause")
+                or item.get("description")
+                or item.get("title"),
                 "recommendation": item.get("recommendation"),
                 "evidence_sql": item.get("sql"),
             },
@@ -537,13 +703,20 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
                 "vincular control y leccion esperada",
             ],
         }
-    if action_kind in {"s4_revenue_review", "s4_business_partner_review", "s4_procurement_review", "sap_review"}:
+    if action_kind in {
+        "s4_revenue_review",
+        "s4_business_partner_review",
+        "s4_procurement_review",
+        "sap_review",
+    }:
         return {
             **base,
             "sap_s4hana": {
                 "business_partner": details.get("business_partner"),
-                "customer": details.get("customer_code") or details.get("customer_name"),
-                "supplier": details.get("supplier_code") or details.get("supplier_name"),
+                "customer": details.get("customer_code")
+                or details.get("customer_name"),
+                "supplier": details.get("supplier_code")
+                or details.get("supplier_name"),
                 "open_value": _num(details.get("open_value")),
                 "revenue": _num(details.get("revenue")),
                 "spend": _num(details.get("total_spend")),
@@ -561,14 +734,19 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
                 "pernr": details.get("pernr") or item.get("entity_id"),
                 "position": details.get("position") or details.get("plans"),
                 "cost_center": details.get("cost_center") or details.get("kostl"),
-                "monthly_cost_usd": _num(details.get("monthly_cost_usd") or details.get("salary_monthly_usd")),
+                "monthly_cost_usd": _num(
+                    details.get("monthly_cost_usd") or details.get("salary_monthly_usd")
+                ),
             },
             "prepared_actions": [
                 "validar baja/posicion/centro de costo",
                 "preparar bloqueo o correccion para aprobacion",
             ],
         }
-    if action_kind in {"successfactors_employee_review", "successfactors_recruiting_review"}:
+    if action_kind in {
+        "successfactors_employee_review",
+        "successfactors_recruiting_review",
+    }:
         return {
             **base,
             "sap_successfactors": {
@@ -593,7 +771,9 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
 
 
 @_bind_to_core
-def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]) -> dict[str, Any]:
+def _execution_payload(
+    item: dict[str, Any], mode: str, template: dict[str, Any]
+) -> dict[str, Any]:
     impact = _impact_for_item(item)
     action_payload = _action_payload_for_template(item, template)
     writeback = _writeback_capability(template)
@@ -604,7 +784,9 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
         "execution_contract": "supervised_execution",
         "dry_run": mode != "execute_live",
         "template": template,
-        "target_system": template.get("cartridge_id") if template.get("cartridge_id") != "platform" else item.get("cartridge"),
+        "target_system": template.get("cartridge_id")
+        if template.get("cartridge_id") != "platform"
+        else item.get("cartridge"),
         "item": {
             "id": item.get("id"),
             "title": item.get("title"),
@@ -625,10 +807,15 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
         "operations": [
             {
                 "operation": template.get("action_kind"),
-                "status": "pending_execution" if mode == "execute_live" else "preview" if mode == "preview" else "validated",
+                "status": "pending_execution"
+                if mode == "execute_live"
+                else "preview"
+                if mode == "preview"
+                else "validated",
                 "requires_approval": True,
                 "external_write": bool(writeback.get("external")),
-                "internal_write": bool(writeback.get("supported")) and not bool(writeback.get("external")),
+                "internal_write": bool(writeback.get("supported"))
+                and not bool(writeback.get("external")),
                 "payload": action_payload,
                 "writeback": writeback,
                 "evidence": {
@@ -666,22 +853,29 @@ async def create_decision_for_item(
         f"Recomendacion OMEGA: {item['recommendation']}\n\n"
         f"Fuente: {item['source_dataset']} ({item['cartridge']})."
     )
-    kpis = [{
-        "label": "Severidad",
-        "value": item["severity"],
-        "source": item["source_dataset"],
-    }, {
-        "label": "Entidad",
-        "value": item["entity_label"],
-        "source": item["cartridge"],
-    }, {
-        "label": "Estado OMEGA",
-        "value": item.get("status") or "open",
-        "source": "control_room",
-    }, decision_provenance("control_room", item_id=item["id"])]
+    kpis = [
+        {
+            "label": "Severidad",
+            "value": item["severity"],
+            "source": item["source_dataset"],
+        },
+        {
+            "label": "Entidad",
+            "value": item["entity_label"],
+            "source": item["cartridge"],
+        },
+        {
+            "label": "Estado OMEGA",
+            "value": item.get("status") or "open",
+            "source": "control_room",
+        },
+        decision_provenance("control_room", item_id=item["id"]),
+    ]
     pool = await auth.pool()
 
-    async def _write(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+    async def _write(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> Any:
         row = await conn.fetchrow(
             """INSERT INTO decisions
                   (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
@@ -765,7 +959,9 @@ async def select_item_option(
 
     pool = await auth.pool()
 
-    async def _write_selection(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+    async def _write_selection(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status="in_review")
         try:
             await conn.execute(
@@ -851,7 +1047,9 @@ async def record_item_step(
         "control_id": str(control_id or "").strip()[:120],
     }
 
-    async def _write_step(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+    async def _write_step(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> None:
         await _ensure_item_row(
             conn,
             user=user,
@@ -903,7 +1101,9 @@ async def update_item_control(
         raise HTTPException(400, "control_id is required")
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     current_controls = item.get("omega", {}).get("control", {}).get("items") or []
-    control = next((row for row in current_controls if str(row.get("id")) == control_key), None)
+    control = next(
+        (row for row in current_controls if str(row.get("id")) == control_key), None
+    )
     if not control:
         raise HTTPException(404, "control item not found")
 
@@ -916,13 +1116,21 @@ async def update_item_control(
         due_at = parsed_due.isoformat()
     elif body.get("days") is not None:
         try:
-            due_at = (datetime.now(UTC) + timedelta(days=max(0, int(body.get("days"))))).isoformat()
+            due_at = (
+                datetime.now(UTC) + timedelta(days=max(0, int(body.get("days"))))
+            ).isoformat()
         except (TypeError, ValueError):
             due_at = control.get("due_at")
     else:
         due_at = control.get("due_at")
 
-    owner = str(body.get("owner") or body.get("owner_email") or control.get("owner") or user.get("email") or "operaciones").strip()
+    owner = str(
+        body.get("owner")
+        or body.get("owner_email")
+        or control.get("owner")
+        or user.get("email")
+        or "operaciones"
+    ).strip()
     note = str(body.get("note") or "").strip()[:500]
     now = datetime.now(UTC).isoformat()
     existing_state = _control_state(item)
@@ -943,11 +1151,15 @@ async def update_item_control(
         control_key: next_control,
     }
     item_status = str(item.get("status") or "open")
-    target_status = item_status if item_status in TERMINAL_ITEM_STATUSES else "in_review"
+    target_status = (
+        item_status if item_status in TERMINAL_ITEM_STATUSES else "in_review"
+    )
     pool = await auth.pool()
     event_type = "control_updated" if next_status != "closed" else "control_checked"
 
-    async def _write_control(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+    async def _write_control(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status=target_status)
         try:
             await conn.execute(
@@ -1007,7 +1219,8 @@ async def update_item_control(
         item, _with_omega, status=target_status, control_state=next_state
     )
     updated_control = next(
-        row for row in public_item.get("omega", {}).get("control", {}).get("items", [])
+        row
+        for row in public_item.get("omega", {}).get("control", {}).get("items", [])
         if str(row.get("id")) == control_key
     )
     return {
@@ -1032,10 +1245,14 @@ async def create_item_lesson(
         raise HTTPException(400, "lesson rule must contain at least 8 characters")
     rule = rule[:700]
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    decision_id = int(item["decision_id"]) if item.get("decision_id") is not None else None
+    decision_id = (
+        int(item["decision_id"]) if item.get("decision_id") is not None else None
+    )
     pool = await auth.pool()
 
-    async def _write_lesson(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+    async def _write_lesson(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
         await _ensure_item_row(
             conn,
             user=user,
@@ -1094,17 +1311,19 @@ async def create_item_lesson(
     )
     lessons = await _load_lesson_rows(user, item_id=item["id"], limit=20)
     if not lessons:
-        lessons = [{
-            "id": None,
-            "item_id": item["id"],
-            "cartridge_id": item.get("cartridge") or "platform",
-            "anomaly_type": item.get("anomaly_type") or "control_room_item",
-            "rule": rule,
-            "source_decision_id": decision_id,
-            "confidence": _impact_for_item(item).get("confidence") or 0.7,
-            "metadata": {"manual": True},
-            "created_at": datetime.now(UTC).isoformat(),
-        }]
+        lessons = [
+            {
+                "id": None,
+                "item_id": item["id"],
+                "cartridge_id": item.get("cartridge") or "platform",
+                "anomaly_type": item.get("anomaly_type") or "control_room_item",
+                "rule": rule,
+                "source_decision_id": decision_id,
+                "confidence": _impact_for_item(item).get("confidence") or 0.7,
+                "metadata": {"manual": True},
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        ]
     public_item = _project_public_item(
         item,
         _with_omega,
@@ -1143,7 +1362,9 @@ async def apply_item_lesson(
     )
     item_lessons = await _load_lesson_rows(user, item_id=item["id"], limit=100)
     lessons = _dedupe_lessons([*related_lessons, *item_lessons])
-    lesson = next((row for row in lessons if int(row.get("id") or 0) == int(lesson_id)), None)
+    lesson = next(
+        (row for row in lessons if int(row.get("id") or 0) == int(lesson_id)), None
+    )
     if not lesson or not _lesson_matches_item(lesson, item):
         raise HTTPException(404, "lesson not applicable to this control room item")
 
@@ -1165,15 +1386,27 @@ async def apply_item_lesson(
         application["note"] = note
 
     applications = _lesson_applications(item)
-    applications = [entry for entry in applications if int(entry.get("lesson_id") or 0) != int(lesson_id)]
+    applications = [
+        entry
+        for entry in applications
+        if int(entry.get("lesson_id") or 0) != int(lesson_id)
+    ]
     applications.insert(0, application)
     applications = applications[:20]
-    learned_rules = _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule)
-    target_status = item.get("status") if item.get("status") in TERMINAL_ITEM_STATUSES else "in_review"
+    learned_rules = _merge_rule(
+        item.get("omega", {}).get("lessons", {}).get("rules"), rule
+    )
+    target_status = (
+        item.get("status")
+        if item.get("status") in TERMINAL_ITEM_STATUSES
+        else "in_review"
+    )
 
     pool = await auth.pool()
 
-    async def _write_application(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+    async def _write_application(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status=target_status)
         try:
             await conn.execute(
@@ -1191,10 +1424,12 @@ async def apply_item_lesson(
                 """,
                 scoped_workspace_id,
                 item["id"],
-                json.dumps({
-                    "learned_rules": learned_rules,
-                    "lesson_applications": applications,
-                }),
+                json.dumps(
+                    {
+                        "learned_rules": learned_rules,
+                        "lesson_applications": applications,
+                    }
+                ),
                 sorted(TERMINAL_ITEM_STATUSES),
                 target_status,
             )
@@ -1231,7 +1466,9 @@ async def apply_item_lesson(
         },
         critical=True,
     )
-    related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[:5]
+    related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[
+        :5
+    ]
     public_item = _project_public_item(
         item,
         _with_omega,
@@ -1291,14 +1528,24 @@ def _action_run_idempotency_key(
         return f"{mode}:{template_id}:{safe_provided}"[:512]
     decision_id = str(item.get("decision_id") or "no-decision")
     item_id = str(item.get("id") or "")
-    status_part = f":{status}" if status in {"blocked", "failed", "dry_run_failed"} else ""
+    status_part = (
+        f":{status}" if status in {"blocked", "failed", "dry_run_failed"} else ""
+    )
     return f"{mode}:{item_id}:{template_id}:{decision_id}{status_part}"[:512]
 
 
 @_bind_to_core
-def _action_run_public(row: Any, *, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+def _action_run_public(
+    row: Any, *, fallback: dict[str, Any] | None = None
+) -> dict[str, Any]:
     data = _row_to_public(row) if row else dict(fallback or {})
-    for key in ("input", "dry_run_result", "execution_result", "side_effect", "metadata"):
+    for key in (
+        "input",
+        "dry_run_result",
+        "execution_result",
+        "side_effect",
+        "metadata",
+    ):
         data[key] = _details(data.get(key))
     return data
 
@@ -1363,7 +1610,9 @@ async def _record_action_run(
     critical: bool = False,
 ) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
-    action_type = str(template.get("template_id") or template.get("action_kind") or "unknown")
+    action_type = str(
+        template.get("template_id") or template.get("action_kind") or "unknown"
+    )
     adapter_name = _adapter_name_for_template(template)
     key = idempotency_key or _action_run_idempotency_key(
         item=item,
@@ -1371,7 +1620,14 @@ async def _record_action_run(
         mode=mode,
         status=status,
     )
-    terminal = status in {"preview_generated", "dry_run_completed", "dry_run_failed", "blocked", "completed", "failed"}
+    terminal = status in {
+        "preview_generated",
+        "dry_run_completed",
+        "dry_run_failed",
+        "blocked",
+        "completed",
+        "failed",
+    }
     meta = {
         "template": template,
         "source_dataset": item.get("source_dataset"),
@@ -1540,30 +1796,64 @@ def _dry_run_checks(
     template: dict[str, Any],
     payload: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str], bool]:
-    capability = payload.get("writeback") if isinstance(payload.get("writeback"), dict) else _writeback_capability(template)
+    capability = (
+        payload.get("writeback")
+        if isinstance(payload.get("writeback"), dict)
+        else _writeback_capability(template)
+    )
     checks: list[dict[str, Any]] = []
 
     def add(name: str, passed: bool, *, detail: str, required: bool = True) -> None:
-        checks.append({
-            "name": name,
-            "status": "passed" if passed else "failed",
-            "required": required,
-            "detail": detail,
-        })
+        checks.append(
+            {
+                "name": name,
+                "status": "passed" if passed else "failed",
+                "required": required,
+                "detail": detail,
+            }
+        )
 
     tenant_id, workspace_id = _workspace_scope(user)
-    add("tenant_scope", bool(tenant_id), detail="tenant resolved from authenticated user")
-    add("workspace_scope", bool(workspace_id), detail="workspace resolved from authenticated user")
-    add("actor", bool(user.get("id") or user.get("email")), detail="actor is authenticated")
-    add("input_schema", bool(payload.get("item") and payload.get("operations")), detail="execution payload has item and operation")
-    add("risk", str(template.get("risk_level") or "") in {"low", "medium", "high", "critical"}, detail="risk level is recognized")
+    add(
+        "tenant_scope",
+        bool(tenant_id),
+        detail="tenant resolved from authenticated user",
+    )
+    add(
+        "workspace_scope",
+        bool(workspace_id),
+        detail="workspace resolved from authenticated user",
+    )
+    add(
+        "actor",
+        bool(user.get("id") or user.get("email")),
+        detail="actor is authenticated",
+    )
+    add(
+        "input_schema",
+        bool(payload.get("item") and payload.get("operations")),
+        detail="execution payload has item and operation",
+    )
+    add(
+        "risk",
+        str(template.get("risk_level") or "") in {"low", "medium", "high", "critical"},
+        detail="risk level is recognized",
+    )
     add("approval", True, detail="approval/confirmation gate is declared")
-    add("data", bool(item.get("source_dataset") and item.get("entity_id")), detail="source dataset and entity are present")
+    add(
+        "data",
+        bool(item.get("source_dataset") and item.get("entity_id")),
+        detail="source dataset and entity are present",
+    )
     if capability.get("external"):
         add(
             "adapter",
             bool(capability.get("adapter_available")),
-            detail=str(capability.get("adapter") or capability.get("reason") or "external adapter unavailable"),
+            detail=str(
+                capability.get("adapter")
+                or capability.get("reason")
+                or "external adapter unavailable"
+            ),
         )
         add(
             "external_writeback_flag",
@@ -1582,17 +1872,25 @@ def _dry_run_checks(
         for check in checks
         if check["status"] != "passed" and not bool(check.get("required", True))
     ]
-    ok = all(check["status"] == "passed" for check in checks if bool(check.get("required", True)))
+    ok = all(
+        check["status"] == "passed"
+        for check in checks
+        if bool(check.get("required", True))
+    )
     return checks, warnings, ok
 
 
 @_bind_to_core
 def _uses_asyncpg_pool(pool: Any) -> bool:
-    return pool.__class__.__module__.startswith("asyncpg") and callable(getattr(pool, "acquire", None))
+    return pool.__class__.__module__.startswith("asyncpg") and callable(
+        getattr(pool, "acquire", None)
+    )
 
 
 @_bind_to_core
-async def _run_with_db_scope(pool: Any, user: dict, work: Callable[[Any, str | None, str], Awaitable[Any]]) -> Any:
+async def _run_with_db_scope(
+    pool: Any, user: dict, work: Callable[[Any, str | None, str], Awaitable[Any]]
+) -> Any:
     return await run_with_db_scope(pool, user, work)
 
 
@@ -1617,7 +1915,9 @@ async def action_preview(
     }
     pool = await auth.pool()
 
-    async def _write(conn: Any, _tenant_id: str | None, _workspace_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def _write(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         await _ensure_item_row(
             conn,
             user=user,
@@ -1645,7 +1945,9 @@ async def action_preview(
             status="preview_generated",
             input_payload=payload,
             execution_result=result,
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
             metadata={"legacy_table": "control_room_action_executions"},
             critical=True,
         )
@@ -1686,7 +1988,13 @@ async def action_preview(
     public_item = _project_public_item(
         item, _with_omega, execution_status="preview_generated"
     )
-    return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
+    return {
+        "execution": execution,
+        "action_run": action_run,
+        "payload": payload,
+        "result": result,
+        "item": public_item,
+    }
 
 
 @_bind_to_core
@@ -1731,7 +2039,9 @@ async def action_dry_run(
     }
     pool = await auth.pool()
 
-    async def _write(conn: Any, _tenant_id: str | None, _workspace_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def _write(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         await _ensure_item_row(
             conn,
             user=user,
@@ -1760,10 +2070,15 @@ async def action_dry_run(
             status=action_run_status,
             input_payload=payload,
             dry_run_result=result,
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
             error_code=None if validation_ok else "dry_run_validation_failed",
             error_message=None if validation_ok else result["message"],
-            metadata={"legacy_table": "control_room_action_executions", "checks": validation_checks},
+            metadata={
+                "legacy_table": "control_room_action_executions",
+                "checks": validation_checks,
+            },
             critical=True,
         )
         await _set_execution_status(
@@ -1799,13 +2114,23 @@ async def action_dry_run(
         ip=ip,
         user_agent=user_agent,
         status="success" if validation_ok else "failed",
-        metadata={"template_id": template["template_id"], "result": result, "action_run_id": action_run.get("id")},
+        metadata={
+            "template_id": template["template_id"],
+            "result": result,
+            "action_run_id": action_run.get("id"),
+        },
         critical=True,
     )
     public_item = _project_public_item(
         item, _with_omega, execution_status=execution_status
     )
-    return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
+    return {
+        "execution": execution,
+        "action_run": action_run,
+        "payload": payload,
+        "result": result,
+        "item": public_item,
+    }
 
 
 @_bind_to_core
@@ -1818,6 +2143,7 @@ async def list_item_action_runs(
     item = await _item_for_read(item_id, user, fetcher=fetcher)
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
+
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
         return await conn.fetch(
             """
@@ -1870,6 +2196,7 @@ async def list_item_outcomes(
 ) -> dict[str, Any]:
     item = await _item_for_read(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
+
     async def _load(conn: Any, _tenant_id: str | None, workspace_id: str) -> Any:
         return await conn.fetch(
             """
@@ -1907,10 +2234,15 @@ async def record_item_outcome(
     action_taken = str(body.get("action_taken") or body.get("action") or "").strip()
     if not action_taken:
         raise HTTPException(400, "action_taken is required")
-    option_id = str(body.get("option_id") or item.get("selected_option_id") or "").strip() or None
+    option_id = (
+        str(body.get("option_id") or item.get("selected_option_id") or "").strip()
+        or None
+    )
     predicted_value = _outcome_num(body.get("predicted_value"))
     if predicted_value is None:
-        predicted_value = _outcome_num(item.get("impact_estimate") or _impact_for_item(item).get("estimate"))
+        predicted_value = _outcome_num(
+            item.get("impact_estimate") or _impact_for_item(item).get("estimate")
+        )
     actual_value = _outcome_num(body.get("actual_value"))
     prediction_error = None
     if actual_value is not None and predicted_value is not None:
@@ -1933,12 +2265,21 @@ async def record_item_outcome(
         "measured_impact": body.get("measured_impact"),
         "outcome_status": body.get("outcome_status"),
         "observed_at": body.get("observed_at"),
-        "evidence": body.get("evidence") if isinstance(body.get("evidence"), dict) else {},
+        "evidence": body.get("evidence")
+        if isinstance(body.get("evidence"), dict)
+        else {},
     }
+
     async def _write(conn: Any, tenant_id: str | None, workspace_id: str) -> Any:
         from app.services.intelligence.history import link_outcome_to_snapshot
 
-        await _ensure_item_row(conn, user=user, item=item, status=item.get("status") or "in_review", critical=True)
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status=item.get("status") or "in_review",
+            critical=True,
+        )
         row = await conn.fetchrow(
             """
             INSERT INTO prediction_outcomes (
@@ -1971,7 +2312,13 @@ async def record_item_outcome(
             body=body,
         )
         if learned_rule:
-            await _persist_lessons(conn, user=user, item=item, decision_id=item.get("decision_id"), lessons=[learned_rule])
+            await _persist_lessons(
+                conn,
+                user=user,
+                item=item,
+                decision_id=item.get("decision_id"),
+                lessons=[learned_rule],
+            )
         await conn.execute(
             """
             UPDATE control_room_items
@@ -1982,16 +2329,21 @@ async def record_item_outcome(
             """,
             workspace_id,
             item["id"],
-            json.dumps({
-                "last_outcome": {
-                    "action_taken": action_taken,
-                    "actual_value": actual_value,
-                    "prediction_error": prediction_error,
-                    "outcome_summary": outcome_summary,
-                    "learned_rule": learned_rule,
-                },
-                "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), learned_rule or ""),
-            }),
+            json.dumps(
+                {
+                    "last_outcome": {
+                        "action_taken": action_taken,
+                        "actual_value": actual_value,
+                        "prediction_error": prediction_error,
+                        "outcome_summary": outcome_summary,
+                        "learned_rule": learned_rule,
+                    },
+                    "learned_rules": _merge_rule(
+                        item.get("omega", {}).get("lessons", {}).get("rules"),
+                        learned_rule or "",
+                    ),
+                }
+            ),
         )
         return row, tenant_id, workspace_id
 
@@ -2091,8 +2443,15 @@ async def run_auto_item(
         decision = {"decision": {"id": item.get("decision_id")}, "item": item}
     steps.append({"step": "decision", "decision_id": item.get("decision_id")})
 
-    available_template_ids = {str(template.get("template_id")) for template in _action_templates_for_item(item)}
-    template_id = "create_followup_task" if "create_followup_task" in available_template_ids else _primary_template_for_item(item)["template_id"]
+    available_template_ids = {
+        str(template.get("template_id"))
+        for template in _action_templates_for_item(item)
+    }
+    template_id = (
+        "create_followup_task"
+        if "create_followup_task" in available_template_ids
+        else _primary_template_for_item(item)["template_id"]
+    )
     preview = await action_preview(
         item_id,
         user,
@@ -2110,7 +2469,13 @@ async def run_auto_item(
         fetcher=fetcher,
     )
     item = dry_run["item"]
-    steps.append({"step": "execution", "template_id": template_id, "status": item.get("execution_status")})
+    steps.append(
+        {
+            "step": "execution",
+            "template_id": template_id,
+            "status": item.get("execution_status"),
+        }
+    )
 
     control = await record_item_step(
         item_id,
@@ -2125,7 +2490,9 @@ async def run_auto_item(
 
     pool = await auth.pool()
 
-    async def _record_auto_run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+    async def _record_auto_run(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> None:
         await _record_item_event(
             conn,
             user=user,
@@ -2179,7 +2546,14 @@ def _confirmed_for_execute(value: Any) -> bool:
     if value is True:
         return True
     if isinstance(value, str):
-        return value.strip().lower() in {"execute", "confirm", "confirmed", "true", "yes", "1"}
+        return value.strip().lower() in {
+            "execute",
+            "confirm",
+            "confirmed",
+            "true",
+            "yes",
+            "1",
+        }
     return False
 
 
@@ -2273,11 +2647,18 @@ async def _record_execute_block(
             mode="execute",
             status="blocked",
         ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"legacy_table": "control_room_action_executions", "block_reason": error},
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
+        metadata={
+            "legacy_table": "control_room_action_executions",
+            "block_reason": error,
+        },
     )
     if str(item.get("execution_status") or "not_started") != "dry_run_validated":
-        await _set_execution_status(pool, user=user, item=item, execution_status="blocked", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="blocked", critical=True
+        )
     await _record_item_event(
         pool,
         user=user,
@@ -2540,7 +2921,9 @@ async def _execute_internal_followup_task_tx(
             mode="execute",
             provided=idempotency_key,
         ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
         metadata={"legacy_table": "control_room_action_executions"},
         critical=True,
     )
@@ -2555,16 +2938,18 @@ async def _execute_internal_followup_task_tx(
         """,
         workspace_id,
         item["id"],
-        json.dumps({
-            "execution_status": "executed",
-            "writeback_result": {
-                "adapter": "internal_followup_task",
-                "target": "decision_actions",
-                "decision_action_id": public_action.get("id"),
-                "execution_id": execution.get("id"),
-                "action_run_id": action_run.get("id"),
-            },
-        }),
+        json.dumps(
+            {
+                "execution_status": "executed",
+                "writeback_result": {
+                    "adapter": "internal_followup_task",
+                    "target": "decision_actions",
+                    "decision_action_id": public_action.get("id"),
+                    "execution_id": execution.get("id"),
+                    "action_run_id": action_run.get("id"),
+                },
+            }
+        ),
     )
     await _record_item_event(
         db,
@@ -2626,8 +3011,17 @@ async def _execute_internal_investigation_note(
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
-    note_payload = payload.get("action_payload") if isinstance(payload.get("action_payload"), dict) else {}
-    note = _details(note_payload.get("note")).get("summary") or item.get("root_cause") or item.get("description") or item.get("title")
+    note_payload = (
+        payload.get("action_payload")
+        if isinstance(payload.get("action_payload"), dict)
+        else {}
+    )
+    note = (
+        _details(note_payload.get("note")).get("summary")
+        or item.get("root_cause")
+        or item.get("description")
+        or item.get("title")
+    )
     side_effect = {
         "target": "control_room_item_events",
         "event_type": "investigation_note_created",
@@ -2673,7 +3067,9 @@ async def _execute_internal_investigation_note(
             mode="execute",
             provided=idempotency_key,
         ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
         metadata={"legacy_table": "control_room_action_executions"},
         critical=True,
     )
@@ -2690,7 +3086,9 @@ async def _execute_internal_investigation_note(
         },
         critical=True,
     )
-    await _set_execution_status(pool, user=user, item=item, execution_status="executed", critical=True)
+    await _set_execution_status(
+        pool, user=user, item=item, execution_status="executed", critical=True
+    )
     await _record_writeback_audit_event(
         pool,
         user=user,
@@ -2787,7 +3185,9 @@ async def _execute_internal_decision_monitoring(
             mode="execute",
             provided=idempotency_key,
         ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
         metadata={"legacy_table": "control_room_action_executions"},
         critical=True,
     )
@@ -2802,7 +3202,9 @@ async def _execute_internal_decision_monitoring(
         """,
         workspace_id,
         item["id"],
-        json.dumps({"decision_monitoring": monitoring_state, "execution_status": "executed"}),
+        json.dumps(
+            {"decision_monitoring": monitoring_state, "execution_status": "executed"}
+        ),
     )
     await _record_item_event(
         pool,
@@ -2882,7 +3284,11 @@ def _external_action_data(
 
 @_bind_to_core
 def _writeback_template_type(template: dict[str, Any]) -> str:
-    return str(template.get("template_type") or template.get("template_id") or "").strip().lower()
+    return (
+        str(template.get("template_type") or template.get("template_id") or "")
+        .strip()
+        .lower()
+    )
 
 
 @_bind_to_core
@@ -2926,7 +3332,9 @@ async def _record_adapter_success_lesson(
     template_type: str,
 ) -> dict[str, Any] | None:
     tenant_id, workspace_id = _workspace_scope(user)
-    cartridge_id = str(item.get("cartridge") or template.get("cartridge_id") or "platform")
+    cartridge_id = str(
+        item.get("cartridge") or template.get("cartridge_id") or "platform"
+    )
     anomaly_type = str(item.get("anomaly_type") or "control_room_item")
     decision_id = int(item["decision_id"]) if item.get("decision_id") else None
     confidence = _impact_for_item(item).get("confidence") or 0.85
@@ -2938,13 +3346,16 @@ async def _record_adapter_success_lesson(
         "autonomous_learning": True,
         "source": "adapter_success",
         "execution_id": execution.get("id"),
-        "result_status": result.get("status") or result.get("adapter_result", {}).get("status"),
+        "result_status": result.get("status")
+        or result.get("adapter_result", {}).get("status"),
         "suggested_action": {
             "template_id": template.get("template_id"),
             "template_type": template_type,
             "label": template.get("label"),
             "action_kind": template.get("action_kind"),
-            "target": result.get("target") or template.get("cartridge_id") or item.get("cartridge"),
+            "target": result.get("target")
+            or template.get("cartridge_id")
+            or item.get("cartridge"),
             "adapter": adapter_name,
         },
     }
@@ -2994,7 +3405,9 @@ async def _execute_external_writeback(
 ) -> dict[str, Any]:
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
 
-    cartridge_id = str(template.get("cartridge_id") or item.get("cartridge") or "").strip()
+    cartridge_id = str(
+        template.get("cartridge_id") or item.get("cartridge") or ""
+    ).strip()
     if not cartridge_id:
         await _record_execute_block(
             pool,
@@ -3054,7 +3467,9 @@ async def _execute_external_writeback(
     }
 
     try:
-        credentials = _writeback_credentials_for_action(item=item, template=template, payload=payload)
+        credentials = _writeback_credentials_for_action(
+            item=item, template=template, payload=payload
+        )
         adapter = WriteBackAdapterFactory.get_adapter(template_type)
         adapter_name = adapter.__class__.__name__
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
@@ -3100,11 +3515,19 @@ async def _execute_external_writeback(
                 mode="execute",
                 provided=idempotency_key,
             ),
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-            metadata={"external_write": True, "target": target, "adapter": adapter_name},
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+            metadata={
+                "external_write": True,
+                "target": target,
+                "adapter": adapter_name,
+            },
             critical=True,
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="failed", critical=True
+        )
         await _record_item_event(
             pool,
             user=user,
@@ -3178,11 +3601,19 @@ async def _execute_external_writeback(
                 mode="execute",
                 provided=idempotency_key,
             ),
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-            metadata={"external_write": True, "target": target, "adapter": adapter_name},
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+            metadata={
+                "external_write": True,
+                "target": target,
+                "adapter": adapter_name,
+            },
             critical=True,
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="failed", critical=True
+        )
         await _record_item_event(
             pool,
             user=user,
@@ -3255,11 +3686,19 @@ async def _execute_external_writeback(
                 mode="execute",
                 provided=idempotency_key,
             ),
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-            metadata={"external_write": True, "target": target, "adapter": adapter_name},
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+            metadata={
+                "external_write": True,
+                "target": target,
+                "adapter": adapter_name,
+            },
             critical=True,
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="failed", critical=True
+        )
         await _record_item_event(
             pool,
             user=user,
@@ -3351,11 +3790,15 @@ async def _execute_external_writeback(
             mode="execute",
             provided=idempotency_key,
         ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
         metadata={"external_write": True, "target": target, "adapter": adapter_name},
         critical=True,
     )
-    await _set_execution_status(pool, user=user, item=item, execution_status=execution_status, critical=True)
+    await _set_execution_status(
+        pool, user=user, item=item, execution_status=execution_status, critical=True
+    )
     await _record_item_event(
         pool,
         user=user,
@@ -3405,7 +3848,9 @@ async def _execute_external_writeback(
         adapter_name=adapter_name,
         template_type=template_type,
     )
-    suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
+    suggested_actions = _suggested_actions_from_lessons(
+        item, [learning_lesson] if learning_lesson else []
+    )
     public_item = _project_public_item(
         item,
         _with_omega,
@@ -3467,11 +3912,16 @@ async def execute_item(
                 payload=payload,
                 ip=ip,
                 user_agent=user_agent,
-                message=str(capability.get("reason") or "No hay adapter ERP aprobado para este template."),
+                message=str(
+                    capability.get("reason")
+                    or "No hay adapter ERP aprobado para este template."
+                ),
                 error="adapter_missing",
             )
         )
-        raise HTTPException(501, "external ERP write-back adapter is not available for this template")
+        raise HTTPException(
+            501, "external ERP write-back adapter is not available for this template"
+        )
 
     if capability.get("external") and not _external_writeback_enabled():
         await _with_scoped_db(
@@ -3487,7 +3937,9 @@ async def execute_item(
                 error="CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false",
             )
         )
-        raise HTTPException(409, "external ERP write-back is not available in Control Room V1")
+        raise HTTPException(
+            409, "external ERP write-back is not available in Control Room V1"
+        )
 
     if not capability.get("supported") and not capability.get("external"):
         await _with_scoped_db(
@@ -3503,7 +3955,9 @@ async def execute_item(
                 error="unsupported_writeback_template",
             )
         )
-        raise HTTPException(501, "execution template is not supported in Control Room V1")
+        raise HTTPException(
+            501, "execution template is not supported in Control Room V1"
+        )
 
     if not _confirmed_for_execute(confirm_execute):
         await _with_scoped_db(
@@ -3551,7 +4005,9 @@ async def execute_item(
                 error="terminal_item",
             )
         )
-        raise HTTPException(409, "terminal control room item cannot execute supervised action")
+        raise HTTPException(
+            409, "terminal control room item cannot execute supervised action"
+        )
 
     try:
         existing = await _with_scoped_db(
@@ -3560,7 +4016,9 @@ async def execute_item(
                 user=user,
                 item=item,
                 template=template,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 critical=True,
             )
         )
@@ -3647,7 +4105,9 @@ async def execute_item(
                 error="dry_run_action_run_required",
             )
         )
-        raise HTTPException(409, "successful dry-run action run is required before execution")
+        raise HTTPException(
+            409, "successful dry-run action run is required before execution"
+        )
 
     if str(template.get("template_id") or "") == "create_followup_task":
         return await _with_scoped_db(
@@ -3657,7 +4117,9 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3671,7 +4133,9 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3685,7 +4149,9 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3699,7 +4165,9 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3763,7 +4231,9 @@ async def approve_item(
     pool = await auth.pool()
     lessons = _lessons_for_item(item)
 
-    async def _write_approval(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+    async def _write_approval(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> Any:
         visible = await conn.fetchrow(
             "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
             decision_id,
@@ -3878,7 +4348,9 @@ async def dismiss_item(
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
 
-    async def _write_dismissed(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
+    async def _write_dismissed(
+        conn: Any, _tenant_id: str | None, workspace_id: str
+    ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status="dismissed")
         try:
             await conn.execute(
@@ -3935,7 +4407,9 @@ async def reopen_item(
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
 
-    async def _write_reopened(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
+    async def _write_reopened(
+        conn: Any, _tenant_id: str | None, workspace_id: str
+    ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status="open")
         try:
             await conn.execute(
@@ -4024,8 +4498,12 @@ async def _operate_alert(
         raise HTTPException(404, "active alert not found")
 
     now = datetime.now(UTC).isoformat()
-    existing_state = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
-    owner_email = str(body.get("owner_email") or body.get("owner") or user.get("email") or "").strip()
+    existing_state = (
+        item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    )
+    owner_email = str(
+        body.get("owner_email") or body.get("owner") or user.get("email") or ""
+    ).strip()
     note = str(body.get("note") or "").strip()
     reason = str(body.get("reason") or "").strip()
     alert_state = {
@@ -4048,14 +4526,20 @@ async def _operate_alert(
         alert_state["assigned_at"] = now
     elif next_state == "false_positive":
         alert_state["false_positive_at"] = now
-        alert_state["reason"] = reason or "Marcado como falso positivo desde Sala de Control"
+        alert_state["reason"] = (
+            reason or "Marcado como falso positivo desde Sala de Control"
+        )
 
-    target_status = "dismissed" if next_state == "false_positive" else (
-        current_status if current_status not in {"open", ""} else "in_review"
+    target_status = (
+        "dismissed"
+        if next_state == "false_positive"
+        else (current_status if current_status not in {"open", ""} else "in_review")
     )
     pool = await auth.pool()
 
-    async def _write_alert_state(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
+    async def _write_alert_state(
+        conn: Any, _tenant_id: str | None, workspace_id: str
+    ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status=target_status)
         try:
             await conn.execute(
@@ -4207,62 +4691,62 @@ async def mark_alert_false_positive(
 
 
 __all__ = (
-    '_external_writeback_enabled',
-    '_external_delivery_enabled',
-    '_writeback_capability',
-    '_template_with_writeback',
-    '_impact_payload',
-    '_priority_payload',
-    '_impact_for_item',
-    '_template_ids_for_item',
-    '_action_templates_for_item',
-    '_primary_template_for_item',
-    '_action_payload_for_template',
-    '_execution_payload',
-    'create_decision_for_item',
-    'select_item_option',
-    'get_item_impact',
-    'record_item_step',
-    'update_item_control',
-    'create_item_lesson',
-    'apply_item_lesson',
-    '_resolve_template',
-    '_adapter_name_for_template',
-    '_action_run_idempotency_key',
-    '_action_run_public',
-    '_record_action_run_event',
-    '_record_action_run',
-    '_latest_successful_dry_run',
-    '_dry_run_checks',
-    'action_preview',
-    'action_dry_run',
-    'list_item_action_runs',
-    '_outcome_num',
-    '_outcome_public',
-    'list_item_outcomes',
-    'record_item_outcome',
-    'run_auto_item',
-    '_confirmed_for_execute',
-    '_supports_transactional_acquire',
-    '_record_writeback_audit_event',
-    '_record_execute_block',
-    '_existing_executed_writeback',
-    '_execute_internal_followup_task',
-    '_execute_internal_followup_task_tx',
-    '_execute_internal_investigation_note',
-    '_execute_internal_decision_monitoring',
-    '_external_action_data',
-    '_execute_external_writeback',
-    'execute_item',
-    'create_decision_for_anomaly',
-    'approve_item',
-    'approve_anomaly',
-    'dismiss_item',
-    'reopen_item',
-    '_snoozed_until_from_body',
-    '_operate_alert',
-    'acknowledge_alert',
-    'snooze_alert',
-    'assign_alert',
-    'mark_alert_false_positive'
+    "_external_writeback_enabled",
+    "_external_delivery_enabled",
+    "_writeback_capability",
+    "_template_with_writeback",
+    "_impact_payload",
+    "_priority_payload",
+    "_impact_for_item",
+    "_template_ids_for_item",
+    "_action_templates_for_item",
+    "_primary_template_for_item",
+    "_action_payload_for_template",
+    "_execution_payload",
+    "create_decision_for_item",
+    "select_item_option",
+    "get_item_impact",
+    "record_item_step",
+    "update_item_control",
+    "create_item_lesson",
+    "apply_item_lesson",
+    "_resolve_template",
+    "_adapter_name_for_template",
+    "_action_run_idempotency_key",
+    "_action_run_public",
+    "_record_action_run_event",
+    "_record_action_run",
+    "_latest_successful_dry_run",
+    "_dry_run_checks",
+    "action_preview",
+    "action_dry_run",
+    "list_item_action_runs",
+    "_outcome_num",
+    "_outcome_public",
+    "list_item_outcomes",
+    "record_item_outcome",
+    "run_auto_item",
+    "_confirmed_for_execute",
+    "_supports_transactional_acquire",
+    "_record_writeback_audit_event",
+    "_record_execute_block",
+    "_existing_executed_writeback",
+    "_execute_internal_followup_task",
+    "_execute_internal_followup_task_tx",
+    "_execute_internal_investigation_note",
+    "_execute_internal_decision_monitoring",
+    "_external_action_data",
+    "_execute_external_writeback",
+    "execute_item",
+    "create_decision_for_anomaly",
+    "approve_item",
+    "approve_anomaly",
+    "dismiss_item",
+    "reopen_item",
+    "_snoozed_until_from_body",
+    "_operate_alert",
+    "acknowledge_alert",
+    "snooze_alert",
+    "assign_alert",
+    "mark_alert_false_positive",
 )

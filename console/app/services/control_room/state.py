@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# fmt: off
-
 import types
 
 from app.services.control_room import core as _core
@@ -125,7 +123,10 @@ async def _load_threshold_rows(
     if enabled_only:
         where.append("enabled = TRUE")
     try:
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+
+        async def _load(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> list[Any]:
             return await conn.fetch(
                 f"""
                 SELECT id, cartridge_id, anomaly_type, metric, warning_value,
@@ -175,7 +176,10 @@ async def _load_lesson_rows(
         where.append(f"item_id = ${len(params)}")
     params.append(max(1, min(int(limit or 100), 500)))
     try:
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+
+        async def _load(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> list[Any]:
             return await conn.fetch(
                 f"""
                 SELECT id, item_id, cartridge_id, anomaly_type, rule,
@@ -627,6 +631,7 @@ def _with_omega(
         ),
     )
 
+
 @_bind_to_core
 def _status_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str, str]:
     active_rank = 1 if item.get("status") in TERMINAL_ITEM_STATUSES else 0
@@ -729,6 +734,7 @@ def _alert_for_item(
         external_delivery_enabled=_external_delivery_enabled,
     )
 
+
 @_bind_to_core
 def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
     business_ids = eligible_item_ids(items)
@@ -807,7 +813,9 @@ async def _overlay_item_state(
         return []
     tenant_id, workspace_id = _workspace_scope(user)
     item_ids = [item["id"] for item in items]
-    owner_id = None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
+    owner_id = (
+        None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
+    )
 
     async def _load(
         conn: Any, _tenant_id: str | None, _workspace_id: str
@@ -1024,6 +1032,7 @@ async def get_item_activity(
     decision_action_rows: list[Any] = []
     action_run_rows: list[Any] = []
     outcome_rows: list[Any] = []
+
     async def _load_item_activity(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> tuple[list[Any], list[Any], list[Any]]:
@@ -1353,7 +1362,9 @@ async def upsert_threshold(
     metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
     pool = await auth.pool()
 
-    async def _write_threshold(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+    async def _write_threshold(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> Any:
         return await conn.fetchrow(
             """
             INSERT INTO control_room_thresholds (

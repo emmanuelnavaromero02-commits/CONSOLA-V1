@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# fmt: off
-
 import asyncio
 import os
 import time
@@ -17,7 +15,10 @@ from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
 from app.services.permissions import require_permission
-from app.services.security_context import build_security_context, verify_signed_security_context
+from app.services.security_context import (
+    build_security_context,
+    verify_signed_security_context,
+)
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
@@ -36,10 +37,26 @@ def _control_room_cache_ttl() -> float:
 
 def _control_room_cache_identity(user: dict | None) -> tuple[Any, ...]:
     ctx = build_security_context(user)
-    allowed = tuple(sorted(str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()))
+    allowed = tuple(
+        sorted(
+            str(item).strip()
+            for item in (ctx.get("allowed_cartridges") or [])
+            if str(item).strip()
+        )
+    )
     return (
-        str(ctx.get("tenant_id") or (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip(),
-        str(ctx.get("workspace_id") or (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip(),
+        str(
+            ctx.get("tenant_id")
+            or (user or {}).get("active_tenant_id")
+            or (user or {}).get("tenant_id")
+            or ""
+        ).strip(),
+        str(
+            ctx.get("workspace_id")
+            or (user or {}).get("active_workspace_id")
+            or (user or {}).get("workspace_id")
+            or ""
+        ).strip(),
         str(ctx.get("role") or (user or {}).get("role") or "").strip(),
         str((user or {}).get("id") or ctx.get("sub") or "").strip(),
         allowed,
@@ -75,7 +92,9 @@ def _control_room_cache_set(namespace: str, user: dict | None, value: Any) -> An
     return value
 
 
-async def _control_room_cache_get_or_set(namespace: str, user: dict | None, loader) -> Any:
+async def _control_room_cache_get_or_set(
+    namespace: str, user: dict | None, loader
+) -> Any:
     cached = _control_room_cache_get(namespace, user)
     if cached is not None:
         return cached
@@ -93,7 +112,9 @@ async def _control_room_cache_get_or_set(namespace: str, user: dict | None, load
 
 def _control_room_cache_invalidate(user: dict | None) -> None:
     identity = _control_room_cache_identity(user)
-    keys = [key for key in _CONTROL_ROOM_READ_CACHE if len(key) == 2 and key[1] == identity]
+    keys = [
+        key for key in _CONTROL_ROOM_READ_CACHE if len(key) == 2 and key[1] == identity
+    ]
     for key in keys:
         _CONTROL_ROOM_READ_CACHE.pop(key, None)
 
@@ -128,7 +149,9 @@ def _control_room_internal_user(
         raise HTTPException(status_code=403, detail="trusted security_context required")
     permissions = {str(item) for item in (ctx.get("permissions") or [])}
     if "datasets.read" not in permissions:
-        raise HTTPException(status_code=403, detail="permission required: datasets.read")
+        raise HTTPException(
+            status_code=403, detail="permission required: datasets.read"
+        )
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
     if not tenant_id or not workspace_id:
@@ -220,7 +243,9 @@ async def _control_room_internal_view(
         return await _control_room_cache_get_or_set(
             "sap-successfactors-talent-metadata-readiness",
             user,
-            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(
+                user
+            ),
         )
     if view == "sap_successfactors_market_validation":
         return await _control_room_cache_get_or_set(
@@ -269,21 +294,32 @@ async def _control_room_internal_view(
             user,
             min_outcomes_required=min_outcomes_required,
         )
-    raise HTTPException(status_code=400, detail=f"unsupported control room view: {view}")
+    raise HTTPException(
+        status_code=400, detail=f"unsupported control room view: {view}"
+    )
 
 
 @router.get("/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_summary(user: dict = Depends(require_authenticated)):
-    return await _control_room_cache_get_or_set("summary", user, lambda: control_room_service.summary(user))
+    return await _control_room_cache_get_or_set(
+        "summary", user, lambda: control_room_service.summary(user)
+    )
 
 
 @router.get("/dashboard", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_dashboard(user: dict = Depends(require_authenticated)):
-    return await _control_room_cache_get_or_set("dashboard", user, lambda: control_room_service.dashboard(user))
+    return await _control_room_cache_get_or_set(
+        "dashboard", user, lambda: control_room_service.dashboard(user)
+    )
 
 
-@router.get("/sap-successfactors/gold-kpis", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require_authenticated)):
+@router.get(
+    "/sap-successfactors/gold-kpis",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_gold_kpis(
+    user: dict = Depends(require_authenticated),
+):
     return await _control_room_cache_get_or_set(
         "sap-successfactors-gold-kpis",
         user,
@@ -291,8 +327,13 @@ async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require
     )
 
 
-@router.get("/sap-successfactors/talent-kpis", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_sap_successfactors_talent_kpis(user: dict = Depends(require_authenticated)):
+@router.get(
+    "/sap-successfactors/talent-kpis",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_talent_kpis(
+    user: dict = Depends(require_authenticated),
+):
     return await _control_room_cache_get_or_set(
         "sap-successfactors-talent-kpis",
         user,
@@ -300,8 +341,13 @@ async def control_room_sap_successfactors_talent_kpis(user: dict = Depends(requi
     )
 
 
-@router.get("/sap-successfactors/talent/overview", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_sap_successfactors_talent_overview(user: dict = Depends(require_authenticated)):
+@router.get(
+    "/sap-successfactors/talent/overview",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_talent_overview(
+    user: dict = Depends(require_authenticated),
+):
     return await _control_room_cache_get_or_set(
         "sap-successfactors-talent-overview",
         user,
@@ -309,8 +355,13 @@ async def control_room_sap_successfactors_talent_overview(user: dict = Depends(r
     )
 
 
-@router.get("/sap-successfactors/talent/9box", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_sap_successfactors_talent_9box(user: dict = Depends(require_authenticated)):
+@router.get(
+    "/sap-successfactors/talent/9box",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_talent_9box(
+    user: dict = Depends(require_authenticated),
+):
     return await _control_room_cache_get_or_set(
         "sap-successfactors-talent-9box",
         user,
@@ -318,7 +369,10 @@ async def control_room_sap_successfactors_talent_9box(user: dict = Depends(requi
     )
 
 
-@router.get("/sap-successfactors/talent/9box/{box_id}", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/sap-successfactors/talent/9box/{box_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_sap_successfactors_talent_9box_box(
     box_id: str,
     user: dict = Depends(require_authenticated),
@@ -330,8 +384,13 @@ async def control_room_sap_successfactors_talent_9box_box(
     )
 
 
-@router.get("/sap-successfactors/talent/anomalies", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_sap_successfactors_talent_anomalies(user: dict = Depends(require_authenticated)):
+@router.get(
+    "/sap-successfactors/talent/anomalies",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_talent_anomalies(
+    user: dict = Depends(require_authenticated),
+):
     return await _control_room_cache_get_or_set(
         "sap-successfactors-talent-anomalies",
         user,
@@ -339,8 +398,13 @@ async def control_room_sap_successfactors_talent_anomalies(user: dict = Depends(
     )
 
 
-@router.get("/sap-successfactors/talent/metadata-readiness", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_sap_successfactors_talent_metadata_readiness(user: dict = Depends(require_authenticated)):
+@router.get(
+    "/sap-successfactors/talent/metadata-readiness",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_sap_successfactors_talent_metadata_readiness(
+    user: dict = Depends(require_authenticated),
+):
     return await _control_room_cache_get_or_set(
         "sap-successfactors-talent-metadata-readiness",
         user,
@@ -348,25 +412,37 @@ async def control_room_sap_successfactors_talent_metadata_readiness(user: dict =
     )
 
 
-@router.get("/banxico/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/banxico/readiness", dependencies=[Depends(require_permission("datasets.read"))]
+)
 async def control_room_banxico_readiness(user: dict = Depends(require_authenticated)):
     from app.services.banxico_readiness import banxico_readiness
 
-    return await _control_room_cache_get_or_set("banxico-readiness", user, lambda: banxico_readiness(user))
+    return await _control_room_cache_get_or_set(
+        "banxico-readiness", user, lambda: banxico_readiness(user)
+    )
 
 
-@router.get("/inegi/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/inegi/readiness", dependencies=[Depends(require_permission("datasets.read"))]
+)
 async def control_room_inegi_readiness(user: dict = Depends(require_authenticated)):
     from app.services.inegi_readiness import inegi_readiness
 
-    return await _control_room_cache_get_or_set("inegi-readiness", user, lambda: inegi_readiness(user))
+    return await _control_room_cache_get_or_set(
+        "inegi-readiness", user, lambda: inegi_readiness(user)
+    )
 
 
-@router.get("/sec-edgar/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/sec-edgar/readiness", dependencies=[Depends(require_permission("datasets.read"))]
+)
 async def control_room_sec_edgar_readiness(user: dict = Depends(require_authenticated)):
     from app.services.sec_edgar_readiness import sec_edgar_readiness
 
-    return await _control_room_cache_get_or_set("sec-edgar-readiness", user, lambda: sec_edgar_readiness(user))
+    return await _control_room_cache_get_or_set(
+        "sec-edgar-readiness", user, lambda: sec_edgar_readiness(user)
+    )
 
 
 @router.post(
@@ -430,7 +506,10 @@ async def control_room_agents_ops(
     )
 
 
-@router.get("/decision-intelligence/runs", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/runs",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_decision_intelligence_runs(
     limit: int = Query(default=50, ge=1, le=250),
     user: dict = Depends(require_authenticated),
@@ -438,7 +517,10 @@ async def control_room_decision_intelligence_runs(
     return await intelligence_history.list_runs(user, limit=limit)
 
 
-@router.get("/decision-intelligence/runs/{run_id}", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/runs/{run_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_decision_intelligence_run_detail(
     run_id: str,
     user: dict = Depends(require_authenticated),
@@ -446,7 +528,10 @@ async def control_room_decision_intelligence_run_detail(
     return await intelligence_history.get_run(user, run_id)
 
 
-@router.get("/decision-intelligence/history", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/history",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_decision_intelligence_history(
     limit: int = Query(default=100, ge=1, le=500),
     user: dict = Depends(require_authenticated),
@@ -454,7 +539,10 @@ async def control_room_decision_intelligence_history(
     return await intelligence_history.list_history(user, limit=limit)
 
 
-@router.get("/decision-intelligence/calibration", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/calibration",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_decision_intelligence_calibration(
     min_outcomes_required: int = Query(default=10, ge=1, le=1000),
     user: dict = Depends(require_authenticated),
@@ -484,7 +572,9 @@ async def control_room_internal_read(
     payload = body if isinstance(body, dict) else {}
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     user = _control_room_internal_user(
-        payload.get("security_context") if isinstance(payload.get("security_context"), dict) else {},
+        payload.get("security_context")
+        if isinstance(payload.get("security_context"), dict)
+        else {},
         internal_service,
     )
     view = str(payload.get("view") or "").strip()
@@ -500,7 +590,10 @@ async def control_room_internal_read(
 
 @router.post(
     "/alerts/{item_id}/ack",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_acknowledge_alert(
     item_id: str,
@@ -522,7 +615,10 @@ async def control_room_acknowledge_alert(
 
 @router.post(
     "/alerts/{item_id}/snooze",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_snooze_alert(
     item_id: str,
@@ -544,7 +640,10 @@ async def control_room_snooze_alert(
 
 @router.post(
     "/alerts/{item_id}/assign",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_assign_alert(
     item_id: str,
@@ -566,7 +665,10 @@ async def control_room_assign_alert(
 
 @router.post(
     "/alerts/{item_id}/false-positive",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_false_positive_alert(
     item_id: str,
@@ -591,34 +693,61 @@ async def control_room_anomalies(user: dict = Depends(require_authenticated)):
     return await control_room_service.list_anomalies(user)
 
 
-@router.get("/items/{item_id}", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_item_detail(item_id: str, user: dict = Depends(require_authenticated)):
+@router.get(
+    "/items/{item_id}", dependencies=[Depends(require_permission("datasets.read"))]
+)
+async def control_room_item_detail(
+    item_id: str, user: dict = Depends(require_authenticated)
+):
     return await control_room_service.get_item(item_id, user)
 
 
-@router.get("/items/{item_id}/impact", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_item_impact(item_id: str, user: dict = Depends(require_authenticated)):
+@router.get(
+    "/items/{item_id}/impact",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_item_impact(
+    item_id: str, user: dict = Depends(require_authenticated)
+):
     return await control_room_service.get_item_impact(item_id, user)
 
 
-@router.get("/items/{item_id}/activity", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_item_activity(item_id: str, user: dict = Depends(require_authenticated)):
+@router.get(
+    "/items/{item_id}/activity",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_item_activity(
+    item_id: str, user: dict = Depends(require_authenticated)
+):
     return await control_room_service.get_item_activity(item_id, user)
 
 
-@router.get("/items/{item_id}/action-runs", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_item_action_runs(item_id: str, user: dict = Depends(require_authenticated)):
+@router.get(
+    "/items/{item_id}/action-runs",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_item_action_runs(
+    item_id: str, user: dict = Depends(require_authenticated)
+):
     return await control_room_service.list_item_action_runs(item_id, user)
 
 
-@router.get("/items/{item_id}/outcomes", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_item_outcomes(item_id: str, user: dict = Depends(require_authenticated)):
+@router.get(
+    "/items/{item_id}/outcomes",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_item_outcomes(
+    item_id: str, user: dict = Depends(require_authenticated)
+):
     return await control_room_service.list_item_outcomes(item_id, user)
 
 
 @router.post(
     "/items/{item_id}/step",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_record_item_step(
     item_id: str,
@@ -645,7 +774,10 @@ async def control_room_record_item_step(
 
 @router.post(
     "/items/{item_id}/lessons",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_create_item_lesson(
     item_id: str,
@@ -667,7 +799,10 @@ async def control_room_create_item_lesson(
 
 @router.post(
     "/items/{item_id}/outcomes",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_record_item_outcome(
     item_id: str,
@@ -689,7 +824,10 @@ async def control_room_record_item_outcome(
 
 @router.post(
     "/items/{item_id}/lessons/{lesson_id}/apply",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_apply_item_lesson(
     item_id: str,
@@ -713,7 +851,10 @@ async def control_room_apply_item_lesson(
 
 @router.post(
     "/items/{item_id}/control/{control_id}",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_update_item_control(
     item_id: str,
@@ -735,14 +876,22 @@ async def control_room_update_item_control(
     )
 
 
-@router.get("/anomalies/{anomaly_id}", dependencies=[Depends(require_permission("datasets.read"))])
-async def control_room_anomaly_detail(anomaly_id: str, user: dict = Depends(require_authenticated)):
+@router.get(
+    "/anomalies/{anomaly_id}",
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
+async def control_room_anomaly_detail(
+    anomaly_id: str, user: dict = Depends(require_authenticated)
+):
     return await control_room_service.get_anomaly(anomaly_id, user)
 
 
 @router.post(
     "/anomalies/{anomaly_id}/decision",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_create_decision(
     anomaly_id: str,
@@ -762,7 +911,10 @@ async def control_room_create_decision(
 
 @router.post(
     "/items/{item_id}/decision",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_create_item_decision(
     item_id: str,
@@ -782,7 +934,10 @@ async def control_room_create_item_decision(
 
 @router.post(
     "/items/{item_id}/option",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_select_item_option(
     item_id: str,
@@ -805,7 +960,10 @@ async def control_room_select_item_option(
 
 @router.post(
     "/items/{item_id}/action-preview",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_action_preview(
     item_id: str,
@@ -828,7 +986,10 @@ async def control_room_action_preview(
 
 @router.post(
     "/items/{item_id}/action-dry-run",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_action_dry_run(
     item_id: str,
@@ -851,7 +1012,10 @@ async def control_room_action_dry_run(
 
 @router.post(
     "/items/{item_id}/auto-run",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_auto_run_item(
     item_id: str,
@@ -897,7 +1061,9 @@ async def control_room_execute_item(
             user,
             template_id=str(template_id) if template_id else None,
             confirm_execute=confirm_execute,
-            idempotency_key=str(idempotency_key).strip()[:128] if idempotency_key else None,
+            idempotency_key=str(idempotency_key).strip()[:128]
+            if idempotency_key
+            else None,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),
@@ -906,7 +1072,10 @@ async def control_room_execute_item(
 
 @router.post(
     "/anomalies/{anomaly_id}/approve",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_approve(
     anomaly_id: str,
@@ -931,7 +1100,10 @@ async def control_room_approve(
 
 @router.post(
     "/items/{item_id}/approve",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_approve_item(
     item_id: str,
@@ -956,7 +1128,10 @@ async def control_room_approve_item(
 
 @router.post(
     "/items/{item_id}/dismiss",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_dismiss_item(
     item_id: str,
@@ -979,7 +1154,10 @@ async def control_room_dismiss_item(
 
 @router.post(
     "/items/{item_id}/reopen",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_reopen_item(
     item_id: str,
@@ -1007,7 +1185,10 @@ async def control_room_thresholds(user: dict = Depends(require_authenticated)):
 
 @router.post(
     "/thresholds",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_upsert_threshold(
     request: Request,
@@ -1027,7 +1208,10 @@ async def control_room_upsert_threshold(
 
 @router.patch(
     "/thresholds",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_patch_threshold(
     request: Request,
