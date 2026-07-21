@@ -172,6 +172,36 @@ def test_evidence_id_without_source_identity_is_not_evidence():
     assert has_evidence({"evidence_id": "evidence-17"}) is False
 
 
+@pytest.mark.parametrize("source_field", ["source", "source_ref"])
+def test_narrative_source_plus_evidence_id_is_not_evidence(source_field):
+    assert (
+        has_evidence({source_field: "analysis complete", "evidence_id": "evidence-17"})
+        is False
+    )
+
+
+def test_nested_narrative_source_plus_evidence_id_is_not_evidence():
+    assert (
+        has_evidence(
+            {
+                "evidence": {
+                    "source": "analysis complete",
+                    "evidence_id": "evidence-17",
+                }
+            }
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["gold_metrics:row", "s3://bucket/evidence/17.json"],
+)
+def test_namespaced_source_plus_evidence_id_remains_evidence(source):
+    assert has_evidence({"source": source, "evidence_id": "evidence-17"}) is True
+
+
 def test_top_level_source_and_evidence_id_pair_is_evidence():
     assert has_evidence(_item(evidence_id="evidence-17")) is True
 

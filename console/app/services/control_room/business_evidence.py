@@ -44,6 +44,7 @@ _SOURCE_FIELDS = frozenset(
         "table",
     }
 )
+_GENERIC_SOURCE_FIELDS = frozenset({"source", "source_ref"})
 _LOCATOR_FIELDS = frozenset(
     {
         "artifact",
@@ -116,6 +117,18 @@ def _structured_id(value: Any) -> bool:
     return bool(_stable_text(value) and _ID_TOKEN.fullmatch(value.strip()))
 
 
+def _structured_source(key: Any, value: Any) -> bool:
+    normalized = str(key).strip().lower()
+    if normalized in _GENERIC_SOURCE_FIELDS:
+        return _structured_locator(value)
+    return bool(
+        normalized in _SOURCE_FIELDS
+        and isinstance(value, str)
+        and _stable_text(value)
+        and _ID_TOKEN.fullmatch(value.strip())
+    )
+
+
 def _is_id_field(key: Any, *, allow_generic_id: bool) -> bool:
     normalized = str(key).strip().lower()
     return normalized in _EVIDENCE_ID_FIELDS or (
@@ -131,7 +144,7 @@ def _source_and_id_pair(
 ) -> bool:
     has_source = any(
         str(key).strip().lower() in _SOURCE_FIELDS
-        and _stable_text(value)
+        and _structured_source(key, value)
         and _reference_token(value) not in excluded_references
         for key, value in values.items()
     )
