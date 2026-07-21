@@ -11,6 +11,9 @@ from app.services.control_room.business_decision_persistence import (
     persist_option_selection,
 )
 from app.services.control_room.business_item_persistence import PERSIST_ITEMS_SQL
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_item_reader import (
     resolve_scoped_business_item_lookup,
 )
@@ -33,22 +36,36 @@ USER = {"id": 7, "email": "owner@example.com"}
 
 
 def _item() -> dict:
-    return {
+    item = {
         "id": "business-1",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "tenant_id": "tenant-a",
         "title": "Valid anomaly",
         "entity_label": "Employee",
         "description": "Measured anomaly",
         "recommendation": "Review",
         "source_dataset": "gold_people",
+        "source_system": "sap_hcm",
         "cartridge": "sap_hcm",
         "severity": "high",
         "observed_value": 1,
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_people:business-1"],
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            source_row={"item_id": item["id"]},
+            locator_field="item_id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
@@ -163,7 +180,7 @@ async def test_normal_user_cannot_resolve_legacy_null_owner_but_admin_can():
         return dict(persisted)
 
     async def scoped(_pool, _user, work):
-        return await work(AsyncMock(), None, "workspace-a")
+        return await work(AsyncMock(), "tenant-a", "workspace-a")
 
     common = {
         "load_persisted": load_persisted,
@@ -174,7 +191,11 @@ async def test_normal_user_cannot_resolve_legacy_null_owner_but_admin_can():
     }
     normal, _ = await resolve_scoped_business_item_lookup(
         "business-1",
-        {"id": 7, "active_workspace_id": "workspace-a"},
+        {
+            "id": 7,
+            "active_tenant_id": "tenant-a",
+            "active_workspace_id": "workspace-a",
+        },
         **common,
     )
     admin, _ = await resolve_scoped_business_item_lookup(
@@ -182,6 +203,7 @@ async def test_normal_user_cannot_resolve_legacy_null_owner_but_admin_can():
         {
             "id": 9,
             "workspace_role": "workspace_admin",
+            "active_tenant_id": "tenant-a",
             "active_workspace_id": "workspace-a",
         },
         **common,

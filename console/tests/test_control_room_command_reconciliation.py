@@ -8,9 +8,17 @@ from fastapi import HTTPException
 
 from app.services import control_room_service
 from app.services.control_room.business_item_reader import resolve_business_item_lookup
+from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
+    ELIGIBILITY_POLICY_VERSION,
+    ELIGIBILITY_POLICY_VERSION_KEY,
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
+    business_observation_fingerprint,
 )
 
 
@@ -29,6 +37,8 @@ def _diagnostic() -> dict:
         "kind": "source_state",
         "item_kind": "source_state",
         "source_dataset": "gold_people",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
         "data_status": "missing",
         "title": "Source missing",
     }
@@ -39,12 +49,15 @@ def _owned_diagnostic(owner_user_id: int) -> dict:
 
 
 def _business() -> dict:
-    return {
+    item = {
         "id": "item-1",
         "kind": "anomaly",
         "cartridge": "sap_hcm",
         "domain": "People",
         "source_dataset": "gold_people",
+        "source_system": "sap_hcm",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
         "title": "Valid anomaly",
         "description": "Measured anomaly.",
         "recommendation": "Review.",
@@ -54,7 +67,19 @@ def _business() -> dict:
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-16",
-        "evidence_refs": ["gold_people:item-1"],
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            source_row={"item_id": item["id"]},
+            locator_field="item_id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
@@ -133,12 +158,27 @@ class DecisionConn:
         if "FOR UPDATE" in sql:
             if len(args) > 2:
                 self.lock_owner = args[2]
+            item = _business()
+            metadata = {
+                **business_policy_metadata({}, item),
+                CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(
+                    item
+                ),
+                ELIGIBILITY_POLICY_VERSION_KEY: ELIGIBILITY_POLICY_VERSION,
+            }
             return {
+                "tenant_id": "tenant-a",
+                "workspace_id": "workspace-a",
                 "item_id": "item-1",
-                "owner_user_id": self.lock_owner,
+                "owner_user_id": self.lock_owner or 7,
+                "cartridge_id": "sap_hcm",
+                "source_dataset": "gold_people",
+                "item_kind": "anomaly",
+                "status": "open",
                 "decision_id": None,
                 "selected_option_id": None,
-                "metadata": {},
+                "execution_status": "not_started",
+                "metadata": metadata,
             }
         if "INSERT INTO decisions" in sql:
             return {"id": 42, "title": "Decision"}

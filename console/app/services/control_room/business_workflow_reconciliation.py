@@ -15,6 +15,9 @@ from app.services.control_room.business_workflow_provenance import (
     workflow_eligibility_provenance,
     workflow_has_eligible_provenance,
 )
+from app.services.control_room.business_workflow_quarantine import (
+    workflow_is_quarantined,
+)
 
 
 _WORKFLOW_STATUSES = frozenset({"decision_created", "approved", "resolved"})
@@ -83,6 +86,30 @@ def _legacy_is_demonstrable(existing: Mapping[str, Any]) -> bool:
     )
 
 
+def _quarantine_patch(
+    existing: Mapping[str, Any],
+    current: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    provenance = _mapping(metadata.get(DECISION_PROVENANCE_KEY))
+    quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
+    changed = bool(
+        provenance.get("fingerprint")
+        and str(provenance["fingerprint"]) != business_observation_fingerprint(current)
+    )
+    reason = str(quarantine.get("reason") or "").strip()
+    if not reason:
+        reason = "observation_changed" if changed else "workflow_not_business_eligible"
+    quarantined = quarantine_workflow_metadata(
+        metadata,
+        item=_item(existing),
+        decision_id=existing.get("decision_id"),
+        stage=_stage(existing).value,
+        reason=reason,
+    )
+    return {WORKFLOW_QUARANTINE_KEY: quarantined[WORKFLOW_QUARANTINE_KEY]}
+
+
 async def workflow_metadata_patches(
     conn: Any, rows: Sequence[Mapping[str, Any]]
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -133,10 +160,9 @@ async def workflow_metadata_patches(
             continue
         metadata = _mapping(existing.get("metadata"))
         quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
-        if quarantine:
-            patches[key] = {WORKFLOW_QUARANTINE_KEY: quarantine}
-            continue
         if not _has_workflow(existing):
+            if quarantine:
+                patches[key] = {WORKFLOW_QUARANTINE_KEY: quarantine}
             continue
         decision_id = existing.get("decision_id")
         has_modern_marker = any(
@@ -154,15 +180,15 @@ async def workflow_metadata_patches(
                 decision_id=decision_id,
             )
             and classify_business_item(current).eligible
+            and not workflow_is_quarantined(existing)
         ):
-            patches[key] = {DECISION_PROVENANCE_KEY: metadata[DECISION_PROVENANCE_KEY]}
+            patches[key] = {
+                **({WORKFLOW_QUARANTINE_KEY: quarantine} if quarantine else {}),
+                DECISION_PROVENANCE_KEY: metadata[DECISION_PROVENANCE_KEY],
+            }
             continue
         if has_modern_marker:
-            patches[key] = {
-                WORKFLOW_QUARANTINE_KEY: quarantine_workflow_metadata({})[
-                    WORKFLOW_QUARANTINE_KEY
-                ]
-            }
+            patches[key] = _quarantine_patch(existing, current, metadata)
             continue
         if (
             _legacy_is_demonstrable(existing)
@@ -180,11 +206,7 @@ async def workflow_metadata_patches(
                 )
             }
             continue
-        patches[key] = {
-            WORKFLOW_QUARANTINE_KEY: quarantine_workflow_metadata({})[
-                WORKFLOW_QUARANTINE_KEY
-            ]
-        }
+        patches[key] = _quarantine_patch(existing, current, metadata)
     return patches
 
 

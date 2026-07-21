@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -15,18 +18,33 @@ from app.services.control_room.business_workflow_reconciliation import (
 
 
 def _item(value: int = 1) -> dict:
-    return {
+    item = {
         "item_id": "business-1",
         "id": "business-1",
         "item_kind": "anomaly",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "tenant_id": "tenant-a",
+        "source_system": "sap_hcm",
+        "cartridge": "sap_hcm",
         "source_dataset": "gold_people",
         "observed_value": value,
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_people:business-1"],
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id="tenant-a",
+            workspace_id="workspace-a",
+            source_row={"item_id": item["id"], "observed_value": value},
+            locator_field="item_id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
@@ -56,7 +74,7 @@ class RefreshCycle(ExistingRow):
 
 
 @pytest.mark.asyncio
-async def test_modern_quarantine_wins_over_matching_provenance_permanently():
+async def test_legacy_quarantine_is_migrated_to_the_linked_generation():
     item = _item()
     provenance = workflow_eligibility_provenance(
         item,
@@ -81,7 +99,12 @@ async def test_modern_quarantine_wins_over_matching_provenance_permanently():
         ("workspace-a", "business-1")
     ]
 
-    assert patch == {WORKFLOW_QUARANTINE_KEY: quarantine}
+    generations = patch[WORKFLOW_QUARANTINE_KEY]["generations"]
+    assert len(generations) == 1
+    assert generations[0]["fingerprint"] == provenance["fingerprint"]
+    assert generations[0]["decision_id"] == 42
+    assert generations[0]["stage"] == "decision_created"
+    assert generations[0]["reason"] == "observation_changed"
 
 
 @pytest.mark.asyncio

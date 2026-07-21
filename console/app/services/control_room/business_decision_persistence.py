@@ -17,6 +17,10 @@ from app.services.control_room.business_workflow_provenance import (
     workflow_eligibility_provenance,
     workflow_has_eligible_provenance,
 )
+from app.services.control_room.business_workflow_quarantine import (
+    workflow_columns_unlinked,
+    workflow_is_quarantined,
+)
 
 
 ItemWriter = Callable[..., Awaitable[None]]
@@ -70,7 +74,8 @@ async def create_and_link_decision(
     )
     owner_user_id = expected_item_owner(item, user)
     locked = await conn.fetchrow(
-        """SELECT item_id, decision_id, selected_option_id, owner_user_id, metadata
+        """SELECT item_id, decision_id, selected_option_id, owner_user_id, metadata,
+                  status, execution_status
              FROM control_room_items
             WHERE workspace_id = $1
               AND item_id = $2
@@ -82,6 +87,13 @@ async def create_and_link_decision(
     )
     if not locked:
         raise HTTPException(404, "control room item not found")
+    locked_item = {
+        **dict(item),
+        **dict(locked),
+        "workspace_id": workspace_id,
+    }
+    if workflow_is_quarantined(locked_item):
+        raise HTTPException(409, "control room item has quarantined workflow")
     existing_decision_id = locked.get("decision_id")
     if existing_decision_id is not None:
         scoped_item = {
@@ -104,6 +116,9 @@ async def create_and_link_decision(
         if not existing:
             raise HTTPException(409, "control room decision link is invalid")
         return existing
+
+    if locked.get("metadata") and not workflow_columns_unlinked(locked):
+        raise HTTPException(409, "previous control room workflow is not unlinked")
 
     title, description, kpis = _decision_fields(item)
     row = await conn.fetchrow(

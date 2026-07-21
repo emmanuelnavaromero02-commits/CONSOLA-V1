@@ -32,6 +32,12 @@ class WorkflowStage(StrEnum):
 _DECISION_STAGES = frozenset(
     {WorkflowStage.DECISION_CREATED, WorkflowStage.APPROVED, WorkflowStage.EXECUTED}
 )
+_STAGE_REASONS = {
+    WorkflowStage.OPTION_SELECTED: "explicit_option_selection",
+    WorkflowStage.DECISION_CREATED: "explicit_decision_creation",
+    WorkflowStage.APPROVED: "explicit_approval",
+    WorkflowStage.EXECUTED: "explicit_execution",
+}
 
 _IDENTITY_FIELDS = frozenset({"kind", "item_kind"})
 _ROOT_FIELDS = frozenset(
@@ -115,6 +121,7 @@ def workflow_eligibility_provenance(
     workspace_id: str,
     decision_id: int | None = None,
     option_id: str | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     parent_context = getattr(item, "_eligible_parent_ids", None)
     eligible_parent_ids = (
@@ -146,6 +153,7 @@ def workflow_eligibility_provenance(
         "fingerprint": business_observation_fingerprint(item),
         "eligible_at_link": True,
         "linked_at": datetime.now(UTC).isoformat(),
+        "reason": reason or _STAGE_REASONS[parsed_stage],
     }
     if decision_id is not None:
         payload["decision_id"] = int(decision_id)
@@ -247,21 +255,22 @@ def persistence_metadata(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def workflow_is_quarantined(item: Mapping[str, Any] | None) -> bool:
-    current = item if isinstance(item, Mapping) else {}
-    metadata = _metadata_mapping(current.get("metadata"))
-    return bool(
-        current.get(WORKFLOW_QUARANTINE_KEY) or metadata.get(WORKFLOW_QUARANTINE_KEY)
+    from app.services.control_room.business_workflow_quarantine import (
+        workflow_is_quarantined as evaluate,
     )
 
+    return evaluate(item)
 
-def quarantine_workflow_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
-    clean = dict(metadata or {})
-    clean[WORKFLOW_QUARANTINE_KEY] = {
-        "reason": "legacy_or_diagnostic_workflow",
-        "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "quarantined_at": datetime.now(UTC).isoformat(),
-    }
-    return clean
+
+def quarantine_workflow_metadata(
+    metadata: Mapping[str, Any] | None,
+    **generation: Any,
+) -> dict[str, Any]:
+    from app.services.control_room.business_workflow_quarantine import (
+        quarantine_workflow_metadata as build,
+    )
+
+    return build(metadata, **generation)
 
 
 __all__ = (
