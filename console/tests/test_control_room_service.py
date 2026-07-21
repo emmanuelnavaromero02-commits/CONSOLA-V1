@@ -2514,6 +2514,8 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
     )
     persisted_item = {
         "item_id": "item-activity",
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
         "cartridge_id": "replicon",
         "domain": "Finanzas",
         "source_dataset": "pnl_mensual",

@@ -37,6 +37,7 @@ class _DecisionConnection:
                 "decision_id": 2,
                 "item_id": "business-2",
                 "item_kind": "anomaly",
+                "workspace_id": "workspace-a",
                 "source_dataset": "gold_metrics",
                 "metadata": dict(business_metadata),
             },
@@ -44,6 +45,7 @@ class _DecisionConnection:
                 "decision_id": 3,
                 "item_id": "technical-3",
                 "item_kind": "source_state",
+                "workspace_id": "workspace-a",
                 "source_dataset": "gold_metrics",
                 "metadata": {"data_status": "missing"},
             },
@@ -51,6 +53,7 @@ class _DecisionConnection:
         business = {
             "id": "business-2",
             "kind": "anomaly",
+            "workspace_id": "workspace-a",
             "source_dataset": "gold_metrics",
             "metadata": dict(business_metadata),
         }
