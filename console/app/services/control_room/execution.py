@@ -6,6 +6,32 @@ from app.services.control_room import core as _core
 from app.services.control_room.business_projection import (
     project_public_business_item as _project_public_business_item,
 )
+from app.services.control_room.business_action_templates import (
+    primary_template_for_business_item,
+    template_ids_for_business_item,
+    templates_for_business_item,
+)
+from app.services.control_room.business_execution_payload import (
+    build_action_payload,
+    build_execution_payload,
+)
+from app.services.control_room.business_impact_projection import (
+    build_impact_payload,
+    build_priority_payload,
+)
+from app.services.control_room.business_impact_rules import calculate_item_impact
+
+for _builder in (
+    build_action_payload,
+    build_execution_payload,
+    build_impact_payload,
+    build_priority_payload,
+    calculate_item_impact,
+    primary_template_for_business_item,
+    template_ids_for_business_item,
+    templates_for_business_item,
+):
+    _core.__dict__.setdefault(_builder.__name__, _builder)
 
 
 _RESERVED_GLOBALS = {
@@ -184,34 +210,17 @@ def _impact_payload(
     explanation: str,
     currency: str = "USD",
 ) -> dict[str, Any]:
-    estimate_value = round(float(estimate or 0), 2) if estimate is not None else None
-    severity_weight = SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2)
-    impact_points = (
-        0 if estimate_value is None else min(42, int(abs(estimate_value) / 10_000))
+    return build_impact_payload(
+        item=item,
+        estimate=estimate,
+        status=status,
+        confidence=confidence,
+        drivers=drivers,
+        formula=formula,
+        explanation=explanation,
+        severity_weights=SEVERITY_WEIGHT,
+        currency=currency,
     )
-    threshold_state = str(item.get("threshold_state") or "")
-    threshold_points = {"critical": 12, "warning": 6}.get(threshold_state, 0)
-    priority_score = min(
-        100,
-        max(
-            0,
-            severity_weight * 14
-            + impact_points
-            + int(confidence * 20)
-            + threshold_points,
-        ),
-    )
-    return {
-        "item_id": item.get("id"),
-        "status": status,
-        "estimate": estimate_value,
-        "currency": currency,
-        "confidence": round(max(0.0, min(1.0, confidence)), 2),
-        "priority_score": priority_score,
-        "drivers": drivers,
-        "formula": formula,
-        "explanation": explanation,
-    }
 
 
 @_bind_to_core
@@ -220,647 +229,73 @@ def _priority_payload(
     item: dict[str, Any],
     impact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    impact = impact or _impact_for_item(item)
-    score = int(impact.get("priority_score") or 0)
-    drivers: list[dict[str, Any]] = [
-        {
-            "label": "Severidad",
-            "value": item.get("severity") or "medium",
-            "points": SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2)
-            * 14,
-        }
-    ]
-    if impact.get("status") == "ok" and impact.get("estimate") is not None:
-        drivers.append(
-            {
-                "label": "Impacto economico",
-                "value": impact.get("estimate"),
-                "currency": impact.get("currency") or "USD",
-                "points": min(
-                    42, int(abs(float(impact.get("estimate") or 0)) / 10_000)
-                ),
-            }
-        )
-    else:
-        drivers.append(
-            {"label": "Impacto economico", "value": "no disponible", "points": 0}
-        )
-
-    threshold_state = str(item.get("threshold_state") or "default")
-    threshold_points = {"critical": 16, "warning": 8}.get(threshold_state, 0)
-    if threshold_points:
-        drivers.append(
-            {"label": "Umbral", "value": threshold_state, "points": threshold_points}
-        )
-        score += threshold_points
-
-    lesson_count = int(item.get("lesson_count") or 0)
-    lesson_points = min(12, lesson_count * 4)
-    if lesson_points:
-        drivers.append(
-            {
-                "label": "Patron aprendido",
-                "value": lesson_count,
-                "points": lesson_points,
-            }
-        )
-        score += lesson_points
-
-    if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
-        drivers.append(
-            {"label": "Estado cerrado", "value": item.get("status"), "points": -35}
-        )
-        score -= 35
-
-    score = max(0, min(100, score))
-    band = (
-        "critical"
-        if score >= 90
-        else "high"
-        if score >= 75
-        else "medium"
-        if score >= 55
-        else "low"
+    return build_priority_payload(
+        item,
+        impact or _impact_for_item(item),
+        severity_weights=SEVERITY_WEIGHT,
+        terminal_statuses=TERMINAL_ITEM_STATUSES,
     )
-    return {
-        "score": score,
-        "band": band,
-        "drivers": drivers,
-        "formula": "severity + impact + confidence + thresholds + learned_patterns",
-    }
 
 
 @_bind_to_core
 @business_impact_builder
 def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
-
-    stored = _num(item.get("impact_estimate"))
-    if stored is not None and stored > 0:
-        return _impact_payload(
-            item=item,
-            estimate=stored,
-            status="ok",
-            confidence=_num(item.get("confidence")) or 0.6,
-            drivers=[
-                {
-                    "label": "Impacto persistido",
-                    "value": stored,
-                    "currency": item.get("impact_currency") or "USD",
-                }
-            ],
-            formula="Impacto persistido en control_room_items.",
-            explanation="Estimacion recuperada del estado operativo persistido.",
-            currency=str(item.get("impact_currency") or "USD"),
-        )
-
-    anomaly_type = str(item.get("anomaly_type") or "")
-    cartridge = str(item.get("cartridge") or "")
-
-    if cartridge == "replicon" and anomaly_type in {"low_margin", "wip_variance"}:
-        revenue = _num(details.get("revenue_usd"))
-        margin_usd = _num(details.get("margen_bruto_usd"))
-        wip = _num(details.get("wip_usd")) or 0
-        margin_gap = 0.0
-        if revenue is not None and margin_usd is not None:
-            margin_gap = max(0.0, revenue * 0.20 - margin_usd)
-        exposure = margin_gap + (abs(wip) if abs(wip) >= 5000 else 0)
-        if exposure > 0:
-            return _impact_payload(
-                item=item,
-                estimate=exposure,
-                status="ok",
-                confidence=0.78,
-                drivers=[
-                    {
-                        "label": "Brecha margen objetivo 20%",
-                        "value": round(margin_gap, 2),
-                        "currency": "USD",
-                    },
-                    {
-                        "label": "WIP bajo revision",
-                        "value": round(abs(wip), 2),
-                        "currency": "USD",
-                    },
-                ],
-                formula="max(0, revenue_usd * 20% - margen_bruto_usd) + abs(wip_usd si >= 5000)",
-                explanation="Usa P&L Replicon materializado; no escribe en Replicon.",
-            )
-
-    if cartridge == "replicon" and anomaly_type == "non_billable_ratio":
-        hours = _num(details.get("horas_no_facturables"))
-        rate = (
-            _num(details.get("billing_rate_usd"))
-            or _num(details.get("billing_rate"))
-            or _num(details.get("rate_usd"))
-            or _num(details.get("currenthourlybillingamount"))
-        )
-        if hours is not None and rate is not None:
-            return _impact_payload(
-                item=item,
-                estimate=hours * rate,
-                status="ok",
-                confidence=0.7,
-                drivers=[
-                    {"label": "Horas no facturables", "value": round(hours, 2)},
-                    {
-                        "label": "Tarifa Replicon",
-                        "value": round(rate, 2),
-                        "currency": "USD",
-                    },
-                ],
-                formula="horas_no_facturables * tarifa_replicon",
-                explanation="Calcula exposicion de horas no facturables con tarifa real disponible.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type == "negative_revenue":
-        revenue = _num(details.get("revenue"))
-        if revenue is not None:
-            return _impact_payload(
-                item=item,
-                estimate=abs(revenue),
-                status="ok",
-                confidence=0.74,
-                drivers=[
-                    {"label": "Revenue negativo", "value": revenue, "currency": "USD"}
-                ],
-                formula="abs(revenue)",
-                explanation="Usa revenue materializado por cliente/periodo.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type == "aged_sales_backlog":
-        open_value = _num(details.get("open_value"))
-        if open_value is not None:
-            return _impact_payload(
-                item=item,
-                estimate=open_value,
-                status="ok",
-                confidence=0.62,
-                drivers=[
-                    {
-                        "label": "Backlog abierto",
-                        "value": round(open_value, 2),
-                        "currency": "USD",
-                    },
-                    {
-                        "label": "Antiguedad maxima",
-                        "value": _num(details.get("oldest_age_days")) or 0,
-                        "unit": "dias",
-                    },
-                ],
-                formula="open_value",
-                explanation="Exposicion comercial, no perdida confirmada.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type == "supplier_spend_concentration":
-        spend = _num(details.get("total_spend"))
-        if spend is not None:
-            return _impact_payload(
-                item=item,
-                estimate=spend,
-                status="ok",
-                confidence=0.45,
-                drivers=[
-                    {
-                        "label": "Gasto concentrado",
-                        "value": round(spend, 2),
-                        "currency": "USD",
-                    }
-                ],
-                formula="total_spend",
-                explanation="Exposicion de compras bajo revision, no ahorro garantizado.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type in {
-        "missing_address",
-        "missing_tax_id",
-        "duplicate_business_partner",
-    }:
-        exposure = (
-            _num(details.get("open_value"))
-            or _num(details.get("balance_usd"))
-            or _num(details.get("exposure_usd"))
-            or _num(details.get("total_spend"))
-        )
-        if exposure is not None and exposure > 0:
-            return _impact_payload(
-                item=item,
-                estimate=exposure,
-                status="ok",
-                confidence=0.52,
-                drivers=[
-                    {
-                        "label": "Exposicion BP",
-                        "value": round(exposure, 2),
-                        "currency": "USD",
-                    },
-                    {"label": "Tipo maestro", "value": anomaly_type},
-                ],
-                formula="open_value | balance_usd | exposure_usd | total_spend",
-                explanation="Usa exposicion comercial/proveedor disponible para el maestro BP.",
-            )
-
-    if cartridge == "sap_hcm" and anomaly_type == "terminated_but_active":
-        monthly_cost = (
-            _num(details.get("monthly_cost_usd"))
-            or _num(details.get("salary_monthly_usd"))
-            or _num(details.get("costo_mensual_usd"))
-        )
-        if monthly_cost is not None and monthly_cost > 0:
-            return _impact_payload(
-                item=item,
-                estimate=monthly_cost * 3,
-                status="ok",
-                confidence=0.66,
-                drivers=[
-                    {
-                        "label": "Costo mensual empleado",
-                        "value": round(monthly_cost, 2),
-                        "currency": "USD",
-                    },
-                    {"label": "Ventana control", "value": 3, "unit": "meses"},
-                ],
-                formula="monthly_cost_usd * 3 meses de exposicion",
-                explanation="Estima cola de costo/acceso para empleado terminado pero activo.",
-            )
-
-    if cartridge == "sap_successfactors" and anomaly_type in {
-        "missing_manager",
-        "missing_department",
-        "missing_job_code",
-    }:
-        affected = (
-            _num(details.get("affected_employees"))
-            or _num(details.get("direct_reports"))
-            or _num(details.get("headcount"))
-        )
-        monthly_cost = _num(details.get("avg_monthly_cost_usd")) or _num(
-            details.get("salary_monthly_usd")
-        )
-        if (
-            affected is not None
-            and monthly_cost is not None
-            and affected > 0
-            and monthly_cost > 0
-        ):
-            return _impact_payload(
-                item=item,
-                estimate=affected * monthly_cost * 0.15,
-                status="ok",
-                confidence=0.48,
-                drivers=[
-                    {"label": "Personas afectadas", "value": round(affected, 2)},
-                    {
-                        "label": "Costo mensual promedio",
-                        "value": round(monthly_cost, 2),
-                        "currency": "USD",
-                    },
-                ],
-                formula="affected_employees * avg_monthly_cost_usd * 15%",
-                explanation="Proxy de riesgo operativo SF cuando hay base de costo y poblacion afectada.",
-            )
-
-    monthly_cost = (
-        _num(details.get("monthly_cost_usd"))
-        or _num(details.get("salary_monthly_usd"))
-        or _num(details.get("costo_mensual_usd"))
-    )
-    if monthly_cost is not None and monthly_cost > 0:
-        return _impact_payload(
-            item=item,
-            estimate=monthly_cost,
-            status="ok",
-            confidence=0.55,
-            drivers=[
-                {
-                    "label": "Costo mensual",
-                    "value": round(monthly_cost, 2),
-                    "currency": "USD",
-                }
-            ],
-            formula="monthly_cost_usd",
-            explanation="Usa costo directo disponible en la fuente.",
-        )
-
-    return _impact_payload(
-        item=item,
-        estimate=None,
-        status="unavailable",
-        confidence=0.25,
-        drivers=[],
-        formula="Sin base monetaria disponible en el dataset.",
-        explanation="La senal es operativa; falta cost basis para convertirla a dinero sin inventar cifras.",
-    )
+    return calculate_item_impact(item, number=_num, payload=_impact_payload)
 
 
 @_bind_to_core
 @business_template_ids_builder
 def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
-    anomaly_type = str(item.get("anomaly_type") or "")
-    cartridge = str(item.get("cartridge") or "")
-    module_id = str(item.get("module_id") or "")
-    if cartridge == "replicon":
-        if anomaly_type in {"low_margin", "wip_variance", "non_billable_ratio"}:
-            return [
-                "prepare_billing_review",
-                "prepare_replicon_adjustment",
-                "create_followup_task",
-            ]
-        return [
-            "prepare_replicon_adjustment",
-            "request_owner_review",
-            "create_followup_task",
-        ]
-    if cartridge == "sap_s4hana":
-        if (
-            anomaly_type in {"negative_revenue", "aged_sales_backlog"}
-            or module_id == "sap_s4hana_sales"
-        ):
-            return [
-                "prepare_s4_revenue_review",
-                "prepare_sap_review",
-                "create_followup_task",
-            ]
-        if anomaly_type in {
-            "missing_address",
-            "missing_tax_id",
-            "duplicate_business_partner",
-        }:
-            return [
-                "prepare_s4_business_partner_review",
-                "prepare_sap_review",
-                "create_followup_task",
-            ]
-        if (
-            anomaly_type == "supplier_spend_concentration"
-            or module_id == "sap_s4hana_procurement"
-        ):
-            return [
-                "prepare_s4_procurement_review",
-                "prepare_sap_review",
-                "create_followup_task",
-            ]
-        return ["prepare_sap_review", "request_owner_review", "create_followup_task"]
-    if cartridge == "sap_hcm":
-        if anomaly_type == "terminated_but_active":
-            return [
-                "prepare_hcm_access_review",
-                "request_owner_review",
-                "create_followup_task",
-            ]
-        return [
-            "prepare_hcm_org_review",
-            "request_owner_review",
-            "create_followup_task",
-        ]
-    if cartridge == "sap_successfactors":
-        if module_id == "sap_successfactors_recruiting":
-            return [
-                "prepare_successfactors_recruiting_review",
-                "prepare_successfactors_review",
-                "create_followup_task",
-            ]
-        return [
-            "prepare_successfactors_review",
-            "request_owner_review",
-            "create_followup_task",
-        ]
-    return ["request_owner_review", "create_followup_task"]
+    return template_ids_for_business_item(item)
 
 
 @_bind_to_core
 @business_action_templates_builder
 def _action_templates_for_item(item: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        _template_with_writeback(ACTION_TEMPLATES[template_id])
-        for template_id in _template_ids_for_item(item)
-        if template_id in ACTION_TEMPLATES
-    ]
+    return templates_for_business_item(
+        item,
+        templates=ACTION_TEMPLATES,
+        decorate=_template_with_writeback,
+    )
 
 
 @_bind_to_core
 @business_primary_template_builder
 def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    templates = _action_templates_for_item(item)
-    return templates[0] if templates else dict(ACTION_TEMPLATES["request_owner_review"])
+    return primary_template_for_business_item(
+        item,
+        templates=ACTION_TEMPLATES,
+        decorate=_template_with_writeback,
+    )
 
 
 @_bind_to_core
 def _action_payload_for_template(
     item: dict[str, Any], template: dict[str, Any]
 ) -> dict[str, Any]:
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
-    action_kind = str(template.get("action_kind") or "owner_review")
-    writeback = _writeback_capability(template)
-    base = {
-        "action_kind": action_kind,
-        "template_id": template.get("template_id"),
-        "entity": {
-            "kind": item.get("entity_kind"),
-            "id": item.get("entity_id"),
-            "label": item.get("entity_label"),
-        },
-        "source_dataset": item.get("source_dataset"),
-        "severity": item.get("severity"),
-        "recommendation": item.get("recommendation"),
-        "writeback": writeback,
-    }
-    if action_kind == "billing_review":
-        return {
-            **base,
-            "replicon": {
-                "project": details.get("project_name")
-                or details.get("proyecto")
-                or item.get("entity_label"),
-                "revenue_manager": details.get("revenue_manager"),
-                "revenue_usd": _num(details.get("revenue_usd")),
-                "margin_pct": _num(details.get("margen_bruto_pct")),
-                "wip_usd": _num(details.get("wip_usd")),
-                "billing_gap_usd": _num(details.get("billing_gap_usd")),
-            },
-            "prepared_actions": [
-                "validar WIP y facturacion contra contrato",
-                "confirmar owner financiero",
-                "preparar ajuste Replicon sin ejecutarlo",
-            ],
-        }
-    if action_kind == "replicon_adjustment":
-        return {
-            **base,
-            "replicon": {
-                "consultant": details.get("consultant_name")
-                or details.get("consultor")
-                or item.get("entity_label"),
-                "project": details.get("project_name") or details.get("proyecto"),
-                "allocation_pct": _num(details.get("pct_asignacion")),
-                "billable_hours": _num(details.get("billable_hours")),
-                "non_billable_hours": _num(details.get("horas_no_facturables")),
-            },
-            "prepared_actions": [
-                "validar asignacion/timesheet",
-                "preparar ajuste para owner",
-            ],
-        }
-    if action_kind == "investigation_note":
-        return {
-            **base,
-            "note": {
-                "summary": item.get("root_cause")
-                or item.get("description")
-                or item.get("title"),
-                "recommendation": item.get("recommendation"),
-                "evidence_sql": item.get("sql"),
-            },
-            "prepared_actions": [
-                "registrar nota de investigacion",
-                "mantener evidencia ligada al item",
-            ],
-        }
-    if action_kind == "decision_monitoring":
-        return {
-            **base,
-            "monitoring": {
-                "metric": item.get("metric") or item.get("anomaly_type"),
-                "severity": item.get("severity"),
-                "entity": item.get("entity_label") or item.get("entity_id"),
-                "source_dataset": item.get("source_dataset"),
-            },
-            "prepared_actions": [
-                "marcar decision para seguimiento",
-                "vincular control y leccion esperada",
-            ],
-        }
-    if action_kind in {
-        "s4_revenue_review",
-        "s4_business_partner_review",
-        "s4_procurement_review",
-        "sap_review",
-    }:
-        return {
-            **base,
-            "sap_s4hana": {
-                "business_partner": details.get("business_partner"),
-                "customer": details.get("customer_code")
-                or details.get("customer_name"),
-                "supplier": details.get("supplier_code")
-                or details.get("supplier_name"),
-                "open_value": _num(details.get("open_value")),
-                "revenue": _num(details.get("revenue")),
-                "spend": _num(details.get("total_spend")),
-            },
-            "prepared_actions": [
-                "validar maestro/partida en SAP",
-                "adjuntar evidencia a decision",
-                "bloquear write-back hasta aprobacion",
-            ],
-        }
-    if action_kind in {"hcm_access_review", "hcm_org_review"}:
-        return {
-            **base,
-            "sap_hcm": {
-                "pernr": details.get("pernr") or item.get("entity_id"),
-                "position": details.get("position") or details.get("plans"),
-                "cost_center": details.get("cost_center") or details.get("kostl"),
-                "monthly_cost_usd": _num(
-                    details.get("monthly_cost_usd") or details.get("salary_monthly_usd")
-                ),
-            },
-            "prepared_actions": [
-                "validar baja/posicion/centro de costo",
-                "preparar bloqueo o correccion para aprobacion",
-            ],
-        }
-    if action_kind in {
-        "successfactors_employee_review",
-        "successfactors_recruiting_review",
-    }:
-        return {
-            **base,
-            "sap_successfactors": {
-                "user_id": details.get("user_id") or item.get("entity_id"),
-                "manager": details.get("manager_id") or details.get("manager"),
-                "department": details.get("department"),
-                "job_code": details.get("job_code"),
-                "requisition": details.get("requisition_id"),
-            },
-            "prepared_actions": [
-                "validar owner en SuccessFactors",
-                "preparar correccion o excepcion auditada",
-            ],
-        }
-    return {
-        **base,
-        "prepared_actions": [
-            "solicitar revision de owner",
-            "mantener evidencia y fecha de control",
-        ],
-    }
+    return build_action_payload(
+        item,
+        template,
+        number=_num,
+        writeback_for=_writeback_capability,
+    )
 
 
 @_bind_to_core
 def _execution_payload(
     item: dict[str, Any], mode: str, template: dict[str, Any]
 ) -> dict[str, Any]:
-    impact = _impact_for_item(item)
-    action_payload = _action_payload_for_template(item, template)
-    writeback = _writeback_capability(template)
-    return {
-        "mode": mode,
-        "external_writeback_enabled": _external_writeback_enabled(),
-        "supervised_execution_enabled": True,
-        "execution_contract": "supervised_execution",
-        "dry_run": mode != "execute_live",
-        "template": template,
-        "target_system": template.get("cartridge_id")
-        if template.get("cartridge_id") != "platform"
-        else item.get("cartridge"),
-        "item": {
-            "id": item.get("id"),
-            "title": item.get("title"),
-            "kind": item.get("kind"),
-            "cartridge": item.get("cartridge"),
-            "domain": item.get("domain"),
-            "source_dataset": item.get("source_dataset"),
-            "entity_kind": item.get("entity_kind"),
-            "entity_id": item.get("entity_id"),
-            "entity_label": item.get("entity_label"),
-            "anomaly_type": item.get("anomaly_type"),
-            "severity": item.get("severity"),
-            "selected_option_id": item.get("selected_option_id"),
-        },
-        "impact": impact,
-        "action_payload": action_payload,
-        "writeback": writeback,
-        "operations": [
-            {
-                "operation": template.get("action_kind"),
-                "status": "pending_execution"
-                if mode == "execute_live"
-                else "preview"
-                if mode == "preview"
-                else "validated",
-                "requires_approval": True,
-                "external_write": bool(writeback.get("external")),
-                "internal_write": bool(writeback.get("supported"))
-                and not bool(writeback.get("external")),
-                "payload": action_payload,
-                "writeback": writeback,
-                "evidence": {
-                    "sql": item.get("sql"),
-                    "recommendation": item.get("recommendation"),
-                    "root_cause": item.get("root_cause"),
-                },
-            }
-        ],
-        "guardrails": {
-            "human_approval_required": True,
-            "supervised_execution_available": True,
-            "external_writeback_blocked_by_default": not _external_writeback_enabled(),
-            "writeback_blocked_by_default": not _external_writeback_enabled(),
-            "feature_flag": "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
-            "supported_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
-        },
-    }
+    external_enabled = _external_writeback_enabled()
+    return build_execution_payload(
+        item,
+        mode,
+        template,
+        impact=_impact_for_item(item),
+        action_payload=_action_payload_for_template(item, template),
+        writeback=_writeback_capability(template),
+        external_writeback_enabled=external_enabled,
+        supported_internal_templates=SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES,
+    )
 
 
 @_bind_to_core
