@@ -241,8 +241,8 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
 
         records = await conn.fetch(
             """
-            SELECT tenant_id, workspace_id, item_id, owner_user_id, item_kind,
-                   status, decision_id,
+            SELECT tenant_id, workspace_id, item_id, owner_user_id, cartridge_id,
+                   source_dataset, item_kind, status, decision_id,
                    selected_option_id, execution_status, metadata
               FROM control_room_items
              WHERE workspace_id = $1
