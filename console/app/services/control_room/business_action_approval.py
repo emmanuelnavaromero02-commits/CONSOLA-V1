@@ -31,34 +31,6 @@ class ApprovableDecision:
     linked: bool
 
 
-def _kpis(value: Any) -> list[Any]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-    return list(value) if isinstance(value, list) else []
-
-
-def _provenance_item_ids(value: Any) -> set[str]:
-    item_ids: set[str] = set()
-    for entry in _kpis(value):
-        if not isinstance(entry, Mapping):
-            continue
-        provenance = entry.get("provenance")
-        if not isinstance(provenance, Mapping):
-            continue
-        if (
-            provenance.get("type") == "decision_provenance"
-            and provenance.get("version") == 1
-            and str(provenance.get("origin") or "").lower() == "control_room"
-        ):
-            item_id = str(provenance.get("item_id") or "").strip()
-            if item_id:
-                item_ids.add(item_id)
-    return item_ids
-
-
 async def require_approvable_decision(
     conn: Any,
     *,
@@ -69,7 +41,7 @@ async def require_approvable_decision(
 ) -> ApprovableDecision:
     decision = await conn.fetchrow(
         """
-        SELECT id, created_by_id, kpis
+        SELECT id, created_by_id
           FROM decisions
          WHERE id = $1 AND workspace_id = $2
         """,
@@ -122,8 +94,7 @@ async def require_approvable_decision(
         decision_id=decision_id,
         use_stored_fingerprint=True,
     )
-    server_provenance = str(item["id"]) in _provenance_item_ids(decision.get("kpis"))
-    if not (own_link or eligible_provenance or server_provenance):
+    if not (own_link or eligible_provenance):
         raise HTTPException(409, "decision is not linked to this control room item")
     return ApprovableDecision(row=decision, linked=own_link)
 

@@ -24,7 +24,7 @@ def _eligible_metadata(item_id: str, **updates) -> dict:
         "metric_type": "scalar",
         "observed_value": 1,
         "observation_date": "2026-07-17T10:00:00Z",
-        "evidence_refs": [f"evidence:{item_id}"],
+        "evidence_refs": [f"gold_a:{item_id}"],
         **updates,
     }
 
@@ -138,10 +138,10 @@ def test_lineage_row_duplicated_by_linked_seed_does_not_hide_valid_decision():
     ) == [decision]
 
 
-def test_control_room_provenance_cannot_be_removed_by_kpi_patch():
+def test_kpi_patch_removes_control_room_provenance_without_server_link_proof():
     marker = {"provenance": {"origin": "control_room", "item_id": "item-1"}}
 
-    assert preserve_control_room_provenance([marker], []) == [marker]
+    assert preserve_control_room_provenance([marker], []) == []
     assert (
         preserve_control_room_provenance([{"provenance": {"origin": "manual"}}], [])
         == []

@@ -6,6 +6,7 @@ from typing import Any
 
 from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
     WorkflowStage,
@@ -61,31 +62,6 @@ def _stage(row: Mapping[str, Any]) -> WorkflowStage:
     return WorkflowStage.OPTION_SELECTED
 
 
-def _typed_decision_origin(kpis: Any, item_id: str) -> bool:
-    values = kpis
-    if isinstance(values, str):
-        try:
-            values = json.loads(values)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return False
-    if not isinstance(values, list):
-        return False
-    for value in values:
-        if not isinstance(value, Mapping):
-            continue
-        provenance = value.get("provenance")
-        if not isinstance(provenance, Mapping):
-            continue
-        if (
-            provenance.get("type") == "decision_provenance"
-            and provenance.get("version") == 1
-            and provenance.get("origin") == "control_room"
-            and str(provenance.get("item_id") or "") == item_id
-        ):
-            return True
-    return False
-
-
 def _legacy_is_demonstrable(existing: Mapping[str, Any]) -> bool:
     item = _item(existing)
     return bool(
@@ -93,8 +69,7 @@ def _legacy_is_demonstrable(existing: Mapping[str, Any]) -> bool:
         and existing.get("decision_id") is not None
         and str(existing.get("decision_workspace_id") or "")
         == str(existing.get("workspace_id") or "")
-        and existing.get("has_decision_action") is True
-        and _typed_decision_origin(existing.get("decision_kpis"), item["id"])
+        and existing.get("has_control_room_action") is True
     )
 
 
@@ -114,9 +89,11 @@ async def workflow_metadata_patches(
               FROM jsonb_to_recordset($1::jsonb) AS x(workspace_id text, item_id text)
         )
         SELECT c.*, d.workspace_id::text AS decision_workspace_id,
-               d.kpis AS decision_kpis,
-               EXISTS(SELECT 1 FROM decision_actions a WHERE a.decision_id=d.id)
-                   AS has_decision_action
+               EXISTS(
+                   SELECT 1 FROM decision_actions a
+                    WHERE a.decision_id=d.id
+                      AND a.action_text='Decision creada desde Sala de Control'
+               ) AS has_control_room_action
           FROM requested r
           JOIN control_room_items c
             ON c.workspace_id=r.workspace_id AND c.item_id=r.item_id
@@ -138,16 +115,30 @@ async def workflow_metadata_patches(
             continue
         metadata = _mapping(existing.get("metadata"))
         decision_id = existing.get("decision_id")
+        has_modern_marker = any(
+            key in metadata
+            for key in (
+                CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+                DECISION_PROVENANCE_KEY,
+                WORKFLOW_QUARANTINE_KEY,
+            )
+        )
         if (
             workflow_has_eligible_provenance(
                 metadata,
                 {**current, "workspace_id": key[0]},
                 decision_id=decision_id,
-                use_stored_fingerprint=True,
             )
             and classify_business_item(current).eligible
         ):
             patches[key] = {DECISION_PROVENANCE_KEY: metadata[DECISION_PROVENANCE_KEY]}
+            continue
+        if has_modern_marker:
+            quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
+            patches[key] = {
+                WORKFLOW_QUARANTINE_KEY: quarantine
+                or quarantine_workflow_metadata({})[WORKFLOW_QUARANTINE_KEY]
+            }
             continue
         if (
             _legacy_is_demonstrable(existing)

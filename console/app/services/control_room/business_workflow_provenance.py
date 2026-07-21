@@ -181,12 +181,8 @@ def workflow_has_eligible_provenance(
         stage = WorkflowStage(str(value.get("stage") or "decision_created"))
     except ValueError:
         return False
+    del use_stored_fingerprint
     current_fingerprint = business_observation_fingerprint(item)
-    if use_stored_fingerprint:
-        current_fingerprint = (
-            str(current_metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
-            or current_fingerprint
-        )
     expected_decision_id = (
         decision_id if decision_id is not None else item.get("decision_id")
     )
@@ -211,12 +207,12 @@ def workflow_has_eligible_provenance(
     if not common:
         return False
     stored_decision = str(value.get("decision_id") or "").strip()
-    if stage in _DECISION_STAGES:
-        if expected_decision_id is None or stored_decision != str(expected_decision_id):
+    if expected_decision_id is not None:
+        if stage not in _DECISION_STAGES:
             return False
-    elif stored_decision and (
-        expected_decision_id is None or stored_decision != str(expected_decision_id)
-    ):
+        if stored_decision != str(expected_decision_id):
+            return False
+    elif stage in _DECISION_STAGES or stored_decision:
         return False
     stored_option = str(value.get("option_id") or "").strip()
     if stage is WorkflowStage.OPTION_SELECTED:

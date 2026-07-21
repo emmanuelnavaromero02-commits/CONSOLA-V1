@@ -5,6 +5,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.domains.decisions.provenance import (
+    decision_kpis_with_provenance,
+    decision_provenance,
+)
 from app.services.control_room.business_item_persistence import (
     parse_command_tag,
     persist_item_rows,
@@ -133,36 +137,6 @@ async def fetch_lineage_rows(
         """,
         *params,
     )
-
-
-def decision_provenance(
-    origin: str,
-    *,
-    item_id: str | None = None,
-) -> dict[str, Any]:
-    provenance: dict[str, Any] = {
-        "type": "decision_provenance",
-        "version": 1,
-        "origin": str(origin).strip().lower(),
-    }
-    if item_id:
-        provenance["item_id"] = str(item_id)
-    return {
-        "label": "Provenance",
-        "value": provenance["origin"],
-        "provenance": provenance,
-    }
-
-
-def decision_kpis_with_provenance(
-    value: Any,
-    origin: str,
-    *,
-    item_id: str | None = None,
-) -> list[Any]:
-    kpis = list(value) if isinstance(value, list) else []
-    kpis.append(decision_provenance(origin, item_id=item_id))
-    return kpis
 
 
 async def link_control_room_decision(

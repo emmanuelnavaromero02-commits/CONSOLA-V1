@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.domains.decisions.provenance import strip_control_room_provenance
 from app.services.control_room.business_projection import (
     filter_business_decisions,
     lineage_parent_ids,
@@ -16,27 +16,11 @@ DECISION_BATCH_SIZE = 500
 CONTROL_ROOM_ACTION = "Decision creada desde Sala de Control"
 
 
-def _kpi_list(value: Any) -> list[Any]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-    return list(value) if isinstance(value, list) else []
-
-
 def preserve_control_room_provenance(existing: Any, requested: Any) -> list[Any]:
-    updated = _kpi_list(requested)
-    for entry in _kpi_list(existing):
-        if not isinstance(entry, Mapping):
-            continue
-        provenance = entry.get("provenance")
-        origin = provenance.get("origin") if isinstance(provenance, Mapping) else None
-        is_control_room = str(entry.get("source") or "").lower() == "control_room"
-        is_control_room = is_control_room or str(origin or "").lower() == "control_room"
-        if is_control_room and entry not in updated:
-            updated.append(dict(entry))
-    return updated
+    del existing
+    # The PATCH helper has no server-side item/decision relation. Reserved
+    # provenance is therefore removed; the control_room_items link remains truth.
+    return strip_control_room_provenance(requested)
 
 
 async def _linked_rows(
