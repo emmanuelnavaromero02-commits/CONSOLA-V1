@@ -39,7 +39,7 @@ def has_substantive_reference(
     value: Any,
     *,
     scalar_is_locator: bool,
-    canonical_source_values: frozenset[str],
+    canonical_sources_by_role: Mapping[str, frozenset[str]],
     allow_generic_id: bool = False,
     excluded_references: frozenset[str] = frozenset(),
     seen: set[int] | None = None,
@@ -58,7 +58,7 @@ def has_substantive_reference(
             )
             typed = typed_reference(
                 value,
-                canonical_source_values=canonical_source_values,
+                canonical_sources_by_role=canonical_sources_by_role,
                 excluded_references=local_exclusions,
             )
             if typed is not None:
@@ -66,7 +66,7 @@ def has_substantive_reference(
             if source_and_id_pair(
                 value,
                 allow_generic_id=allow_generic_id,
-                canonical_source_values=canonical_source_values,
+                canonical_sources_by_role=canonical_sources_by_role,
                 excluded_references=local_exclusions,
             ):
                 return True
@@ -76,7 +76,7 @@ def has_substantive_reference(
                     continue
                 if normalized in _LOCATOR_FIELDS and legacy_scalar_reference(
                     nested,
-                    canonical_source_values=canonical_source_values,
+                    canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
                 ):
                     return True
@@ -84,7 +84,7 @@ def has_substantive_reference(
                     nested,
                     scalar_is_locator=True,
                     allow_generic_id=True,
-                    canonical_source_values=canonical_source_values,
+                    canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
                     seen=seen,
                 ):
@@ -93,7 +93,7 @@ def has_substantive_reference(
                     has_substantive_reference(
                         nested,
                         scalar_is_locator=False,
-                        canonical_source_values=canonical_source_values,
+                        canonical_sources_by_role=canonical_sources_by_role,
                         excluded_references=local_exclusions,
                         seen=seen,
                     )
@@ -119,7 +119,7 @@ def has_substantive_reference(
                     entry,
                     scalar_is_locator=scalar_is_locator,
                     allow_generic_id=allow_generic_id,
-                    canonical_source_values=canonical_source_values,
+                    canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
                     seen=seen,
                 )
@@ -131,7 +131,7 @@ def has_substantive_reference(
         scalar_is_locator
         and legacy_scalar_reference(
             value,
-            canonical_source_values=canonical_source_values,
+            canonical_sources_by_role=canonical_sources_by_role,
             excluded_references=excluded_references,
         )
     )

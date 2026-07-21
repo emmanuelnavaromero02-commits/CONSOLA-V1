@@ -31,7 +31,7 @@ def has_evidence(item: Mapping[str, Any]) -> bool:
         if any(key in values for key in EVIDENCE_ID_FIELDS) and source_and_id_pair(
             values,
             allow_generic_id=False,
-            canonical_source_values=sources,
+            canonical_sources_by_role=sources,
             excluded_references=excluded,
         ):
             return True
@@ -40,7 +40,7 @@ def has_evidence(item: Mapping[str, Any]) -> bool:
                 values.get(key),
                 scalar_is_locator=True,
                 allow_generic_id=True,
-                canonical_source_values=sources,
+                canonical_sources_by_role=sources,
                 excluded_references=excluded,
             ):
                 return True

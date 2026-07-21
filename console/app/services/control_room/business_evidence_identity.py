@@ -20,6 +20,13 @@ SOURCE_FIELDS = frozenset(
     }
 )
 CANONICAL_SOURCE_FIELDS = SOURCE_FIELDS - {"source", "source_ref"}
+SOURCE_FIELD_ROLES = {
+    "dataset": "dataset",
+    "gold_table": "dataset",
+    "source_dataset": "dataset",
+    "table": "dataset",
+    "source_system": "system",
+}
 _EVIDENCE_ID_FIELDS = frozenset(
     {
         "artifact_id",
@@ -69,13 +76,31 @@ def stable_text(value: Any) -> bool:
 
 def canonical_sources(
     surfaces: Iterable[Mapping[str, Any]],
-) -> frozenset[str]:
-    return frozenset(
-        reference_token(value)
-        for values in surfaces
-        for key, value in values.items()
-        if str(key).strip().lower() in CANONICAL_SOURCE_FIELDS and stable_text(value)
-    )
+) -> dict[str, frozenset[str]]:
+    sources: dict[str, set[str]] = {}
+    for values in surfaces:
+        for key, value in values.items():
+            role = SOURCE_FIELD_ROLES.get(str(key).strip().lower())
+            if role and stable_text(value):
+                sources.setdefault(role, set()).add(reference_token(value))
+    return {role: frozenset(values) for role, values in sources.items()}
+
+
+def _all_source_values(sources: Mapping[str, frozenset[str]]) -> frozenset[str]:
+    return frozenset(value for values in sources.values() for value in values)
+
+
+def _source_matches(
+    key: Any,
+    value: Any,
+    sources: Mapping[str, frozenset[str]],
+) -> bool:
+    field = str(key).strip().lower()
+    token = reference_token(value)
+    role = SOURCE_FIELD_ROLES.get(field)
+    if role:
+        return token in sources.get(role, frozenset())
+    return field in {"source", "source_ref"} and token in _all_source_values(sources)
 
 
 def administrative_references(
@@ -146,7 +171,7 @@ def structured_id(value: Any, excluded: frozenset[str]) -> bool:
 def legacy_scalar_reference(
     value: Any,
     *,
-    canonical_source_values: frozenset[str],
+    canonical_sources_by_role: Mapping[str, frozenset[str]],
     excluded_references: frozenset[str],
 ) -> bool:
     if not stable_text(value) or contains_excluded(value, excluded_references):
@@ -154,7 +179,7 @@ def legacy_scalar_reference(
     parts = re.split(r"[:/]", value.strip(), maxsplit=1)
     return bool(
         len(parts) == 2
-        and reference_token(parts[0]) in canonical_source_values
+        and reference_token(parts[0]) in _all_source_values(canonical_sources_by_role)
         and structured_id(parts[1], excluded_references)
     )
 
@@ -170,13 +195,13 @@ def source_and_id_pair(
     values: Mapping[str, Any],
     *,
     allow_generic_id: bool,
-    canonical_source_values: frozenset[str],
+    canonical_sources_by_role: Mapping[str, frozenset[str]],
     excluded_references: frozenset[str],
 ) -> bool:
     local_exclusions = excluded_references | administrative_references((values,))
     return any(
         str(key).strip().lower() in SOURCE_FIELDS
-        and reference_token(value) in canonical_source_values
+        and _source_matches(key, value, canonical_sources_by_role)
         and not contains_excluded(value, local_exclusions)
         for key, value in values.items()
     ) and any(
@@ -189,7 +214,7 @@ def source_and_id_pair(
 def typed_reference(
     values: Mapping[str, Any],
     *,
-    canonical_source_values: frozenset[str],
+    canonical_sources_by_role: Mapping[str, frozenset[str]],
     excluded_references: frozenset[str],
 ) -> bool | None:
     evidence_type = reference_token(values.get("type"))
@@ -201,7 +226,7 @@ def typed_reference(
     local_exclusions = excluded_references | administrative_references((values,))
     has_source = any(
         str(key).strip().lower() in SOURCE_FIELDS
-        and reference_token(value) in canonical_source_values
+        and _source_matches(key, value, canonical_sources_by_role)
         for key, value in values.items()
     )
     has_id = any(
@@ -214,6 +239,7 @@ def typed_reference(
 __all__ = (
     "ADMINISTRATIVE_ID_FIELDS",
     "CANONICAL_SOURCE_FIELDS",
+    "SOURCE_FIELD_ROLES",
     "SOURCE_FIELDS",
     "administrative_references",
     "canonical_sources",

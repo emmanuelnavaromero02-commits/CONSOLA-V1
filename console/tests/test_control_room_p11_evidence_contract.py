@@ -101,6 +101,25 @@ def test_structured_evidence_source_must_match_item_source():
     assert has_evidence(_item(evidence_refs=[evidence])) is False
 
 
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {
+            "type": "dataset_row",
+            "source_dataset": "sap",
+            "source_record_id": "record-7",
+        },
+        {
+            "type": "dataset_row",
+            "source_system": "gold_metrics",
+            "source_record_id": "record-7",
+        },
+    ],
+)
+def test_structured_evidence_source_must_match_the_same_source_role(evidence):
+    assert has_evidence(_item(evidence_refs=[evidence])) is False
+
+
 def test_runtime_reference_is_typed_and_verifiable():
     evidence = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
