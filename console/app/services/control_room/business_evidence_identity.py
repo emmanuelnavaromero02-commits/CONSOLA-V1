@@ -150,7 +150,14 @@ def contains_excluded(value: Any, excluded: frozenset[str]) -> bool:
     return any(
         reference
         and (
-            reference in components or (len(reference) >= 8 and reference in normalized)
+            reference in components
+            or bool(
+                re.search(
+                    rf"(?<![a-z0-9]){re.escape(reference)}(?![a-z0-9])",
+                    normalized,
+                )
+            )
+            or (len(reference) >= 8 and reference in normalized)
         )
         for reference in excluded
     )
