@@ -82,6 +82,15 @@ def test_nested_technical_metadata_is_replaced_but_safe_details_survive():
     assert not POLICY_FIELDS.intersection(clean["details"])
 
 
+def test_nested_surface_is_removed_when_only_technical_metadata_remains():
+    clean = business_policy_metadata(
+        {"details": LEGACY_FIELDS},
+        _business_item(),
+    )
+
+    assert "details" not in clean
+
+
 def test_all_nested_semantic_surfaces_are_cleaned_without_erasing_safe_content():
     metadata = {
         "observation": {

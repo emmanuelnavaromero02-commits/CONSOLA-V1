@@ -45,7 +45,11 @@ def _clean_surface_path(
     clean = dict(values)
     child = values.get(path[0])
     if isinstance(child, Mapping):
-        clean[path[0]] = _clean_surface_path(child, path[1:])
+        clean_child = _clean_surface_path(child, path[1:])
+        if clean_child:
+            clean[path[0]] = clean_child
+        else:
+            clean.pop(path[0], None)
     return clean
 
 
@@ -80,7 +84,12 @@ def _clean_jsonb_surface(
             f"CASE WHEN jsonb_typeof({original_child}) = 'object' "
             f"THEN {cleaned_child} ELSE COALESCE({original_child}, 'null'::jsonb) END"
         )
-        clean = f"jsonb_set({clean}, {_jsonb_path((child,))}, {replacement}, false)"
+        updated = f"jsonb_set({clean}, {_jsonb_path((child,))}, {replacement}, false)"
+        clean = (
+            f"CASE WHEN jsonb_typeof({original_child}) = 'object' "
+            f"AND ({cleaned_child}) = '{{}}'::jsonb "
+            f"THEN ({clean} - '{child}') ELSE {updated} END"
+        )
     return clean
 
 
