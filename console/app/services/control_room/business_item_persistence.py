@@ -84,7 +84,7 @@ _SEMANTIC_UPDATE = f"""
     anomaly_type = EXCLUDED.anomaly_type,
     metadata = (
         CASE WHEN {_RESET_WORKFLOW}
-             THEN $4::jsonb
+             THEN ({_CLEAN_EXISTING_METADATA}) || $4::jsonb
              ELSE {_CLEAN_EXISTING_METADATA}
         END
     ) || EXCLUDED.metadata,
