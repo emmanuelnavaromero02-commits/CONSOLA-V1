@@ -105,6 +105,27 @@ def test_overlay_clears_workflow_when_live_observation_changes():
     assert projected["decision_id"] is None
 
 
+def test_overlay_clears_workflow_when_linked_decision_differs_from_provenance():
+    item = _item()
+    metadata = {
+        DECISION_PROVENANCE_KEY: decision_eligibility_provenance(item, decision_id=42),
+        CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(item),
+    }
+
+    projected = _overlay(
+        item,
+        {
+            "status": "decision_created",
+            "decision_id": 99,
+            "execution_status": "not_started",
+            "metadata": metadata,
+        },
+    )
+
+    assert projected["status"] == "open"
+    assert projected["decision_id"] is None
+
+
 def test_decision_projection_requires_eligible_link_provenance():
     item = _item()
     linked = {

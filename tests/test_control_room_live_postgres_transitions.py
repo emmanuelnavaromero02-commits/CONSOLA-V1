@@ -4,7 +4,10 @@ import uuid
 import asyncpg
 import pytest
 
-from app.services.control_room.business_item_persistence import persist_item_rows
+from app.services.control_room.business_item_persistence import (
+    ensure_item_row,
+    persist_item_rows,
+)
 from app.services.control_room.business_observation_codec import (
     ENVELOPE_KEY,
     INVALID_ENVELOPE_FIELD,
@@ -178,6 +181,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
                         "source_item_id": "technical-source",
                         "source_status": "missing",
                         "source_system": "technical",
+                        "safe_detail": "keep",
                     },
                 }
             ),
@@ -194,6 +198,12 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
             owner_by_item={technical_id: 7, legitimate_id: 7},
         )
         await persist_item_rows(conn, rows, workspace_wide=True)
+        await ensure_item_row(
+            conn,
+            {**rows[0], "status": "open"},
+            terminal_statuses=("approved", "dismissed", "resolved"),
+            workspace_wide=True,
+        )
 
         records = await conn.fetch(
             """
@@ -216,7 +226,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         assert transitioned_metadata.get("item_kind") != "source_state"
         assert transitioned_metadata.get(WORKFLOW_QUARANTINE_KEY)
         assert not LEGACY_RESIDUAL_FIELDS.intersection(transitioned_metadata)
-        assert "details" not in transitioned_metadata
+        assert transitioned_metadata["details"] == {"safe_detail": "keep"}
         assert transitioned_metadata["kind"] == "anomaly"
         assert transitioned_metadata["source_dataset"] == "gold_people"
         assert transitioned_metadata["observation"] == {"safe_observation": "keep"}

@@ -240,6 +240,7 @@ def filter_business_decisions(
             and workflow_has_eligible_provenance(
                 row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {},
                 row,
+                decision_id=row.get("decision_id"),
                 use_stored_fingerprint=True,
             )
             for row in rows

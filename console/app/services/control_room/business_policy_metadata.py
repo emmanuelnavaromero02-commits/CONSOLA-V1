@@ -131,7 +131,9 @@ def business_policy_metadata(
         clean[key] = value
     details = item.get("details")
     if isinstance(details, Mapping):
-        clean["details"] = _without_policy_fields(details)
+        clean_details = _without_policy_fields(details)
+        if clean_details:
+            clean["details"] = clean_details
     return with_observation_envelope(clean, item)
 
 

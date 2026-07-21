@@ -6,8 +6,8 @@ from app.domains.decisions.business_visibility import (
     fetch_business_decisions,
     preserve_control_room_provenance,
 )
-from app.services.control_room.business_projection import filter_business_decisions
 from app.services.control_room.business_projection import (
+    filter_business_decisions,
     normalize_persisted_business_item,
 )
 from app.services.control_room.business_workflow_provenance import (
@@ -26,6 +26,7 @@ def _with_eligible_provenance(row):
     metadata[DECISION_PROVENANCE_KEY] = {
         "policy_version": ELIGIBILITY_POLICY_VERSION,
         "eligible_at_link": True,
+        "decision_id": str(row["decision_id"]),
         "item_id": item["id"],
         "kind": item["kind"],
         "fingerprint": fingerprint,
@@ -285,7 +286,6 @@ class AllTechnicalConnection(DecisionBatchConnection):
 @pytest.mark.asyncio
 async def test_decision_scan_is_keyset_paginated_until_exhausted():
     conn = AllTechnicalConnection()
-
     rows = await fetch_business_decisions(
         conn,
         sql="SELECT * FROM decisions ORDER BY created_at DESC, id DESC",

@@ -47,7 +47,9 @@ _PROVEN_WORKFLOW = (
     f"AND lower(control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'kind') "
     "= lower(EXCLUDED.item_kind) "
     f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'fingerprint' "
-    f"= EXCLUDED.metadata->>'{CURRENT_ELIGIBILITY_FINGERPRINT_KEY}'"
+    f"= EXCLUDED.metadata->>'{CURRENT_ELIGIBILITY_FINGERPRINT_KEY}' "
+    f"AND control_room_items.metadata->'{DECISION_PROVENANCE_KEY}'->>'decision_id' "
+    "= control_room_items.decision_id::text"
 )
 _HAS_WORKFLOW = (
     "control_room_items.decision_id IS NOT NULL "
@@ -99,11 +101,14 @@ _SEMANTIC_UPDATE = f"""
 """
 
 
-def _owner_conflict_guard(parameter: int) -> str:
+def _owner_conflict_guard(owner_parameter: int, workspace_parameter: int) -> str:
     return f"""
-WHERE control_room_items.owner_user_id IS NULL
-   OR control_room_items.owner_user_id = EXCLUDED.owner_user_id
-   OR ${parameter}::boolean
+WHERE ${workspace_parameter}::boolean
+   OR (
+       ${owner_parameter}::bigint IS NOT NULL
+       AND control_room_items.owner_user_id = ${owner_parameter}::bigint
+       AND EXCLUDED.owner_user_id = ${owner_parameter}::bigint
+   )
 """
 
 
@@ -153,7 +158,7 @@ SET {_SEMANTIC_UPDATE},
                               THEN NULL ELSE control_room_items.selected_option_id END,
     execution_status = CASE WHEN {_RESET_WORKFLOW}
                             THEN 'not_started' ELSE control_room_items.execution_status END
-{_owner_conflict_guard(5)}
+{_owner_conflict_guard(5, 6)}
 """
 
 ENSURE_ITEM_SQL = f"""
@@ -186,7 +191,7 @@ SET {_SEMANTIC_UPDATE},
         WHEN {_RESET_WORKFLOW} THEN 'not_started'
         ELSE COALESCE(EXCLUDED.execution_status, control_room_items.execution_status)
     END
-{_owner_conflict_guard(6)}
+{_owner_conflict_guard(6, 7)}
 """
 
 
@@ -200,6 +205,20 @@ def _assert_count(result: Any, *, expected: int) -> None:
         )
 
 
+def _validate_owner_scope(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    owner_scope_id: int | None,
+    workspace_wide: bool,
+) -> None:
+    if workspace_wide:
+        return
+    if owner_scope_id is None or any(
+        row.get("owner_user_id") != owner_scope_id for row in rows
+    ):
+        raise OwnerScopeConflict("control room item owner scope mismatch")
+
+
 async def persist_item_rows(
     conn: Any,
     rows: Sequence[Mapping[str, Any]],
@@ -209,12 +228,18 @@ async def persist_item_rows(
 ) -> None:
     if not rows:
         return
+    _validate_owner_scope(
+        rows,
+        owner_scope_id=owner_scope_id,
+        workspace_wide=workspace_wide,
+    )
     result = await conn.execute(
         PERSIST_ITEMS_SQL,
         dumps_jsonb(_prepared_rows(rows)),
         list(REPLACED_POLICY_KEYS),
         ELIGIBILITY_POLICY_VERSION,
         dumps_jsonb(quarantine_workflow_metadata({})),
+        owner_scope_id,
         bool(workspace_wide),
     )
     _assert_count(result, expected=len(rows))
@@ -228,6 +253,11 @@ async def ensure_item_row(
     owner_scope_id: int | None = None,
     workspace_wide: bool = False,
 ) -> None:
+    _validate_owner_scope(
+        (row,),
+        owner_scope_id=owner_scope_id,
+        workspace_wide=workspace_wide,
+    )
     prepared = _prepared_rows((row,))[0]
     result = await conn.execute(
         ENSURE_ITEM_SQL,
@@ -236,6 +266,7 @@ async def ensure_item_row(
         ELIGIBILITY_POLICY_VERSION,
         dumps_jsonb(quarantine_workflow_metadata({})),
         list(terminal_statuses),
+        owner_scope_id,
         bool(workspace_wide),
     )
     if _is_explicit_test_double(result):

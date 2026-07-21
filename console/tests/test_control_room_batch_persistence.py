@@ -167,7 +167,11 @@ class CommandTagConnection:
 )
 async def test_real_backend_rejects_missing_or_malformed_command_tags(result):
     with pytest.raises(PersistenceCommandTagError):
-        await persist_item_rows(CommandTagConnection(result), [{"item_id": "item-1"}])
+        await persist_item_rows(
+            CommandTagConnection(result),
+            [{"item_id": "item-1", "owner_user_id": 7}],
+            owner_scope_id=7,
+        )
 
 
 @pytest.mark.asyncio
@@ -175,12 +179,17 @@ async def test_real_backend_rejects_unexpected_affected_row_count():
     with pytest.raises(PersistenceCountMismatch, match="2/1"):
         await ensure_item_row(
             CommandTagConnection("INSERT 0 2"),
-            {"item_id": "item-1"},
+            {"item_id": "item-1", "owner_user_id": 7},
             terminal_statuses=(),
+            owner_scope_id=7,
         )
 
 
 @pytest.mark.asyncio
 async def test_identifiable_mock_command_result_is_explicitly_tolerated():
     conn = AsyncMock()
-    await persist_item_rows(conn, [{"item_id": "item-1"}])
+    await persist_item_rows(
+        conn,
+        [{"item_id": "item-1", "owner_user_id": 7}],
+        owner_scope_id=7,
+    )

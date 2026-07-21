@@ -76,18 +76,29 @@ def test_eligible_decision_provenance_is_machine_checkable():
     item = _business_item()
     provenance = decision_eligibility_provenance(item, decision_id=42)
     assert provenance["eligible_at_link"] is True
-    assert workflow_has_eligible_provenance({DECISION_PROVENANCE_KEY: provenance}, item)
+    assert workflow_has_eligible_provenance(
+        {DECISION_PROVENANCE_KEY: provenance},
+        item,
+        decision_id=42,
+    )
 
 
 def test_workflow_provenance_must_match_current_item_identity_and_fingerprint():
     item = _business_item()
-    provenance = decision_eligibility_provenance(item)
+    provenance = decision_eligibility_provenance(item, decision_id=42)
     metadata = {DECISION_PROVENANCE_KEY: provenance}
 
-    assert workflow_has_eligible_provenance(metadata, item)
-    assert not workflow_has_eligible_provenance(metadata, {**item, "id": "other"})
-    assert not workflow_has_eligible_provenance(metadata, {**item, "kind": "signal"})
-    assert not workflow_has_eligible_provenance(metadata, {**item, "observed_value": 2})
+    assert workflow_has_eligible_provenance(metadata, item, decision_id=42)
+    assert not workflow_has_eligible_provenance(metadata, item, decision_id=99)
+    assert not workflow_has_eligible_provenance(
+        metadata, {**item, "id": "other"}, decision_id=42
+    )
+    assert not workflow_has_eligible_provenance(
+        metadata, {**item, "kind": "signal"}, decision_id=42
+    )
+    assert not workflow_has_eligible_provenance(
+        metadata, {**item, "observed_value": 2}, decision_id=42
+    )
 
 
 def test_persistence_metadata_uses_current_fingerprint_and_drops_incoming_links():
@@ -115,6 +126,9 @@ def test_persist_sql_matches_all_provenance_fields_to_current_item():
         "item_id",
         "kind",
         "fingerprint",
+        "decision_id",
     ):
         assert f"->>'{field}'" in PERSIST_ITEMS_SQL
     assert CURRENT_ELIGIBILITY_FINGERPRINT_KEY in PERSIST_ITEMS_SQL
+    assert "= control_room_items.decision_id::text" in PERSIST_ITEMS_SQL
+    assert "fingerprint'AND" not in PERSIST_ITEMS_SQL

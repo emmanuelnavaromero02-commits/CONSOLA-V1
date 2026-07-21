@@ -10,6 +10,7 @@ from app.services.control_room.business_item_persistence import (
     ENSURE_ITEM_SQL,
     OwnerScopeConflict,
     ensure_item_row,
+    persist_item_rows,
 )
 from app.services.control_room.business_repository import link_control_room_decision
 
@@ -133,6 +134,20 @@ async def test_owner_conflict_aborts_upsert_and_decision_link():
                 "evidence_refs": ["gold_metrics:business-1"],
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_non_admin_batch_rejects_payload_for_another_owner():
+    conn = AsyncMock()
+
+    with pytest.raises(OwnerScopeConflict):
+        await persist_item_rows(
+            conn,
+            [{"item_id": "business-1", "owner_user_id": 7}],
+            owner_scope_id=9,
+        )
+
+    conn.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,9 @@ from typing import Any
 from fastapi import HTTPException
 
 
-WORKSPACE_WIDE_ROLES = frozenset({"admin", "owner", "super_admin"})
+WORKSPACE_WIDE_ROLES = frozenset(
+    {"admin", "owner", "super_admin", "tenant_admin", "workspace_admin"}
+)
 WORKSPACE_WIDE_SCOPED_ROLES = frozenset({"tenant_admin", "workspace_admin"})
 
 

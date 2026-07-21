@@ -68,7 +68,9 @@ def _workflow_state(
     metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     trusted = not _has_linked_workflow(state) or workflow_has_eligible_provenance(
-        metadata, item
+        metadata,
+        item,
+        decision_id=state.get("decision_id"),
     )
     if trusted:
         return {

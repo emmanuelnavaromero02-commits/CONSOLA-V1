@@ -50,7 +50,9 @@ class _DecisionConnection:
         self.items[0]["metadata"].update(
             {
                 CURRENT_ELIGIBILITY_FINGERPRINT_KEY: fingerprint,
-                DECISION_PROVENANCE_KEY: decision_eligibility_provenance(business),
+                DECISION_PROVENANCE_KEY: decision_eligibility_provenance(
+                    business, decision_id=2
+                ),
             }
         )
 

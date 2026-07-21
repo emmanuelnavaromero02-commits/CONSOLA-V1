@@ -1284,6 +1284,8 @@ async def _ensure_item_row(
             pool,
             row,
             terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+            owner_scope_id=owner_scope_id(user),
+            workspace_wide=_can_read_workspace_wide(user),
         )
     except OwnerScopeConflict:
         raise HTTPException(404, "control room item not found") from None

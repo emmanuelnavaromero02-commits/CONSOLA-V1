@@ -91,6 +91,14 @@ def test_nested_surface_is_removed_when_only_technical_metadata_remains():
     assert "details" not in clean
 
 
+def test_empty_incoming_details_do_not_replace_existing_safe_metadata():
+    item = {**_business_item(), "details": LEGACY_FIELDS}
+
+    clean = business_policy_metadata({"details": {"safe": "keep"}}, item)
+
+    assert clean["details"] == {"safe": "keep"}
+
+
 def test_all_nested_semantic_surfaces_are_cleaned_without_erasing_safe_content():
     metadata = {
         "observation": {

@@ -113,6 +113,7 @@ def workflow_has_eligible_provenance(
     metadata: Mapping[str, Any] | None,
     item: Mapping[str, Any],
     *,
+    decision_id: Any = None,
     use_stored_fingerprint: bool = False,
 ) -> bool:
     current_metadata = dict(metadata or {})
@@ -125,6 +126,9 @@ def workflow_has_eligible_provenance(
             str(current_metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
             or current_fingerprint
         )
+    expected_decision_id = (
+        decision_id if decision_id is not None else item.get("decision_id")
+    )
     return (
         value.get("eligible_at_link") is True
         and value.get("policy_version") == ELIGIBILITY_POLICY_VERSION
@@ -133,6 +137,9 @@ def workflow_has_eligible_provenance(
         and str(value.get("kind") or "").strip().lower()
         == _identity_value(item, "kind", "item_kind").lower()
         and str(value.get("fingerprint") or "").strip() == current_fingerprint
+        and expected_decision_id is not None
+        and str(value.get("decision_id") or "").strip()
+        == str(expected_decision_id).strip()
     )
 
 
