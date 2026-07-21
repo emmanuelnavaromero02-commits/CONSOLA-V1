@@ -98,10 +98,12 @@ _SEMANTIC_UPDATE = f"""
     last_seen_at = NOW()
 """
 
-_OWNER_CONFLICT_GUARD = """
+
+def _owner_conflict_guard(parameter: int) -> str:
+    return f"""
 WHERE control_room_items.owner_user_id IS NULL
    OR control_room_items.owner_user_id = EXCLUDED.owner_user_id
-   OR $6::boolean
+   OR ${parameter}::boolean
 """
 
 
@@ -151,7 +153,7 @@ SET {_SEMANTIC_UPDATE},
                               THEN NULL ELSE control_room_items.selected_option_id END,
     execution_status = CASE WHEN {_RESET_WORKFLOW}
                             THEN 'not_started' ELSE control_room_items.execution_status END
-{_OWNER_CONFLICT_GUARD}
+{_owner_conflict_guard(5)}
 """
 
 ENSURE_ITEM_SQL = f"""
@@ -184,7 +186,7 @@ SET {_SEMANTIC_UPDATE},
         WHEN {_RESET_WORKFLOW} THEN 'not_started'
         ELSE COALESCE(EXCLUDED.execution_status, control_room_items.execution_status)
     END
-{_OWNER_CONFLICT_GUARD}
+{_owner_conflict_guard(6)}
 """
 
 
@@ -213,7 +215,6 @@ async def persist_item_rows(
         list(REPLACED_POLICY_KEYS),
         ELIGIBILITY_POLICY_VERSION,
         dumps_jsonb(quarantine_workflow_metadata({})),
-        list(()),
         bool(workspace_wide),
     )
     _assert_count(result, expected=len(rows))
