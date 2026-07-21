@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import base64
 import hashlib
 import inspect
@@ -108,14 +110,7 @@ VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 ACTIVE_INSTALLATION_STATUSES = {"ready", "active"}
 CONTROL_ROOM_REFRESH_INTERVAL_SECONDS = 30
 TERMINAL_ITEM_STATUSES = {"approved", "dismissed", "resolved"}
-ITEM_STATUSES = {
-    "open",
-    "in_review",
-    "decision_created",
-    "approved",
-    "dismissed",
-    "resolved",
-}
+ITEM_STATUSES = {"open", "in_review", "decision_created", "approved", "dismissed", "resolved"}
 SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 ALERT_SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 OMEGA_STEPS = [
@@ -219,9 +214,7 @@ class WriteBackAdapterFactory:
         cls._register_builtin("sap_hcm_it0008", SapHcmAdapter)
 
     @classmethod
-    def _register_builtin(
-        cls, template_type: str, adapter_cls: type[BaseAdapter]
-    ) -> None:
+    def _register_builtin(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
         registered_cls = adapter_cls
         if not issubclass(adapter_cls, BaseAdapter):
             # Pytest can import the legacy facade and modular core in an order
@@ -230,9 +223,7 @@ class WriteBackAdapterFactory:
             # active factory contract without changing runtime behavior.
             class BuiltinAdapterBridge(BaseAdapter):
                 def execute(self, action_data, credentials, dry_run=True):
-                    return adapter_cls().execute(
-                        action_data, credentials, dry_run=dry_run
-                    )
+                    return adapter_cls().execute(action_data, credentials, dry_run=dry_run)
 
             BuiltinAdapterBridge.__name__ = adapter_cls.__name__
             BuiltinAdapterBridge.__qualname__ = adapter_cls.__qualname__
@@ -243,9 +234,7 @@ class WriteBackAdapterFactory:
             cls._registry[template_type] = registered_cls
 
     @classmethod
-    def register_adapter(
-        cls, template_type: str, adapter_cls: type[BaseAdapter]
-    ) -> None:
+    def register_adapter(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
         if not issubclass(adapter_cls, BaseAdapter):
             raise TypeError("adapter_cls must inherit BaseAdapter")
         cls._registry[str(template_type)] = adapter_cls
@@ -255,9 +244,7 @@ class WriteBackAdapterFactory:
         cls._ensure_builtin_adapters()
         adapter_cls = cls._registry.get(str(template_type))
         if not adapter_cls:
-            raise NotImplementedError(
-                f"No write-back adapter registered for {template_type}"
-            )
+            raise NotImplementedError(f"No write-back adapter registered for {template_type}")
         return adapter_cls()
 
     @classmethod
@@ -268,7 +255,6 @@ class WriteBackAdapterFactory:
     @classmethod
     def supports(cls, template_type: str) -> bool:
         return cls.has_adapter(template_type)
-
 
 OMEGA_STEP_EVENT_TYPES = {
     "signals": "signals_opened",
@@ -469,17 +455,8 @@ DATA_READINESS_STATES = (
     "no_permission",
 )
 DATA_READY_STATES = {"ready"}
-NON_READY_SOURCE_STATES = {
-    "empty",
-    "missing",
-    "unavailable",
-    "invalid_schema",
-    "blocked",
-    "no_permission",
-}
-CONTROL_ROOM_DATASET_READINESS: dict[tuple[str, str], dict[str, Any]] = (
-    dataset_readiness_registry()
-)
+NON_READY_SOURCE_STATES = {"empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"}
+CONTROL_ROOM_DATASET_READINESS: dict[tuple[str, str], dict[str, Any]] = dataset_readiness_registry()
 
 
 @dataclass(frozen=True)
@@ -1159,15 +1136,7 @@ MODULES: tuple[ControlRoomModule, ...] = (
     ),
 )
 
-DOMAIN_ORDER = [
-    "Recursos Humanos",
-    "Nomina",
-    "Finanzas",
-    "Presupuestos",
-    "Compras",
-    "Ventas",
-    "Operacion",
-]
+DOMAIN_ORDER = ["Recursos Humanos", "Nomina", "Finanzas", "Presupuestos", "Compras", "Ventas", "Operacion"]
 DOMAIN_ACCENTS = {
     "Recursos Humanos": "#7c3aed",
     "Nomina": "#ef4444",
@@ -1227,12 +1196,8 @@ ThresholdMap = dict[tuple[str, str, str], dict[str, Any]]
 
 
 def _readiness_contract(source: ControlRoomSource) -> dict[str, Any]:
-    registry = CONTROL_ROOM_DATASET_READINESS.get(
-        (source.cartridge, source.dataset), {}
-    )
-    data_readiness = str(
-        source.data_readiness or registry.get("data_readiness") or "ready"
-    )
+    registry = CONTROL_ROOM_DATASET_READINESS.get((source.cartridge, source.dataset), {})
+    data_readiness = str(source.data_readiness or registry.get("data_readiness") or "ready")
     if data_readiness == "ready" and registry:
         data_readiness = str(registry.get("data_readiness") or "ready")
     if data_readiness not in DATA_READINESS_STATES:
@@ -1241,8 +1206,7 @@ def _readiness_contract(source: ControlRoomSource) -> dict[str, Any]:
     warnings = tuple(source.contract_warnings or registry.get("warnings") or ())
     return {
         "data_readiness": data_readiness,
-        "readiness_reason": source.readiness_reason
-        or str(registry.get("reason") or ""),
+        "readiness_reason": source.readiness_reason or str(registry.get("reason") or ""),
         "readiness_blockers": list(blockers),
         "contract_warnings": list(warnings),
     }
@@ -1273,9 +1237,7 @@ def _source_status_payload(
             }.get(status, "La fuente requiere revision.")
         if status not in blockers:
             blockers.append(status)
-    operationally_ready = (
-        status == "ok" and count > 0 and data_readiness in DATA_READY_STATES
-    )
+    operationally_ready = status == "ok" and count > 0 and data_readiness in DATA_READY_STATES
     payload = {
         "dataset": source.dataset,
         "cartridge": source.cartridge,
@@ -1310,24 +1272,11 @@ def _module_data_readiness(module_sources: list[dict[str, Any]]) -> str:
         return "missing"
     if all(source.get("operationally_ready") for source in module_sources):
         return "ready"
-    states = {
-        str(source.get("data_readiness") or source.get("status") or "unavailable")
-        for source in module_sources
-    }
-    for state in (
-        "invalid_schema",
-        "blocked",
-        "no_permission",
-        "unavailable",
-        "missing",
-        "stub",
-        "partial",
-        "empty",
-    ):
+    states = {str(source.get("data_readiness") or source.get("status") or "unavailable") for source in module_sources}
+    for state in ("invalid_schema", "blocked", "no_permission", "unavailable", "missing", "stub", "partial", "empty"):
         if state in states:
             return state
     return "partial"
-
 
 # Implementation modules bind their functions back into this module namespace.
 # That keeps the historical `app.services.control_room_service.<name>` import
@@ -1338,9 +1287,7 @@ def _install_module_exports() -> None:
     from app.services.control_room import execution as _execution
 
     for _module in (_api, _state, _execution):
-        for _name in getattr(
-            _module, "__all__", ()
-        ):  # pragma: no branch - static tuple
+        for _name in getattr(_module, "__all__", ()):  # pragma: no branch - static tuple
             globals()[_name] = getattr(_module, _name)
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import types
 
 from app.services.control_room import core as _core
@@ -120,32 +122,24 @@ def _agentops_monitor_engines(contract: object) -> list[dict[str, Any]]:
         if not engine:
             continue
         seen.add(engine)
-        engines.append(
-            {
-                "engine": engine,
-                "enabled": item.get("enabled") is not False,
-                "source_type": item.get("source_type"),
-                "source_id": item.get("source_id"),
-                "calibration_group": item.get("calibration_group"),
-                "mode": "direct",
-            }
-        )
+        engines.append({
+            "engine": engine,
+            "enabled": item.get("enabled") is not False,
+            "source_type": item.get("source_type"),
+            "source_id": item.get("source_id"),
+            "calibration_group": item.get("calibration_group"),
+            "mode": "direct",
+        })
         engine_inputs = item.get("engine_inputs")
-        if isinstance(engine_inputs, dict) and isinstance(
-            engine_inputs.get("bayesian_calibration"), dict
-        ):
+        if isinstance(engine_inputs, dict) and isinstance(engine_inputs.get("bayesian_calibration"), dict):
             if "bayesian_calibration" not in seen:
                 seen.add("bayesian_calibration")
-                engines.append(
-                    {
-                        "engine": "bayesian_calibration",
-                        "enabled": item.get("enabled") is not False,
-                        "calibration_group": engine_inputs["bayesian_calibration"].get(
-                            "calibration_group"
-                        ),
-                        "mode": "nested",
-                    }
-                )
+                engines.append({
+                    "engine": "bayesian_calibration",
+                    "enabled": item.get("enabled") is not False,
+                    "calibration_group": engine_inputs["bayesian_calibration"].get("calibration_group"),
+                    "mode": "nested",
+                })
     return engines
 
 
@@ -379,7 +373,10 @@ async def _sf_foundation_gold_results(
 def _sf_foundation_gold_rows(
     results: dict[str, dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]] | None]:
-    return {key: _sf_gold_usable_rows(result) for key, result in results.items()}
+    return {
+        key: _sf_gold_usable_rows(result)
+        for key, result in results.items()
+    }
 
 
 @_bind_to_core
@@ -578,7 +575,8 @@ async def _sf_talent_latest_simulation_result(user: dict | None) -> dict[str, An
     return {
         "status": "ready",
         "row": {
-            key: _sf_talent_public_value(value) for key, value in dict(row).items()
+            key: _sf_talent_public_value(value)
+            for key, value in dict(row).items()
         },
     }
 
@@ -603,24 +601,14 @@ async def _sf_talent_kpi_results(
     user: dict | None,
 ) -> dict[str, dict[str, Any]]:
     return {
-        "employee_profile": await _sf_talent_gold_result(
-            datasets["employee_profile"], user, 5000
-        ),
-        "role_profile": await _sf_talent_gold_result(
-            datasets["role_profile"], user, 1000
-        ),
-        "mobility_history": await _sf_talent_gold_result(
-            datasets["mobility_history"], user, 5000
-        ),
+        "employee_profile": await _sf_talent_gold_result(datasets["employee_profile"], user, 5000),
+        "role_profile": await _sf_talent_gold_result(datasets["role_profile"], user, 1000),
+        "mobility_history": await _sf_talent_gold_result(datasets["mobility_history"], user, 5000),
         "readiness": await _sf_talent_gold_result(datasets["readiness"], user, 5000),
         "nine_box": await _sf_talent_gold_result(datasets["nine_box"], user, 5000),
         "signals": await _sf_talent_gold_result(datasets["signals"], user, 100),
-        "operational_features": await _sf_talent_gold_result(
-            datasets["operational_features"], user, 1
-        ),
-        "simulation_inputs": await _sf_talent_gold_result(
-            datasets["simulation_inputs"], user, 1
-        ),
+        "operational_features": await _sf_talent_gold_result(datasets["operational_features"], user, 1),
+        "simulation_inputs": await _sf_talent_gold_result(datasets["simulation_inputs"], user, 1),
     }
 
 
@@ -677,9 +665,10 @@ def _sf_talent_readiness_counts(
             "readiness_calculable": calculable_rows,
             "readiness_insufficient": insufficient_rows,
         }
-    operational_calculable = _sf_talent_int(
-        operational_row.get("calculable_count")
-    ) or _sf_talent_int(operational_row.get("calculable_employee_count"))
+    operational_calculable = (
+        _sf_talent_int(operational_row.get("calculable_count"))
+        or _sf_talent_int(operational_row.get("calculable_employee_count"))
+    )
     operational_pending = _sf_talent_int(operational_row.get("readiness_pending_count"))
     return {
         "readiness_calculable": max(operational_calculable, calculable_rows),
@@ -748,12 +737,8 @@ def _sf_talent_kpi_metrics(
     source_mode = _sf_talent_source_mode(operational_row, readiness_rows)
     return {
         "profiled_employees": _sf_talent_profiled_count(operational_row, profile_rows),
-        "roles_profiled": _sf_talent_int(operational_row.get("role_count"))
-        or len(role_rows),
-        "mobility_observed": _sf_talent_int(
-            operational_row.get("mobility_observed_count")
-        )
-        or sum(
+        "roles_profiled": _sf_talent_int(operational_row.get("role_count")) or len(role_rows),
+        "mobility_observed": _sf_talent_int(operational_row.get("mobility_observed_count")) or sum(
             1 for row in mobility_rows if _sf_talent_int(row.get("movement_events")) > 0
         ),
         "readiness_calculable": readiness_counts["readiness_calculable"],
@@ -766,9 +751,7 @@ def _sf_talent_kpi_metrics(
             _sf_talent_int(operational_row.get("roles_without_requirements"))
             or _sf_talent_int(operational_row.get("roles_without_requirements_count"))
         ),
-        "high_severity_signals": _sf_talent_int(
-            operational_row.get("high_severity_signal_count")
-        ),
+        "high_severity_signals": _sf_talent_int(operational_row.get("high_severity_signal_count")),
         "learning_blockers": _sf_talent_first_int(
             operational_row,
             "learning_blocked_count",
@@ -782,14 +765,11 @@ def _sf_talent_kpi_metrics(
         "skill_gap_count": _sf_talent_int(operational_row.get("skill_gap_count")),
         "skill_coverage_pct": operational_row.get("skill_coverage_pct"),
         "operational_status": _sf_talent_status(
-            operational_row.get("feature_status")
-            or results["operational_features"]["status"]
+            operational_row.get("feature_status") or results["operational_features"]["status"]
         ),
         "confidence": operational_row.get("confidence"),
         "source_mode": source_mode,
-        "operational_label": str(
-            operational_row.get("user_status_label") or "En espera de datos"
-        ),
+        "operational_label": str(operational_row.get("user_status_label") or "En espera de datos"),
     }
 
 
@@ -809,11 +789,11 @@ def _sf_talent_kpi_blockers(
         "Datos de aspiracion pendientes",
     ]
     role_blockers = _sf_talent_extract_blockers(role_rows)
-    operational_blockers = (
-        _sf_talent_extract_blockers([operational_row]) if operational_row else []
-    )
+    operational_blockers = _sf_talent_extract_blockers([operational_row]) if operational_row else []
     system_errors = [
-        str(result.get("error")) for result in results.values() if result.get("error")
+        str(result.get("error"))
+        for result in results.values()
+        if result.get("error")
     ]
 
     blockers = []
@@ -821,10 +801,13 @@ def _sf_talent_kpi_blockers(
         metrics.get("source_mode") == "benchmark_internal"
         and _sf_talent_int(metrics.get("readiness_calculable")) > 0
     )
-    if not has_operational_reference and (
-        not metrics["profiled_employees"]
-        or metrics["readiness_insufficient"]
-        or metrics["readiness_calculable"] == 0
+    if (
+        not has_operational_reference
+        and (
+            not metrics["profiled_employees"]
+            or metrics["readiness_insufficient"]
+            or metrics["readiness_calculable"] == 0
+        )
     ):
         blockers.append(
             {
@@ -842,30 +825,22 @@ def _sf_talent_kpi_blockers(
                 "status": "partial",
                 "title": "Roles parciales",
                 "detail": "Los roles existen, pero faltan requisitos de habilidades para comparar persona contra rol.",
-                "items": role_blockers
-                or [
-                    "Requisitos de rol pendientes",
-                    "Habilidades requeridas pendientes",
-                ],
+                "items": role_blockers or ["Requisitos de rol pendientes", "Habilidades requeridas pendientes"],
             }
         )
     if system_errors:
-        blockers.append(
-            {
-                "id": "talent_dataset_availability",
-                "status": "unavailable",
-                "title": "Datasets no disponibles",
-                "detail": "Algunos golds de Talento no pudieron leerse en este workspace.",
-                "items": system_errors,
-            }
-        )
+        blockers.append({
+            "id": "talent_dataset_availability",
+            "status": "unavailable",
+            "title": "Datasets no disponibles",
+            "detail": "Algunos golds de Talento no pudieron leerse en este workspace.",
+            "items": system_errors,
+        })
     return blockers
 
 
 @_bind_to_core
-def _sf_talent_signal_payloads(
-    signal_rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def _sf_talent_signal_payloads(signal_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "id": str(row.get("signal_id") or f"signal_{idx}"),
@@ -1027,9 +1002,7 @@ def _sf_talent_kpi_readiness_payload(
         "confidence": _sf_talent_public_value(metrics["confidence"]),
         "source_mode": metrics["source_mode"],
         "latest_analysis_status": latest_simulation.get("status"),
-        "status": "partial"
-        if metrics["readiness_insufficient"] or blockers
-        else "ready",
+        "status": "partial" if metrics["readiness_insufficient"] or blockers else "ready",
     }
 
 
@@ -1043,10 +1016,7 @@ def _sf_talent_operational_features_payload(
         "dataset": datasets["operational_features"],
         "status": metrics["operational_status"],
         "label": metrics["operational_label"],
-        "row": {
-            key: _sf_talent_public_value(value)
-            for key, value in operational_row.items()
-        },
+        "row": {key: _sf_talent_public_value(value) for key, value in operational_row.items()},
     }
 
 
@@ -1062,9 +1032,7 @@ def _sf_talent_analysis_inputs_payload(
         "status": _sf_talent_status(
             simulation_row.get("input_status") or results["simulation_inputs"]["status"]
         ),
-        "label": str(
-            simulation_row.get("user_status_label") or metrics["operational_label"]
-        ),
+        "label": str(simulation_row.get("user_status_label") or metrics["operational_label"]),
         "scenario_count": _sf_talent_int(simulation_row.get("scenario_count")),
         "contract_version": simulation_row.get("analysis_contract_version"),
     }
@@ -1144,8 +1112,7 @@ def _wt_aggregate_series(
     return {
         "months": months,
         "headcount": [
-            int(round(headcount[month])) if month in headcount else None
-            for month in months
+            int(round(headcount[month])) if month in headcount else None for month in months
         ],
         "avg_tenure_months": [
             round(tenure[month][0] / tenure[month][1], 2)
@@ -1202,10 +1169,8 @@ async def build_workforce_trends(
         "history_months": _wt_int(operational_row.get("headcount_history_months")),
     }
     has_kpis = any(value is not None for value in kpis.values())
-    status = (
-        "ready"
-        if series["months"] and has_kpis
-        else ("partial" if series["months"] or has_kpis else "waiting_for_data")
+    status = "ready" if series["months"] and has_kpis else (
+        "partial" if series["months"] or has_kpis else "waiting_for_data"
     )
     return {
         "status": status,
@@ -1246,9 +1211,7 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
     blockers = _sf_talent_kpi_blockers(rows, results, metrics)
     signals = _sf_talent_signal_payloads(rows["signal_rows"])
     role_samples = _sf_talent_role_samples(rows["role_rows"])
-    widgets = _sf_talent_kpi_widgets(
-        datasets, results, rows, metrics, signals, role_samples
-    )
+    widgets = _sf_talent_kpi_widgets(datasets, results, rows, metrics, signals, role_samples)
 
     generated_at = datetime.now(UTC).isoformat()
     tenant_id, workspace_id = _workspace_scope(user)
@@ -1291,7 +1254,8 @@ async def sap_successfactors_talent_kpis(user: dict | None) -> dict[str, Any]:
 @_bind_to_core
 def _sf_talent_dataset_href(dataset: str) -> str:
     return (
-        "/data/catalog?layer=gold&cartridge=sap_successfactors" f"&datasets={dataset}"
+        "/data/catalog?layer=gold&cartridge=sap_successfactors"
+        f"&datasets={dataset}"
     )
 
 
@@ -1465,14 +1429,8 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         "employee_key": employee_key,
         "display_name": _sf_talent_masked_name(employee_key),
         "role": str(row.get("role_name") or row.get("job_code") or "Rol no disponible"),
-        "unit": str(
-            row.get("department_name")
-            or row.get("company_name")
-            or "Unidad no disponible"
-        ),
-        "region": str(
-            row.get("location_name") or row.get("region") or "Region no disponible"
-        ),
+        "unit": str(row.get("department_name") or row.get("company_name") or "Unidad no disponible"),
+        "region": str(row.get("location_name") or row.get("region") or "Region no disponible"),
         "readiness_status": _sf_talent_status(row.get("readiness_status"), "blocked"),
         "box_id": str(row.get("box_key") or ""),
         "box_label": str(row.get("box_label") or "9-box"),
@@ -1483,12 +1441,8 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
         "desempeno_disponible": bool(band_available) and bool(potential_pending),
         "potential_band": str(row.get("potential_band") or "unknown"),
         "fit_band": _sf_talent_fit_band(row.get("fit_score")),
-        "movement_age_bucket": _sf_talent_movement_bucket(
-            row.get("months_since_movement")
-        ),
-        "data_status": _sf_talent_status(
-            row.get("box_status") or row.get("cpa_status"), "blocked"
-        ),
+        "movement_age_bucket": _sf_talent_movement_bucket(row.get("months_since_movement")),
+        "data_status": _sf_talent_status(row.get("box_status") or row.get("cpa_status"), "blocked"),
     }
 
 
@@ -1496,7 +1450,10 @@ def _sf_talent_masked_roster_row(row: dict[str, Any]) -> dict[str, Any]:
 def _sf_talent_metadata_entities(
     entities: list[dict[str, Any]] = TALENT_METADATA_ENTITIES,
 ) -> list[dict[str, Any]]:
-    return [{**item, "blockers": list(item.get("blockers", []))} for item in entities]
+    return [
+        {**item, "blockers": list(item.get("blockers", []))}
+        for item in entities
+    ]
 
 
 @_bind_to_core
@@ -1505,11 +1462,9 @@ def _sf_talent_live_component_for(
     live_components: dict[str, dict[str, Any]],
     component_ids: dict[str, str] = TALENT_LIVE_COMPONENT_IDS,
 ) -> dict[str, Any]:
-    return (
-        live_components.get(entity_id)
-        or live_components.get(component_ids.get(entity_id, ""))
-        or {}
-    )
+    return live_components.get(entity_id) or live_components.get(
+        component_ids.get(entity_id, "")
+    ) or {}
 
 
 @_bind_to_core
@@ -1518,11 +1473,7 @@ def _sf_talent_live_blocker_items(component: dict[str, Any]) -> list[str]:
         item for item in component.get("candidates", []) if isinstance(item, dict)
     ]
     if not candidates:
-        return [
-            str(item)
-            for item in component.get("blockers", [])
-            if str(item or "").strip()
-        ]
+        return [str(item) for item in component.get("blockers", []) if str(item or "").strip()]
 
     permission = [
         str(item.get("odata_entity") or item.get("entity") or "").strip()
@@ -1530,23 +1481,15 @@ def _sf_talent_live_blocker_items(component: dict[str, Any]) -> list[str]:
         if str(item.get("status") or "") == "permission_blocked"
     ]
     if permission:
-        return [
-            f"Permiso de lectura pendiente: {entity}" for entity in permission if entity
-        ]
+        return [f"Permiso de lectura pendiente: {entity}" for entity in permission if entity]
 
     invalid_fields: list[str] = []
     for item in candidates:
         if str(item.get("status") or "") != "field_blocked":
             continue
         entity = str(item.get("odata_entity") or item.get("entity") or "").strip()
-        fields = ", ".join(
-            str(field) for field in (item.get("fields_missing") or []) if field
-        )
-        invalid_fields.append(
-            f"Campos no expuestos en {entity}: {fields}"
-            if fields
-            else f"Campos no expuestos en {entity}"
-        )
+        fields = ", ".join(str(field) for field in (item.get("fields_missing") or []) if field)
+        invalid_fields.append(f"Campos no expuestos en {entity}: {fields}" if fields else f"Campos no expuestos en {entity}")
     if invalid_fields:
         return invalid_fields
 
@@ -1564,12 +1507,7 @@ def _sf_talent_live_blocker_items(component: dict[str, Any]) -> list[str]:
         return [
             "Grupo requerido pendiente: "
             + ", ".join(str(group) for group in missing_groups if group)
-            + (
-                "; encontrados: "
-                + ", ".join(str(group) for group in ready_groups if group)
-                if ready_groups
-                else ""
-            )
+            + ("; encontrados: " + ", ".join(str(group) for group in ready_groups if group) if ready_groups else "")
         ]
     return ["Metadata pendiente de confirmar"]
 
@@ -1579,9 +1517,7 @@ def _sf_talent_merge_live_metadata(
     entity: dict[str, Any],
     live_components: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    component = _sf_talent_live_component_for(
-        str(entity.get("id") or ""), live_components
-    )
+    component = _sf_talent_live_component_for(str(entity.get("id") or ""), live_components)
     if not component:
         return entity
     status = _sf_talent_status(component.get("status"), entity.get("status", "partial"))
@@ -1590,16 +1526,13 @@ def _sf_talent_merge_live_metadata(
         **entity,
         "status": status,
         "entity": str(selected_entity or entity.get("entity") or ""),
-        "odata_entity": component.get("odata_entity")
-        or component.get("selected_entity"),
+        "odata_entity": component.get("odata_entity") or component.get("selected_entity"),
         "fields_found": component.get("fields_found") or [],
         "fields_missing": component.get("fields_missing") or [],
         "sample_status": component.get("sample_status"),
         "ready_to_extract": bool(component.get("ready_to_extract")),
         "extraction_target": selected_entity,
-        "blockers": []
-        if status == "ready"
-        else _sf_talent_live_blocker_items(component),
+        "blockers": [] if status == "ready" else _sf_talent_live_blocker_items(component),
         "live_status": component.get("status"),
         "live_selected_entity": component.get("selected_entity"),
         "live_candidates": component.get("candidates", []),
@@ -1607,9 +1540,7 @@ def _sf_talent_merge_live_metadata(
 
 
 @_bind_to_core
-def _sf_talent_blockers_from_results(
-    results: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def _sf_talent_blockers_from_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     for result in results:
         if not result.get("error"):
@@ -1627,21 +1558,15 @@ def _sf_talent_blockers_from_results(
 
 
 @_bind_to_core
-async def _sf_talent_live_metadata_readiness(
-    user: dict | None,
-) -> dict[str, Any] | None:
+async def _sf_talent_live_metadata_readiness(user: dict | None) -> dict[str, Any] | None:
     """Fetch live SAP C/P/A metadata readiness from the cartridge service.
 
     Control Room must degrade, not fail, when the SAP cartridge is offline or
     credentials are pending. The payload carries no sample values/PII.
     """
-    base_url = os.environ.get(
-        "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"
-    ).rstrip("/")
+    base_url = os.environ.get("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203").rstrip("/")
     headers = _internal_headers("CARTRIDGE")
-    headers["X-Security-Context"] = json.dumps(
-        build_security_context(user), ensure_ascii=False
-    )
+    headers["X-Security-Context"] = json.dumps(build_security_context(user), ensure_ascii=False)
     try:
         async with httpx.AsyncClient(timeout=20.0, headers=headers) as client:
             response = await client.get(
@@ -1737,12 +1662,10 @@ def _sf_talent_9box_operational_rows_from_detail(
         counts["employee_count"] += 1
         box_status = _sf_talent_status(row.get("box_status"), "")
         source_mode = _sf_talent_status(row.get("source_mode"), "")
-        is_ready = box_status not in {
-            "blocked",
-            "insufficient_data",
-            "missing",
-            "",
-        } or source_mode in {"cpa_real", "benchmark_internal"}
+        is_ready = (
+            box_status not in {"blocked", "insufficient_data", "missing", ""}
+            or source_mode in {"cpa_real", "benchmark_internal"}
+        )
         if is_ready:
             counts["ready_count"] += 1
         else:
@@ -1819,8 +1742,7 @@ def _sf_talent_desempeno_cohort(
             }
         )
     roster.sort(
-        key=lambda item: band_order.get(item["performance_band_available"], 0),
-        reverse=True,
+        key=lambda item: band_order.get(item["performance_band_available"], 0), reverse=True
     )
     return {
         "count": count,
@@ -1838,9 +1760,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     totals = _sf_talent_9box_totals(cells)
     raw_detail_rows: list[dict[str, Any]] | None = None
     if totals["ready"] == 0:
-        detail_result = await _sf_talent_gold_result(
-            "sap_successfactors_talent_9box", user, 5000
-        )
+        detail_result = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
         raw_detail_rows = detail_result["rows"]
         detail_rows = _sf_talent_9box_operational_rows_from_detail(raw_detail_rows)
         detail_cells = _sf_talent_9box_cells(detail_rows)
@@ -1854,9 +1774,7 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
     # Cohorte "Desempeno disponible" (per-empleado, del detalle 9box). Reutiliza el read del
     # fallback si ya se hizo; si no, lo consulta una vez.
     if raw_detail_rows is None:
-        cohort_detail = await _sf_talent_gold_result(
-            "sap_successfactors_talent_9box", user, 5000
-        )
+        cohort_detail = await _sf_talent_gold_result("sap_successfactors_talent_9box", user, 5000)
         raw_detail_rows = cohort_detail["rows"]
     desempeno_disponible = _sf_talent_desempeno_cohort(raw_detail_rows)
 
@@ -1867,24 +1785,14 @@ async def sap_successfactors_talent_9box(user: dict | None) -> dict[str, Any]:
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
         "dataset": dataset,
-        "status": "ready"
-        if totals["ready"]
-        else result["status"]
-        if result["status"] != "ready"
-        else "blocked",
+        "status": "ready" if totals["ready"] else result["status"] if result["status"] != "ready" else "blocked",
         "totals": totals,
         "cells": cells,
         "desempeno_disponible": desempeno_disponible,
         "blockers": blockers,
         "privacy": {
             "roster": "masked",
-            "forbidden_fields": [
-                "full_name",
-                "user_id",
-                "pernr",
-                "salary",
-                "paycomp_value",
-            ],
+            "forbidden_fields": ["full_name", "user_id", "pernr", "salary", "paycomp_value"],
         },
     }
 
@@ -1899,7 +1807,9 @@ async def sap_successfactors_talent_9box_box(
 
     dataset = "sap_successfactors_talent_9box"
     result = await _sf_talent_gold_result(dataset, user, 5000)
-    rows = [row for row in result["rows"] if str(row.get("box_key") or "") == box_id]
+    rows = [
+        row for row in result["rows"] if str(row.get("box_key") or "") == box_id
+    ]
     roster = [_sf_talent_masked_roster_row(row) for row in rows[:100]]
     raw_blockers: set[str] = set()
     for row in rows:
@@ -1925,23 +1835,13 @@ async def sap_successfactors_talent_9box_box(
         "workspace_id": workspace_id,
         "dataset": dataset,
         "box": definitions[box_id],
-        "status": result["status"]
-        if roster
-        else "empty"
-        if result["status"] == "ready"
-        else result["status"],
+        "status": result["status"] if roster else "empty" if result["status"] == "ready" else result["status"],
         "count": len(rows),
         "roster": roster,
         "blockers": blockers,
         "privacy": {
             "masked": True,
-            "excluded_fields": [
-                "full_name",
-                "user_id",
-                "pernr",
-                "salary",
-                "paycomp_value",
-            ],
+            "excluded_fields": ["full_name", "user_id", "pernr", "salary", "paycomp_value"],
         },
     }
 
@@ -1956,9 +1856,7 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
             "type": str(row.get("action_type") or "priorizacion"),
             "severity": _severity(row.get("severity")),
             "title": str(row.get("title") or "Senal Talento"),
-            "detail": str(
-                row.get("recommendation") or "Revisar cobertura antes de decidir."
-            ),
+            "detail": str(row.get("recommendation") or "Revisar cobertura antes de decidir."),
             "affected_count": _sf_talent_int(row.get("affected_count")),
             "recommendation": str(row.get("recommendation") or ""),
             "status": str(row.get("status") or "recommendation_only"),
@@ -1977,12 +1875,8 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
         "status": result["status"],
         "summary": {
             "total": len(anomalies),
-            "high": sum(
-                1 for item in anomalies if item["severity"] in {"critical", "high"}
-            ),
-            "recommendation_only": sum(
-                1 for item in anomalies if item["status"] == "recommendation_only"
-            ),
+            "high": sum(1 for item in anomalies if item["severity"] in {"critical", "high"}),
+            "recommendation_only": sum(1 for item in anomalies if item["status"] == "recommendation_only"),
         },
         "items": anomalies,
         "blockers": _sf_talent_blockers_from_results([result]),
@@ -2000,9 +1894,7 @@ def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str,
         if _sf_talent_status(row.get("cpa_status")) in {"insufficient_data", "blocked"}
     )
     performance_present = sum(
-        1
-        for row in cpa_rows
-        if _sf_talent_float(row.get("performance_score")) is not None
+        1 for row in cpa_rows if _sf_talent_float(row.get("performance_score")) is not None
     )
     return {
         "ready_cpa": ready_cpa,
@@ -2012,9 +1904,7 @@ def _sf_talent_cpa_readiness_counts(cpa_rows: list[dict[str, Any]]) -> dict[str,
 
 
 @_bind_to_core
-def _sf_talent_live_components(
-    live: dict[str, Any] | None,
-) -> dict[str, dict[str, Any]]:
+def _sf_talent_live_components(live: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     return {
         str(component.get("id")): component
         for component in (live or {}).get("components", [])
@@ -2031,10 +1921,7 @@ def _sf_talent_entities_for_readiness(
     entities = _sf_talent_metadata_entities()
     live_components = _sf_talent_live_components(live)
     if live_components:
-        entities = [
-            _sf_talent_merge_live_metadata(entity, live_components)
-            for entity in entities
-        ]
+        entities = [_sf_talent_merge_live_metadata(entity, live_components) for entity in entities]
     if ready_cpa:
         entities = [
             {**entity, "status": "ready", "blockers": []}
@@ -2114,9 +2001,7 @@ def _sf_talent_live_readiness_blockers(
                 "detail": "SuccessFactors todavia no expone todas las entidades/campos/permisos para competencia, desempeno y aspiracion.",
                 "items": [
                     ", ".join(
-                        str(entity)
-                        for entity in item.get("entities_checked", [])
-                        if entity
+                        str(entity) for entity in item.get("entities_checked", []) if entity
                     )
                     or str(item.get("component") or item.get("reason") or "metadata")
                     for item in live_blockers_raw
@@ -2146,9 +2031,7 @@ def _sf_talent_metadata_readiness_summary(
         "cpa_ready_employees": counts["ready_cpa"],
         "cpa_insufficient_employees": counts["insufficient"],
         "entities": len(entities),
-        "blocked_entities": sum(
-            1 for entity in entities if entity["status"] == "blocked"
-        ),
+        "blocked_entities": sum(1 for entity in entities if entity["status"] == "blocked"),
         "live_required_ready": live_summary["live_required_ready"],
         "live_required_total": live_summary["live_required_total"],
         "live_status": live_summary["live_status"],
@@ -2159,9 +2042,7 @@ def _sf_talent_metadata_readiness_summary(
 async def sap_successfactors_talent_metadata_readiness(
     user: dict | None,
 ) -> dict[str, Any]:
-    cpa = await _sf_talent_gold_result(
-        "sap_successfactors_talent_cpa_scores", user, 1000
-    )
+    cpa = await _sf_talent_gold_result("sap_successfactors_talent_cpa_scores", user, 1000)
     live = await _sf_talent_live_metadata_readiness(user)
     cpa_rows = cpa["rows"]
     counts = _sf_talent_cpa_readiness_counts(cpa_rows)
@@ -2180,9 +2061,7 @@ async def sap_successfactors_talent_metadata_readiness(
         "connection_id": "femsa_sf",
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "status": "ready"
-        if counts["ready_cpa"] and counts["insufficient"] == 0
-        else "partial",
+        "status": "ready" if counts["ready_cpa"] and counts["insufficient"] == 0 else "partial",
         "summary": _sf_talent_metadata_readiness_summary(
             entities,
             counts,
@@ -2190,8 +2069,7 @@ async def sap_successfactors_talent_metadata_readiness(
         ),
         "entities": entities,
         "blockers": dataset_blockers + live_blockers,
-        "live_preflight": live
-        or {
+        "live_preflight": live or {
             "status": "unavailable",
             "blockers": [{"reason": "no_live_preflight_payload"}],
         },
@@ -2469,10 +2347,7 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
     tenant_id, workspace_id = _workspace_scope(user)
     try:
         pool = await auth.pool()
-
-        async def _load(
-            conn: Any, _tenant_id: str | None, _workspace_id: str
-        ) -> list[Any]:
+        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
             return await conn.fetch(
                 """
                 SELECT
@@ -2958,7 +2833,9 @@ def _replicon_pnl_state(
     wip: float,
     threshold_values: dict[str, float],
 ) -> dict[str, Any] | None:
-    margin_breached = margin is not None and margin < threshold_values["margin_warning"]
+    margin_breached = (
+        margin is not None and margin < threshold_values["margin_warning"]
+    )
     wip_breached = abs(wip) >= threshold_values["wip_warning"]
     if not margin_breached and not wip_breached:
         return None
@@ -3109,9 +2986,7 @@ def _sf_talent_signal_details(row: dict[str, Any]) -> dict[str, Any]:
 
 @_bind_to_core
 def _sf_talent_signal_readiness(row: dict[str, Any]) -> str:
-    explicit = (
-        str(row.get("readiness_status") or row.get("data_status") or "").strip().lower()
-    )
+    explicit = str(row.get("readiness_status") or row.get("data_status") or "").strip().lower()
     if explicit:
         return explicit
     if _sf_talent_int(row.get("source_row_count")) > 0:
@@ -3176,9 +3051,7 @@ def _sf_talent_signal_evidence_pack(
             "source_type": "readiness",
             "source_ref": f"readiness:WB-TALENTO:{signal_id}",
             "supports_hypothesis": f"Estado de datos: {readiness_status}.",
-            "strength": 0.7
-            if readiness_status in {"ready", "gold_ready", "materialized"}
-            else 0.42,
+            "strength": 0.7 if readiness_status in {"ready", "gold_ready", "materialized"} else 0.42,
         },
     ]
     for index, blocker in enumerate(blockers[:4]):
@@ -3238,9 +3111,7 @@ def _sf_talent_math_provenance(
         "control_origin": "sap_successfactors_talent_signal",
         "formula": "recommendation_only: severity + affected_count + gold_readiness",
         "input_hash": hashlib.sha256(
-            f"{signal_id}:{affected_count}:{source_row_count}:{readiness_status}".encode(
-                "utf-8"
-            )
+            f"{signal_id}:{affected_count}:{source_row_count}:{readiness_status}".encode("utf-8")
         ).hexdigest(),
         "monte_carlo": monte_carlo,
         "bayesian_calibration": bayes,
@@ -3254,9 +3125,7 @@ def _sf_talent_signal_context(
     signal_id = str(row.get("signal_id") or "").strip()
     if not signal_id:
         return None
-    signal_type = (
-        str(row.get("signal_type") or "talent_signal").strip() or "talent_signal"
-    )
+    signal_type = str(row.get("signal_type") or "talent_signal").strip() or "talent_signal"
     title = str(row.get("title") or "Senal Talento").strip() or "Senal Talento"
     recommendation = (
         str(row.get("recommendation") or "").strip()
@@ -3298,9 +3167,7 @@ def _sf_talent_signal_context(
 
 
 @_bind_to_core
-def _sf_talent_signal_priority(
-    context: dict[str, Any], source: ControlRoomSource
-) -> dict[str, Any]:
+def _sf_talent_signal_priority(context: dict[str, Any], source: ControlRoomSource) -> dict[str, Any]:
     severity = context["severity"]
     affected_count = context["affected_count"]
     priority_score = min(
@@ -4170,11 +4037,7 @@ def _persisted_item_narrative_fields(
         if isinstance(metadata.get("details"), dict)
         else {},
         "title": public_row.get("title")
-        or (
-            "Alerta de agente monitor"
-            if is_agent_alert
-            else "Senal de inteligencia operativa"
-        ),
+        or ("Alerta de agente monitor" if is_agent_alert else "Senal de inteligencia operativa"),
         "description": metadata.get("description")
         or public_row.get("title")
         or (
@@ -4346,9 +4209,7 @@ async def _persisted_business_items(user: dict | None) -> list[dict[str, Any]]:
     try:
         tenant_id, workspace_id = _workspace_scope(user)
         owner_id = (
-            None
-            if _can_read_workspace_wide(user)
-            else _actor_id((user or {}).get("id"))
+            None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
         )
         if not _can_read_workspace_wide(user) and owner_id is None:
             return []
@@ -4472,7 +4333,9 @@ def _blocked_installation_source_status(
         count=0,
         checked_at=datetime.now(UTC).isoformat(),
         error=str(
-            installation.get("error_message") or installation.get("current_step") or ""
+            installation.get("error_message")
+            or installation.get("current_step")
+            or ""
         ),
     )
 
@@ -4719,7 +4582,8 @@ def _domain_module_has_runtime(
     sources: list[dict[str, Any]],
 ) -> bool:
     module_has_sources = any(
-        source.get("module_id") == module.visible_id and source.get("domain") == domain
+        source.get("module_id") == module.visible_id
+        and source.get("domain") == domain
         for source in sources
     )
     module_has_items = any(
@@ -4832,9 +4696,7 @@ def _domain_module_payload(
         "accent": module.accent,
         "description": module.description,
         "item_count": len(module_items),
-        "critical_count": sum(
-            1 for item in module_items if item["severity"] == "critical"
-        ),
+        "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
         "source_status": source_status,
         "data_readiness": data_readiness,
         "operationally_ready": data_readiness == "ready",
@@ -5017,7 +4879,8 @@ def _dashboard_domains_payload(
             if source.domain not in domain_labels:
                 domain_labels.append(source.domain)
     domains = [
-        _domain_payload(domain, modules, items, sources) for domain in domain_labels
+        _domain_payload(domain, modules, items, sources)
+        for domain in domain_labels
     ]
     if _show_known_non_ready_sources():
         return domains
@@ -5029,15 +4892,15 @@ def _dashboard_domains_payload(
 
 
 @_bind_to_core
-def _dashboard_threshold_summary(
-    thresholds: list[dict[str, Any]], items: list[dict[str, Any]]
-) -> dict[str, Any]:
+def _dashboard_threshold_summary(thresholds: list[dict[str, Any]], items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "active": sum(1 for row in thresholds if row.get("enabled", True)),
         "total": len(thresholds),
         "by_cartridge": {
             cartridge_id: sum(
-                1 for row in thresholds if row.get("cartridge_id") == cartridge_id
+                1
+                for row in thresholds
+                if row.get("cartridge_id") == cartridge_id
             )
             for cartridge_id in sorted(
                 {
@@ -5068,9 +4931,7 @@ def _dashboard_module_groups(
 ) -> dict[str, list[dict[str, Any]]]:
     return {
         "data_ready_modules": [
-            row
-            for row in cartridges
-            if row["active"] and row.get("operationally_ready")
+            row for row in cartridges if row["active"] and row.get("operationally_ready")
         ],
         "partial_modules": [
             row
@@ -5092,7 +4953,9 @@ def _dashboard_module_groups(
 
 
 @_bind_to_core
-def _dashboard_source_states_payload(sources: list[dict[str, Any]]) -> dict[str, int]:
+def _dashboard_source_states_payload(
+    sources: list[dict[str, Any]]
+) -> dict[str, int]:
     return {
         status: sum(1 for source in sources if source["status"] == status)
         for status in [
@@ -5133,9 +4996,7 @@ def _dashboard_summary_payload(
         "critical": by_severity.get("critical", 0),
         "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
         "open_decisions": open_decisions,
-        "active_connectors": len(
-            {row["connector_id"] for row in active_non_operational}
-        ),
+        "active_connectors": len({row["connector_id"] for row in active_non_operational}),
         "active_modules": len(active_non_operational),
         "active_cartridges": len(active_non_operational),
         "operational_cartridges": len(modules["operational_cartridges"]),
@@ -5208,8 +5069,7 @@ def _dashboard_workspace_payload(
     workspace_id: str | None,
 ) -> dict[str, Any]:
     return {
-        "tenant_id": (user or {}).get("active_tenant_id")
-        or (user or {}).get("tenant_id"),
+        "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
         "workspace_id": workspace_id,
     }
 
@@ -5594,9 +5454,7 @@ def _agentops_runs_payload(
             "cartridge_id": row["cartridge_id"],
             "status": row["status"],
             "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-            "finished_at": row["finished_at"].isoformat()
-            if row["finished_at"]
-            else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
             "tool_count": len(tool_calls) if isinstance(tool_calls, list) else 0,
             "tools": [
                 str(call.get("tool") or call.get("name") or "")
@@ -5618,9 +5476,7 @@ def _agentops_alerts_by_agent(rows: Iterable[Any]) -> dict[str, dict[str, Any]]:
         str(row["agent_id"] or ""): {
             "total": int(row["total"] or 0),
             "open": int(row["open"] or 0),
-            "last_seen_at": row["last_seen_at"].isoformat()
-            if row["last_seen_at"]
-            else None,
+            "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
         }
         for row in rows
         if str(row["agent_id"] or "")
@@ -5642,14 +5498,9 @@ def _agentops_agents_payload(
         extra = _agentops_json_value(row["extra"], {})
         allowed_tools = _agentops_json_value(row["allowed_tools"], [])
         monitor = extra.get("monitor") if isinstance(extra, dict) else {}
-        role = (
-            str((extra or {}).get("role") or "").strip().lower()
-            if isinstance(extra, dict)
-            else ""
-        )
+        role = str((extra or {}).get("role") or "").strip().lower() if isinstance(extra, dict) else ""
         operational_tools = [
-            _agentops_tool_label(tool)
-            for tool in allowed_tools
+            _agentops_tool_label(tool) for tool in allowed_tools
             if isinstance(tool, str) and _agentops_tool_is_operational(tool)
         ]
         is_monitor = role == "monitor" and isinstance(monitor, dict) and bool(monitor)
@@ -5659,11 +5510,7 @@ def _agentops_agents_payload(
             active_count += 1
         schedule = {}
         if isinstance(extra, dict):
-            schedule = (
-                extra.get("schedule")
-                or (monitor.get("schedule") if isinstance(monitor, dict) else {})
-                or {}
-            )
+            schedule = extra.get("schedule") or (monitor.get("schedule") if isinstance(monitor, dict) else {}) or {}
         agent_id = str(row["id"])
         last_run = (runs_by_agent.get(agent_id) or [None])[0]
         configured_engines = _agentops_monitor_engines(monitor)
@@ -5672,30 +5519,24 @@ def _agentops_agents_payload(
                 continue
             name = str(engine.get("engine") or "").strip()
             if name:
-                configured_engine_counts[name] = (
-                    configured_engine_counts.get(name, 0) + 1
-                )
-        agents_payload.append(
-            {
-                "id": agent_id,
-                "cartridge_id": row["cartridge_id"],
-                "slug": row["slug"],
-                "name": row["name"],
-                "active": bool(row["is_active"]),
-                "role": role or ("monitor" if is_monitor else "agent"),
-                "monitor": bool(is_monitor),
-                "operationally_ready": bool(is_monitor and operational_tools),
-                "schedule": schedule,
-                "monitor_contract": monitor if isinstance(monitor, dict) else {},
-                "configured_engines": configured_engines,
-                "allowed_tools": operational_tools,
-                "operational_tools_count": len(operational_tools),
-                "last_run": last_run,
-                "alerts": alerts_by_agent.get(
-                    agent_id, {"total": 0, "open": 0, "last_seen_at": None}
-                ),
-            }
-        )
+                configured_engine_counts[name] = configured_engine_counts.get(name, 0) + 1
+        agents_payload.append({
+            "id": agent_id,
+            "cartridge_id": row["cartridge_id"],
+            "slug": row["slug"],
+            "name": row["name"],
+            "active": bool(row["is_active"]),
+            "role": role or ("monitor" if is_monitor else "agent"),
+            "monitor": bool(is_monitor),
+            "operationally_ready": bool(is_monitor and operational_tools),
+            "schedule": schedule,
+            "monitor_contract": monitor if isinstance(monitor, dict) else {},
+            "configured_engines": configured_engines,
+            "allowed_tools": operational_tools,
+            "operational_tools_count": len(operational_tools),
+            "last_run": last_run,
+            "alerts": alerts_by_agent.get(agent_id, {"total": 0, "open": 0, "last_seen_at": None}),
+        })
     agents_payload.sort(
         key=lambda item: (
             not bool(item.get("monitor")),
@@ -5746,9 +5587,7 @@ def _agentops_engines_payload(
         {
             "engine": "wisdom_bit",
             "configured": configured_engine_counts.get("wisdom_bit", 0),
-            "evidence_count": sum(
-                1 for agent in agents_payload if agent.get("monitor")
-            ),
+            "evidence_count": sum(1 for agent in agents_payload if agent.get("monitor")),
             "latest_at": None,
             "status": "ready" if monitor_count else "missing",
         },
@@ -5757,11 +5596,7 @@ def _agentops_engines_payload(
             "configured": configured_engine_counts.get("monte_carlo", 0),
             "evidence_count": monte_carlo_total,
             "latest_at": monte_carlo_latest.isoformat() if monte_carlo_latest else None,
-            "status": "ready"
-            if monte_carlo_total
-            else "configured"
-            if configured_engine_counts.get("monte_carlo")
-            else "missing",
+            "status": "ready" if monte_carlo_total else "configured" if configured_engine_counts.get("monte_carlo") else "missing",
         },
         {
             "engine": "bayesian_calibration",
@@ -5779,14 +5614,8 @@ def _agentops_engines_payload(
             "engine": "decision_orchestrator",
             "configured": configured_engine_counts.get("decision_orchestrator", 0),
             "evidence_count": orchestration_total,
-            "latest_at": orchestration_latest.isoformat()
-            if orchestration_latest
-            else None,
-            "status": "ready"
-            if orchestration_total
-            else "configured"
-            if configured_engine_counts.get("decision_orchestrator")
-            else "missing",
+            "latest_at": orchestration_latest.isoformat() if orchestration_latest else None,
+            "status": "ready" if orchestration_total else "configured" if configured_engine_counts.get("decision_orchestrator") else "missing",
         },
     ]
     for item in engines_payload:
@@ -5794,9 +5623,7 @@ def _agentops_engines_payload(
         if execution:
             item["executions"] = {
                 **execution,
-                "latest_at": execution["latest_at"].isoformat()
-                if execution.get("latest_at")
-                else None,
+                "latest_at": execution["latest_at"].isoformat() if execution.get("latest_at") else None,
             }
     return engines_payload
 
@@ -5808,19 +5635,15 @@ def _agentops_runtime_metrics(
     run_payloads: list[dict[str, Any]],
     alerts_by_agent: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    orchestration_row = (
-        dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
+    orchestration_row = dict(raw["orchestration_rows"][0]) if raw["orchestration_rows"] else {}
+    calibration = _agentops_calibration_projection(
+        raw["operational_calibration_rows"]
     )
-    calibration = _agentops_calibration_projection(raw["operational_calibration_rows"])
     return {
-        "failed_recent": sum(
-            1 for run in run_payloads if str(run.get("status")) == "error"
-        ),
+        "failed_recent": sum(1 for run in run_payloads if str(run.get("status")) == "error"),
         "open_alerts": sum(row.get("open", 0) for row in alerts_by_agent.values()),
         "total_alerts": sum(row.get("total", 0) for row in alerts_by_agent.values()),
-        "monte_carlo_total": sum(
-            int(row["total"] or 0) for row in raw["monte_carlo_rows"]
-        ),
+        "monte_carlo_total": sum(int(row["total"] or 0) for row in raw["monte_carlo_rows"]),
         "monte_carlo_latest": max(
             (row["latest_at"] for row in raw["monte_carlo_rows"] if row["latest_at"]),
             default=None,
@@ -5835,9 +5658,7 @@ def _agentops_runtime_metrics(
 def _agentops_tools_used_payload(tool_usage: dict[str, int]) -> list[dict[str, Any]]:
     return [
         {"tool": tool, "count": count}
-        for tool, count in sorted(
-            tool_usage.items(), key=lambda item: (-item[1], item[0])
-        )
+        for tool, count in sorted(tool_usage.items(), key=lambda item: (-item[1], item[0]))
     ]
 
 
@@ -6152,9 +5973,7 @@ async def agents_ops(user: dict | None, *, limit: int = 12) -> dict[str, Any]:
     business_source_ids = agentops_source_ids(business_items)
     alert_ids = business_source_ids["agent_alert"]
 
-    async def _load(
-        conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> dict[str, Any]:
+    async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, Any]:
         return await _agentops_load_snapshot(
             conn,
             tenant_id=_tenant_id,
