@@ -15,6 +15,7 @@ from app.services.control_room.business_observation import (
     EVIDENCE_FIELDS,
     SUCCESSFUL_EVALUATION_STATES,
     assess_observation,
+    has_qualitative_anomaly_observation,
     semantic_states,
 )
 
@@ -135,6 +136,11 @@ def classify_business_item(
     if observation.is_zero and not observation.zero_valid:
         return BusinessEligibility(False, EligibilityReason.ZERO_WITHOUT_POPULATION)
     if observation.invalid_explicit_observation:
+        return BusinessEligibility(False, EligibilityReason.INVALID_OBSERVATION)
+    if observation.declared:
+        if not observation.observed_with_evidence:
+            return BusinessEligibility(False, EligibilityReason.INVALID_OBSERVATION)
+    elif not has_qualitative_anomaly_observation(item):
         return BusinessEligibility(False, EligibilityReason.INVALID_OBSERVATION)
 
     return BusinessEligibility(True, EligibilityReason.ELIGIBLE)

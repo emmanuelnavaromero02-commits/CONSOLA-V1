@@ -9,31 +9,17 @@ from app.services.control_room.business_lineage import (
     item_identity,
     parent_references,
 )
+from app.services.control_room.business_policy_metadata import (
+    BUSINESS_ARTIFACT_FIELDS,
+    strip_business_artifacts,
+)
 from app.services.control_room.business_resolution import resolve_business_lineage
 from app.services.control_room.business_workflow_provenance import (
     workflow_has_eligible_provenance,
 )
 
 
-BUSINESS_ONLY_FIELDS = frozenset(
-    {
-        "action_templates",
-        "alert",
-        "alert_state",
-        "control_state",
-        "decision_id",
-        "execution_status",
-        "impact_drivers",
-        "impact_estimate",
-        "impact_formula",
-        "omega",
-        "options",
-        "priority",
-        "priority_score",
-        "recommended_actions",
-        "selected_option_id",
-    }
-)
+BUSINESS_ONLY_FIELDS = BUSINESS_ARTIFACT_FIELDS
 
 
 class ProjectedBusinessItem(dict[str, Any]):
@@ -112,9 +98,7 @@ def _business_mask(items: list[Mapping[str, Any]]) -> set[int]:
 
 
 def strip_business_fields(item: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        key: value for key, value in item.items() if key not in BUSINESS_ONLY_FIELDS
-    }
+    return strip_business_artifacts(item)
 
 
 def filter_business_items(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -132,9 +116,14 @@ def filter_business_items(items: Iterable[Mapping[str, Any]]) -> list[dict[str, 
             continue
         context = business_parent_context(item) or set()
         context.update(parent_references(item).ids & eligible_ids)
+        sanitized = (
+            item
+            if isinstance(item, ProjectedBusinessItem)
+            else strip_business_artifacts(item, strip_root=False)
+        )
         projected.append(
             project_business_item(
-                item,
+                sanitized,
                 eligible_parent_ids=context,
                 lineage_depth=resolutions[index].depth,
             )

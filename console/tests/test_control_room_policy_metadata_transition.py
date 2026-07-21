@@ -5,6 +5,7 @@ from app.services.control_room.business_observation_codec import (
     POLICY_FIELDS,
 )
 from app.services.control_room.business_policy_metadata import (
+    BUSINESS_ARTIFACT_FIELDS,
     REPLACED_POLICY_KEYS,
     business_policy_metadata,
     diagnostic_policy_sql,
@@ -57,7 +58,9 @@ def test_technical_metadata_is_replaced_from_the_canonical_policy_schema():
 
     clean = business_policy_metadata(metadata, _business_item())
 
-    assert REPLACED_POLICY_KEYS == tuple(sorted(POLICY_FIELDS | {ENVELOPE_KEY}))
+    assert REPLACED_POLICY_KEYS == tuple(
+        sorted(POLICY_FIELDS | BUSINESS_ARTIFACT_FIELDS | {ENVELOPE_KEY})
+    )
     dropped_keys = LEGACY_FIELDS.keys() - {"kind", "source_dataset"}
     assert not dropped_keys & clean.keys()
     assert clean["kind"] == "anomaly"

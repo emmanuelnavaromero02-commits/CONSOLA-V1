@@ -20,6 +20,9 @@ def _business_item(**overrides):
         "id": "business-1",
         "kind": "anomaly",
         "source_dataset": "gold_workforce",
+        "source_system": "test_runtime",
+        "entity_id": "entity-1",
+        "evidence_refs": ["gold_workforce:row:business-1"],
         "status": "open",
         "detected_at": "2026-07-16T10:00:00Z",
     }
@@ -225,6 +228,7 @@ def test_projection_resolves_parent_before_derived_child():
         id="child-1",
         kind="intelligence_signal",
         parent_item_id="parent-1",
+        observed_value=1,
     )
 
     assert filter_business_items([child, parent]) == [child, parent]

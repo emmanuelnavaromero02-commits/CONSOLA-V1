@@ -35,6 +35,7 @@ def _item(**overrides):
         "source_dataset": "gold_metrics",
         "data_status": "ready",
         "observation_date": "2026-07-16",
+        "evidence_refs": ["gold_metrics:row:metric-slots-1"],
     }
     return {**item, **overrides}
 
@@ -178,12 +179,10 @@ def test_observation_flag_contradiction_fails_closed():
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
-def test_count_zero_requires_positive_population():
+def test_count_zero_accepts_known_empty_population():
     item = _item(metric_type="count", count=0, population_count=0)
 
-    assert (
-        classify_business_item(item).reason is EligibilityReason.ZERO_WITHOUT_POPULATION
-    )
+    assert classify_business_item(item).eligible is True
 
 
 @pytest.mark.parametrize(
@@ -198,7 +197,7 @@ def test_count_zero_requires_positive_population():
         ("scalar", {"observed_value": 0}),
     ],
 )
-def test_real_zero_requires_positive_population_for_each_metric_kind(
+def test_real_zero_uses_metric_specific_population_rules(
     metric_type,
     measurement,
 ):
@@ -206,10 +205,7 @@ def test_real_zero_requires_positive_population_for_each_metric_kind(
     empty_population = {**valid, "population_count": 0}
 
     assert classify_business_item(valid).eligible is True
-    assert (
-        classify_business_item(empty_population).reason
-        is EligibilityReason.ZERO_WITHOUT_POPULATION
-    )
+    assert classify_business_item(empty_population).eligible is True
 
 
 @pytest.mark.parametrize("missing", ["data_status", "observation_date"])
@@ -236,6 +232,7 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
     item = _item(
         data_status="partial",
         observed_value=1,
+        evidence_refs=[],
         evidence_pack=evidence_pack,
     )
 
@@ -250,13 +247,17 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
     "evidence",
     [
         {"evidence_pack_id": "pack-17"},
-        {"evidence_pack": {"id": 17, "items": []}},
+        {"evidence_pack": {"id": "pack-17", "items": []}},
         {"evidence_refs": ["gold_metrics:row:17"]},
         {"evidence_pack": {"items": [{"source_ref": "gold_metrics"}]}},
     ],
 )
 def test_stable_ids_and_substantive_references_are_evidence(evidence):
-    item = _item(data_status="partial", observed_value=1, **evidence)
+    item = _item(
+        data_status="partial",
+        observed_value=1,
+        **{"evidence_refs": [], **evidence},
+    )
 
     assert has_evidence(item) is True
     assert classify_business_item(item).eligible is True

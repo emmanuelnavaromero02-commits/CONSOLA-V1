@@ -43,6 +43,7 @@ _OBSERVED_VALUE_KINDS = frozenset(
 
 @dataclass(frozen=True)
 class ObservationAssessment:
+    declared: bool
     has_observation_date: bool
     has_evidence: bool
     has_measured_fact: bool
@@ -187,11 +188,9 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
     slots = resolve_semantic_slots(item)
     if not slots.valid:
         return False
-    population = slots.population.value if slots.population.declared else None
-    if population is None or population <= 0:
-        return False
     if kind is MetricKind.COUNT:
-        return True
+        population = slots.population.value if slots.population.declared else None
+        return population is not None and population >= 0
     if kind in {
         MetricKind.RATE,
         MetricKind.PERCENTAGE,
@@ -205,6 +204,36 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
     return False
 
 
+def _nonempty_field(item: Mapping[str, Any], fields: tuple[str, ...]) -> bool:
+    containers = [item]
+    for key in ("details", "metadata"):
+        value = item.get(key)
+        if isinstance(value, Mapping):
+            containers.append(value)
+    return any(
+        str(values.get(field) or "").strip()
+        for values in containers
+        for field in fields
+    )
+
+
+def has_qualitative_anomaly_observation(item: Mapping[str, Any]) -> bool:
+    kinds = {
+        str(values.get(field) or "").strip().lower()
+        for values in semantic_maps(item)
+        for field in ("kind", "item_kind")
+        if str(values.get(field) or "").strip()
+    }
+    return bool(
+        "anomaly" in kinds
+        and has_observation_date(item)
+        and has_evidence(item)
+        and _nonempty_field(item, ("source_dataset", "dataset", "gold_table"))
+        and _nonempty_field(item, ("source_system", "cartridge", "connector_id"))
+        and _nonempty_field(item, ("entity_id", "anomaly_id", "signal_id"))
+    )
+
+
 def assess_observation(item: Mapping[str, Any]) -> ObservationAssessment:
     metric_kind = resolve_metric_kind(item)
     kind = metric_kind.value if metric_kind.valid else MetricKind.UNKNOWN
@@ -212,6 +241,7 @@ def assess_observation(item: Mapping[str, Any]) -> ObservationAssessment:
     number = finite_number(value) if measured else None
     is_zero = number == 0.0 if number is not None else False
     return ObservationAssessment(
+        declared=declared,
         has_observation_date=has_observation_date(item),
         has_evidence=has_evidence(item),
         has_measured_fact=measured,
@@ -229,6 +259,7 @@ __all__ = (
     "SUCCESSFUL_EVALUATION_STATES",
     "assess_observation",
     "has_evidence",
+    "has_qualitative_anomaly_observation",
     "has_observation_date",
     "semantic_maps",
     "semantic_states",

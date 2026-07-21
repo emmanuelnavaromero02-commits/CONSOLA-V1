@@ -13,7 +13,35 @@ from app.services.control_room.business_eligibility import TECHNICAL_STATES
 
 
 POLICY_METADATA_FIELDS = POLICY_FIELDS | frozenset({ENVELOPE_KEY})
-REPLACED_POLICY_KEYS = tuple(sorted(POLICY_METADATA_FIELDS))
+BUSINESS_ARTIFACT_FIELDS = frozenset(
+    {
+        "action_templates",
+        "alert",
+        "alert_state",
+        "approval_status",
+        "bayesian_calibration",
+        "control_state",
+        "decision_actions",
+        "decision_id",
+        "decision_intelligence",
+        "execution_status",
+        "impact_drivers",
+        "impact_estimate",
+        "impact_formula",
+        "monte_carlo",
+        "omega",
+        "options",
+        "priority",
+        "priority_score",
+        "recommended_actions",
+        "selected_option_id",
+        "suggested_actions",
+        "workflow",
+        "workflow_state",
+        "workflow_status",
+    }
+)
+REPLACED_POLICY_KEYS = tuple(sorted(POLICY_METADATA_FIELDS | BUSINESS_ARTIFACT_FIELDS))
 _DIAGNOSTIC_KIND_FIELDS = tuple(sorted(POLICY_FIELDS & {"item_kind", "kind"}))
 _DIAGNOSTIC_STATE_FIELDS = tuple(
     sorted(
@@ -35,6 +63,20 @@ def _without_policy_fields(values: Mapping[str, Any]) -> dict[str, Any]:
         for key, value in values.items()
         if str(key) not in POLICY_METADATA_FIELDS
     }
+
+
+def strip_business_artifacts(value: Any, *, strip_root: bool = True) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): strip_business_artifacts(nested)
+            for key, nested in value.items()
+            if not strip_root or str(key) not in BUSINESS_ARTIFACT_FIELDS
+        }
+    if isinstance(value, list):
+        return [strip_business_artifacts(entry) for entry in value]
+    if isinstance(value, tuple):
+        return tuple(strip_business_artifacts(entry) for entry in value)
+    return value
 
 
 def _clean_surface_path(
@@ -120,7 +162,7 @@ def business_policy_metadata(
     metadata: Mapping[str, Any] | None,
     item: Mapping[str, Any],
 ) -> dict[str, Any]:
-    original = dict(metadata or {})
+    original = strip_business_artifacts(dict(metadata or {}))
     clean = _clean_metadata_surfaces(original)
     for key in POLICY_METADATA_FIELDS:
         if key not in item:
@@ -131,16 +173,18 @@ def business_policy_metadata(
         clean[key] = value
     details = item.get("details")
     if isinstance(details, Mapping):
-        clean_details = _without_policy_fields(details)
+        clean_details = strip_business_artifacts(_without_policy_fields(details))
         if clean_details:
             clean["details"] = clean_details
     return with_observation_envelope(clean, item)
 
 
 __all__ = (
+    "BUSINESS_ARTIFACT_FIELDS",
     "POLICY_METADATA_FIELDS",
     "REPLACED_POLICY_KEYS",
     "business_policy_metadata",
     "diagnostic_policy_sql",
     "policy_metadata_without_fields_sql",
+    "strip_business_artifacts",
 )

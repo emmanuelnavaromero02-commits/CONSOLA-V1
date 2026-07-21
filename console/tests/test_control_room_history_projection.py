@@ -29,13 +29,24 @@ def _persisted(kind: str, item_id: str) -> dict:
         "kind": kind,
         "cartridge": "platform",
         "source_dataset": "gold_metrics",
+        "observation_date": "2026-07-20",
+        "observed_value": 1,
         "evidence_refs": [f"evidence:{item_id}"],
     }
 
 
 @pytest.mark.asyncio
 async def test_dashboard_merge_does_not_revive_ordinary_historical_items():
-    current = [{"id": "current", "kind": "anomaly"}]
+    current = [
+        {
+            "id": "current",
+            "kind": "anomaly",
+            "source_dataset": "gold_metrics",
+            "observation_date": "2026-07-20",
+            "observed_value": 1,
+            "evidence_refs": ["evidence:current"],
+        }
+    ]
     persisted = [
         _persisted("anomaly", "historical-anomaly"),
         _persisted("control_item", "historical-control"),
@@ -154,6 +165,8 @@ def test_validated_parent_context_survives_dashboard_reprojection():
             "kind": "intelligence_signal",
             "parent_item_id": "parent",
             "source_dataset": "gold_metrics",
+            "observation_date": "2026-07-20",
+            "observed_value": 1,
             "evidence_refs": ["evidence:child"],
         },
         eligible_parent_ids={"parent"},
@@ -167,12 +180,17 @@ def test_physical_parent_context_survives_a_second_projection():
         "id": "parent",
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
+        "observation_date": "2026-07-20",
+        "observed_value": 1,
+        "evidence_refs": ["evidence:parent"],
     }
     child = {
         "id": "child",
         "kind": "intelligence_signal",
         "parent_item_id": "parent",
         "source_dataset": "gold_metrics",
+        "observation_date": "2026-07-20",
+        "observed_value": 1,
         "evidence_refs": ["evidence:child"],
     }
 

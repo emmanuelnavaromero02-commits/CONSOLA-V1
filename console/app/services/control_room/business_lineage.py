@@ -82,7 +82,7 @@ def _reference_value(value: Any) -> tuple[set[str], bool]:
 
 def _root_identity(role: str, value: str) -> str:
     clean = value.strip()
-    if role == "dataset" and clean.startswith("gold_"):
+    if role in {"dataset", "root_source"} and clean.startswith("gold_"):
         return clean.removeprefix("gold_")
     return clean
 
@@ -149,6 +149,8 @@ def parent_references(item: Mapping[str, Any]) -> ParentReferences:
     malformed = malformed or any(
         len(role_values) > 1 for role_values in root_values_by_role.values()
     )
+    lineage_roots = root_values_by_role["dataset"] | root_values_by_role["root_source"]
+    malformed = malformed or len(lineage_roots) > 1
     return ParentReferences(frozenset(ids), malformed)
 
 

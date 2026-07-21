@@ -413,6 +413,8 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
         "freshness_at": "2026-06-01",
         "freshness_field": "mes",
         "data_status": "gold_ready",
+        "metric_type": "scalar",
+        "observation_date": "2026-06-01",
         "evidence_pack_id": 42,
         "evidence_pack": {
             "id": 42,
@@ -610,7 +612,13 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
             return [
                 {
                     "item_id": "intel:a",
-                    "metadata": {"evidence_refs": ["evidence:intel:a"]},
+                    "metadata": {
+                        "data_status": "ready",
+                        "metric_type": "scalar",
+                        "observed_value": 1,
+                        "observation_date": "2026-07-16",
+                        "evidence_refs": ["evidence:intel:a"],
+                    },
                     "item_kind": "intelligence_signal",
                     "source_dataset": "gold_metrics",
                 }
@@ -675,7 +683,13 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
         return [
             {
                 "item_id": "intel:owned",
-                "metadata": {"evidence_refs": ["evidence:intel:owned"]},
+                "metadata": {
+                    "data_status": "ready",
+                    "metric_type": "scalar",
+                    "observed_value": 1,
+                    "observation_date": "2026-07-16",
+                    "evidence_refs": ["evidence:intel:owned"],
+                },
                 "item_kind": "intelligence_signal",
                 "source_dataset": "gold_metrics",
             }

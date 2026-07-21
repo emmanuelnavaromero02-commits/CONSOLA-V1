@@ -165,7 +165,12 @@ async def test_orchestrator_accepts_canonical_intelligence_signal_metadata(
         "summary": "Observed workforce deviation",
         "metadata": {
             "data_status": "gold_ready",
-            "evidence_pack": {"id": 17, "items": [{"id": "evidence-1"}]},
+            "observed_at": "2026-07-10T00:00:00Z",
+            "metric_type": "scalar",
+            "observed_value": 7,
+            "evidence_pack": {
+                "items": [{"type": "runtime_observation", "id": "evidence-signal-1"}]
+            },
         },
     }
 
@@ -241,14 +246,31 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
         workspace_id=user["active_workspace_id"],
         item_id="business-parent",
         item_kind="anomaly",
-        metadata={"data_status": "ready"},
+        metadata={
+            "data_status": "ready",
+            "observed_at": "2026-07-10T00:00:00Z",
+            "metric_type": "scalar",
+            "observed_value": 1,
+            "evidence_refs": [
+                {"type": "runtime_observation", "id": "evidence-business-parent"}
+            ],
+        },
     )
     db.add_control_room_item(
         tenant_id=user["active_tenant_id"],
         workspace_id=user["active_workspace_id"],
         item_id="business-alert",
         item_kind="agent_alert",
-        metadata={"parent_item_id": "business-parent", "data_status": "ready"},
+        metadata={
+            "parent_item_id": "business-parent",
+            "data_status": "ready",
+            "observed_at": "2026-07-10T00:00:00Z",
+            "metric_type": "scalar",
+            "observed_value": 1,
+            "evidence_refs": [
+                {"type": "runtime_observation", "id": "evidence-business-alert"}
+            ],
+        },
     )
 
     result = await orchestrator.orchestrate(

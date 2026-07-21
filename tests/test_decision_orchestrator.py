@@ -138,7 +138,13 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
         workspace_id=user_a["active_workspace_id"],
         item_id="item-a",
         title="Forecast anomaly probability breach",
-        metadata={"evidence_refs": [{"type": "control_room_item", "id": "item-a"}]},
+        metadata={
+            "data_status": "ready",
+            "observed_at": "2026-07-10T00:00:00Z",
+            "metric_type": "scalar",
+            "observed_value": 1,
+            "evidence_refs": [{"type": "runtime_observation", "id": "evidence-item-a"}],
+        },
     )
 
     result = await orchestrator.orchestrate(
@@ -240,7 +246,13 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
         item_id="action-source",
         title="Notify owner and create task",
         metadata={
-            "evidence_refs": [{"type": "control_room_item", "id": "action-source"}]
+            "data_status": "ready",
+            "observed_at": "2026-07-10T00:00:00Z",
+            "metric_type": "scalar",
+            "observed_value": 1,
+            "evidence_refs": [
+                {"type": "runtime_observation", "id": "evidence-action-source"}
+            ],
         },
     )
     propose_calls: list[dict[str, Any]] = []

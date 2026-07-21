@@ -64,6 +64,13 @@ def _business_item() -> dict:
         "severity_weight": 4,
         "status": "open",
         "detected_at": "2026-07-16T10:00:00Z",
+        "evidence_refs": [
+            {
+                "type": "dataset_row",
+                "source_dataset": "employees_anomalies",
+                "source_record_id": "record-business-1",
+            }
+        ],
         "details": {"salary_monthly_usd": 1000},
     }
 
@@ -173,6 +180,11 @@ async def test_mutation_lookup_propagates_database_failures():
 
 
 COMMAND_CASES = (
+    (
+        "sap_successfactors_talent_action_preview",
+        (USER, {"action_id": "source-state-1"}),
+        {},
+    ),
     ("create_decision_for_item", ("source-state-1", USER), {}),
     ("select_item_option", ("source-state-1", "remediate", USER), {}),
     ("record_item_step", ("source-state-1", "signals", USER), {}),
@@ -218,6 +230,9 @@ async def test_commands_stop_at_business_guard(name, args, kwargs):
         patch.object(control_room_service.auth, "pool", pool),
         patch.object(control_room_service.audit_service, "record_event", audit),
         patch.object(control_room_service, "_resolve_template", template),
+        patch.object(
+            control_room_service, "query_dataset_rows", new=AsyncMock(return_value=[])
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await getattr(control_room_service, name)(*args, **kwargs)
@@ -267,6 +282,9 @@ def test_validated_parent_context_survives_builders_without_serializing():
         "id": "child-1",
         "kind": "intelligence_signal",
         "parent_item_id": "parent-1",
+        "data_status": "ready",
+        "metric_type": "amount",
+        "observed_value": 1000,
     }
 
     projected = control_room_service._with_omega(

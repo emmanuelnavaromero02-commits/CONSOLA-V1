@@ -19,6 +19,7 @@ def _item(**overrides):
         "source_dataset": "gold_metrics",
         "data_status": "ready",
         "observation_date": "2026-07-16",
+        "evidence_refs": ["gold_metrics:row:metric-1"],
     }
     return {**item, **overrides}
 
@@ -35,12 +36,12 @@ def _round_trip(item: dict) -> dict:
     )
 
 
-def test_observed_count_zero_with_empty_population_is_rejected():
+def test_observed_count_zero_with_known_empty_population_is_eligible():
     result = classify_business_item(
         _item(metric_type="count", count=0, population_count=0)
     )
 
-    assert result.reason is EligibilityReason.ZERO_WITHOUT_POPULATION
+    assert result.eligible is True
 
 
 def test_observed_rate_zero_requires_positive_denominator():
@@ -224,7 +225,7 @@ def test_stale_requires_prior_observation_evidence_fact_and_lineage():
                 population_count=0,
                 evidence_refs=["evidence:1"],
             ),
-            EligibilityReason.ZERO_WITHOUT_POPULATION,
+            EligibilityReason.ELIGIBLE,
         ),
         (
             _item(data_status=None, metric_type="count", count=None),

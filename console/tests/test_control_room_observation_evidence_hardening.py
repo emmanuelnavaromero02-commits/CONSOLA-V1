@@ -48,7 +48,13 @@ def test_every_declared_metric_kind_requires_its_value_slot(
     measurement,
     supporting_only,
 ):
-    valid = classify_business_item(_item(metric_type=metric_kind, **measurement))
+    valid = classify_business_item(
+        _item(
+            metric_type=metric_kind,
+            evidence_refs=["gold_metrics:row:metric-hardening-1"],
+            **measurement,
+        )
+    )
     missing = classify_business_item(_item(metric_type=metric_kind, **supporting_only))
 
     assert valid.eligible is True
@@ -57,7 +63,12 @@ def test_every_declared_metric_kind_requires_its_value_slot(
 
 def test_count_explicitly_accepts_affected_count_as_its_value():
     result = classify_business_item(
-        _item(metric_type="count", affected_count=3, population_count=10)
+        _item(
+            metric_type="count",
+            affected_count=3,
+            population_count=10,
+            evidence_refs=["gold_metrics:row:metric-hardening-1"],
+        )
     )
 
     assert result.eligible is True
@@ -152,6 +163,7 @@ def test_matching_root_sources_and_distinct_source_system_remain_valid():
         _item(
             observed_value=1,
             source_system="sap",
+            evidence_refs=["gold_metrics:row:metric-hardening-1"],
             metadata={"source_dataset": "gold_metrics", "source_system": "sap"},
         )
     )
@@ -164,6 +176,7 @@ def test_logical_dataset_matches_prefixed_gold_table():
         _item(
             observed_value=1,
             source_dataset="metrics",
+            evidence_refs=["gold_metrics:row:metric-hardening-1"],
             metadata={"details": {"gold_table": "gold_metrics"}},
         )
     )
@@ -172,7 +185,10 @@ def test_logical_dataset_matches_prefixed_gold_table():
 
 
 def test_strict_legacy_flat_envelope_is_read_but_rewritten_as_canonical_v1():
-    item = _item(business_observation={"metric_type": "scalar", "observed_value": 2})
+    item = _item(
+        business_observation={"metric_type": "scalar", "observed_value": 2},
+        evidence_refs=["gold_metrics:row:metric-hardening-1"],
+    )
 
     assert persisted_claims(item) == ({"metric_type": "scalar", "observed_value": 2},)
     assert classify_business_item(item).eligible is True
