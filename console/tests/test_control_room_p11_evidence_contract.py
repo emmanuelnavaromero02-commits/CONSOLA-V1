@@ -136,7 +136,7 @@ def test_runtime_reference_is_typed_and_verifiable():
     )
 
     assert evidence["evidence_refs"][0]["type"] == "dataset_row"
-    assert has_evidence(_item(**evidence)) is True
+    assert has_evidence(_item(employee_id="employee-7", **evidence)) is True
 
 
 @pytest.mark.parametrize("state", ["failed", "failure", "pending", "not_ready"])

@@ -281,6 +281,7 @@ def test_stable_ids_and_substantive_references_are_evidence(evidence):
         data_status="partial",
         metric_type="scalar",
         observed_value=1,
+        metric_id="record-17",
         **{"evidence_refs": [], **evidence},
     )
 

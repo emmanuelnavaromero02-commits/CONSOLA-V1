@@ -8,6 +8,9 @@ from app.services.control_room.business_evidence_identity import (
     canonical_sources,
     source_and_id_pair,
 )
+from app.services.control_room.business_evidence_binding import (
+    runtime_reference_matches_item,
+)
 from app.services.control_room.business_evidence_reference import (
     has_substantive_reference,
 )
@@ -48,6 +51,9 @@ def has_evidence(item: Mapping[str, Any]) -> bool:
                 canonical_sources_by_role=sources,
                 excluded_references=excluded,
                 require_scope_binding=require_scope_binding,
+                runtime_reference_validator=lambda reference: (
+                    runtime_reference_matches_item(reference, item)
+                ),
             ):
                 return True
     return False

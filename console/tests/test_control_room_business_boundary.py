@@ -31,6 +31,8 @@ def _diagnostic_item() -> dict:
     return {
         "id": "source-state-1",
         "kind": "source_state",
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
         "cartridge": "sap_hcm",
         "domain": "Recursos Humanos",
         "module": "SAP HCM",
@@ -76,7 +78,7 @@ def _business_item() -> dict:
             cartridge="sap_hcm",
             tenant_id="tenant-A",
             workspace_id="workspace-A",
-            source_row={"business_id": "record-business-1"},
+            source_row={"business_id": "business-1"},
             locator_field="business_id",
             observed_at="2026-07-16T10:00:00Z",
         ),
@@ -280,6 +282,17 @@ def test_validated_parent_context_survives_builders_without_serializing():
         "data_status": "ready",
         "metric_type": "amount",
         "observed_value": 1000,
+        "signal_id": "child-1",
+        **runtime_row_evidence_fields(
+            source_dataset="employees_anomalies",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id="tenant-A",
+            workspace_id="workspace-A",
+            source_row={"signal_id": "child-1"},
+            locator_field="signal_id",
+            observed_at="2026-07-16T10:00:00Z",
+        ),
     }
 
     projected = control_room_service._with_omega(

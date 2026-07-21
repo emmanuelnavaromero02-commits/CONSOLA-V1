@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from app.services.control_room.business_evidence_identity import (
@@ -43,6 +43,7 @@ def has_substantive_reference(
     allow_generic_id: bool = False,
     excluded_references: frozenset[str] = frozenset(),
     require_scope_binding: bool = False,
+    runtime_reference_validator: Callable[[Mapping[str, Any]], bool] | None = None,
     seen: set[int] | None = None,
 ) -> bool:
     if isinstance(value, Mapping):
@@ -64,7 +65,17 @@ def has_substantive_reference(
                 require_scope_binding=require_scope_binding,
             )
             if typed is not None:
-                return typed
+                require_runtime_binding = (
+                    require_scope_binding or "server_attestation" in value
+                )
+                return bool(
+                    typed
+                    and (
+                        not require_runtime_binding
+                        or runtime_reference_validator is None
+                        or runtime_reference_validator(value)
+                    )
+                )
             if not require_scope_binding and source_and_id_pair(
                 value,
                 allow_generic_id=allow_generic_id,
@@ -93,6 +104,7 @@ def has_substantive_reference(
                     canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
                     require_scope_binding=require_scope_binding,
+                    runtime_reference_validator=runtime_reference_validator,
                     seen=seen,
                 ):
                     return True
@@ -103,6 +115,7 @@ def has_substantive_reference(
                         canonical_sources_by_role=canonical_sources_by_role,
                         excluded_references=local_exclusions,
                         require_scope_binding=require_scope_binding,
+                        runtime_reference_validator=runtime_reference_validator,
                         seen=seen,
                     )
                 ):
@@ -130,6 +143,7 @@ def has_substantive_reference(
                     canonical_sources_by_role=canonical_sources_by_role,
                     excluded_references=local_exclusions,
                     require_scope_binding=require_scope_binding,
+                    runtime_reference_validator=runtime_reference_validator,
                     seen=seen,
                 )
                 for entry in value

@@ -247,6 +247,7 @@ def test_runtime_row_source_and_record_pair_remains_evidence():
                 cartridge="sap",
                 tenant_id="tenant-7",
                 workspace_id="workspace-17",
+                entity_id="entity-17",
                 **evidence,
             )
         )

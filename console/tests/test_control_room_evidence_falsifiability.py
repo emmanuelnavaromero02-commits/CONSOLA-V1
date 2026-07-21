@@ -160,7 +160,7 @@ def test_runtime_evidence_is_typed_source_bound_and_accepted():
     }
     assert reference["source_row_hash"]
     assert reference["server_attestation"]
-    assert has_evidence(_item(**fields)) is True
+    assert has_evidence(_item(employee_id="employee-17", **fields)) is True
 
 
 def test_runtime_attestation_cannot_be_reused_for_a_fabricated_record_id():
