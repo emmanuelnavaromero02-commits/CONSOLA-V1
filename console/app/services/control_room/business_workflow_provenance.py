@@ -182,7 +182,7 @@ def workflow_has_eligible_provenance(
     if not isinstance(value, Mapping):
         return False
     try:
-        stage = WorkflowStage(str(value.get("stage") or "decision_created"))
+        stage = WorkflowStage(str(value.get("stage") or "").strip())
     except ValueError:
         return False
     if allowed_stages is not None and stage not in {

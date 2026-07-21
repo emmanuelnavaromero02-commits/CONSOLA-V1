@@ -14,6 +14,7 @@ from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
     workflow_eligibility_provenance,
+    workflow_has_eligible_provenance,
 )
 
 
@@ -63,6 +64,23 @@ def test_option_selected_provenance_cannot_carry_decision_id():
             decision_id=91,
             option_id="review",
         )
+
+
+def test_decision_provenance_requires_an_explicit_stage():
+    item = _item()
+    provenance = workflow_eligibility_provenance(
+        item,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-a",
+        decision_id=91,
+    )
+    provenance.pop("stage")
+
+    assert not workflow_has_eligible_provenance(
+        {DECISION_PROVENANCE_KEY: provenance},
+        item,
+        decision_id=91,
+    )
 
 
 def test_manual_post_sanitizes_every_reserved_decision_provenance_marker():
