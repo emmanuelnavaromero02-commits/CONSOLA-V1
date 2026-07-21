@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from app.services import control_room_service
@@ -8,6 +10,7 @@ from app.services.control_room.business_eligibility import (
     classify_business_item,
 )
 from app.services.control_room.business_lineage import MAX_LINEAGE_DEPTH
+from app.services.control_room.business_lineage_query import lineage_reference_lateral
 from app.services.control_room.business_projection import filter_business_items
 from app.services.control_room.business_repository import fetch_lineage_rows
 
@@ -180,6 +183,10 @@ class LineageConnection:
     async def fetch(self, sql, *args):
         self.calls.append((" ".join(sql.split()), args))
         return []
+
+
+def test_lineage_sql_fragment_accepts_no_dynamic_identifier_input():
+    assert inspect.signature(lineage_reference_lateral).parameters == {}
 
 
 @pytest.mark.asyncio
