@@ -89,6 +89,7 @@ from app.services.control_room.business_operational_state import (
     locked_operational_metadata,
     merged_alert_state,
     merged_control_state,
+    merged_learned_rules,
     merged_lesson_state,
 )
 from app.services.control_room.business_workflow_provenance import WorkflowStage
@@ -114,6 +115,7 @@ for _helper in (
     lock_pending_action_reservation,
     merged_alert_state,
     merged_control_state,
+    merged_learned_rules,
     merged_lesson_state,
     require_matching_dry_run,
 ):
@@ -657,7 +659,7 @@ async def create_item_lesson(
 
     async def _write_lesson(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
-    ) -> None:
+    ) -> list[str]:
         await _ensure_item_row(
             conn,
             user=user,
@@ -671,6 +673,13 @@ async def create_item_lesson(
             decision_id=decision_id,
             lessons=[rule],
         )
+        operational_metadata = await locked_operational_metadata(
+            conn,
+            workspace_id=scoped_workspace_id,
+            item_id=str(item["id"]),
+            owner_user_id=expected_business_item_owner(item, user),
+        )
+        learned_rules = merged_learned_rules(operational_metadata, rule=rule)
         update_result = await conn.execute(
             """
                 UPDATE control_room_items
@@ -682,14 +691,7 @@ async def create_item_lesson(
                 """,
             scoped_workspace_id,
             item["id"],
-            json.dumps(
-                {
-                    "learned_rules": _merge_rule(
-                        item.get("omega", {}).get("lessons", {}).get("rules"),
-                        rule,
-                    )
-                }
-            ),
+            json.dumps({"learned_rules": learned_rules}),
             expected_business_item_owner(item, user),
         )
         _require_exact_count(update_result, "UPDATE")
@@ -700,8 +702,9 @@ async def create_item_lesson(
             event_type="lesson_recorded",
             metadata={"decision_id": decision_id, "lessons": [rule], "manual": True},
         )
+        return learned_rules
 
-    await _run_with_db_scope(pool, user, _write_lesson)
+    learned_rules = await _run_with_db_scope(pool, user, _write_lesson)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -734,10 +737,7 @@ async def create_item_lesson(
         _with_omega,
         related_lessons=lessons[:5],
         lesson_count=len(lessons),
-        learned_rules=_merge_rule(
-            item.get("omega", {}).get("lessons", {}).get("rules"),
-            rule,
-        ),
+        learned_rules=learned_rules,
     )
     return {
         "created": True,
@@ -1659,6 +1659,18 @@ async def record_item_outcome(
             status=item.get("status") or "in_review",
             critical=True,
         )
+        learned_rules = None
+        if learned_rule:
+            operational_metadata = await locked_operational_metadata(
+                conn,
+                workspace_id=workspace_id,
+                item_id=str(item["id"]),
+                owner_user_id=expected_business_item_owner(item, user),
+            )
+            learned_rules = merged_learned_rules(
+                operational_metadata,
+                rule=learned_rule,
+            )
         row = await conn.fetchrow(
             """
             INSERT INTO prediction_outcomes (
@@ -1698,6 +1710,17 @@ async def record_item_outcome(
                 decision_id=item.get("decision_id"),
                 lessons=[learned_rule],
             )
+        metadata_patch = {
+            "last_outcome": {
+                "action_taken": action_taken,
+                "actual_value": actual_value,
+                "prediction_error": prediction_error,
+                "outcome_summary": outcome_summary,
+                "learned_rule": learned_rule,
+            }
+        }
+        if learned_rules is not None:
+            metadata_patch["learned_rules"] = learned_rules
         update_result = await conn.execute(
             """
             UPDATE control_room_items
@@ -1709,21 +1732,7 @@ async def record_item_outcome(
             """,
             workspace_id,
             item["id"],
-            json.dumps(
-                {
-                    "last_outcome": {
-                        "action_taken": action_taken,
-                        "actual_value": actual_value,
-                        "prediction_error": prediction_error,
-                        "outcome_summary": outcome_summary,
-                        "learned_rule": learned_rule,
-                    },
-                    "learned_rules": _merge_rule(
-                        item.get("omega", {}).get("lessons", {}).get("rules"),
-                        learned_rule or "",
-                    ),
-                }
-            ),
+            json.dumps(metadata_patch),
             expected_business_item_owner(item, user),
         )
         _require_exact_count(update_result, "UPDATE")

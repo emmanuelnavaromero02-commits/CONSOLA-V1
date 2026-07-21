@@ -97,6 +97,11 @@ def merged_lesson_state(
     )
     applications.insert(0, dict(application))
 
+    rules = merged_learned_rules(metadata, rule=rule)
+    return rules, applications[:20]
+
+
+def merged_learned_rules(metadata: Mapping[str, Any], *, rule: str) -> list[str]:
     raw_rules = metadata.get("learned_rules")
     rules = []
     if isinstance(raw_rules, list):
@@ -106,12 +111,13 @@ def merged_lesson_state(
                 rules.append(text)
     if rule and rule not in rules:
         rules.insert(0, rule)
-    return rules[:10], applications[:20]
+    return rules[:10]
 
 
 __all__ = (
     "locked_operational_metadata",
     "merged_alert_state",
     "merged_control_state",
+    "merged_learned_rules",
     "merged_lesson_state",
 )
