@@ -55,6 +55,7 @@ from app.services.control_room.business_builder_policy import (
     business_priority_builder,
     business_template_ids_builder,
 )
+from app.services.adapter_idempotency import adapter_guarantees_idempotency
 from app.services.control_room.business_decision_persistence import (
     create_and_link_decision as _create_and_link_business_decision,
     persist_option_selection as _persist_business_option_selection,
@@ -69,6 +70,22 @@ from app.services.control_room.business_action_mutations import (
     persist_step as _persist_step,
     require_exact_count as _require_exact_count,
 )
+from app.services.control_room.business_action_reservation import (
+    ActionReservation,
+    ReservationState,
+    acquire_action_reservation,
+    acquire_guarded_action_reservation,
+    complete_action_reservation,
+)
+from app.services.control_room.business_execution_precondition import (
+    dry_run_metadata,
+    lock_pending_action_reservation,
+    require_matching_dry_run,
+)
+from app.services.control_room.business_mutation_guard import (
+    lock_authoritative_business_item,
+)
+from app.services.control_room.business_workflow_provenance import WorkflowStage
 
 _core.__dict__.setdefault(
     "_create_and_link_business_decision", _create_and_link_business_decision
@@ -82,6 +99,22 @@ _core.__dict__.setdefault("_persist_control", _persist_control)
 _core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
 _core.__dict__.setdefault("_persist_step", _persist_step)
 _core.__dict__.setdefault("_require_exact_count", _require_exact_count)
+for _helper in (
+    acquire_action_reservation,
+    acquire_guarded_action_reservation,
+    complete_action_reservation,
+    lock_authoritative_business_item,
+    lock_pending_action_reservation,
+    require_matching_dry_run,
+):
+    _core.__dict__.setdefault(_helper.__name__, _helper)
+_core.__dict__.setdefault("ActionReservation", ActionReservation)
+_core.__dict__.setdefault("ReservationState", ReservationState)
+_core.__dict__.setdefault("WorkflowStage", WorkflowStage)
+_core.__dict__.setdefault("dry_run_metadata", dry_run_metadata)
+_core.__dict__.setdefault(
+    "adapter_guarantees_idempotency", adapter_guarantees_idempotency
+)
 
 
 def _bind_to_core(fn):
@@ -1120,39 +1153,6 @@ async def _record_action_run(
 
 
 @_bind_to_core
-async def _latest_successful_dry_run(
-    pool: Any,
-    *,
-    user: dict,
-    item: dict[str, Any],
-    template: dict[str, Any],
-) -> dict[str, Any] | None:
-    workspace_id = _workspace_id(user)
-    row = await pool.fetchrow(
-        """
-        SELECT id, tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
-               action_type, adapter_name, mode, status, risk_level,
-               requires_approval, approval_status, idempotency_key,
-               actor_id, actor_email, input, dry_run_result, execution_result,
-               side_effect, error_code, error_message, metadata,
-               created_at, updated_at, completed_at
-          FROM action_runs
-         WHERE workspace_id = $1
-           AND item_id = $2
-           AND action_type = $3
-           AND mode = 'dry_run'
-           AND status = 'dry_run_completed'
-         ORDER BY completed_at DESC NULLS LAST, updated_at DESC
-         LIMIT 1
-        """,
-        workspace_id,
-        item["id"],
-        str(template.get("template_id") or ""),
-    )
-    return _action_run_public(row) if row else None
-
-
-@_bind_to_core
 def _dry_run_checks(
     *,
     user: dict,
@@ -1442,6 +1442,7 @@ async def action_dry_run(
             metadata={
                 "legacy_table": "control_room_action_executions",
                 "checks": validation_checks,
+                **dry_run_metadata(item, template_id=str(template["template_id"])),
             },
             critical=True,
         )
@@ -1978,6 +1979,14 @@ async def _record_execute_block(
     ip: str | None,
     user_agent: str | None,
 ) -> None:
+    decision_id = int(item["decision_id"]) if item.get("decision_id") else None
+    await lock_authoritative_business_item(
+        pool,
+        user=user,
+        item=item,
+        decision_id=decision_id,
+        allowed_stages=(WorkflowStage.DECISION_CREATED,) if decision_id else None,
+    )
     result = {
         "ok": False,
         "mode": "execute_live",
@@ -2061,60 +2070,82 @@ async def _record_execute_block(
 
 
 @_bind_to_core
-async def _existing_executed_writeback(
-    pool: Any,
+def _reserved_action_response(
+    reservation: ActionReservation,
+    *,
+    item: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if reservation.state is ReservationState.IN_PROGRESS:
+        raise HTTPException(
+            409,
+            {
+                "code": "action_in_progress",
+                "reservation_id": reservation.id,
+                "idempotency_key": reservation.effective_key,
+            },
+        )
+    if reservation.state is ReservationState.FAILED:
+        raise HTTPException(
+            409,
+            {
+                "code": "action_previously_failed",
+                "reservation_id": reservation.id,
+                "idempotency_key": reservation.effective_key,
+            },
+        )
+    if reservation.state is not ReservationState.COMPLETED:
+        raise RuntimeError("acquired action reservation cannot be replayed")
+    action_run = _action_run_public(reservation.row)
+    result = _details(action_run.get("execution_result"))
+    return {
+        "executed": bool(result.get("executed", True)),
+        "idempotent": True,
+        "execution": {},
+        "action_run": action_run,
+        "payload": _details(action_run.get("input")) or payload,
+        "result": {**result, "idempotent": True},
+        "item": _project_public_item(item, _with_omega, execution_status="executed"),
+    }
+
+
+@_bind_to_core
+async def _complete_execute_reservation(
+    db: Any,
     *,
     user: dict,
     item: dict[str, Any],
-    template: dict[str, Any],
-    idempotency_key: str | None,
-    critical: bool = False,
-) -> dict[str, Any] | None:
-    workspace_id = _workspace_id(user)
-    try:
-        if idempotency_key:
-            row = await pool.fetchrow(
-                """
-                SELECT id, item_id, template_id, mode, status, payload, result,
-                       error, actor_email, created_at, completed_at
-                  FROM control_room_action_executions
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                   AND template_id = $3
-                   AND mode = 'execute_live'
-                   AND status = 'executed'
-                   AND (payload->>'idempotency_key' = $4 OR result->>'idempotency_key' = $4)
-                 ORDER BY created_at DESC
-                 LIMIT 1
-                """,
-                workspace_id,
-                item["id"],
-                template["template_id"],
-                idempotency_key,
-            )
-        else:
-            row = await pool.fetchrow(
-                """
-                SELECT id, item_id, template_id, mode, status, payload, result,
-                       error, actor_email, created_at, completed_at
-                  FROM control_room_action_executions
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                   AND template_id = $3
-                   AND mode = 'execute_live'
-                   AND status = 'executed'
-                 ORDER BY created_at DESC
-                 LIMIT 1
-                """,
-                workspace_id,
-                item["id"],
-                template["template_id"],
-            )
-    except Exception:
-        if critical:
-            raise
-        return None
-    return _row_to_public(row) if row else None
+    reservation: ActionReservation,
+    status: str,
+    result: dict[str, Any],
+    side_effect: dict[str, Any] | None = None,
+    legacy_execution_id: int | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    row = await complete_action_reservation(
+        db,
+        workspace_id=_workspace_id(user),
+        reservation_id=reservation.id,
+        effective_key=reservation.effective_key,
+        status=status,
+        execution_result=result,
+        side_effect=side_effect,
+        legacy_execution_id=legacy_execution_id,
+        error_code=error_code,
+        error_message=error_message,
+    )
+    await _record_action_run_event(
+        db,
+        user=user,
+        item=item,
+        action_run_id=reservation.id,
+        event_type=f"action_run.{status}",
+        status=status,
+        metadata={"error_code": error_code},
+        critical=True,
+    )
+    return _action_run_public(row)
 
 
 @_bind_to_core
@@ -2172,31 +2203,23 @@ async def _execute_internal_followup_task_tx(
     user_agent: str | None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(user)
-    await db.execute(
-        "SELECT pg_advisory_xact_lock(hashtext($1))",
-        f"control_room_writeback:{workspace_id}:{item['id']}:{template['template_id']}",
-    )
-    existing = await _existing_executed_writeback(
+    reservation = await acquire_guarded_action_reservation(
         db,
         user=user,
         item=item,
-        template=template,
-        idempotency_key=None,
-        critical=True,
+        template_id=str(template["template_id"]),
+        adapter_name=_adapter_name_for_template(template),
+        operation="execute",
+        provided_key=idempotency_key,
+        input_payload=payload,
     )
-    if existing:
-        existing_result = _details(existing.get("result"))
-        public_item = _project_public_item(
-            item, _with_omega, execution_status="executed"
+    if reservation.state is not ReservationState.ACQUIRED:
+        return _reserved_action_response(
+            reservation,
+            item=item,
+            payload=payload,
         )
-        return {
-            "executed": True,
-            "idempotent": True,
-            "execution": existing,
-            "payload": _details(existing.get("payload")) or payload,
-            "result": {**existing_result, "idempotent": True},
-            "item": public_item,
-        }
+    idempotency_key = reservation.effective_key
     decision_id = int(item["decision_id"])
     visible = await db.fetchrow(
         "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
@@ -2270,31 +2293,21 @@ async def _execute_internal_followup_task_tx(
         result=result,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         db,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed",
-        input_payload={**payload, "idempotency_key": idempotency_key},
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect={
             "target": "decision_actions",
             "decision_id": decision_id,
             "decision_action_id": public_action.get("id"),
         },
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
     )
     update_result = await db.execute(
         """
@@ -2383,6 +2396,19 @@ async def _execute_internal_investigation_note(
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
+    reservation = await acquire_guarded_action_reservation(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+        adapter_name=_adapter_name_for_template(template),
+        operation="execute",
+        provided_key=idempotency_key,
+        input_payload=payload,
+    )
+    if reservation.state is not ReservationState.ACQUIRED:
+        return _reserved_action_response(reservation, item=item, payload=payload)
+    idempotency_key = reservation.effective_key
     note_payload = (
         payload.get("action_payload")
         if isinstance(payload.get("action_payload"), dict)
@@ -2423,27 +2449,17 @@ async def _execute_internal_investigation_note(
         result=result,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         pool,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed",
-        input_payload={**payload, "idempotency_key": idempotency_key},
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect=side_effect,
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
     )
     await _record_item_event(
         pool,
@@ -2503,6 +2519,19 @@ async def _execute_internal_decision_monitoring(
     user_agent: str | None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(user)
+    reservation = await acquire_guarded_action_reservation(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+        adapter_name=_adapter_name_for_template(template),
+        operation="execute",
+        provided_key=idempotency_key,
+        input_payload=payload,
+    )
+    if reservation.state is not ReservationState.ACQUIRED:
+        return _reserved_action_response(reservation, item=item, payload=payload)
+    idempotency_key = reservation.effective_key
     monitoring_state = {
         "enabled": True,
         "decision_id": item.get("decision_id"),
@@ -2541,27 +2570,17 @@ async def _execute_internal_decision_monitoring(
         result=result,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         pool,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed",
-        input_payload={**payload, "idempotency_key": idempotency_key},
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect=side_effect,
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
     )
     update_result = await pool.execute(
         """
@@ -2772,12 +2791,34 @@ async def _execute_external_writeback(
     item: dict[str, Any],
     template: dict[str, Any],
     payload: dict[str, Any],
-    idempotency_key: str | None,
+    reservation: ActionReservation,
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
 
+    await lock_authoritative_business_item(
+        pool,
+        user=user,
+        item=item,
+        decision_id=int(item["decision_id"]),
+        allowed_stages=(WorkflowStage.DECISION_CREATED,),
+    )
+    await require_matching_dry_run(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+    )
+    await lock_pending_action_reservation(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+        reservation_id=reservation.id,
+        effective_key=reservation.effective_key,
+    )
+    idempotency_key = reservation.effective_key
     cartridge_id = str(
         template.get("cartridge_id") or item.get("cartridge") or ""
     ).strip()
@@ -2844,6 +2885,10 @@ async def _execute_external_writeback(
             item=item, template=template, payload=payload
         )
         adapter = WriteBackAdapterFactory.get_adapter(template_type)
+        if not adapter_guarantees_idempotency(template_type, adapter):
+            raise NotImplementedError(
+                "external write-back adapter does not guarantee idempotency"
+            )
         adapter_name = adapter.__class__.__name__
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
@@ -2871,32 +2916,19 @@ async def _execute_external_writeback(
             error="circuit_breaker_open",
             critical=True,
         )
-        action_run = await _record_action_run(
+        action_run = await _complete_execute_reservation(
             pool,
             user=user,
             item=item,
-            template=template,
-            mode="execute",
             status="failed",
-            input_payload=action_data,
-            execution_result=result,
+            reservation=reservation,
+            result=result,
             error_code="circuit_breaker_open",
             error_message=str(exc),
-            idempotency_key=_action_run_idempotency_key(
-                item=item,
-                template=template,
-                mode="execute",
-                provided=idempotency_key,
-            ),
             legacy_execution_id=int(execution["id"])
             if execution.get("id") is not None
             else None,
-            metadata={
-                "external_write": True,
-                "target": target,
-                "adapter": adapter_name,
-            },
-            critical=True,
+            side_effect={"target": target, "adapter": adapter_name},
         )
         await _set_execution_status(
             pool, user=user, item=item, execution_status="failed", critical=True
@@ -2934,7 +2966,7 @@ async def _execute_external_writeback(
                 "validation_result": public_validation_result,
             },
         )
-        raise HTTPException(503, result) from exc
+        return {"_http_error_status": 503, "_http_error_detail": result}
     except AdapterExecutionError as exc:
         result = {
             "ok": False,
@@ -2957,32 +2989,19 @@ async def _execute_external_writeback(
             error="external_writeback_failed",
             critical=True,
         )
-        action_run = await _record_action_run(
+        action_run = await _complete_execute_reservation(
             pool,
             user=user,
             item=item,
-            template=template,
-            mode="execute",
             status="failed",
-            input_payload=action_data,
-            execution_result=result,
+            reservation=reservation,
+            result=result,
             error_code="external_writeback_failed",
             error_message=str(exc),
-            idempotency_key=_action_run_idempotency_key(
-                item=item,
-                template=template,
-                mode="execute",
-                provided=idempotency_key,
-            ),
             legacy_execution_id=int(execution["id"])
             if execution.get("id") is not None
             else None,
-            metadata={
-                "external_write": True,
-                "target": target,
-                "adapter": adapter_name,
-            },
-            critical=True,
+            side_effect={"target": target, "adapter": adapter_name},
         )
         await _set_execution_status(
             pool, user=user, item=item, execution_status="failed", critical=True
@@ -3020,7 +3039,7 @@ async def _execute_external_writeback(
                 "validation_result": public_validation_result,
             },
         )
-        raise HTTPException(502, result) from exc
+        return {"_http_error_status": 502, "_http_error_detail": result}
     except Exception as exc:
         result = {
             "ok": False,
@@ -3042,32 +3061,19 @@ async def _execute_external_writeback(
             error=type(exc).__name__,
             critical=True,
         )
-        action_run = await _record_action_run(
+        action_run = await _complete_execute_reservation(
             pool,
             user=user,
             item=item,
-            template=template,
-            mode="execute",
             status="failed",
-            input_payload=action_data,
-            execution_result=result,
+            reservation=reservation,
+            result=result,
             error_code=type(exc).__name__,
             error_message=str(exc),
-            idempotency_key=_action_run_idempotency_key(
-                item=item,
-                template=template,
-                mode="execute",
-                provided=idempotency_key,
-            ),
             legacy_execution_id=int(execution["id"])
             if execution.get("id") is not None
             else None,
-            metadata={
-                "external_write": True,
-                "target": target,
-                "adapter": adapter_name,
-            },
-            critical=True,
+            side_effect={"target": target, "adapter": adapter_name},
         )
         await _set_execution_status(
             pool, user=user, item=item, execution_status="failed", critical=True
@@ -3105,7 +3111,8 @@ async def _execute_external_writeback(
                 "validation_result": public_validation_result,
             },
         )
-        raise HTTPException(502, result) from exc
+        status = 501 if isinstance(exc, NotImplementedError) else 502
+        return {"_http_error_status": status, "_http_error_detail": result}
 
     ok = bool(public_adapter_result.get("ok", True))
     execution_status = "executed" if ok else "failed"
@@ -3145,29 +3152,19 @@ async def _execute_external_writeback(
         error=None if ok else message,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         pool,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed" if ok else "failed",
-        input_payload=action_data,
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect={"target": target, "adapter": adapter_name, "after": after},
         error_code=None if ok else "external_writeback_failed",
         error_message=None if ok else message,
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
-        metadata={"external_write": True, "target": target, "adapter": adapter_name},
-        critical=True,
     )
     await _set_execution_status(
         pool, user=user, item=item, execution_status=execution_status, critical=True
@@ -3210,7 +3207,7 @@ async def _execute_external_writeback(
         },
     )
     if not ok:
-        raise HTTPException(502, message)
+        return {"_http_error_status": 502, "_http_error_detail": message}
     learning_lesson = await _record_adapter_success_lesson(
         pool,
         user=user,
@@ -3382,49 +3379,10 @@ async def execute_item(
             409, "terminal control room item cannot execute supervised action"
         )
 
-    try:
-        existing = await _with_scoped_db(
-            lambda db: _existing_executed_writeback(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
-                critical=True,
-            )
-        )
-    except Exception as exc:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="No se pudo validar idempotencia antes de la ejecucion supervisada.",
-                error="idempotency_lookup_failed",
-            )
-        )
-        raise HTTPException(503, "execution idempotency lookup failed") from exc
-    if existing:
-        existing_result = _details(existing.get("result"))
-        public_item = _project_public_item(
-            item, _with_omega, execution_status="executed"
-        )
-        return {
-            "executed": True,
-            "idempotent": True,
-            "execution": existing,
-            "payload": _details(existing.get("payload")) or payload,
-            "result": {**existing_result, "idempotent": True},
-            "item": public_item,
-        }
-
-    if str(item.get("execution_status") or "not_started") != "dry_run_validated":
+    if str(item.get("execution_status") or "not_started") not in {
+        "dry_run_validated",
+        "executed",
+    }:
         await _with_scoped_db(
             lambda db: _record_execute_block(
                 db,
@@ -3439,48 +3397,6 @@ async def execute_item(
             )
         )
         raise HTTPException(409, "dry-run validation is required before execution")
-
-    try:
-        successful_dry_run = await _with_scoped_db(
-            lambda db: _latest_successful_dry_run(
-                db,
-                user=user,
-                item=item,
-                template=template,
-            )
-        )
-    except Exception as exc:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="No se pudo validar el action_run de dry-run antes de ejecutar.",
-                error="dry_run_lookup_failed",
-            )
-        )
-        raise HTTPException(503, "dry-run action run lookup failed") from exc
-    if not successful_dry_run:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Se requiere action_run de dry-run exitoso antes de la ejecucion supervisada.",
-                error="dry_run_action_run_required",
-            )
-        )
-        raise HTTPException(
-            409, "successful dry-run action run is required before execution"
-        )
 
     if str(template.get("template_id") or "") == "create_followup_task":
         return await _with_scoped_db(
@@ -3531,20 +3447,49 @@ async def execute_item(
         )
 
     if capability.get("external") and capability.get("supported"):
-        return await _with_scoped_db(
+        adapter = WriteBackAdapterFactory.get_adapter(
+            _writeback_template_type(template)
+        )
+        if not adapter_guarantees_idempotency(
+            _writeback_template_type(template), adapter
+        ):
+            raise HTTPException(
+                501, "external write-back adapter must support idempotency"
+            )
+        reservation = await _with_scoped_db(
+            lambda db: acquire_guarded_action_reservation(
+                db,
+                user=user,
+                item=item,
+                template_id=str(template["template_id"]),
+                adapter_name=adapter.__class__.__name__,
+                operation="execute",
+                provided_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
+                input_payload=payload,
+            )
+        )
+        if reservation.state is not ReservationState.ACQUIRED:
+            return _reserved_action_response(reservation, item=item, payload=payload)
+        response = await _with_scoped_db(
             lambda db: _execute_external_writeback(
                 db,
                 user=user,
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                reservation=reservation,
                 ip=ip,
                 user_agent=user_agent,
             )
         )
+        if response.get("_http_error_status"):
+            raise HTTPException(
+                int(response["_http_error_status"]),
+                response.get("_http_error_detail"),
+            )
+        return response
 
     await _with_scoped_db(
         lambda db: _record_execute_block(
@@ -4004,7 +3949,6 @@ __all__ = (
     "_action_run_public",
     "_record_action_run_event",
     "_record_action_run",
-    "_latest_successful_dry_run",
     "_dry_run_checks",
     "action_preview",
     "action_dry_run",
@@ -4018,7 +3962,6 @@ __all__ = (
     "_supports_transactional_acquire",
     "_record_writeback_audit_event",
     "_record_execute_block",
-    "_existing_executed_writeback",
     "_execute_internal_followup_task",
     "_execute_internal_followup_task_tx",
     "_execute_internal_investigation_note",

@@ -3592,6 +3592,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
 
     class ExternalBillingAdapter(control_room_service.BaseAdapter):
+        supports_idempotency = True
         calls: list[bool] = []
 
         def execute(

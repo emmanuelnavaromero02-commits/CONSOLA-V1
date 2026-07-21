@@ -5,6 +5,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services import control_room_service
+from app.services.control_room.business_action_reservation import (
+    ActionReservation,
+    ReservationState,
+)
 
 
 USER = {
@@ -156,7 +160,14 @@ async def test_adapter_success_lesson_propagates_storage_failure():
 async def test_external_writeback_does_not_return_success_after_lesson_insert_zero():
     pool = ZeroRowPool(insert_tag="INSERT 0 0")
     adapter = AsyncMock()
+    adapter.supports_idempotency = True
     adapter.execute.return_value = {"ok": True, "status": "executed"}
+    reservation = ActionReservation(
+        id=42,
+        effective_key="cr-action:v1:lesson-zero",
+        state=ReservationState.ACQUIRED,
+        row={},
+    )
 
     with (
         patch.object(
@@ -174,8 +185,15 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
         ),
         patch.object(
             control_room_service,
-            "_record_action_run",
+            "_complete_execute_reservation",
             AsyncMock(return_value={"id": 42}),
+        ),
+        patch.object(
+            control_room_service, "lock_authoritative_business_item", AsyncMock()
+        ),
+        patch.object(control_room_service, "require_matching_dry_run", AsyncMock()),
+        patch.object(
+            control_room_service, "lock_pending_action_reservation", AsyncMock()
         ),
         patch.object(control_room_service, "_set_execution_status", AsyncMock()),
         patch.object(control_room_service, "_record_item_event", AsyncMock()),
@@ -185,10 +203,10 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
             await control_room_service._execute_external_writeback(
                 pool,
                 user=USER,
-                item=_item(),
+                item={**_item(), "decision_id": 42},
                 template={"template_id": "notify_manager", "cartridge_id": "sap_hcm"},
                 payload={},
-                idempotency_key="lesson-zero",
+                reservation=reservation,
                 ip=None,
                 user_agent=None,
             )

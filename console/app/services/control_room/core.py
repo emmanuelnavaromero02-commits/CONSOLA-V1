@@ -21,6 +21,7 @@ from app.security import get_internal_api_key
 from app.version import app_version
 from app.services import audit_service, auth
 from app.services.db_scope import SET_SCOPE_SQL, run_with_db_scope
+from app.services.adapter_idempotency import template_supports_idempotency
 from app.services.control_room.readiness_manifest import dataset_readiness_registry
 from app.services.control_room.business_eligibility import (
     BUSINESS_EVIDENCE_FIELDS,
@@ -231,6 +232,9 @@ class WriteBackAdapterFactory:
 
         existing = cls._registry.get(template_type)
         if existing is None or not issubclass(existing, BaseAdapter):
+            registered_cls.supports_idempotency = template_supports_idempotency(
+                template_type
+            )
             cls._registry[template_type] = registered_cls
 
     @classmethod
