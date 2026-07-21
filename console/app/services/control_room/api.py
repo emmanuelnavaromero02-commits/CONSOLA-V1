@@ -14,13 +14,7 @@ from app.services.control_room.business_agentops import agentops_source_ids
 from app.services.control_room.business_cartridge_scope import (
     allowed_business_cartridges,
 )
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
-)
-from app.services.control_room.business_source_scope import (
-    scoped_runtime_evidence_fields,
-    scoped_source_row,
-)
+from app.services.control_room.business_source_scope import scoped_runtime_evidence_fields, scoped_source_row
 from app.services.control_room.business_talent_preview import (
     build_talent_action_preview,
 )
@@ -40,7 +34,6 @@ for _name, _value in _core.__dict__.items():
         globals()[_name] = _value
 _core.__dict__.setdefault("agentops_source_ids", agentops_source_ids)
 _core.__dict__.setdefault("allowed_business_cartridges", allowed_business_cartridges)
-_core.__dict__.setdefault("runtime_row_evidence_fields", runtime_row_evidence_fields)
 _core.__dict__.setdefault("scoped_runtime_evidence_fields", scoped_runtime_evidence_fields)
 _core.__dict__.setdefault("scoped_source_row", scoped_source_row)
 _core.__dict__.setdefault("_build_talent_action_preview", build_talent_action_preview)
