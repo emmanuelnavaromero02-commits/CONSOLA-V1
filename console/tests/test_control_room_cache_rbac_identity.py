@@ -9,6 +9,7 @@ import pytest
 from app.routers import control_room
 from app.services import permissions
 from app.services.control_room import authorization_cache
+from app.services.control_room.cache_identity import authorization_cache_identity
 
 
 BASE_USER = {
@@ -180,8 +181,8 @@ def test_authorization_identity_is_complete_ordered_and_stable():
         access_revision={"tenant": 3, "workspace": 9},
     )
 
-    first_identity = authorization_cache.authorization_cache_identity(first)
-    second_identity = authorization_cache.authorization_cache_identity(second)
+    first_identity = authorization_cache_identity(first)
+    second_identity = authorization_cache_identity(second)
 
     assert first_identity == second_identity
     assert first_identity.tenant_id == "tenant-a"

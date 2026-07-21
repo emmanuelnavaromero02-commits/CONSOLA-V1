@@ -12,9 +12,11 @@ from app.services import control_room_service
 from app.services.control_room.authorization_cache import (
     READ_CACHE as _CONTROL_ROOM_READ_CACHE,
     READ_CACHE_LOCKS as _CONTROL_ROOM_READ_CACHE_LOCKS,
-    authorization_cache_identity as _control_room_cache_identity,
     cache_get_or_set as _control_room_cache_get_or_set,
     cache_invalidate as _control_room_cache_invalidate,
+)
+from app.services.control_room.cache_identity import (
+    authorization_cache_identity as _control_room_cache_identity,
 )
 from app.services.control_room.business_cartridge_scope import (
     business_cartridge_allowed,
