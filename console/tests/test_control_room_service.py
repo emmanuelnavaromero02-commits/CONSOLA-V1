@@ -2389,7 +2389,7 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
         {**decision_item, "execution_status": "dry_run_validated"}
     )  # noqa: SLF001
     mock_pool = AsyncMock()
-    mock_pool.execute.return_value = None
+    _enable_successful_writes(mock_pool)
 
     with (
         patch.object(
@@ -2775,6 +2775,7 @@ async def test_create_item_lesson_persists_manual_lesson_and_audits():
         "created_at": datetime(2026, 5, 20, 11, 0, 0),
     }
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow.return_value = None
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -2842,6 +2843,7 @@ async def test_apply_item_lesson_persists_application_and_audits():
         "created_at": datetime(2026, 5, 20, 11, 0, 0),
     }
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow.return_value = None
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0

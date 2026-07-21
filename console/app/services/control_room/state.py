@@ -4,6 +4,7 @@ import types
 
 from app.services.control_room import core as _core
 from app.services.control_room.business_alert_projection import build_business_alert
+from app.services.control_room.business_action_mutations import require_exact_count
 from app.services.control_room.business_command_item import (
     load_persisted_command_item,
     resolve_command_item,
@@ -35,6 +36,7 @@ _core.__dict__.setdefault("build_omega_projection", build_omega_projection)
 _core.__dict__.setdefault("load_persisted_command_item", load_persisted_command_item)
 _core.__dict__.setdefault("OmegaProjectionRuntime", OmegaProjectionRuntime)
 _core.__dict__.setdefault("resolve_command_item", resolve_command_item)
+_core.__dict__.setdefault("require_exact_count", require_exact_count)
 
 
 def _bind_to_core(fn):
@@ -1153,27 +1155,23 @@ async def _record_item_event(
     critical: bool = False,
 ) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
-    try:
-        await pool.execute(
-            """
-            INSERT INTO control_room_item_events (
-                tenant_id, workspace_id, item_id, event_type,
-                actor_id, actor_email, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-            """,
-            tenant_id,
-            workspace_id,
-            item["id"],
-            event_type,
-            user.get("id"),
-            user.get("email"),
-            json.dumps(metadata),
+    result = await pool.execute(
+        """
+        INSERT INTO control_room_item_events (
+            tenant_id, workspace_id, item_id, event_type,
+            actor_id, actor_email, metadata
         )
-    except Exception:
-        if critical:
-            raise
-        return
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        """,
+        tenant_id,
+        workspace_id,
+        item["id"],
+        event_type,
+        user.get("id"),
+        user.get("email"),
+        json.dumps(metadata),
+    )
+    require_exact_count(result, "INSERT")
 
 
 @_bind_to_core
@@ -1200,32 +1198,30 @@ async def _persist_lessons(
 ) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
     for rule in lessons:
-        try:
-            await pool.execute(
-                """
-                INSERT INTO control_room_lessons (
-                    tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
-                    rule, source_decision_id, confidence, metadata
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-                """,
-                tenant_id,
-                workspace_id,
-                item["id"],
-                item.get("cartridge") or "platform",
-                item.get("anomaly_type") or "control_room_item",
-                rule,
-                decision_id,
-                _impact_for_item(item).get("confidence") or 0.7,
-                json.dumps(
-                    {
-                        "source_dataset": item.get("source_dataset"),
-                        "status": item.get("status"),
-                    }
-                ),
+        result = await pool.execute(
+            """
+            INSERT INTO control_room_lessons (
+                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+                rule, source_decision_id, confidence, metadata
             )
-        except Exception:
-            return
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            item.get("cartridge") or "platform",
+            item.get("anomaly_type") or "control_room_item",
+            rule,
+            decision_id,
+            _impact_for_item(item).get("confidence") or 0.7,
+            json.dumps(
+                {
+                    "source_dataset": item.get("source_dataset"),
+                    "status": item.get("status"),
+                }
+            ),
+        )
+        require_exact_count(result, "INSERT")
 
 
 @_bind_to_core
@@ -1238,25 +1234,23 @@ async def _set_execution_status(
     critical: bool = False,
 ) -> None:
     workspace_id = _workspace_id(user)
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET execution_status = $1,
-                   metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
-            execution_status,
-            workspace_id,
-            item["id"],
-            json.dumps({"execution_status": execution_status}),
-        )
-    except Exception:
-        if critical:
-            raise
-        return
+    result = await pool.execute(
+        """
+        UPDATE control_room_items
+           SET execution_status = $1,
+               metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+               last_seen_at = NOW()
+         WHERE workspace_id = $2
+           AND item_id = $3
+           AND owner_user_id IS NOT DISTINCT FROM $5
+        """,
+        execution_status,
+        workspace_id,
+        item["id"],
+        json.dumps({"execution_status": execution_status}),
+        expected_business_item_owner(item, user),
+    )
+    require_exact_count(result, "UPDATE")
 
 
 @_bind_to_core
@@ -1289,10 +1283,6 @@ async def _ensure_item_row(
         )
     except OwnerScopeConflict:
         raise HTTPException(404, "control room item not found") from None
-    except Exception:
-        if critical:
-            raise
-        return
 
 
 @_bind_to_core

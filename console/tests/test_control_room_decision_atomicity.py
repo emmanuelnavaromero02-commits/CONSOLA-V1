@@ -65,8 +65,9 @@ class TransactionalConnection:
 
         return _Context(self, finish)
 
-    async def execute(self, _sql: str, *_args):
-        return None
+    async def execute(self, sql: str, *_args):
+        command = sql.lstrip().split(maxsplit=1)[0].upper()
+        return "INSERT 0 1" if command == "INSERT" else "SELECT 1"
 
     async def fetchrow(self, sql: str, *_args):
         self.fetchrow_calls += 1

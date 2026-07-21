@@ -41,6 +41,7 @@ from app.services.control_room.business_action_mutations import (
     persist_control as _persist_control,
     persist_status_transition as _persist_status_transition,
     persist_step as _persist_step,
+    require_exact_count as _require_exact_count,
 )
 
 _core.__dict__.setdefault(
@@ -54,6 +55,7 @@ _core.__dict__.setdefault("_persist_alert_state", _persist_alert_state)
 _core.__dict__.setdefault("_persist_control", _persist_control)
 _core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
 _core.__dict__.setdefault("_persist_step", _persist_step)
+_core.__dict__.setdefault("_require_exact_count", _require_exact_count)
 
 
 def _bind_to_core(fn):
@@ -1190,28 +1192,28 @@ async def create_item_lesson(
             decision_id=decision_id,
             lessons=[rule],
         )
-        try:
-            await conn.execute(
-                """
+        update_result = await conn.execute(
+            """
                 UPDATE control_room_items
                    SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
                        last_seen_at = NOW()
                  WHERE workspace_id = $1
                    AND item_id = $2
+                   AND owner_user_id IS NOT DISTINCT FROM $4
                 """,
-                scoped_workspace_id,
-                item["id"],
-                json.dumps(
-                    {
-                        "learned_rules": _merge_rule(
-                            item.get("omega", {}).get("lessons", {}).get("rules"),
-                            rule,
-                        )
-                    }
-                ),
-            )
-        except Exception:
-            pass
+            scoped_workspace_id,
+            item["id"],
+            json.dumps(
+                {
+                    "learned_rules": _merge_rule(
+                        item.get("omega", {}).get("lessons", {}).get("rules"),
+                        rule,
+                    )
+                }
+            ),
+            expected_business_item_owner(item, user),
+        )
+        _require_exact_count(update_result, "UPDATE")
         await _record_item_event(
             conn,
             user=user,
@@ -1332,9 +1334,8 @@ async def apply_item_lesson(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> None:
         await _ensure_item_row(conn, user=user, item=item, status=target_status)
-        try:
-            await conn.execute(
-                """
+        update_result = await conn.execute(
+            """
                 UPDATE control_room_items
                    SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
                        status = CASE
@@ -1345,20 +1346,21 @@ async def apply_item_lesson(
                        last_seen_at = NOW()
                  WHERE workspace_id = $1
                    AND item_id = $2
+                   AND owner_user_id IS NOT DISTINCT FROM $6
                 """,
-                scoped_workspace_id,
-                item["id"],
-                json.dumps(
-                    {
-                        "learned_rules": learned_rules,
-                        "lesson_applications": applications,
-                    }
-                ),
-                sorted(TERMINAL_ITEM_STATUSES),
-                target_status,
-            )
-        except Exception:
-            pass
+            scoped_workspace_id,
+            item["id"],
+            json.dumps(
+                {
+                    "learned_rules": learned_rules,
+                    "lesson_applications": applications,
+                }
+            ),
+            sorted(TERMINAL_ITEM_STATUSES),
+            target_status,
+            expected_business_item_owner(item, user),
+        )
+        _require_exact_count(update_result, "UPDATE")
 
         await _record_item_event(
             conn,
@@ -1487,10 +1489,10 @@ async def _record_action_run_event(
     critical: bool = False,
 ) -> None:
     if action_run_id is None:
-        return
+        raise RuntimeError("control room action run event requires an action run id")
     tenant_id, workspace_id = _workspace_scope(user)
     try:
-        await pool.execute(
+        insert_result = await pool.execute(
             """
             INSERT INTO action_run_events (
                 tenant_id, workspace_id, action_run_id, item_id, event_type,
@@ -1508,6 +1510,7 @@ async def _record_action_run_event(
             user.get("email"),
             json.dumps(metadata),
         )
+        _require_exact_count(insert_result, "INSERT")
     except Exception:
         if critical:
             raise
@@ -1655,6 +1658,8 @@ async def _record_action_run(
             json.dumps(meta),
             terminal,
         )
+        if action_run_id is None:
+            raise RuntimeError("control room action run was not persisted")
         fallback["id"] = action_run_id
         await _record_action_run_event(
             pool,
@@ -2243,13 +2248,14 @@ async def record_item_outcome(
                 decision_id=item.get("decision_id"),
                 lessons=[learned_rule],
             )
-        await conn.execute(
+        update_result = await conn.execute(
             """
             UPDATE control_room_items
                SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
                    last_seen_at = NOW()
              WHERE workspace_id = $1
                AND item_id = $2
+               AND owner_user_id IS NOT DISTINCT FROM $4
             """,
             workspace_id,
             item["id"],
@@ -2268,7 +2274,9 @@ async def record_item_outcome(
                     ),
                 }
             ),
+            expected_business_item_owner(item, user),
         )
+        _require_exact_count(update_result, "UPDATE")
         return row, tenant_id, workspace_id
 
     row, tenant_id, workspace_id = await _run_with_db_scope(pool, user, _write)
@@ -2500,7 +2508,7 @@ async def _record_writeback_audit_event(
     status: str,
     metadata: dict[str, Any],
 ) -> None:
-    await db.execute(
+    insert_result = await db.execute(
         """
         INSERT INTO audit_events
         (user_id, email, action, resource_type, resource_id,
@@ -2519,6 +2527,7 @@ async def _record_writeback_audit_event(
         request_id_var.get(),
         json.dumps(metadata),
     )
+    _require_exact_count(insert_result, "INSERT")
 
 
 @_bind_to_core
@@ -2578,6 +2587,7 @@ async def _record_execute_block(
             "legacy_table": "control_room_action_executions",
             "block_reason": error,
         },
+        critical=True,
     )
     if str(item.get("execution_status") or "not_started") != "dry_run_validated":
         await _set_execution_status(
@@ -2851,7 +2861,7 @@ async def _execute_internal_followup_task_tx(
         metadata={"legacy_table": "control_room_action_executions"},
         critical=True,
     )
-    await db.execute(
+    update_result = await db.execute(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
@@ -2859,6 +2869,7 @@ async def _execute_internal_followup_task_tx(
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
+           AND owner_user_id IS NOT DISTINCT FROM $4
         """,
         workspace_id,
         item["id"],
@@ -2874,7 +2885,9 @@ async def _execute_internal_followup_task_tx(
                 },
             }
         ),
+        expected_business_item_owner(item, user),
     )
+    _require_exact_count(update_result, "UPDATE")
     await _record_item_event(
         db,
         user=user,
@@ -3115,7 +3128,7 @@ async def _execute_internal_decision_monitoring(
         metadata={"legacy_table": "control_room_action_executions"},
         critical=True,
     )
-    await pool.execute(
+    update_result = await pool.execute(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
@@ -3123,13 +3136,16 @@ async def _execute_internal_decision_monitoring(
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
+           AND owner_user_id IS NOT DISTINCT FROM $4
         """,
         workspace_id,
         item["id"],
         json.dumps(
             {"decision_monitoring": monitoring_state, "execution_status": "executed"}
         ),
+        expected_business_item_owner(item, user),
     )
+    _require_exact_count(update_result, "UPDATE")
     await _record_item_event(
         pool,
         user=user,

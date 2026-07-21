@@ -24,6 +24,11 @@ def _require_count(result: Any, command: str, expected: int = 1) -> None:
         raise RuntimeError(f"control room {command.lower()} affected unexpected rows")
 
 
+def require_exact_count(result: Any, command: str) -> None:
+    if command_count(result, command) != 1:
+        raise RuntimeError(f"control room {command.lower()} affected unexpected rows")
+
+
 async def _record_event(
     conn: Any,
     *,
@@ -260,4 +265,5 @@ __all__ = (
     "persist_control",
     "persist_status_transition",
     "persist_step",
+    "require_exact_count",
 )
