@@ -64,6 +64,15 @@ def test_typed_evidence_source_cannot_match_by_prefix():
     assert has_evidence(_item(evidence_refs=[evidence])) is False
 
 
+def test_untyped_structured_evidence_source_cannot_match_by_prefix():
+    evidence = {
+        "source_dataset": "gold_metrics:forged",
+        "source_record_id": "record-17",
+    }
+
+    assert has_evidence(_item(evidence_refs=[evidence])) is False
+
+
 @pytest.mark.parametrize(
     "reference",
     [

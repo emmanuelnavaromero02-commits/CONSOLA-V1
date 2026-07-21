@@ -115,15 +115,6 @@ def structured_id(value: Any, excluded: frozenset[str]) -> bool:
     )
 
 
-def source_matches(value: Any, sources: frozenset[str]) -> bool:
-    if not stable_text(value):
-        return False
-    normalized = reference_token(value)
-    if normalized in sources:
-        return True
-    return re.split(r"[:/]", normalized, maxsplit=1)[0] in sources
-
-
 def legacy_scalar_reference(
     value: Any,
     *,
@@ -156,7 +147,7 @@ def source_and_id_pair(
 ) -> bool:
     return any(
         str(key).strip().lower() in SOURCE_FIELDS
-        and source_matches(value, canonical_source_values)
+        and reference_token(value) in canonical_source_values
         and not contains_excluded(value, excluded_references)
         for key, value in values.items()
     ) and any(
