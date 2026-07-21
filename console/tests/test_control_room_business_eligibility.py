@@ -77,6 +77,7 @@ def test_partial_requires_observation_evidence_date_and_useful_fact():
         data_status="partial",
         evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
         detected_at="",
+        metric_type="count",
         details={"affected_count": 2},
     )
     complete = {
@@ -143,7 +144,8 @@ def test_metric_value_zero_uses_the_same_zero_policy():
     ],
 )
 def test_nested_and_count_zeros_cannot_bypass_population_policy(measurement):
-    item = _business_item(data_status="ready", population_count=0, **measurement)
+    item = _business_item(metric_type="count", population_count=-1, **measurement)
+    item["data_status"] = "ready"
 
     assert (
         classify_business_item(item).reason is EligibilityReason.ZERO_WITHOUT_POPULATION
@@ -170,9 +172,9 @@ def test_nested_zero_is_valid_with_success_population_and_date():
 def test_stale_valid_observation_remains_business_eligible():
     item = _business_item(
         data_status="stale",
+        metric_type="scalar",
         evidence_pack={"items": [{"source_ref": "gold_metrics:business-1"}]},
         observed_value=4,
-        population_count=10,
     )
 
     assert classify_business_item(item).eligible is True
@@ -228,6 +230,7 @@ def test_projection_resolves_parent_before_derived_child():
         id="child-1",
         kind="intelligence_signal",
         parent_item_id="parent-1",
+        metric_type="scalar",
         observed_value=1,
     )
 

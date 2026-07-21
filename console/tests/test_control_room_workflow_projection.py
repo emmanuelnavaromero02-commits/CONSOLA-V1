@@ -17,6 +17,7 @@ def _item() -> dict:
         "kind": "anomaly",
         "status": "open",
         "source_dataset": "gold_metrics",
+        "metric_type": "scalar",
         "observed_value": 2,
         "observation_date": "2026-07-20",
         "evidence_refs": ["gold_metrics:business-1"],

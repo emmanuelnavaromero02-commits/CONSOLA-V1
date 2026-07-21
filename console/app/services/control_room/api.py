@@ -3161,7 +3161,7 @@ def _sf_talent_signal_evidence_pack(
     items: list[dict[str, Any]] = [
         {
             "source_type": "gold",
-            "source_ref": source.dataset,
+            "source_ref": f"{source.dataset}:signal:{signal_id}",
             "supports_hypothesis": (
                 f"{affected_count} registro(s) afectados en la senal {signal_id}."
             ),
@@ -3174,18 +3174,18 @@ def _sf_talent_signal_evidence_pack(
         },
         {
             "source_type": "readiness",
-            "source_ref": "WB-TALENTO readiness",
+            "source_ref": f"readiness:WB-TALENTO:{signal_id}",
             "supports_hypothesis": f"Estado de datos: {readiness_status}.",
             "strength": 0.7
             if readiness_status in {"ready", "gold_ready", "materialized"}
             else 0.42,
         },
     ]
-    for blocker in blockers[:4]:
+    for index, blocker in enumerate(blockers[:4]):
         items.append(
             {
                 "source_type": "blocker",
-                "source_ref": "talent_metadata_readiness",
+                "source_ref": f"talent_metadata_readiness:{signal_id}:{index}",
                 "supports_hypothesis": blocker,
                 "strength": 0.55,
             }
@@ -3522,6 +3522,9 @@ def _sf_talent_signal_item_fields(
             "recommendation_only": True,
         },
         "detected_at": context["generated_at"],
+        "metric_type": "count",
+        "affected_count": context["affected_count"],
+        "population_count": context["source_row_count"],
         "status": "open",
         "data_status": "gold_ready",
         "source_system": "sap_successfactors",

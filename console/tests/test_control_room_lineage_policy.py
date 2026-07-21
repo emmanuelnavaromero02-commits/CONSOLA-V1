@@ -19,6 +19,7 @@ def _business(item_id: str = "root", **overrides):
         "source_dataset": "gold_metrics",
         "data_status": "ready",
         "observation_date": "2026-07-16",
+        "metric_type": "scalar",
         "observed_value": 1,
         "evidence_refs": [f"evidence:{item_id}"],
     }

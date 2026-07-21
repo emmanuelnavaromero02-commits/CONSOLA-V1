@@ -20,6 +20,7 @@ def _root(item_id: str = "node-0", **overrides):
         "source_dataset": "gold_metrics",
         "data_status": "ready",
         "observation_date": "2026-07-17",
+        "metric_type": "scalar",
         "observed_value": 1,
         "evidence_refs": [f"evidence:{item_id}"],
     }

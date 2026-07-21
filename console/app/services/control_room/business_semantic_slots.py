@@ -209,7 +209,11 @@ def resolve_metric_kind(item: Mapping[str, Any]) -> ResolvedMetricKind:
     kinds = [_normalized_metric_kind(value) for value in raw_values]
     valid_kinds = [kind for kind in kinds if kind is not None]
     contradictory = len(set(valid_kinds)) > 1
-    valid = len(valid_kinds) == len(raw_values) and not contradictory
+    valid = (
+        len(valid_kinds) == len(raw_values)
+        and not contradictory
+        and MetricKind.UNKNOWN not in valid_kinds
+    )
     return ResolvedMetricKind(
         True,
         valid,

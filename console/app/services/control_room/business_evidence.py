@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -34,24 +33,31 @@ _ADMINISTRATIVE_ID_FIELDS = frozenset(
         "workspace_id",
     }
 )
-_REFERENCE_FIELDS = frozenset(
+_SOURCE_FIELDS = frozenset(
+    {
+        "dataset",
+        "gold_table",
+        "source",
+        "source_dataset",
+        "source_ref",
+        "source_system",
+        "table",
+    }
+)
+_LOCATOR_FIELDS = frozenset(
     {
         "artifact",
         "artifact_ref",
-        "dataset",
         "document",
         "document_ref",
-        "gold_table",
         "href",
         "path",
         "query",
         "ref",
         "reference",
         "source",
-        "source_dataset",
         "source_ref",
         "sql",
-        "table",
         "uri",
         "url",
     }
@@ -78,47 +84,36 @@ _PLACEHOLDER_REFERENCES = frozenset(
 )
 _NAMESPACED_REFERENCE = re.compile(r"^[a-z0-9][a-z0-9._-]*:[^\s]+$", re.IGNORECASE)
 _PATH_REFERENCE = re.compile(r"^[^\s/]+/[^\s]+$")
-_REFERENCE_ID = re.compile(
-    r"^(?:artifact|document|evidence|pack|record|ref|source|wb)-[a-z0-9._:-]+$",
-    re.IGNORECASE,
-)
-_UUID_REFERENCE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
-_DATASET_REFERENCE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$", re.IGNORECASE)
-_DATASET_REFERENCE_FIELDS = frozenset(
-    {"dataset", "gold_table", "source_dataset", "source_ref", "table"}
-)
+_ID_TOKEN = re.compile(r"^[a-z0-9][a-z0-9._:@/-]*$", re.IGNORECASE)
 
 
-def _stable_reference(value: Any) -> bool:
-    if isinstance(value, str):
-        normalized = " ".join(value.strip().casefold().split())
-        return bool(normalized) and normalized not in _PLACEHOLDER_REFERENCES
-    if isinstance(value, bool) or value is None:
-        return False
-    if isinstance(value, int):
-        return value > 0
-    if isinstance(value, float):
-        return math.isfinite(value) and value > 0
-    return False
+def _reference_token(value: Any) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
 
 
-def _structured_reference(value: Any) -> bool:
-    if not isinstance(value, str) or not _stable_reference(value):
+def _stable_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(
+        (normalized := _reference_token(value))
+        and normalized not in _PLACEHOLDER_REFERENCES
+    )
+
+
+def _structured_locator(value: Any) -> bool:
+    if not _stable_text(value):
         return False
     normalized = value.strip()
     return bool(
         _NAMESPACED_REFERENCE.fullmatch(normalized)
         or _PATH_REFERENCE.fullmatch(normalized)
-        or _REFERENCE_ID.fullmatch(normalized)
-        or _UUID_REFERENCE.fullmatch(normalized)
     )
 
 
-def _reference_token(value: Any) -> str:
-    return " ".join(str(value or "").strip().casefold().split())
+def _structured_id(value: Any) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    return bool(_stable_text(value) and _ID_TOKEN.fullmatch(value.strip()))
 
 
 def _is_id_field(key: Any, *, allow_generic_id: bool) -> bool:
@@ -128,15 +123,31 @@ def _is_id_field(key: Any, *, allow_generic_id: bool) -> bool:
     )
 
 
-def _is_reference_field(key: Any) -> bool:
-    normalized = str(key).strip().lower()
-    return normalized in _REFERENCE_FIELDS
+def _source_and_id_pair(
+    values: Mapping[str, Any],
+    *,
+    allow_generic_id: bool,
+    excluded_references: frozenset[str],
+) -> bool:
+    has_source = any(
+        str(key).strip().lower() in _SOURCE_FIELDS
+        and _stable_text(value)
+        and _reference_token(value) not in excluded_references
+        for key, value in values.items()
+    )
+    has_id = any(
+        _is_id_field(key, allow_generic_id=allow_generic_id)
+        and _structured_id(value)
+        and _reference_token(value) not in excluded_references
+        for key, value in values.items()
+    )
+    return has_source and has_id
 
 
 def _has_substantive_reference(
     value: Any,
     *,
-    scalar_is_reference: bool,
+    scalar_is_locator: bool,
     allow_generic_id: bool = False,
     excluded_references: frozenset[str] = frozenset(),
     seen: set[int] | None = None,
@@ -144,58 +155,42 @@ def _has_substantive_reference(
     if isinstance(value, Mapping):
         if not value:
             return False
-        seen = seen or set()
+        seen = seen if seen is not None else set()
         identity = id(value)
         if identity in seen:
             return False
         seen.add(identity)
         try:
+            if _source_and_id_pair(
+                value,
+                allow_generic_id=allow_generic_id,
+                excluded_references=excluded_references,
+            ):
+                return True
             for key, nested in value.items():
                 normalized = str(key).strip().lower()
                 if normalized in _ADMINISTRATIVE_ID_FIELDS:
                     continue
-                is_id_field = _is_id_field(key, allow_generic_id=allow_generic_id)
-                is_reference_field = _is_reference_field(key)
-                direct_reference = (
-                    _structured_reference(nested)
+                if (
+                    normalized in _LOCATOR_FIELDS
+                    and _structured_locator(nested)
                     and _reference_token(nested) not in excluded_references
-                    if is_id_field
-                    else False
-                )
-                if is_reference_field and isinstance(nested, str):
-                    direct_reference = _reference_token(
-                        nested
-                    ) not in excluded_references and (
-                        _structured_reference(nested)
-                        or (
-                            normalized in _DATASET_REFERENCE_FIELDS
-                            and bool(_DATASET_REFERENCE.fullmatch(nested.strip()))
-                        )
-                    )
-                if (is_id_field or is_reference_field) and (
-                    direct_reference
-                    or _has_substantive_reference(
+                ):
+                    return True
+                if normalized in _REFERENCE_CONTAINERS and (
+                    _has_substantive_reference(
                         nested,
-                        scalar_is_reference=True,
-                        allow_generic_id=False,
+                        scalar_is_locator=True,
+                        allow_generic_id=True,
                         excluded_references=excluded_references,
                         seen=seen,
                     )
                 ):
                     return True
-                if normalized in _REFERENCE_CONTAINERS and _has_substantive_reference(
-                    nested,
-                    scalar_is_reference=True,
-                    allow_generic_id=True,
-                    excluded_references=excluded_references,
-                    seen=seen,
-                ):
-                    return True
                 if isinstance(nested, (Mapping, list, tuple)) and (
                     _has_substantive_reference(
                         nested,
-                        scalar_is_reference=False,
-                        allow_generic_id=False,
+                        scalar_is_locator=False,
                         excluded_references=excluded_references,
                         seen=seen,
                     )
@@ -207,7 +202,7 @@ def _has_substantive_reference(
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         if not value:
             return False
-        seen = seen or set()
+        seen = seen if seen is not None else set()
         identity = id(value)
         if identity in seen:
             return False
@@ -216,7 +211,7 @@ def _has_substantive_reference(
             return any(
                 _has_substantive_reference(
                     entry,
-                    scalar_is_reference=scalar_is_reference,
+                    scalar_is_locator=scalar_is_locator,
                     allow_generic_id=allow_generic_id,
                     excluded_references=excluded_references,
                     seen=seen,
@@ -226,26 +221,9 @@ def _has_substantive_reference(
         finally:
             seen.remove(identity)
     return bool(
-        scalar_is_reference
-        and _structured_reference(value)
+        scalar_is_locator
+        and _structured_locator(value)
         and _reference_token(value) not in excluded_references
-    )
-
-
-def _evidence_pack_is_substantive(
-    value: Any, excluded_references: frozenset[str]
-) -> bool:
-    if not isinstance(value, Mapping):
-        return _has_substantive_reference(
-            value,
-            scalar_is_reference=True,
-            excluded_references=excluded_references,
-        )
-    return _has_substantive_reference(
-        value,
-        scalar_is_reference=False,
-        allow_generic_id=True,
-        excluded_references=excluded_references,
     )
 
 
@@ -257,23 +235,16 @@ def has_evidence(item: Mapping[str, Any]) -> bool:
         if key in values and (token := _reference_token(values.get(key)))
     )
     for values in semantic_maps(item):
-        if any(
-            key in values
-            and _structured_reference(values.get(key))
-            and _reference_token(values.get(key)) not in excluded_references
-            for key in EVIDENCE_ID_FIELDS
+        if any(key in values for key in EVIDENCE_ID_FIELDS) and _source_and_id_pair(
+            values,
+            allow_generic_id=False,
+            excluded_references=excluded_references,
         ):
             return True
         for key in EVIDENCE_FIELDS:
-            if key not in values:
-                continue
-            evidence = values.get(key)
-            if key == "evidence_pack":
-                if _evidence_pack_is_substantive(evidence, excluded_references):
-                    return True
-            elif _has_substantive_reference(
-                evidence,
-                scalar_is_reference=True,
+            if key in values and _has_substantive_reference(
+                values.get(key),
+                scalar_is_locator=True,
                 allow_generic_id=True,
                 excluded_references=excluded_references,
             ):

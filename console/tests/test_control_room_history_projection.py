@@ -30,6 +30,7 @@ def _persisted(kind: str, item_id: str) -> dict:
         "cartridge": "platform",
         "source_dataset": "gold_metrics",
         "observation_date": "2026-07-20",
+        "metric_type": "scalar",
         "observed_value": 1,
         "evidence_refs": [f"evidence:{item_id}"],
     }
@@ -43,6 +44,7 @@ async def test_dashboard_merge_does_not_revive_ordinary_historical_items():
             "kind": "anomaly",
             "source_dataset": "gold_metrics",
             "observation_date": "2026-07-20",
+            "metric_type": "scalar",
             "observed_value": 1,
             "evidence_refs": ["evidence:current"],
         }
@@ -166,6 +168,7 @@ def test_validated_parent_context_survives_dashboard_reprojection():
             "parent_item_id": "parent",
             "source_dataset": "gold_metrics",
             "observation_date": "2026-07-20",
+            "metric_type": "scalar",
             "observed_value": 1,
             "evidence_refs": ["evidence:child"],
         },
@@ -181,6 +184,7 @@ def test_physical_parent_context_survives_a_second_projection():
         "kind": "anomaly",
         "source_dataset": "gold_metrics",
         "observation_date": "2026-07-20",
+        "metric_type": "scalar",
         "observed_value": 1,
         "evidence_refs": ["evidence:parent"],
     }
@@ -190,6 +194,7 @@ def test_physical_parent_context_survives_a_second_projection():
         "parent_item_id": "parent",
         "source_dataset": "gold_metrics",
         "observation_date": "2026-07-20",
+        "metric_type": "scalar",
         "observed_value": 1,
         "evidence_refs": ["evidence:child"],
     }
@@ -210,6 +215,7 @@ async def test_lessons_exclude_ineligible_historical_parent():
         "id": "business-1",
         "kind": "anomaly",
         "source_dataset": "employees_anomalies",
+        "metric_type": "scalar",
         "observed_value": 1,
         "observation_date": "2026-07-16",
         "evidence_refs": ["employees_anomalies:business-1"],

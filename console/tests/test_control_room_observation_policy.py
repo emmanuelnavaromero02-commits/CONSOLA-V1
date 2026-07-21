@@ -156,12 +156,13 @@ def test_metric_type_is_not_inferred_from_visible_text():
         )
     )
 
-    assert result.reason is EligibilityReason.ZERO_WITHOUT_POPULATION
+    assert result.reason is EligibilityReason.INVALID_OBSERVATION
 
 
 def test_stale_requires_prior_observation_evidence_fact_and_lineage():
     base = _item(
         data_status="stale",
+        metric_type="scalar",
         observed_value=4,
         evidence_refs=["evidence:1"],
     )

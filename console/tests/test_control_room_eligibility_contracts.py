@@ -139,7 +139,7 @@ def test_narrative_or_administrative_references_are_not_evidence(evidence):
     assert has_evidence(_metric(evidence_refs=[], **evidence)) is False
 
 
-def test_typed_evidence_reference_is_accepted():
+def test_evidence_id_with_source_identity_is_accepted():
     assert has_evidence(_metric(evidence_refs=[], evidence_id="evidence-17")) is True
 
 
@@ -153,6 +153,10 @@ def test_non_administrative_uuid_evidence_id_is_accepted():
         )
         is True
     )
+
+
+def test_evidence_id_without_source_identity_is_rejected():
+    assert has_evidence({"evidence_id": "evidence-17"}) is False
 
 
 def test_conflicting_dataset_and_lineage_root_fail_closed():

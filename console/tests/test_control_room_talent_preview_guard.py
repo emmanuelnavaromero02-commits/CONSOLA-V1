@@ -34,7 +34,10 @@ def _talent_item() -> dict:
         "detected_at": "2026-07-16T10:00:00Z",
         "metric_type": "count",
         "evaluation_status": "success",
-        "evidence": {"source_dataset": "sap_successfactors_talent_action_candidates"},
+        "evidence": {
+            "source_dataset": "sap_successfactors_talent_action_candidates",
+            "source_record_id": "talent-action-1",
+        },
     }
 
 

@@ -36,7 +36,6 @@ _OBSERVED_VALUE_KINDS = frozenset(
         MetricKind.DIVISION,
         MetricKind.AMOUNT,
         MetricKind.SCALAR,
-        MetricKind.UNKNOWN,
     }
 )
 
@@ -116,12 +115,8 @@ def _first_value(*slots: ResolvedNumber) -> float | None:
 def _selected_value(
     kind: MetricKind,
     slots: SemanticSlots,
-    *,
-    metric_declared: bool,
 ) -> float | None:
     if kind is MetricKind.COUNT:
-        return _first_value(slots.observed_value, slots.affected_count)
-    if not metric_declared:
         return _first_value(slots.observed_value, slots.affected_count)
     if kind in _OBSERVED_VALUE_KINDS:
         return _first_value(slots.observed_value)
@@ -131,11 +126,7 @@ def _selected_value(
 def _required_value_missing(
     kind: MetricKind,
     slots: SemanticSlots,
-    *,
-    metric_declared: bool,
 ) -> bool:
-    if not metric_declared:
-        return False
     if kind is MetricKind.COUNT:
         return not (slots.observed_value.declared or slots.affected_count.declared)
     return not slots.observed_value.declared
@@ -149,16 +140,16 @@ def _measurement(item: Mapping[str, Any]) -> tuple[bool, bool, float | None]:
     slots = resolve_semantic_slots(item)
     observation_flag = resolve_observation_flag(item)
     kind = metric_kind.value if metric_kind.valid else MetricKind.UNKNOWN
-    value = _selected_value(kind, slots, metric_declared=metric_kind.declared)
-    required_value_missing = metric_kind.valid and _required_value_missing(
-        kind,
-        slots,
-        metric_declared=metric_kind.declared,
+    quantitative_declared = slots.declared or observation_flag.declared
+    known_metric = (
+        metric_kind.declared and metric_kind.valid and kind is not MetricKind.UNKNOWN
     )
-    candidate_declared = slots.declared
+    value = _selected_value(kind, slots) if known_metric else None
+    required_value_missing = known_metric and _required_value_missing(kind, slots)
+    metric_contract_invalid = quantitative_declared and not known_metric
     declared = (
-        candidate_declared
-        or observation_flag.declared
+        quantitative_declared
+        or metric_kind.declared
         or required_value_missing
         or invalid_envelope
         or not metric_kind.valid
@@ -171,6 +162,7 @@ def _measurement(item: Mapping[str, Any]) -> tuple[bool, bool, float | None]:
         or not observation_flag.valid
         or (observation_flag.declared and observation_flag.value is not True)
         or required_value_missing
+        or metric_contract_invalid
     )
     if invalid or value is None:
         return declared, False, None

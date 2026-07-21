@@ -231,6 +231,7 @@ def test_real_zero_requires_successful_evaluation_and_date(missing):
 def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
     item = _item(
         data_status="partial",
+        metric_type="scalar",
         observed_value=1,
         evidence_refs=[],
         evidence_pack=evidence_pack,
@@ -247,14 +248,19 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
     "evidence",
     [
         {"evidence_pack_id": "pack-17"},
-        {"evidence_pack": {"id": "pack-17", "items": []}},
         {"evidence_refs": ["gold_metrics:row:17"]},
-        {"evidence_pack": {"items": [{"source_ref": "gold_metrics"}]}},
+        {
+            "evidence_pack": {
+                "source_dataset": "gold_metrics",
+                "source_record_id": "record-17",
+            }
+        },
     ],
 )
 def test_stable_ids_and_substantive_references_are_evidence(evidence):
     item = _item(
         data_status="partial",
+        metric_type="scalar",
         observed_value=1,
         **{"evidence_refs": [], **evidence},
     )
