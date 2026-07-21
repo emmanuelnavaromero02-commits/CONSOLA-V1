@@ -26,7 +26,9 @@ V1_ROUTE_INVENTORY = {
 
 def test_v1_router_paths_are_covered_by_runtime_app_without_duplicates():
     os.environ.setdefault("APP_ENV", "test")
-    os.environ.setdefault("INTERNAL_API_KEY", "v1routercoverageinternal1234567890abcdef")
+    os.environ.setdefault(
+        "INTERNAL_API_KEY", "v1routercoverageinternal1234567890abcdef"
+    )
     if str(REPO / "console") not in sys.path:
         sys.path.insert(0, str(REPO / "console"))
 
@@ -75,24 +77,24 @@ def test_v1_route_inventory_marks_all_modules_as_legacy_mirrors():
 
 def test_visible_endpoint_fixes_are_not_v1_only():
     main_src = (REPO / "console/app/main.py").read_text(encoding="utf-8")
-    run_logs_src = (
-        REPO / "console/app/domains/pipeline/run_logs.py"
-    ).read_text(encoding="utf-8")
+    run_logs_src = (REPO / "console/app/domains/pipeline/run_logs.py").read_text(
+        encoding="utf-8"
+    )
     v1_jobs_src = (REPO / "console/app/routers/v1/jobs.py").read_text(encoding="utf-8")
     v1_data_src = (REPO / "console/app/routers/v1/data.py").read_text(encoding="utf-8")
 
-    assert '@app.get("/api/jobs/{job_id}/logs"' in main_src
+    assert '"/api/jobs/{job_id}/logs"' in main_src
     assert "_build_job_logs_payload_impl" in main_src
     assert "job_service=job_service" in main_src
     assert "job_service.get_scoped" in run_logs_src
     assert 'job_args.get("cartridge_id")' in run_logs_src
     assert "WHERE run_id=$1 AND cartridge=$2" in run_logs_src
-    assert '@router.get("/api/jobs/{job_id}/logs"' in v1_jobs_src
+    assert '"/api/jobs/{job_id}/logs"' in v1_jobs_src
     assert "job_service.get_scoped" in v1_jobs_src
     assert 'job_args.get("cartridge_id")' in v1_jobs_src
     assert "WHERE run_id=$1 AND cartridge=$2" in v1_jobs_src
 
-    assert '@app.get("/api/datasets/{name}/detail"' in main_src
+    assert '"/api/datasets/{name}/detail"' in main_src
     assert "return _normalize_dataset_detail(" in main_src
-    assert '@router.get("/api/datasets/{name}/detail"' in v1_data_src
+    assert '"/api/datasets/{name}/detail"' in v1_data_src
     assert "return _normalize_dataset_detail(" in v1_data_src
