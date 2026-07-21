@@ -44,9 +44,9 @@ def _diagnostic() -> dict:
     }
 
 
-def _business() -> dict:
+def _business(item_id: str = "item-1") -> dict:
     item = {
-        "id": "item-1",
+        "id": item_id,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
         "domain": "People",
@@ -81,8 +81,7 @@ def _business() -> dict:
 
 def _derived_business() -> dict:
     return {
-        **_business(),
-        "id": "derived-1",
+        **_business("derived-1"),
         "kind": "intelligence_signal",
         "item_kind": "intelligence_signal",
         "parent_item_id": "parent-1",
@@ -124,8 +123,8 @@ async def test_live_business_reconciliation_preserves_persisted_owner():
 
 @pytest.mark.asyncio
 async def test_persisted_derived_item_uses_eligible_persisted_parent():
-    parent = {**_business(), "id": "parent-1"}
-    collect_items = AsyncMock()
+    parent = _business("parent-1")
+    collect_items = AsyncMock(return_value={"items": [], "diagnostics": []})
     load_lineage = AsyncMock(return_value=[parent])
 
     item, parents = await resolve_business_item_lookup(
@@ -148,34 +147,24 @@ class DecisionConn:
         self.link_metadata: dict | None = None
         self.link_owner: int | None = None
         self.committed = False
-        self.lock_owner: int | None = None
+        self.row = {
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
+            "item_id": "item-1",
+            "owner_user_id": 7,
+            "cartridge_id": "sap_hcm",
+            "source_dataset": "gold_people",
+            "item_kind": "source_state",
+            "status": "open",
+            "decision_id": None,
+            "selected_option_id": None,
+            "execution_status": "not_started",
+            "metadata": {"item_kind": "source_state", "data_status": "missing"},
+        }
 
     async def fetchrow(self, sql: str, *args):
         if "FOR UPDATE" in sql:
-            if len(args) > 2:
-                self.lock_owner = args[2]
-            item = _business()
-            metadata = {
-                **business_policy_metadata({}, item),
-                CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(
-                    item
-                ),
-                ELIGIBILITY_POLICY_VERSION_KEY: ELIGIBILITY_POLICY_VERSION,
-            }
-            return {
-                "tenant_id": "tenant-a",
-                "workspace_id": "workspace-a",
-                "item_id": "item-1",
-                "owner_user_id": self.lock_owner or 7,
-                "cartridge_id": "sap_hcm",
-                "source_dataset": "gold_people",
-                "item_kind": "anomaly",
-                "status": "open",
-                "decision_id": None,
-                "selected_option_id": None,
-                "execution_status": "not_started",
-                "metadata": metadata,
-            }
+            return dict(self.row)
         if "INSERT INTO decisions" in sql:
             return {"id": 42, "title": "Decision"}
         if "INSERT INTO decision_actions" in sql:
@@ -185,10 +174,15 @@ class DecisionConn:
         if "UPDATE control_room_items" in sql and "decision_id" in sql:
             self.link_metadata = json.loads(args[3])
             self.link_owner = args[4]
+            self.row.update(
+                decision_id=args[0], status=args[5], metadata=self.link_metadata
+            )
             return {"item_id": "item-1"}
         return {"id": 1}
 
-    async def execute(self, *_args):
+    async def execute(self, sql: str, *args):
+        if "INSERT INTO control_room_items" in sql:
+            self.row.update(json.loads(args[0]))
         return "INSERT 0 1"
 
 

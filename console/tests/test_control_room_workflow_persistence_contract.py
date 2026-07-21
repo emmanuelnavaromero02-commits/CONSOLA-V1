@@ -24,6 +24,7 @@ from app.services.control_room.business_workflow_provenance import (
     WORKFLOW_QUARANTINE_KEY,
     WorkflowStage,
     business_observation_fingerprint,
+    persistence_metadata,
     workflow_eligibility_provenance,
     workflow_has_eligible_provenance,
 )
@@ -32,7 +33,7 @@ from app.services.control_room.business_workflow_reconciliation import (
 )
 
 
-USER = {"id": 7, "email": "owner@example.com"}
+USER = {"id": 7, "tenant_id": "tenant-a", "workspace_id": "workspace-a"}
 
 
 def _item() -> dict:
@@ -84,7 +85,6 @@ def test_option_stage_without_decision_is_valid_and_workspace_bound():
             "option_id": "review",
         },
     }
-
     assert workflow_has_eligible_provenance(metadata, item, decision_id=None)
     assert not workflow_has_eligible_provenance(
         metadata,
@@ -104,7 +104,6 @@ async def test_option_update_failure_rolls_back_before_success_event():
 
     ensure = AsyncMock()
     event = AsyncMock()
-
     with pytest.raises(RuntimeError, match="write failed"):
         await persist_option_selection(
             BrokenConnection(),
@@ -116,7 +115,6 @@ async def test_option_update_failure_rolls_back_before_success_event():
             ensure_item_row=ensure,
             record_item_event=event,
         )
-
     event.assert_not_awaited()
 
 
@@ -166,7 +164,6 @@ async def test_refresh_quarantines_workflow_when_current_observation_is_technica
     }
     patches = await workflow_metadata_patches(Connection(), [technical])
     patch = patches[("workspace-a", business["id"])]
-
     assert WORKFLOW_QUARANTINE_KEY in patch
     assert DECISION_PROVENANCE_KEY not in patch
 
@@ -208,7 +205,6 @@ async def test_normal_user_cannot_resolve_legacy_null_owner_but_admin_can():
         },
         **common,
     )
-
     assert normal is None
     assert admin and admin["owner_user_id"] is None
 
@@ -251,7 +247,6 @@ async def test_decision_creation_locks_item_before_inserting_decision():
         ensure_item_row=ensure,
         record_item_event=AsyncMock(),
     )
-
     assert calls[:3] == ["ensure", "lock", "decision"]
 
 
@@ -269,6 +264,19 @@ async def test_option_selection_persists_typed_provenance_before_event():
 
     class Connection:
         async def fetchrow(self, sql: str, *args):
+            if "FOR UPDATE" in sql:
+                item = _item()
+                row = dict(
+                    item,
+                    item_id=item["id"],
+                    item_kind=item["kind"],
+                    owner_user_id=7,
+                    status="open",
+                    execution_status="not_started",
+                    metadata=dict(item),
+                )
+                row["metadata"] = persistence_metadata(row)
+                return row
             assert "RETURNING item_id" in sql
             captured.update(json.loads(args[0]))
             return {"item_id": "business-1"}
@@ -284,7 +292,6 @@ async def test_option_selection_persists_typed_provenance_before_event():
         ensure_item_row=AsyncMock(),
         record_item_event=event,
     )
-
     provenance = captured[DECISION_PROVENANCE_KEY]
     assert provenance["stage"] == "option_selected"
     assert provenance["workspace_id"] == "workspace-a"
