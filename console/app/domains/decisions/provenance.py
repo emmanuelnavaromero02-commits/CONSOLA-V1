@@ -26,11 +26,23 @@ def is_reserved_control_room_provenance(value: Any) -> bool:
     return str(provenance.get("origin") or "").strip().lower() == CONTROL_ROOM_ORIGIN
 
 
+def is_reserved_decision_provenance(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    provenance = value.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return False
+    marker_type = str(provenance.get("type") or "").strip().lower()
+    return marker_type == "decision_provenance" or is_reserved_control_room_provenance(
+        value
+    )
+
+
 def strip_control_room_provenance(value: Any) -> list[Any]:
     return [
         entry
         for entry in _kpi_list(value)
-        if not is_reserved_control_room_provenance(entry)
+        if not is_reserved_decision_provenance(entry)
     ]
 
 
@@ -69,5 +81,6 @@ __all__ = (
     "decision_kpis_with_provenance",
     "decision_provenance",
     "is_reserved_control_room_provenance",
+    "is_reserved_decision_provenance",
     "strip_control_room_provenance",
 )

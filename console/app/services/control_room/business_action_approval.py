@@ -18,6 +18,7 @@ from app.services.control_room.business_action_mutations import (
 )
 from app.services.control_room.business_workflow_provenance import (
     WORKFLOW_QUARANTINE_KEY,
+    WorkflowStage,
     workflow_has_eligible_provenance,
 )
 
@@ -102,6 +103,7 @@ async def require_approvable_decision(
         {**dict(item), "workspace_id": workspace_id},
         decision_id=decision_id,
         use_stored_fingerprint=True,
+        allowed_stages=(WorkflowStage.DECISION_CREATED,),
     )
     if not eligible_provenance:
         raise HTTPException(409, "decision is not linked to this control room item")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -131,6 +131,8 @@ def workflow_eligibility_provenance(
         raise ValueError("workflow provenance requires workspace")
     if parsed_stage in _DECISION_STAGES and decision_id is None:
         raise ValueError(f"{parsed_stage.value} requires decision_id")
+    if parsed_stage is WorkflowStage.OPTION_SELECTED and decision_id is not None:
+        raise ValueError("option_selected must not include decision_id")
     selected_option = str(option_id or "").strip()
     if parsed_stage is WorkflowStage.OPTION_SELECTED and not selected_option:
         raise ValueError("option_selected requires option_id")
@@ -173,6 +175,7 @@ def workflow_has_eligible_provenance(
     *,
     decision_id: Any = None,
     use_stored_fingerprint: bool = False,
+    allowed_stages: Collection[WorkflowStage | str] | None = None,
 ) -> bool:
     current_metadata = _metadata_mapping(metadata)
     value = current_metadata.get(DECISION_PROVENANCE_KEY)
@@ -181,6 +184,10 @@ def workflow_has_eligible_provenance(
     try:
         stage = WorkflowStage(str(value.get("stage") or "decision_created"))
     except ValueError:
+        return False
+    if allowed_stages is not None and stage not in {
+        WorkflowStage(str(allowed)) for allowed in allowed_stages
+    }:
         return False
     del use_stored_fingerprint
     current_fingerprint = business_observation_fingerprint(item)
@@ -241,8 +248,7 @@ def workflow_is_quarantined(item: Mapping[str, Any] | None) -> bool:
     current = item if isinstance(item, Mapping) else {}
     metadata = _metadata_mapping(current.get("metadata"))
     return bool(
-        current.get(WORKFLOW_QUARANTINE_KEY)
-        or metadata.get(WORKFLOW_QUARANTINE_KEY)
+        current.get(WORKFLOW_QUARANTINE_KEY) or metadata.get(WORKFLOW_QUARANTINE_KEY)
     )
 
 
