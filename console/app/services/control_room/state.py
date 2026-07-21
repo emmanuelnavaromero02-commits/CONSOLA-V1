@@ -56,7 +56,6 @@ def _bind_to_core(fn):
     return rebound
 
 
-# Persistent state, thresholds, lessons, and alert overlays.
 @_bind_to_core
 def _row_to_public(row: Any) -> dict[str, Any]:
     data = dict(row)
@@ -1263,6 +1262,7 @@ async def _ensure_item_row(
     critical: bool = False,
 ) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
+    await lock_authoritative_business_item(pool, user=user, item=item, allow_missing=True)
     impact = _impact_for_item(item)
     try:
         row = ensured_row(

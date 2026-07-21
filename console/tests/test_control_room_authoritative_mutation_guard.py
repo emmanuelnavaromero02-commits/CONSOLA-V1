@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+from copy import deepcopy
+
+import pytest
+from fastapi import HTTPException
+
+from app.services.control_room.business_mutation_guard import (
+    lock_authoritative_business_item,
+)
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
+from app.services.control_room.business_workflow_provenance import (
+    ELIGIBILITY_POLICY_VERSION,
+    ELIGIBILITY_POLICY_VERSION_KEY,
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+    business_observation_fingerprint,
+)
+
+
+TENANT = "11111111-1111-1111-1111-111111111111"
+WORKSPACE = "22222222-2222-2222-2222-222222222222"
+
+
+def _item(value: int = 3) -> dict:
+    item = {
+        "id": "business-guard-1",
+        "item_id": "business-guard-1",
+        "kind": "anomaly",
+        "item_kind": "anomaly",
+        "tenant_id": TENANT,
+        "workspace_id": WORKSPACE,
+        "owner_user_id": 7,
+        "cartridge": "sap_hcm",
+        "source_system": "sap_hcm",
+        "source_dataset": "gold_people",
+        "metric_type": "scalar",
+        "observed_value": value,
+        "population_count": 10,
+        "observation_date": "2026-07-21",
+    }
+    item.update(
+        runtime_row_evidence_fields(
+            source_dataset="gold_people",
+            source_system="sap_hcm",
+            cartridge="sap_hcm",
+            tenant_id=TENANT,
+            workspace_id=WORKSPACE,
+            source_row={"item_id": item["id"], "observed_value": value},
+            locator_field="item_id",
+            observed_at="2026-07-21T10:00:00Z",
+        )
+    )
+    return item
+
+
+def _persisted(item: dict) -> dict:
+    semantic = {
+        key: deepcopy(item[key])
+        for key in (
+            "metric_type",
+            "observed_value",
+            "population_count",
+            "observation_date",
+            "evidence_refs",
+        )
+    }
+    semantic.update(
+        {
+            CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(item),
+            ELIGIBILITY_POLICY_VERSION_KEY: ELIGIBILITY_POLICY_VERSION,
+            "source_system": item["source_system"],
+        }
+    )
+    return {
+        "tenant_id": TENANT,
+        "workspace_id": WORKSPACE,
+        "owner_user_id": 7,
+        "item_id": item["id"],
+        "cartridge_id": item["cartridge"],
+        "source_dataset": item["source_dataset"],
+        "item_kind": item["kind"],
+        "status": "open",
+        "decision_id": None,
+        "selected_option_id": None,
+        "execution_status": "not_started",
+        "metadata": semantic,
+    }
+
+
+class GuardConnection:
+    def __init__(self, row: dict) -> None:
+        self.row = row
+        self.statements: list[str] = []
+
+    async def fetchrow(self, sql: str, *_args):
+        self.statements.append(sql)
+        return deepcopy(self.row)
+
+    async def execute(self, sql: str, *_args):
+        self.statements.append(sql)
+        raise AssertionError("mutation ran before authoritative guard")
+
+
+def _user() -> dict:
+    return {
+        "id": 7,
+        "role": "analyst",
+        "tenant_id": TENANT,
+        "workspace_id": WORKSPACE,
+    }
+
+
+@pytest.mark.asyncio
+async def test_refresh_between_resolve_and_mutation_rejects_before_side_effect() -> None:
+    resolved = _item(3)
+    refreshed = _item(4)
+    conn = GuardConnection(_persisted(refreshed))
+    adapter_calls: list[str] = []
+
+    with pytest.raises(HTTPException) as error:
+        await lock_authoritative_business_item(conn, user=_user(), item=resolved)
+        adapter_calls.append("called")
+
+    assert error.value.status_code == 409
+    assert adapter_calls == []
+    assert len(conn.statements) == 1
+    assert "FOR UPDATE" in conn.statements[0]
+    assert not any(
+        keyword in conn.statements[0].upper()
+        for keyword in ("INSERT ", "UPDATE ", "DELETE ", "CALL ")
+    )
+
+
+@pytest.mark.asyncio
+async def test_matching_authoritative_observation_can_continue() -> None:
+    item = _item(3)
+    conn = GuardConnection(_persisted(item))
+
+    locked = await lock_authoritative_business_item(conn, user=_user(), item=item)
+
+    assert locked["item_id"] == item["id"]
+    assert len(conn.statements) == 1
+    assert "FOR UPDATE" in conn.statements[0]
+
+
+@pytest.mark.asyncio
+async def test_item_becoming_source_state_rejects_before_side_effect() -> None:
+    item = _item(3)
+    row = _persisted(item)
+    row["item_kind"] = "source_state"
+    row["metadata"] = {**row["metadata"], "data_status": "missing"}
+    conn = GuardConnection(row)
+
+    with pytest.raises(HTTPException) as error:
+        await lock_authoritative_business_item(conn, user=_user(), item=item)
+
+    assert error.value.status_code == 409
+    assert len(conn.statements) == 1

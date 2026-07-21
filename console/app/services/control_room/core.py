@@ -82,6 +82,7 @@ from app.services.control_room.business_item_reader import (
     resolve_scoped_business_item_lookup,
 )
 from app.services.control_room.business_metadata import business_item_metadata
+from app.services.control_room.business_mutation_guard import lock_authoritative_business_item
 from app.services.control_room.business_persisted_row import persisted_business_item
 from app.services.control_room.business_repository import (
     approve_control_room_decision,
@@ -102,7 +103,6 @@ from app.services.control_room.business_decision_summary import (
     count_open_business_decisions,
 )
 from app.services.security_context import build_security_context, rls_user_context
-
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500").rstrip("/")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
