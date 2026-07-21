@@ -199,9 +199,21 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         )
         await persist_item_rows(conn, rows, workspace_wide=True)
         technical_row = next(row for row in rows if row["item_id"] == technical_id)
+        legitimate_row = next(row for row in rows if row["item_id"] == legitimate_id)
         await ensure_item_row(
             conn,
             {**technical_row, "status": "open"},
+            terminal_statuses=("approved", "dismissed", "resolved"),
+            workspace_wide=True,
+        )
+        await ensure_item_row(
+            conn,
+            {
+                **legitimate_row,
+                "status": "in_review",
+                "selected_option_id": "replacement",
+                "execution_status": "not_started",
+            },
             terminal_statuses=("approved", "dismissed", "resolved"),
             workspace_wide=True,
         )
@@ -247,6 +259,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
 
         kept = by_id[legitimate_id]
         kept_metadata = _jsonb(kept["metadata"])
+        assert kept["status"] == "in_review"
         assert kept["decision_id"] == 77
         assert kept["selected_option_id"] == "review"
         assert kept["execution_status"] == "executed"

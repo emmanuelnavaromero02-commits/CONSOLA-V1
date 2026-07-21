@@ -185,11 +185,11 @@ SET {_SEMANTIC_UPDATE},
     END,
     selected_option_id = CASE
         WHEN {_RESET_WORKFLOW} THEN NULL
-        ELSE COALESCE(EXCLUDED.selected_option_id, control_room_items.selected_option_id)
+        ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
         WHEN {_RESET_WORKFLOW} THEN 'not_started'
-        ELSE COALESCE(EXCLUDED.execution_status, control_room_items.execution_status)
+        ELSE COALESCE(control_room_items.execution_status, EXCLUDED.execution_status)
     END
 {_owner_conflict_guard(6, 7)}
 """
