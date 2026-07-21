@@ -102,7 +102,7 @@ async def require_approvable_decision(
         decision_id=decision_id,
         use_stored_fingerprint=True,
     )
-    if not (own_link or eligible_provenance):
+    if not eligible_provenance:
         raise HTTPException(409, "decision is not linked to this control room item")
     return ApprovableDecision(row=decision, linked=own_link)
 
