@@ -38,6 +38,23 @@ class ExistingRow:
         return [self.row]
 
 
+class RefreshCycle(ExistingRow):
+    async def refresh(self, item: dict, *, clear_workflow: bool = False) -> dict:
+        patch = (await workflow_metadata_patches(self, [item]))[
+            ("workspace-a", "business-1")
+        ]
+        self.row = {
+            **self.row,
+            **item,
+            "decision_id": None if clear_workflow else self.row.get("decision_id"),
+            "status": "open" if clear_workflow else self.row.get("status"),
+            "selected_option_id": None,
+            "execution_status": "not_started",
+            "metadata": patch,
+        }
+        return patch
+
+
 @pytest.mark.asyncio
 async def test_modern_quarantine_wins_over_matching_provenance_permanently():
     item = _item()
@@ -85,3 +102,38 @@ async def test_modern_quarantine_survives_when_workflow_columns_are_cleared():
     ]
 
     assert patch == {WORKFLOW_QUARANTINE_KEY: quarantine}
+
+
+@pytest.mark.asyncio
+async def test_workflow_a_never_revives_across_three_refreshes_of_observation_b():
+    observation_a = _item(value=1)
+    observation_b = _item(value=2)
+    provenance = workflow_eligibility_provenance(
+        observation_a,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-a",
+        decision_id=42,
+    )
+    state = RefreshCycle(
+        {
+            **observation_a,
+            "decision_id": 42,
+            "status": "decision_created",
+            "execution_status": "not_started",
+            "metadata": {
+                CURRENT_ELIGIBILITY_FINGERPRINT_KEY: provenance["fingerprint"],
+                DECISION_PROVENANCE_KEY: provenance,
+            },
+        }
+    )
+
+    patches = [
+        await state.refresh(observation_b, clear_workflow=True),
+        await state.refresh(observation_b),
+        await state.refresh(observation_b),
+    ]
+
+    assert all(WORKFLOW_QUARANTINE_KEY in patch for patch in patches)
+    assert all(DECISION_PROVENANCE_KEY not in patch for patch in patches)
+    assert state.row["decision_id"] is None
+    assert state.row["status"] == "open"
