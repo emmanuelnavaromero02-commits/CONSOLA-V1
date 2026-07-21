@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import json
 import os
 from dataclasses import dataclass
@@ -77,23 +79,17 @@ ENGINE_ROUTES: dict[str, EngineRoute] = {
     "risk_forecast": EngineRoute(
         ("decision_intelligence", "monte_carlo", "bayesian_calibration"),
         (),
-        (
-            "Use existing forecast evidence; Monte Carlo and Bayes are recommended but not executed in 19A.",
-        ),
+        ("Use existing forecast evidence; Monte Carlo and Bayes are recommended but not executed in 19A.",),
     ),
     "resource_allocation": EngineRoute(
         ("decision_intelligence", "monte_carlo"),
         ("constrained_optimizer_candidate",),
-        (
-            "Requires constrained optimizer for allocation decisions; candidate is advisory only.",
-        ),
+        ("Requires constrained optimizer for allocation decisions; candidate is advisory only.",),
     ),
     "budget_optimization": EngineRoute(
         ("decision_intelligence", "monte_carlo"),
         ("constrained_optimizer_candidate",),
-        (
-            "Requires constrained optimizer for budget trade-offs; candidate is advisory only.",
-        ),
+        ("Requires constrained optimizer for budget trade-offs; candidate is advisory only.",),
     ),
     "capacity_planning": EngineRoute(
         ("decision_intelligence", "monte_carlo"),
@@ -118,16 +114,12 @@ ENGINE_ROUTES: dict[str, EngineRoute] = {
     "simple_action": EngineRoute(
         ("decision_intelligence", "external_action_framework"),
         (),
-        (
-            "External action framework can propose sandbox actions requiring human approval.",
-        ),
+        ("External action framework can propose sandbox actions requiring human approval.",),
     ),
     "data_quality": EngineRoute(
         ("decision_intelligence", "agent_monitor"),
         (),
-        (
-            "Use Control Room and Agent Monitor evidence; no external action is executed.",
-        ),
+        ("Use Control Room and Agent Monitor evidence; no external action is executed.",),
     ),
     "insufficient_data": EngineRoute(
         ("decision_intelligence",),
@@ -234,9 +226,7 @@ def _manual_fixture_allowed() -> bool:
 
 
 def action_creation_enabled() -> bool:
-    return _truthy(
-        os.environ.get("DECISION_ORCHESTRATOR_CREATE_ACTIONS"), default=False
-    )
+    return _truthy(os.environ.get("DECISION_ORCHESTRATOR_CREATE_ACTIONS"), default=False)
 
 
 def _actor_id(user: dict | None) -> int | None:
@@ -300,9 +290,7 @@ def _validate_no_scope_fields(value: Any, *, path: str = "payload") -> None:
         for key, item in value.items():
             key_text = str(key)
             if key_text in FORBIDDEN_SCOPE_KEYS:
-                raise DecisionOrchestratorError(
-                    422, f"{path}.{key_text} is not accepted"
-                )
+                raise DecisionOrchestratorError(422, f"{path}.{key_text} is not accepted")
             _validate_no_scope_fields(item, path=f"{path}.{key_text}")
         return
     if isinstance(value, list):
@@ -337,9 +325,7 @@ def normalize_signal(payload: dict[str, Any], source: dict[str, Any]) -> dict[st
         "source_type": payload.get("source_type"),
         "source_id": payload.get("source_id"),
         "title": payload.get("title") or source_data.get("title") or "",
-        "description": payload.get("description")
-        or source_data.get("description")
-        or "",
+        "description": payload.get("description") or source_data.get("description") or "",
         "metrics": payload.get("metrics") or metadata.get("metrics") or {},
         "entities": payload.get("entities") or metadata.get("entities") or [],
         "time_horizon": payload.get("time_horizon") or metadata.get("time_horizon"),
@@ -426,7 +412,9 @@ def classify_problem(normalized: dict[str, Any]) -> dict[str, Any]:
     if score <= 0:
         best = "unknown"
     secondaries = [
-        problem for problem, value in ranked[1:] if value > 0 and problem != best
+        problem
+        for problem, value in ranked[1:]
+        if value > 0 and problem != best
     ][:3]
     confidence = round(min(0.92, max(0.42, 0.48 + score * 0.11)), 2)
     if best == "unknown":
@@ -508,17 +496,13 @@ def build_decision_plan(
         "Run recommended engines manually if more quantitative evidence is required.",
     ]
     if engine_route["candidate_engines"]:
-        steps.append(
-            "Treat candidate engines as roadmap markers; they are not implemented."
-        )
+        steps.append("Treat candidate engines as roadmap markers; they are not implemented.")
     if action_recommended:
         steps.append("Create a sandbox external action proposal for human approval.")
     if problem_type == "insufficient_data":
         steps = ["Collect missing evidence before proposing any action."]
     elif recommendation_only:
-        steps.append(
-            "Keep the result advisory; external action proposals are disabled."
-        )
+        steps.append("Keep the result advisory; external action proposals are disabled.")
     refs = normalized.get("evidence_refs") or []
     evidence_metadata = external_evidence_metadata(refs)
     plan = {
@@ -539,20 +523,14 @@ def build_decision_plan(
     return plan
 
 
-def build_orchestration_plan(
-    payload: dict[str, Any], source: dict[str, Any]
-) -> dict[str, Any]:
+def build_orchestration_plan(payload: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     _validate_no_scope_fields(payload)
     normalized = normalize_signal(payload, source)
     classification = classify_problem(normalized)
     route = route_engines(classification)
-    evidence_metadata = external_evidence_metadata(
-        normalized.get("evidence_refs") or []
-    )
+    evidence_metadata = external_evidence_metadata(normalized.get("evidence_refs") or [])
     if evidence_metadata:
-        route["engine_plan"]["external_evidence"] = evidence_metadata[
-            "external_evidence"
-        ]
+        route["engine_plan"]["external_evidence"] = evidence_metadata["external_evidence"]
     decision_plan = build_decision_plan(normalized, classification, route)
     safety_notes = [
         "Plan-only orchestrator: available engines were not executed automatically.",
@@ -562,13 +540,9 @@ def build_orchestration_plan(
     if decision_plan["action_recommended"]:
         safety_notes.append("Any external action proposal requires human approval.")
     if decision_plan.get("recommendation_only"):
-        safety_notes.append(
-            "Recommendation-only constraints disable external action proposals."
-        )
+        safety_notes.append("Recommendation-only constraints disable external action proposals.")
     if evidence_metadata:
-        safety_notes.append(
-            "External market context is treated as evidence only, not as automatic truth."
-        )
+        safety_notes.append("External market context is treated as evidence only, not as automatic truth.")
     return {
         **classification,
         **route,
@@ -928,11 +902,7 @@ async def orchestrate(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         action = action_response.get("action") or {}
         external_action_id = action.get("id")
         if external_action_id:
-            async with scoped_db_for_user(pool, user) as (
-                conn,
-                _tenant_id,
-                workspace_id,
-            ):
+            async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
                 row = await conn.fetchrow(
                     """
                     UPDATE decision_orchestration_runs

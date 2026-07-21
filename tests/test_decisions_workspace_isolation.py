@@ -18,6 +18,8 @@ scope by the active workspace.
 
 from __future__ import annotations
 
+# fmt: off
+
 import importlib
 import os
 import sys
@@ -60,7 +62,6 @@ def _clean_app_modules():
 
 # ── Static guards on console/app/main.py ────────────────────────────────────
 
-
 def test_decision_select_queries_are_workspace_scoped():
     """Every direct SELECT on the ``decisions`` table must include the
     ``workspace_id`` filter so a cross-workspace read can't slip past
@@ -68,13 +69,13 @@ def test_decision_select_queries_are_workspace_scoped():
     src = console_route_source()
 
     # _dec_load_with_visibility built the per-row lookup.
-    assert (
-        "SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2" in src
-    ), "_dec_load_with_visibility must include workspace_id in the WHERE"
+    assert "SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2" in src, (
+        "_dec_load_with_visibility must include workspace_id in the WHERE"
+    )
 
     # The list endpoint builds the WHERE through _dec_visible_clause;
     # confirm that clause references workspace_id at least once.
-    assert 'workspace_clause = f"workspace_id = {ws_param}"' in src or (
+    assert "workspace_clause = f\"workspace_id = {ws_param}\"" in src or (
         "workspace_id = " in src and "_dec_visible_clause" in src
     ), "_dec_visible_clause must emit workspace_id = $N"
 
@@ -90,14 +91,15 @@ def test_decision_insert_writes_workspace_id():
 def test_decision_update_is_workspace_scoped():
     src = console_route_source()
     assert (
-        "WHERE id = {decision_ref} AND workspace_id = {workspace_ref} " "RETURNING *"
+        "WHERE id = {decision_ref} AND workspace_id = {workspace_ref} "
+        "RETURNING *"
     ) in src, "PATCH /api/decisions/{id} must include workspace_id"
 
 
 def test_decision_delete_is_workspace_scoped():
     src = console_route_source()
     assert (
-        "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2"
+        'DELETE FROM decisions WHERE id = $1 AND workspace_id = $2'
     ) in src, "DELETE /api/decisions/{id} must include workspace_id"
 
 
@@ -157,7 +159,11 @@ class _FakePool:
 
 
 def _non_scope_calls(fake: _FakePool) -> list[tuple[str, str, tuple]]:
-    return [call for call in fake.calls if "set_config('app.tenant_id'" not in call[1]]
+    return [
+        call
+        for call in fake.calls
+        if "set_config('app.tenant_id'" not in call[1]
+    ]
 
 
 def _assert_db_scope(fake: _FakePool, workspace_id: str) -> None:
@@ -167,9 +173,7 @@ def _assert_db_scope(fake: _FakePool, workspace_id: str) -> None:
         if "set_config('app.tenant_id'" in call[1]
         and "set_config('app.workspace_id'" in call[1]
     ]
-    assert (
-        scope_calls
-    ), "scoped endpoints must set Postgres app.tenant_id/app.workspace_id"
+    assert scope_calls, "scoped endpoints must set Postgres app.tenant_id/app.workspace_id"
     assert scope_calls[0][2][1] == workspace_id
 
 
@@ -179,7 +183,8 @@ def console_main(monkeypatch):
         monkeypatch.setenv(k, v)
     saved_path = list(sys.path)
     sys.path[:] = [
-        p for p in sys.path if not any(marker in p for marker in SERVICE_PATH_MARKERS)
+        p for p in sys.path
+        if not any(marker in p for marker in SERVICE_PATH_MARKERS)
     ]
     sys.path.insert(0, str(CONSOLE_DIR))
     _purge_app_modules()
@@ -210,9 +215,7 @@ async def test_list_decisions_filters_by_active_workspace(console_main, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_list_decisions_returns_empty_without_active_workspace(
-    console_main, monkeypatch
-):
+async def test_list_decisions_returns_empty_without_active_workspace(console_main, monkeypatch):
     """A user with no active workspace must see zero decisions — the
     route must fail closed before hitting the database."""
     fake = _FakePool(fetch_result=[])
@@ -239,9 +242,7 @@ async def test_load_with_visibility_returns_none_without_active_workspace(consol
 
 
 @pytest.mark.asyncio
-async def test_load_with_visibility_scopes_query_to_workspace(
-    console_main, monkeypatch
-):
+async def test_load_with_visibility_scopes_query_to_workspace(console_main, monkeypatch):
     fake = _FakePool(fetchrow_result=None)
 
     async def _factory():
@@ -260,9 +261,7 @@ async def test_load_with_visibility_scopes_query_to_workspace(
 
 
 @pytest.mark.asyncio
-async def test_load_with_visibility_admin_still_scoped_to_workspace(
-    console_main, monkeypatch
-):
+async def test_load_with_visibility_admin_still_scoped_to_workspace(console_main, monkeypatch):
     """Admins are global, but only inside their active workspace. They
     don't get to read tenant A's decisions while their session is on
     tenant B."""
@@ -291,7 +290,9 @@ async def test_create_decision_rejects_no_active_workspace(console_main):
 
     user = {"id": 7, "role": "user"}  # no active_workspace_id
     with pytest.raises(HTTPException) as exc_info:
-        await console_main.api_decisions_create(body={"title": "test"}, user=user)
+        await console_main.api_decisions_create(
+            body={"title": "test"}, user=user
+        )
     assert exc_info.value.status_code == 400
     assert "workspace" in str(exc_info.value.detail).lower()
 
@@ -367,9 +368,9 @@ async def test_decision_routes_hide_historical_source_state_rows(
     monkeypatch.setattr(console_main, "_dec_pool", _factory)
     user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
 
-    assert await console_main.api_decisions_list(status="", overdue="", user=user) == {
-        "decisions": []
-    }
+    assert await console_main.api_decisions_list(
+        status="", overdue="", user=user
+    ) == {"decisions": []}
 
     from fastapi import HTTPException
 
@@ -388,7 +389,9 @@ async def test_create_decision_inserts_active_workspace_id(console_main, monkeyp
     monkeypatch.setattr(console_main, "_dec_pool", _factory)
     user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
 
-    out = await console_main.api_decisions_create(body={"title": "test"}, user=user)
+    out = await console_main.api_decisions_create(
+        body={"title": "test"}, user=user
+    )
     assert out["workspace_id"] == "workspace-A"
 
     _assert_db_scope(fake, "workspace-A")
@@ -410,7 +413,6 @@ async def test_create_decision_inserts_active_workspace_id(console_main, monkeyp
 # ── Happy paths (reviewer #2): cross-workspace -> 404 was already covered;
 # verify same-workspace -> 200 so a regression that returns None for every
 # row would also fail the suite, not just the negative tests. ──────────────
-
 
 @pytest.mark.asyncio
 async def test_get_decision_happy_path_same_workspace(console_main, monkeypatch):
@@ -504,7 +506,6 @@ async def test_delete_decision_happy_path_same_workspace(console_main, monkeypat
 # workspace-scoped by construction. The tests below pin that contract
 # so a future refactor that bypasses the helper fails CI. ───────────────
 
-
 @pytest.mark.asyncio
 async def test_add_action_404_when_cross_workspace(console_main, monkeypatch):
     from fastapi import HTTPException
@@ -554,12 +555,7 @@ async def test_add_action_happy_path_same_workspace(console_main, monkeypatch):
         return fake
 
     monkeypatch.setattr(console_main, "_dec_pool", _factory)
-    user = {
-        "id": 7,
-        "role": "user",
-        "email": "u@test",
-        "active_workspace_id": "workspace-A",
-    }
+    user = {"id": 7, "role": "user", "email": "u@test", "active_workspace_id": "workspace-A"}
 
     out = await console_main.api_decisions_add_action(
         decision_id=1, body={"action_text": "note"}, user=user
@@ -576,7 +572,6 @@ async def test_add_action_happy_path_same_workspace(console_main, monkeypatch):
 # ── Edge case: active_workspace_id="" (empty string, not None). The
 # helper treats "" as falsy via `or`, so an empty workspace must
 # behave like a missing one. ──────────────────────────────────────────
-
 
 def test_current_workspace_id_treats_empty_string_as_missing(console_main):
     user = {"id": 7, "role": "user", "active_workspace_id": ""}

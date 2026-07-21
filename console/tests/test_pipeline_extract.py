@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import importlib
 import sys
 import types
@@ -73,31 +75,27 @@ def test_pipeline_gold_dependency_matcher_accepts_successfactors_s3_paths(consol
     ) == [
         {
             "name": "sap_successfactors_talent_signals",
-            "sources": [
-                "silver/sap_successfactors/sap_successfactors_employee_profile"
-            ],
+            "sources": ["silver/sap_successfactors/sap_successfactors_employee_profile"],
         }
     ]
 
 
 def test_sync_child_gold_refresh_summary_counts_partial_aggregate(console_main):
-    summary = console_main._sync_child_gold_refresh_summary(
-        [
-            {
-                "extra": {
-                    "gold_refresh": {
-                        "status": "partial",
-                        "materialized": 14,
-                        "total": 19,
-                        "results": [
-                            {"name": "ok_dataset", "status": "ok"},
-                            {"name": "failed_dataset", "status": "error"},
-                        ],
-                    }
+    summary = console_main._sync_child_gold_refresh_summary([
+        {
+            "extra": {
+                "gold_refresh": {
+                    "status": "partial",
+                    "materialized": 14,
+                    "total": 19,
+                    "results": [
+                        {"name": "ok_dataset", "status": "ok"},
+                        {"name": "failed_dataset", "status": "error"},
+                    ],
                 }
             }
-        ]
-    )
+        }
+    ])
 
     assert summary["status"] == "partial"
     assert summary["materialized"] == 14
@@ -329,23 +327,14 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
     intelligence_stub = _module(run_intelligence=run_intelligence)
     import app.services as _svc_pkg
 
-    monkeypatch.setitem(
-        sys.modules, "app.services.control_room_service", control_room_stub
-    )
-    monkeypatch.setitem(
-        sys.modules, "app.services.intelligence_engine", intelligence_stub
-    )
-    monkeypatch.setattr(
-        _svc_pkg, "control_room_service", control_room_stub, raising=False
-    )
-    monkeypatch.setattr(
-        _svc_pkg, "intelligence_engine", intelligence_stub, raising=False
-    )
+    monkeypatch.setitem(sys.modules, "app.services.control_room_service", control_room_stub)
+    monkeypatch.setitem(sys.modules, "app.services.intelligence_engine", intelligence_stub)
+    monkeypatch.setattr(_svc_pkg, "control_room_service", control_room_stub, raising=False)
+    monkeypatch.setattr(_svc_pkg, "intelligence_engine", intelligence_stub, raising=False)
     monkeypatch.setattr(console_main, "_sync_child_runs", child_runs)
     monkeypatch.setattr(console_main, "api_pipeline", pipeline)
     monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
     monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
-
     async def agentops(**_kwargs):
         return {
             "status": "success",
@@ -1009,9 +998,7 @@ async def test_sync_now_request_id_reuses_existing_terminal_run(
     monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
     monkeypatch.setattr(console_main, "_fetch_active_sync_run", active_should_not_run)
     monkeypatch.setattr(console_main, "_upsert_sync_run", upsert_should_not_run)
-    monkeypatch.setattr(
-        console_main, "_trigger_airflow_extract_dag", trigger_should_not_run
-    )
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
 
     result = await console_main.api_cartridge_sync_now(
         "sap_successfactors",
@@ -1135,9 +1122,7 @@ async def test_active_sync_run_endpoint_returns_persisted_payload_when_status_bu
     assert result["run_id"] == row["run_id"]
     assert result["status"] == "running"
     assert result["target"] == "all"
-    assert result["triggered_entities"] == [
-        {"entity": console_main._SYNC_AGGREGATE_ENTITY}
-    ]
+    assert result["triggered_entities"] == [{"entity": console_main._SYNC_AGGREGATE_ENTITY}]
 
 
 @pytest.mark.anyio
@@ -1321,9 +1306,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
                     "entity": "EmpCompensation",
                     "bronze": {"status": "fresh"},
                     "silver": [{"name": "sf_empcomp_latest", "status": "fresh"}],
-                    "gold": [
-                        {"name": "sap_successfactors_talent_signals", "status": "fresh"}
-                    ],
+                    "gold": [{"name": "sap_successfactors_talent_signals", "status": "fresh"}],
                 }
             ]
         }
@@ -1370,14 +1353,10 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
     monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
     monkeypatch.setattr(console_main, "_fetch_sync_run", fetch)
     monkeypatch.setattr(console_main, "_run_sync_agentops_monitors", run_agentops)
-    monkeypatch.setitem(
-        sys.modules, "app.services.control_room_service", control_room_stub
-    )
+    monkeypatch.setitem(sys.modules, "app.services.control_room_service", control_room_stub)
     import app.services as _svc_pkg
 
-    monkeypatch.setattr(
-        _svc_pkg, "control_room_service", control_room_stub, raising=False
-    )
+    monkeypatch.setattr(_svc_pkg, "control_room_service", control_room_stub, raising=False)
 
     result = await console_main._build_sync_run_status(
         cartridge="sap_successfactors",
@@ -1604,14 +1583,10 @@ async def test_successfactors_dag_entity_without_connection_id_returns_400_befor
         }
 
     async def trigger_should_not_run(*_args, **_kwargs):
-        raise AssertionError(
-            "Airflow should not be triggered without a SuccessFactors conn_id"
-        )
+        raise AssertionError("Airflow should not be triggered without a SuccessFactors conn_id")
 
     monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
-    monkeypatch.setattr(
-        console_main, "_trigger_airflow_extract_dag", trigger_should_not_run
-    )
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
 
     with pytest.raises(HTTPException) as exc:
         await console_main.api_pipeline_extract(
@@ -1748,9 +1723,7 @@ async def test_successfactors_entity_extract_endpoint_returns_reused_active_run(
     monkeypatch.setattr(
         console_main, "_reserve_successfactors_entity_extract_slot", reserve
     )
-    monkeypatch.setattr(
-        console_main, "_trigger_airflow_extract_dag", trigger_should_not_run
-    )
+    monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger_should_not_run)
 
     result = await console_main.api_pipeline_extract(
         "sap_successfactors",
@@ -2026,9 +1999,7 @@ async def test_api_pipeline_entity_runs_formats_successfactors_metadata_block_as
     )
 
     assert result["runs"][0]["status"] == "partial"
-    assert (
-        result["runs"][0]["classification"]["code"] == "SUCCESSFACTORS_METADATA_BLOCKED"
-    )
+    assert result["runs"][0]["classification"]["code"] == "SUCCESSFACTORS_METADATA_BLOCKED"
 
 
 @pytest.mark.anyio

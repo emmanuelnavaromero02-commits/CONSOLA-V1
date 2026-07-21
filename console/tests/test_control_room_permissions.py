@@ -1,3 +1,5 @@
+# fmt: off
+
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -44,9 +46,7 @@ def test_control_room_mutations_use_specific_write_permission():
         '"/thresholds"',
     ):
         assert route in router
-    execute_route = router.split('"/items/{item_id}/execute"', 1)[1].split(
-        "async def control_room_execute_item", 1
-    )[0]
+    execute_route = router.split('"/items/{item_id}/execute"', 1)[1].split("async def control_room_execute_item", 1)[0]
     assert "Depends(require_csrf)" in execute_route
     assert 'Depends(require_permission("control_room.write"))' in execute_route
     assert 'Depends(require_permission("control_room.execute"))' in execute_route
@@ -58,9 +58,7 @@ def test_control_room_permission_is_registered_and_workspace_admin_can_operate()
     assert '"control_room.write"' in permissions
     assert '"control_room.execute"' in permissions
     role_permissions = permissions.split("ROLE_PERMISSIONS = {", 1)[1]
-    workspace_admin_section = role_permissions.split('"workspace_admin": {', 1)[
-        1
-    ].split("},", 1)[0]
+    workspace_admin_section = role_permissions.split('"workspace_admin": {', 1)[1].split('},', 1)[0]
     assert '"control_room.write"' in workspace_admin_section
     assert '"control_room.execute"' in workspace_admin_section
 
@@ -94,31 +92,20 @@ def test_control_room_execute_permission_runtime_allows_workspace_admin():
         "workspace_role": "workspace_admin",
     }
     assert permissions.has_permission(user, "control_room.execute")
-    response = _build_execute_permission_client(user).post(
-        "/api/control-room/items/item-1/execute"
-    )
+    response = _build_execute_permission_client(user).post("/api/control-room/items/item-1/execute")
     assert response.status_code == 200
 
 
 def test_control_room_execute_permission_runtime_rejects_analyst_viewer_and_anonymous():
     for user in (
-        {
-            "id": 5,
-            "email": "analyst@example.com",
-            "role": "user",
-            "workspace_role": "analyst",
-        },
+        {"id": 5, "email": "analyst@example.com", "role": "user", "workspace_role": "analyst"},
         {"id": 6, "email": "viewer@example.com", "role": "viewer"},
     ):
         assert not permissions.has_permission(user, "control_room.execute")
-        response = _build_execute_permission_client(user).post(
-            "/api/control-room/items/item-1/execute"
-        )
+        response = _build_execute_permission_client(user).post("/api/control-room/items/item-1/execute")
         assert response.status_code == 403
 
-    response = _build_execute_permission_client(None).post(
-        "/api/control-room/items/item-1/execute"
-    )
+    response = _build_execute_permission_client(None).post("/api/control-room/items/item-1/execute")
     assert response.status_code == 401
 
 
@@ -142,18 +129,11 @@ def _build_real_control_room_router_client(user: dict | None) -> TestClient:
 
 def test_real_control_room_execute_route_rejects_roles_before_service_call():
     for user in (
-        {
-            "id": 5,
-            "email": "analyst@example.com",
-            "role": "user",
-            "workspace_role": "analyst",
-        },
+        {"id": 5, "email": "analyst@example.com", "role": "user", "workspace_role": "analyst"},
         {"id": 6, "email": "viewer@example.com", "role": "viewer"},
         None,
     ):
-        with patch.object(
-            control_room_service, "execute_item", new=AsyncMock()
-        ) as execute_item:
+        with patch.object(control_room_service, "execute_item", new=AsyncMock()) as execute_item:
             response = _build_real_control_room_router_client(user).post(
                 "/api/control-room/items/item-1/execute",
                 headers={"authorization": "Bearer test"},
@@ -191,9 +171,7 @@ def test_real_control_room_execute_route_requires_csrf_for_cookie_session():
         "role": "user",
         "workspace_role": "workspace_admin",
     }
-    with patch.object(
-        control_room_service, "execute_item", new=AsyncMock()
-    ) as execute_item:
+    with patch.object(control_room_service, "execute_item", new=AsyncMock()) as execute_item:
         response = _build_real_control_room_router_client(user).post(
             "/api/control-room/items/item-1/execute",
             json={"template_id": "create_followup_task", "confirm_execute": True},
@@ -213,4 +191,4 @@ def test_published_apps_stay_on_console_origin_via_workspace_proxy():
 
     assert '@app.get("/apps/{name}/content"' in main
     assert "_proxy_workspace_app" in main
-    assert 'RedirectResponse(f"{workspace_url}/apps' not in main
+    assert "RedirectResponse(f\"{workspace_url}/apps" not in main
