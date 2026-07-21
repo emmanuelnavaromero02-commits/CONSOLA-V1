@@ -7,6 +7,11 @@ import httpx
 import pytest
 
 from app.routers import control_room as routes
+from control_room_get_assertions import (
+    assert_route_scope,
+    matches_shape,
+    stable_response,
+)
 from control_room_get_edges import installed_read_edges
 from control_room_get_harness import (
     ITEM_ID,
@@ -188,34 +193,6 @@ PAYLOAD_SHAPES = {
 }
 
 
-def _matches_shape(payload, shape) -> bool:
-    return isinstance(payload, dict) and all(
-        isinstance(payload.get(key), expected)
-        if isinstance(expected, type)
-        else payload.get(key) == expected
-        for key, expected in shape.items()
-    )
-
-
-def _stable_response(value):
-    if isinstance(value, dict):
-        return {
-            key: _stable_response(item)
-            for key, item in value.items()
-            if key
-            not in {
-                "checked_at",
-                "due_at",
-                "generated_at",
-                "latency_ms",
-                "updated_at",
-            }
-        }
-    if isinstance(value, list):
-        return [_stable_response(item) for item in value]
-    return value
-
-
 @pytest.mark.asyncio
 async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
     discovered = {
@@ -227,7 +204,7 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
     assert discovered == set(GET_PATHS)
 
     sentinel = MutationSentinel()
-    before = sentinel.snapshot()
+    global_before = sentinel.snapshot()
     probe = ConcurrencyProbe()
     app = build_app(probe)
     routes._CONTROL_ROOM_READ_CACHE.clear()
@@ -241,6 +218,15 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
             base_url="http://test",
         ) as client:
             for index, (route, path) in enumerate(GET_PATHS.items()):
+                route_before = sentinel.snapshot()
+                scope_start = len(sentinel.scope_calls)
+                query_start = len(sentinel.query_calls)
+                request_ids = {
+                    f"route-{index}-sequential-a",
+                    f"route-{index}-sequential-b",
+                    f"route-{index}-concurrent-a",
+                    f"route-{index}-concurrent-b",
+                }
                 shape = PAYLOAD_SHAPES[route]
                 first = await client.get(
                     path, headers={"x-purity-request": f"route-{index}-sequential-a"}
@@ -252,10 +238,8 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
                 assert first.status_code == 200, (path, first.text)
                 assert second.status_code == first.status_code
                 first_payload = first.json()
-                assert _matches_shape(first_payload, shape), path
-                assert _stable_response(first_payload) == _stable_response(
-                    second.json()
-                )
+                assert matches_shape(first_payload, shape), path
+                assert stable_response(first_payload) == stable_response(second.json())
                 routes._CONTROL_ROOM_READ_CACHE.clear()
                 routes._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
                 probe.reset()
@@ -279,14 +263,22 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
                     path,
                     concurrent_b.text,
                 )
-                assert _matches_shape(concurrent_a.json(), shape), path
-                assert _stable_response(concurrent_a.json()) == _stable_response(
+                assert matches_shape(concurrent_a.json(), shape), path
+                assert stable_response(concurrent_a.json()) == stable_response(
                     concurrent_b.json()
                 )
                 assert probe.max_in_flight >= 2, path
+                assert sentinel.snapshot() == route_before, path
+                assert_route_scope(
+                    sentinel,
+                    scope_start=scope_start,
+                    query_start=query_start,
+                    request_ids=request_ids,
+                    expected_scope=(TENANT_ID, WORKSPACE_ID),
+                )
 
     assert len(seen_paths) == 29
-    assert sentinel.snapshot() == before
+    assert sentinel.snapshot() == global_before
     assert sentinel.mutation_attempts == []
     scoped_request_ids = {entry[0] for entry in sentinel.scope_calls}
     assert all(entry[1:] == (TENANT_ID, WORKSPACE_ID) for entry in sentinel.scope_calls)

@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
 from importlib import import_module
+import re
 from unittest.mock import patch
 
 from app.routers import control_room as routes
 
-from control_room_get_harness import ConcurrencyProbe, MutationSentinel
+from control_room_get_harness import (
+    TENANT_ID,
+    WORKSPACE_ID,
+    ConcurrencyProbe,
+    MutationSentinel,
+)
 
 
 DEFAULT_FETCHER_READS = (
@@ -21,6 +27,7 @@ DEFAULT_FETCHER_READS = (
     "list_item_outcomes",
     "get_anomaly",
 )
+_SAFE_DATASET = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
 def _async_value(value):
@@ -32,7 +39,23 @@ def _async_value(value):
 
 @contextmanager
 def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
-    async def dataset_fetcher(dataset: str, _user, _limit: int):
+    async def dataset_fetcher(dataset: str, user, limit: int):
+        assert _SAFE_DATASET.fullmatch(dataset)
+        assert user["active_tenant_id"] == TENANT_ID
+        assert user["active_workspace_id"] == WORKSPACE_ID
+        await sentinel.execute(
+            "SELECT set_config('app.tenant_id', $1, true), "
+            "set_config('app.workspace_id', $2, true)",
+            TENANT_ID,
+            WORKSPACE_ID,
+        )
+        await sentinel.fetch(
+            f'SELECT * FROM public."gold_{dataset}" '
+            "WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT $3",
+            WORKSPACE_ID,
+            TENANT_ID,
+            max(1, min(int(limit), 5000)),
+        )
         if dataset == "employees_anomalies":
             return [
                 {
@@ -79,12 +102,16 @@ def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
                 new=empty_dataset,
             )
         )
+        gold = import_module("app.services.intelligence.gold_fetcher")
+        stack.enter_context(
+            patch.object(gold, "query_gold_dataset_rows", new=dataset_fetcher)
+        )
         market = import_module("app.services.intelligence.market_decision_validation")
         stack.enter_context(
             patch.object(
                 market,
                 "query_intelligence_dataset_rows",
-                new=empty_dataset,
+                new=dataset_fetcher,
             )
         )
         for name in ("banxico", "inegi", "sec_edgar"):
@@ -93,7 +120,7 @@ def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
                 patch.object(
                     module,
                     "query_gold_dataset_rows",
-                    new=empty_dataset,
+                    new=dataset_fetcher,
                 )
             )
         stack.enter_context(
