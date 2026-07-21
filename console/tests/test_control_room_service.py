@@ -1100,12 +1100,14 @@ def test_desempeno_module_rewired_to_real_performance_not_compensation():
     comp = next(
         (m for m in MODULES if m.module_id == "sap_successfactors_compensation"), None
     )
-    assert (
-        perf is not None
-    ), "modulo Desempeno (sap_successfactors_performance) debe existir"
-    assert (
-        comp is not None
-    ), "modulo Compensacion (sap_successfactors_compensation) separado debe existir"
+    missing_performance = (
+        "modulo Desempeno (sap_successfactors_performance) debe existir"
+    )
+    missing_compensation = (
+        "modulo Compensacion (sap_successfactors_compensation) separado debe existir"
+    )
+    assert perf is not None, missing_performance
+    assert comp is not None, missing_compensation
 
     perf_datasets = {s.dataset for s in perf.sources}
     comp_datasets = {s.dataset for s in comp.sources}
@@ -1126,14 +1128,14 @@ def test_no_module_mixes_compensation_and_performance():
         datasets = {source.dataset for source in module.sources}
         has_comp = any("compensation" in ds for ds in datasets)
         has_perf = any(("performance" in ds or "cpa_scores" in ds) for ds in datasets)
-        assert not (
-            has_comp and has_perf
-        ), f"modulo {module.visible_id} mezcla compensacion y desempeno"
+        mixed_module = f"modulo {module.visible_id} mezcla compensacion y desempeno"
+        assert not (has_comp and has_perf), mixed_module
         if "sap_successfactors_compensation_distribution" in datasets:
             comp_consumers += 1
-    assert (
-        comp_consumers == 1
-    ), "compensation_distribution debe consumirlo exactamente un modulo"
+    duplicate_compensation = (
+        "compensation_distribution debe consumirlo exactamente un modulo"
+    )
+    assert comp_consumers == 1, duplicate_compensation
 
     comp_terms = (
         "compensation",
@@ -1158,18 +1160,14 @@ def test_no_module_mixes_compensation_and_performance():
         return " ".join(parts).lower()
 
     perf_str, comp_str = match_string(perf), match_string(comp)
-    assert any(
-        t in perf_str for t in perf_terms
-    ), "Desempeno debe seguir matcheando su tarjeta"
-    assert not any(
-        t in perf_str for t in comp_terms
-    ), "Desempeno no debe matchear compensacion"
-    assert any(
-        t in comp_str for t in comp_terms
-    ), "Compensacion debe matchear su tarjeta"
-    assert not any(
-        t in comp_str for t in perf_terms
-    ), "Compensacion no debe matchear desempeno"
+    missing_performance_match = "Desempeno debe seguir matcheando su tarjeta"
+    unexpected_compensation_match = "Desempeno no debe matchear compensacion"
+    missing_compensation_match = "Compensacion debe matchear su tarjeta"
+    unexpected_performance_match = "Compensacion no debe matchear desempeno"
+    assert any(t in perf_str for t in perf_terms), missing_performance_match
+    assert not any(t in perf_str for t in comp_terms), unexpected_compensation_match
+    assert any(t in comp_str for t in comp_terms), missing_compensation_match
+    assert not any(t in comp_str for t in perf_terms), unexpected_performance_match
 
 
 @pytest.mark.asyncio
