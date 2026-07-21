@@ -56,15 +56,20 @@ def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
         workspace_id="workspace-A",
         decision_id=42,
     )
-    return [
-        {"id": 42, "created_by_id": 7, "kpis": []},
-        {
+    decision = {"id": 42, "created_by_id": 7, "kpis": []}
+    item_row = {
             "item_id": item_id,
             "decision_id": 42,
             "owner_user_id": 7,
             "item_kind": "anomaly",
             "metadata": {DECISION_PROVENANCE_KEY: provenance},
-        },
+        }
+    return [
+        decision,
+        item_row,
+        None,
+        decision,
+        item_row,
         None,
         action,
         {"item_id": item_id, "owner_user_id": 7, "decision_id": 42},
@@ -4444,7 +4449,7 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     assert "workspace_id = $2" in visible_sql
     assert decision_id == 42
     assert workspace_id == "workspace-A"
-    link_args = mock_pool.fetchrow.call_args_list[5].args
+    link_args = mock_pool.fetchrow.call_args_list[8].args
     link_sql = link_args[0]
     assert "owner_user_id IS NOT DISTINCT FROM $5" in link_sql
     assert "RETURNING item_id" in link_sql

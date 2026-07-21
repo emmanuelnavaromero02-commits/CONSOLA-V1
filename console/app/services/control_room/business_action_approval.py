@@ -56,6 +56,7 @@ async def require_approvable_decision(
         SELECT item_id, decision_id, owner_user_id, item_kind, metadata
           FROM control_room_items
          WHERE workspace_id = $1 AND item_id = $2
+         FOR UPDATE
         """,
         workspace_id,
         item["id"],
@@ -98,7 +99,7 @@ async def require_approvable_decision(
         raise HTTPException(409, "control room item has quarantined workflow")
     eligible_provenance = workflow_has_eligible_provenance(
         metadata if isinstance(metadata, Mapping) else {},
-        item,
+        {**dict(item), "workspace_id": workspace_id},
         decision_id=decision_id,
         use_stored_fingerprint=True,
     )
@@ -170,6 +171,13 @@ async def approve_business_item(
         item=dict(item),
         status="decision_created" if not approved.linked else "approved",
         critical=True,
+    )
+    approved = await require_approvable_decision(
+        conn,
+        user=user,
+        item=item,
+        workspace_id=workspace_id,
+        decision_id=decision_id,
     )
     if not approved.linked:
         await link_decision(
