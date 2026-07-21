@@ -16,6 +16,7 @@ def _item(**overrides):
     item = {
         "id": "business-1",
         "kind": "anomaly",
+        "cartridge": "sap_hcm",
         "source_dataset": "gold_metrics",
         "metric_type": "scalar",
         "observed_value": 2,
@@ -143,17 +144,18 @@ def test_overlay_is_repeatable_and_does_not_mutate_persisted_state():
 
 
 def _persisted_row(item, metadata, *, workflow=False):
+    persisted_metadata = {**item, **metadata}
+    persisted_metadata.pop("cartridge", None)
+    persisted_metadata.pop("cartridge_id", None)
     row = {
         "item_id": item["id"],
         "item_kind": item["kind"],
+        "cartridge_id": item.get("cartridge") or item.get("cartridge_id"),
         "source_dataset": item["source_dataset"],
         "status": "open",
         "impact_estimate": 999,
         "priority_score": 100,
-        "metadata": {
-            **item,
-            **metadata,
-        },
+        "metadata": persisted_metadata,
     }
     if workflow:
         row.update(

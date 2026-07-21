@@ -99,6 +99,7 @@ def business_observation_fingerprint(item: Mapping[str, Any]) -> str:
     refs = parent_references(item)
     payload = {
         "item_id": _identity_value(item, "id", "item_id"),
+        "cartridge_id": _identity_value(item, "cartridge", "cartridge_id"),
         "kind": _identity_value(item, "kind", "item_kind").lower(),
         "observation": _semantic_fingerprint_values(item),
         "lineage": sorted(refs.ids),

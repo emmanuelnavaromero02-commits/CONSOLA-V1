@@ -68,6 +68,7 @@ def persisted_business_item(
         "item_kind": metadata.get("item_kind") or public.get("item_kind"),
         "tenant_id": public.get("tenant_id") or metadata.get("tenant_id"),
         "workspace_id": public.get("workspace_id") or metadata.get("workspace_id"),
+        "cartridge_id": public.get("cartridge_id"),
         "source_dataset": public.get("source_dataset"),
         "metadata": metadata,
     }

@@ -9,8 +9,12 @@ from app.services.control_room.business_state_overlay import (
 )
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+    DECISION_PROVENANCE_KEY,
     ELIGIBILITY_POLICY_VERSION,
+    WorkflowStage,
     business_observation_fingerprint,
+    workflow_eligibility_provenance,
+    workflow_has_eligible_provenance,
 )
 
 
@@ -32,6 +36,8 @@ def _item(**overrides):
         "id": "business-1",
         "kind": "anomaly",
         "status": "open",
+        "workspace_id": "workspace-1",
+        "cartridge": "sap_hcm",
         "source_dataset": "gold_metrics",
         "metric_type": "scalar",
         "observed_value": 2,
@@ -112,6 +118,52 @@ def test_different_observation_fingerprint_does_not_overlay_artifacts():
     projected = _overlay(current, _state_for(prior))
 
     _assert_no_persisted_artifacts(projected)
+
+
+def test_different_cartridge_invalidates_fingerprint_provenance_and_overlay():
+    prior = _item(cartridge="sap_hcm")
+    current = _item(cartridge="sec_edgar")
+    provenance = workflow_eligibility_provenance(
+        prior,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-1",
+        decision_id=42,
+    )
+    state = _state_for(prior, **{DECISION_PROVENANCE_KEY: provenance})
+    state.update(status="decision_created", decision_id=42)
+
+    assert business_observation_fingerprint(prior) != (
+        business_observation_fingerprint(current)
+    )
+    assert not workflow_has_eligible_provenance(
+        state["metadata"], current, decision_id=42
+    )
+    projected = _overlay(current, state)
+    assert projected["status"] == "open"
+    assert projected["decision_id"] is None
+    _assert_no_persisted_artifacts(projected)
+
+
+def test_same_canonical_cartridge_preserves_legitimate_workflow_and_artifacts():
+    prior = _item(cartridge="sap_hcm")
+    current = _item(cartridge=None, cartridge_id="sap_hcm")
+    provenance = workflow_eligibility_provenance(
+        prior,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-1",
+        decision_id=42,
+    )
+    state = _state_for(prior, **{DECISION_PROVENANCE_KEY: provenance})
+    state.update(status="decision_created", decision_id=42)
+
+    assert business_observation_fingerprint(prior) == (
+        business_observation_fingerprint(current)
+    )
+    assert workflow_has_eligible_provenance(state["metadata"], current, decision_id=42)
+    projected = _overlay(current, state)
+    assert projected["status"] == "decision_created"
+    assert projected["decision_id"] == 42
+    assert projected["impact_estimate"] == 900
 
 
 def test_matching_observation_and_policy_preserve_legitimate_artifacts():
