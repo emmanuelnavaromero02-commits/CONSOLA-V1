@@ -6,6 +6,7 @@ from typing import Any
 from app.services.control_room.business_evidence_identity import (
     ADMINISTRATIVE_ID_FIELDS,
     legacy_scalar_reference,
+    nested_administrative_references,
     source_and_id_pair,
     typed_reference,
 )
@@ -52,10 +53,13 @@ def has_substantive_reference(
             return False
         seen.add(identity)
         try:
+            local_exclusions = excluded_references | nested_administrative_references(
+                value
+            )
             typed = typed_reference(
                 value,
                 canonical_source_values=canonical_source_values,
-                excluded_references=excluded_references,
+                excluded_references=local_exclusions,
             )
             if typed is not None:
                 return typed
@@ -63,7 +67,7 @@ def has_substantive_reference(
                 value,
                 allow_generic_id=allow_generic_id,
                 canonical_source_values=canonical_source_values,
-                excluded_references=excluded_references,
+                excluded_references=local_exclusions,
             ):
                 return True
             for key, nested in value.items():
@@ -73,7 +77,7 @@ def has_substantive_reference(
                 if normalized in _LOCATOR_FIELDS and legacy_scalar_reference(
                     nested,
                     canonical_source_values=canonical_source_values,
-                    excluded_references=excluded_references,
+                    excluded_references=local_exclusions,
                 ):
                     return True
                 if normalized in _REFERENCE_CONTAINERS and has_substantive_reference(
@@ -81,7 +85,7 @@ def has_substantive_reference(
                     scalar_is_locator=True,
                     allow_generic_id=True,
                     canonical_source_values=canonical_source_values,
-                    excluded_references=excluded_references,
+                    excluded_references=local_exclusions,
                     seen=seen,
                 ):
                     return True
@@ -90,7 +94,7 @@ def has_substantive_reference(
                         nested,
                         scalar_is_locator=False,
                         canonical_source_values=canonical_source_values,
-                        excluded_references=excluded_references,
+                        excluded_references=local_exclusions,
                         seen=seen,
                     )
                 ):
@@ -107,13 +111,16 @@ def has_substantive_reference(
             return False
         seen.add(identity)
         try:
+            local_exclusions = excluded_references | nested_administrative_references(
+                value
+            )
             return any(
                 has_substantive_reference(
                     entry,
                     scalar_is_locator=scalar_is_locator,
                     allow_generic_id=allow_generic_id,
                     canonical_source_values=canonical_source_values,
-                    excluded_references=excluded_references,
+                    excluded_references=local_exclusions,
                     seen=seen,
                 )
                 for entry in value

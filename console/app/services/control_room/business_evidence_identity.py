@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 
@@ -89,6 +89,34 @@ def administrative_references(
     )
 
 
+def nested_administrative_references(
+    value: Any,
+    *,
+    seen: set[int] | None = None,
+) -> frozenset[str]:
+    if not isinstance(value, (Mapping, Sequence)) or isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        return frozenset()
+    seen = seen if seen is not None else set()
+    identity = id(value)
+    if identity in seen:
+        return frozenset()
+    seen.add(identity)
+    try:
+        references: set[str] = set()
+        if isinstance(value, Mapping):
+            references.update(administrative_references((value,)))
+            nested_values = value.values()
+        else:
+            nested_values = value
+        for nested in nested_values:
+            references.update(nested_administrative_references(nested, seen=seen))
+        return frozenset(references)
+    finally:
+        seen.remove(identity)
+
+
 def contains_excluded(value: Any, excluded: frozenset[str]) -> bool:
     normalized = reference_token(value)
     components = frozenset(
@@ -145,14 +173,15 @@ def source_and_id_pair(
     canonical_source_values: frozenset[str],
     excluded_references: frozenset[str],
 ) -> bool:
+    local_exclusions = excluded_references | administrative_references((values,))
     return any(
         str(key).strip().lower() in SOURCE_FIELDS
         and reference_token(value) in canonical_source_values
-        and not contains_excluded(value, excluded_references)
+        and not contains_excluded(value, local_exclusions)
         for key, value in values.items()
     ) and any(
         _is_id_field(key, allow_generic_id=allow_generic_id)
-        and structured_id(value, excluded_references)
+        and structured_id(value, local_exclusions)
         for key, value in values.items()
     )
 
@@ -169,14 +198,14 @@ def typed_reference(
     id_fields = _TYPED_EVIDENCE_IDS.get(evidence_type)
     if id_fields is None:
         return False
+    local_exclusions = excluded_references | administrative_references((values,))
     has_source = any(
         str(key).strip().lower() in SOURCE_FIELDS
         and reference_token(value) in canonical_source_values
         for key, value in values.items()
     )
     has_id = any(
-        str(key).strip().lower() in id_fields
-        and structured_id(value, excluded_references)
+        str(key).strip().lower() in id_fields and structured_id(value, local_exclusions)
         for key, value in values.items()
     )
     return has_source and has_id
@@ -190,6 +219,7 @@ __all__ = (
     "canonical_sources",
     "contains_excluded",
     "legacy_scalar_reference",
+    "nested_administrative_references",
     "source_and_id_pair",
     "typed_reference",
 )

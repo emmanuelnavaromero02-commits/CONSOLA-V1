@@ -2520,7 +2520,7 @@ def _base_item(
                 )
                 if key in row
             },
-            **nonempty_mapping_fields(row, ("observation", "intelligence")),
+            **nonempty_mapping_fields(row, ("observation",)),
             **nonempty_mapping_fields(row, ("lineage",)),
             **runtime_row_evidence_fields(
                 source_dataset=source.dataset,
