@@ -89,6 +89,20 @@ def test_count_explicitly_accepts_affected_count_as_its_value():
     assert result.eligible is True
 
 
+def test_zero_count_requires_a_strictly_positive_known_population():
+    result = classify_business_item(
+        _item(
+            metric_type="count",
+            count=0,
+            population_count=0,
+            data_status="ready",
+            evidence_refs=["gold_metrics:row:metric-hardening-1"],
+        )
+    )
+
+    assert result.reason is EligibilityReason.ZERO_WITHOUT_POPULATION
+
+
 @pytest.mark.parametrize(
     "supporting_only",
     [
@@ -147,8 +161,6 @@ def test_narrative_text_is_not_verifiable_evidence(evidence):
 @pytest.mark.parametrize(
     "evidence",
     [
-        {"evidence_refs": ["s3://bucket/evidence/17.json"]},
-        {"analysis_evidence": {"uri": "gs://bucket/evidence/17.json"}},
         {"evidence_pack": {"items": [{"source_ref": "gold_metrics:17"}]}},
         {
             "evidence_pack": {
@@ -158,7 +170,7 @@ def test_narrative_text_is_not_verifiable_evidence(evidence):
         },
     ],
 )
-def test_allowlisted_evidence_ids_and_references_are_substantive(evidence):
+def test_source_bound_evidence_ids_and_references_are_substantive(evidence):
     assert has_evidence(_item(**evidence)) is True
 
 

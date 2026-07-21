@@ -8,7 +8,6 @@ from app.services.control_room.business_evidence_identity import (
     legacy_scalar_reference,
     source_and_id_pair,
     typed_reference,
-    verifiable_uri,
 )
 
 
@@ -71,13 +70,10 @@ def has_substantive_reference(
                 normalized = str(key).strip().lower()
                 if normalized in ADMINISTRATIVE_ID_FIELDS:
                     continue
-                if normalized in _LOCATOR_FIELDS and (
-                    verifiable_uri(nested, excluded_references)
-                    or legacy_scalar_reference(
-                        nested,
-                        canonical_source_values=canonical_source_values,
-                        excluded_references=excluded_references,
-                    )
+                if normalized in _LOCATOR_FIELDS and legacy_scalar_reference(
+                    nested,
+                    canonical_source_values=canonical_source_values,
+                    excluded_references=excluded_references,
                 ):
                     return True
                 if normalized in _REFERENCE_CONTAINERS and has_substantive_reference(

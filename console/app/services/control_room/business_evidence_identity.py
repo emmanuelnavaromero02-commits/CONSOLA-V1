@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
-from urllib.parse import urlsplit
 
 
 ADMINISTRATIVE_ID_FIELDS = frozenset(
@@ -50,7 +49,6 @@ _PLACEHOLDERS = frozenset(
     }
 )
 _ID_TOKEN = re.compile(r"^[a-z0-9][a-z0-9._:@/-]*$", re.IGNORECASE)
-_URI_SCHEMES = frozenset({"gs", "https", "s3"})
 _TYPED_EVIDENCE_IDS = {
     "artifact": frozenset({"artifact_id"}),
     "dataset_row": frozenset({"record_id", "source_record_id"}),
@@ -105,17 +103,6 @@ def contains_excluded(value: Any, excluded: frozenset[str]) -> bool:
     )
 
 
-def verifiable_uri(value: Any, excluded: frozenset[str]) -> bool:
-    if not stable_text(value) or contains_excluded(value, excluded):
-        return False
-    parsed = urlsplit(value.strip())
-    return bool(
-        parsed.scheme.casefold() in _URI_SCHEMES
-        and parsed.netloc
-        and parsed.path not in ("", "/")
-    )
-
-
 def structured_id(value: Any, excluded: frozenset[str]) -> bool:
     if isinstance(value, bool) or value is None:
         return False
@@ -143,8 +130,6 @@ def legacy_scalar_reference(
     canonical_source_values: frozenset[str],
     excluded_references: frozenset[str],
 ) -> bool:
-    if verifiable_uri(value, excluded_references):
-        return True
     if not stable_text(value) or contains_excluded(value, excluded_references):
         return False
     parts = re.split(r"[:/]", value.strip(), maxsplit=1)
@@ -216,5 +201,4 @@ __all__ = (
     "legacy_scalar_reference",
     "source_and_id_pair",
     "typed_reference",
-    "verifiable_uri",
 )

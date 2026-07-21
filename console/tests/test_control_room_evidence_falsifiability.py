@@ -64,6 +64,18 @@ def test_typed_evidence_source_cannot_match_by_prefix():
     assert has_evidence(_item(evidence_refs=[evidence])) is False
 
 
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "https://evil.example/fabricated/17",
+        "s3://unrelated-bucket/fabricated/17",
+        "gs://unrelated-bucket/fabricated/17",
+    ],
+)
+def test_unbound_external_uri_is_not_evidence(reference):
+    assert has_evidence(_item(evidence_refs=[reference])) is False
+
+
 def test_unknown_structured_evidence_type_is_rejected():
     evidence = {
         "type": "narrative_note",

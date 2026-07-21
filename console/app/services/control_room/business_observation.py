@@ -182,7 +182,7 @@ def _zero_is_valid(item: Mapping[str, Any], kind: MetricKind) -> bool:
         return False
     if kind is MetricKind.COUNT:
         population = slots.population.value if slots.population.declared else None
-        return population is not None and population >= 0
+        return population is not None and population > 0
     if kind in {
         MetricKind.RATE,
         MetricKind.PERCENTAGE,
