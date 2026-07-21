@@ -11,19 +11,28 @@ REQUIRED_PATHS = (
     "console/app/domains/pipeline/control_room_refresh.py",
     "console/app/domains/pipeline/sync_state.py",
     "console/app/services/intelligence/decision_orchestrator.py",
+    "console/app/services/intelligence/evidence_refs.py",
     "console/app/services/control_room/**",
     "console/tests/control_room_get_*.py",
     "console/tests/test_control_room*.py",
+    "console/tests/test_ops_summary_and_version.py",
+    "console/tests/test_scoped_surface_hardening.py",
     "tests/test_control_room*.py",
+    "tests/decision_orchestrator_harness.py",
+    "tests/test_aws_beta_operations.py",
+    "tests/test_intelligence_engine_contract.py",
 )
 
 REQUIRED_RELATED_TESTS = (
     "console/tests/test_decision*.py",
+    "console/tests/test_ops_summary_and_version.py",
     "console/tests/test_pipeline_extract.py",
     "tests/test_decision*.py",
     "tests/test_pipeline_control_room_refresh.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
+    "tests/test_aws_beta_operations.py",
     "tests/test_control_room_ci_contract.py",
+    "tests/test_intelligence_engine_contract.py",
     "tests/test_v1_router_mount.py",
 )
 
@@ -54,10 +63,10 @@ def test_control_room_workflow_runs_all_related_contract_suites():
         assert test_path in focal_step
 
 
-def test_focal_junit_guard_requires_757_and_zero_bad_results():
+def test_focal_junit_guard_requires_exact_current_minimum_and_zero_bad_results():
     text = _workflow_text()
     assert "--junitxml=/tmp/control-room-focal.xml" in text
-    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=757' in text
+    assert 'verify_junit("/tmp/control-room-focal.xml", minimum=807' in text
 
 
 def test_postgres_junit_guard_requires_13_and_zero_bad_results():
