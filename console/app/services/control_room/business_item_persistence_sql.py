@@ -168,7 +168,6 @@ SET {_SEMANTIC_UPDATE},
     status = CASE
         WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN 'open'
         WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         WHEN control_room_items.status = ANY($3::text[]) THEN control_room_items.status
         ELSE EXCLUDED.status
     END,
