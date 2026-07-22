@@ -11,14 +11,24 @@ from app.services.control_room.business_item_reader import (
 from app.services.control_room.business_projection import (
     normalize_persisted_business_item,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 
 
+TENANT_ID = "tenant-A"
 WORKSPACE_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def _persisted_item(index: int, *, eligible: bool = False) -> dict:
+    observation = {
+        "item_id": f"item-{index:04d}",
+        "metric_type": "scalar",
+        "observed_value": index,
+        "observation_date": "2026-07-16",
+    }
     return {
-        "tenant_id": None,
+        "tenant_id": TENANT_ID,
         "workspace_id": WORKSPACE_ID,
         "owner_user_id": None,
         "item_id": f"item-{index:04d}",
@@ -41,7 +51,16 @@ def _persisted_item(index: int, *, eligible: bool = False) -> dict:
                 "observed_value": index,
                 "population_count": 1,
                 "observation_date": "2026-07-16",
-                "evidence_refs": [f"gold_metrics:{index}"],
+                **runtime_row_evidence_fields(
+                    source_dataset="gold_metrics",
+                    source_system="platform",
+                    cartridge="platform",
+                    tenant_id=TENANT_ID,
+                    workspace_id=WORKSPACE_ID,
+                    source_row=observation,
+                    locator_field="item_id",
+                    observed_at="2026-07-16",
+                ),
             }
             if eligible
             else {"data_status": "missing"}
@@ -83,7 +102,7 @@ async def test_technical_items_do_not_consume_persisted_business_limit():
     items = await fetch_eligible_persisted_items(
         conn,
         workspace_id=WORKSPACE_ID,
-        tenant_id=None,
+        tenant_id=TENANT_ID,
         owner_id=None,
         kinds=("intelligence_signal", "source_state"),
         row_to_item=normalize_persisted_business_item,
@@ -107,7 +126,21 @@ class ParentAndChildPage:
             "metric_type": "scalar",
             "observed_value": 2,
             "observation_date": "2026-07-16",
-            "evidence_refs": ["gold_metrics:child"],
+            **runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_system="platform",
+                cartridge="platform",
+                tenant_id=TENANT_ID,
+                workspace_id=WORKSPACE_ID,
+                source_row={
+                    "item_id": self.child["item_id"],
+                    "metric_type": "scalar",
+                    "observed_value": 2,
+                    "observation_date": "2026-07-16",
+                },
+                locator_field="item_id",
+                observed_at="2026-07-16",
+            ),
         }
 
     async def fetch(self, sql: str, *_args):
@@ -124,7 +157,7 @@ async def test_lineage_seed_duplicate_does_not_hide_parent_and_child():
     items = await fetch_eligible_persisted_items(
         conn,
         workspace_id=WORKSPACE_ID,
-        tenant_id=None,
+        tenant_id=TENANT_ID,
         owner_id=None,
         kinds=(),
         row_to_item=normalize_persisted_business_item,
@@ -154,7 +187,7 @@ async def test_unbounded_projection_exhausts_more_than_five_thousand_items():
     items = await fetch_eligible_persisted_items(
         conn,
         workspace_id=WORKSPACE_ID,
-        tenant_id=None,
+        tenant_id=TENANT_ID,
         owner_id=None,
         kinds=(),
         row_to_item=normalize_persisted_business_item,

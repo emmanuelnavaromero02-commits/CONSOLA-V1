@@ -84,6 +84,8 @@ async def _fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
     if dataset == "employees_anomalies":
         return [
             {
+                "tenant_id": "tenant-A",
+                "workspace_id": "workspace-A",
                 "pernr": "1001",
                 "full_name": "Ana Gomez",
                 "anomaly_type": "terminated_but_active",
