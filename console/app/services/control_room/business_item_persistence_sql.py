@@ -100,22 +100,23 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         ELSE control_room_items.status
     END,
     decision_id = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.decision_id
-        WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
+        ELSE control_room_items.decision_id
     END,
     selected_option_id = CASE
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
         WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
         ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
         ELSE control_room_items.execution_status
     END
 {_owner_conflict_guard(3, 4)}
@@ -139,23 +140,24 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         WHEN control_room_items.status = ANY($3::text[]) THEN control_room_items.status
         ELSE EXCLUDED.status
     END,
     decision_id = CASE
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.decision_id
-        WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
+        ELSE control_room_items.decision_id
     END,
     selected_option_id = CASE
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
         WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
         ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
-        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
         ELSE control_room_items.execution_status
     END
 {_owner_conflict_guard(4, 5)}

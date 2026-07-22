@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import asyncpg
 import pytest
@@ -104,8 +105,13 @@ async def _assert_single_approval(dsn: str, workspace_id: str, item: dict):
             workspace_id,
             item["id"],
         )
+        metadata = (
+            json.loads(row["metadata"])
+            if isinstance(row["metadata"], str)
+            else row["metadata"]
+        )
         assert row["status"] == "approved"
-        assert row["metadata"]["decision_eligibility_provenance"]["stage"] == "approved"
+        assert metadata["decision_eligibility_provenance"]["stage"] == "approved"
         assert (
             await conn.fetchval(
                 """SELECT COUNT(*) FROM decision_actions

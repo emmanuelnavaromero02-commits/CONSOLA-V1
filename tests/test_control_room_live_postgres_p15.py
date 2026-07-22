@@ -89,6 +89,7 @@ def _user(tenant_id: str, workspace_id: str) -> dict:
         "email": "workflow-owner@example.com",
         "active_tenant_id": tenant_id,
         "active_workspace_id": workspace_id,
+        "_effective_permissions": ["control_room.write", "control_room.execute"],
     }
 
 
@@ -122,6 +123,13 @@ async def _seed_matching_dry_run(
             f"dry-run:{item['id']}:{template_id}",
             json.dumps({"ok": True, "validated": True}),
             json.dumps(dry_run_metadata(item, template_id=template_id)),
+        )
+        await conn.execute(
+            """UPDATE control_room_items
+                  SET execution_status='dry_run_validated'
+                WHERE workspace_id=$1 AND item_id=$2""",
+            workspace_id,
+            item["id"],
         )
     finally:
         await conn.close()
