@@ -94,6 +94,7 @@ def _item(**overrides):
             source_row={"project_id": "P-100", "observed_value": 12000},
             locator_field="project_id",
             observed_at="2026-06-12T10:00:00Z",
+            business_observation=base,
         )
     )
     return control_room_service._with_omega({**base, **overrides})  # noqa: SLF001

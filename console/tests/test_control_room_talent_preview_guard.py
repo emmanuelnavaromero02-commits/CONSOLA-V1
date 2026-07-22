@@ -24,7 +24,7 @@ USER = {
 
 
 def _talent_item() -> dict:
-    return {
+    item = {
         "id": "talent-action-1",
         "kind": "anomaly",
         "cartridge": "sap_successfactors",
@@ -40,7 +40,9 @@ def _talent_item() -> dict:
         "detected_at": "2026-07-16T10:00:00Z",
         "metric_type": "count",
         "evaluation_status": "success",
-        **runtime_row_evidence_fields(
+    }
+    item.update(
+        runtime_row_evidence_fields(
             source_dataset="sap_successfactors_talent_action_candidates",
             source_system="sap_successfactors",
             cartridge="sap_successfactors",
@@ -49,8 +51,10 @@ def _talent_item() -> dict:
             source_row={"action_id": "talent-action-1"},
             locator_field="action_id",
             observed_at="2026-07-16T10:00:00Z",
-        ),
-    }
+            business_observation=item,
+        )
+    )
+    return item
 
 
 @pytest.mark.asyncio

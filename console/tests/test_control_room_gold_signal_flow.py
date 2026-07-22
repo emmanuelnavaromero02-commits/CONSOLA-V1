@@ -447,6 +447,13 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
             source_row={"signal_id": "intel:replicon-gold"},
             locator_field="signal_id",
             observed_at="2026-06-01",
+            business_observation={
+                "id": "intel:replicon-gold",
+                "kind": "intelligence_signal",
+                "metric_type": "scalar",
+                "observed_value": 40,
+                "observation_date": "2026-06-01",
+            },
         ),
         "module": "Intelligence Engine",
         "description": "Horas facturables mensuales por consultor: Andrea Morales bajo baseline.",
@@ -793,6 +800,13 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
             source_row={"item_id": "derived-1"},
             locator_field="item_id",
             observed_at="2026-07-20",
+            business_observation={
+                "id": "derived-1",
+                "kind": "agent_alert",
+                "metric_type": "scalar",
+                "observed_value": 1,
+                "observation_date": "2026-07-20",
+            },
         ),
     }
     business_item = project_business_item(

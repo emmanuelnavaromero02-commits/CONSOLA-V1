@@ -329,6 +329,7 @@ def _scoped_rows(dataset: str, rows: list[dict], user: dict | None) -> list[dict
                     source_row=source_row,
                     locator_field=source.entity_id_field,
                     observed_at=observed_at,
+                    business_observation=projected,
                 )
             )
         scoped.append(projected)
@@ -971,7 +972,9 @@ async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation
             return [
                 {
                     "action_id": "talent_calibration_sensitivity",
+                    "kind": "anomaly",
                     "action_type": "sensibilidad",
+                    "metric_type": "count",
                     "severity": "medium",
                     "title": "Casos cerca de cortes 9-box",
                     "affected_count": 4,
@@ -2663,6 +2666,13 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
             source_row={"item_id": "item-activity"},
             locator_field="item_id",
             observed_at="2026-05-20T10:00:00Z",
+            business_observation={
+                "id": "item-activity",
+                "kind": "intelligence_signal",
+                "metric_type": "scalar",
+                "observed_value": 1,
+                "observation_date": "2026-05-20T10:00:00Z",
+            },
         ),
     }
     business_item = {
