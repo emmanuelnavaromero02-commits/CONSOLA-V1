@@ -3,8 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 995
-POSTGRES_MINIMUM = 24
+FOCAL_MINIMUM = 1024
+POSTGRES_MINIMUM = 30
 
 REQUIRED_PATHS = (
     "console/app/main.py",
@@ -28,8 +28,7 @@ REQUIRED_PATHS = (
     "console/app/services/intelligence/persistence.py",
     "console/app/services/intelligence/readiness.py",
     "console/app/services/control_room/**",
-    "console/tests/control_room_get_*.py",
-    "console/tests/control_room_runtime_evidence_fixture.py",
+    "console/tests/control_room_*.py",
     "console/tests/conftest.py",
     "console/tests/test_control_room*.py",
     "console/tests/test_gold_fetcher.py",
@@ -55,6 +54,7 @@ REQUIRED_PATHS = (
     "infra/terraform-gcp/**",
     "infra/terraform/deploy/**",
     "infra/terraform/infra/secretsmanager.tf",
+    "scripts/aws-env-pair.sh",
     "scripts/aws-entrypoint.sh",
     ".github/workflows/control-room-postgres-rls.yml",
 )
@@ -70,6 +70,8 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_pipeline_control_room_refresh.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
     "tests/test_aws_beta_operations.py",
+    "tests/test_aws_env_pair_transaction.py",
+    "tests/test_aws_evidence_env_isolation.py",
     "tests/test_control_room_ci_contract.py",
     "tests/test_control_room_evidence_keyring_runtime.py",
     "tests/test_control_room_evidence_signing_wiring.py",
