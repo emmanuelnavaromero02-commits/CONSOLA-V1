@@ -9,7 +9,10 @@ import pytest
 from app.services.control_room.business_decision_persistence import (
     create_and_link_decision,
 )
-from app.services.control_room.business_item_persistence import persist_item_rows
+from app.services.control_room.business_item_persistence import (
+    ensure_item_row,
+    persist_item_rows,
+)
 from app.services.control_room.business_observation_order import (
     OBSERVATION_ORDER_KEY,
     business_observation_order,
@@ -20,7 +23,9 @@ from app.services.control_room.business_runtime_evidence import (
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
+    WorkflowStage,
     business_observation_fingerprint,
+    workflow_eligibility_provenance,
 )
 from tests.test_control_room_live_postgres_workflows import (
     AsyncNoop,
@@ -184,3 +189,81 @@ async def test_live_stale_refresh_cannot_replace_or_quarantine_newer_workflow(
         assert WORKFLOW_QUARANTINE_KEY not in metadata
     finally:
         await check.close()
+
+
+@pytest.mark.asyncio
+async def test_live_ensure_status_mutates_but_stale_generation_is_inert(
+    postgres_with_real_init_schema: str,
+) -> None:
+    conn = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        tenant_id, workspace_id = await _scope(conn)
+        current = _generation(
+            "ensure-status",
+            tenant_id,
+            workspace_id,
+            observed_at="2026-07-21",
+            value=2,
+            title="Current generation",
+        )
+        stale = _generation(
+            current["id"],
+            tenant_id,
+            workspace_id,
+            observed_at="2026-07-20",
+            value=1,
+            title="Stale generation",
+        )
+        current_row = _rows([current], tenant_id, workspace_id)[0]
+        stale_row = _rows([stale], tenant_id, workspace_id)[0]
+        terminal = ("approved", "dismissed", "resolved")
+        await persist_item_rows(conn, [current_row], owner_scope_id=7)
+
+        await ensure_item_row(
+            conn,
+            {**current_row, "status": "in_review"},
+            terminal_statuses=terminal,
+            owner_scope_id=7,
+        )
+        provenance = workflow_eligibility_provenance(
+            current,
+            stage=WorkflowStage.OPTION_SELECTED,
+            workspace_id=workspace_id,
+            option_id="review",
+        )
+        await conn.execute(
+            """UPDATE control_room_items
+                  SET selected_option_id='review', execution_status='dry_run_validated',
+                      metadata=metadata || $3::jsonb
+                WHERE workspace_id=$1 AND item_id=$2""",
+            workspace_id,
+            current["id"],
+            json.dumps({DECISION_PROVENANCE_KEY: provenance}),
+        )
+        select_state = """SELECT status, metadata, selected_option_id, execution_status
+                            FROM control_room_items WHERE workspace_id=$1 AND item_id=$2"""
+        before = dict(await conn.fetchrow(select_state, workspace_id, current["id"]))
+        assert before["status"] == "in_review"
+
+        await persist_item_rows(conn, [stale_row], owner_scope_id=7)
+        assert dict(
+            await conn.fetchrow(select_state, workspace_id, current["id"])
+        ) == before
+
+        await conn.execute(
+            "UPDATE control_room_items SET status='approved' WHERE workspace_id=$1 AND item_id=$2",
+            workspace_id,
+            current["id"],
+        )
+        await ensure_item_row(
+            conn,
+            {**stale_row, "status": "open"},
+            terminal_statuses=terminal,
+            owner_scope_id=7,
+        )
+        terminal_state = dict(
+            await conn.fetchrow(select_state, workspace_id, current["id"])
+        )
+        assert terminal_state == {**before, "status": "approved"}
+    finally:
+        await conn.close()

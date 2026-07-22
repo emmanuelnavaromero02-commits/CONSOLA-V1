@@ -128,7 +128,10 @@ def test_refresh_unlinks_ambiguous_legacy_workflow_for_quarantine():
     assert "WHEN (EXCLUDED.metadata ? 'workflow_quarantine'" in sql
     assert "decision_id = CASE" in sql
     assert "selected_option_id = CASE" in sql
-    assert "THEN NULL WHEN NOT" in sql
+    decision_case = sql.split("decision_id = CASE", 1)[1].split(
+        "selected_option_id = CASE", 1
+    )[0]
+    assert decision_case.index("WHEN NOT (") < decision_case.index("THEN NULL")
 
 
 @pytest.mark.asyncio

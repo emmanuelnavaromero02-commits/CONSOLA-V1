@@ -49,9 +49,9 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _order_instant(order: str) -> str:
+def _order_has_instant(order: str) -> bool:
     parts = str(order or "").split("|", 2)
-    return parts[1] if len(parts) > 1 else ""
+    return len(parts) > 1 and bool(parts[1])
 
 
 def _item(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -177,18 +177,12 @@ async def reconcile_workflow_metadata(
         metadata = _mapping(existing.get("metadata"))
         existing_order = business_observation_order(_item(existing))
         current_order = business_observation_order(current)
-        existing_orders[key] = existing_order
-        has_modern_fingerprint = bool(
-            metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY)
-        )
+        if _order_has_instant(existing_order):
+            existing_orders[key] = existing_order
+        has_modern_fingerprint = bool(metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY))
         has_observation_order = bool(metadata.get(OBSERVATION_ORDER_KEY))
-        existing_instant = _order_instant(existing_order)
-        current_instant = _order_instant(current_order)
-        if (
-            (has_observation_order or has_modern_fingerprint)
-            and existing_instant
-            and current_instant
-            and current_instant < existing_instant
+        if (has_observation_order or has_modern_fingerprint) and (
+            current_order < existing_order
         ):
             continue
         quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))

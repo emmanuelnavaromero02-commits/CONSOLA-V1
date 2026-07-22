@@ -16,6 +16,12 @@ from app.services.control_room.business_observation_order import (
     OBSERVATION_ORDER_VERSION,
     business_observation_order,
 )
+from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
+)
+from app.services.control_room.business_workflow_reconciliation import (
+    workflow_metadata_patches,
+)
 
 
 def _row(value: int, observed_at: str, *, title: str) -> dict:
@@ -107,6 +113,14 @@ class _LegacyConnection:
         return "INSERT 0 1"
 
 
+class _WorkflowConnection:
+    def __init__(self, existing: dict) -> None:
+        self.existing = existing
+
+    async def fetch(self, *_args):
+        return [self.existing]
+
+
 @pytest.mark.asyncio
 async def test_older_refresh_finishing_last_converges_to_newer_generation():
     conn = _ConvergentConnection()
@@ -145,6 +159,34 @@ async def test_legacy_row_supplies_server_computed_order_baseline():
     assert metadata[OBSERVATION_ORDER_KEY] != "client-forged"
 
 
+@pytest.mark.asyncio
+async def test_reconciliation_rejects_same_time_losing_fingerprint_before_patch():
+    candidates = (
+        _row(3, "2026-07-21", title="Correction A"),
+        _row(4, "2026-07-21", title="Correction B"),
+    )
+    loser, winner = sorted(candidates, key=business_observation_order)
+    loser_order = business_observation_order(loser)
+    winner_order = business_observation_order(winner)
+    assert loser_order.split("|", 2)[1] == winner_order.split("|", 2)[1]
+    assert loser_order < winner_order
+    existing = {
+        **winner,
+        "decision_id": 42,
+        "status": "decision_created",
+        "selected_option_id": "review",
+        "execution_status": "dry_run_validated",
+        "metadata": {
+            OBSERVATION_ORDER_KEY: winner_order,
+            CURRENT_ELIGIBILITY_FINGERPRINT_KEY: "winner",
+        },
+    }
+
+    patches = await workflow_metadata_patches(_WorkflowConnection(existing), [loser])
+
+    assert patches == {}
+
+
 def test_upserts_guard_semantics_and_workflow_with_the_same_order_token():
     for statement in (PERSIST_ITEMS_SQL, ENSURE_ITEM_SQL):
         sql = " ".join(statement.split())
@@ -157,3 +199,29 @@ def test_upserts_guard_semantics_and_workflow_with_the_same_order_token():
         assert "THEN control_room_items.selected_option_id" in sql
         assert "THEN control_room_items.execution_status" in sql
         assert "ELSE control_room_items.last_seen_at END" in sql
+        assignments = (
+            ("metadata = CASE", "impact_estimate ="),
+            ("status = CASE", "decision_id = CASE"),
+            ("decision_id = CASE", "selected_option_id = CASE"),
+            ("selected_option_id = CASE", "execution_status = CASE"),
+            ("execution_status = CASE", "WHERE $"),
+        )
+        for start, end in assignments:
+            case = sql.split(start, 1)[1].split(end, 1)[0]
+            assert case.index("WHEN NOT (") < case.index("workflow_quarantine")
+
+
+def test_ensure_and_persist_status_keep_current_branch_after_stale_guard():
+    ensure_sql = " ".join(ENSURE_ITEM_SQL.split())
+    persist_sql = " ".join(PERSIST_ITEMS_SQL.split())
+    ensure_status = ensure_sql.split("status = CASE", 1)[1].split(
+        "decision_id = CASE", 1
+    )[0]
+    persist_status = persist_sql.split("status = CASE", 1)[1].split(
+        "decision_id = CASE", 1
+    )[0]
+
+    assert "ELSE EXCLUDED.status END" in ensure_status
+    assert f"metadata->>'{OBSERVATION_ORDER_KEY}'" in ensure_status
+    assert f"metadata->>'{OBSERVATION_ORDER_KEY}'" in persist_status
+    assert "ELSE control_room_items.status END" in persist_status

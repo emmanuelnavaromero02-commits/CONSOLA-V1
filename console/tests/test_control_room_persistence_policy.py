@@ -116,7 +116,10 @@ def test_persist_sql_unlinks_workflow_for_explicit_quarantine():
     marker = "EXCLUDED.metadata ? 'workflow_quarantine'"
     assert marker in sql
     assert "WHEN (EXCLUDED.metadata ? 'workflow_quarantine'" in sql
-    assert "THEN NULL WHEN NOT" in sql
+    decision_case = sql.split("decision_id = CASE", 1)[1].split(
+        "selected_option_id = CASE", 1
+    )[0]
+    assert decision_case.index("WHEN NOT (") < decision_case.index("THEN NULL")
     assert "selected_option_id = CASE" in sql
     assert "THEN 'not_started'" in sql
     assert "THEN 'open'" in sql

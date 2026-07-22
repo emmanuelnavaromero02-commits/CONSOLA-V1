@@ -31,7 +31,7 @@ from app.services.control_room.business_workflow_reconciliation import (
 )
 
 
-def _item(value: int) -> dict:
+def _item(value: int, *, observed_at: str = "2026-07-20") -> dict:
     item = {
         "id": "business-1",
         "item_id": "business-1",
@@ -51,7 +51,7 @@ def _item(value: int) -> dict:
         "observed_value": value,
         "metric_type": "count",
         "population_count": 10,
-        "observation_date": "2026-07-20",
+        "observation_date": observed_at,
     }
     return {
         **item,
@@ -126,7 +126,7 @@ class RefreshState:
 @pytest.mark.asyncio
 async def test_quarantine_is_bound_to_workflow_a_generation() -> None:
     state = RefreshState()
-    patch = await state.refresh(_item(2))
+    patch = await state.refresh(_item(2, observed_at="2026-07-21"))
     quarantine = patch[WORKFLOW_QUARANTINE_KEY]
     generations = quarantine["generations"]
     assert generations == [
@@ -143,7 +143,7 @@ async def test_quarantine_is_bound_to_workflow_a_generation() -> None:
 @pytest.mark.asyncio
 async def test_three_refreshes_leave_a_inert_and_b_actionable() -> None:
     state = RefreshState()
-    observation_b = _item(2)
+    observation_b = _item(2, observed_at="2026-07-21")
     for _ in range(3):
         await state.refresh(observation_b)
     assert state.row["decision_id"] is None
@@ -197,7 +197,7 @@ class DecisionConnection:
 @pytest.mark.asyncio
 async def test_workflow_b_requires_clean_columns_and_links_new_provenance() -> None:
     state = RefreshState()
-    observation_b = _item(2)
+    observation_b = _item(2, observed_at="2026-07-21")
     await state.refresh(observation_b)
     dirty = DecisionConnection(state.row, selected_option_id="legacy-option")
     with pytest.raises(HTTPException) as exc:
@@ -233,7 +233,7 @@ async def test_workflow_b_requires_clean_columns_and_links_new_provenance() -> N
 @pytest.mark.asyncio
 async def test_refresh_preserves_explicit_workflow_b_and_a_history() -> None:
     state = RefreshState()
-    observation_b = _item(2)
+    observation_b = _item(2, observed_at="2026-07-21")
     await state.refresh(observation_b)
     quarantine = state.row["metadata"][WORKFLOW_QUARANTINE_KEY]
     provenance_b = workflow_eligibility_provenance(
