@@ -10,9 +10,10 @@ from .business_evidence_signing import (
     sign_control_room_evidence,
     verify_control_room_evidence,
 )
+from .business_evidence_binding import runtime_business_binding
 
 
-_ATTESTATION_VERSION = "hmac-sha256-v3"
+_ATTESTATION_VERSION = "hmac-sha256-v4"
 _ATTESTATION_PURPOSE = "control-room-runtime-evidence-v1"
 _SIGNED_FIELDS = (
     "type",
@@ -23,6 +24,7 @@ _SIGNED_FIELDS = (
     "source_record_id",
     "source_locator",
     "source_row_hash",
+    "business_binding",
     "observed_at",
     "attestation_version",
     "attestation_purpose",
@@ -90,6 +92,9 @@ def verified_runtime_row_reference(value: Mapping[str, Any]) -> bool:
         str(locator.get("field") or "").strip(),
         locator_value,
         str(value.get("source_row_hash") or "").strip(),
+        value.get("business_binding")
+        if isinstance(value.get("business_binding"), Mapping)
+        else None,
         str(value.get("observed_at") or "").strip(),
         str(value.get("attestation_key_id") or "").strip(),
         str(value.get("server_attestation") or "").strip(),
@@ -115,6 +120,7 @@ def canonical_runtime_row_reference(value: Mapping[str, Any]) -> dict[str, Any] 
         return None
     canonical = {field: value[field] for field in _SIGNED_FIELDS}
     canonical["source_locator"] = dict(value["source_locator"])
+    canonical["business_binding"] = dict(value["business_binding"])
     canonical["server_attestation"] = value["server_attestation"]
     return canonical
 
@@ -164,6 +170,13 @@ def runtime_row_evidence_fields(
     ):
         return {}
     record_id = f"record-{locator_value}"
+    business_binding = runtime_business_binding(
+        source_row,
+        locator_field=field,
+        observed_at=observation,
+    )
+    if business_binding is None:
+        return {}
     try:
         runtime_ref = {
             "type": "dataset_row",
@@ -178,6 +191,7 @@ def runtime_row_evidence_fields(
                 "value": locator_value,
             },
             "source_row_hash": _row_hash(source_row),
+            "business_binding": business_binding,
             "observed_at": observation,
             "attestation_version": _ATTESTATION_VERSION,
             "attestation_purpose": _ATTESTATION_PURPOSE,
