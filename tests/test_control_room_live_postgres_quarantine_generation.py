@@ -38,6 +38,7 @@ async def test_live_workflow_generation_rearm_is_explicit_and_transactional(
             tenant_id,
             workspace_id,
             observed_value=2,
+            observation_date="2026-07-21",
         )
         await persist_item_rows(
             conn,

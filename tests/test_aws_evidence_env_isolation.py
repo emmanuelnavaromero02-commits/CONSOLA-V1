@@ -251,6 +251,8 @@ def test_compose_resolves_private_env_only_for_console(
     expected_private = (
         private if custom_private else Path(f"{shared}.control-room-evidence")
     )
+    shared.touch()
+    expected_private.touch()
     result = subprocess.run(
         [
             docker,

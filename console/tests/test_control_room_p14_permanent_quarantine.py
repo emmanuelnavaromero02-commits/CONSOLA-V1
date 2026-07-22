@@ -17,7 +17,7 @@ from app.services.control_room.business_workflow_reconciliation import (
 )
 
 
-def _item(value: int = 1) -> dict:
+def _item(value: int = 1, *, observation_date: str = "2026-07-20") -> dict:
     item = {
         "item_id": "business-1",
         "id": "business-1",
@@ -31,7 +31,7 @@ def _item(value: int = 1) -> dict:
         "observed_value": value,
         "metric_type": "count",
         "population_count": 10,
-        "observation_date": "2026-07-20",
+        "observation_date": observation_date,
     }
     return {
         **item,
@@ -131,7 +131,7 @@ async def test_modern_quarantine_survives_when_workflow_columns_are_cleared():
 @pytest.mark.asyncio
 async def test_workflow_a_never_revives_across_three_refreshes_of_observation_b():
     observation_a = _item(value=1)
-    observation_b = _item(value=2)
+    observation_b = _item(value=2, observation_date="2026-07-21")
     provenance = workflow_eligibility_provenance(
         observation_a,
         stage=WorkflowStage.DECISION_CREATED,

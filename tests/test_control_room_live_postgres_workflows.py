@@ -33,6 +33,7 @@ def _item(
     workspace_id: str,
     *,
     observed_value: int = 1,
+    observation_date: str = "2026-07-20",
 ) -> dict:
     item = {
         "id": item_id,
@@ -51,7 +52,7 @@ def _item(
         "observed_value": observed_value,
         "metric_type": "count",
         "population_count": 10,
-        "observation_date": "2026-07-20",
+        "observation_date": observation_date,
     }
     return {
         **item,
@@ -63,7 +64,7 @@ def _item(
             workspace_id=workspace_id,
             source_row={**item, "item_id": item_id},
             locator_field="item_id",
-            observed_at="2026-07-20",
+            observed_at=observation_date,
             business_observation=item,
         ),
     }
