@@ -83,6 +83,21 @@ class ScopedLinkedDecisionConnection:
         raise AssertionError(sql)
 
 
+class LegacyEnglishControlRoomDecisionConnection:
+    async def fetch(self, sql: str, *args):
+        normalized = " ".join(sql.split()).lower()
+        if "from control_room_items" in normalized:
+            return []
+        if "from decision_actions" in normalized:
+            markers = args[2]
+            if isinstance(markers, str):
+                markers = [markers]
+            return (
+                [{"decision_id": 42}] if "Created from Control Room" in markers else []
+            )
+        raise AssertionError(sql)
+
+
 @pytest.mark.asyncio
 async def test_foreign_workspace_provenance_is_not_visible() -> None:
     linked = _linked_item(workspace_id="workspace-a")
@@ -94,6 +109,18 @@ async def test_foreign_workspace_provenance_is_not_visible() -> None:
         workspace_id="workspace-a",
         tenant_id="tenant-a",
         rows=[{"id": 42}],
+    )
+
+    assert visible == []
+
+
+@pytest.mark.asyncio
+async def test_unlinked_legacy_english_control_room_decision_stays_hidden() -> None:
+    visible = await filter_decision_rows(
+        LegacyEnglishControlRoomDecisionConnection(),
+        workspace_id="workspace-a",
+        tenant_id="tenant-a",
+        rows=[{"id": 42, "kpis": []}],
     )
 
     assert visible == []

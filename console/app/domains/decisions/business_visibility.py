@@ -8,12 +8,14 @@ from app.services.control_room.business_projection import (
     filter_business_decisions,
     lineage_parent_ids,
 )
+from app.services.control_room.business_action_markers import (
+    CONTROL_ROOM_ACTION_MARKERS,
+)
 from app.services.control_room.business_repository import fetch_lineage_rows
 
 
 MAX_VISIBLE_DECISIONS = 500
 DECISION_BATCH_SIZE = 500
-CONTROL_ROOM_ACTION = "Decision creada desde Sala de Control"
 
 
 def preserve_control_room_provenance(existing: Any, requested: Any) -> list[Any]:
@@ -68,11 +70,11 @@ async def _linked_rows(
           JOIN decisions decision ON decision.id = action.decision_id
          WHERE decision.workspace_id = $1
            AND action.decision_id = ANY($2::bigint[])
-           AND action.action_text = $3
+           AND action.action_text = ANY($3::text[])
         """,
         workspace_id,
         list(decision_ids),
-        CONTROL_ROOM_ACTION,
+        list(CONTROL_ROOM_ACTION_MARKERS),
     )
     return list(linked), lineage, {int(row["decision_id"]) for row in origins}
 

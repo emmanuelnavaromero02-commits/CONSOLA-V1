@@ -4,6 +4,9 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.services.control_room.business_action_markers import (
+    CONTROL_ROOM_ACTION_MARKERS,
+)
 from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
@@ -21,10 +24,6 @@ from app.services.control_room.business_workflow_quarantine import (
 
 
 _WORKFLOW_STATUSES = frozenset({"decision_created", "approved", "resolved"})
-_CONTROL_ROOM_ACTION_MARKERS = (
-    "Decision creada desde Sala de Control",
-    "Created from Control Room",
-)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -145,7 +144,7 @@ async def workflow_metadata_patches(
          FOR UPDATE OF c
         """,
         json.dumps(keys),
-        list(_CONTROL_ROOM_ACTION_MARKERS),
+        list(CONTROL_ROOM_ACTION_MARKERS),
     )
     incoming = {
         (str(row.get("workspace_id") or ""), str(row.get("item_id") or "")): _item(row)

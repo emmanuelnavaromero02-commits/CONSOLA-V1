@@ -105,3 +105,32 @@ def test_signing_key_rotation_does_not_change_business_generation(monkeypatch):
     assert business_observation_fingerprint(old_item) == (
         business_observation_fingerprint(new_item)
     )
+
+
+def test_lineage_permutations_do_not_change_business_generation():
+    item = {
+        **_scoped_item(),
+        "derived_from": ["parent-a", "parent-b"],
+        "lineage": {
+            "source_dataset": "gold_metrics",
+            "derived_from": [
+                {"item_id": "parent-a"},
+                {"item_id": "parent-b"},
+            ],
+        },
+    }
+    permuted = {
+        **item,
+        "derived_from": ["parent-b", "parent-a"],
+        "lineage": {
+            "derived_from": [
+                {"item_id": "parent-b"},
+                {"item_id": "parent-a"},
+            ],
+            "source_dataset": "gold_metrics",
+        },
+    }
+
+    assert business_observation_fingerprint(item) == (
+        business_observation_fingerprint(permuted)
+    )

@@ -33,6 +33,7 @@ _EVIDENCE_FIELDS = frozenset(
         "evidence_refs",
     }
 )
+_UNORDERED_STRUCTURED_FIELDS = _EVIDENCE_FIELDS | frozenset({"derived_from", "lineage"})
 _VOLATILE_ATTESTATION_FIELDS = frozenset(
     {"attestation_key_id", "server_attestation", "source_row_hash"}
 )
@@ -52,15 +53,15 @@ def _identity_value(item: Mapping[str, Any], *keys: str) -> str:
     return ""
 
 
-def _stable_evidence(value: Any) -> Any:
+def _stable_structured_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            str(key): _stable_evidence(nested)
+            str(key): _stable_structured_value(nested)
             for key, nested in sorted(value.items(), key=lambda entry: str(entry[0]))
             if str(key) not in _VOLATILE_ATTESTATION_FIELDS
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        stable = [_stable_evidence(entry) for entry in value]
+        stable = [_stable_structured_value(entry) for entry in value]
         return sorted(stable, key=_canonical)
     return value
 
@@ -73,8 +74,8 @@ def _semantic_values(item: Mapping[str, Any]) -> dict[str, list[str]]:
             if key not in surface or surface[key] in (None, ""):
                 continue
             value = (
-                _stable_evidence(surface[key])
-                if key in _EVIDENCE_FIELDS
+                _stable_structured_value(surface[key])
+                if key in _UNORDERED_STRUCTURED_FIELDS
                 else surface[key]
             )
             values.setdefault(key, set()).add(_canonical(value))
