@@ -12,9 +12,7 @@ from app.services.control_room.business_projection import (
     filter_business_items,
     filter_by_eligible_parent,
 )
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
-)
+from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 
 
 USER = {
@@ -49,7 +47,7 @@ def _diagnostic_item() -> dict:
 
 
 def _business_item() -> dict:
-    return {
+    item = {
         "id": "business-1",
         "kind": "anomaly",
         "cartridge": "sap_hcm",
@@ -72,18 +70,11 @@ def _business_item() -> dict:
         "severity_weight": 4,
         "status": "open",
         "detected_at": "2026-07-16T10:00:00Z",
-        **runtime_row_evidence_fields(
-            source_dataset="employees_anomalies",
-            source_system="sap_hcm",
-            cartridge="sap_hcm",
-            tenant_id="tenant-A",
-            workspace_id="workspace-A",
-            source_row={"business_id": "business-1"},
-            locator_field="business_id",
-            observed_at="2026-07-16T10:00:00Z",
-        ),
         "details": {"salary_monthly_usd": 1000},
     }
+    return bind_runtime_row_evidence(
+        item, locator_field="business_id", observed_at=item["detected_at"]
+    )
 
 
 def test_mixed_projection_excludes_diagnostics_from_business_relations():
@@ -177,12 +168,24 @@ async def test_mutation_lookup_returns_404_for_wrong_scope():
 
 
 COMMAND_CASES = (
-    ("sap_successfactors_talent_action_preview", (USER, {"action_id": "source-state-1"}), {}),
+    (
+        "sap_successfactors_talent_action_preview",
+        (USER, {"action_id": "source-state-1"}),
+        {},
+    ),
     ("create_decision_for_item", ("source-state-1", USER), {}),
     ("select_item_option", ("source-state-1", "remediate", USER), {}),
     ("record_item_step", ("source-state-1", "signals", USER), {}),
-    ("update_item_control", ("source-state-1", "control-1", {"status": "closed"}, USER), {}),
-    ("create_item_lesson", ("source-state-1", {"rule": "Validate owner first"}, USER), {}),
+    (
+        "update_item_control",
+        ("source-state-1", "control-1", {"status": "closed"}, USER),
+        {},
+    ),
+    (
+        "create_item_lesson",
+        ("source-state-1", {"rule": "Validate owner first"}, USER),
+        {},
+    ),
     ("apply_item_lesson", ("source-state-1", 1, {}, USER), {}),
     ("action_preview", ("source-state-1", USER), {}),
     ("action_dry_run", ("source-state-1", USER), {}),
@@ -202,7 +205,9 @@ COMMAND_CASES = (
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name,args,kwargs", COMMAND_CASES)
 async def test_commands_stop_at_business_guard(name, args, kwargs):
-    conflict = HTTPException(409, detail={"code": "item_not_business_eligible", "reason": "source_state"})
+    conflict = HTTPException(
+        409, detail={"code": "item_not_business_eligible", "reason": "source_state"}
+    )
     guard = AsyncMock(side_effect=conflict)
     pool = AsyncMock(side_effect=AssertionError("database reached"))
     audit = AsyncMock(side_effect=AssertionError("audit reached"))
@@ -268,17 +273,10 @@ def test_validated_parent_context_survives_builders_without_serializing():
         "metric_type": "amount",
         "observed_value": 1000,
         "signal_id": "child-1",
-        **runtime_row_evidence_fields(
-            source_dataset="employees_anomalies",
-            source_system="sap_hcm",
-            cartridge="sap_hcm",
-            tenant_id="tenant-A",
-            workspace_id="workspace-A",
-            source_row={"signal_id": "child-1"},
-            locator_field="signal_id",
-            observed_at="2026-07-16T10:00:00Z",
-        ),
     }
+    child = bind_runtime_row_evidence(
+        child, locator_field="signal_id", observed_at=child["detected_at"]
+    )
 
     projected = control_room_service._with_omega(
         child,

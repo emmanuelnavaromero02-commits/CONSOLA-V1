@@ -8,15 +8,13 @@ from fastapi import HTTPException
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
-)
 from app.services.control_room.business_workflow_provenance import (
     ELIGIBILITY_POLICY_VERSION,
     ELIGIBILITY_POLICY_VERSION_KEY,
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     business_observation_fingerprint,
 )
+from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 
 
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -40,19 +38,12 @@ def _item(value: int = 3) -> dict:
         "population_count": 10,
         "observation_date": "2026-07-21",
     }
-    item.update(
-        runtime_row_evidence_fields(
-            source_dataset="gold_people",
-            source_system="sap_hcm",
-            cartridge="sap_hcm",
-            tenant_id=TENANT,
-            workspace_id=WORKSPACE,
-            source_row={"item_id": item["id"], "observed_value": value},
-            locator_field="item_id",
-            observed_at="2026-07-21T10:00:00Z",
-        )
+    return bind_runtime_row_evidence(
+        item,
+        locator_field="item_id",
+        observed_at="2026-07-21T10:00:00Z",
+        source_row={"item_id": item["id"], "observed_value": value},
     )
-    return item
 
 
 def _persisted(item: dict) -> dict:

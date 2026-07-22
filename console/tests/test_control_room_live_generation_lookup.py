@@ -6,15 +6,13 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.control_room.business_command_item import resolve_command_item
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
-)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
     workflow_eligibility_provenance,
 )
+from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 
 
 USER = {
@@ -47,19 +45,12 @@ def _item(value: int) -> dict:
         "population_count": 10,
         "observation_date": "2026-07-22",
     }
-    return {
-        **item,
-        **runtime_row_evidence_fields(
-            source_dataset="gold_people",
-            source_system="sap_hcm",
-            cartridge="sap_hcm",
-            tenant_id="tenant-a",
-            workspace_id="workspace-a",
-            source_row={"item_id": item["id"], "observed_value": value},
-            locator_field="item_id",
-            observed_at=item["observation_date"],
-        ),
-    }
+    return bind_runtime_row_evidence(
+        item,
+        locator_field="item_id",
+        observed_at=item["observation_date"],
+        source_row={"item_id": item["id"], "observed_value": value},
+    )
 
 
 def _persisted_a(*, linked: bool = True) -> dict:
