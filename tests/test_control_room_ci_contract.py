@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 958
+FOCAL_MINIMUM = 971
 POSTGRES_MINIMUM = 21
 
 REQUIRED_PATHS = (
@@ -29,24 +29,39 @@ REQUIRED_PATHS = (
     "console/app/services/intelligence/readiness.py",
     "console/app/services/control_room/**",
     "console/tests/control_room_get_*.py",
+    "console/tests/control_room_runtime_evidence_fixture.py",
+    "console/tests/conftest.py",
     "console/tests/test_control_room*.py",
+    "console/tests/test_gold_fetcher.py",
     "console/tests/test_ops_summary_and_version.py",
     "console/tests/test_intelligence_control_room_canonical_persistence.py",
     "console/tests/test_intelligence_evidence_refs_attestation.py",
     "console/tests/test_scoped_surface_hardening.py",
     "tests/test_control_room*.py",
+    "tests/test_control_room_evidence_keyring_runtime.py",
+    "tests/test_control_room_evidence_signing_wiring.py",
     "tests/decision_orchestrator_harness.py",
     "tests/test_aws_beta_operations.py",
     "tests/test_intelligence_engine_contract.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
+    "tests/conftest.py",
+    "infra/.env.example",
+    "infra/bootstrap-keys.sh",
+    "infra/bootstrap.sh",
+    "infra/docker-compose.yml",
     "infra/init/**",
+    "infra/terraform-gcp/**",
+    "infra/terraform/deploy/**",
+    "infra/terraform/infra/secretsmanager.tf",
+    "scripts/aws-entrypoint.sh",
     ".github/workflows/control-room-postgres-rls.yml",
 )
 
 REQUIRED_RELATED_TESTS = (
     "console/tests/test_decision*.py",
+    "console/tests/test_gold_fetcher.py",
     "console/tests/test_ops_summary_and_version.py",
     "console/tests/test_intelligence_control_room_canonical_persistence.py",
     "console/tests/test_intelligence_evidence_refs_attestation.py",
@@ -56,6 +71,8 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_agentops_scheduled_monitor_contract.py",
     "tests/test_aws_beta_operations.py",
     "tests/test_control_room_ci_contract.py",
+    "tests/test_control_room_evidence_keyring_runtime.py",
+    "tests/test_control_room_evidence_signing_wiring.py",
     "tests/test_intelligence_engine_contract.py",
     "tests/test_v1_router_mount.py",
 )
