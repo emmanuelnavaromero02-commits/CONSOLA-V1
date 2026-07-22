@@ -55,7 +55,7 @@ LEGACY_RESIDUAL_FIELDS = frozenset(
 
 
 def _business_item(item_id: str, tenant_id: str, workspace_id: str) -> dict:
-    return {
+    item = {
         "id": item_id,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
@@ -72,15 +72,19 @@ def _business_item(item_id: str, tenant_id: str, workspace_id: str) -> dict:
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-16",
+    }
+    return {
+        **item,
         **runtime_row_evidence_fields(
             source_dataset="gold_people",
             source_system="sap_hcm",
             cartridge="sap_hcm",
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            source_row={"item_id": item_id},
+            source_row={**item, "item_id": item_id},
             locator_field="item_id",
             observed_at="2026-07-16",
+            business_observation=item,
         ),
     }
 

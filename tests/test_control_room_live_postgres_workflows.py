@@ -27,8 +27,14 @@ from tests.test_operational_rls_console_refinement import (
 )
 
 
-def _item(item_id: str, tenant_id: str, workspace_id: str) -> dict:
-    return {
+def _item(
+    item_id: str,
+    tenant_id: str,
+    workspace_id: str,
+    *,
+    observed_value: int = 1,
+) -> dict:
+    item = {
         "id": item_id,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
@@ -42,19 +48,23 @@ def _item(item_id: str, tenant_id: str, workspace_id: str) -> dict:
         "description": "Measured headcount gap",
         "recommendation": "Review staffing",
         "severity": "high",
-        "observed_value": 1,
+        "observed_value": observed_value,
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
+    }
+    return {
+        **item,
         **runtime_row_evidence_fields(
             source_dataset="gold_people",
             source_system="sap_hcm",
             cartridge="sap_hcm",
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            source_row={"item_id": item_id},
+            source_row={**item, "item_id": item_id},
             locator_field="item_id",
             observed_at="2026-07-20",
+            business_observation=item,
         ),
     }
 

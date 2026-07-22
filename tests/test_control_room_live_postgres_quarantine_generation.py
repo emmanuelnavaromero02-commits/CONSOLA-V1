@@ -33,7 +33,12 @@ async def test_live_workflow_generation_rearm_is_explicit_and_transactional(
     try:
         tenant_id, workspace_id = await _scope(conn)
         observation_a = _item("generation-item", tenant_id, workspace_id)
-        observation_b = {**observation_a, "observed_value": 2}
+        observation_b = _item(
+            "generation-item",
+            tenant_id,
+            workspace_id,
+            observed_value=2,
+        )
         await persist_item_rows(
             conn,
             _rows([observation_a], tenant_id, workspace_id),

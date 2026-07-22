@@ -40,7 +40,11 @@ async def test_live_option_selection_without_decision_survives_refresh(
         await persist_item_rows(conn, [row], owner_scope_id=7)
         await persist_option_selection(
             conn,
-            user={"id": 7},
+            user={
+                "id": 7,
+                "active_tenant_id": tenant_id,
+                "active_workspace_id": workspace_id,
+            },
             item={**item, "owner_user_id": 7},
             workspace_id=workspace_id,
             option_id="review",
