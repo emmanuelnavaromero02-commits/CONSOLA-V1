@@ -79,6 +79,7 @@ async def test_stale_pending_reservation_is_reclaimed_with_same_effective_key():
 @pytest.mark.asyncio
 async def test_remote_success_late_local_failure_carries_durable_receipt():
     pool = AsyncMock()
+    pool.fetchrow.return_value = {"id": 42, "status": "pending"}
     adapter = AsyncMock()
     adapter.supports_idempotency = True
     adapter.execute.return_value = {

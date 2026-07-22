@@ -77,6 +77,10 @@ from app.services.control_room.business_action_reservation import (
     acquire_guarded_action_reservation,
     complete_action_reservation,
 )
+from app.services.control_room.business_action_attempt import (
+    mark_remote_attempt_ambiguous,
+    mark_remote_attempt_started,
+)
 from app.services.control_room.business_action_failure import (
     finalize_aborted_action_reservation,
     run_reserved_external_action,
@@ -122,6 +126,8 @@ for _helper in (
     acquire_action_reservation,
     acquire_guarded_action_reservation,
     complete_action_reservation,
+    mark_remote_attempt_ambiguous,
+    mark_remote_attempt_started,
     finalize_aborted_action_reservation,
     run_reserved_external_action,
     lock_authoritative_business_item,
@@ -2922,6 +2928,14 @@ async def _execute_external_writeback(
                 "external write-back adapter does not guarantee idempotency"
             )
         adapter_name = adapter.__class__.__name__
+        await mark_remote_attempt_started(
+            pool,
+            workspace_id=_workspace_id(user),
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+            adapter=adapter_name,
+            target=str(target),
+        )
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
             adapter_result = await adapter_result
@@ -2936,6 +2950,18 @@ async def _execute_external_writeback(
             "message": str(exc),
             "remote_status": exc.status_code,
         }
+        if exc.status_code in {429, 500, 502, 503, 504}:
+            await mark_remote_attempt_ambiguous(
+                pool,
+                workspace_id=_workspace_id(user),
+                reservation_id=reservation.id,
+                effective_key=reservation.effective_key,
+                error_code="external_writeback_outcome_ambiguous",
+            )
+            result["message"] = (
+                "External write-back outcome is ambiguous; retry/reconciliation must use the same idempotency key."
+            )
+            return {"_http_error_status": 409, "_http_error_detail": result}
         execution = await _record_action_execution(
             pool,
             user=user,

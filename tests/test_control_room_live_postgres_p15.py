@@ -27,27 +27,17 @@ from tests.test_control_room_live_postgres_workflows import (
     _scope,
 )
 from tests.test_operational_rls_console_refinement import (
+    omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
 
-
+# fmt: off
 INTERNAL_CASES = (
-    (
-        "create_followup_task",
-        service._execute_internal_followup_task_tx,
-        "action_executed",
-    ),
-    (
-        "create_investigation_note",
-        service._execute_internal_investigation_note,
-        "investigation_note_created",
-    ),
-    (
-        "mark_decision_for_monitoring",
-        service._execute_internal_decision_monitoring,
-        "decision_monitoring_marked",
-    ),
+    ("create_followup_task", service._execute_internal_followup_task_tx, "action_executed"),
+    ("create_investigation_note", service._execute_internal_investigation_note, "investigation_note_created"),
+    ("mark_decision_for_monitoring", service._execute_internal_decision_monitoring, "decision_monitoring_marked"),
 )
+# fmt: on
 
 
 async def _linked_item(dsn: str, item_id: str):
@@ -97,7 +87,6 @@ def _user(tenant_id: str, workspace_id: str) -> dict:
     return {
         "id": 7,
         "email": "workflow-owner@example.com",
-        "role": "admin",
         "active_tenant_id": tenant_id,
         "active_workspace_id": workspace_id,
     }
@@ -154,6 +143,7 @@ def _template(template_id: str, cartridge: str = "platform") -> dict:
 @pytest.mark.parametrize("template_id,runner,event_type", INTERNAL_CASES)
 async def test_live_internal_effect_is_once_under_concurrency(
     postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
     template_id: str,
     runner,
     event_type: str,
@@ -174,7 +164,7 @@ async def test_live_internal_effect_is_once_under_concurrency(
     barrier = asyncio.Barrier(2)
 
     async def execute():
-        conn = await asyncpg.connect(postgres_with_real_init_schema)
+        conn = await asyncpg.connect(omega_console_live_dsn)
         try:
             async with conn.transaction():
                 await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
@@ -216,7 +206,9 @@ async def test_live_internal_effect_is_once_under_concurrency(
 
 @pytest.mark.asyncio
 async def test_live_external_remote_call_is_once_and_uses_reserved_key(
-    postgres_with_real_init_schema: str, monkeypatch: pytest.MonkeyPatch
+    postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     tenant_id, workspace_id, item = await _linked_item(
         postgres_with_real_init_schema, "p15-external"
@@ -250,7 +242,7 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
 
     async def execute():
         await barrier.wait()
-        conn = await asyncpg.connect(postgres_with_real_init_schema)
+        conn = await asyncpg.connect(omega_console_live_dsn)
         try:
             async with conn.transaction():
                 await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
@@ -267,7 +259,7 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
             await conn.close()
         if reservation.state is not ReservationState.ACQUIRED:
             return reservation
-        conn = await asyncpg.connect(postgres_with_real_init_schema)
+        conn = await asyncpg.connect(omega_console_live_dsn)
         try:
             async with conn.transaction():
                 await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)

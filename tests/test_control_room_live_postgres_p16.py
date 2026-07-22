@@ -28,6 +28,7 @@ from tests.test_control_room_live_postgres_workflows import (
     _scope,
 )
 from tests.test_operational_rls_console_refinement import (
+    omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
 
@@ -138,6 +139,7 @@ async def _assert_single_approval(dsn: str, workspace_id: str, item: dict):
 @pytest.mark.asyncio
 async def test_live_concurrent_approval_has_one_winner(
     postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
 ):
     tenant_id, workspace_id, item = await _linked_item(
         postgres_with_real_init_schema, "p16-double-approval"
@@ -149,7 +151,7 @@ async def test_live_concurrent_approval_has_one_winner(
         await barrier.wait()
         try:
             return await _tx(
-                postgres_with_real_init_schema,
+                omega_console_live_dsn,
                 tenant_id,
                 workspace_id,
                 lambda conn: _approve(
@@ -170,6 +172,7 @@ async def test_live_concurrent_approval_has_one_winner(
 @pytest.mark.asyncio
 async def test_live_option_waiting_on_approval_cannot_downgrade_stage(
     postgres_with_real_init_schema: str,
+    omega_console_live_dsn: str,
 ):
     tenant_id, workspace_id, item = await _linked_item(
         postgres_with_real_init_schema, "p16-option-approval"
@@ -191,7 +194,7 @@ async def test_live_option_waiting_on_approval_cannot_downgrade_stage(
             await allow_approval.wait()
             return await _approve(conn, user=user, item=item, workspace_id=workspace_id)
 
-        return await _tx(postgres_with_real_init_schema, tenant_id, workspace_id, work)
+        return await _tx(omega_console_live_dsn, tenant_id, workspace_id, work)
 
     async def select_option():
         await approval_locked.wait()
@@ -210,9 +213,7 @@ async def test_live_option_waiting_on_approval_cannot_downgrade_stage(
             )
 
         try:
-            return await _tx(
-                postgres_with_real_init_schema, tenant_id, workspace_id, work
-            )
+            return await _tx(omega_console_live_dsn, tenant_id, workspace_id, work)
         except HTTPException as exc:
             return exc
 

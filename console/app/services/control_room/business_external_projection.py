@@ -10,6 +10,7 @@ from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
 )
+from app.services.control_room.business_action_attempt import has_remote_attempt
 from app.services.control_room.business_projection import (
     normalize_persisted_business_item,
 )
@@ -192,10 +193,15 @@ def reserved_action_response(
     omega_builder: Callable[..., Any],
 ) -> dict[str, Any]:
     if reservation.state is ReservationState.IN_PROGRESS:
+        code = (
+            "external_action_pending_reconciliation"
+            if has_remote_attempt(reservation.row)
+            else "action_in_progress"
+        )
         raise HTTPException(
             409,
             {
-                "code": "action_in_progress",
+                "code": code,
                 "reservation_id": reservation.id,
                 "idempotency_key": reservation.effective_key,
             },
