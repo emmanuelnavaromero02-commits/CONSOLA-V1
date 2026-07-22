@@ -84,17 +84,11 @@ async def _linked_item(dsn: str, item_id: str):
             item=linked_item,
             lessons=[],
         )
-        return (
-            tenant_id,
-            workspace_id,
-            {
-                **item,
-                "owner_user_id": 7,
-                "decision_id": decision_id,
-                "status": "approved",
-                "execution_status": "dry_run_validated",
-            },
-        )
+        item["owner_user_id"] = 7
+        item["decision_id"] = decision_id
+        item["status"] = "approved"
+        item["execution_status"] = "dry_run_validated"
+        return tenant_id, workspace_id, item
     finally:
         await conn.close()
 
@@ -202,25 +196,20 @@ async def test_live_internal_effect_is_once_under_concurrency(
     check = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         assert sorted(result["idempotent"] for result in results) == [False, True]
-        assert (
-            await check.fetchval(
-                """SELECT COUNT(*) FROM action_runs
-                    WHERE workspace_id=$1 AND item_id=$2 AND mode='execute'""",
-                workspace_id,
-                item["id"],
-            )
-            == 1
+        run_count = await check.fetchval(
+            "SELECT COUNT(*) FROM action_runs "
+            "WHERE workspace_id=$1 AND item_id=$2 AND mode='execute'",
+            workspace_id,
+            item["id"],
         )
-        assert (
-            await check.fetchval(
-                """SELECT COUNT(*) FROM control_room_item_events
-                 WHERE workspace_id=$1 AND item_id=$2 AND event_type=$3""",
-                workspace_id,
-                item["id"],
-                event_type,
-            )
-            == 1
+        event_count = await check.fetchval(
+            "SELECT COUNT(*) FROM control_room_item_events "
+            "WHERE workspace_id=$1 AND item_id=$2 AND event_type=$3",
+            workspace_id,
+            item["id"],
+            event_type,
         )
+        assert (run_count, event_count) == (1, 1)
     finally:
         await check.close()
 
@@ -299,8 +288,8 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
     check = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         row = await check.fetchrow(
-            """SELECT idempotency_key, status FROM action_runs
-                 WHERE workspace_id=$1 AND item_id=$2 AND mode='execute'""",
+            "SELECT idempotency_key, status FROM action_runs "
+            "WHERE workspace_id=$1 AND item_id=$2 AND mode='execute'",
             workspace_id,
             item["id"],
         )
