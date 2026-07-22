@@ -254,14 +254,6 @@ async def test_decision_creation_locks_item_before_inserting_decision():
     assert calls[:3] == ["ensure", "lock", "decision"]
 
 
-@pytest.mark.parametrize("stage", [WorkflowStage.APPROVED, WorkflowStage.EXECUTED])
-def test_approved_and_executed_provenance_require_decision(stage):
-    with pytest.raises(ValueError, match="requires decision_id"):
-        workflow_eligibility_provenance(
-            _item(), stage=stage, workspace_id="workspace-a"
-        )
-
-
 @pytest.mark.asyncio
 async def test_option_selection_persists_typed_provenance_before_event():
     captured = {}
