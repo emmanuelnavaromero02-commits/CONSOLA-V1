@@ -82,3 +82,58 @@ def test_runtime_attestation_cannot_replay_same_locator_for_another_observation(
 
     assert has_evidence(item_a) is True
     assert has_evidence(item_b) is False
+
+
+def test_runtime_attestation_identity_field_cannot_be_rebound_to_an_alias():
+    fields = runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+        source_row={"id": "item-a", "employee_id": "employee-17"},
+        locator_field="employee_id",
+        observed_at="2026-07-20T10:00:00Z",
+    )
+    replayed = {
+        "id": "item-b",
+        "entity_id": "item-a",
+        "kind": "anomaly",
+        "source_dataset": "gold_metrics",
+        "source_system": "sap_successfactors",
+        "cartridge": "sap_successfactors",
+        "tenant_id": "tenant-11111111-1111-1111-1111-111111111111",
+        "workspace_id": "22222222-2222-2222-2222-222222222222",
+        "employee_id": "employee-17",
+        "observed_at": "2026-07-20T10:00:00Z",
+        **fields,
+    }
+
+    assert has_evidence(replayed) is False
+
+
+def test_runtime_attestation_requires_the_exact_observation_instant():
+    fields = runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_system="sap_successfactors",
+        cartridge="sap_successfactors",
+        tenant_id="tenant-11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+        source_row={"id": "item-a", "employee_id": "employee-17"},
+        locator_field="employee_id",
+        observed_at="2026-07-20T10:00:00Z",
+    )
+    replayed = {
+        "id": "item-a",
+        "kind": "anomaly",
+        "source_dataset": "gold_metrics",
+        "source_system": "sap_successfactors",
+        "cartridge": "sap_successfactors",
+        "tenant_id": "tenant-11111111-1111-1111-1111-111111111111",
+        "workspace_id": "22222222-2222-2222-2222-222222222222",
+        "employee_id": "employee-17",
+        "observed_at": "2026-07-20T18:00:00Z",
+        **fields,
+    }
+
+    assert has_evidence(replayed) is False

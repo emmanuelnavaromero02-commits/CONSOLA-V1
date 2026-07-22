@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -57,6 +58,27 @@ def _number_token(value: Any) -> str:
     return "0" if normalized in {"-0", ""} else normalized
 
 
+def _time_token(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw) == 10:
+        try:
+            return date.fromisoformat(raw).isoformat()
+        except ValueError:
+            return _token(raw)
+    try:
+        parsed = datetime.fromisoformat(
+            raw.replace("Z", "+00:00").replace("z", "+00:00")
+        )
+    except ValueError:
+        return _token(raw)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC)
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    return parsed.isoformat(timespec=timespec).replace("+00:00", "Z").casefold()
+
+
 def _first(surfaces: tuple[Mapping[str, Any], ...], fields: tuple[str, ...]):
     for field in fields:
         for surface in surfaces:
@@ -103,7 +125,7 @@ def runtime_business_binding(
     _field, value = _first(surfaces, _VALUE_FIELDS)
     if value is not None:
         observation["value"] = _number_token(value)
-    observation["observed_at"] = _token(observed_at)
+    observation["observed_at"] = _time_token(observed_at)
     binding: dict[str, Any] = {
         "version": _BINDING_VERSION,
         "identity": {"field": str(identity_field), "value": identity},
@@ -111,15 +133,6 @@ def runtime_business_binding(
     }
     binding["fingerprint"] = _binding_fingerprint(binding)
     return binding
-
-
-def _surface_values(item: Mapping[str, Any], fields: tuple[str, ...]) -> set[str]:
-    return {
-        _token(surface.get(field))
-        for surface in semantic_maps(item)
-        for field in fields
-        if surface.get(field) is not None and _token(surface.get(field))
-    }
 
 
 def _observation_matches(binding: Mapping[str, Any], item: Mapping[str, Any]) -> bool:
@@ -145,15 +158,20 @@ def _observation_matches(binding: Mapping[str, Any], item: Mapping[str, Any]) ->
             return False
         if expected and expected not in actual:
             return False
-    observed_at = str(observation.get("observed_at") or "")
+    observed_at = _time_token(observation.get("observed_at"))
     if observed_at:
-        actual = _surface_values(item, _TIME_FIELDS)
-        if (
-            actual
-            and observed_at not in actual
-            and observed_at[:10]
-            not in {value[:10] for value in actual if len(value) >= 10}
-        ):
+        actual = {
+            (_time_token(surface.get(field)), len(str(surface.get(field)).strip()) > 10)
+            for surface in semantic_maps(item)
+            for field in _TIME_FIELDS
+            if surface.get(field) is not None
+        }
+        precise = {value for value, has_time in actual if has_time}
+        dates = {value for value, has_time in actual if not has_time}
+        if precise:
+            if observed_at not in precise:
+                return False
+        elif dates and observed_at[:10] not in dates:
             return False
     return True
 
@@ -193,16 +211,11 @@ def runtime_reference_matches_item(
         if _token(surface.get(identity_field))
     }
     locator_matches = locator_matches or value in identities
-    exact_identity = any(
-        identity_field in surface
-        and _token(surface.get(identity_field)) == identity_value
-        for surface in surfaces
-    )
-    business_identity = identity_value in identities
+    canonical_identity_field = "id" if identity_field == "item_id" else identity_field
+    _field, effective_identity = _first(surfaces, (canonical_identity_field,))
+    exact_identity = _token(effective_identity) == identity_value
     return bool(
-        locator_matches
-        and (exact_identity or business_identity)
-        and _observation_matches(binding, item)
+        locator_matches and exact_identity and _observation_matches(binding, item)
     )
 
 
