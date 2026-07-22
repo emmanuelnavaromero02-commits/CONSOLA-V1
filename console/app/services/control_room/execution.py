@@ -3098,6 +3098,8 @@ async def _execute_external_writeback(
             },
         )
         return {"_http_error_status": 502, "_http_error_detail": result}
+    except external_effect.RemoteSideEffectCommitted:
+        raise
     except Exception as exc:
         result = {
             "ok": False,

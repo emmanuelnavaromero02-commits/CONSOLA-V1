@@ -219,8 +219,10 @@ def reserved_action_response(
         raise RuntimeError("acquired action reservation cannot be replayed")
     action_run = action_run_public(reservation.row)
     result = details(action_run.get("execution_result"))
+    is_external_write = result.get("external_write") is True
     if result.get("local_projection_status") == "pending_reconciliation" or (
-        result.get("executed") is True
+        is_external_write
+        and result.get("executed") is True
         and str(item.get("execution_status") or "") != "executed"
     ):
         raise HTTPException(

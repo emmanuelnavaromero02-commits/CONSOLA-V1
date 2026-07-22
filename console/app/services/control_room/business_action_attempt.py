@@ -49,8 +49,8 @@ async def mark_remote_attempt_started(
                               'remote_attempt',
                               jsonb_build_object(
                                   'status', 'started',
-                                  'adapter', $4,
-                                  'target', $5,
+                                  'adapter', $4::text,
+                                  'target', $5::text,
                                   'started_at', NOW()
                               )
                           ),
@@ -89,7 +89,7 @@ async def mark_remote_attempt_ambiguous(
                               COALESCE(metadata -> 'remote_attempt', '{}'::jsonb)
                               || jsonb_build_object(
                                   'status', 'ambiguous',
-                                  'error_code', $4,
+                                  'error_code', $4::text,
                                   'ambiguous_at', NOW()
                               )
                           ),
