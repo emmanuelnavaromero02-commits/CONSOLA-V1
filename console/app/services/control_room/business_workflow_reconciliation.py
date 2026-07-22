@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.control_room.business_action_markers import (
     CONTROL_ROOM_ACTION_MARKERS,
 )
 from app.services.control_room.business_eligibility import classify_business_item
+from app.services.control_room.business_observation_order import (
+    business_observation_order,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -24,6 +28,12 @@ from app.services.control_room.business_workflow_quarantine import (
 
 
 _WORKFLOW_STATUSES = frozenset({"decision_created", "approved", "resolved"})
+
+
+@dataclass(frozen=True)
+class WorkflowReconciliation:
+    patches: dict[tuple[str, str], dict[str, Any]]
+    existing_orders: dict[tuple[str, str], str]
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -109,11 +119,11 @@ def _quarantine_patch(
     return {WORKFLOW_QUARANTINE_KEY: quarantined[WORKFLOW_QUARANTINE_KEY]}
 
 
-async def workflow_metadata_patches(
+async def reconcile_workflow_metadata(
     conn: Any, rows: Sequence[Mapping[str, Any]]
-) -> dict[tuple[str, str], dict[str, Any]]:
+) -> WorkflowReconciliation:
     if not rows or not callable(getattr(conn, "fetch", None)):
-        return {}
+        return WorkflowReconciliation(patches={}, existing_orders={})
     keys = [
         {"workspace_id": str(row.get("workspace_id") or ""), "item_id": row["item_id"]}
         for row in rows
@@ -151,12 +161,14 @@ async def workflow_metadata_patches(
         for row in rows
     }
     patches: dict[tuple[str, str], dict[str, Any]] = {}
+    existing_orders: dict[tuple[str, str], str] = {}
     for raw in existing_rows:
         existing = dict(raw)
         key = (str(existing.get("workspace_id") or ""), str(existing["item_id"]))
         current = incoming.get(key)
         if current is None:
             continue
+        existing_orders[key] = business_observation_order(_item(existing))
         metadata = _mapping(existing.get("metadata"))
         quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
         if not _has_workflow(existing):
@@ -206,7 +218,20 @@ async def workflow_metadata_patches(
             }
             continue
         patches[key] = _quarantine_patch(existing, current, metadata)
-    return patches
+    return WorkflowReconciliation(
+        patches=patches,
+        existing_orders=existing_orders,
+    )
 
 
-__all__ = ("workflow_metadata_patches",)
+async def workflow_metadata_patches(
+    conn: Any, rows: Sequence[Mapping[str, Any]]
+) -> dict[tuple[str, str], dict[str, Any]]:
+    return (await reconcile_workflow_metadata(conn, rows)).patches
+
+
+__all__ = (
+    "WorkflowReconciliation",
+    "reconcile_workflow_metadata",
+    "workflow_metadata_patches",
+)

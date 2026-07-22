@@ -7,13 +7,18 @@ from app.services.control_room.business_item_persistence_sql import (
     ENSURE_ITEM_SQL,
     PERSIST_ITEMS_SQL,
 )
+from app.services.control_room.business_observation_order import (
+    OBSERVATION_ORDER_BASELINE_KEY,
+    OBSERVATION_ORDER_KEY,
+    business_observation_order,
+)
 from app.services.control_room.business_policy_metadata import REPLACED_POLICY_KEYS
 from app.services.control_room.business_serialization import dumps_jsonb
 from app.services.control_room.business_workflow_provenance import (
     persistence_metadata,
 )
 from app.services.control_room.business_workflow_reconciliation import (
-    workflow_metadata_patches,
+    reconcile_workflow_metadata,
 )
 
 
@@ -46,18 +51,26 @@ def parse_command_tag(result: Any, command: str) -> int:
 
 
 def _prepared_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return [{**dict(row), "metadata": persistence_metadata(row)} for row in rows]
+    prepared: list[dict[str, Any]] = []
+    for row in rows:
+        metadata = persistence_metadata(row)
+        metadata.pop(OBSERVATION_ORDER_BASELINE_KEY, None)
+        metadata[OBSERVATION_ORDER_KEY] = business_observation_order(row)
+        prepared.append({**dict(row), "metadata": metadata})
+    return prepared
 
 
 async def _reconciled_rows(
     conn: Any, rows: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
     prepared = _prepared_rows(rows)
-    patches = await workflow_metadata_patches(conn, prepared)
+    reconciliation = await reconcile_workflow_metadata(conn, prepared)
     for row in prepared:
         key = (str(row.get("workspace_id") or ""), str(row.get("item_id") or ""))
-        if patch := patches.get(key):
+        if patch := reconciliation.patches.get(key):
             row["metadata"] = {**dict(row["metadata"]), **patch}
+        if baseline := reconciliation.existing_orders.get(key):
+            row["metadata"][OBSERVATION_ORDER_BASELINE_KEY] = baseline
     return prepared
 
 

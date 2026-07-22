@@ -3,6 +3,10 @@ from __future__ import annotations
 from app.services.control_room.business_policy_metadata import (
     policy_metadata_without_fields_sql,
 )
+from app.services.control_room.business_observation_order import (
+    OBSERVATION_ORDER_BASELINE_KEY,
+    OBSERVATION_ORDER_KEY,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
@@ -29,25 +33,41 @@ _QUARANTINED_WORKFLOW = (
     f"(EXCLUDED.metadata ? '{WORKFLOW_QUARANTINE_KEY}' "
     f"AND NOT EXCLUDED.metadata ? '{DECISION_PROVENANCE_KEY}')"
 )
+_INCOMING_IS_CURRENT = (
+    f"COALESCE(EXCLUDED.metadata->>'{OBSERVATION_ORDER_KEY}', '') >= "
+    f"COALESCE(control_room_items.metadata->>'{OBSERVATION_ORDER_KEY}', "
+    f"EXCLUDED.metadata->>'{OBSERVATION_ORDER_BASELINE_KEY}', '')"
+)
+_BACKFILL_EXISTING_ORDER = (
+    f"CASE WHEN EXCLUDED.metadata->>'{OBSERVATION_ORDER_BASELINE_KEY}' IS NOT NULL "
+    f"THEN jsonb_set(control_room_items.metadata, '{{{OBSERVATION_ORDER_KEY}}}', "
+    f"to_jsonb(EXCLUDED.metadata->>'{OBSERVATION_ORDER_BASELINE_KEY}'), true) "
+    "ELSE control_room_items.metadata END"
+)
+
+
+def _if_current(incoming: str, existing: str) -> str:
+    return f"CASE WHEN {_INCOMING_IS_CURRENT} THEN {incoming} ELSE {existing} END"
+
 
 _SEMANTIC_UPDATE = f"""
-    cartridge_id = EXCLUDED.cartridge_id,
-    domain = EXCLUDED.domain,
-    source_dataset = EXCLUDED.source_dataset,
-    item_kind = EXCLUDED.item_kind,
-    title = EXCLUDED.title,
-    severity = EXCLUDED.severity,
-    entity_kind = EXCLUDED.entity_kind,
-    entity_id = EXCLUDED.entity_id,
-    entity_label = EXCLUDED.entity_label,
-    anomaly_type = EXCLUDED.anomaly_type,
-    metadata = {_CLEAN_WORKFLOW_METADATA} || EXCLUDED.metadata,
-    impact_estimate = EXCLUDED.impact_estimate,
-    impact_currency = EXCLUDED.impact_currency,
-    confidence = EXCLUDED.confidence,
-    priority_score = EXCLUDED.priority_score,
+    cartridge_id = {_if_current("EXCLUDED.cartridge_id", "control_room_items.cartridge_id")},
+    domain = {_if_current("EXCLUDED.domain", "control_room_items.domain")},
+    source_dataset = {_if_current("EXCLUDED.source_dataset", "control_room_items.source_dataset")},
+    item_kind = {_if_current("EXCLUDED.item_kind", "control_room_items.item_kind")},
+    title = {_if_current("EXCLUDED.title", "control_room_items.title")},
+    severity = {_if_current("EXCLUDED.severity", "control_room_items.severity")},
+    entity_kind = {_if_current("EXCLUDED.entity_kind", "control_room_items.entity_kind")},
+    entity_id = {_if_current("EXCLUDED.entity_id", "control_room_items.entity_id")},
+    entity_label = {_if_current("EXCLUDED.entity_label", "control_room_items.entity_label")},
+    anomaly_type = {_if_current("EXCLUDED.anomaly_type", "control_room_items.anomaly_type")},
+    metadata = {_if_current(f"({_CLEAN_WORKFLOW_METADATA} || EXCLUDED.metadata) - '{OBSERVATION_ORDER_BASELINE_KEY}'", _BACKFILL_EXISTING_ORDER)},
+    impact_estimate = {_if_current("EXCLUDED.impact_estimate", "control_room_items.impact_estimate")},
+    impact_currency = {_if_current("EXCLUDED.impact_currency", "control_room_items.impact_currency")},
+    confidence = {_if_current("EXCLUDED.confidence", "control_room_items.confidence")},
+    priority_score = {_if_current("EXCLUDED.priority_score", "control_room_items.priority_score")},
     owner_user_id = control_room_items.owner_user_id,
-    last_seen_at = NOW()
+    last_seen_at = {_if_current("NOW()", "control_room_items.last_seen_at")}
 """
 
 
@@ -80,17 +100,21 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
         ELSE control_room_items.status
     END,
     decision_id = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.decision_id
         WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
     END,
     selected_option_id = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
         WHEN {_QUARANTINED_WORKFLOW} THEN NULL
         ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
         ELSE control_room_items.execution_status
     END
@@ -115,18 +139,22 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
         WHEN control_room_items.status = ANY($3::text[]) THEN control_room_items.status
         ELSE EXCLUDED.status
     END,
     decision_id = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.decision_id
         WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
     END,
     selected_option_id = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
         WHEN {_QUARANTINED_WORKFLOW} THEN NULL
         ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
+        WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
         WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
         ELSE control_room_items.execution_status
     END
