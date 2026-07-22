@@ -15,14 +15,17 @@ fi
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
 ENV_FILE="${MODECISSIONS_ENV_FILE:-/opt/modecissions/infra/terraform/deploy/.env}"
+EVIDENCE_ENV_FILE="${MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE:-${ENV_FILE}.control-room-evidence}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=aws-env-pair.sh
+source "$SCRIPT_DIR/aws-env-pair.sh"
+aws_env_pair_init "$ENV_FILE" "$EVIDENCE_ENV_FILE"
 
 required_secrets=(
   ANTHROPIC_API_KEY
   JWT_SECRET_KEY
   INTERNAL_API_KEY
   SECURITY_CONTEXT_SIGNING_KEY
-  CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID
-  CONTROL_ROOM_EVIDENCE_SIGNING_KEY
   INTERNAL_API_KEY_CONSOLE_TO_CONSOLE
   INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT
   INTERNAL_API_KEY_CONSOLE_TO_VAULT
@@ -89,63 +92,14 @@ optional_secrets=(
   SMTP_PASSWORD
 )
 
-required_if_configured_secrets=(
-  CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
+required_evidence_secrets=(
+  CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID
+  CONTROL_ROOM_EVIDENCE_SIGNING_KEY
 )
 
-tmp_file="$(mktemp)"
-err_file="$(mktemp)"
-trap 'rm -f "$tmp_file" "$err_file"' EXIT
-chmod 600 "$tmp_file" "$err_file"
-
-write_env() {
-  local key="$1"
-  local value="$2"
-  if [[ "$value" == *$'\n'* ]]; then
-    echo "[aws-entrypoint] value for $key contains newline; refusing to write dotenv" >&2
-    return 1
-  fi
-  local escaped="${value//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
-  escaped="${escaped//\$/\\$}"
-  escaped="${escaped//\`/\\\`}"
-  printf '%s="%s"\n' "$key" "$escaped" >> "$tmp_file"
-}
-
-fetch_secret() {
-  local name="$1"
-  local arn="$2"
-  local delay=1
-  local attempt
-
-  for attempt in 1 2 3; do
-    if value="$(aws --region "$AWS_REGION" secretsmanager get-secret-value \
-      --secret-id "$arn" \
-      --query SecretString \
-      --output text 2>"$err_file")"; then
-      printf '%s' "$value"
-      return 0
-    fi
-    echo "[aws-entrypoint] secret fetch failed for $name attempt=$attempt" >&2
-    if [[ "$attempt" == "3" ]]; then
-      cat "$err_file" >&2 || true
-      return 1
-    fi
-    sleep "$delay"
-    delay=$((delay * 2))
-  done
-}
-
-derive_public_url() {
-  local base="$1"
-  local port="$2"
-  local scheme rest hostport host
-  scheme="${base%%://*}"
-  rest="${base#*://}"
-  hostport="${rest%%/*}"
-  host="${hostport%%:*}"
-  printf '%s://%s:%s' "$scheme" "$host" "$port"
-}
+configured_evidence_secrets=(
+  CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS
+)
 
 is_release_tag() {
   [[ "${1:-}" =~ ^v[0-9] ]]
@@ -160,12 +114,8 @@ assert_release_refs_coherent() {
 
 echo "[aws-entrypoint] writing runtime env to $ENV_FILE"
 required_config=(
-  AWS_REGION
-  S3_BUCKET_NAME
-  AIRFLOW_ADMIN_USER
-  SUPERSET_ADMIN_USER
-  CONSOLE_URL
-  WORKSPACE_PUBLIC_URL
+  AWS_REGION S3_BUCKET_NAME AIRFLOW_ADMIN_USER
+  SUPERSET_ADMIN_USER CONSOLE_URL WORKSPACE_PUBLIC_URL
 )
 
 AIRFLOW_ADMIN_USER="${AIRFLOW_ADMIN_USER:-admin}"
@@ -268,6 +218,8 @@ for config_name in \
   write_env "$config_name" "${!config_name}"
 done
 
+write_env MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE "$EVIDENCE_ENV_FILE"
+
 for secret_name in "${required_secrets[@]}"; do
   arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
   arn="${!arn_var:-}"
@@ -282,18 +234,32 @@ for secret_name in "${required_secrets[@]}"; do
   write_env "$secret_name" "$secret_value"
 done
 
-for secret_name in "${required_if_configured_secrets[@]}"; do
+for secret_name in "${required_evidence_secrets[@]}"; do
   arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
   arn="${!arn_var:-}"
   if [[ -z "$arn" ]]; then
-    write_env "$secret_name" ""
+    echo "[aws-entrypoint] missing ARN env var: $arn_var" >&2
+    exit 1
+  fi
+  secret_value="$(fetch_secret "$secret_name" "$arn")" || {
+    echo "[aws-entrypoint] unable to fetch required secret: $secret_name" >&2
+    exit 1
+  }
+  write_evidence_env "$secret_name" "$secret_value"
+done
+
+for secret_name in "${configured_evidence_secrets[@]}"; do
+  arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
+  arn="${!arn_var:-}"
+  if [[ -z "$arn" ]]; then
+    write_evidence_env "$secret_name" ""
     continue
   fi
   secret_value="$(fetch_secret "$secret_name" "$arn")" || {
     echo "[aws-entrypoint] unable to fetch configured secret: $secret_name" >&2
     exit 1
   }
-  write_env "$secret_name" "$secret_value"
+  write_evidence_env "$secret_name" "$secret_value"
 done
 
 for secret_name in "${optional_secrets[@]}"; do
@@ -312,10 +278,15 @@ for secret_name in "${optional_secrets[@]}"; do
 done
 
 while IFS='=' read -r env_name env_value; do
-  if [[ "$env_name" == MODECISSIONS_ENV_* ]]; then
-    write_env "${env_name#MODECISSIONS_ENV_}" "$env_value"
-  fi
+  [[ "$env_name" == MODECISSIONS_ENV_* ]] || continue
+  replay_name="${env_name#MODECISSIONS_ENV_}"
+  case "$replay_name" in
+    FILE|CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID|CONTROL_ROOM_EVIDENCE_SIGNING_KEY|CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS)
+      continue
+      ;;
+  esac
+  write_env "$replay_name" "$env_value"
 done < <(env)
 
-install -m 600 -o root -g root "$tmp_file" "$ENV_FILE"
+publish_env_pair
 echo "[aws-entrypoint] runtime env written successfully"

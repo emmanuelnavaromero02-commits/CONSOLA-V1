@@ -9,6 +9,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 GCP_STARTUP = REPO / "infra/terraform-gcp/templates/startup.sh.tftpl"
 AWS_ENTRYPOINT = REPO / "scripts/aws-entrypoint.sh"
+AWS_DEPLOY = REPO / "infra/terraform/deploy"
+BOOTSTRAP_KEYS = REPO / "infra/bootstrap-keys.sh"
 
 KEYRING = {
     "control_room_evidence_signing_key_id": "CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID",
@@ -58,27 +60,82 @@ def test_aws_previous_keyring_is_fatal_only_when_reference_is_configured():
     source = AWS_ENTRYPOINT.read_text(encoding="utf-8")
     previous = "CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS"
 
-    configured = _array_body(source, "required_if_configured_secrets")
+    required = _array_body(source, "required_evidence_secrets")
+    configured = _array_body(source, "configured_evidence_secrets")
     optional = _array_body(source, "optional_secrets")
+    assert "CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID" in required
+    assert "CONTROL_ROOM_EVIDENCE_SIGNING_KEY" in required
     assert previous in configured
     assert previous not in optional
 
     loop = re.search(
-        r'for secret_name in "\$\{required_if_configured_secrets\[@\]\}"; do'
+        r'for secret_name in "\$\{configured_evidence_secrets\[@\]\}"; do'
         r"(?P<body>[\s\S]*?)\ndone",
         source,
     )
     assert loop
     body = loop.group("body")
     assert 'if [[ -z "$arn" ]]' in body
-    assert 'write_env "$secret_name" ""' in body
+    assert 'write_evidence_env "$secret_name" ""' in body
     assert 'fetch_secret "$secret_name" "$arn"' in body
     assert "exit 1" in body
 
 
+def test_aws_launchers_do_not_repopulate_evidence_keys_in_shared_env():
+    for name in ("start.sh", "update.sh"):
+        source = (AWS_DEPLOY / name).read_text(encoding="utf-8")
+        assert "MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE=false" in source
+        assert "bootstrap-keys.sh .env" in source
+
+
+def test_aws_bootstrap_still_generates_every_non_evidence_key(tmp_path):
+    source = BOOTSTRAP_KEYS.read_text(encoding="utf-8")
+    declared = set(
+        re.findall(
+            r'"([A-Z][A-Z0-9_]+)"',
+            _array_body(source, "KEYS") + _array_body(source, "DB_KEYS"),
+        )
+    )
+    declared.remove("CONTROL_ROOM_EVIDENCE_SIGNING_KEY")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_openssl = bin_dir / "openssl"
+    fake_openssl.write_text(
+        "#!/usr/bin/env bash\nprintf 'generated-secret'\n", encoding="utf-8"
+    )
+    fake_openssl.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE": "false",
+        }
+    )
+    output = tmp_path / "runtime.env"
+
+    result = subprocess.run(
+        ["bash", str(BOOTSTRAP_KEYS), str(output)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    generated = {
+        line.split("=", 1)[0]
+        for line in output.read_text(encoding="utf-8").splitlines()
+    }
+    assert generated == declared
+    assert not generated.intersection(KEYRING.values())
+
+
 def test_aws_configured_previous_keyring_fetch_failure_stops_entrypoint(tmp_path):
     source = AWS_ENTRYPOINT.read_text(encoding="utf-8")
-    required = _array_body(source, "required_secrets").split()
+    required = (
+        _array_body(source, "required_secrets").split()
+        + _array_body(source, "required_evidence_secrets").split()
+    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fake_aws = bin_dir / "aws"
@@ -135,3 +192,4 @@ printf 'test-secret-value'
     assert "unable to fetch configured secret" in combined
     assert "optional secret unavailable" not in combined
     assert not (tmp_path / "runtime.env").exists()
+    assert not (tmp_path / "runtime.env.control-room-evidence").exists()

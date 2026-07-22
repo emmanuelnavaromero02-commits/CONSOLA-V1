@@ -13,22 +13,33 @@ def _services(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))["services"]
 
 
-def test_dedicated_evidence_keys_mount_only_in_console():
-    for relative in (
-        "infra/docker-compose.yml",
-        "infra/terraform/deploy/docker-compose.aws.yml",
-    ):
-        services = _services(REPO / relative)
-        assert CURRENT_ID in services["console"]["environment"]
-        assert CURRENT_KEY in services["console"]["environment"]
-        assert PREVIOUS_KEYS in services["console"]["environment"]
-        for service_name, service in services.items():
-            if service_name == "console":
-                continue
-            environment = service.get("environment") or {}
-            assert CURRENT_ID not in environment
-            assert CURRENT_KEY not in environment
-            assert PREVIOUS_KEYS not in environment
+def test_local_evidence_keys_mount_only_in_console():
+    services = _services(REPO / "infra/docker-compose.yml")
+    for name in (CURRENT_ID, CURRENT_KEY, PREVIOUS_KEYS):
+        assert name in services["console"]["environment"]
+        assert all(
+            name not in (service.get("environment") or {})
+            for service_name, service in services.items()
+            if service_name != "console"
+        )
+
+
+def test_aws_evidence_env_mounts_only_in_console():
+    services = _services(REPO / "infra/terraform/deploy/docker-compose.aws.yml")
+    private_path = (
+        "${MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE:-"
+        "${AWS_ENV_FILE:-.env}.control-room-evidence}"
+    )
+    console_env_files = services["console"]["env_file"]
+    assert [item["required"] for item in console_env_files] == [True, True]
+    assert console_env_files[1]["path"] == private_path
+    for name in (CURRENT_ID, CURRENT_KEY, PREVIOUS_KEYS):
+        assert name not in services["console"]["environment"]
+    for service_name, service in services.items():
+        if service_name != "console":
+            assert private_path not in {
+                item["path"] for item in service.get("env_file", [])
+            }
 
 
 def test_gcp_overlay_mounts_dedicated_evidence_keys_only_in_console():

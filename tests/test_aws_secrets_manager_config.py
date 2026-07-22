@@ -123,14 +123,18 @@ def test_bedrock_policy_uses_specific_model_resources():
 
 def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     src = _read(REPO / "scripts/aws-entrypoint.sh")
+    env_pair = _read(REPO / "scripts/aws-env-pair.sh")
     assert "set -Eeuo pipefail" in src
     assert "umask 077" in src
+    assert 'source "$SCRIPT_DIR/aws-env-pair.sh"' in src
     assert "missing ARN env var" in src
     assert "exit 1" in src
-    assert "secretsmanager get-secret-value" in src
-    assert "sleep \"$delay\"" in src
+    assert "secretsmanager get-secret-value" in env_pair
+    assert 'sleep "$delay"' in env_pair
     assert "optional_secrets" in src
-    required_block = re.search(r"required_secrets=\(([\s\S]*?)\)\n\noptional_secrets=", src)
+    required_block = re.search(
+        r"required_secrets=\(([\s\S]*?)\)\n\noptional_secrets=", src
+    )
     assert required_block
     assert "SUPERSET_SERVICE_PASSWORD" in required_block.group(1)
     for secret_name in (
@@ -152,7 +156,7 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     assert "AIRFLOW_PUBLIC_URL" in src
     assert "SUPERSET_PUBLIC_URL" in src
     assert "must not point to localhost in production" in src
-    assert 'printf \'%s="%s' in src
+    assert "printf '%s=\"%s" in env_pair
 
 
 def test_compose_aws_does_not_contain_secret_literals():
