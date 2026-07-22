@@ -2839,6 +2839,7 @@ async def _execute_external_writeback(
     user_agent: str | None,
 ) -> dict[str, Any]:
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
+    from app.services.control_room import business_external_effect as external_effect
 
     await lock_authoritative_business_item(
         pool,
@@ -3183,103 +3184,104 @@ async def _execute_external_writeback(
         "adapter_result": public_adapter_result,
         "writeback_result": public_adapter_result,
     }
-    execution = await _record_action_execution(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="execute_live",
-        status=execution_status,
-        payload=action_data,
-        result=result,
-        error=None if ok else message,
-        critical=True,
-    )
-    action_run = await _complete_execute_reservation(
-        pool,
-        user=user,
-        item=item,
-        status="completed" if ok else "failed",
-        reservation=reservation,
-        result=result,
-        side_effect={"target": target, "adapter": adapter_name, "after": after},
-        error_code=None if ok else "external_writeback_failed",
-        error_message=None if ok else message,
-        legacy_execution_id=int(execution["id"])
-        if execution.get("id") is not None
-        else None,
-    )
-    await _set_execution_status(
-        pool, user=user, item=item, execution_status=execution_status, critical=True
-    )
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="action_executed" if ok else "action_failed",
-        metadata={
-            "template_id": template["template_id"],
-            "template_type": template_type,
-            "execution_id": execution.get("id"),
-            "action_run_id": action_run.get("id"),
-            "target": target,
-            "adapter": adapter_name,
-        },
-        critical=True,
-    )
-    await _record_writeback_audit_event(
-        pool,
-        user=user,
-        action="control_room.action.execute",
-        resource_type="control_room_item",
-        resource_id=item["id"],
-        ip=ip,
-        user_agent=user_agent,
-        status="success" if ok else "failure",
-        metadata={
-            "template_id": template["template_id"],
-            "template_type": template_type,
-            "target": target,
-            "adapter": adapter_name,
-            "execution_id": execution.get("id"),
-            "action_run_id": action_run.get("id"),
-            "before": before,
-            "after": after,
-            "validation_result": public_validation_result,
-            "adapter_result": public_adapter_result,
-        },
-    )
-    if not ok:
-        return {"_http_error_status": 502, "_http_error_detail": message}
-    learning_lesson = await _record_adapter_success_lesson(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        execution=execution,
-        result=result,
-        adapter_name=adapter_name,
-        template_type=template_type,
-    )
-    suggested_actions = _suggested_actions_from_lessons(
-        item, [learning_lesson] if learning_lesson else []
-    )
-    public_item = _project_public_item(
-        item,
-        _with_omega,
-        execution_status="executed",
-        suggested_actions=suggested_actions,
-    )
-    return {
-        "executed": True,
-        "idempotent": False,
-        "execution": execution,
-        "action_run": action_run,
-        "payload": action_data,
-        "result": result,
-        "learning_lesson": learning_lesson,
-        "item": public_item,
-    }
+    with external_effect.remote_effect_boundary(result, target, adapter_name, after):
+        execution = await _record_action_execution(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            mode="execute_live",
+            status=execution_status,
+            payload=action_data,
+            result=result,
+            error=None if ok else message,
+            critical=True,
+        )
+        action_run = await _complete_execute_reservation(
+            pool,
+            user=user,
+            item=item,
+            status="completed" if ok else "failed",
+            reservation=reservation,
+            result=result,
+            side_effect={"target": target, "adapter": adapter_name, "after": after},
+            error_code=None if ok else "external_writeback_failed",
+            error_message=None if ok else message,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+        )
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status=execution_status, critical=True
+        )
+        await _record_item_event(
+            pool,
+            user=user,
+            item=item,
+            event_type="action_executed" if ok else "action_failed",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "target": target,
+                "adapter": adapter_name,
+            },
+            critical=True,
+        )
+        await _record_writeback_audit_event(
+            pool,
+            user=user,
+            action="control_room.action.execute",
+            resource_type="control_room_item",
+            resource_id=item["id"],
+            ip=ip,
+            user_agent=user_agent,
+            status="success" if ok else "failure",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "target": target,
+                "adapter": adapter_name,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "before": before,
+                "after": after,
+                "validation_result": public_validation_result,
+                "adapter_result": public_adapter_result,
+            },
+        )
+        if not ok:
+            return {"_http_error_status": 502, "_http_error_detail": message}
+        learning_lesson = await _record_adapter_success_lesson(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            execution=execution,
+            result=result,
+            adapter_name=adapter_name,
+            template_type=template_type,
+        )
+        suggested_actions = _suggested_actions_from_lessons(
+            item, [learning_lesson] if learning_lesson else []
+        )
+        public_item = _project_public_item(
+            item,
+            _with_omega,
+            execution_status="executed",
+            suggested_actions=suggested_actions,
+        )
+        return {
+            "executed": True,
+            "idempotent": False,
+            "execution": execution,
+            "action_run": action_run,
+            "payload": action_data,
+            "result": result,
+            "learning_lesson": learning_lesson,
+            "item": public_item,
+        }
 
 
 @_bind_to_core

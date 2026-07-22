@@ -8,6 +8,7 @@ from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
 )
+from app.services.control_room.business_external_effect import RemoteSideEffectCommitted
 
 
 USER = {
@@ -192,7 +193,7 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
         patch.object(control_room_service, "_record_item_event", AsyncMock()),
         patch.object(control_room_service, "_project_public_item") as project_item,
     ):
-        with pytest.raises(RuntimeError, match="insert affected unexpected rows"):
+        with pytest.raises(RemoteSideEffectCommitted) as exc:
             await control_room_service._execute_external_writeback(
                 pool,
                 user=USER,
@@ -204,6 +205,8 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
                 user_agent=None,
             )
 
+    assert exc.value.cause_type == "RuntimeError"
+    assert exc.value.execution_result["executed"] is True
     project_item.assert_not_called()
 
 

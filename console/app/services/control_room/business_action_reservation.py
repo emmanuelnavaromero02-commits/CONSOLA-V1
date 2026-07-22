@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -32,6 +33,9 @@ class ReservationState(StrEnum):
 
 class ReservationConflict(RuntimeError):
     pass
+
+
+RESERVATION_LEASE_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,17 @@ def _reservation(
         effective_key=key,
         state=ReservationState.ACQUIRED if acquired else _state(data.get("status")),
         row=data,
+    )
+
+
+def _lease_expired(row: Mapping[str, Any]) -> bool:
+    updated_at = row.get("updated_at")
+    if not isinstance(updated_at, datetime):
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return updated_at <= datetime.now(UTC) - timedelta(
+        seconds=RESERVATION_LEASE_SECONDS
     )
 
 
@@ -157,6 +172,28 @@ async def acquire_action_reservation(
     stored = metadata.get("reservation_contract")
     if isinstance(stored, Mapping) and _canonical(stored) != _canonical(contract):
         raise ReservationConflict("action reservation contract mismatch")
+    if _state(
+        existing.get("status")
+    ) is ReservationState.IN_PROGRESS and _lease_expired(existing):
+        reclaimed = await reservation_fetchrow(
+            conn,
+            """
+            UPDATE action_runs
+               SET updated_at = NOW()
+             WHERE workspace_id = $1::uuid
+               AND id = $2
+               AND idempotency_key = $3
+               AND status = 'pending'
+               AND updated_at = $4
+             RETURNING *
+            """,
+            workspace_id,
+            int(existing["id"]),
+            key,
+            existing["updated_at"],
+        )
+        if reclaimed:
+            return _reservation(reclaimed, key, acquired=True)
     return _reservation(existing, key, acquired=False)
 
 
