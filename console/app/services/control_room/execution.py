@@ -63,6 +63,9 @@ from app.services.control_room.business_decision_persistence import (
 from app.services.control_room.business_action_approval import (
     approve_business_item as _approve_business_item,
 )
+from app.services.control_room.business_approve_with_optional_decision import (
+    approve_with_optional_decision as _approve_with_optional_decision,
+)
 from app.services.control_room.business_action_mutations import (
     persist_alert_state as _persist_alert_state,
     persist_control as _persist_control,
@@ -117,6 +120,9 @@ _core.__dict__.setdefault(
     "_persist_business_option_selection", _persist_business_option_selection
 )
 _core.__dict__.setdefault("_approve_business_item", _approve_business_item)
+_core.__dict__.setdefault(
+    "_approve_with_optional_decision", _approve_with_optional_decision
+)
 _core.__dict__.setdefault("_persist_alert_state", _persist_alert_state)
 _core.__dict__.setdefault("_persist_control", _persist_control)
 _core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
@@ -3577,36 +3583,39 @@ async def approve_item(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    if decision_id is None:
-        created = await create_decision_for_item(
-            item_id,
-            user,
-            ip=ip,
-            user_agent=user_agent,
-            fetcher=fetcher,
-        )
-        decision_id = int(created["decision"]["id"])
-
     pool = await auth.pool()
     lessons = _lessons_for_item(item)
-
-    async def _write_approval(
-        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
-    ) -> Any:
-        return await _approve_business_item(
-            conn,
-            user=user,
-            item=item,
-            workspace_id=scoped_workspace_id,
-            decision_id=decision_id,
-            lessons=lessons,
-            confidence=float(_impact_for_item(item).get("confidence") or 0.7),
-            ensure_item_row=_ensure_item_row,
-            link_decision=link_control_room_decision,
-            approve_link=approve_control_room_decision,
+    approval = await _approve_with_optional_decision(
+        pool,
+        user=user,
+        item=item,
+        decision_id=decision_id,
+        lessons=lessons,
+        confidence=float(_impact_for_item(item).get("confidence") or 0.7),
+        run_scoped=_run_with_db_scope,
+        ensure_item_row=_ensure_item_row,
+        record_item_event=_record_item_event,
+        create_and_link=_create_and_link_business_decision,
+        approve_item=_approve_business_item,
+        link_decision=link_control_room_decision,
+        approve_link=approve_control_room_decision,
+    )
+    decision_id = approval.decision_id
+    action = approval.action
+    item = approval.item
+    if approval.implicit_decision:
+        await audit_service.record_event(
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="control_room.decision.create",
+            resource_type="control_room_item",
+            resource_id=item_id,
+            ip=ip,
+            user_agent=user_agent,
+            status="success",
+            metadata={"decision_id": decision_id, "item": item},
+            critical=True,
         )
-
-    action = await _run_with_db_scope(pool, user, _write_approval)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
