@@ -29,6 +29,8 @@ def remote_effect_boundary(
     try:
         yield
     except BaseException as error:
+        if execution_result.get("executed") is not True:
+            raise
         raise RemoteSideEffectCommitted(
             execution_result=execution_result,
             side_effect={"target": target, "adapter": adapter, "after": dict(after)},

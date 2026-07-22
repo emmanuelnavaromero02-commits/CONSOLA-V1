@@ -16,6 +16,7 @@ from app.services.control_room.business_action_failure import (
 )
 from app.services.control_room.business_external_effect import (
     RemoteSideEffectCommitted,
+    remote_effect_boundary,
 )
 
 
@@ -31,6 +32,17 @@ def _item() -> dict:
         "population_count": 10,
         "observation_date": "2026-07-20",
     }
+
+
+def test_rejected_remote_result_does_not_claim_a_committed_side_effect():
+    with pytest.raises(ConnectionError, match="local projection unavailable"):
+        with remote_effect_boundary(
+            {"ok": False, "executed": False},
+            "remote-target",
+            "IdempotentAdapter",
+            {},
+        ):
+            raise ConnectionError("local projection unavailable")
 
 
 @pytest.mark.asyncio
