@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +20,17 @@ _RAW_EVIDENCE_FIELDS = frozenset(
     }
 )
 INVALID_SCOPE_STATUS = "invalid_scope"
+_OBSERVED_AT_FIELDS = (
+    "detected_at",
+    "generated_at",
+    "observation_date",
+    "freshness_at",
+    "period_key",
+    "as_of",
+    "mes",
+    "semana",
+    "spend_month",
+)
 
 
 def _text(value: Any) -> str:
@@ -197,6 +208,46 @@ def scoped_runtime_evidence_fields(
     )
 
 
+def scoped_source_row_with_evidence(
+    row: Mapping[str, Any],
+    *,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    source_dataset: str,
+    source_system: str,
+    cartridge: str,
+    locator_fields: Sequence[str],
+) -> ScopedSourceRow:
+    scoped = scoped_source_row(
+        row,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+    )
+    locator_field = next(
+        (field for field in locator_fields if scoped.get(field) is not None), ""
+    )
+    observed_at = next(
+        (
+            str(scoped[field])
+            for field in _OBSERVED_AT_FIELDS
+            if scoped.get(field) is not None and str(scoped[field]).strip()
+        ),
+        "",
+    )
+    if locator_field and observed_at:
+        scoped.update(
+            scoped_runtime_evidence_fields(
+                scoped,
+                source_dataset=source_dataset,
+                source_system=source_system,
+                cartridge=cartridge,
+                locator_field=locator_field,
+                observed_at=observed_at,
+            )
+        )
+    return scoped
+
+
 def partial_scope_diagnostic_item(
     item_id: str, *, tenant_id: str, workspace_id: str
 ) -> dict[str, Any]:
@@ -232,4 +283,5 @@ __all__ = (
     "scope_matches",
     "scoped_runtime_evidence_fields",
     "scoped_source_row",
+    "scoped_source_row_with_evidence",
 )
