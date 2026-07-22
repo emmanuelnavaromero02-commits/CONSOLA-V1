@@ -18,9 +18,9 @@ from app.services.control_room.business_access import (
     owner_scope_id,
 )
 from app.services.control_room.business_repository import fetch_lineage_rows
-from app.services.control_room.business_workflow_provenance import (
-    WORKFLOW_QUARANTINE_KEY,
-    workflow_is_quarantined,
+from app.services.control_room import business_workflow_provenance as workflow
+from app.services.control_room.business_workflow_quarantine import (
+    workflow_columns_unlinked,
 )
 from app.services.control_room.business_source_scope import command_scope_boundary
 
@@ -30,10 +30,7 @@ RowPredicate = Callable[[Mapping[str, Any]], bool]
 PersistedLoader = Callable[[str], Awaitable[dict[str, Any] | None]]
 ItemCollector = Callable[[], Awaitable[Mapping[str, Any]]]
 LineageLoader = Callable[[Sequence[str]], Awaitable[Sequence[Mapping[str, Any]]]]
-
-_PERSISTED_COMMAND_KINDS = frozenset(
-    {"agent_alert", "intelligence_signal", "source_state"}
-)
+_PERSISTED_COMMAND_KINDS = {"agent_alert", "intelligence_signal", "source_state"}
 
 
 async def _page(
@@ -165,70 +162,79 @@ async def resolve_business_item_lookup(
     load_lineage: LineageLoader,
     normalize_lineage: RowConverter,
 ) -> tuple[dict[str, Any] | None, set[str]]:
-    """Resolve a command item and its eligible lineage without HTTP concerns."""
     eligible_parent_ids: set[str] = set()
     loaded_persisted = await load_persisted(item_id)
-    item = loaded_persisted
-    if item is not None and not item_kinds(item) & _PERSISTED_COMMAND_KINDS:
-        item = None
-
-    persisted_item = item
+    persisted_item = loaded_persisted
+    if persisted_item is not None and not (
+        item_kinds(persisted_item) & _PERSISTED_COMMAND_KINDS
+    ):
+        persisted_item = None
     if persisted_item is not None and (refs := parent_references(persisted_item).ids):
         lineage_rows = await load_lineage(sorted(refs))
         eligible_parent_ids = eligible_item_ids(
             normalize_lineage(row) for row in lineage_rows
         )
-    persisted_eligible = (
-        not workflow_is_quarantined(persisted_item)
+    persisted_eligible = bool(
+        persisted_item
+        and not workflow.workflow_is_quarantined(persisted_item)
         and classify_business_item(
             persisted_item,
             eligible_parent_ids=eligible_parent_ids,
         ).eligible
-        if persisted_item is not None
-        else False
     )
-    if item is None or not persisted_eligible:
-        collected = await collect_items()
-        business_items = [
-            dict(candidate)
-            for candidate in collected.get("items", [])
-            if isinstance(candidate, Mapping)
-        ]
-        diagnostics = [
-            dict(candidate)
-            for candidate in collected.get("diagnostics", [])
-            if isinstance(candidate, Mapping)
-        ]
-        eligible_parent_ids = eligible_item_ids(business_items)
-        live_item = next(
-            (
-                candidate
-                for candidate in [*business_items, *diagnostics]
-                if str(candidate.get("id") or "") == item_id
-            ),
-            None,
+    metadata = persisted_item.get("metadata") if persisted_item else None
+    if (
+        persisted_eligible
+        and workflow_columns_unlinked(persisted_item)
+        and not (
+            isinstance(metadata, Mapping)
+            and metadata.get(workflow.CURRENT_ELIGIBILITY_FINGERPRINT_KEY)
         )
-        if (
-            live_item is not None
-            and classify_business_item(
-                live_item,
-                eligible_parent_ids=eligible_parent_ids,
-            ).eligible
-        ):
-            item = {
-                **live_item,
-                **owner_projection(live_item, loaded_persisted or {}),
-                **(
-                    {WORKFLOW_QUARANTINE_KEY: True}
-                    if workflow_is_quarantined(persisted_item)
-                    else {}
-                ),
-            }
-        elif persisted_item is not None:
-            item = persisted_item
-        else:
-            item = live_item
-    return item, eligible_parent_ids
+    ):
+        return persisted_item, eligible_parent_ids
+    collected = await collect_items()
+    business_items = [
+        dict(candidate)
+        for candidate in collected.get("items", [])
+        if isinstance(candidate, Mapping)
+    ]
+    diagnostics = [
+        dict(candidate)
+        for candidate in collected.get("diagnostics", [])
+        if isinstance(candidate, Mapping)
+    ]
+    live_parent_ids = eligible_item_ids(business_items)
+    live_item = next(
+        (
+            candidate
+            for candidate in [*business_items, *diagnostics]
+            if str(candidate.get("id") or "") == item_id
+        ),
+        None,
+    )
+    live_eligible = bool(
+        live_item is not None
+        and classify_business_item(
+            live_item,
+            eligible_parent_ids=live_parent_ids,
+        ).eligible
+    )
+    if persisted_eligible and live_eligible:
+        same_generation = workflow.business_observation_fingerprint(
+            persisted_item
+        ) == workflow.business_observation_fingerprint(live_item)
+        if same_generation:
+            return persisted_item, eligible_parent_ids
+        item = {**live_item, **owner_projection(live_item, loaded_persisted or {})}
+        if not workflow_columns_unlinked(persisted_item):
+            item[workflow.WORKFLOW_QUARANTINE_KEY] = True
+        return item, live_parent_ids
+    if live_eligible:
+        item = {**live_item, **owner_projection(live_item, loaded_persisted or {})}
+        if workflow.workflow_is_quarantined(persisted_item):
+            item[workflow.WORKFLOW_QUARANTINE_KEY] = True
+        return item, live_parent_ids
+    return persisted_item or live_item, eligible_parent_ids
 
 
 async def resolve_scoped_business_item_lookup(
