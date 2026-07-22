@@ -11,6 +11,9 @@ on:
       - "console/app/domains/pipeline/sync_state.py"
       - "console/app/services/permissions.py"
       - "console/app/services/security_context.py"
+      - "console/app/services/adapter_idempotency.py"
+      - "console/app/services/adapters/**"
+      - "console/app/services/db_scope.py"
       - "console/app/services/banxico_readiness.py"
       - "console/app/services/inegi_readiness.py"
       - "console/app/services/sec_edgar_readiness.py"
@@ -41,6 +44,7 @@ on:
       - "tests/test_v1_router_mount.py"
       - "tests/test_operational_rls_console_refinement.py"
       - "tests/test_operational_rls_policy_guard.py"
+      - "infra/init/**"
       - ".github/workflows/control-room-postgres-rls.yml"
 
 jobs:
@@ -120,6 +124,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=946, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=20, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=958, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=21, label="Live PostgreSQL/RLS")
           PY
