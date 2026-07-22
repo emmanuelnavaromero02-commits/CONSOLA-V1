@@ -110,6 +110,18 @@ async def _seed_matching_dry_run(
         await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
         await conn.execute(
             """
+            INSERT INTO control_room_action_templates (
+                template_id, cartridge_id, label, description, action_kind,
+                risk_level, mode_default, requires_approval, config
+            )
+            VALUES ($1, 'platform', $1, 'Live test action', 'test',
+                    'low', 'dry_run', true, '{}'::jsonb)
+            ON CONFLICT (template_id) DO NOTHING
+            """,
+            template_id,
+        )
+        await conn.execute(
+            """
             INSERT INTO action_runs (
                 tenant_id, workspace_id, item_id, decision_id, action_type,
                 adapter_name, mode, status, idempotency_key, actor_id,

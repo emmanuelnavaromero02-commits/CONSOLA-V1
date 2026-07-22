@@ -143,8 +143,13 @@ def workflow_has_eligible_provenance(
         WorkflowStage(str(allowed)) for allowed in allowed_stages
     }:
         return False
-    del use_stored_fingerprint
-    current_fingerprint = business_observation_fingerprint(item)
+    current_fingerprint = (
+        str(current_metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY) or "").strip()
+        if use_stored_fingerprint
+        else ""
+    )
+    if not current_fingerprint:
+        current_fingerprint = business_observation_fingerprint(item)
     expected_decision_id = (
         decision_id if decision_id is not None else item.get("decision_id")
     )

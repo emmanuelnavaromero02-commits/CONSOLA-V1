@@ -10,6 +10,7 @@ from app.services.control_room.business_action_markers import (
 )
 from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_observation_order import (
+    OBSERVATION_ORDER_KEY,
     business_observation_order,
 )
 from app.services.control_room.business_workflow_provenance import (
@@ -168,8 +169,12 @@ async def reconcile_workflow_metadata(
         current = incoming.get(key)
         if current is None:
             continue
-        existing_orders[key] = business_observation_order(_item(existing))
         metadata = _mapping(existing.get("metadata"))
+        existing_order = business_observation_order(_item(existing))
+        current_order = business_observation_order(current)
+        existing_orders[key] = existing_order
+        if metadata.get(OBSERVATION_ORDER_KEY) and current_order < existing_order:
+            continue
         quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
         if not _has_workflow(existing):
             if quarantine:
@@ -189,6 +194,7 @@ async def reconcile_workflow_metadata(
                 metadata,
                 {**current, "workspace_id": key[0]},
                 decision_id=decision_id,
+                use_stored_fingerprint=not bool(metadata.get(OBSERVATION_ORDER_KEY)),
             )
             and classify_business_item(current).eligible
             and not workflow_is_quarantined(existing)

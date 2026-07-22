@@ -125,8 +125,10 @@ def test_owner_projection_preserves_explicit_legacy_null_owner():
 
 def test_refresh_unlinks_ambiguous_legacy_workflow_for_quarantine():
     sql = " ".join(PERSIST_ITEMS_SQL.split())
-    assert "THEN NULL ELSE control_room_items.decision_id" in sql
-    assert "THEN NULL ELSE control_room_items.selected_option_id" in sql
+    assert "WHEN (EXCLUDED.metadata ? 'workflow_quarantine'" in sql
+    assert "decision_id = CASE" in sql
+    assert "selected_option_id = CASE" in sql
+    assert "THEN NULL WHEN NOT" in sql
 
 
 @pytest.mark.asyncio

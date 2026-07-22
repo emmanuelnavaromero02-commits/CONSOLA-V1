@@ -102,8 +102,9 @@ def test_persist_sql_unlinks_workflow_for_explicit_quarantine():
     sql = " ".join(PERSIST_ITEMS_SQL.split())
     marker = "EXCLUDED.metadata ? 'workflow_quarantine'"
     assert marker in sql
-    assert "THEN NULL ELSE control_room_items.decision_id" in sql
-    assert "THEN NULL ELSE control_room_items.selected_option_id" in sql
+    assert "WHEN (EXCLUDED.metadata ? 'workflow_quarantine'" in sql
+    assert "THEN NULL WHEN NOT" in sql
+    assert "selected_option_id = CASE" in sql
     assert "THEN 'not_started'" in sql
     assert "THEN 'open'" in sql
 
