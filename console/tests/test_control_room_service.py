@@ -81,11 +81,17 @@ def _authoritative_item_row(
         **item,
         "metadata": business_policy_metadata(item.get("metadata"), item),
     }
+    resolved_status = status or item.get("status") or "open"
     metadata = persistence_metadata(policy_item)
     if resolved_decision is not None:
         metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
             item,
-            stage=stage or WorkflowStage.DECISION_CREATED,
+            stage=stage
+            or (
+                WorkflowStage.APPROVED
+                if resolved_status == "approved"
+                else WorkflowStage.DECISION_CREATED
+            ),
             workspace_id="workspace-A",
             decision_id=int(resolved_decision),
             option_id=selected_option_id or item.get("selected_option_id"),
@@ -101,7 +107,7 @@ def _authoritative_item_row(
         "item_kind": item.get("kind") or item.get("item_kind"),
         "title": item.get("title"),
         "severity": item.get("severity"),
-        "status": status or item.get("status") or "open",
+        "status": resolved_status,
         "decision_id": resolved_decision,
         "entity_kind": item.get("entity_kind"),
         "entity_id": item.get("entity_id"),
@@ -3256,7 +3262,7 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     )
 
 
-def _executed_item(item: dict, *, status: str = "decision_created") -> dict:
+def _executed_item(item: dict, *, status: str = "approved") -> dict:
     return control_room_service._with_omega(
         {  # noqa: SLF001 - targeted execution fixture
             **item,
@@ -4278,7 +4284,7 @@ async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_execute_live_rejects_approved_terminal_item(monkeypatch):
+async def test_execute_live_rejects_resolved_terminal_item(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     base_item = (
         await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
@@ -4289,7 +4295,7 @@ async def test_execute_live_rejects_approved_terminal_item(monkeypatch):
             use_catalog=False,
         )
     )["items"][0]
-    item = _executed_item(base_item, status="approved")
+    item = _executed_item(base_item, status="resolved")
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(

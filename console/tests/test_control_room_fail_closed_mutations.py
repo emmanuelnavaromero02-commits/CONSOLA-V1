@@ -185,10 +185,7 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
             "_complete_execute_reservation",
             AsyncMock(return_value={"id": 42}),
         ),
-        patch.object(
-            control_room_service, "lock_authoritative_business_item", AsyncMock()
-        ),
-        patch.object(control_room_service, "require_matching_dry_run", AsyncMock()),
+        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
         patch.object(
             control_room_service, "lock_pending_action_reservation", AsyncMock()
         ),

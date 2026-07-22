@@ -9,17 +9,15 @@ from typing import Any
 
 from app.services.control_room.business_access import workspace_scope
 from app.services.control_room.business_action_key import effective_action_key
-from app.services.control_room.business_mutation_guard import (
-    lock_authoritative_business_item,
-)
 from app.services.control_room.business_reservation_errors import reservation_fetchrow
+from app.services.control_room.business_execution_approval import (
+    require_approved_execution,
+)
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
-    require_matching_dry_run,
 )
 from app.services.control_room.business_workflow_provenance import (
     ELIGIBILITY_POLICY_VERSION,
-    WorkflowStage,
     business_observation_fingerprint,
 )
 
@@ -208,14 +206,7 @@ async def acquire_guarded_action_reservation(
     provided_key: str | None = None,
     input_payload: Mapping[str, Any] | None = None,
 ) -> ActionReservation:
-    await lock_authoritative_business_item(
-        conn,
-        user=user,
-        item=item,
-        decision_id=int(item["decision_id"]),
-        allowed_stages=(WorkflowStage.DECISION_CREATED,),
-    )
-    await require_matching_dry_run(
+    await require_approved_execution(
         conn,
         user=user,
         item=item,

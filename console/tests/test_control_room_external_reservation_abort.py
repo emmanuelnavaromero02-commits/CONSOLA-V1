@@ -24,7 +24,9 @@ def _item() -> dict:
         "id": "item-1",
         "kind": "anomaly",
         "decision_id": 42,
-        "status": "in_review",
+        "status": "approved",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
         "execution_status": "dry_run_validated",
         "metric_name": "headcount",
         "metric_type": "scalar",
@@ -75,6 +77,9 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
             new=AsyncMock(side_effect=run_scoped),
         ),
         patch.object(control_room_service, "_ensure_item_row", new=AsyncMock()),
+        patch.object(
+            control_room_service, "require_approved_execution", new=AsyncMock()
+        ),
         patch.object(
             control_room_service,
             "_writeback_capability",

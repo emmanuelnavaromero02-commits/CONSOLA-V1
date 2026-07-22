@@ -16,6 +16,9 @@ from app.services.control_room.business_decision_persistence import (
 )
 from app.services.control_room.business_execution_precondition import dry_run_metadata
 from app.services.control_room.business_item_persistence import persist_item_rows
+from app.services.control_room.business_repository import (
+    approve_control_room_decision,
+)
 from app.services.db_scope import SET_SCOPE_SQL
 from tests.test_control_room_live_postgres_workflows import (
     AsyncNoop,
@@ -65,14 +68,30 @@ async def _linked_item(dsn: str, item_id: str):
             ensure_item_row=AsyncNoop(),
             record_item_event=AsyncNoop(),
         )
+        decision_id = int(decision["id"])
+        linked_item = {
+            **item,
+            "owner_user_id": 7,
+            "decision_id": decision_id,
+            "status": "decision_created",
+        }
+        await approve_control_room_decision(
+            conn,
+            workspace_id=workspace_id,
+            item_id=item["id"],
+            decision_id=decision_id,
+            owner_user_id=7,
+            item=linked_item,
+            lessons=[],
+        )
         return (
             tenant_id,
             workspace_id,
             {
                 **item,
                 "owner_user_id": 7,
-                "decision_id": int(decision["id"]),
-                "status": "decision_created",
+                "decision_id": decision_id,
+                "status": "approved",
                 "execution_status": "dry_run_validated",
             },
         )

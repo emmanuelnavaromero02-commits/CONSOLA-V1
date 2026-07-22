@@ -87,6 +87,10 @@ from app.services.control_room.business_execution_precondition import (
     lock_pending_action_reservation,
     require_matching_dry_run,
 )
+from app.services.control_room.business_execution_approval import (
+    execution_lifecycle_block,
+    require_approved_execution,
+)
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
@@ -125,6 +129,7 @@ for _helper in (
     merged_learned_rules,
     merged_lesson_state,
     require_matching_dry_run,
+    require_approved_execution,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
 _core.__dict__.setdefault("ActionReservation", ActionReservation)
@@ -132,6 +137,7 @@ _core.__dict__.setdefault("ReservationState", ReservationState)
 _core.__dict__.setdefault("ReservationUnavailable", ReservationUnavailable)
 _core.__dict__.setdefault("WorkflowStage", WorkflowStage)
 _core.__dict__.setdefault("dry_run_metadata", dry_run_metadata)
+_core.__dict__.setdefault("execution_lifecycle_block", execution_lifecycle_block)
 _core.__dict__.setdefault(
     "adapter_guarantees_idempotency", adapter_guarantees_idempotency
 )
@@ -2028,7 +2034,12 @@ async def _record_execute_block(
         user=user,
         item=item,
         decision_id=decision_id,
-        allowed_stages=(WorkflowStage.DECISION_CREATED,) if decision_id else None,
+        allowed_stages=(
+            WorkflowStage.DECISION_CREATED,
+            WorkflowStage.APPROVED,
+        )
+        if decision_id
+        else None,
     )
     result = {
         "ok": False,
@@ -2841,14 +2852,7 @@ async def _execute_external_writeback(
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
     from app.services.control_room import business_external_effect as external_effect
 
-    await lock_authoritative_business_item(
-        pool,
-        user=user,
-        item=item,
-        decision_id=int(item["decision_id"]),
-        allowed_stages=(WorkflowStage.DECISION_CREATED,),
-    )
-    await require_matching_dry_run(
+    await require_approved_execution(
         pool,
         user=user,
         item=item,
@@ -3321,6 +3325,30 @@ async def execute_item(
             critical=True,
         )
     )
+    lifecycle_block = execution_lifecycle_block(item)
+    if lifecycle_block is not None:
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message=lifecycle_block.message,
+                error=lifecycle_block.code,
+            )
+        )
+        raise HTTPException(409, lifecycle_block.message)
+    await _with_scoped_db(
+        lambda db: require_approved_execution(
+            db,
+            user=user,
+            item=item,
+            template_id=str(template["template_id"]),
+        )
+    )
     capability = _writeback_capability(template)
     if capability.get("external") and not capability.get("adapter_available"):
         await _with_scoped_db(
@@ -3394,59 +3422,6 @@ async def execute_item(
             )
         )
         raise HTTPException(409, "explicit execution confirmation is required")
-
-    if not item.get("decision_id"):
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Se requiere decision aprobada antes de la ejecucion supervisada.",
-                error="decision_required",
-            )
-        )
-        raise HTTPException(409, "decision is required before execution")
-
-    if str(item.get("status") or "") in TERMINAL_ITEM_STATUSES:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Item cerrado no puede ejecutar acciones supervisadas.",
-                error="terminal_item",
-            )
-        )
-        raise HTTPException(
-            409, "terminal control room item cannot execute supervised action"
-        )
-
-    if str(item.get("execution_status") or "not_started") not in {
-        "dry_run_validated",
-        "executed",
-    }:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Se requiere dry-run validado antes de la ejecucion supervisada.",
-                error="dry_run_required",
-            )
-        )
-        raise HTTPException(409, "dry-run validation is required before execution")
 
     if str(template.get("template_id") or "") == "create_followup_task":
         return await _with_scoped_db(

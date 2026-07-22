@@ -90,10 +90,7 @@ async def test_remote_success_late_local_failure_carries_durable_receipt():
     )
 
     with (
-        patch.object(
-            control_room_service, "lock_authoritative_business_item", AsyncMock()
-        ),
-        patch.object(control_room_service, "require_matching_dry_run", AsyncMock()),
+        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
         patch.object(
             control_room_service, "lock_pending_action_reservation", AsyncMock()
         ),

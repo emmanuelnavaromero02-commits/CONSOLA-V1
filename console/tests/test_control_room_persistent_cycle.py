@@ -63,7 +63,7 @@ def _item(**overrides):
         "title": "Margen bajo",
         "description": "Margen bajo en proyecto beta",
         "severity": "high",
-        "status": "decision_created",
+        "status": "approved",
         "decision_id": 42,
         "execution_status": "not_started",
         "data_status": "ready",
@@ -176,7 +176,11 @@ def _persisted_item_row(item: dict) -> dict:
             ELIGIBILITY_POLICY_VERSION_KEY: ELIGIBILITY_POLICY_VERSION,
             DECISION_PROVENANCE_KEY: workflow_eligibility_provenance(
                 item,
-                stage=WorkflowStage.DECISION_CREATED,
+                stage=(
+                    WorkflowStage.APPROVED
+                    if item.get("status") == "approved"
+                    else WorkflowStage.DECISION_CREATED
+                ),
                 workspace_id=item["workspace_id"],
                 decision_id=item["decision_id"],
             ),

@@ -180,28 +180,20 @@ async def test_guard_and_reservation_share_connection_and_order():
     order = []
     reservation = object()
 
-    async def lock(conn, **_kwargs):
-        assert conn is db
-        order.append("lock")
-
     async def acquire(conn, **_kwargs):
         assert conn is db
         order.append("reserve")
         return reservation
 
-    async def dry_run(conn, **kwargs):
+    async def approved(conn, **kwargs):
         assert conn is db
         assert kwargs["template_id"] == "create_followup_task"
-        order.append("dry_run")
+        order.append("approved")
 
     with (
         patch(
-            "app.services.control_room.business_action_reservation.lock_authoritative_business_item",
-            side_effect=lock,
-        ),
-        patch(
-            "app.services.control_room.business_action_reservation.require_matching_dry_run",
-            side_effect=dry_run,
+            "app.services.control_room.business_action_reservation.require_approved_execution",
+            side_effect=approved,
         ),
         patch(
             "app.services.control_room.business_action_reservation.acquire_action_reservation",
@@ -224,7 +216,7 @@ async def test_guard_and_reservation_share_connection_and_order():
         )
 
     assert result is reservation
-    assert order == ["lock", "dry_run", "reserve"]
+    assert order == ["approved", "reserve"]
 
 
 @pytest.mark.asyncio
@@ -232,25 +224,17 @@ async def test_dry_run_is_revalidated_after_lock_before_reservation():
     db = object()
     order = []
 
-    async def lock(conn, **_kwargs):
-        assert conn is db
-        order.append("lock")
-
-    async def stale_dry_run(conn, **kwargs):
+    async def stale_approval(conn, **kwargs):
         assert conn is db
         assert kwargs["template_id"] == "create_followup_task"
-        order.append("dry_run")
+        order.append("approved")
         raise HTTPException(409, {"code": "matching_dry_run_required"})
 
     reserve = AsyncMock()
     with (
         patch(
-            "app.services.control_room.business_action_reservation.lock_authoritative_business_item",
-            side_effect=lock,
-        ),
-        patch(
-            "app.services.control_room.business_action_reservation.require_matching_dry_run",
-            side_effect=stale_dry_run,
+            "app.services.control_room.business_action_reservation.require_approved_execution",
+            side_effect=stale_approval,
         ),
         patch(
             "app.services.control_room.business_action_reservation.acquire_action_reservation",
@@ -274,5 +258,5 @@ async def test_dry_run_is_revalidated_after_lock_before_reservation():
             )
 
     assert exc.value.status_code == 409
-    assert order == ["lock", "dry_run"]
+    assert order == ["approved"]
     reserve.assert_not_awaited()
