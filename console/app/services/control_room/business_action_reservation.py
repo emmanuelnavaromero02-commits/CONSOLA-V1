@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ from enum import StrEnum
 from typing import Any
 
 from app.services.control_room.business_access import workspace_scope
+from app.services.control_room.business_action_key import effective_action_key
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
@@ -44,40 +44,6 @@ class ActionReservation:
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, default=str, separators=(",", ":"), sort_keys=True)
-
-
-def effective_action_key(
-    *,
-    workspace_id: str,
-    item: Mapping[str, Any],
-    template_id: str,
-    operation: str,
-    provided: str | None = None,
-) -> str:
-    contract = {
-        "version": 1,
-        "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "workspace_id": str(workspace_id or "").strip(),
-        "item_id": str(item.get("id") or item.get("item_id") or "").strip(),
-        "fingerprint": business_observation_fingerprint(item),
-        "decision_id": str(item.get("decision_id") or ""),
-        "template_id": str(template_id or "").strip(),
-        "operation": str(operation or "").strip(),
-        "client_key": str(provided or "").strip(),
-    }
-    if not all(
-        contract[key]
-        for key in (
-            "workspace_id",
-            "item_id",
-            "fingerprint",
-            "template_id",
-            "operation",
-        )
-    ):
-        raise ValueError("action reservation contract is incomplete")
-    digest = hashlib.sha256(_canonical(contract).encode("utf-8")).hexdigest()
-    return f"cr-action:v1:{digest}"
 
 
 def _json(value: Any) -> dict[str, Any]:

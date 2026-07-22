@@ -57,7 +57,8 @@ async def require_approvable_decision(
         raise HTTPException(404, "decision not found")
     item_row = await conn.fetchrow(
         """
-        SELECT item_id, decision_id, owner_user_id, item_kind, metadata
+        SELECT item_id, decision_id, selected_option_id, owner_user_id,
+               item_kind, metadata
           FROM control_room_items
          WHERE workspace_id = $1 AND item_id = $2
          FOR UPDATE
@@ -101,6 +102,14 @@ async def require_approvable_decision(
             metadata = {}
     if isinstance(metadata, Mapping) and metadata.get(WORKFLOW_QUARANTINE_KEY):
         raise HTTPException(409, "control room item has quarantined workflow")
+    persisted_option = str(
+        (item_row.get("selected_option_id") if item_row else None)
+        or (metadata.get("selected_option_id") if isinstance(metadata, Mapping) else None)
+        or ""
+    ).strip()
+    expected_option = str(item.get("selected_option_id") or "").strip()
+    if persisted_option != expected_option:
+        raise HTTPException(409, "control room option changed before approval")
     eligible_provenance = workflow_has_eligible_provenance(
         metadata if isinstance(metadata, Mapping) else {},
         {**dict(item), "workspace_id": workspace_id},

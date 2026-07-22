@@ -50,6 +50,20 @@ def test_effective_key_binds_full_execution_contract_without_client_key():
         template_id="create_followup_task",
         operation="execute",
     )
+    assert base == effective_action_key(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        operation="execute",
+        provided="retry-a",
+    )
+    assert base == effective_action_key(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        operation="execute",
+        provided="retry-b",
+    )
     assert base != effective_action_key(
         workspace_id="workspace-b",
         item=_item(workspace_id="workspace-b"),

@@ -119,6 +119,34 @@ async def test_exact_existing_item_decision_link_is_accepted():
 
 
 @pytest.mark.asyncio
+async def test_approval_rejects_option_changed_after_item_was_read():
+    item = {**_item(), "selected_option_id": "safe-option"}
+    changed = {**item, "selected_option_id": "dangerous-option"}
+    provenance = workflow_eligibility_provenance(
+        changed,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-a",
+        decision_id=91,
+        option_id="dangerous-option",
+    )
+    metadata = {
+        "selected_option_id": "dangerous-option",
+        DECISION_PROVENANCE_KEY: provenance,
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        await require_approvable_decision(
+            DecisionLookup(metadata=metadata),
+            user=USER,
+            item=item,
+            workspace_id="workspace-a",
+            decision_id=91,
+        )
+
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_exact_legacy_link_without_eligible_provenance_is_rejected():
     with pytest.raises(HTTPException) as exc:
         await require_approvable_decision(
