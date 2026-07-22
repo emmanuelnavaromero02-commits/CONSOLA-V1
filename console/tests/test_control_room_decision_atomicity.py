@@ -277,6 +277,7 @@ async def test_legacy_technical_row_is_semantically_upserted_before_atomic_link(
     assert connection.item_row["status"] == "decision_created"
     assert connection.item_row["decision_id"] == 42
     assert connection.item_row["metadata"]["legacy_note"] == "keep"
-    assert "item_kind = EXCLUDED.item_kind" in connection.ensure_sql
-    assert "source_dataset = EXCLUDED.source_dataset" in connection.ensure_sql
+    assert "item_kind = CASE WHEN" in connection.ensure_sql
+    assert "business_observation_order" in connection.ensure_sql
+    assert "source_dataset = CASE WHEN" in connection.ensure_sql
     assert "control_room_items.metadata - $2::text[]" in connection.ensure_sql

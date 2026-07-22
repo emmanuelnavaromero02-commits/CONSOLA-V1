@@ -57,6 +57,19 @@ def test_observation_order_prefers_source_time_then_deterministic_fingerprint():
     )
 
 
+def test_refresh_generated_at_never_outranks_an_authoritative_observation_date():
+    stale = {
+        **_row(1, "2026-07-20", title="Stale"),
+        "generated_at": "2026-07-22T18:00:00Z",
+    }
+    current = {
+        **_row(2, "2026-07-21", title="Current"),
+        "generated_at": "2026-07-21T10:00:00Z",
+    }
+
+    assert business_observation_order(stale) < business_observation_order(current)
+
+
 class _ConvergentConnection:
     def __init__(self) -> None:
         self.old_arrived = asyncio.Event()

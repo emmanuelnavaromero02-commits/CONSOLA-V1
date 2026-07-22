@@ -17,10 +17,10 @@ _TIME_FIELDS = (
     "observed_at",
     "observation_date",
     "as_of",
+    "period_key",
     "detected_at",
     "generated_at",
     "freshness_at",
-    "period_key",
 )
 
 
@@ -56,14 +56,17 @@ def _normalized_instant(value: Any) -> str:
 
 
 def _latest_observation_instant(item: Mapping[str, Any]) -> str:
-    instants = {
-        normalized
-        for surface in semantic_surfaces(item)
-        for field in _TIME_FIELDS
-        if field in surface
-        if (normalized := _normalized_instant(surface.get(field)))
-    }
-    return max(instants, default="")
+    surfaces = semantic_surfaces(item)
+    for field in _TIME_FIELDS:
+        instants = {
+            normalized
+            for surface in surfaces
+            if field in surface
+            if (normalized := _normalized_instant(surface.get(field)))
+        }
+        if instants:
+            return max(instants)
+    return ""
 
 
 def business_observation_order(item: Mapping[str, Any]) -> str:
