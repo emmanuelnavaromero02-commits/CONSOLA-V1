@@ -3658,7 +3658,7 @@ async def test_dismiss_item_persists_state_and_records_audit_event():
 
 
 @pytest.mark.asyncio
-async def test_reopen_item_resets_terminal_state_and_records_audit_event():
+async def test_reopen_item_reopens_clean_dismissal_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
         "anomalies"
     ][0]
@@ -3685,6 +3685,19 @@ async def test_reopen_item_resets_terminal_state_and_records_audit_event():
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
         ) as audit_event,
+        patch.object(
+            control_room_service,
+            "lock_authoritative_business_item",
+            new=AsyncMock(
+                return_value={
+                    "status": "dismissed",
+                    "decision_id": None,
+                    "selected_option_id": None,
+                    "execution_status": "not_started",
+                    "metadata": {},
+                }
+            ),
+        ),
     ):
         result = await control_room_service.reopen_item(
             anomaly["id"],

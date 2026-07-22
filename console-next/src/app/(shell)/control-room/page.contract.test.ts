@@ -41,6 +41,11 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("/alerts/");
   });
 
+  it("does not advertise a generic workflow reopen without server eligibility", () => {
+    expect(pageSource).not.toContain("/reopen");
+    expect(pageSource).not.toContain(">Reabrir<");
+  });
+
   it("surfaces advisory agent monitor alerts distinctly", () => {
     expect(pageSource).toContain('type AlertSourceFilter = "all" | "agent" | "system" | "intelligence"');
     expect(pageSource).toContain("Agente monitor");

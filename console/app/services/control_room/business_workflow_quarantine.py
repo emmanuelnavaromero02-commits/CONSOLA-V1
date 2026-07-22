@@ -107,9 +107,33 @@ def workflow_columns_unlinked(row: Mapping[str, Any]) -> bool:
     )
 
 
+def workflow_reopen_allowed(row: Mapping[str, Any]) -> bool:
+    raw_metadata = row.get("metadata")
+    if raw_metadata is None:
+        metadata: Mapping[str, Any] = {}
+    elif isinstance(raw_metadata, Mapping):
+        metadata = raw_metadata
+    elif isinstance(raw_metadata, str):
+        try:
+            parsed = json.loads(raw_metadata)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(parsed, Mapping):
+            return False
+        metadata = parsed
+    else:
+        return False
+    return bool(
+        str(row.get("status") or "").strip().lower() == "dismissed"
+        and workflow_columns_unlinked(row)
+        and DECISION_PROVENANCE_KEY not in metadata
+    )
+
+
 __all__ = (
     "quarantine_generations",
     "quarantine_workflow_metadata",
     "workflow_columns_unlinked",
     "workflow_is_quarantined",
+    "workflow_reopen_allowed",
 )

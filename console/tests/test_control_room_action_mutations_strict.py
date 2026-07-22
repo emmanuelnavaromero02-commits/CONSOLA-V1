@@ -111,6 +111,19 @@ async def test_command_update_zero_rolls_back_without_success_audit(
         patch.object(control_room_service, "_run_with_db_scope", _scoped),
         patch.object(control_room_service, "_ensure_item_row", AsyncMock()),
         patch.object(
+            control_room_service,
+            "lock_authoritative_business_item",
+            AsyncMock(
+                return_value={
+                    "status": "dismissed",
+                    "decision_id": None,
+                    "selected_option_id": None,
+                    "execution_status": "not_started",
+                    "metadata": {},
+                }
+            ),
+        ),
+        patch.object(
             control_room_service, "_alert_for_item", return_value={"id": "item-1"}
         ),
         patch.object(control_room_service.audit_service, "record_event", audit),

@@ -112,6 +112,9 @@ from app.services.control_room.business_operational_state import (
     merged_lesson_state,
 )
 from app.services.control_room.business_workflow_provenance import WorkflowStage
+from app.services.control_room.business_workflow_quarantine import (
+    workflow_reopen_allowed,
+)
 
 _core.__dict__.setdefault(
     "_create_and_link_business_decision", _create_and_link_business_decision
@@ -145,6 +148,7 @@ for _helper in (
     merged_lesson_state,
     require_matching_dry_run,
     require_approved_execution,
+    workflow_reopen_allowed,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
 _core.__dict__.setdefault("ActionReservation", ActionReservation)
@@ -3729,6 +3733,27 @@ async def reopen_item(
     async def _write_reopened(
         conn: Any, _tenant_id: str | None, workspace_id: str
     ) -> None:
+        guard_item = dict(item)
+        for field in (
+            "decision_id",
+            "selected_option_id",
+            "status",
+            "execution_status",
+        ):
+            guard_item.pop(field, None)
+        locked = await lock_authoritative_business_item(
+            conn,
+            user=user,
+            item=guard_item,
+        )
+        if locked is None or not workflow_reopen_allowed(locked):
+            raise HTTPException(
+                409,
+                {
+                    "code": "workflow_reopen_not_allowed",
+                    "message": "only dismissed items without workflow state can be reopened",
+                },
+            )
         await _persist_status_transition(
             conn,
             user=user,

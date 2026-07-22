@@ -179,14 +179,14 @@ async def persist_status_transition(
     reason: str,
     ensure_item_row: ItemWriter,
 ) -> None:
-    await _ensure(
-        ensure_item_row,
-        conn,
-        user=user,
-        item=item,
-        status=target_status,
-    )
     if target_status == "dismissed":
+        await _ensure(
+            ensure_item_row,
+            conn,
+            user=user,
+            item=item,
+            status=target_status,
+        )
         sql = """
             UPDATE control_room_items
                SET status = 'dismissed',
@@ -198,10 +198,18 @@ async def persist_status_transition(
     elif target_status == "open":
         sql = """
             UPDATE control_room_items
-               SET status = 'open', decision_id = NULL, resolved_at = NULL,
-                   dismissed_at = NULL, last_seen_at = NOW()
+               SET status = 'open', resolved_at = NULL, dismissed_at = NULL,
+                   last_seen_at = NOW()
              WHERE workspace_id = $1 AND item_id = $2
                AND owner_user_id IS NOT DISTINCT FROM $3
+               AND status = 'dismissed'
+               AND decision_id IS NULL
+               AND NULLIF(BTRIM(selected_option_id), '') IS NULL
+               AND COALESCE(NULLIF(BTRIM(execution_status), ''), 'not_started') = 'not_started'
+               AND NOT (
+                   COALESCE(metadata, '{}'::jsonb)
+                   ? 'decision_eligibility_provenance'
+               )
         """
     else:  # pragma: no cover - callers use the two declared transitions.
         raise ValueError("unsupported control room status transition")
