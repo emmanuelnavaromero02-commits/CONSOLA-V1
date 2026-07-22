@@ -9,6 +9,9 @@ from app.services.control_room.business_command_item import (
     load_persisted_command_item,
     resolve_command_item,
 )
+from app.services.control_room.business_execution_status import (
+    persist_execution_status,
+)
 from app.services.control_room.business_item_ensure_command import (
     ensure_authoritative_item_row,
 )
@@ -40,6 +43,7 @@ _core.__dict__.setdefault("load_persisted_command_item", load_persisted_command_
 _core.__dict__.setdefault("OmegaProjectionRuntime", OmegaProjectionRuntime)
 _core.__dict__.setdefault("resolve_command_item", resolve_command_item)
 _core.__dict__.setdefault("require_exact_count", require_exact_count)
+_core.__dict__.setdefault("persist_execution_status", persist_execution_status)
 _core.__dict__.setdefault(
     "ensure_authoritative_item_row", ensure_authoritative_item_row
 )
@@ -1238,24 +1242,13 @@ async def _set_execution_status(
     execution_status: str,
     critical: bool = False,
 ) -> None:
-    workspace_id = _workspace_id(user)
-    result = await pool.execute(
-        """
-        UPDATE control_room_items
-           SET execution_status = $1,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-               last_seen_at = NOW()
-         WHERE workspace_id = $2
-           AND item_id = $3
-           AND owner_user_id IS NOT DISTINCT FROM $5
-        """,
-        execution_status,
-        workspace_id,
-        item["id"],
-        json.dumps({"execution_status": execution_status}),
-        expected_business_item_owner(item, user),
+    await persist_execution_status(
+        pool,
+        workspace_id=_workspace_id(user),
+        item_id=item["id"],
+        owner_user_id=expected_business_item_owner(item, user),
+        execution_status=execution_status,
     )
-    require_exact_count(result, "UPDATE")
 
 
 @_bind_to_core

@@ -2,6 +2,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services import control_room_service
 from app.services.control_room.business_action_reservation import (
@@ -88,7 +89,7 @@ async def test_record_item_event_rejects_zero_row_insert_when_critical():
 async def test_set_execution_status_rejects_zero_row_update_when_critical():
     pool = ZeroRowPool()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(HTTPException) as exc:
         await control_room_service._set_execution_status(
             pool,
             user=USER,
@@ -97,6 +98,8 @@ async def test_set_execution_status_rejects_zero_row_update_when_critical():
             critical=True,
         )
 
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "execution_status_conflict"
     assert pool.calls == ["UPDATE"]
 
 
