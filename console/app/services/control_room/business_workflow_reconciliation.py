@@ -173,7 +173,13 @@ async def reconcile_workflow_metadata(
         existing_order = business_observation_order(_item(existing))
         current_order = business_observation_order(current)
         existing_orders[key] = existing_order
-        if metadata.get(OBSERVATION_ORDER_KEY) and current_order < existing_order:
+        has_modern_fingerprint = bool(
+            metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY)
+        )
+        has_observation_order = bool(metadata.get(OBSERVATION_ORDER_KEY))
+        if (has_observation_order or has_modern_fingerprint) and (
+            current_order < existing_order
+        ):
             continue
         quarantine = _mapping(metadata.get(WORKFLOW_QUARANTINE_KEY))
         if not _has_workflow(existing):
@@ -194,7 +200,9 @@ async def reconcile_workflow_metadata(
                 metadata,
                 {**current, "workspace_id": key[0]},
                 decision_id=decision_id,
-                use_stored_fingerprint=not bool(metadata.get(OBSERVATION_ORDER_KEY)),
+                use_stored_fingerprint=not (
+                    has_observation_order or has_modern_fingerprint
+                ),
             )
             and classify_business_item(current).eligible
             and not workflow_is_quarantined(existing)

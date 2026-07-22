@@ -148,7 +148,8 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
                 "_record_action_execution",
                 AsyncMock(side_effect=ConnectionError("late local failure")),
             )
-            with pytest.raises(RemoteSideEffectCommitted) as captured:
+            captured_error = None
+            try:
                 async with execute_conn.transaction():
                     await execute_conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
                     await service._execute_external_writeback(
@@ -161,6 +162,9 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
                         ip=None,
                         user_agent=None,
                     )
+            except BaseException as exc:
+                captured_error = exc
+            assert isinstance(captured_error, RemoteSideEffectCommitted)
     finally:
         await execute_conn.close()
 
@@ -172,7 +176,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
                 finalize_conn,
                 workspace_id=workspace_id,
                 reservation=reservation,
-                error=captured.value,
+                error=captured_error,
             )
     finally:
         await finalize_conn.close()
