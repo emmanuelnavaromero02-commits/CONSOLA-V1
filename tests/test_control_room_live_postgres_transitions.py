@@ -11,11 +11,6 @@ from app.services.control_room.business_item_persistence import (
 from app.services.control_room.business_observation_codec import (
     ENVELOPE_KEY,
     INVALID_ENVELOPE_FIELD,
-    POLICY_FIELDS,
-)
-from app.services.control_room.business_policy_metadata import (
-    BUSINESS_ARTIFACT_FIELDS,
-    REPLACED_POLICY_KEYS,
 )
 from app.services.control_room.business_projection import (
     filter_business_items,
@@ -293,9 +288,3 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         assert kept_metadata[DECISION_PROVENANCE_KEY]["eligible_at_link"] is True
     finally:
         await conn.close()
-
-
-def test_replaced_policy_keys_follow_the_canonical_policy_schema():
-    assert REPLACED_POLICY_KEYS == tuple(
-        sorted(POLICY_FIELDS | {ENVELOPE_KEY} | BUSINESS_ARTIFACT_FIELDS)
-    )

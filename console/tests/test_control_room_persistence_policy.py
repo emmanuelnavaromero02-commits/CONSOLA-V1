@@ -4,7 +4,15 @@ from app.services.control_room.business_item_persistence import (
     PERSIST_ITEMS_SQL,
     REPLACED_POLICY_KEYS,
 )
-from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_observation_codec import (
+    ENVELOPE_KEY,
+    INVALID_ENVELOPE_FIELD,
+    POLICY_FIELDS,
+)
+from app.services.control_room.business_policy_metadata import (
+    BUSINESS_ARTIFACT_FIELDS,
+    business_policy_metadata,
+)
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
@@ -16,7 +24,6 @@ from app.services.control_room.business_workflow_provenance import (
     persistence_metadata,
     workflow_has_eligible_provenance,
 )
-from app.services.control_room.business_observation_codec import INVALID_ENVELOPE_FIELD
 
 
 def _source_row(item: dict) -> dict:
@@ -78,6 +85,12 @@ def test_replaced_policy_keys_cover_legacy_source_state_fields():
         INVALID_ENVELOPE_FIELD,
     ):
         assert key in REPLACED_POLICY_KEYS
+
+
+def test_replaced_policy_keys_follow_the_canonical_policy_schema():
+    assert REPLACED_POLICY_KEYS == tuple(
+        sorted(POLICY_FIELDS | {ENVELOPE_KEY} | BUSINESS_ARTIFACT_FIELDS)
+    )
 
 
 def test_business_policy_metadata_drops_legacy_source_state_semantics():
