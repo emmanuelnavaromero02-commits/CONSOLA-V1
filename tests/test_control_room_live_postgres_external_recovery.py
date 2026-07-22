@@ -20,6 +20,7 @@ from app.services.control_room.business_external_effect import (
 from app.services.db_scope import SET_SCOPE_SQL
 from tests.test_control_room_live_postgres_p15 import (
     _linked_item,
+    _mutation_item,
     _seed_matching_dry_run,
     _template,
     _user,
@@ -117,7 +118,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
         reservation = await acquire_guarded_action_reservation(
             setup,
             user=user,
-            item=item,
+            item=_mutation_item(item),
             template_id=template["template_id"],
             adapter_name="Adapter",
             operation="execute",
@@ -153,7 +154,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
                     await service._execute_external_writeback(
                         execute_conn,
                         user=user,
-                        item=item,
+                        item=_mutation_item(item),
                         template=template,
                         payload=payload,
                         reservation=reservation,

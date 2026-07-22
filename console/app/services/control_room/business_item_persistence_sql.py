@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.control_room.business_policy_metadata import (
+    diagnostic_policy_sql,
     policy_metadata_without_fields_sql,
 )
 from app.services.control_room.business_observation_order import (
@@ -33,6 +34,10 @@ _QUARANTINED_WORKFLOW = (
     f"(EXCLUDED.metadata ? '{WORKFLOW_QUARANTINE_KEY}' "
     f"AND NOT EXCLUDED.metadata ? '{DECISION_PROVENANCE_KEY}')"
 )
+_EXISTING_DIAGNOSTIC = diagnostic_policy_sql("control_room_items.metadata")
+_QUARANTINED_DIAGNOSTIC_WORKFLOW = (
+    f"({_QUARANTINED_WORKFLOW} AND {_EXISTING_DIAGNOSTIC})"
+)
 _INCOMING_IS_CURRENT = (
     f"COALESCE(EXCLUDED.metadata->>'{OBSERVATION_ORDER_KEY}', '') >= "
     f"COALESCE(control_room_items.metadata->>'{OBSERVATION_ORDER_KEY}', "
@@ -50,6 +55,17 @@ def _if_current(incoming: str, existing: str) -> str:
     return f"CASE WHEN {_INCOMING_IS_CURRENT} THEN {incoming} ELSE {existing} END"
 
 
+_MERGED_INCOMING_METADATA = (
+    f"({_CLEAN_WORKFLOW_METADATA} || EXCLUDED.metadata) "
+    f"- '{OBSERVATION_ORDER_BASELINE_KEY}'"
+)
+_METADATA_UPDATE = (
+    f"CASE WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} "
+    f"THEN {_MERGED_INCOMING_METADATA} "
+    f"ELSE {_if_current(_MERGED_INCOMING_METADATA, _BACKFILL_EXISTING_ORDER)} END"
+)
+
+
 _SEMANTIC_UPDATE = f"""
     cartridge_id = {_if_current("EXCLUDED.cartridge_id", "control_room_items.cartridge_id")},
     domain = {_if_current("EXCLUDED.domain", "control_room_items.domain")},
@@ -61,7 +77,7 @@ _SEMANTIC_UPDATE = f"""
     entity_id = {_if_current("EXCLUDED.entity_id", "control_room_items.entity_id")},
     entity_label = {_if_current("EXCLUDED.entity_label", "control_room_items.entity_label")},
     anomaly_type = {_if_current("EXCLUDED.anomaly_type", "control_room_items.anomaly_type")},
-    metadata = {_if_current(f"({_CLEAN_WORKFLOW_METADATA} || EXCLUDED.metadata) - '{OBSERVATION_ORDER_BASELINE_KEY}'", _BACKFILL_EXISTING_ORDER)},
+    metadata = {_METADATA_UPDATE},
     impact_estimate = {_if_current("EXCLUDED.impact_estimate", "control_room_items.impact_estimate")},
     impact_currency = {_if_current("EXCLUDED.impact_currency", "control_room_items.impact_currency")},
     confidence = {_if_current("EXCLUDED.confidence", "control_room_items.confidence")},
@@ -100,23 +116,26 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN 'open'
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
         ELSE control_room_items.status
     END,
     decision_id = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN NULL
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.decision_id
-        ELSE control_room_items.decision_id
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
     END,
     selected_option_id = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN NULL
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
         ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN 'not_started'
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
         ELSE control_room_items.execution_status
     END
 {_owner_conflict_guard(3, 4)}
@@ -140,24 +159,27 @@ SELECT NULLIF(x.tenant_id, '')::uuid, x.workspace_id::uuid, x.owner_user_id,
 ON CONFLICT (workspace_id, item_id) DO UPDATE
 SET {_SEMANTIC_UPDATE},
     status = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN 'open'
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.status
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'open'
         WHEN control_room_items.status = ANY($3::text[]) THEN control_room_items.status
         ELSE EXCLUDED.status
     END,
     decision_id = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN NULL
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.decision_id
-        ELSE control_room_items.decision_id
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL ELSE control_room_items.decision_id
     END,
     selected_option_id = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN NULL
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.selected_option_id
+        WHEN {_QUARANTINED_WORKFLOW} THEN NULL
         ELSE control_room_items.selected_option_id
     END,
     execution_status = CASE
-        WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
+        WHEN {_QUARANTINED_DIAGNOSTIC_WORKFLOW} THEN 'not_started'
         WHEN NOT ({_INCOMING_IS_CURRENT}) THEN control_room_items.execution_status
+        WHEN {_QUARANTINED_WORKFLOW} THEN 'not_started'
         ELSE control_room_items.execution_status
     END
 {_owner_conflict_guard(4, 5)}
