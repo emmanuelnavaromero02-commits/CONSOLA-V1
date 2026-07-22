@@ -51,6 +51,13 @@ def _source(source_type: str, *, owner_id: int, technical: bool = False) -> dict
                 source_row={"source_id": f"{source_type}-1"},
                 locator_field="source_id",
                 observed_at="2026-07-17T10:00:00Z",
+                business_observation={
+                    "source_id": f"{source_type}-1",
+                    "item_kind": item_kind,
+                    "metric_type": "scalar",
+                    "observed_value": 1,
+                    "observation_date": "2026-07-17T10:00:00Z",
+                },
             ),
         },
     }

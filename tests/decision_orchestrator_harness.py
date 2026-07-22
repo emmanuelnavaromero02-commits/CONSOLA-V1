@@ -23,7 +23,6 @@ def runtime_evidence(user, item_id, *, kind="anomaly", value=1):
     source_row = {
         "item_id": item_id,
         "kind": kind,
-        "metric_name": "measured_metric",
         "metric_type": "scalar",
         "observed_value": value,
         "observation_date": observed_at,

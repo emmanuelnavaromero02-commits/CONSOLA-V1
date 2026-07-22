@@ -44,6 +44,13 @@ def _linked_item(*, workspace_id: str = "workspace-a") -> dict:
                 source_row={"item_id": "business-1"},
                 locator_field="item_id",
                 observed_at="2026-07-20",
+                business_observation={
+                    "item_id": "business-1",
+                    "item_kind": "anomaly",
+                    "metric_type": "count",
+                    "observed_value": 1,
+                    "observation_date": "2026-07-20",
+                },
             ),
         },
     }

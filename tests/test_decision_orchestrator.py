@@ -5,14 +5,12 @@ from typing import Any
 
 import pytest
 
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
-)
 from tests.decision_orchestrator_harness import (
     FakeOrchestratorDB,
     _patch_pool,
     _user,
     orchestrator,
+    runtime_evidence,
 )
 
 
@@ -140,6 +138,7 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
         tenant_id=user_a["active_tenant_id"],
         workspace_id=user_a["active_workspace_id"],
         item_id="item-a",
+        item_kind="anomaly",
         title="Forecast anomaly probability breach",
         source_dataset="gold_metrics",
         metadata={
@@ -147,16 +146,7 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            **runtime_row_evidence_fields(
-                source_dataset="gold_metrics",
-                source_system="sap_hcm",
-                cartridge="sap_hcm",
-                tenant_id=user_a["active_tenant_id"],
-                workspace_id=user_a["active_workspace_id"],
-                source_row={"item_id": "item-a"},
-                locator_field="item_id",
-                observed_at="2026-07-10T00:00:00Z",
-            ),
+            **runtime_evidence(user_a, "item-a"),
         },
     )
 
@@ -257,6 +247,7 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
         tenant_id=user["active_tenant_id"],
         workspace_id=user["active_workspace_id"],
         item_id="action-source",
+        item_kind="anomaly",
         title="Notify owner and create task",
         source_dataset="gold_metrics",
         metadata={
@@ -264,16 +255,7 @@ async def test_orchestrator_optional_external_action_stays_pending_approval(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            **runtime_row_evidence_fields(
-                source_dataset="gold_metrics",
-                source_system="sap_hcm",
-                cartridge="sap_hcm",
-                tenant_id=user["active_tenant_id"],
-                workspace_id=user["active_workspace_id"],
-                source_row={"item_id": "action-source"},
-                locator_field="item_id",
-                observed_at="2026-07-10T00:00:00Z",
-            ),
+            **runtime_evidence(user, "action-source"),
         },
     )
     propose_calls: list[dict[str, Any]] = []
