@@ -91,6 +91,9 @@ from app.services.control_room.business_execution_approval import (
     execution_lifecycle_block,
     require_approved_execution,
 )
+from app.services.control_room.business_external_projection import (
+    reserved_action_response as _build_reserved_action_response,
+)
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
@@ -138,6 +141,9 @@ _core.__dict__.setdefault("ReservationUnavailable", ReservationUnavailable)
 _core.__dict__.setdefault("WorkflowStage", WorkflowStage)
 _core.__dict__.setdefault("dry_run_metadata", dry_run_metadata)
 _core.__dict__.setdefault("execution_lifecycle_block", execution_lifecycle_block)
+_core.__dict__.setdefault(
+    "_build_reserved_action_response", _build_reserved_action_response
+)
 _core.__dict__.setdefault(
     "adapter_guarantees_idempotency", adapter_guarantees_idempotency
 )
@@ -2130,37 +2136,15 @@ def _reserved_action_response(
     item: dict[str, Any],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    if reservation.state is ReservationState.IN_PROGRESS:
-        raise HTTPException(
-            409,
-            {
-                "code": "action_in_progress",
-                "reservation_id": reservation.id,
-                "idempotency_key": reservation.effective_key,
-            },
-        )
-    if reservation.state is ReservationState.FAILED:
-        raise HTTPException(
-            409,
-            {
-                "code": "action_previously_failed",
-                "reservation_id": reservation.id,
-                "idempotency_key": reservation.effective_key,
-            },
-        )
-    if reservation.state is not ReservationState.COMPLETED:
-        raise RuntimeError("acquired action reservation cannot be replayed")
-    action_run = _action_run_public(reservation.row)
-    result = _details(action_run.get("execution_result"))
-    return {
-        "executed": bool(result.get("executed", True)),
-        "idempotent": True,
-        "execution": {},
-        "action_run": action_run,
-        "payload": _details(action_run.get("input")) or payload,
-        "result": {**result, "idempotent": True},
-        "item": _project_public_item(item, _with_omega, execution_status="executed"),
-    }
+    return _build_reserved_action_response(
+        reservation,
+        item=item,
+        payload=payload,
+        action_run_public=_action_run_public,
+        details=_details,
+        project_item=_project_public_item,
+        omega_builder=_with_omega,
+    )
 
 
 @_bind_to_core

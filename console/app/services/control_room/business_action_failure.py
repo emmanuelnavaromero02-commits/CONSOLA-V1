@@ -8,6 +8,9 @@ from app.services.control_room.business_action_reservation import (
     complete_action_reservation,
 )
 from app.services.control_room.business_external_effect import RemoteSideEffectCommitted
+from app.services.control_room.business_external_projection import (
+    project_committed_external_effect,
+)
 
 
 def _error_code(error: Exception) -> str:
@@ -32,7 +35,7 @@ async def finalize_aborted_action_reservation(
             "local_projection_status": "pending_reconciliation",
             "local_projection_error": error.cause_type,
         }
-        return await complete_action_reservation(
+        pending = await complete_action_reservation(
             conn,
             workspace_id=workspace_id,
             reservation_id=reservation.id,
@@ -43,6 +46,13 @@ async def finalize_aborted_action_reservation(
             error_code="local_projection_failed_after_remote_success",
             error_message="remote write completed; local projection requires reconciliation",
         )
+        projected = await project_committed_external_effect(
+            conn,
+            workspace_id=workspace_id,
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+        )
+        return projected or pending
     code = _error_code(error)
     return await complete_action_reservation(
         conn,

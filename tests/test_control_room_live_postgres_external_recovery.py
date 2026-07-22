@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import asyncpg
 import pytest
 
+from app.services import control_room_service as service
 from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_action_reservation,
+    acquire_guarded_action_reservation,
+)
+from app.services.control_room.business_action_failure import (
+    finalize_aborted_action_reservation,
+)
+from app.services.control_room.business_external_effect import (
+    RemoteSideEffectCommitted,
 )
 from app.services.db_scope import SET_SCOPE_SQL
-from tests.test_control_room_live_postgres_p15 import _linked_item
+from tests.test_control_room_live_postgres_p15 import (
+    _linked_item,
+    _seed_matching_dry_run,
+    _template,
+    _user,
+)
 from tests.test_operational_rls_console_refinement import (
     postgres_with_real_init_schema,
 )
@@ -69,3 +84,124 @@ async def test_live_stale_external_reservation_reclaims_same_row_and_key(
     assert retry.id == first.id
     assert retry.effective_key == first.effective_key
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_live_remote_receipt_projects_authoritative_item_once(
+    postgres_with_real_init_schema: str, monkeypatch: pytest.MonkeyPatch
+):
+    tenant_id, workspace_id, item = await _linked_item(
+        postgres_with_real_init_schema,
+        "external-finalizer-projection",
+    )
+    user = _user(tenant_id, workspace_id)
+    template = _template("external-finalizer", cartridge="replicon")
+    payload = {"mode": "execute_live", "action_payload": {}}
+    await _seed_matching_dry_run(
+        postgres_with_real_init_schema,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        item=item,
+        template_id=template["template_id"],
+    )
+    setup = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        await setup.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+        await setup.execute(
+            """UPDATE control_room_items
+                  SET execution_status='dry_run_validated'
+                WHERE workspace_id=$1 AND item_id=$2""",
+            workspace_id,
+            item["id"],
+        )
+        reservation = await acquire_guarded_action_reservation(
+            setup,
+            user=user,
+            item=item,
+            template_id=template["template_id"],
+            adapter_name="Adapter",
+            operation="execute",
+            input_payload=payload,
+        )
+    finally:
+        await setup.close()
+
+    class Adapter(service.BaseAdapter):
+        supports_idempotency = True
+        calls = 0
+
+        async def execute(self, action_data, credentials, dry_run=True):
+            type(self).calls += 1
+            return service.ExecutionResult(True, "executed", "ok", {"id": "remote-1"})
+
+    monkeypatch.setattr(
+        service.WriteBackAdapterFactory,
+        "get_adapter",
+        classmethod(lambda _cls, _template_type: Adapter()),
+    )
+    execute_conn = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        with monkeypatch.context() as local_failure:
+            local_failure.setattr(
+                service,
+                "_record_action_execution",
+                AsyncMock(side_effect=ConnectionError("late local failure")),
+            )
+            with pytest.raises(RemoteSideEffectCommitted) as captured:
+                async with execute_conn.transaction():
+                    await execute_conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+                    await service._execute_external_writeback(
+                        execute_conn,
+                        user=user,
+                        item=item,
+                        template=template,
+                        payload=payload,
+                        reservation=reservation,
+                        ip=None,
+                        user_agent=None,
+                    )
+    finally:
+        await execute_conn.close()
+
+    finalize_conn = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        async with finalize_conn.transaction():
+            await finalize_conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+            finalized = await finalize_aborted_action_reservation(
+                finalize_conn,
+                workspace_id=workspace_id,
+                reservation=reservation,
+                error=captured.value,
+            )
+    finally:
+        await finalize_conn.close()
+
+    check = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        execution_status = await check.fetchval(
+            """SELECT execution_status FROM control_room_items
+                WHERE workspace_id=$1 AND item_id=$2""",
+            workspace_id,
+            item["id"],
+        )
+        run_count = await check.fetchval(
+            """SELECT COUNT(*) FROM action_runs
+                WHERE workspace_id=$1 AND item_id=$2 AND mode='execute'""",
+            workspace_id,
+            item["id"],
+        )
+        projection_status = await check.fetchval(
+            """SELECT execution_result->>'local_projection_status'
+                  FROM action_runs
+                 WHERE workspace_id=$1 AND id=$2""",
+            workspace_id,
+            reservation.id,
+        )
+    finally:
+        await check.close()
+
+    assert Adapter.calls == 1
+    assert execution_status == "executed"
+    assert finalized["id"] == reservation.id
+    assert projection_status == "completed"
+    assert run_count == 1

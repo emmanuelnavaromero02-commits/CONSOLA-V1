@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.services import control_room_service
 from app.services.control_room.business_action_reservation import (
@@ -17,6 +18,9 @@ from app.services.control_room.business_action_failure import (
 from app.services.control_room.business_external_effect import (
     RemoteSideEffectCommitted,
     remote_effect_boundary,
+)
+from app.services.control_room.business_external_projection import (
+    project_committed_external_effect,
 )
 
 
@@ -130,6 +134,7 @@ async def test_remote_success_late_local_failure_carries_durable_receipt():
     assert exc.value.execution_result["executed"] is True
     assert exc.value.execution_result["adapter_result"]["external_id"] == "ERP-42"
     assert exc.value.side_effect["adapter"]
+    assert adapter.execute.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -148,14 +153,124 @@ async def test_remote_success_receipt_finalizes_original_reservation_completed()
         cause=ConnectionError("local projection unavailable"),
     )
 
-    await finalize_aborted_action_reservation(
-        db,
-        workspace_id="workspace-a",
-        reservation=reservation,
-        error=error,
-    )
+    with patch(
+        "app.services.control_room.business_action_failure.project_committed_external_effect",
+        AsyncMock(return_value=None),
+    ):
+        await finalize_aborted_action_reservation(
+            db,
+            workspace_id="workspace-a",
+            reservation=reservation,
+            error=error,
+        )
 
     args = db.fetchrow.await_args.args
     assert args[4] == "completed"
     assert "ERP-42" in args[5]
     assert args[8] == "local_projection_failed_after_remote_success"
+
+
+@pytest.mark.asyncio
+async def test_remote_success_finalizer_marks_completed_after_exact_projection():
+    db = AsyncMock()
+    pending = {"id": 42, "status": "completed"}
+    completed = {
+        "id": 42,
+        "status": "completed",
+        "execution_result": {"local_projection_status": "completed"},
+    }
+    db.fetchrow.return_value = pending
+    projection = AsyncMock(return_value=completed)
+    reservation = ActionReservation(
+        id=42,
+        effective_key="cr-action:v1:remote-success",
+        state=ReservationState.ACQUIRED,
+        row={},
+    )
+    error = RemoteSideEffectCommitted(
+        execution_result={"ok": True, "executed": True},
+        side_effect={"target": "sap", "adapter": "IdempotentAdapter"},
+        cause=ConnectionError("late local failure"),
+    )
+
+    with patch(
+        "app.services.control_room.business_action_failure.project_committed_external_effect",
+        projection,
+    ):
+        result = await finalize_aborted_action_reservation(
+            db,
+            workspace_id="workspace-a",
+            reservation=reservation,
+            error=error,
+        )
+
+    projection.assert_awaited_once_with(
+        db,
+        workspace_id="workspace-a",
+        reservation_id=42,
+        effective_key=reservation.effective_key,
+    )
+    assert result["execution_result"]["local_projection_status"] == "completed"
+
+
+def test_pending_remote_receipt_replay_is_truthful_409():
+    item = {**_item(), "execution_status": "dry_run_validated"}
+    reservation = ActionReservation(
+        id=42,
+        effective_key="cr-action:v1:remote-success",
+        state=ReservationState.COMPLETED,
+        row={
+            "id": 42,
+            "status": "completed",
+            "execution_result": {
+                "ok": True,
+                "executed": True,
+                "local_projection_status": "pending_reconciliation",
+            },
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        control_room_service._reserved_action_response(
+            reservation, item=item, payload={}
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "external_action_pending_reconciliation"
+    assert item["execution_status"] == "dry_run_validated"
+
+
+@pytest.mark.asyncio
+async def test_projection_contract_mismatch_keeps_durable_receipt_pending():
+    db = AsyncMock()
+    db.fetchrow.side_effect = [
+        {
+            "id": 42,
+            "workspace_id": "workspace-a",
+            "item_id": "item-1",
+            "decision_id": 42,
+            "status": "completed",
+            "metadata": {
+                "reservation_contract": {
+                    "workspace_id": "different-workspace",
+                    "item_id": "item-1",
+                    "decision_id": 42,
+                }
+            },
+            "execution_result": {
+                "executed": True,
+                "local_projection_status": "pending_reconciliation",
+            },
+        },
+        {"item_id": "item-1", "decision_id": 42, "status": "approved"},
+    ]
+
+    result = await project_committed_external_effect(
+        db,
+        workspace_id="workspace-a",
+        reservation_id=42,
+        effective_key="cr-action:v1:remote-success",
+    )
+
+    assert result is None
+    assert db.fetchrow.await_count == 2
