@@ -246,9 +246,10 @@ async def test_live_ensure_status_mutates_but_stale_generation_is_inert(
         assert before["status"] == "in_review"
 
         await persist_item_rows(conn, [stale_row], owner_scope_id=7)
-        assert dict(
-            await conn.fetchrow(select_state, workspace_id, current["id"])
-        ) == before
+        assert (
+            dict(await conn.fetchrow(select_state, workspace_id, current["id"]))
+            == before
+        )
 
         await conn.execute(
             "UPDATE control_room_items SET status='approved' WHERE workspace_id=$1 AND item_id=$2",

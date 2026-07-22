@@ -19,6 +19,7 @@ from app.services.control_room.business_runtime_evidence import (
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
+    ELIGIBILITY_POLICY_VERSION,
     business_observation_fingerprint,
     decision_eligibility_provenance,
     persistence_metadata,
@@ -133,6 +134,29 @@ def test_eligible_decision_provenance_is_machine_checkable():
         {DECISION_PROVENANCE_KEY: provenance},
         item,
         decision_id=42,
+    )
+
+
+def test_option_stage_without_decision_is_valid_and_workspace_bound():
+    item = _business_item()
+    metadata = {
+        "selected_option_id": "review",
+        DECISION_PROVENANCE_KEY: {
+            "policy_version": ELIGIBILITY_POLICY_VERSION,
+            "stage": "option_selected",
+            "workspace_id": "workspace-a",
+            "item_id": item["id"],
+            "kind": item["kind"],
+            "fingerprint": business_observation_fingerprint(item),
+            "eligible_at_link": True,
+            "option_id": "review",
+        },
+    }
+    assert workflow_has_eligible_provenance(metadata, item, decision_id=None)
+    assert not workflow_has_eligible_provenance(
+        metadata,
+        {**item, "workspace_id": "workspace-b"},
+        decision_id=None,
     )
 
 
