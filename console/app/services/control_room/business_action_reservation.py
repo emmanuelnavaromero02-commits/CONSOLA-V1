@@ -11,6 +11,7 @@ from app.services.control_room.business_access import workspace_scope
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
+from app.services.control_room.business_reservation_errors import reservation_fetchrow
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
     require_matching_dry_run,
@@ -147,7 +148,8 @@ async def acquire_action_reservation(
         "operation": operation,
         "authorization": dict(authorization_contract or {}),
     }
-    row = await conn.fetchrow(
+    row = await reservation_fetchrow(
+        conn,
         """
         INSERT INTO action_runs (
             tenant_id, workspace_id, item_id, decision_id, action_type,
@@ -174,7 +176,8 @@ async def acquire_action_reservation(
     )
     if row:
         return _reservation(row, key, acquired=True)
-    existing = await conn.fetchrow(
+    existing = await reservation_fetchrow(
+        conn,
         """
         SELECT * FROM action_runs
          WHERE workspace_id = $1::uuid AND idempotency_key = $2

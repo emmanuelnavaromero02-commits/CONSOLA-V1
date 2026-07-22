@@ -77,6 +77,7 @@ from app.services.control_room.business_action_reservation import (
     acquire_guarded_action_reservation,
     complete_action_reservation,
 )
+from app.services.control_room.business_reservation_errors import ReservationUnavailable
 from app.services.control_room.business_execution_precondition import (
     dry_run_metadata,
     lock_pending_action_reservation,
@@ -122,6 +123,7 @@ for _helper in (
     _core.__dict__.setdefault(_helper.__name__, _helper)
 _core.__dict__.setdefault("ActionReservation", ActionReservation)
 _core.__dict__.setdefault("ReservationState", ReservationState)
+_core.__dict__.setdefault("ReservationUnavailable", ReservationUnavailable)
 _core.__dict__.setdefault("WorkflowStage", WorkflowStage)
 _core.__dict__.setdefault("dry_run_metadata", dry_run_metadata)
 _core.__dict__.setdefault(
@@ -3295,7 +3297,12 @@ async def execute_item(
         async def _run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
             return await work(conn)
 
-        return await _run_with_db_scope(pool, user, _run)
+        try:
+            return await _run_with_db_scope(pool, user, _run)
+        except ReservationUnavailable as exc:
+            raise HTTPException(
+                503, "execution idempotency reservation failed"
+            ) from exc
 
     await _with_scoped_db(
         lambda db: _ensure_item_row(
