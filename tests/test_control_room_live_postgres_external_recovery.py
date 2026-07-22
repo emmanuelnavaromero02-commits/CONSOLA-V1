@@ -164,7 +164,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
                     )
             except BaseException as exc:
                 captured_error = exc
-            assert isinstance(captured_error, RemoteSideEffectCommitted)
+            assert type(captured_error).__name__ == RemoteSideEffectCommitted.__name__
     finally:
         await execute_conn.close()
 

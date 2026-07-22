@@ -22,6 +22,21 @@ def _error_code(error: Exception) -> str:
     return "execution_aborted_after_reservation"
 
 
+def _remote_side_effect(
+    error: Exception,
+) -> tuple[Mapping[str, Any], Mapping[str, Any], str] | None:
+    if isinstance(error, RemoteSideEffectCommitted) or (
+        isinstance(getattr(error, "execution_result", None), Mapping)
+        and isinstance(getattr(error, "side_effect", None), Mapping)
+    ):
+        return (
+            getattr(error, "execution_result"),
+            getattr(error, "side_effect"),
+            str(getattr(error, "cause_type", type(error).__name__)),
+        )
+    return None
+
+
 async def finalize_aborted_action_reservation(
     conn: Any,
     *,
@@ -29,11 +44,12 @@ async def finalize_aborted_action_reservation(
     reservation: ActionReservation,
     error: Exception,
 ) -> dict[str, Any]:
-    if isinstance(error, RemoteSideEffectCommitted):
+    if remote := _remote_side_effect(error):
+        execution_result, side_effect, cause_type = remote
         result = {
-            **error.execution_result,
+            **execution_result,
             "local_projection_status": "pending_reconciliation",
-            "local_projection_error": error.cause_type,
+            "local_projection_error": cause_type,
         }
         pending = await complete_action_reservation(
             conn,
@@ -42,7 +58,7 @@ async def finalize_aborted_action_reservation(
             effective_key=reservation.effective_key,
             status="completed",
             execution_result=result,
-            side_effect=error.side_effect,
+            side_effect=side_effect,
             error_code="local_projection_failed_after_remote_success",
             error_message="remote write completed; local projection requires reconciliation",
         )
