@@ -14,7 +14,9 @@ from app.services.intelligence.utils import workspace_scope
 
 
 _SAFE_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_GOLD_ROW_CACHE: dict[tuple[str, str, str, int], tuple[float, list[dict[str, Any]]]] = {}
+_GOLD_ROW_CACHE: dict[
+    tuple[str, str, str, int], tuple[float, list[dict[str, Any]]]
+] = {}
 _GOLD_ROW_CACHE_LOCKS: dict[tuple[str, str, str, int], asyncio.Lock] = {}
 
 
@@ -23,7 +25,9 @@ def _normalize_dsn(raw: str) -> str:
 
 
 def _gold_dsn() -> str:
-    return _normalize_dsn(os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
+    return _normalize_dsn(
+        os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
+    )
 
 
 def _gold_table(dataset: str) -> str:
@@ -56,14 +60,18 @@ def _gold_cache_get(key: tuple[str, str, str, int]) -> list[dict[str, Any]] | No
     return deepcopy(rows)
 
 
-def _gold_cache_set(key: tuple[str, str, str, int], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _gold_cache_set(
+    key: tuple[str, str, str, int], rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     ttl = _gold_cache_ttl()
     if ttl > 0:
         _GOLD_ROW_CACHE[key] = (time.monotonic() + ttl, deepcopy(rows))
     return rows
 
 
-def clear_gold_row_cache(tenant_id: str | None = None, workspace_id: str | None = None) -> None:
+def clear_gold_row_cache(
+    tenant_id: str | None = None, workspace_id: str | None = None
+) -> None:
     """Clear cached Gold reads after sync/materialization updates."""
     tenant_text = str(tenant_id or "").strip()
     workspace_text = str(workspace_id or "").strip()
@@ -101,7 +109,9 @@ async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
     return {str(row["column_name"]) for row in rows}
 
 
-async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 5000) -> list[dict[str, Any]]:
+async def query_gold_dataset_rows(
+    dataset: str, user: dict | None, limit: int = 5000
+) -> list[dict[str, Any]]:
     """Read workspace-scoped Gold rows directly for intelligence runs.
 
     Refinement can still serve datasets for legacy flows, but the intelligence
@@ -114,7 +124,9 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
     table = _gold_table(dataset)
     tenant_id, workspace_id = workspace_scope(user)
     if not tenant_id:
-        raise HTTPException(403, "gold dataset requires complete tenant/workspace scope")
+        raise HTTPException(
+            403, "gold dataset requires complete tenant/workspace scope"
+        )
     safe_limit = max(1, min(int(limit or 5000), 5000))
     cache_key = (str(dataset), str(tenant_id or ""), str(workspace_id), safe_limit)
     cached = _gold_cache_get(cache_key)
@@ -133,12 +145,16 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
                     tenant_id or "",
                     workspace_id,
                 )
-                exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+                exists = bool(
+                    await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
+                )
                 if not exists:
                     raise HTTPException(404, f"dataset unavailable: {dataset}")
                 columns = await _table_columns(conn, table)
                 if "workspace_id" not in columns:
-                    raise HTTPException(403, f"dataset is not workspace scoped: {dataset}")
+                    raise HTTPException(
+                        403, f"dataset is not workspace scoped: {dataset}"
+                    )
                 if "tenant_id" not in columns:
                     raise HTTPException(403, f"dataset is not tenant scoped: {dataset}")
                 rows = await conn.fetch(
@@ -152,7 +168,9 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
             await conn.close()
 
 
-async def query_intelligence_dataset_rows(dataset: str, user: dict | None, limit: int = 5000) -> list[dict[str, Any]]:
+async def query_intelligence_dataset_rows(
+    dataset: str, user: dict | None, limit: int = 5000
+) -> list[dict[str, Any]]:
     """Prefer scoped Gold data, then fall back to the existing Refinement path.
 
     A present but empty/scoped Gold table returns an empty list instead of falling

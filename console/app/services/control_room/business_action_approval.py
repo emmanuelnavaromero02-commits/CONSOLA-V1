@@ -104,7 +104,11 @@ async def require_approvable_decision(
         raise HTTPException(409, "control room item has quarantined workflow")
     persisted_option = str(
         (item_row.get("selected_option_id") if item_row else None)
-        or (metadata.get("selected_option_id") if isinstance(metadata, Mapping) else None)
+        or (
+            metadata.get("selected_option_id")
+            if isinstance(metadata, Mapping)
+            else None
+        )
         or ""
     ).strip()
     expected_option = str(item.get("selected_option_id") or "").strip()

@@ -69,6 +69,8 @@ def _item() -> dict:
             business_observation=item,
         ),
     }
+
+
 def test_option_stage_without_decision_is_valid_and_workspace_bound():
     item = _item()
     metadata = {
@@ -90,6 +92,8 @@ def test_option_stage_without_decision_is_valid_and_workspace_bound():
         {**item, "workspace_id": "workspace-b"},
         decision_id=None,
     )
+
+
 @pytest.mark.asyncio
 async def test_option_update_failure_rolls_back_before_success_event():
     class BrokenConnection:

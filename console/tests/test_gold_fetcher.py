@@ -34,7 +34,11 @@ class _FakeConn:
     async def fetch(self, sql: str, *args: object):
         self.fetch_calls.append((sql, args))
         if "information_schema.columns" in sql:
-            return [{"column_name": "tenant_id"}, {"column_name": "workspace_id"}, {"column_name": "headcount"}]
+            return [
+                {"column_name": "tenant_id"},
+                {"column_name": "workspace_id"},
+                {"column_name": "headcount"},
+            ]
         return [{"tenant_id": args[1], "workspace_id": args[0], "headcount": 1288}]
 
     async def close(self):
@@ -151,8 +155,12 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
         "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
         "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
     }
-    first = await gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", base_user, 20)
-    second = await gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", base_user, 20)
+    first = await gold_fetcher.query_gold_dataset_rows(
+        "sap_successfactors_employee_360", base_user, 20
+    )
+    second = await gold_fetcher.query_gold_dataset_rows(
+        "sap_successfactors_employee_360", base_user, 20
+    )
     other = await gold_fetcher.query_gold_dataset_rows(
         "sap_successfactors_employee_360",
         {**base_user, "workspace_id": "00000000-0000-0000-0000-000000000002"},
@@ -165,25 +173,42 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
 
 
 def test_clear_gold_row_cache_removes_only_requested_scope():
-    gold_fetcher._GOLD_ROW_CACHE[
-        ("dataset_a", "tenant-1", "workspace-1", 20)
-    ] = (999999999.0, [{"value": 1}])
-    gold_fetcher._GOLD_ROW_CACHE[
-        ("dataset_a", "tenant-1", "workspace-2", 20)
-    ] = (999999999.0, [{"value": 2}])
-    gold_fetcher._GOLD_ROW_CACHE_LOCKS[
-        ("dataset_a", "tenant-1", "workspace-1", 20)
-    ] = asyncio.Lock()
-    gold_fetcher._GOLD_ROW_CACHE_LOCKS[
-        ("dataset_a", "tenant-1", "workspace-2", 20)
-    ] = asyncio.Lock()
+    gold_fetcher._GOLD_ROW_CACHE[("dataset_a", "tenant-1", "workspace-1", 20)] = (
+        999999999.0,
+        [{"value": 1}],
+    )
+    gold_fetcher._GOLD_ROW_CACHE[("dataset_a", "tenant-1", "workspace-2", 20)] = (
+        999999999.0,
+        [{"value": 2}],
+    )
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[("dataset_a", "tenant-1", "workspace-1", 20)] = (
+        asyncio.Lock()
+    )
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[("dataset_a", "tenant-1", "workspace-2", 20)] = (
+        asyncio.Lock()
+    )
 
     gold_fetcher.clear_gold_row_cache("tenant-1", "workspace-1")
 
-    assert ("dataset_a", "tenant-1", "workspace-1", 20) not in gold_fetcher._GOLD_ROW_CACHE
-    assert ("dataset_a", "tenant-1", "workspace-1", 20) not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert (
+        "dataset_a",
+        "tenant-1",
+        "workspace-1",
+        20,
+    ) not in gold_fetcher._GOLD_ROW_CACHE
+    assert (
+        "dataset_a",
+        "tenant-1",
+        "workspace-1",
+        20,
+    ) not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
     assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE
-    assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert (
+        "dataset_a",
+        "tenant-1",
+        "workspace-2",
+        20,
+    ) in gold_fetcher._GOLD_ROW_CACHE_LOCKS
 
 
 @pytest.mark.asyncio
@@ -205,7 +230,12 @@ async def test_gold_fetcher_singleflights_concurrent_cold_reads(monkeypatch):
     }
 
     results = await asyncio.gather(
-        *(gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", user, 20) for _ in range(8))
+        *(
+            gold_fetcher.query_gold_dataset_rows(
+                "sap_successfactors_employee_360", user, 20
+            )
+            for _ in range(8)
+        )
     )
 
     assert results == [results[0]] * 8

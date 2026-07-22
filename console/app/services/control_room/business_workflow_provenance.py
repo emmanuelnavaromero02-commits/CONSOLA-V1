@@ -36,6 +36,7 @@ _STAGE_REASONS = {
     WorkflowStage.EXECUTED: "explicit_execution",
 }
 
+
 def _metadata_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)

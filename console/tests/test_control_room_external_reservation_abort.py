@@ -104,9 +104,7 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
             control_room_service,
             "_execute_external_writeback",
             new=AsyncMock(
-                side_effect=HTTPException(
-                    409, {"code": "item_business_state_changed"}
-                )
+                side_effect=HTTPException(409, {"code": "item_business_state_changed"})
             ),
         ),
         patch.object(
