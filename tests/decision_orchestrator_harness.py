@@ -9,9 +9,35 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
+
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATION = REPO / "infra" / "init" / "99u_decision_orchestrator.sql"
+
+
+def runtime_evidence(user, item_id, *, kind="anomaly", value=1):
+    observed_at = "2026-07-10T00:00:00Z"
+    source_row = {
+        "item_id": item_id,
+        "kind": kind,
+        "metric_name": "measured_metric",
+        "metric_type": "scalar",
+        "observed_value": value,
+        "observation_date": observed_at,
+    }
+    return runtime_row_evidence_fields(
+        source_dataset="gold_metrics",
+        source_system="sap_hcm",
+        cartridge="sap_hcm",
+        tenant_id=user["active_tenant_id"],
+        workspace_id=user["active_workspace_id"],
+        source_row=source_row,
+        locator_field="item_id",
+        observed_at=observed_at,
+    )
 
 
 @pytest.fixture()
@@ -80,6 +106,7 @@ class FakeOrchestratorDB:
         self.sources[(workspace_id, "control_room_item", item_id)] = {
             "tenant_id": tenant_id,
             "workspace_id": workspace_id,
+            "item_id": item_id,
             "source_id": item_id,
             "item_kind": item_kind,
             "title": title,

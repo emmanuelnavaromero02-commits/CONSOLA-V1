@@ -5,9 +5,6 @@ import json
 
 import pytest
 
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
-)
 from tests.decision_orchestrator_harness import (
     MIGRATION,
     REPO,
@@ -15,20 +12,8 @@ from tests.decision_orchestrator_harness import (
     _patch_pool,
     _user,
     orchestrator,
+    runtime_evidence,
 )
-
-
-def _runtime_evidence(user, item_id):
-    return runtime_row_evidence_fields(
-        source_dataset="gold_metrics",
-        source_system="sap_hcm",
-        cartridge="sap_hcm",
-        tenant_id=user["active_tenant_id"],
-        workspace_id=user["active_workspace_id"],
-        source_row={"item_id": item_id},
-        locator_field="item_id",
-        observed_at="2026-07-10T00:00:00Z",
-    )
 
 
 def test_decision_orchestrator_migration_and_router_contracts():
@@ -186,7 +171,7 @@ async def test_orchestrator_accepts_canonical_intelligence_signal_metadata(
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 7,
-            **_runtime_evidence(user, "signal-1"),
+            **runtime_evidence(user, "signal-1", kind="intelligence_signal", value=7),
         },
     }
 
@@ -268,7 +253,7 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            **_runtime_evidence(user, "business-parent"),
+            **runtime_evidence(user, "business-parent"),
         },
     )
     db.add_control_room_item(
@@ -283,7 +268,7 @@ async def test_orchestrator_accepts_an_eligible_parent(orchestrator, monkeypatch
             "observed_at": "2026-07-10T00:00:00Z",
             "metric_type": "scalar",
             "observed_value": 1,
-            **_runtime_evidence(user, "business-alert"),
+            **runtime_evidence(user, "business-alert", kind="agent_alert"),
         },
     )
 

@@ -7,6 +7,7 @@ all in a single Python process. Each test that needs to import a cartridge
 calls :func:`load_cartridge_app` which swaps ``sys.path`` and clears the
 ``app.*`` modules from ``sys.modules`` first.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,13 +31,22 @@ _BASE_SYS_PATH = list(sys.path)
 # importing console/app/services/auth.py + vault/app/main.py at
 # collection time doesn't trip the production pair-key check.
 os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test_security_context_signing_key_with_more_than_32_chars")
+os.environ.setdefault(
+    "SECURITY_CONTEXT_SIGNING_KEY",
+    "test_security_context_signing_key_with_more_than_32_chars",
+)
+os.environ.setdefault("CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID", "test-current")
+os.environ.setdefault(
+    "CONTROL_ROOM_EVIDENCE_SIGNING_KEY",
+    "test_control_room_evidence_signing_key_with_more_than_32_chars",
+)
 
 
 PRIORITY_CARTRIDGES = ("sap_successfactors", "sap_hcm", "sap_s4hana")
 ALL_SAP_CARTRIDGES = tuple(
     sorted(
-        p.name for p in CARTRIDGES_ROOT.iterdir()
+        p.name
+        for p in CARTRIDGES_ROOT.iterdir()
         if p.is_dir() and p.name.startswith("sap_")
     )
 )
@@ -63,8 +73,13 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     sys.path.insert(0, str(cart_dir))
 
     os.environ["INTERNAL_API_KEY"] = "test-secret-key-not-default"
-    os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://test:test@postgres:5432/modecissions")
-    os.environ.setdefault("GOLD_DATABASE_URL", "postgresql+psycopg2://test:test@postgres_gold:5433/modecissions_gold")
+    os.environ.setdefault(
+        "DATABASE_URL", "postgresql+psycopg2://test:test@postgres:5432/modecissions"
+    )
+    os.environ.setdefault(
+        "GOLD_DATABASE_URL",
+        "postgresql+psycopg2://test:test@postgres_gold:5433/modecissions_gold",
+    )
     os.environ.setdefault("MINIO_ACCESS_KEY", "test-minio-access")
     os.environ.setdefault("MINIO_SECRET_KEY", "test-minio-secret")
     # Sprint v1.33 (audit B1): SAP cartridge protection_service refuses
@@ -73,6 +88,7 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     # tests that exercise the missing/invalid branches use monkeypatch.
     if not os.environ.get("FIELD_ENCRYPTION_KEY"):
         from cryptography.fernet import Fernet as _Fernet
+
         os.environ["FIELD_ENCRYPTION_KEY"] = _Fernet.generate_key().decode()
     main = import_module("app.main")
 
@@ -99,8 +115,10 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     # fail-fast tests (tests/test_cartridge_startup_fail_fast.py) own
     # the failure-path coverage and apply their own monkeypatch.
     if hasattr(main, "job_runner"):
+
         async def _ok():
             return None
+
         main.job_runner.ensure_schema = _ok
         main.job_runner.cleanup_stale = _ok
     return main
