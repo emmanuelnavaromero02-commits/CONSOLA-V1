@@ -7,6 +7,9 @@ from app.services.control_room.business_state_overlay import (
     load_overlay_state,
     overlay_business_state,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -18,43 +21,43 @@ from app.services.control_room.business_workflow_provenance import (
 )
 
 
-ARTIFACT_KEYS = (
-    "alert_state",
-    "control_state",
-    "decision_intelligence",
-    "impact_estimate",
-    "impact_currency",
-    "intelligence",
-    "priority_score",
-    "threshold_state",
-    "thresholds_applied",
-)
-
-
 def _item(**overrides):
-    return {
+    item = {
         "id": "business-1",
         "kind": "anomaly",
         "status": "open",
+        "tenant_id": "tenant-1",
         "workspace_id": "workspace-1",
         "cartridge": "sap_hcm",
         "source_dataset": "gold_metrics",
+        "source_system": "sap_hcm",
+        "metric_name": "measured_metric",
         "metric_type": "scalar",
         "observed_value": 2,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_metrics:record-1"],
         **overrides,
+    }
+    cartridge = item.get("cartridge") or item.get("cartridge_id")
+    item["source_system"] = str(cartridge)
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset=item["source_dataset"],
+            source_system=item["source_system"],
+            cartridge=str(cartridge),
+            tenant_id=item["tenant_id"],
+            workspace_id=item["workspace_id"],
+            source_row=item,
+            locator_field="id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
 def _state_for(item, **metadata_overrides):
     metadata = {
+        **item,
         "item_kind": item["kind"],
-        "source_dataset": item["source_dataset"],
-        "metric_type": item["metric_type"],
-        "observed_value": item["observed_value"],
-        "observation_date": item["observation_date"],
-        "evidence_refs": item["evidence_refs"],
         CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(item),
         "eligibility_policy_version": ELIGIBILITY_POLICY_VERSION,
         "intelligence": {"options": [{"id": "old-option"}]},
@@ -66,6 +69,14 @@ def _state_for(item, **metadata_overrides):
         **metadata_overrides,
     }
     return {
+        "item_id": item["id"],
+        "item_kind": item["kind"],
+        "source_dataset": item["source_dataset"],
+        "source_system": item["source_system"],
+        "metric_name": item["metric_name"],
+        "tenant_id": item["tenant_id"],
+        "workspace_id": item["workspace_id"],
+        "cartridge_id": item.get("cartridge") or item.get("cartridge_id"),
         "status": "open",
         "impact_estimate": 900,
         "impact_currency": "USD",
@@ -236,10 +247,10 @@ def test_overlay_loader_keeps_persisted_kind_and_source_for_policy_checks():
             metadata.pop("item_kind")
             return [
                 {
+                    **state,
                     "item_id": item["id"],
                     "item_kind": "source_state",
                     "source_dataset": item["source_dataset"],
-                    **state,
                     "metadata": metadata,
                 }
             ]

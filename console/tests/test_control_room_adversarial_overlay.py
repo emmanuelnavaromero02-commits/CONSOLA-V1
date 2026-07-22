@@ -7,6 +7,9 @@ import pytest
 from app.services.control_room.business_orchestrator import (
     eligible_orchestrator_source,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_state_overlay import (
     load_overlay_state,
     overlay_business_state,
@@ -23,20 +26,52 @@ from app.services.control_room.business_workflow_provenance import (
 )
 
 
-def _item() -> dict:
-    return {
+def _source_row(item: Mapping) -> dict:
+    fields = (
+        "id",
+        "kind",
+        "metric_name",
+        "metric_type",
+        "observed_value",
+        "observation_date",
+        "tenant_id",
+        "workspace_id",
+    )
+    return {field: item[field] for field in fields}
+
+
+def _item(**overrides) -> dict:
+    item = {
         "id": "business-1",
         "kind": "anomaly",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "cartridge": "sap_hcm",
         "source_dataset": "gold_metrics",
+        "source_system": "sap_hcm",
+        "metric_name": "measured_metric",
         "metric_type": "scalar",
         "observed_value": 2,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_metrics:record-1"],
+        **overrides,
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset=item["source_dataset"],
+            source_system=item["source_system"],
+            cartridge=item["cartridge"],
+            tenant_id=item["tenant_id"],
+            workspace_id=item["workspace_id"],
+            source_row=_source_row(item),
+            locator_field="id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
 def _state(item: Mapping, *, provenance_workspace: str) -> dict:
-    provenance_item = {**item, "workspace_id": provenance_workspace}
+    provenance_item = _item(workspace_id=provenance_workspace)
     metadata = {
         **item,
         "intelligence": {"options": [{"id": "foreign"}]},

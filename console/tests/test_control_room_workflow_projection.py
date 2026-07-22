@@ -3,6 +3,9 @@ from app.services.control_room.business_projection import (
     project_business_item,
 )
 from app.services.control_room.business_state_overlay import overlay_business_state
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -11,17 +14,48 @@ from app.services.control_room.business_workflow_provenance import (
 )
 
 
-def _item() -> dict:
-    return {
+def _source_row(item: dict) -> dict:
+    fields = (
+        "id",
+        "kind",
+        "metric_name",
+        "metric_type",
+        "observed_value",
+        "observation_date",
+        "tenant_id",
+        "workspace_id",
+    )
+    return {field: item[field] for field in fields}
+
+
+def _item(**overrides) -> dict:
+    item = {
         "id": "business-1",
         "kind": "anomaly",
+        "tenant_id": "tenant-a",
         "workspace_id": "workspace-a",
         "status": "open",
         "source_dataset": "gold_metrics",
+        "source_system": "sap_hcm",
+        "cartridge": "sap_hcm",
+        "metric_name": "measured_metric",
         "metric_type": "scalar",
         "observed_value": 2,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_metrics:business-1"],
+        **overrides,
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset=item["source_dataset"],
+            source_system=item["source_system"],
+            cartridge=item["cartridge"],
+            tenant_id=item["tenant_id"],
+            workspace_id=item["workspace_id"],
+            source_row=_source_row(item),
+            locator_field="id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
@@ -91,7 +125,7 @@ def test_overlay_clears_workflow_when_live_observation_changes():
             linked_item
         ),
     }
-    live_item = {**linked_item, "observed_value": 3}
+    live_item = _item(observed_value=3)
 
     projected = _overlay(
         live_item,
@@ -143,23 +177,20 @@ def test_decision_projection_requires_eligible_link_provenance():
 
     fingerprint = business_observation_fingerprint(item)
     linked["metadata"] = {
+        **item,
         DECISION_PROVENANCE_KEY: decision_eligibility_provenance(item, decision_id=42),
         CURRENT_ELIGIBILITY_FINGERPRINT_KEY: fingerprint,
-        "observed_value": 2,
-        "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_metrics:business-1"],
     }
     assert filter_business_decisions([decision], [linked]) == [decision]
 
 
 def test_derived_item_provenance_uses_validated_parent_context():
     child = project_business_item(
-        {
-            **_item(),
-            "id": "derived-1",
-            "kind": "intelligence_signal",
-            "parent_item_id": "parent-1",
-        },
+        _item(
+            id="derived-1",
+            kind="intelligence_signal",
+            parent_item_id="parent-1",
+        ),
         eligible_parent_ids={"parent-1"},
     )
 

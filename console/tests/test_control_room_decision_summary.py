@@ -5,6 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domains.decisions.business_visibility import count_business_decisions
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -22,8 +25,21 @@ class _DecisionConnection:
             "observed_value": 1,
             "population_count": 1,
             "observation_date": "2026-07-16",
-            "evidence_refs": ["gold_metrics:business-2"],
+            "source_system": "sap",
+            "cartridge": "sap",
         }
+        business_metadata.update(
+            runtime_row_evidence_fields(
+                source_dataset="gold_metrics",
+                source_system="sap",
+                cartridge="sap",
+                tenant_id="tenant-a",
+                workspace_id="workspace-a",
+                source_row={"item_id": "business-2", **business_metadata},
+                locator_field="item_id",
+                observed_at="2026-07-16",
+            )
+        )
         self.decisions = [
             {
                 "id": decision_id,
@@ -37,6 +53,7 @@ class _DecisionConnection:
                 "decision_id": 2,
                 "item_id": "business-2",
                 "item_kind": "anomaly",
+                "tenant_id": "tenant-a",
                 "workspace_id": "workspace-a",
                 "source_dataset": "gold_metrics",
                 "metadata": dict(business_metadata),
@@ -45,6 +62,7 @@ class _DecisionConnection:
                 "decision_id": 3,
                 "item_id": "technical-3",
                 "item_kind": "source_state",
+                "tenant_id": "tenant-a",
                 "workspace_id": "workspace-a",
                 "source_dataset": "gold_metrics",
                 "metadata": {"data_status": "missing"},
@@ -53,6 +71,7 @@ class _DecisionConnection:
         business = {
             "id": "business-2",
             "kind": "anomaly",
+            "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
             "source_dataset": "gold_metrics",
             "metadata": dict(business_metadata),

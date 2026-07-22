@@ -15,6 +15,20 @@ from app.services.control_room.business_workflow_provenance import (
 )
 
 
+def _source_row(item):
+    fields = (
+        "id",
+        "kind",
+        "metric_name",
+        "metric_type",
+        "observed_value",
+        "observation_date",
+        "tenant_id",
+        "workspace_id",
+    )
+    return {field: item[field] for field in fields}
+
+
 def _item(**overrides):
     item = {
         "id": "business-1",
@@ -24,21 +38,26 @@ def _item(**overrides):
         "source_system": "sap_hcm",
         "tenant_id": "tenant-A",
         "workspace_id": "workspace-A",
+        "metric_name": "measured_metric",
         "metric_type": "scalar",
         "observed_value": 2,
         "observation_date": "2026-07-20",
-        **runtime_row_evidence_fields(
-            source_dataset="gold_metrics",
-            source_system="sap_hcm",
-            cartridge="sap_hcm",
-            tenant_id="tenant-A",
-            workspace_id="workspace-A",
-            source_row={"metric_id": "record-1"},
-            locator_field="metric_id",
-            observed_at="2026-07-20",
-        ),
+        **overrides,
     }
-    return {**item, **overrides}
+    evidence = runtime_row_evidence_fields(
+        source_dataset=item["source_dataset"],
+        source_system=item["source_system"],
+        cartridge=item["cartridge"],
+        tenant_id=item["tenant_id"],
+        workspace_id=item["workspace_id"],
+        source_row=_source_row(item),
+        locator_field="id",
+        observed_at=item["observation_date"],
+    )
+    return {
+        **item,
+        **evidence,
+    }
 
 
 def _artifacts():

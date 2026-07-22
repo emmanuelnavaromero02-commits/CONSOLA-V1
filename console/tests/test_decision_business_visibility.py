@@ -10,8 +10,8 @@ from app.services.control_room.business_projection import (
     filter_business_decisions,
     normalize_persisted_business_item,
 )
+from app.services.control_room import business_runtime_evidence as evidence
 from app.services.control_room.business_workflow_provenance import (
-    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     ELIGIBILITY_POLICY_VERSION,
     business_observation_fingerprint,
@@ -19,21 +19,33 @@ from app.services.control_room.business_workflow_provenance import (
 
 
 def _eligible_metadata(item_id: str, **updates) -> dict:
-    return {
+    metadata = {
         "data_status": "ready",
         "metric_type": "scalar",
         "observed_value": 1,
         "observation_date": "2026-07-17T10:00:00Z",
-        "evidence_refs": [f"gold_a:{item_id}"],
+        "source_system": "sap",
+        "cartridge": "sap",
         **updates,
     }
+    metadata |= evidence.runtime_row_evidence_fields(
+        source_dataset="gold_a",
+        source_system="sap",
+        cartridge="sap",
+        tenant_id="tenant-A",
+        workspace_id="workspace-A",
+        source_row={"item_id": item_id, **metadata},
+        locator_field="item_id",
+        observed_at="2026-07-17T10:00:00Z",
+    )
+    return metadata
 
 
 def _with_eligible_provenance(row):
+    row = {**row, "tenant_id": "tenant-A", "workspace_id": "workspace-A"}
     item = normalize_persisted_business_item(row)
     fingerprint = business_observation_fingerprint(item)
     metadata = dict(item.get("metadata") or {})
-    metadata[CURRENT_ELIGIBILITY_FINGERPRINT_KEY] = fingerprint
     metadata[DECISION_PROVENANCE_KEY] = {
         "policy_version": ELIGIBILITY_POLICY_VERSION,
         "stage": "decision_created",
@@ -44,7 +56,7 @@ def _with_eligible_provenance(row):
         "kind": item["kind"],
         "fingerprint": fingerprint,
     }
-    return {**row, "workspace_id": "workspace-A", "metadata": metadata}
+    return {**row, "metadata": metadata}
 
 
 def test_historical_decisions_are_filtered_through_linked_business_items():

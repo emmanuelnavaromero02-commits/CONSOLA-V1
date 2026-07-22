@@ -5,6 +5,9 @@ from app.services.control_room.business_item_persistence import (
     REPLACED_POLICY_KEYS,
 )
 from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
@@ -16,17 +19,47 @@ from app.services.control_room.business_workflow_provenance import (
 from app.services.control_room.business_observation_codec import INVALID_ENVELOPE_FIELD
 
 
+def _source_row(item: dict) -> dict:
+    fields = (
+        "id",
+        "kind",
+        "metric_name",
+        "metric_type",
+        "observed_value",
+        "observation_date",
+        "tenant_id",
+        "workspace_id",
+    )
+    return {field: item[field] for field in fields}
+
+
 def _business_item() -> dict:
-    return {
+    item = {
         "id": "item-1",
         "kind": "anomaly",
+        "tenant_id": "tenant-a",
         "workspace_id": "workspace-a",
         "source_dataset": "gold_people",
+        "source_system": "sap_hcm",
+        "cartridge": "sap_hcm",
+        "metric_name": "affected_people",
         "observed_value": 1,
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-16",
-        "evidence_refs": ["gold_people:item-1"],
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset=item["source_dataset"],
+            source_system=item["source_system"],
+            cartridge=item["cartridge"],
+            tenant_id=item["tenant_id"],
+            workspace_id=item["workspace_id"],
+            source_row=_source_row(item),
+            locator_field="id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 

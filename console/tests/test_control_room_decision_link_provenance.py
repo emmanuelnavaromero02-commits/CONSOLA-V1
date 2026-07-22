@@ -9,6 +9,9 @@ from app.services.control_room.business_action_approval import (
     approve_business_item,
     require_approvable_decision,
 )
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
@@ -23,19 +26,50 @@ USER = {
 }
 
 
-def _item() -> dict:
-    return {
+def _source_row(item: dict) -> dict:
+    fields = (
+        "id",
+        "kind",
+        "metric_name",
+        "metric_type",
+        "observed_value",
+        "observation_date",
+        "tenant_id",
+        "workspace_id",
+    )
+    return {field: item[field] for field in fields}
+
+
+def _item(**overrides) -> dict:
+    item = {
         "id": "business-1",
         "kind": "anomaly",
+        "tenant_id": "tenant-a",
         "workspace_id": "workspace-a",
         "title": "Measured anomaly",
         "recommendation": "Review",
         "source_dataset": "gold_people",
+        "source_system": "sap_hcm",
+        "cartridge": "sap_hcm",
+        "metric_name": "affected_people",
         "metric_type": "count",
         "observed_value": 1,
         "population_count": 10,
         "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_people:business-1"],
+        **overrides,
+    }
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset=item["source_dataset"],
+            source_system=item["source_system"],
+            cartridge=item["cartridge"],
+            tenant_id=item["tenant_id"],
+            workspace_id=item["workspace_id"],
+            source_row=_source_row(item),
+            locator_field="id",
+            observed_at=item["observation_date"],
+        ),
     }
 
 
@@ -55,6 +89,8 @@ class DecisionLookup:
                 "item_id": "business-1",
                 "decision_id": 91,
                 "owner_user_id": 7,
+                "tenant_id": "tenant-a",
+                "workspace_id": "workspace-a",
                 "item_kind": "anomaly",
                 "metadata": self.metadata,
             }
@@ -101,7 +137,7 @@ async def test_foreign_workspace_provenance_is_rejected_when_live_item_omits_sco
     live_item = _item()
     live_item.pop("workspace_id")
     provenance = workflow_eligibility_provenance(
-        {**live_item, "workspace_id": "workspace-b"},
+        _item(workspace_id="workspace-b"),
         stage=WorkflowStage.DECISION_CREATED,
         workspace_id="workspace-b",
         decision_id=91,
@@ -141,6 +177,8 @@ class QuarantineDuringApproval(DecisionLookup):
                 "item_id": "business-1",
                 "decision_id": 91,
                 "owner_user_id": 7,
+                "tenant_id": "tenant-a",
+                "workspace_id": "workspace-a",
                 "item_kind": "anomaly",
                 "metadata": metadata,
             }

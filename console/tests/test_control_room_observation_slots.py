@@ -271,7 +271,7 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
                 workspace_id="workspace-17",
                 source_row={"metric_id": "record-17"},
                 locator_field="metric_id",
-                observed_at="2026-07-20",
+                observed_at="2026-07-16",
             ),
         },
     ],
