@@ -77,7 +77,7 @@ def _row(
         "anomaly_type": item.get("anomaly_type"),
         "metadata": dict(metadata),
         "impact_estimate": impact.get("estimate"),
-        "impact_currency": impact.get("currency") or ("USD" if impact else None),
+        "impact_currency": impact.get("currency") or "USD",
         "confidence": impact.get("confidence"),
         "priority_score": impact.get("priority_score") or 0,
         "selected_option_id": item.get("selected_option_id"),
