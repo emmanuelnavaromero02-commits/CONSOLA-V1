@@ -8,12 +8,20 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_action_reservation import effective_action_key
+from app.services.control_room.business_execution_precondition import (
+    execution_authorization_contract,
+)
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
+from app.services.control_room.business_source_scope import scoped_source_row
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
+    ELIGIBILITY_POLICY_VERSION,
     WorkflowStage,
+    business_observation_fingerprint,
     persistence_metadata,
     workflow_eligibility_provenance,
 )
@@ -25,6 +33,11 @@ USER = {
     "active_workspace_id": "workspace-A",
     "tenant_id": "tenant-A",
     "allowed_cartridges": ["sap_hcm", "sap_s4hana", "sap_successfactors", "replicon"],
+    "_effective_permissions": [
+        "control_room.read",
+        "control_room.write",
+        "control_room.execute",
+    ],
 }
 
 
@@ -52,6 +65,66 @@ def _observed_anomaly_fields(item_id: str) -> dict:
     }
 
 
+def _authoritative_item_row(
+    item: dict,
+    *,
+    decision_id: int | None = None,
+    stage: WorkflowStage | None = None,
+    status: str | None = None,
+    selected_option_id: str | None = None,
+    execution_status: str | None = None,
+) -> dict:
+    resolved_decision = (
+        decision_id if decision_id is not None else item.get("decision_id")
+    )
+    policy_item = {
+        **item,
+        "metadata": business_policy_metadata(item.get("metadata"), item),
+    }
+    metadata = persistence_metadata(policy_item)
+    if resolved_decision is not None:
+        metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
+            item,
+            stage=stage or WorkflowStage.DECISION_CREATED,
+            workspace_id="workspace-A",
+            decision_id=int(resolved_decision),
+            option_id=selected_option_id or item.get("selected_option_id"),
+        )
+    return {
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
+        "owner_user_id": 7,
+        "item_id": item["id"],
+        "cartridge_id": item.get("cartridge"),
+        "domain": item.get("domain"),
+        "source_dataset": item.get("source_dataset"),
+        "item_kind": item.get("kind") or item.get("item_kind"),
+        "title": item.get("title"),
+        "severity": item.get("severity"),
+        "status": status or item.get("status") or "open",
+        "decision_id": resolved_decision,
+        "entity_kind": item.get("entity_kind"),
+        "entity_id": item.get("entity_id"),
+        "entity_label": item.get("entity_label"),
+        "anomaly_type": item.get("anomaly_type"),
+        "metadata": metadata,
+        "impact_estimate": item.get("impact_estimate"),
+        "impact_currency": item.get("impact_currency"),
+        "confidence": item.get("confidence"),
+        "priority_score": item.get("priority_score"),
+        "selected_option_id": selected_option_id
+        if selected_option_id is not None
+        else item.get("selected_option_id"),
+        "execution_status": execution_status
+        or item.get("execution_status")
+        or "not_started",
+        "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
+        "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
+        "resolved_at": None,
+        "dismissed_at": None,
+    }
+
+
 def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
     item_id = item["id"]
     provenance = workflow_eligibility_provenance(
@@ -61,20 +134,13 @@ def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
         decision_id=42,
     )
     decision = {"id": 42, "created_by_id": 7, "kpis": []}
-    item_row = {
-        "item_id": item_id,
-        "decision_id": 42,
-        "owner_user_id": 7,
-        "item_kind": "anomaly",
-        "metadata": {DECISION_PROVENANCE_KEY: provenance},
-    }
+    item_row = _authoritative_item_row(item, decision_id=42)
+    item_row["metadata"][DECISION_PROVENANCE_KEY] = provenance
     return [
         decision,
         item_row,
         None,
-        decision,
         item_row,
-        None,
         action,
         {"item_id": item_id, "owner_user_id": 7, "decision_id": 42},
         {"item_id": item_id},
@@ -212,7 +278,61 @@ def test_source_state_cleanup_is_not_exposed_on_read_service():
 
 
 async def sample_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-    return SAMPLE_ROWS[dataset]
+    return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
+
+
+def _scoped_rows(dataset: str, rows: list[dict], user: dict | None) -> list[dict]:
+    context = user or USER
+    source = next(
+        (
+            item
+            for item in control_room_service._all_sources()
+            if item.dataset == dataset
+        ),
+        None,
+    )
+    scoped = []
+    for row in rows:
+        source_row = {
+            **row,
+            "tenant_id": context["tenant_id"],
+            "workspace_id": context["active_workspace_id"],
+        }
+        projected = scoped_source_row(
+            source_row,
+            tenant_id=context["tenant_id"],
+            workspace_id=context["active_workspace_id"],
+        )
+        observed_at = next(
+            (
+                str(source_row[field])
+                for field in (
+                    "detected_at",
+                    "generated_at",
+                    "observation_date",
+                    "mes",
+                    "semana",
+                    "spend_month",
+                )
+                if source_row.get(field)
+            ),
+            "",
+        )
+        if source is not None and observed_at:
+            projected.update(
+                runtime_row_evidence_fields(
+                    source_dataset=dataset,
+                    source_system=source.cartridge,
+                    cartridge=source.cartridge,
+                    tenant_id=context["tenant_id"],
+                    workspace_id=context["active_workspace_id"],
+                    source_row=source_row,
+                    locator_field=source.entity_id_field,
+                    observed_at=observed_at,
+                )
+            )
+        scoped.append(projected)
+    return scoped
 
 
 def test_runtime_source_row_becomes_typed_business_evidence():
@@ -221,13 +341,18 @@ def test_runtime_source_row_becomes_typed_business_evidence():
         for source in control_room_service._all_sources()  # noqa: SLF001
         if source.dataset == "employees_anomalies"
     )
+    row = {
+        **SAMPLE_ROWS["employees_anomalies"][0],
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
+    }
     item = control_room_service._normalize_standard_anomaly(  # noqa: SLF001
         source,
-        {
-            **SAMPLE_ROWS["employees_anomalies"][0],
-            "tenant_id": "tenant-A",
-            "workspace_id": "workspace-A",
-        },
+        scoped_source_row(
+            row,
+            tenant_id="tenant-A",
+            workspace_id="workspace-A",
+        ),
     )
 
     assert item["evidence_refs"][0]["type"] == "dataset_row"
@@ -490,22 +615,26 @@ async def test_sap_successfactors_talent_kpis_degrades_when_datasets_missing(
 async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_employee_profile":
-            return [{"employee_key": "tal_1"}]
+            return _scoped_rows(dataset, [{"employee_key": "tal_1"}], _user)
         if dataset == "sap_successfactors_talent_signals":
-            return [
-                {
-                    "signal_id": "talent_role_requirements_missing",
-                    "signal_type": "pipeline",
-                    "severity": "medium",
-                    "affected_count": 42,
-                    "title": "Requisitos de rol pendientes",
-                    "recommendation": "Validar Position y entidades de skills.",
-                    "status": "recommendation_only",
-                    "generated_at": "2026-06-24T03:27:32Z",
-                    "user_id": "100",
-                    "full_name": "Ana Gomez",
-                }
-            ]
+            return _scoped_rows(
+                dataset,
+                [
+                    {
+                        "signal_id": "talent_role_requirements_missing",
+                        "signal_type": "pipeline",
+                        "severity": "medium",
+                        "affected_count": 42,
+                        "title": "Requisitos de rol pendientes",
+                        "recommendation": "Validar Position y entidades de skills.",
+                        "status": "recommendation_only",
+                        "generated_at": "2026-06-24T03:27:32Z",
+                        "user_id": "100",
+                        "full_name": "Ana Gomez",
+                    }
+                ],
+                _user,
+            )
         return []
 
     mock_pool = AsyncMock()
@@ -1186,7 +1315,7 @@ def test_no_module_mixes_compensation_and_performance():
 @pytest.mark.asyncio
 async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-        return SAMPLE_ROWS[dataset]
+        return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -1348,7 +1477,7 @@ async def test_list_anomalies_marks_missing_dataset_unavailable_without_failing(
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "business_partner_anomalies":
             raise HTTPException(404, "dataset not found")
-        return SAMPLE_ROWS[dataset]
+        return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
     result = await control_room_service.list_anomalies(USER, fetcher=fetcher)
 
@@ -1389,7 +1518,7 @@ async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready(
                 "total_base_salary": None,
             }
         ]
-        return rows[dataset]
+        return _scoped_rows(dataset, rows[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -1484,7 +1613,7 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
         rows["purchase_spend_by_supplier"] = [
             {"supplier_code": "S-1", "total_spend": 15000}
         ]
-        return rows[dataset]
+        return _scoped_rows(dataset, rows[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -1540,7 +1669,7 @@ async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list
             "margen_bruto_pct": 5,
         }
     ]
-    return rows[dataset]
+    return _scoped_rows(dataset, rows[dataset], _user)
 
 
 async def threshold_margin_fetcher(
@@ -1561,7 +1690,7 @@ async def threshold_margin_fetcher(
             "margen_bruto_pct": 15,
         }
     ]
-    return rows[dataset]
+    return _scoped_rows(dataset, rows[dataset], _user)
 
 
 @pytest.mark.asyncio
@@ -2108,7 +2237,7 @@ async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching
 
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         called.append(dataset)
-        return SAMPLE_ROWS[dataset]
+        return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -2182,16 +2311,15 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
-            {
-                "item_id": anomaly["id"],
-                "decision_id": None,
-                "selected_option_id": None,
-                "owner_user_id": 7,
-                "metadata": {},
-            },
+            _authoritative_item_row({**anomaly, "selected_option_id": None}),
+            _authoritative_item_row({**anomaly, "selected_option_id": None}),
             decision_row,
             action_row,
-            {"item_id": anomaly["id"], "owner_user_id": 7, "decision_id": None},
+            {
+                "item_id": anomaly["id"],
+                "owner_user_id": 7,
+                "decision_id": None,
+            },
             {"item_id": anomaly["id"]},
         ]
     )
@@ -2238,14 +2366,14 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
         )
 
     assert result["decision"]["id"] == 42
-    assert mock_pool.fetchrow.call_count == 5
-    insert_sql = mock_pool.fetchrow.call_args_list[1].args[0]
+    assert mock_pool.fetchrow.call_count == 6
+    insert_sql = mock_pool.fetchrow.call_args_list[2].args[0]
     assert "INSERT INTO decisions" in insert_sql
     assert "workspace_id" in insert_sql
-    assert mock_pool.fetchrow.call_args_list[1].args[-1] == "workspace-A"
-    action_sql = mock_pool.fetchrow.call_args_list[2].args[0]
+    assert mock_pool.fetchrow.call_args_list[2].args[-1] == "workspace-A"
+    action_sql = mock_pool.fetchrow.call_args_list[3].args[0]
     assert "INSERT INTO decision_actions" in action_sql
-    link_sql = mock_pool.fetchrow.call_args_list[4].args[0]
+    link_sql = mock_pool.fetchrow.call_args_list[5].args[0]
     assert "UPDATE control_room_items" in link_sql
     assert "RETURNING item_id" in link_sql
     audit_event.assert_awaited_once()
@@ -2262,7 +2390,12 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
-    mock_pool.fetchrow.return_value = {"item_id": anomaly["id"]}
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=[
+            _authoritative_item_row(anomaly),
+            {"item_id": anomaly["id"]},
+        ]
+    )
     mock_pool.fetchval.return_value = 0
 
     with (
@@ -2304,8 +2437,12 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
         for call in mock_pool.fetchrow.call_args_list
     )
     assert any(
-        "selected_option_id = $5" in call.args[0]
+        "selected_option_id = $4" in call.args[0]
+        and "owner_user_id IS NOT DISTINCT FROM $5" in call.args[0]
         for call in mock_pool.fetchrow.call_args_list
+    )
+    assert any(
+        "FOR UPDATE" in call.args[0] for call in mock_pool.fetchrow.call_args_list
     )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.option.select"
@@ -2329,7 +2466,7 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
     mock_pool.fetchval.return_value = 0
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
-            None,
+            _authoritative_item_row(item),
             {
                 "id": 1,
                 "workspace_id": "workspace-A",
@@ -2342,7 +2479,7 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
                 "created_at": datetime(2026, 5, 20, 10, 0, 0),
                 "completed_at": datetime(2026, 5, 20, 10, 0, 1),
             },
-            None,
+            _authoritative_item_row(item),
             {
                 "id": 2,
                 "workspace_id": "workspace-A",
@@ -2377,6 +2514,11 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
                     },
                 ]
             ),
+        ),
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=item),
         ),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
@@ -2421,6 +2563,12 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
     )  # noqa: SLF001
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow.return_value = _authoritative_item_row(
+        dry_run_item,
+        decision_id=42,
+        selected_option_id="remediate",
+        execution_status="dry_run_validated",
+    )
 
     with (
         patch.object(
@@ -2602,9 +2750,18 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
     ]
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = persisted_item
-    mock_pool.fetch = AsyncMock(
-        side_effect=[event_rows, execution_rows, decision_rows, [], []]
-    )
+
+    def activity_rows(query, *_args):
+        sql = str(query)
+        if "FROM control_room_item_events" in sql:
+            return event_rows
+        if "FROM control_room_action_executions" in sql:
+            return execution_rows
+        if "FROM decision_actions" in sql:
+            return decision_rows
+        return []
+
+    mock_pool.fetch = AsyncMock(side_effect=activity_rows)
 
     with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
         result = await control_room_service.get_item_activity("item-activity", USER)
@@ -2626,7 +2783,12 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
     assert result["activity"][1]["label"] == "Dry-run validado"
     assert result["activity"][1]["payload"] == {"target": "replicon"}
     assert result["activity"][2]["metadata"]["decision_id"] == 77
-    event_sql, workspace_id, item_id = mock_pool.fetch.call_args_list[0].args
+    event_call = next(
+        call
+        for call in mock_pool.fetch.call_args_list
+        if "FROM control_room_item_events" in str(call.args[0])
+    )
+    event_sql, workspace_id, item_id = event_call.args
     assert "workspace_id = $1" in event_sql
     assert workspace_id == "workspace-A"
     assert item_id == "item-activity"
@@ -2711,7 +2873,7 @@ async def test_update_item_control_persists_control_state_and_audits():
     ][0]
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow.return_value = None
+    mock_pool.fetchrow.return_value = _authoritative_item_row(anomaly)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -2756,13 +2918,14 @@ async def test_update_item_control_persists_control_state_and_audits():
     assert result["control"]["status"] == "closed"
     assert result["control"]["owner"] == "ops-owner@example.com"
     assert result["item"]["control_state"]["refresh"]["status"] == "closed"
-    metadata_payloads = [
-        arg
+    assert any(
+        "control_state" in str(call.args[0])
         for call in mock_pool.execute.call_args_list
-        for arg in call.args
-        if isinstance(arg, str) and "control_state" in arg
-    ]
-    assert any("validated refresh" in payload for payload in metadata_payloads)
+    )
+    assert any(
+        "validated refresh" in str(call.args)
+        for call in mock_pool.execute.call_args_list
+    )
     assert any(
         len(call.args) > 4 and call.args[4] == "control_checked"
         for call in mock_pool.execute.call_args_list
@@ -2837,7 +3000,7 @@ async def test_create_item_lesson_persists_manual_lesson_and_audits():
     }
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow.return_value = None
+    mock_pool.fetchrow.return_value = _authoritative_item_row(anomaly)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -2905,7 +3068,7 @@ async def test_apply_item_lesson_persists_application_and_audits():
     }
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow.return_value = None
+    mock_pool.fetchrow.return_value = _authoritative_item_row(anomaly)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -3035,18 +3198,11 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
     mock_pool.fetchrow = AsyncMock(
-        return_value={
-            "id": 3,
-            "workspace_id": "workspace-A",
-            "item_id": item["id"],
-            "template_id": "prepare_hcm_access_review",
-            "mode": "execute_live",
-            "status": "blocked",
-            "payload": {},
-            "result": {},
-            "created_at": datetime(2026, 5, 20, 10, 2, 0),
-            "completed_at": datetime(2026, 5, 20, 10, 2, 1),
-        }
+        side_effect=_execution_fetchrow_router(
+            item,
+            template_id="prepare_hcm_access_review",
+            execution_status="blocked",
+        )
     )
 
     with (
@@ -3163,6 +3319,86 @@ def _dry_run_action_run_row(
     }
 
 
+def _execution_fetchrow_router(
+    item: dict,
+    *,
+    template_id: str = "create_followup_task",
+    execution_status: str = "executed",
+    decision_exists: bool = True,
+    dry_run_exists: bool = True,
+    existing_reservation: bool = False,
+    action_row: dict | None = None,
+):
+    adapter_name = (
+        "internal_followup_task"
+        if template_id == "create_followup_task"
+        else template_id
+    )
+    key = effective_action_key(
+        workspace_id="workspace-A",
+        item=item,
+        template_id=template_id,
+        operation="execute",
+        provided="idem-1" if template_id == "create_followup_task" else None,
+    )
+    contract = {
+        "version": 1,
+        "policy_version": ELIGIBILITY_POLICY_VERSION,
+        "workspace_id": "workspace-A",
+        "item_id": item["id"],
+        "fingerprint": business_observation_fingerprint(item),
+        "decision_id": item.get("decision_id"),
+        "template_id": template_id,
+        "operation": "execute",
+        "authorization": execution_authorization_contract(USER),
+    }
+    pending = {
+        "id": 55,
+        "status": "completed" if existing_reservation else "pending",
+        "idempotency_key": key,
+        "metadata": {"reservation_contract": contract},
+        "execution_result": {"ok": True, "target": "decision_actions"},
+    }
+
+    def route(query: object, *_args: object):
+        sql = " ".join(str(query).split()).upper()
+        if "FROM CONTROL_ROOM_ITEMS" in sql and "FOR UPDATE" in sql:
+            return _authoritative_item_row(
+                item,
+                decision_id=item.get("decision_id"),
+                status=item.get("status"),
+                selected_option_id=item.get("selected_option_id"),
+                execution_status=item.get("execution_status"),
+            )
+        if "MODE = 'DRY_RUN'" in sql:
+            return (
+                _dry_run_action_run_row(item, template_id=template_id)
+                if dry_run_exists
+                else None
+            )
+        if sql.startswith("INSERT INTO ACTION_RUNS"):
+            return None if existing_reservation else pending
+        if sql.startswith("SELECT * FROM ACTION_RUNS"):
+            return pending if existing_reservation else None
+        if "FROM ACTION_RUNS" in sql and "FOR UPDATE" in sql:
+            return {**pending, "status": "pending"}
+        if sql.startswith("UPDATE ACTION_RUNS"):
+            return {**pending, "status": "completed"}
+        if "FROM DECISIONS" in sql:
+            return {"id": 42} if decision_exists else None
+        if sql.startswith("INSERT INTO DECISION_ACTIONS"):
+            return action_row or {"id": 101, "decision_id": 42}
+        if sql.startswith("INSERT INTO CONTROL_ROOM_ACTION_EXECUTIONS"):
+            return _execution_row(
+                item,
+                status=execution_status,
+                template_id=template_id,
+            )
+        return None
+
+    return route
+
+
 def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
     adapter = control_room_service.WriteBackAdapterFactory.get_adapter("sap_hcm_it0008")
 
@@ -3272,7 +3508,7 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
     monkeypatch,
 ):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
-    base_item = (
+    items = (
         await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
             USER,
             fetcher=finance_fetcher,
@@ -3280,8 +3516,14 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
             persist=False,
             use_catalog=False,
         )
-    )["items"][0]
-    item = _executed_item(base_item)
+    )["items"]
+    item = _executed_item(
+        next(
+            candidate
+            for candidate in items
+            if candidate["source_dataset"] == "pnl_mensual"
+        )
+    )
     action_row = {
         "id": 101,
         "decision_id": 42,
@@ -3293,14 +3535,7 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            _dry_run_action_run_row(item),
-            None,
-            {"id": 42},
-            action_row,
-            _execution_row(item),
-        ]
+        side_effect=_execution_fetchrow_router(item, action_row=action_row)
     )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3335,8 +3570,11 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
         for call in mock_pool.fetchrow.call_args_list
     )
     assert any(
-        "pg_advisory_xact_lock" in call.args[0]
-        for call in mock_pool.execute.call_args_list
+        "INSERT INTO action_runs" in call.args[0]
+        for call in mock_pool.fetchrow.call_args_list
+    )
+    assert any(
+        "FOR UPDATE" in call.args[0] for call in mock_pool.fetchrow.call_args_list
     )
     assert any(
         "UPDATE control_room_items" in call.args[0]
@@ -3354,7 +3592,7 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
 @pytest.mark.asyncio
 async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (
+    items = (
         await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
             USER,
             fetcher=finance_fetcher,
@@ -3362,8 +3600,14 @@ async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeyp
             persist=False,
             use_catalog=False,
         )
-    )["items"][0]
-    item = _executed_item(base_item)
+    )["items"]
+    item = _executed_item(
+        next(
+            candidate
+            for candidate in items
+            if candidate["source_dataset"] == "pnl_mensual"
+        )
+    )
     action_row = {
         "id": 101,
         "decision_id": 42,
@@ -3374,14 +3618,9 @@ async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeyp
     }
     pool = _TransactionalPool(
         pool_fetchrow_side_effect=[],
-        conn_fetchrow_side_effect=[
-            None,
-            _dry_run_action_run_row(item),
-            None,
-            {"id": 42},
-            action_row,
-            _execution_row(item),
-        ],
+        conn_fetchrow_side_effect=_execution_fetchrow_router(
+            item, action_row=action_row
+        ),
     )
 
     with (
@@ -3406,8 +3645,11 @@ async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeyp
     assert pool.conn.transaction_exited is True
     assert pool.conn.transaction_error is None
     assert any(
-        "pg_advisory_xact_lock" in call.args[0]
-        for call in pool.conn.execute.call_args_list
+        "INSERT INTO action_runs" in call.args[0]
+        for call in pool.conn.fetchrow.call_args_list
+    )
+    assert any(
+        "FOR UPDATE" in call.args[0] for call in pool.conn.fetchrow.call_args_list
     )
     assert any(
         "INSERT INTO audit_events" in call.args[0]
@@ -3427,17 +3669,12 @@ async def test_execute_live_supported_followup_is_idempotent(monkeypatch):
             use_catalog=False,
         )
     )["items"][0]
-    item = _executed_item(
-        {
-            **base_item,
-            "cartridge": "sap_s4hana",
-            "module_id": "sap_s4hana",
-            "anomaly_type": "missing_address",
-        }
-    )
+    item = _executed_item(base_item)
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item))
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(item, existing_reservation=True)
+    )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -3483,7 +3720,9 @@ async def test_execute_live_idempotent_replay_still_requires_confirmation(monkey
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(item, execution_status="blocked")
+    )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -3517,7 +3756,7 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
     monkeypatch,
 ):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (
+    items = (
         await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
             USER,
             fetcher=finance_fetcher,
@@ -3525,26 +3764,18 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
             persist=False,
             use_catalog=False,
         )
-    )["items"][0]
+    )["items"]
     item = _executed_item(
-        {
-            **base_item,
-            "cartridge": "sap_s4hana",
-            "module_id": "sap_s4hana",
-            "anomaly_type": "missing_address",
-        }
+        next(candidate for candidate in items if candidate["cartridge"] == "sap_s4hana")
     )
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            _execution_row(
-                item,
-                status="blocked",
-                template_id="prepare_sap_review",
-                result={"ok": False, "blocked": True, "reason": "adapter_missing"},
-            ),
-        ]
+        side_effect=_execution_fetchrow_router(
+            item,
+            template_id="prepare_sap_review",
+            execution_status="blocked",
+        )
     )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3616,7 +3847,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
         "_registry",
         {"prepare_billing_review": ExternalBillingAdapter},
     )
-    base_item = (
+    items = (
         await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
             USER,
             fetcher=finance_fetcher,
@@ -3624,24 +3855,20 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
             persist=False,
             use_catalog=False,
         )
-    )["items"][0]
-    item = _executed_item(base_item)
+    )["items"]
+    item = _executed_item(
+        next(
+            candidate
+            for candidate in items
+            if candidate["source_dataset"] == "pnl_mensual"
+        )
+    )
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            _dry_run_action_run_row(item, template_id="prepare_billing_review"),
-            _execution_row(
-                item,
-                template_id="prepare_billing_review",
-                result={
-                    "ok": True,
-                    "target": "replicon",
-                    "adapter": "ExternalBillingAdapter",
-                },
-            ),
-        ]
+        side_effect=_execution_fetchrow_router(
+            item, template_id="prepare_billing_review"
+        )
     )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -3957,7 +4184,9 @@ async def test_execute_live_requires_explicit_confirmation(monkeypatch):
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(item, execution_status="blocked")
+    )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -4009,7 +4238,9 @@ async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypat
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[None, _execution_row(item, status="blocked")]
+        side_effect=_execution_fetchrow_router(
+            item, execution_status="blocked", dry_run_exists=False
+        )
     )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -4051,7 +4282,9 @@ async def test_execute_live_rejects_approved_terminal_item(monkeypatch):
     item = _executed_item(base_item, status="approved")
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(item, execution_status="blocked")
+    )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -4094,13 +4327,9 @@ async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            _dry_run_action_run_row(item),
-            None,
-            None,
-            _execution_row(item, status="blocked"),
-        ]
+        side_effect=_execution_fetchrow_router(
+            item, execution_status="blocked", decision_exists=False
+        )
     )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -4147,12 +4376,14 @@ async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            RuntimeError("lookup down"),
-            _execution_row(item, status="blocked"),
-        ]
-    )
+    base_router = _execution_fetchrow_router(item, execution_status="blocked")
+
+    def failing_reservation(query, *args):
+        if "INSERT INTO action_runs" in str(query):
+            raise RuntimeError("lookup down")
+        return base_router(query, *args)
+
+    mock_pool.fetchrow = AsyncMock(side_effect=failing_reservation)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -4176,10 +4407,7 @@ async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(
             )
 
     assert exc.value.status_code == 503
-    assert (
-        audit_event.await_args.kwargs["metadata"]["reason"]
-        == "idempotency_lookup_failed"
-    )
+    audit_event.assert_not_awaited()
     assert not any(
         "INSERT INTO decision_actions" in call.args[0]
         for call in mock_pool.fetchrow.call_args_list
@@ -4209,14 +4437,9 @@ async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch)
     }
     pool = _TransactionalPool(
         pool_fetchrow_side_effect=[],
-        conn_fetchrow_side_effect=[
-            None,
-            _dry_run_action_run_row(item),
-            None,
-            {"id": 42},
-            action_row,
-            _execution_row(item),
-        ],
+        conn_fetchrow_side_effect=_execution_fetchrow_router(
+            item, action_row=action_row
+        ),
     )
 
     with (
@@ -4384,9 +4607,14 @@ async def test_approve_persists_lessons_to_lessons_table():
         "actor": "ops@example.com",
         "ts": datetime(2026, 5, 20, 10, 1, 0),
     }
+    decision_item = control_room_service._with_omega(
+        {**anomaly, "decision_id": 42, "status": "decision_created"}
+    )
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(side_effect=_approval_fetchrows(anomaly, action))
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_approval_fetchrows(decision_item, action)
+    )
     mock_pool.fetch.return_value = []
 
     with (
@@ -4407,7 +4635,7 @@ async def test_approve_persists_lessons_to_lessons_table():
         patch.object(
             control_room_service,
             "_item_for_mutation",
-            new=AsyncMock(return_value=anomaly),
+            new=AsyncMock(return_value=decision_item),
         ),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
@@ -4439,9 +4667,14 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
         "actor": "ops@example.com",
         "ts": datetime(2026, 5, 20, 10, 1, 0),
     }
+    decision_item = control_room_service._with_omega(
+        {**anomaly, "decision_id": 42, "status": "decision_created"}
+    )
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow = AsyncMock(side_effect=_approval_fetchrows(anomaly, action))
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_approval_fetchrows(decision_item, action)
+    )
     mock_pool.fetch.return_value = []
 
     with (
@@ -4472,7 +4705,7 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
         patch.object(
             control_room_service,
             "_item_for_mutation",
-            new=AsyncMock(return_value=anomaly),
+            new=AsyncMock(return_value=decision_item),
         ),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()
@@ -4492,7 +4725,11 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     assert "workspace_id = $2" in visible_sql
     assert decision_id == 42
     assert workspace_id == "workspace-A"
-    link_args = mock_pool.fetchrow.call_args_list[8].args
+    link_args = next(
+        call.args
+        for call in mock_pool.fetchrow.call_args_list
+        if "RETURNING item_id" in call.args[0]
+    )
     link_sql = link_args[0]
     assert "owner_user_id IS NOT DISTINCT FROM $5" in link_sql
     assert "RETURNING item_id" in link_sql
