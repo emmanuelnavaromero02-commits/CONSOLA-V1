@@ -20,6 +20,7 @@ from app.services.control_room.business_workflow_provenance import (
 
 ItemWriter = Callable[..., Awaitable[None]]
 _IMMUTABLE_STAGES = frozenset({WorkflowStage.APPROVED, WorkflowStage.EXECUTED})
+_TERMINAL_EXECUTION_STATUSES = frozenset({"executed", "resolved", "terminal"})
 
 
 def _metadata(value: Any) -> dict[str, Any]:
@@ -104,14 +105,16 @@ async def select_option_with_stage_cas(
         decision_id=decision_id,
         ensure_item_row=ensure_item_row,
     )
-    terminal = {str(value) for value in terminal_statuses} | {
+    terminal = {str(value).strip().lower() for value in terminal_statuses} | {
         "approved",
         "executed",
         "resolved",
         "dismissed",
     }
     if (
-        str(locked.get("status") or "") in terminal
+        str(locked.get("status") or "").strip().lower() in terminal
+        or str(locked.get("execution_status") or "").strip().lower()
+        in _TERMINAL_EXECUTION_STATUSES
         or _stage(locked) in _IMMUTABLE_STAGES
     ):
         raise HTTPException(409, "terminal control room workflow cannot change option")
@@ -144,6 +147,7 @@ async def select_option_with_stage_cas(
            AND decision_id IS NOT DISTINCT FROM $7
            AND COALESCE(metadata->'decision_eligibility_provenance'->>'stage', '')
                <> ALL($8::text[])
+           AND COALESCE(execution_status, 'not_started') <> ALL($9::text[])
          RETURNING item_id
         """,
         dumps_jsonb(
@@ -159,6 +163,7 @@ async def select_option_with_stage_cas(
         sorted(terminal),
         decision_id,
         sorted(stage.value for stage in _IMMUTABLE_STAGES),
+        sorted(_TERMINAL_EXECUTION_STATUSES),
     )
     if not updated or str(updated.get("item_id")) != str(item["id"]):
         raise HTTPException(409, "control room workflow stage changed")

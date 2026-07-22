@@ -20,9 +20,9 @@ from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
 from app.services.control_room.business_workflow_provenance import (
-    WORKFLOW_QUARANTINE_KEY,
     WorkflowStage,
     workflow_has_eligible_provenance,
+    workflow_is_quarantined,
 )
 
 
@@ -100,7 +100,12 @@ async def require_approvable_decision(
             metadata = json.loads(metadata)
         except (TypeError, ValueError, json.JSONDecodeError):
             metadata = {}
-    if isinstance(metadata, Mapping) and metadata.get(WORKFLOW_QUARANTINE_KEY):
+    current_generation = {
+        **dict(item_row or {}),
+        **dict(item),
+        "metadata": metadata if isinstance(metadata, Mapping) else {},
+    }
+    if workflow_is_quarantined(current_generation):
         raise HTTPException(409, "control room item has quarantined workflow")
     persisted_option = str(
         (item_row.get("selected_option_id") if item_row else None)
