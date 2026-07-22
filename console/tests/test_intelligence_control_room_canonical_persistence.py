@@ -7,6 +7,9 @@ import pytest
 
 from app.services.control_room.business_eligibility import classify_business_item
 from app.services.control_room.business_observation_codec import ENVELOPE_KEY
+from app.services.control_room.business_projection import (
+    normalize_persisted_business_item,
+)
 from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     ELIGIBILITY_POLICY_VERSION_KEY,
@@ -62,13 +65,17 @@ async def test_intelligence_signal_persists_canonical_business_observation():
     args = pool.execute.await_args_list[0].args
     metadata = json.loads(args[15])
     claims = metadata[ENVELOPE_KEY]["claims"]
-    persisted = {
-        "id": args[4],
-        "kind": args[8],
-        "item_kind": args[8],
-        "source_dataset": args[7],
-        "metadata": metadata,
-    }
+    persisted = normalize_persisted_business_item(
+        {
+            "tenant_id": args[1],
+            "workspace_id": args[2],
+            "item_id": args[4],
+            "item_kind": args[8],
+            "cartridge_id": args[5],
+            "source_dataset": args[7],
+            "metadata": metadata,
+        }
+    )
 
     assert any(claim.get("metric_type") == "scalar" for claim in claims)
     assert any(claim.get("observed_value") == 3 for claim in claims)

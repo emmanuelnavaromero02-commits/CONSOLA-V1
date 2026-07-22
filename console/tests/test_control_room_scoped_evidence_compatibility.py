@@ -53,12 +53,21 @@ def test_persisted_uuid_scope_normalizes_before_evidence_validation():
     tenant_id = uuid.uuid4()
     workspace_id = uuid.uuid4()
     item_id = "metric-1"
-    metadata = {
+    observation = {
+        "id": item_id,
+        "kind": "anomaly",
+        "source_dataset": "gold_metrics",
         "source_system": "sap",
+        "cartridge": "sap",
+        "tenant_id": str(tenant_id),
+        "workspace_id": str(workspace_id),
         "metric_type": "count",
         "observed_value": 1,
         "population_count": 10,
         "observation_date": "2026-07-20",
+    }
+    metadata = {
+        **observation,
         **runtime_row_evidence_fields(
             source_dataset="gold_metrics",
             source_system="sap",
@@ -68,6 +77,7 @@ def test_persisted_uuid_scope_normalizes_before_evidence_validation():
             source_row={"item_id": item_id},
             locator_field="item_id",
             observed_at="2026-07-20",
+            business_observation=observation,
         ),
     }
 

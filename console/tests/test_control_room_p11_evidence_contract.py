@@ -124,6 +124,7 @@ def test_structured_evidence_source_must_match_the_same_source_role(evidence):
 
 
 def test_runtime_reference_is_typed_and_verifiable():
+    item = _item(employee_id="employee-7")
     evidence = runtime_row_evidence_fields(
         source_dataset="gold_metrics",
         source_system="sap",
@@ -133,10 +134,11 @@ def test_runtime_reference_is_typed_and_verifiable():
         source_row={"employee_id": "employee-7"},
         locator_field="employee_id",
         observed_at="2026-07-20T10:00:00Z",
+        business_observation=item,
     )
 
     assert evidence["evidence_refs"][0]["type"] == "dataset_row"
-    assert has_evidence(_item(employee_id="employee-7", **evidence)) is True
+    assert has_evidence({**item, **evidence}) is True
 
 
 @pytest.mark.parametrize("state", ["failed", "failure", "pending", "not_ready"])

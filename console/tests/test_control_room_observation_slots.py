@@ -18,7 +18,6 @@ from app.services.control_room.business_semantic_slots import (
     resolve_semantic_slots,
 )
 
-
 SEMANTIC_LOCATIONS = (
     "top_level",
     "details",
@@ -41,6 +40,34 @@ def _item(**overrides):
         "evidence_refs": ["gold_metrics:row:metric-slots-1"],
     }
     return {**item, **overrides}
+
+
+def _signed_partial_evidence() -> dict:
+    scope = {
+        "source_system": "sap",
+        "cartridge": "sap",
+        "tenant_id": "tenant-7",
+        "workspace_id": "workspace-17",
+    }
+    observation = _item(
+        data_status="partial",
+        metric_type="scalar",
+        observed_value=1,
+        metric_id="record-17",
+        evidence_refs=[],
+        **scope,
+    )
+    return {
+        **scope,
+        **runtime_row_evidence_fields(
+            source_dataset="gold_metrics",
+            **scope,
+            source_row={"metric_id": "record-17"},
+            locator_field="metric_id",
+            observed_at="2026-07-16",
+            business_observation=observation,
+        ),
+    }
 
 
 def _at_location(location: str, payload: dict) -> dict:
@@ -66,9 +93,7 @@ def _at_location(location: str, payload: dict) -> dict:
 @pytest.mark.parametrize("location", SEMANTIC_LOCATIONS)
 def test_same_slot_conflict_fails_closed_at_every_semantic_location(location):
     item = _item(observed_value=1, **_at_location(location, {"actual_value": 2}))
-
     assessment = assess_observation(item)
-
     assert assessment.has_measured_fact is False
     assert assessment.invalid_explicit_observation is True
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
@@ -84,7 +109,6 @@ def test_same_slot_numeric_aliases_can_agree_across_locations():
             "business_observation": {"metric_value": 0.10},
         },
     )
-
     assert classify_business_item(item).eligible is True
 
 
@@ -98,9 +122,7 @@ def test_typed_rate_slots_do_not_cross_compare_or_supply_the_rate():
         affected_count=10,
         source_row_count=100,
     )
-
     slots = resolve_semantic_slots(item)
-
     assert slots.observed_value.value == 0.10
     assert slots.numerator.value == 10
     assert slots.denominator.value == 100
@@ -118,9 +140,7 @@ def test_observed_count_and_affected_count_are_distinct_slots():
         affected_count=2,
         population_count=10,
     )
-
     slots = resolve_semantic_slots(item)
-
     assert slots.observed_value.value == 3
     assert slots.affected_count.value == 2
     assert classify_business_item(item).eligible is True
@@ -136,7 +156,6 @@ def test_observed_count_and_affected_count_are_distinct_slots():
 )
 def test_rate_without_observed_value_is_ineligible(non_rate_values):
     result = classify_business_item(_item(metric_type="rate", **non_rate_values))
-
     assert result.reason is EligibilityReason.INVALID_OBSERVATION
 
 
@@ -147,7 +166,6 @@ def test_denominator_alias_contradiction_fails_closed():
         denominator=100,
         metadata={"details": {"denominator_count": 99}},
     )
-
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
@@ -158,7 +176,6 @@ def test_population_alias_contradiction_fails_closed():
         population_count=100,
         intelligence={"signal": {"sample_count": 99}},
     )
-
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
@@ -168,7 +185,6 @@ def test_metric_kind_contradiction_fails_closed():
         observed_value=0.1,
         observation={"aggregation_type": "count"},
     )
-
     assert classify_business_item(item).reason is EligibilityReason.INVALID_OBSERVATION
 
 
@@ -258,22 +274,7 @@ def test_empty_evidence_pack_structures_are_not_evidence(evidence_pack):
     [
         {"evidence_pack_id": "pack-17"},
         {"evidence_refs": ["gold_metrics:row:17"]},
-        {
-            "source_system": "sap",
-            "cartridge": "sap",
-            "tenant_id": "tenant-7",
-            "workspace_id": "workspace-17",
-            **runtime_row_evidence_fields(
-                source_dataset="gold_metrics",
-                source_system="sap",
-                cartridge="sap",
-                tenant_id="tenant-7",
-                workspace_id="workspace-17",
-                source_row={"metric_id": "record-17"},
-                locator_field="metric_id",
-                observed_at="2026-07-16",
-            ),
-        },
+        _signed_partial_evidence(),
     ],
 )
 def test_stable_ids_and_substantive_references_are_evidence(evidence):

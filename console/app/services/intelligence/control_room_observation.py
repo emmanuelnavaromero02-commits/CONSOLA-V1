@@ -26,6 +26,14 @@ def canonical_signal_metadata(
     observed_at = str(
         signal.get("freshness_at") or signal.get("period_key") or ""
     ).strip()
+    observation = {
+        "metric_type": "scalar",
+        "observed_value": signal.get("actual_value"),
+        "observation_date": observed_at,
+        "data_status": "gold_ready",
+        "source_dataset": source_dataset,
+        "source_system": signal.get("source_system") or signal.get("cartridge_id"),
+    }
     evidence = runtime_row_evidence_fields(
         source_dataset=source_dataset,
         source_system=str(metadata.get("source_system") or ""),
@@ -36,16 +44,9 @@ def canonical_signal_metadata(
         locator_field="signal_id",
         locator_relation="intelligence_signals",
         observed_at=observed_at,
+        business_observation={**dict(signal), **observation, "kind": item_kind},
     )
-    observation = {
-        "metric_type": "scalar",
-        "observed_value": signal.get("actual_value"),
-        "observation_date": observed_at,
-        "data_status": "gold_ready",
-        "source_dataset": source_dataset,
-        "source_system": signal.get("source_system") or signal.get("cartridge_id"),
-        **evidence,
-    }
+    observation.update(evidence)
     enriched = with_observation_envelope({**dict(metadata), **observation}, observation)
     return persistence_metadata(
         {

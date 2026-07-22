@@ -28,6 +28,10 @@ def _base_item(**overrides):
         "count": 2,
         "population_count": 10,
         "observation_date": "2026-07-16",
+        **overrides,
+    }
+    return {
+        **item,
         **runtime_row_evidence_fields(
             source_dataset="gold_metrics",
             source_system="sap",
@@ -37,9 +41,9 @@ def _base_item(**overrides):
             source_row={"item_id": "roundtrip-1"},
             locator_field="item_id",
             observed_at="2026-07-16",
+            business_observation=item,
         ),
     }
-    return {**item, **overrides}
 
 
 def _persisted_round_trip(item: dict, *, diagnostic: bool = False) -> dict:
