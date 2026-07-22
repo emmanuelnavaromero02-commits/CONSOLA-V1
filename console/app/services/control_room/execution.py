@@ -77,6 +77,10 @@ from app.services.control_room.business_action_reservation import (
     acquire_guarded_action_reservation,
     complete_action_reservation,
 )
+from app.services.control_room.business_action_failure import (
+    finalize_aborted_action_reservation,
+    run_reserved_external_action,
+)
 from app.services.control_room.business_reservation_errors import ReservationUnavailable
 from app.services.control_room.business_execution_precondition import (
     dry_run_metadata,
@@ -111,6 +115,8 @@ for _helper in (
     acquire_action_reservation,
     acquire_guarded_action_reservation,
     complete_action_reservation,
+    finalize_aborted_action_reservation,
+    run_reserved_external_action,
     lock_authoritative_business_item,
     locked_operational_metadata,
     lock_pending_action_reservation,
@@ -3514,8 +3520,9 @@ async def execute_item(
         )
         if reservation.state is not ReservationState.ACQUIRED:
             return _reserved_action_response(reservation, item=item, payload=payload)
-        response = await _with_scoped_db(
-            lambda db: _execute_external_writeback(
+        response = await run_reserved_external_action(
+            run_scoped=_with_scoped_db,
+            execute=lambda db: _execute_external_writeback(
                 db,
                 user=user,
                 item=item,
@@ -3524,7 +3531,10 @@ async def execute_item(
                 reservation=reservation,
                 ip=ip,
                 user_agent=user_agent,
-            )
+            ),
+            finalize=finalize_aborted_action_reservation,
+            workspace_id=_workspace_id(user),
+            reservation=reservation,
         )
         if response.get("_http_error_status"):
             raise HTTPException(
