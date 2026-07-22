@@ -44,6 +44,7 @@ def _item(value: int = 1) -> dict:
             source_row={"item_id": item["id"], "observed_value": value},
             locator_field="item_id",
             observed_at=item["observation_date"],
+            business_observation=item,
         ),
     }
 

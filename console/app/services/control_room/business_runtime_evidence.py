@@ -137,6 +137,7 @@ def runtime_row_evidence_fields(
     observed_at: str,
     locator_relation: str | None = None,
     existing_refs: Any = None,
+    business_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attest a locator taken from a row already retrieved by the server."""
     dataset = str(source_dataset or "").strip()
@@ -171,7 +172,7 @@ def runtime_row_evidence_fields(
         return {}
     record_id = f"record-{locator_value}"
     business_binding = runtime_business_binding(
-        source_row,
+        business_observation or source_row,
         locator_field=field,
         observed_at=observation,
     )

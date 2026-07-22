@@ -193,6 +193,7 @@ def scoped_runtime_evidence_fields(
     cartridge: str,
     locator_field: str,
     observed_at: str,
+    business_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(row, ScopedSourceRow) or not row.scope_valid:
         return {}
@@ -205,6 +206,7 @@ def scoped_runtime_evidence_fields(
         source_row=row.source_row,
         locator_field=locator_field,
         observed_at=observed_at,
+        business_observation=business_observation,
     )
 
 

@@ -14,6 +14,7 @@ from app.services.control_room.business_agentops import agentops_source_ids
 from app.services.control_room.business_cartridge_scope import (
     allowed_business_cartridges,
 )
+from app.services.control_room.business_source_projection import append_normalized_business_rows
 from app.services.control_room.business_source_scope import scoped_runtime_evidence_fields, scoped_source_row, scoped_source_row_with_evidence
 from app.services.control_room.business_talent_preview import (
     build_talent_action_preview,
@@ -37,6 +38,7 @@ _core.__dict__.setdefault("allowed_business_cartridges", allowed_business_cartri
 _core.__dict__.setdefault("scoped_runtime_evidence_fields", scoped_runtime_evidence_fields)
 _core.__dict__.setdefault("scoped_source_row", scoped_source_row)
 _core.__dict__.setdefault("scoped_source_row_with_evidence", scoped_source_row_with_evidence)
+_core.__dict__.setdefault("append_normalized_business_rows", append_normalized_business_rows)
 _core.__dict__.setdefault("_build_talent_action_preview", build_talent_action_preview)
 
 
@@ -4372,18 +4374,15 @@ def _append_normalized_source_rows(
     thresholds: dict[str, dict[str, Any]],
     user: dict | None,
 ) -> None:
-    tenant_id, workspace_id = _workspace_scope(user)
-    for row in rows:
-        item = _normalize_row(
-            source,
-            scoped_source_row_with_evidence(
-                row, tenant_id=tenant_id, workspace_id=workspace_id, source_dataset=source.dataset,
-                source_system=source.cartridge, cartridge=source.cartridge, locator_fields=(source.entity_id_field, source.entity_label_field),
-            ),
-            thresholds,
-        )
-        if item:
-            items.append(item)
+    append_normalized_business_rows(
+        items,
+        source,
+        rows,
+        thresholds,
+        user,
+        workspace_scope=_workspace_scope,
+        normalize=_normalize_row,
+    )
 
 
 @_bind_to_core

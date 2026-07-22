@@ -66,6 +66,7 @@ def _item() -> dict:
             source_row={"item_id": item["id"]},
             locator_field="item_id",
             observed_at=item["observation_date"],
+            business_observation=item,
         ),
     }
 def test_option_stage_without_decision_is_valid_and_workspace_bound():

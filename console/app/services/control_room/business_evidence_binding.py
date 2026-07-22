@@ -127,13 +127,13 @@ def _observation_matches(binding: Mapping[str, Any], item: Mapping[str, Any]) ->
     if not isinstance(observation, Mapping):
         return False
     checks = (
-        ("kind", _KIND_FIELDS, _token),
-        ("metric_name", _METRIC_NAME_FIELDS, _token),
-        ("metric_type", _METRIC_TYPE_FIELDS, _token),
-        ("value", _VALUE_FIELDS, _number_token),
+        ("kind", _KIND_FIELDS, _token, False),
+        ("metric_name", _METRIC_NAME_FIELDS, _token, True),
+        ("metric_type", _METRIC_TYPE_FIELDS, _token, True),
+        ("value", _VALUE_FIELDS, _number_token, True),
     )
     surfaces = semantic_maps(item)
-    for claim, fields, normalizer in checks:
+    for claim, fields, normalizer, required_when_declared in checks:
         expected = str(observation.get(claim) or "")
         actual = {
             normalizer(surface.get(field))
@@ -141,7 +141,9 @@ def _observation_matches(binding: Mapping[str, Any], item: Mapping[str, Any]) ->
             for field in fields
             if surface.get(field) is not None
         }
-        if expected and actual and expected not in actual:
+        if required_when_declared and actual and not expected:
+            return False
+        if expected and expected not in actual:
             return False
     observed_at = str(observation.get("observed_at") or "")
     if observed_at:

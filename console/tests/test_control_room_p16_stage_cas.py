@@ -53,6 +53,12 @@ def _item():
             source_row={"item_id": "item-1", "observed_value": 1},
             locator_field="item_id",
             observed_at="2026-07-20",
+            business_observation={
+                "id": "item-1",
+                "metric_type": "count",
+                "observed_value": 1,
+                "observation_date": "2026-07-20",
+            },
         ),
     }
 
