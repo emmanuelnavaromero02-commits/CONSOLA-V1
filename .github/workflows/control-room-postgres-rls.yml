@@ -157,6 +157,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1083, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1094, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=47, label="Live PostgreSQL/RLS")
           PY
