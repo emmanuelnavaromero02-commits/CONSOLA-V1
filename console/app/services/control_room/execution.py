@@ -73,6 +73,10 @@ from app.services.control_room.business_action_mutations import (
     persist_step as _persist_step,
     require_exact_count as _require_exact_count,
 )
+from app.services.control_room.business_dismiss_reopen_with_audit import (
+    dismiss_with_audit as _dismiss_with_audit,
+    reopen_with_audit as _reopen_with_audit,
+)
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
@@ -131,6 +135,8 @@ _core.__dict__.setdefault("_persist_control", _persist_control)
 _core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
 _core.__dict__.setdefault("_persist_step", _persist_step)
 _core.__dict__.setdefault("_require_exact_count", _require_exact_count)
+_core.__dict__.setdefault("_dismiss_with_audit", _dismiss_with_audit)
+_core.__dict__.setdefault("_reopen_with_audit", _reopen_with_audit)
 for _helper in (
     acquire_action_reservation,
     acquire_guarded_action_reservation,
@@ -3661,33 +3667,17 @@ async def dismiss_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-
-    async def _write_dismissed(
-        conn: Any, _tenant_id: str | None, workspace_id: str
-    ) -> None:
-        await _persist_status_transition(
-            conn,
-            user=user,
-            item=item,
-            workspace_id=workspace_id,
-            target_status="dismissed",
-            event_type="dismissed",
-            reason=reason or "",
-            ensure_item_row=_ensure_item_row,
-        )
-
-    await _run_with_db_scope(pool, user, _write_dismissed)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.dismiss",
-        resource_type="control_room_item",
-        resource_id=item_id,
+    await _dismiss_with_audit(
+        pool,
+        user=user,
+        item=item,
+        reason=reason or "",
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"reason": reason or "", "item": item},
-        critical=True,
+        run_scoped=_run_with_db_scope,
+        persist_status_transition=_persist_status_transition,
+        ensure_item_row=_ensure_item_row,
+        record_audit_event=audit_service.record_event,
     )
     return {
         "dismissed": True,
@@ -3707,54 +3697,19 @@ async def reopen_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-
-    async def _write_reopened(
-        conn: Any, _tenant_id: str | None, workspace_id: str
-    ) -> None:
-        guard_item = dict(item)
-        for field in (
-            "decision_id",
-            "selected_option_id",
-            "status",
-            "execution_status",
-        ):
-            guard_item.pop(field, None)
-        locked = await lock_authoritative_business_item(
-            conn,
-            user=user,
-            item=guard_item,
-        )
-        if locked is None or not workflow_reopen_allowed(locked):
-            raise HTTPException(
-                409,
-                {
-                    "code": "workflow_reopen_not_allowed",
-                    "message": "only dismissed items without workflow state can be reopened",
-                },
-            )
-        await _persist_status_transition(
-            conn,
-            user=user,
-            item=item,
-            workspace_id=workspace_id,
-            target_status="open",
-            event_type="reopened",
-            reason=reason or "",
-            ensure_item_row=_ensure_item_row,
-        )
-
-    await _run_with_db_scope(pool, user, _write_reopened)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.reopen",
-        resource_type="control_room_item",
-        resource_id=item_id,
+    await _reopen_with_audit(
+        pool,
+        user=user,
+        item=item,
+        reason=reason or "",
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"reason": reason or "", "item": item},
-        critical=True,
+        run_scoped=_run_with_db_scope,
+        persist_status_transition=_persist_status_transition,
+        ensure_item_row=_ensure_item_row,
+        record_audit_event=audit_service.record_event,
+        lock_item=lock_authoritative_business_item,
+        reopen_allowed=workflow_reopen_allowed,
     )
     return {
         "reopened": True,
