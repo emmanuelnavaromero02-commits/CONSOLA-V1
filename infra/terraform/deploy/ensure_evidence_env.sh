@@ -67,14 +67,50 @@ if [[ "$EVIDENCE_ENV_FILE" == "$SHARED_ENV_FILE" ]]; then
   fail "shared and control room evidence env files must be different"
 fi
 
-key_id_valid() {
-  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
-}
+keyring_material_valid() {
+  local current_id="$1"
+  local current_key="$2"
+  local previous_keys="$3"
 
-previous_keys_valid() {
-  local value="$1"
-  [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* &&
-    "$value" == \{*\} ]]
+  [[ "$current_id" != *$'\n'* && "$current_id" != *$'\r'* ]] || return 1
+  [[ "$current_key" != *$'\n'* && "$current_key" != *$'\r'* ]] || return 1
+  [[ "$previous_keys" != *$'\n'* && "$previous_keys" != *$'\r'* ]] || return 1
+  OMEGA_CURRENT_ID="$current_id" \
+    OMEGA_CURRENT_KEY="$current_key" \
+    OMEGA_PREVIOUS_KEYS="$previous_keys" \
+    OMEGA_SECURITY_KEY="${SECURITY_CONTEXT_SIGNING_KEY:-}" \
+    python3 - <<'PY' >/dev/null 2>&1
+import hmac
+import json
+import os
+import re
+
+pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+current_id = os.environ["OMEGA_CURRENT_ID"].strip()
+current_key = os.environ["OMEGA_CURRENT_KEY"].strip()
+security_key = os.environ["OMEGA_SECURITY_KEY"].strip()
+try:
+    previous = json.loads(os.environ["OMEGA_PREVIOUS_KEYS"])
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if not pattern.fullmatch(current_id) or len(current_key) < 32:
+    raise SystemExit(1)
+if security_key and hmac.compare_digest(current_key, security_key):
+    raise SystemExit(1)
+if not isinstance(previous, dict):
+    raise SystemExit(1)
+for key_id, key in previous.items():
+    if not isinstance(key_id, str) or not isinstance(key, str):
+        raise SystemExit(1)
+    normalized_id = key_id.strip()
+    normalized_key = key.strip()
+    if not pattern.fullmatch(normalized_id) or len(normalized_key) < 32:
+        raise SystemExit(1)
+    if normalized_id == current_id or hmac.compare_digest(normalized_key, current_key):
+        raise SystemExit(1)
+    if security_key and hmac.compare_digest(normalized_key, security_key):
+        raise SystemExit(1)
+PY
 }
 
 keyring_complete() (
@@ -88,10 +124,7 @@ keyring_complete() (
   current_id="${CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID:-}"
   current_key="${CONTROL_ROOM_EVIDENCE_SIGNING_KEY:-}"
   previous_keys="${CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS:-}"
-  key_id_valid "$current_id" || return 1
-  [[ "${#current_key}" -ge 32 ]] || return 1
-  [[ "$current_key" != *$'\n'* && "$current_key" != *$'\r'* ]] || return 1
-  previous_keys_valid "$previous_keys" || return 1
+  keyring_material_valid "$current_id" "$current_key" "$previous_keys"
 )
 
 existing_keyring_complete() {
@@ -172,10 +205,6 @@ fi
 if ! CURRENT_KEY="$(required_secret "$KEY_NAME")"; then
   fail "cannot fetch required evidence signing key"
 fi
-if ! key_id_valid "$CURRENT_ID" || [[ "${#CURRENT_KEY}" -lt 32 ]]; then
-  fail "fetched evidence signing keyring is invalid"
-fi
-
 PREVIOUS_SECRET_ID="$(secret_arn "$PREVIOUS_NAME")"
 if [[ -n "$PREVIOUS_SECRET_ID" ]]; then
   if ! PREVIOUS_KEYS="$(fetch_secret "$PREVIOUS_SECRET_ID" 3)"; then
@@ -187,8 +216,8 @@ else
     PREVIOUS_KEYS="{}"
   fi
 fi
-if ! previous_keys_valid "$PREVIOUS_KEYS"; then
-  fail "fetched previous evidence signing keys are invalid"
+if ! keyring_material_valid "$CURRENT_ID" "$CURRENT_KEY" "$PREVIOUS_KEYS"; then
+  fail "fetched evidence signing keyring is invalid"
 fi
 
 write_env_line() {

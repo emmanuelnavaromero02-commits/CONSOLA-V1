@@ -159,7 +159,10 @@ def _run_helper(
     )
 
 
-@pytest.mark.parametrize("existing", [None, "", f'{ID_NAME}="incomplete"\n'])
+@pytest.mark.parametrize(
+    "existing",
+    [None, "", f'{ID_NAME}="incomplete"\n', _keyring_text("{not-json}")],
+)
 def test_missing_or_incomplete_private_env_materializes_operational_keyring(
     tmp_path: Path,
     existing: str | None,
