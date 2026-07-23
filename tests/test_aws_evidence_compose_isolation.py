@@ -21,13 +21,6 @@ EVIDENCE_NAMES = {
 }
 
 
-def _resolved_env_files(service: dict) -> set[Path]:
-    return {
-        Path(item["path"] if isinstance(item, dict) else item).resolve()
-        for item in service.get("env_file", [])
-    }
-
-
 @pytest.mark.parametrize("custom_private", [False, True])
 def test_compose_resolves_private_env_only_for_console(
     tmp_path: Path, custom_private: bool
@@ -46,7 +39,14 @@ def test_compose_resolves_private_env_only_for_console(
         private if custom_private else Path(f"{shared}.control-room-evidence")
     )
     shared.touch()
-    expected_private.touch()
+    evidence_values = {
+        name: f"private-value-{index}"
+        for index, name in enumerate(sorted(EVIDENCE_NAMES))
+    }
+    expected_private.write_text(
+        "".join(f"{name}={value}\n" for name, value in evidence_values.items()),
+        encoding="utf-8",
+    )
     result = subprocess.run(
         [
             docker,
@@ -58,7 +58,6 @@ def test_compose_resolves_private_env_only_for_console(
             "-f",
             str(CARTRIDGES_COMPOSE),
             "config",
-            "--no-env-resolution",
             "--format",
             "json",
         ],
@@ -70,24 +69,22 @@ def test_compose_resolves_private_env_only_for_console(
     )
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
-    expected_private = expected_private.resolve()
     consumers = {
         name
         for name, service in services.items()
-        if expected_private in _resolved_env_files(service)
+        if EVIDENCE_NAMES & service.get("environment", {}).keys()
     }
     assert consumers == {"console"}
-    console_paths = [
-        Path(item["path"]).resolve() for item in services["console"]["env_file"]
-    ]
-    assert console_paths == [shared.resolve(), expected_private]
-    assert not EVIDENCE_NAMES & services["console"].get("environment", {}).keys()
+    assert {
+        name: services["console"]["environment"][name] for name in EVIDENCE_NAMES
+    } == evidence_values
 
     raw = yaml.safe_load(AWS_COMPOSE.read_text(encoding="utf-8"))
     assert [item["required"] for item in raw["services"]["console"]["env_file"]] == [
         True,
         True,
     ]
+    assert not EVIDENCE_NAMES & raw["services"]["console"].get("environment", {}).keys()
     assert "MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE" not in (
         CARTRIDGES_COMPOSE.read_text(encoding="utf-8")
     )
