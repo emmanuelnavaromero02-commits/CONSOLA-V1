@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 1034
+FOCAL_MINIMUM = 1044
 POSTGRES_MINIMUM = 35
 
 REQUIRED_PATHS = (
@@ -14,6 +14,7 @@ REQUIRED_PATHS = (
     "console/app/domains/pipeline/control_room_refresh.py",
     "console/app/domains/pipeline/sync_state.py",
     "console/app/services/permissions.py",
+    "console/app/services/audit_service.py",
     "console/app/services/security_context.py",
     "console/app/services/adapter_idempotency.py",
     "console/app/services/adapters/**",
@@ -30,6 +31,7 @@ REQUIRED_PATHS = (
     "console/app/services/control_room/**",
     "console/tests/control_room_*.py",
     "console/tests/conftest.py",
+    "console/tests/test_audit_service_transactional.py",
     "console/tests/test_control_room*.py",
     "console/tests/test_gold_fetcher.py",
     "console/tests/test_ops_summary_and_version.py",
@@ -41,11 +43,13 @@ REQUIRED_PATHS = (
     "tests/test_control_room_evidence_signing_wiring.py",
     "tests/decision_orchestrator_harness.py",
     "tests/test_aws_beta_operations.py",
+    "tests/test_aws_bootstrap_shared_env_boundary.py",
     "tests/test_aws_evidence_compose_isolation.py",
     "tests/test_intelligence_engine_contract.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
+    "tests/test_aws_ssm_deploy_workflow.py",
     "tests/conftest.py",
     "infra/.env.example",
     "infra/bootstrap-keys.sh",
@@ -57,10 +61,12 @@ REQUIRED_PATHS = (
     "infra/terraform/infra/secretsmanager.tf",
     "scripts/aws-env-pair.sh",
     "scripts/aws-entrypoint.sh",
+    ".github/workflows/deploy-aws.yml",
     ".github/workflows/control-room-postgres-rls.yml",
 )
 
 REQUIRED_RELATED_TESTS = (
+    "console/tests/test_audit_service_transactional.py",
     "console/tests/test_decision*.py",
     "console/tests/test_gold_fetcher.py",
     "console/tests/test_ops_summary_and_version.py",
@@ -71,8 +77,10 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_pipeline_control_room_refresh.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
     "tests/test_aws_beta_operations.py",
+    "tests/test_aws_bootstrap_shared_env_boundary.py",
     "tests/test_aws_evidence_compose_isolation.py",
     "tests/test_aws_env_pair_transaction.py",
+    "tests/test_aws_ssm_deploy_workflow.py",
     "tests/test_aws_evidence_env_isolation.py",
     "tests/test_control_room_ci_contract.py",
     "tests/test_control_room_evidence_keyring_runtime.py",

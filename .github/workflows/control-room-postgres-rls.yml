@@ -10,6 +10,7 @@ on:
       - "console/app/domains/pipeline/control_room_refresh.py"
       - "console/app/domains/pipeline/sync_state.py"
       - "console/app/services/permissions.py"
+      - "console/app/services/audit_service.py"
       - "console/app/services/security_context.py"
       - "console/app/services/adapter_idempotency.py"
       - "console/app/services/adapters/**"
@@ -26,6 +27,7 @@ on:
       - "console/app/services/control_room/**"
       - "console/tests/control_room_*.py"
       - "console/tests/conftest.py"
+      - "console/tests/test_audit_service_transactional.py"
       - "console/tests/test_control_room*.py"
       - "console/tests/test_decision*.py"
       - "console/tests/test_intelligence_control_room_canonical_persistence.py"
@@ -41,8 +43,10 @@ on:
       - "tests/test_pipeline_control_room_refresh.py"
       - "tests/test_agentops_scheduled_monitor_contract.py"
       - "tests/test_aws_beta_operations.py"
+      - "tests/test_aws_bootstrap_shared_env_boundary.py"
       - "tests/test_aws_evidence_compose_isolation.py"
       - "tests/test_aws_env_pair_transaction.py"
+      - "tests/test_aws_ssm_deploy_workflow.py"
       - "tests/test_aws_evidence_env_isolation.py"
       - "tests/test_control_room_ci_contract.py"
       - "tests/test_control_room_evidence_keyring_runtime.py"
@@ -62,6 +66,7 @@ on:
       - "infra/terraform/infra/secretsmanager.tf"
       - "scripts/aws-env-pair.sh"
       - "scripts/aws-entrypoint.sh"
+      - ".github/workflows/deploy-aws.yml"
       - ".github/workflows/control-room-postgres-rls.yml"
 
 jobs:
@@ -88,6 +93,7 @@ jobs:
           PYTHONPATH: .:console
         run: |
           pytest -ra --junitxml=/tmp/control-room-focal.xml \
+            console/tests/test_audit_service_transactional.py \
             console/tests/test_control_room*.py \
             console/tests/test_scoped_surface_hardening.py \
             console/tests/test_decision*.py \
@@ -100,8 +106,10 @@ jobs:
             tests/test_pipeline_control_room_refresh.py \
             tests/test_agentops_scheduled_monitor_contract.py \
             tests/test_aws_beta_operations.py \
+            tests/test_aws_bootstrap_shared_env_boundary.py \
             tests/test_aws_evidence_compose_isolation.py \
             tests/test_aws_env_pair_transaction.py \
+            tests/test_aws_ssm_deploy_workflow.py \
             tests/test_aws_evidence_env_isolation.py \
             tests/test_control_room_ci_contract.py \
             tests/test_control_room_evidence_keyring_runtime.py \
@@ -147,6 +155,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1034, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1044, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=35, label="Live PostgreSQL/RLS")
           PY
