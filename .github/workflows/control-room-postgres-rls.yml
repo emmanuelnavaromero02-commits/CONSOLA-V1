@@ -67,6 +67,7 @@ on:
       - "infra/terraform/infra/secretsmanager.tf"
       - "scripts/aws-env-pair.sh"
       - "scripts/aws-entrypoint.sh"
+      - "scripts/validate-evidence-keyring.py"
       - ".github/workflows/deploy-aws.yml"
       - ".github/workflows/control-room-postgres-rls.yml"
 
@@ -157,6 +158,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1098, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1099, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=48, label="Live PostgreSQL/RLS")
           PY

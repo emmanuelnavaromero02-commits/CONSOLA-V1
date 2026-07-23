@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 1098
+FOCAL_MINIMUM = 1099
 POSTGRES_MINIMUM = 48
 
 REQUIRED_PATHS = (
@@ -62,6 +62,7 @@ REQUIRED_PATHS = (
     "infra/terraform/infra/secretsmanager.tf",
     "scripts/aws-env-pair.sh",
     "scripts/aws-entrypoint.sh",
+    "scripts/validate-evidence-keyring.py",
     ".github/workflows/deploy-aws.yml",
     ".github/workflows/control-room-postgres-rls.yml",
 )
