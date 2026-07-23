@@ -35,5 +35,7 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_mcp_infra_pdf_ingest.py \
+            tests/test_mcp_infra_pdf_capacity.py \
+            tests/test_mcp_infra_pdf_compose_capacity.py \
             tests/test_pypdf_security.py \
             tests/test_mcp_infra_pdf_ci_contract.py

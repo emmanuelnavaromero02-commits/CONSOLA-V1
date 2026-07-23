@@ -885,6 +885,7 @@ services:
       # was simply unset. Default flipped, explicit opt-in here.
       APP_ENV: ${APP_ENV:-production}
       ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
+      MCP_INFRA_PDF_MAX_WORKERS: ${MCP_INFRA_PDF_MAX_WORKERS:-2}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:-}
@@ -929,6 +930,9 @@ services:
       EMBED_DIM:        ${EMBED_DIM:-1024}
       RAG_LOCAL_EMBEDDING_FALLBACK: ${RAG_LOCAL_EMBEDDING_FALLBACK:-true}
       ADMIN_EMAIL:      ${ADMIN_EMAIL:-}
+    mem_limit: ${MCP_INFRA_MEM_LIMIT:-1536m}
+    cpus: ${MCP_INFRA_CPUS:-2.0}
+    pids_limit: ${MCP_INFRA_PIDS_LIMIT:-128}
     ports:
       - "8010:8010"
     volumes:
