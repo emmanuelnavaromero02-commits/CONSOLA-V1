@@ -60,6 +60,7 @@ jobs:
           # narrower threshold below.
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
+            scripts/ci_changed_areas.py \
             --severity-level medium \
             -f json -o bandit-report.json || true
           # v1.45.17 audit follow-up: fail the job on MEDIUM+
@@ -70,6 +71,7 @@ jobs:
           # before v1.0, but HIGH-confidence regressions still fail CI now.
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
+            scripts/ci_changed_areas.py \
             --severity-level medium \
             --confidence-level high
 

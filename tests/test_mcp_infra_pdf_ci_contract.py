@@ -39,6 +39,7 @@ def test_pdf_security_workflow_runs_real_functional_tests_on_every_pr() -> None:
         "tests/test_mcp_infra_pdf_ci_contract.py",
         "tests/test_lint_gate_contract.py",
         "tests/test_security_gate_contract.py",
+        "tests/test_ci_detector_self_protection.py",
     ):
         assert test_file in command
 
