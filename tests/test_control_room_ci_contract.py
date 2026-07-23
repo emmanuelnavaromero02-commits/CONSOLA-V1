@@ -3,8 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 1044
-POSTGRES_MINIMUM = 35
+FOCAL_MINIMUM = 1059
+POSTGRES_MINIMUM = 42
 
 REQUIRED_PATHS = (
     "console/app/main.py",
