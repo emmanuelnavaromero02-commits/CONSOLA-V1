@@ -201,7 +201,7 @@ def _root_test_targets(files: list[str]) -> str:
     if _any(
         files,
         r"^mcp-infra/requirements\.txt$",
-        r"^mcp-infra/app/rag/ingest\.py$",
+        r"^mcp-infra/app/rag/(?:ingest|pdf_worker)\.py$",
         r"^mcp-infra/app/main\.py$",
     ):
         targets.update({

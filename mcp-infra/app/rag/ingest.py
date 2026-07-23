@@ -3,17 +3,23 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from io import BytesIO
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
-from pypdf import PdfReader
 from starlette.requests import Request
 
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_PDF_PAGES = 250
+MAX_PDF_PAGE_CONTENT_BYTES = 1024 * 1024
+MAX_PDF_TOTAL_CONTENT_BYTES = 8 * 1024 * 1024
 MAX_INGEST_TEXT_CHARS = 2_000_000
 MAX_INGEST_REQUEST_BYTES = 15 * 1024 * 1024
+PDF_PROCESS_MEMORY_BYTES = 256 * 1024 * 1024
+PDF_PROCESS_CPU_SECONDS = 8
+PDF_PROCESS_TIMEOUT_SECONDS = 10
 
 
 class RagIngestError(ValueError):
@@ -61,6 +67,49 @@ def validate_text_content(content: Any) -> str:
     return content
 
 
+def _pdf_worker_command() -> list[str]:
+    worker = Path(__file__).with_name("pdf_worker.py")
+    return [
+        sys.executable,
+        "-I",
+        str(worker),
+        str(MAX_PDF_BYTES),
+        str(MAX_PDF_PAGES),
+        str(MAX_INGEST_TEXT_CHARS),
+        str(MAX_PDF_PAGE_CONTENT_BYTES),
+        str(MAX_PDF_TOTAL_CONTENT_BYTES),
+        str(PDF_PROCESS_MEMORY_BYTES),
+        str(PDF_PROCESS_CPU_SECONDS),
+    ]
+
+
+def _extract_in_worker(pdf_bytes: bytes) -> str:
+    try:
+        result = subprocess.run(
+            _pdf_worker_command(),
+            input=pdf_bytes,
+            capture_output=True,
+            check=False,
+            timeout=PDF_PROCESS_TIMEOUT_SECONDS,
+            env={},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _too_large("PDF processing limit exceeded") from exc
+    if result.returncode == 4 or result.returncode < 0:
+        raise _too_large("PDF processing limit exceeded")
+    if result.returncode == 3:
+        raise RagIngestError(400, "Could not extract text from PDF")
+    if result.returncode != 0:
+        raise RagIngestError(400, "Invalid or unsupported PDF")
+    try:
+        content = result.stdout.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RagIngestError(400, "Invalid or unsupported PDF") from exc
+    if len(content) > MAX_INGEST_TEXT_CHARS:
+        raise _too_large("Extracted PDF text exceeds size limit")
+    return content
+
+
 def extract_pdf_text(encoded_content: Any) -> str:
     if not isinstance(encoded_content, str) or not encoded_content:
         raise RagIngestError(400, "PDF content must be base64 text")
@@ -73,25 +122,7 @@ def extract_pdf_text(encoded_content: Any) -> str:
         raise RagIngestError(400, "Invalid PDF base64 content") from exc
     if len(pdf_bytes) > MAX_PDF_BYTES:
         raise _too_large("PDF exceeds size limit")
-
-    try:
-        reader = PdfReader(BytesIO(pdf_bytes))
-        if len(reader.pages) > MAX_PDF_PAGES:
-            raise _too_large("PDF exceeds page limit")
-        pages: list[str] = []
-        text_size = 0
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
-            text_size += len(page_text)
-            if text_size > MAX_INGEST_TEXT_CHARS:
-                raise _too_large("Extracted PDF text exceeds size limit")
-            pages.append(page_text)
-    except RagIngestError:
-        raise
-    except Exception as exc:
-        raise RagIngestError(400, "Invalid or unsupported PDF") from exc
-
-    content = "\n\n".join(pages).strip()
+    content = _extract_in_worker(pdf_bytes).strip()
     if not content:
         raise RagIngestError(400, "Could not extract text from PDF")
     return content

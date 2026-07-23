@@ -7,6 +7,7 @@ import importlib
 import json
 import sys
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -94,8 +95,8 @@ def _headers() -> dict[str, str]:
     return {"x-api-key": PAIR_KEY, "x-internal-service": "console"}
 
 
-def _pdf_with_text(text: str) -> bytes:
-    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+def _pdf_with_stream(stream: bytes, *, filter_name: bytes = b"") -> bytes:
+    filter_entry = b" /Filter /" + filter_name if filter_name else b""
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -105,6 +106,7 @@ def _pdf_with_text(text: str) -> bytes:
         ),
         b"<< /Length "
         + str(len(stream)).encode()
+        + filter_entry
         + b" >>\nstream\n"
         + stream
         + b"\nendstream",
@@ -124,6 +126,11 @@ def _pdf_with_text(text: str) -> bytes:
         f"startxref\n{xref}\n%%EOF\n".encode()
     )
     return bytes(data)
+
+
+def _pdf_with_text(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    return _pdf_with_stream(stream)
 
 
 def _body(content: str, **overrides: Any) -> dict[str, Any]:
@@ -228,6 +235,26 @@ def test_request_size_limit_returns_413_before_json_decode(monkeypatch) -> None:
 
     assert response.status_code == 413
     assert response.json() == {"detail": "RAG ingest request exceeds size limit"}
+
+
+def test_compressed_content_amplification_is_rejected_before_text_parse(
+    monkeypatch,
+) -> None:
+    main = _load_main(monkeypatch)
+    client = TestClient(main.app, raise_server_exceptions=False)
+    expanded = b"q\n" * 600_000
+    compressed = zlib.compress(expanded, level=9)
+    payload = _pdf_with_stream(compressed, filter_name=b"FlateDecode")
+
+    response = client.post(
+        "/rag/ingest",
+        json=_body(base64.b64encode(payload).decode()),
+        headers=_headers(),
+    )
+
+    assert len(compressed) < 10_000
+    assert response.status_code == 413
+    assert response.json() == {"detail": "PDF processing limit exceeded"}
 
 
 def test_foreign_scope_suffix_is_rejected(monkeypatch) -> None:
