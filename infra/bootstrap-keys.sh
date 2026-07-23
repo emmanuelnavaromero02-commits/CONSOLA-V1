@@ -13,7 +13,10 @@
 set -euo pipefail
 
 ENV_FILE="${1:-infra/.env}"
-BOOTSTRAP_CONTROL_ROOM_EVIDENCE="${MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE:-true}"
+# Local infra/bootstrap.sh renders its own keyring. This helper only creates
+# evidence keys when a caller opts in explicitly; AWS must always leave them
+# in the private evidence env rendered by scripts/aws-entrypoint.sh.
+BOOTSTRAP_CONTROL_ROOM_EVIDENCE="${MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE:-false}"
 if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" != "true" && "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" != "false" ]]; then
   echo "ERROR: MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE must be true or false" >&2
   exit 1
