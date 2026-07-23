@@ -79,6 +79,16 @@ def execution_fetchrow_router(
         if "FROM ACTION_RUNS" in sql and "FOR UPDATE" in sql:
             return {**pending, "status": "pending"}
         if sql.startswith("UPDATE ACTION_RUNS"):
+            if "REMOTE_ATTEMPT" in sql:
+                pending["metadata"] = {
+                    **pending["metadata"],
+                    "remote_attempt": {
+                        "status": "started",
+                        "adapter": "TestAdapter",
+                        "target": "external_system",
+                    },
+                }
+                return {**pending, "status": "pending"}
             return {**pending, "status": "completed"}
         if "FROM DECISIONS" in sql:
             return {"id": 42} if decision_exists else None

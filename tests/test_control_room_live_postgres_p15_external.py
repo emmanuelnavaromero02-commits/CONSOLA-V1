@@ -10,6 +10,9 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_guarded_action_reservation,
 )
+from app.services.control_room.business_action_attempt import (
+    mark_remote_attempt_started,
+)
 from app.services.db_scope import SET_SCOPE_SQL
 from tests.test_control_room_live_postgres_p15 import (
     _linked_item,
@@ -79,6 +82,20 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
             await conn.close()
         if reservation.state is not ReservationState.ACQUIRED:
             return reservation
+        conn = await asyncpg.connect(omega_console_live_dsn)
+        try:
+            async with conn.transaction():
+                await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+                await mark_remote_attempt_started(
+                    conn,
+                    workspace_id=str(workspace_id),
+                    reservation_id=reservation.id,
+                    effective_key=reservation.effective_key,
+                    adapter="Adapter",
+                    target="replicon",
+                )
+        finally:
+            await conn.close()
         conn = await asyncpg.connect(omega_console_live_dsn)
         try:
             async with conn.transaction():
