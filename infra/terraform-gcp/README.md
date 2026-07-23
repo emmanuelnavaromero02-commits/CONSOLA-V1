@@ -22,6 +22,13 @@ OMEGA uses the cloud-neutral `LakehouseStorage` provider with native `gs://`
 URIs on GCP. DuckDB refinement can additionally use GCS HMAC credentials from
 Secret Manager when it needs direct Parquet reads.
 
+The effective GCP Compose combines `infra/docker-compose.yml` with the
+generated `infra/docker-compose.gcp.yml`. MCP Infra defaults to two concurrent
+PDF workers and container limits of `1536m` memory, `2.0` CPUs, and `128` PIDs.
+Operators can override `MCP_INFRA_PDF_MAX_WORKERS` (range `1` to `4`),
+`MCP_INFRA_MEM_LIMIT`, `MCP_INFRA_CPUS`, and `MCP_INFRA_PIDS_LIMIT` in
+`infra/.env`.
+
 GCS HMAC lakehouse credentials are read from Secret Manager secrets
 `omega-<env>-gcs_hmac_access_key_id` and
 `omega-<env>-gcs_hmac_secret_access_key`. This stack creates the secret

@@ -72,6 +72,10 @@ services:
     environment:
       <<: *gcp-lakehouse-env
       AIRFLOW_URL: $${AIRFLOW_URL:-http://airflow:8080/airflow}
+      MCP_INFRA_PDF_MAX_WORKERS: $${MCP_INFRA_PDF_MAX_WORKERS:-2}
+    mem_limit: $${MCP_INFRA_MEM_LIMIT:-1536m}
+    cpus: $${MCP_INFRA_CPUS:-2.0}
+    pids_limit: $${MCP_INFRA_PIDS_LIMIT:-128}
   airflow:
     environment:
       <<: *gcp-lakehouse-env

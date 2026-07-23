@@ -114,11 +114,14 @@ def test_mcp_infra_pdf_changes_run_functional_security_tests():
     for changed_file in (
         "mcp-infra/requirements.txt",
         "mcp-infra/app/rag/ingest.py",
+        "mcp-infra/app/rag/pdf_capacity.py",
         "mcp-infra/app/rag/pdf_worker.py",
         "mcp-infra/app/main.py",
     ):
         targets = str(_flags(changed_file)["root_test_targets"])
         assert "tests/test_mcp_infra_pdf_ingest.py" in targets
+        assert "tests/test_mcp_infra_pdf_capacity.py" in targets
+        assert "tests/test_mcp_infra_pdf_compose_capacity.py" in targets
         assert "tests/test_pypdf_security.py" in targets
 
 

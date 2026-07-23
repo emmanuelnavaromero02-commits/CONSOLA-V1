@@ -201,11 +201,13 @@ def _root_test_targets(files: list[str]) -> str:
     if _any(
         files,
         r"^mcp-infra/requirements\.txt$",
-        r"^mcp-infra/app/rag/(?:ingest|pdf_worker)\.py$",
+        r"^mcp-infra/app/rag/(?:ingest|pdf_capacity|pdf_worker)\.py$",
         r"^mcp-infra/app/main\.py$",
     ):
         targets.update({
             "tests/test_mcp_infra_pdf_ingest.py",
+            "tests/test_mcp_infra_pdf_capacity.py",
+            "tests/test_mcp_infra_pdf_compose_capacity.py",
             "tests/test_pypdf_security.py",
         })
     if any(path.startswith("omega_lakehouse/") for path in files):
