@@ -15,6 +15,7 @@ ItemWriter = Callable[..., Awaitable[None]]
 DecisionCreator = Callable[..., Awaitable[Any]]
 DecisionApprover = Callable[..., Awaitable[Any]]
 DecisionLinker = Callable[..., Awaitable[None]]
+AuditRecorder = Callable[..., Awaitable[None]]
 PostLinkHook = Callable[[Any, int], Awaitable[None]]
 
 
@@ -97,6 +98,9 @@ async def approve_with_optional_decision(
     approve_item: DecisionApprover,
     link_decision: DecisionLinker,
     approve_link: DecisionLinker,
+    record_audit_event: AuditRecorder,
+    ip: str | None = None,
+    user_agent: str | None = None,
     post_link_hook: PostLinkHook | None = None,
 ) -> AtomicApproval:
     requested_decision_id = decision_id
@@ -138,6 +142,37 @@ async def approve_with_optional_decision(
             ensure_item_row=ensure_item_row,
             link_decision=link_decision,
             approve_link=approve_link,
+        )
+        audit_metadata = {
+            "decision_id": int(resolved_decision_id),
+            "item": current_item,
+        }
+        if requested_decision_id is None:
+            await record_audit_event(
+                connection=conn,
+                user_id=user.get("id"),
+                email=user.get("email"),
+                action="control_room.decision.create",
+                resource_type="control_room_item",
+                resource_id=str(item["id"]),
+                ip=ip,
+                user_agent=user_agent,
+                status="success",
+                metadata=audit_metadata,
+                critical=True,
+            )
+        await record_audit_event(
+            connection=conn,
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="control_room.approve",
+            resource_type="control_room_item",
+            resource_id=str(item["id"]),
+            ip=ip,
+            user_agent=user_agent,
+            status="success",
+            metadata=audit_metadata,
+            critical=True,
         )
         return AtomicApproval(
             decision_id=int(resolved_decision_id),

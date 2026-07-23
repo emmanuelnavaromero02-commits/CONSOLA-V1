@@ -62,7 +62,7 @@ def test_empty_approve_body_remains_compatible() -> None:
 
 
 @pytest.mark.asyncio
-async def test_implicit_approval_has_one_scope_and_audits_after_commit() -> None:
+async def test_implicit_approval_has_one_scope_and_transactional_audits() -> None:
     order: list[str] = []
     scope_calls = 0
 
@@ -82,12 +82,14 @@ async def test_implicit_approval_has_one_scope_and_audits_after_commit() -> None
                 "metadata": {},
             }
 
+    connection = Connection()
+
     async def run_scope(_pool, _user, work):
         nonlocal scope_calls
         scope_calls += 1
         order.append("begin")
         result = await work(
-            Connection(),
+            connection,
             USER["active_tenant_id"],
             USER["active_workspace_id"],
         )
@@ -105,7 +107,8 @@ async def test_implicit_approval_has_one_scope_and_audits_after_commit() -> None
         return {"id": 8, "decision_id": 42, "ts": None}
 
     async def audit(**kwargs):
-        assert "commit" in order
+        assert kwargs["connection"] is connection
+        assert "commit" not in order
         order.append(f"audit:{kwargs['action']}")
 
     with (
@@ -144,15 +147,16 @@ async def test_implicit_approval_has_one_scope_and_audits_after_commit() -> None
         "create",
         "reconstruct",
         "approve",
-        "commit",
         "audit:control_room.decision.create",
         "audit:control_room.approve",
+        "commit",
     ]
 
 
 @pytest.mark.asyncio
 async def test_post_link_failpoint_aborts_the_single_scope() -> None:
     order: list[str] = []
+    audit = AsyncMock()
 
     async def run_scope(_pool, _user, work):
         order.append("begin")
@@ -185,7 +189,9 @@ async def test_post_link_failpoint_aborts_the_single_scope() -> None:
             approve_item=AsyncMock(),
             link_decision=AsyncMock(),
             approve_link=AsyncMock(),
+            record_audit_event=audit,
             post_link_hook=fail,
         )
 
     assert order == ["begin", "link", "failpoint", "rollback"]
+    audit.assert_not_awaited()

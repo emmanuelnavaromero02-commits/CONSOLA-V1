@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from unittest.mock import AsyncMock, patch
 
 from app.routers import control_room as control_room_router
-from app.services import control_room_service
+from app.services import audit_service, control_room_service
 from app.services.control_room.business_approve_with_optional_decision import (
     approve_with_optional_decision,
 )
@@ -54,6 +54,7 @@ async def _approve(
     *,
     user: dict,
     item: dict,
+    audit_recorder=None,
     post_link_hook=None,
 ):
     return await approve_with_optional_decision(
@@ -70,6 +71,7 @@ async def _approve(
         approve_item=control_room_service._approve_business_item,
         link_decision=control_room_service.link_control_room_decision,
         approve_link=control_room_service.approve_control_room_decision,
+        record_audit_event=audit_recorder or audit_service.record_event,
         post_link_hook=post_link_hook,
     )
 
@@ -161,7 +163,6 @@ async def test_live_empty_body_approval_is_atomic_and_returns_200(
 ) -> None:
     user, item = await _seed(postgres_with_real_init_schema, "p12-empty-body")
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=4)
-    audit = AsyncMock()
     try:
         with (
             patch.object(
@@ -172,7 +173,6 @@ async def test_live_empty_body_approval_is_atomic_and_returns_200(
             patch.object(
                 control_room_service.auth, "pool", AsyncMock(return_value=pool)
             ),
-            patch.object(control_room_service.audit_service, "record_event", audit),
         ):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=_app(user)),
@@ -191,10 +191,6 @@ async def test_live_empty_body_approval_is_atomic_and_returns_200(
     state = await _state(postgres_with_real_init_schema, user, item["id"])
     assert state["decision_id"] == response.json()["decision_id"]
     _assert_single_workflow(state, lessons=2)
-    assert [call.kwargs["action"] for call in audit.await_args_list] == [
-        "control_room.decision.create",
-        "control_room.approve",
-    ]
 
 
 @pytest.mark.asyncio

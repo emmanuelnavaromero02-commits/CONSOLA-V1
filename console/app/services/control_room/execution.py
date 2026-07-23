@@ -3603,35 +3603,13 @@ async def approve_item(
         approve_item=_approve_business_item,
         link_decision=link_control_room_decision,
         approve_link=approve_control_room_decision,
+        record_audit_event=audit_service.record_event,
+        ip=ip,
+        user_agent=user_agent,
     )
     decision_id = approval.decision_id
     action = approval.action
     item = approval.item
-    if approval.implicit_decision:
-        await audit_service.record_event(
-            user_id=user.get("id"),
-            email=user.get("email"),
-            action="control_room.decision.create",
-            resource_type="control_room_item",
-            resource_id=item_id,
-            ip=ip,
-            user_agent=user_agent,
-            status="success",
-            metadata={"decision_id": decision_id, "item": item},
-            critical=True,
-        )
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.approve",
-        resource_type="control_room_item",
-        resource_id=item_id,
-        ip=ip,
-        user_agent=user_agent,
-        status="success",
-        metadata={"decision_id": decision_id, "item": item},
-        critical=True,
-    )
     public_action = dict(action)
     if hasattr(public_action.get("ts"), "isoformat"):
         public_action["ts"] = public_action["ts"].isoformat()
