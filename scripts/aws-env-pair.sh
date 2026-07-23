@@ -74,6 +74,18 @@ write_evidence_env() {
   write_env_file "$AWS_ENV_EVIDENCE_TMP" "$1" "$2"
 }
 
+validate_evidence_keyring_pair() (
+  local validator="$1"
+
+  set -a
+  # shellcheck disable=SC1090
+  source "$AWS_ENV_SHARED_TMP"
+  # shellcheck disable=SC1090
+  source "$AWS_ENV_EVIDENCE_TMP"
+  set +a
+  python3 "$validator"
+)
+
 fetch_secret() {
   local name="$1"
   local arn="$2"

@@ -288,5 +288,9 @@ while IFS='=' read -r env_name env_value; do
   write_env "$replay_name" "$env_value"
 done < <(env)
 
+if ! validate_evidence_keyring_pair "$SCRIPT_DIR/validate-evidence-keyring.py"; then
+  echo "[aws-entrypoint] evidence signing keyring validation failed" >&2
+  exit 1
+fi
 publish_env_pair
 echo "[aws-entrypoint] runtime env written successfully"

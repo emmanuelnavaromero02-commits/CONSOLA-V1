@@ -4,6 +4,8 @@ umask 077
 
 SHARED_ENV_FILE="${1:-.env}"
 ENV_CONFIG="${MODECISSIONS_AWS_ENTRYPOINT_CONFIG:-/etc/modecissions/aws-entrypoint.env}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KEYRING_VALIDATOR="${MODECISSIONS_EVIDENCE_KEYRING_VALIDATOR:-${SCRIPT_DIR}/../../../scripts/validate-evidence-keyring.py}"
 MATERIAL_FILE=""
 STAGE_FILE=""
 
@@ -72,45 +74,10 @@ keyring_material_valid() {
   local current_key="$2"
   local previous_keys="$3"
 
-  [[ "$current_id" != *$'\n'* && "$current_id" != *$'\r'* ]] || return 1
-  [[ "$current_key" != *$'\n'* && "$current_key" != *$'\r'* ]] || return 1
-  [[ "$previous_keys" != *$'\n'* && "$previous_keys" != *$'\r'* ]] || return 1
-  OMEGA_CURRENT_ID="$current_id" \
-    OMEGA_CURRENT_KEY="$current_key" \
-    OMEGA_PREVIOUS_KEYS="$previous_keys" \
-    OMEGA_SECURITY_KEY="${SECURITY_CONTEXT_SIGNING_KEY:-}" \
-    python3 - <<'PY' >/dev/null 2>&1
-import hmac
-import json
-import os
-import re
-
-pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-current_id = os.environ["OMEGA_CURRENT_ID"].strip()
-current_key = os.environ["OMEGA_CURRENT_KEY"].strip()
-security_key = os.environ["OMEGA_SECURITY_KEY"].strip()
-try:
-    previous = json.loads(os.environ["OMEGA_PREVIOUS_KEYS"])
-except (TypeError, ValueError):
-    raise SystemExit(1)
-if not pattern.fullmatch(current_id) or len(current_key) < 32:
-    raise SystemExit(1)
-if security_key and hmac.compare_digest(current_key, security_key):
-    raise SystemExit(1)
-if not isinstance(previous, dict):
-    raise SystemExit(1)
-for key_id, key in previous.items():
-    if not isinstance(key_id, str) or not isinstance(key, str):
-        raise SystemExit(1)
-    normalized_id = key_id.strip()
-    normalized_key = key.strip()
-    if not pattern.fullmatch(normalized_id) or len(normalized_key) < 32:
-        raise SystemExit(1)
-    if normalized_id == current_id or hmac.compare_digest(normalized_key, current_key):
-        raise SystemExit(1)
-    if security_key and hmac.compare_digest(normalized_key, security_key):
-        raise SystemExit(1)
-PY
+  CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID="$current_id" \
+    CONTROL_ROOM_EVIDENCE_SIGNING_KEY="$current_key" \
+    CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS="$previous_keys" \
+    python3 "$KEYRING_VALIDATOR" >/dev/null 2>&1
 }
 
 keyring_complete() (

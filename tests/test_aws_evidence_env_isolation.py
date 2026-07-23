@@ -21,6 +21,9 @@ EVIDENCE_NAMES = (
     "CONTROL_ROOM_EVIDENCE_SIGNING_KEY",
     "CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS",
 )
+CURRENT_KEY = "current-secret-value-" + ("k" * 32)
+PREVIOUS_KEY = "previous-secret-value-" + ("p" * 32)
+PREVIOUS_KEYS = f'{{"evidence-v1":"{PREVIOUS_KEY}"}}'
 
 
 def _array(source: str, name: str) -> list[str]:
@@ -106,8 +109,8 @@ def _entrypoint_env(tmp_path: Path, *, custom_private: bool = False) -> dict[str
             "FAKE_AWS_CALLS": str(tmp_path / "aws.calls"),
             "FAKE_INSTALL_CALLS": str(tmp_path / "install.calls"),
             "FAKE_CURRENT_ID": "evidence-current-v2",
-            "FAKE_CURRENT_KEY": "current-secret-value",
-            "FAKE_PREVIOUS": '{"evidence-v1":"previous-secret-value"}',
+            "FAKE_CURRENT_KEY": CURRENT_KEY,
+            "FAKE_PREVIOUS": PREVIOUS_KEYS,
         }
     )
     if custom_private:
@@ -170,7 +173,7 @@ def test_entrypoint_splits_evidence_env_with_secure_install_and_replay(
     assert 'TENANT_ID="tenant-replay"' in shared_text
     assert 'WORKSPACE_ID="workspace-replay"' in shared_text
     assert 'CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID="evidence-current-v2"' in private_text
-    assert 'CONTROL_ROOM_EVIDENCE_SIGNING_KEY="current-secret-value"' in private_text
+    assert f'CONTROL_ROOM_EVIDENCE_SIGNING_KEY="{CURRENT_KEY}"' in private_text
     assert "poison" not in private_text
     assert f'MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE="{private}"' in shared_text
     assert not re.search(r"(?m)^FILE=", shared_text)
@@ -184,12 +187,30 @@ def test_entrypoint_splits_evidence_env_with_secure_install_and_replay(
         result.stdout + result.stderr + (tmp_path / "entrypoint.log").read_text()
     )
     for secret in (
-        "current-secret-value",
-        "previous-secret-value",
+        CURRENT_KEY,
+        PREVIOUS_KEY,
         "stderr-secret-must-not-leak",
         "arn:test:",
     ):
         assert secret not in combined_log
+
+
+def test_entrypoint_rejects_invalid_keyring_before_pair_publish(
+    tmp_path: Path,
+) -> None:
+    env = _entrypoint_env(tmp_path)
+    env["FAKE_PREVIOUS"] = "{not-json}"
+
+    result = _run(env)
+
+    combined_log = (
+        result.stdout + result.stderr + (tmp_path / "entrypoint.log").read_text()
+    )
+    assert result.returncode == 1
+    assert "evidence signing keyring validation failed" in combined_log
+    assert "{not-json}" not in combined_log
+    assert not Path(env["MODECISSIONS_ENV_FILE"]).exists()
+    assert not Path(f"{env['MODECISSIONS_ENV_FILE']}.control-room-evidence").exists()
 
 
 @pytest.mark.parametrize("failed_name", EVIDENCE_NAMES)
