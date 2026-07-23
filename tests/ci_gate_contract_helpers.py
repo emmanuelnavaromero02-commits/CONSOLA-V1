@@ -78,9 +78,12 @@ def assert_gate_rejects(result: subprocess.CompletedProcess[str]) -> None:
 
 
 def detector_outputs(*files: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("GITHUB_OUTPUT", None)
     result = subprocess.run(
         ["python3", "scripts/ci_changed_areas.py", "--files", *files],
         cwd=ROOT,
+        env=env,
         capture_output=True,
         text=True,
         timeout=10,
