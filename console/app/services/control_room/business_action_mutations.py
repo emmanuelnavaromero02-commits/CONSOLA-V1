@@ -8,6 +8,9 @@ from fastapi import HTTPException
 
 from app.services.control_room.business_access import expected_item_owner
 from app.services.control_room.business_item_persistence import parse_command_tag
+from app.services.control_room.business_status_transition import (
+    persist_status_transition as _persist_status_transition,
+)
 
 
 ItemWriter = Callable[..., Awaitable[None]]
@@ -179,48 +182,16 @@ async def persist_status_transition(
     reason: str,
     ensure_item_row: ItemWriter,
 ) -> None:
-    if target_status == "dismissed":
-        await _ensure(
-            ensure_item_row,
-            conn,
-            user=user,
-            item=item,
-            status=target_status,
-        )
-        sql = """
-            UPDATE control_room_items
-               SET status = 'dismissed',
-                   dismissed_at = COALESCE(dismissed_at, NOW()),
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1 AND item_id = $2
-               AND owner_user_id IS NOT DISTINCT FROM $3
-        """
-    elif target_status == "open":
-        sql = """
-            UPDATE control_room_items
-               SET status = 'open', resolved_at = NULL, dismissed_at = NULL,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $1 AND item_id = $2
-               AND owner_user_id IS NOT DISTINCT FROM $3
-               AND status = 'dismissed'
-               AND decision_id IS NULL
-               AND NULLIF(BTRIM(selected_option_id), '') IS NULL
-               AND COALESCE(NULLIF(BTRIM(execution_status), ''), 'not_started') = 'not_started'
-               AND NOT (
-                   COALESCE(metadata, '{}'::jsonb)
-                   ? 'decision_eligibility_provenance'
-               )
-        """
-    else:  # pragma: no cover - callers use the two declared transitions.
-        raise ValueError("unsupported control room status transition")
-    result = await conn.execute(sql, workspace_id, item["id"], _owner(item, user))
-    _require_count(result, "UPDATE")
-    await _record_event(
+    await _persist_status_transition(
         conn,
         user=user,
         item=item,
+        workspace_id=workspace_id,
+        target_status=target_status,
         event_type=event_type,
-        metadata={"reason": reason},
+        reason=reason,
+        ensure_item_row=ensure_item_row,
+        record_event=_record_event,
     )
 
 

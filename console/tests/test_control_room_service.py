@@ -3623,7 +3623,10 @@ async def test_dismiss_item_persists_state_and_records_audit_event():
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
-    mock_pool.fetchrow.return_value = None
+    mock_pool.fetchrow.side_effect = [
+        None,
+        {"item_id": anomaly["id"], "status": "open"},
+    ]
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
