@@ -73,6 +73,9 @@ from app.services.control_room.business_action_mutations import (
     persist_step as _persist_step,
     require_exact_count as _require_exact_count,
 )
+from app.services.control_room.business_alert_operation_with_audit import (
+    persist_alert_operation_with_audit as _persist_alert_operation_with_audit,
+)
 from app.services.control_room.business_dismiss_reopen_with_audit import (
     dismiss_with_audit as _dismiss_with_audit,
     reopen_with_audit as _reopen_with_audit,
@@ -131,6 +134,9 @@ _core.__dict__.setdefault(
     "_approve_with_optional_decision", _approve_with_optional_decision
 )
 _core.__dict__.setdefault("_persist_alert_state", _persist_alert_state)
+_core.__dict__.setdefault(
+    "_persist_alert_operation_with_audit", _persist_alert_operation_with_audit
+)
 _core.__dict__.setdefault("_persist_control", _persist_control)
 _core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
 _core.__dict__.setdefault("_persist_step", _persist_step)
@@ -3754,7 +3760,7 @@ async def _operate_alert(
     body = body if isinstance(body, dict) else {}
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     current_status = str(item.get("status") or "open")
-    if current_status in TERMINAL_ITEM_STATUSES and next_state != "false_positive":
+    if current_status in TERMINAL_ITEM_STATUSES:
         raise HTTPException(409, "terminal control room item has no active alert")
     if not _alert_for_item(item) and next_state != "false_positive":
         raise HTTPException(404, "active alert not found")
@@ -3794,43 +3800,32 @@ async def _operate_alert(
         if next_state == "false_positive"
         else (current_status if current_status not in {"open", ""} else "in_review")
     )
-    pool = await auth.pool()
-
-    async def _write_alert_state(
-        conn: Any, _tenant_id: str | None, workspace_id: str
-    ) -> None:
-        await _persist_alert_state(
-            conn,
-            user=user,
-            item=item,
-            workspace_id=workspace_id,
-            target_status=target_status,
-            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
-            alert_changes=alert_changes,
-            alert_defaults=alert_defaults,
-            event_type=event_type,
-            note=note,
-            reason=reason,
-            ensure_item_row=_ensure_item_row,
-        )
-
-    await _run_with_db_scope(pool, user, _write_alert_state)
     alert_state = merged_alert_state(
         {"alert_state": item.get("alert_state")},
         changes=alert_changes,
         defaults=alert_defaults,
     )
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action=audit_action,
-        resource_type="control_room_alert",
-        resource_id=item_id,
+    pool = await auth.pool()
+    await _persist_alert_operation_with_audit(
+        pool,
+        user=user,
+        item=item,
+        target_status=target_status,
+        terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+        alert_changes=alert_changes,
+        alert_defaults=alert_defaults,
+        alert_state=alert_state,
+        event_type=event_type,
+        note=note,
+        reason=reason,
+        audit_action=audit_action,
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"alert_state": alert_state, "item": item},
-        critical=next_state == "false_positive",
+        critical_audit=next_state == "false_positive",
+        run_scoped=_run_with_db_scope,
+        persist_alert_state=_persist_alert_state,
+        ensure_item_row=_ensure_item_row,
+        record_audit_event=audit_service.record_event,
     )
     public_item = _project_public_item(
         item, _with_omega, status=target_status, alert_state=alert_state

@@ -3844,7 +3844,10 @@ async def test_false_positive_alert_dismisses_item_and_removes_alert():
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
-    mock_pool.fetchrow.return_value = None
+    mock_pool.fetchrow.side_effect = [
+        None,
+        {"item_id": anomaly["id"], "status": "open"},
+    ]
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -3884,6 +3887,7 @@ async def test_false_positive_alert_dismisses_item_and_removes_alert():
         audit_event.await_args.kwargs["action"] == "control_room.alert.false_positive"
     )
     assert audit_event.await_args.kwargs["critical"] is True
+    assert audit_event.await_args.kwargs["connection"] is mock_pool
 
 
 # --- Fase 3 P0: Workforce Trends (fuente unica) ------------------------------

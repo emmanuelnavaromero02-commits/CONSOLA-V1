@@ -79,6 +79,10 @@ class _ZeroMutationConnection:
             return "INSERT 0 0"
         return "SELECT 1"
 
+    async def fetchrow(self, sql: str, *args):
+        del sql
+        return {"item_id": args[1], "status": "open"}
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -131,7 +135,11 @@ async def test_command_update_zero_rolls_back_without_success_audit(
         with pytest.raises(HTTPException) as exc:
             await getattr(control_room_service, command)(*args, **kwargs)
 
-    assert exc.value.status_code == 404
+    if command in {"dismiss_item", "mark_alert_false_positive"}:
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "workflow_stage_changed"
+    else:
+        assert exc.value.status_code == 404
     assert not any("control_room_item_events" in sql for sql in conn.statements)
     audit.assert_not_awaited()
 

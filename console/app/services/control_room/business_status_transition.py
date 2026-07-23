@@ -23,7 +23,7 @@ def _require_update_count(result: Any) -> None:
         raise HTTPException(404, "control room item not found")
 
 
-def _require_dismiss_count(result: Any) -> None:
+def require_dismiss_count(result: Any) -> None:
     count = parse_command_tag(result, "UPDATE")
     if count == 0:
         raise HTTPException(
@@ -37,7 +37,7 @@ def _require_dismiss_count(result: Any) -> None:
         raise RuntimeError("control room update affected unexpected rows")
 
 
-async def _lock_dismiss_target(
+async def lock_dismiss_target(
     conn: Any,
     *,
     user: Mapping[str, Any],
@@ -84,7 +84,7 @@ async def _dismiss(
     workspace_id: str,
     ensure_item_row: ItemWriter,
 ) -> None:
-    owner_user_id = await _lock_dismiss_target(
+    owner_user_id = await lock_dismiss_target(
         conn,
         user=user,
         item=item,
@@ -108,7 +108,7 @@ async def _dismiss(
         owner_user_id,
         sorted(TERMINAL_WORKFLOW_STATUSES),
     )
-    _require_dismiss_count(result)
+    require_dismiss_count(result)
 
 
 async def _reopen(
@@ -182,4 +182,8 @@ async def persist_status_transition(
     )
 
 
-__all__ = ("persist_status_transition",)
+__all__ = (
+    "lock_dismiss_target",
+    "persist_status_transition",
+    "require_dismiss_count",
+)

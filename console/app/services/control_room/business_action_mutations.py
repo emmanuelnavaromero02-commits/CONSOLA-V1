@@ -9,7 +9,9 @@ from fastapi import HTTPException
 from app.services.control_room.business_access import expected_item_owner
 from app.services.control_room.business_item_persistence import parse_command_tag
 from app.services.control_room.business_status_transition import (
+    lock_dismiss_target,
     persist_status_transition as _persist_status_transition,
+    require_dismiss_count,
 )
 
 
@@ -210,18 +212,27 @@ async def persist_alert_state(
     reason: str,
     ensure_item_row: ItemWriter,
 ) -> None:
-    await _ensure(
-        ensure_item_row,
-        conn,
-        user=user,
-        item=item,
-        status=target_status,
-    )
+    if target_status == "dismissed":
+        owner_user_id = await lock_dismiss_target(
+            conn,
+            user=user,
+            item=item,
+            workspace_id=workspace_id,
+            ensure_item_row=ensure_item_row,
+        )
+    else:
+        await _ensure(
+            ensure_item_row,
+            conn,
+            user=user,
+            item=item,
+            status=target_status,
+        )
+        owner_user_id = _owner(item, user)
     result = await conn.execute(
         """
         UPDATE control_room_items
            SET status = CASE
-                   WHEN $7 = 'dismissed' THEN 'dismissed'
                    WHEN status = ANY($6::text[]) THEN status ELSE $7
                END,
                metadata = jsonb_set(
@@ -237,16 +248,25 @@ async def persist_alert_state(
                last_seen_at = NOW()
          WHERE workspace_id = $3 AND item_id = $4
            AND owner_user_id IS NOT DISTINCT FROM $5
+           AND (
+               $7 <> 'dismissed'
+               OR LOWER(
+                   COALESCE(NULLIF(BTRIM(status), ''), 'open')
+               ) <> ALL($6::text[])
+           )
         """,
         json.dumps(dict(alert_defaults or {})),
         json.dumps(dict(alert_changes)),
         workspace_id,
         item["id"],
-        _owner(item, user),
+        owner_user_id,
         list(terminal_statuses),
         target_status,
     )
-    _require_count(result, "UPDATE")
+    if target_status == "dismissed":
+        require_dismiss_count(result)
+    else:
+        _require_count(result, "UPDATE")
     await _record_event(
         conn,
         user=user,

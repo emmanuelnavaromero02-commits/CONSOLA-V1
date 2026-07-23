@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.control_room.business_action_mutations import (
+    persist_alert_state,
     persist_status_transition,
 )
 from app.services.control_room.business_item_persistence import (
@@ -92,6 +93,29 @@ async def _dismiss(
         target_status="dismissed",
         event_type="dismissed",
         reason="not actionable",
+        ensure_item_row=writer,
+    )
+    return writer
+
+
+async def _false_positive(
+    conn: DismissConnection,
+    *,
+    ensure: AsyncMock | None = None,
+) -> AsyncMock:
+    writer = ensure or AsyncMock()
+    await persist_alert_state(
+        conn,
+        user=USER,
+        item=_item(),
+        workspace_id="workspace-a",
+        target_status="dismissed",
+        terminal_statuses=sorted(TERMINAL_WORKFLOW_STATUSES),
+        alert_changes={"state": "false_positive"},
+        alert_defaults={},
+        event_type="alert_false_positive",
+        note="",
+        reason="duplicate",
         ensure_item_row=writer,
     )
     return writer
@@ -235,3 +259,32 @@ async def test_dismiss_requires_exact_update_command_tag(
 
     assert len(_execute_calls(conn)) == 1
     ensure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", sorted(TERMINAL_WORKFLOW_STATUSES))
+async def test_false_positive_rejects_authoritative_terminal_before_dml(
+    status: str,
+) -> None:
+    conn = DismissConnection(status=status)
+    ensure = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await _false_positive(conn, ensure=ensure)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "terminal_item"
+    assert not _execute_calls(conn)
+    ensure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_false_positive_cas_miss_returns_conflict_without_event() -> None:
+    conn = DismissConnection(update_tag="UPDATE 0")
+
+    with pytest.raises(HTTPException) as exc:
+        await _false_positive(conn)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "workflow_stage_changed"
+    assert len(_execute_calls(conn)) == 1

@@ -8,6 +8,9 @@ from app.services.control_room.business_dismiss_reopen_with_audit import (
     dismiss_with_audit,
     reopen_with_audit,
 )
+from app.services.control_room.business_alert_operation_with_audit import (
+    persist_alert_operation_with_audit,
+)
 
 
 USER = {
@@ -147,3 +150,46 @@ async def test_audit_failure_propagates_through_scope_rollback(operation: str) -
         f"audit:control_room.{operation}",
         "rollback",
     ]
+
+
+@pytest.mark.asyncio
+async def test_false_positive_critical_audit_runs_before_scope_commit() -> None:
+    order: list[str] = []
+    connection = object()
+
+    async def run_scoped(_pool, _user, work):
+        order.append("begin")
+        await work(connection, "tenant-a", "workspace-a")
+        order.append("commit")
+
+    async def persist_alert_state(_conn, **_kwargs):
+        order.append("transition")
+
+    async def record_audit_event(**kwargs):
+        assert kwargs["connection"] is connection
+        assert kwargs["critical"] is True
+        order.append("audit")
+
+    await persist_alert_operation_with_audit(
+        object(),
+        user=USER,
+        item=ITEM,
+        target_status="dismissed",
+        terminal_statuses=("approved", "dismissed", "resolved"),
+        alert_changes={"state": "false_positive"},
+        alert_defaults={},
+        alert_state={"state": "false_positive"},
+        event_type="alert_false_positive",
+        note="",
+        reason="duplicate",
+        audit_action="control_room.alert.false_positive",
+        ip=None,
+        user_agent=None,
+        critical_audit=True,
+        run_scoped=run_scoped,
+        persist_alert_state=persist_alert_state,
+        ensure_item_row=AsyncMock(),
+        record_audit_event=record_audit_event,
+    )
+
+    assert order == ["begin", "transition", "audit", "commit"]
