@@ -20,10 +20,19 @@ def adapter_error_outcome_is_ambiguous(
     *,
     remote_attempt_started: bool,
 ) -> bool:
-    from app.services.adapters import AdapterConfigurationError
+    from app.services.adapters import (
+        AdapterCircuitOpenError,
+        AdapterConfigurationError,
+    )
 
-    if not remote_attempt_started or isinstance(error, AdapterConfigurationError):
+    if not remote_attempt_started or isinstance(
+        error,
+        (AdapterCircuitOpenError, AdapterConfigurationError),
+    ):
         return False
+    explicit_outcome = getattr(error, "outcome_ambiguous", None)
+    if explicit_outcome is not None:
+        return bool(explicit_outcome)
     status_code = error.status_code
     return status_code is None or status_code == 429 or 500 <= status_code <= 599
 
