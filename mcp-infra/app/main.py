@@ -24,9 +24,16 @@ from urllib.parse import unquote
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from app import registry
 from app.rag.embeddings import EmbeddingProviderError
+from app.rag.ingest import (
+    RagIngestError,
+    extract_pdf_text,
+    read_ingest_body,
+    validate_text_content,
+)
 from app.security import get_internal_api_key
 from app.config import settings
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
@@ -1061,7 +1068,12 @@ def _scoped_rag_document_name(ctx: dict[str, Any], name: str) -> str:
     name = str(name or "").strip()
     if _is_unscoped_admin_context(ctx) or not _has_tenant_workspace_scope(ctx):
         return name
-    if _RAG_SCOPE_SUFFIX_RE.search(name):
+    match = _RAG_SCOPE_SUFFIX_RE.search(name)
+    if match:
+        tenant_id = str(ctx.get("tenant_id") or "").strip()
+        workspace_id = str(ctx.get("workspace_id") or "").strip()
+        if match.group(1) != tenant_id or match.group(2) != workspace_id:
+            raise HTTPException(403, detail="RAG source is outside caller scope")
         return name
     return f"{name}{_rag_scope_suffix(ctx)}"
 
@@ -1510,7 +1522,6 @@ def health():
 
 # ── RAG REST endpoints (used by Studio UI) ─────────────────────────────────────
 
-import io as _io
 from app.rag.store import list_sources as _rag_list_sources, delete_source as _rag_delete_source
 from app.tools.rag import _do_ingest as _rag_do_ingest, _do_search as _rag_do_search
 
@@ -1600,7 +1611,11 @@ async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api
 
 
 @app.post("/rag/ingest")
-async def rag_rest_ingest(body: dict, internal_service: str = Depends(verify_api_key)):
+async def rag_rest_ingest(request: Request, internal_service: str = Depends(verify_api_key)):
+    try:
+        body = await read_ingest_body(request)
+    except RagIngestError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
     fake_req = InvokeRequest(tool="ingest_document", args={}, security_context=body.get("security_context") or {})
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
     _require_rag_context_scope(ctx)
@@ -1613,13 +1628,15 @@ async def rag_rest_ingest(body: dict, internal_service: str = Depends(verify_api
         source_name = _scoped_rag_document_name(ctx, source_name)
     content = body.get("content", "")
     if body.get("mime_type") == "application/pdf":
-        import base64
-        from pypdf import PdfReader
-        pdf_bytes = base64.b64decode(body["content"])
-        reader = PdfReader(_io.BytesIO(pdf_bytes))
-        content = "\n\n".join(page.extract_text() or "" for page in reader.pages).strip()
-        if not content:
-            raise HTTPException(400, "Could not extract text from PDF")
+        try:
+            content = await run_in_threadpool(extract_pdf_text, content)
+        except RagIngestError as exc:
+            raise HTTPException(exc.status_code, exc.detail) from exc
+    else:
+        try:
+            content = validate_text_content(content)
+        except RagIngestError as exc:
+            raise HTTPException(exc.status_code, exc.detail) from exc
     try:
         return await _rag_do_ingest(
             name=source_name,

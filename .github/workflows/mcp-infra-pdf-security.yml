@@ -1,0 +1,39 @@
+name: MCP Infra PDF Security
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  functional-pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            tests/requirements.txt
+            mcp-infra/requirements.txt
+
+      - name: Install functional test dependencies
+        run: |
+          python -m pip install -r tests/requirements.txt
+          python -m pip install -r mcp-infra/requirements.txt
+
+      - name: Run protected PDF ingestion regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_mcp_infra_pdf_ingest.py \
+            tests/test_pypdf_security.py \
+            tests/test_mcp_infra_pdf_ci_contract.py
