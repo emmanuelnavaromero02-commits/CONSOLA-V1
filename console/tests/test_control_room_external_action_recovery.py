@@ -97,7 +97,11 @@ async def test_remote_success_late_local_failure_carries_durable_receipt():
     with (
         patch.object(control_room_service, "require_approved_execution", AsyncMock()),
         patch.object(
-            control_room_service, "lock_pending_action_reservation", AsyncMock()
+            control_room_service,
+            "lock_pending_action_reservation",
+            AsyncMock(
+                return_value={"metadata": {"remote_attempt": {"status": "started"}}}
+            ),
         ),
         patch.object(
             control_room_service, "_record_writeback_audit_event", AsyncMock()

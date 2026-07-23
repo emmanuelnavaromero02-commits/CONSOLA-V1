@@ -90,6 +90,7 @@ from app.services.control_room.business_action_reservation import (
 from app.services.control_room.business_action_attempt import (
     mark_remote_attempt_ambiguous,
     mark_remote_attempt_started,
+    remote_attempt_status,
 )
 from app.services.control_room.business_external_outcome import (
     ambiguous_adapter_error_response,
@@ -152,6 +153,7 @@ for _helper in (
     complete_action_reservation,
     mark_remote_attempt_ambiguous,
     mark_remote_attempt_started,
+    remote_attempt_status,
     ambiguous_adapter_error_response,
     finalize_aborted_action_reservation,
     run_reserved_external_action,
@@ -2874,7 +2876,7 @@ async def _execute_external_writeback(
         item=item,
         template_id=str(template["template_id"]),
     )
-    await lock_pending_action_reservation(
+    locked_reservation = await lock_pending_action_reservation(
         pool,
         user=user,
         item=item,
@@ -2882,6 +2884,8 @@ async def _execute_external_writeback(
         reservation_id=reservation.id,
         effective_key=reservation.effective_key,
     )
+    if remote_attempt_status(locked_reservation) != "started":
+        raise HTTPException(409, "remote attempt was not durably prepared")
     idempotency_key = reservation.effective_key
     cartridge_id = str(
         template.get("cartridge_id") or item.get("cartridge") or ""
@@ -2955,14 +2959,6 @@ async def _execute_external_writeback(
                 "external write-back adapter does not guarantee idempotency"
             )
         adapter_name = adapter.__class__.__name__
-        await mark_remote_attempt_started(
-            pool,
-            workspace_id=_workspace_id(user),
-            reservation_id=reservation.id,
-            effective_key=reservation.effective_key,
-            adapter=adapter_name,
-            target=str(target),
-        )
         remote_attempt_started = True
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
@@ -3549,6 +3545,18 @@ async def execute_item(
             return _reserved_action_response(reservation, item=item, payload=payload)
         response = await run_reserved_external_action(
             run_scoped=_with_scoped_db,
+            prepare=lambda db: mark_remote_attempt_started(
+                db,
+                workspace_id=_workspace_id(user),
+                reservation_id=reservation.id,
+                effective_key=reservation.effective_key,
+                adapter=adapter.__class__.__name__,
+                target=str(
+                    template.get("cartridge_id")
+                    or item.get("cartridge")
+                    or "external_system"
+                ),
+            ),
             execute=lambda db: _execute_external_writeback(
                 db,
                 user=user,

@@ -80,6 +80,12 @@ class SapHcmAdapter(BaseAdapter):
                 status_code=503,
                 outcome_ambiguous=True,
             ) from exc
+        except ValueError as exc:
+            CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)
+            raise AdapterExecutionError(
+                "SAP HCM POST returned an invalid response",
+                outcome_ambiguous=True,
+            ) from exc
 
         status_code = response.status_code
         outcome_ambiguous = (

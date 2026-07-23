@@ -85,12 +85,14 @@ async def finalize_aborted_action_reservation(
 async def run_reserved_external_action(
     *,
     run_scoped: Callable[[Callable[[Any], Awaitable[Any]]], Awaitable[Any]],
+    prepare: Callable[[Any], Awaitable[Any]],
     execute: Callable[[Any], Awaitable[dict[str, Any]]],
     finalize: Callable[..., Awaitable[Any]],
     workspace_id: str,
     reservation: ActionReservation,
 ) -> dict[str, Any]:
     try:
+        await run_scoped(prepare)
         return await run_scoped(execute)
     except Exception as error:
         await run_scoped(

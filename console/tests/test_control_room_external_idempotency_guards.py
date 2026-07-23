@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.services import control_room_service
 from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
@@ -84,6 +85,51 @@ def test_replay_of_remote_attempt_returns_reconciliation_code():
 
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "external_action_pending_reconciliation"
+
+
+@pytest.mark.asyncio
+async def test_external_execution_requires_durable_attempt_marker():
+    reservation = ActionReservation(
+        id=7,
+        effective_key="cr-action:v1:missing-marker",
+        state=ReservationState.ACQUIRED,
+        row={},
+    )
+    audit = AsyncMock()
+    with (
+        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
+        patch.object(
+            control_room_service,
+            "lock_pending_action_reservation",
+            AsyncMock(return_value={"metadata": {}}),
+        ),
+        patch.object(
+            control_room_service,
+            "_record_writeback_audit_event",
+            audit,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service._execute_external_writeback(
+                AsyncMock(),
+                user={
+                    "id": 7,
+                    "active_tenant_id": "tenant-a",
+                    "active_workspace_id": "workspace-a",
+                },
+                item={**_item(), "tenant_id": "tenant-a"},
+                template={
+                    "template_id": "external-template",
+                    "cartridge_id": "sap_hcm",
+                },
+                payload={},
+                reservation=reservation,
+                ip=None,
+                user_agent=None,
+            )
+
+    assert exc.value.status_code == 409
+    audit.assert_not_awaited()
 
 
 def test_sap_hcm_sends_idempotency_key_as_header():

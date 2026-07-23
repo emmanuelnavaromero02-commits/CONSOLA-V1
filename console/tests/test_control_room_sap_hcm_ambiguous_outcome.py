@@ -83,7 +83,6 @@ async def _run_real_sap_outcome(
         )
 
     adapter = SapHcmAdapter()
-    mark_started = AsyncMock(return_value={"id": 92, "status": "pending"})
     mark_ambiguous = AsyncMock(return_value={"id": 92, "status": "pending"})
     record_execution = AsyncMock(return_value={"id": 102})
     complete_reservation = AsyncMock(return_value={"id": 92, "status": "failed"})
@@ -99,7 +98,9 @@ async def _run_real_sap_outcome(
             patch.object(
                 control_room_service,
                 "lock_pending_action_reservation",
-                new=AsyncMock(),
+                new=AsyncMock(
+                    return_value={"metadata": {"remote_attempt": {"status": "started"}}}
+                ),
             ),
             patch.object(
                 control_room_service,
@@ -123,11 +124,6 @@ async def _run_real_sap_outcome(
                 control_room_service,
                 "adapter_guarantees_idempotency",
                 return_value=True,
-            ),
-            patch.object(
-                control_room_service,
-                "mark_remote_attempt_started",
-                new=mark_started,
             ),
             patch(
                 "app.services.control_room.business_external_outcome."
@@ -177,7 +173,6 @@ async def _run_real_sap_outcome(
         CartridgeCircuitBreaker.reset(SapHcmAdapter.CARTRIDGE_ID)
 
     assert adapter.__class__ is SapHcmAdapter
-    mark_started.assert_awaited_once()
     return SapOutcomeRun(
         response=response,
         request_methods=request_methods,
@@ -199,6 +194,7 @@ async def _run_real_sap_outcome(
             1,
             ["GET", "POST"],
         ),
+        (200, ValueError("invalid chunk size"), 1, ["GET", "POST"]),
         (200, 0, 1, ["GET", "POST"]),
         (200, 429, 1, ["GET", "POST"]),
         (200, 503, 1, ["GET", "POST"]),
@@ -211,6 +207,7 @@ async def _run_real_sap_outcome(
         "post-timeout",
         "post-os-error",
         "post-response-guard",
+        "post-malformed-chunk",
         "post-malformed-status",
         "post-429",
         "post-503",

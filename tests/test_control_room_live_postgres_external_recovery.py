@@ -14,6 +14,10 @@ from app.services.control_room.business_action_reservation import (
 from app.services.control_room.business_action_failure import (
     finalize_aborted_action_reservation,
 )
+from app.services.control_room.business_action_attempt import (
+    mark_remote_attempt_started,
+    remote_attempt_status,
+)
 from app.services.control_room.business_external_effect import (
     RemoteSideEffectCommitted,
 )
@@ -88,6 +92,64 @@ async def test_live_stale_external_reservation_reclaims_same_row_and_key(
 
 
 @pytest.mark.asyncio
+async def test_live_durable_remote_attempt_is_never_reclaimed(
+    postgres_with_real_init_schema: str,
+):
+    tenant_id, workspace_id, item = await _linked_item(
+        postgres_with_real_init_schema,
+        "p15-external-durable-attempt",
+    )
+    setup = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        await setup.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+        first = await acquire_action_reservation(
+            setup,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            item=item,
+            template_id="external-durable-attempt",
+            adapter_name="IdempotentAdapter",
+            operation="execute",
+        )
+        await mark_remote_attempt_started(
+            setup,
+            workspace_id=workspace_id,
+            reservation_id=first.id,
+            effective_key=first.effective_key,
+            adapter="IdempotentAdapter",
+            target="sap_hcm",
+        )
+        await setup.execute(
+            """UPDATE action_runs
+                  SET updated_at = NOW() - INTERVAL '10 minutes'
+                WHERE workspace_id=$1 AND id=$2""",
+            workspace_id,
+            first.id,
+        )
+    finally:
+        await setup.close()
+
+    retry_conn = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        await retry_conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
+        retry = await acquire_action_reservation(
+            retry_conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            item=item,
+            template_id="external-durable-attempt",
+            adapter_name="IdempotentAdapter",
+            operation="execute",
+        )
+    finally:
+        await retry_conn.close()
+
+    assert retry.state is ReservationState.IN_PROGRESS
+    assert retry.id == first.id
+    assert remote_attempt_status(retry.row) == "started"
+
+
+@pytest.mark.asyncio
 async def test_live_remote_receipt_projects_authoritative_item_once(
     postgres_with_real_init_schema: str, monkeypatch: pytest.MonkeyPatch
 ):
@@ -123,6 +185,14 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
             adapter_name="Adapter",
             operation="execute",
             input_payload=payload,
+        )
+        await mark_remote_attempt_started(
+            setup,
+            workspace_id=workspace_id,
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+            adapter="Adapter",
+            target="replicon",
         )
     finally:
         await setup.close()

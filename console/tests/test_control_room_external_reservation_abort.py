@@ -8,6 +8,9 @@ from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
 )
+from app.services.control_room.business_action_failure import (
+    run_reserved_external_action,
+)
 
 
 USER = {
@@ -37,6 +40,50 @@ def _item() -> dict:
 
 
 @pytest.mark.asyncio
+async def test_remote_attempt_preparation_commits_before_execute_scope():
+    events: list[str] = []
+    reservation = ActionReservation(
+        id=90,
+        effective_key="cr-action:v1:durable-attempt",
+        state=ReservationState.ACQUIRED,
+        row={},
+    )
+
+    async def run_scoped(operation):
+        events.append("scope:start")
+        try:
+            return await operation(object())
+        finally:
+            events.append("scope:end")
+
+    async def prepare(_db):
+        events.append("prepare")
+
+    async def execute(_db):
+        events.append("execute")
+        return {"executed": True}
+
+    result = await run_reserved_external_action(
+        run_scoped=run_scoped,
+        prepare=prepare,
+        execute=execute,
+        finalize=AsyncMock(),
+        workspace_id="workspace-a",
+        reservation=reservation,
+    )
+
+    assert result == {"executed": True}
+    assert events == [
+        "scope:start",
+        "prepare",
+        "scope:end",
+        "scope:start",
+        "execute",
+        "scope:end",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_external_guard_abort_finalizes_durable_reservation_before_reraise():
     item = _item()
     template = {
@@ -56,6 +103,7 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
         return await operation(db, "tenant-a", "workspace-a")
 
     finalizer = AsyncMock()
+    mark_started = AsyncMock(return_value={"id": 91, "status": "pending"})
     adapter = AsyncMock()
     adapter.supports_idempotency = True
     with (
@@ -107,6 +155,11 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
         ),
         patch.object(
             control_room_service,
+            "mark_remote_attempt_started",
+            new=mark_started,
+        ),
+        patch.object(
+            control_room_service,
             "_execute_external_writeback",
             new=AsyncMock(
                 side_effect=HTTPException(409, {"code": "item_business_state_changed"})
@@ -128,6 +181,7 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
             )
 
     assert exc.value.status_code == 409
+    mark_started.assert_awaited_once()
     finalizer.assert_awaited_once_with(
         db,
         workspace_id="workspace-a",

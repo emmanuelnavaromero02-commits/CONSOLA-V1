@@ -56,7 +56,6 @@ def _reservation() -> ActionReservation:
 class OutcomeRun:
     response: dict
     adapter: Mock
-    mark_started: AsyncMock
     mark_ambiguous: AsyncMock
     record_execution: AsyncMock
     complete_reservation: AsyncMock
@@ -70,7 +69,6 @@ async def _run_adapter_error(
 ) -> OutcomeRun:
     adapter = Mock(supports_idempotency=True)
     adapter.execute.side_effect = error
-    mark_started = AsyncMock(return_value={"id": 91, "status": "pending"})
     mark_ambiguous = AsyncMock(return_value={"id": 91, "status": "pending"})
     record_execution = AsyncMock(return_value={"id": 101})
     complete_reservation = AsyncMock(return_value={"id": 91, "status": "failed"})
@@ -88,7 +86,9 @@ async def _run_adapter_error(
         patch.object(
             control_room_service,
             "lock_pending_action_reservation",
-            new=AsyncMock(),
+            new=AsyncMock(
+                return_value={"metadata": {"remote_attempt": {"status": "started"}}}
+            ),
         ),
         patch.object(
             control_room_service,
@@ -109,11 +109,6 @@ async def _run_adapter_error(
             control_room_service,
             "adapter_guarantees_idempotency",
             return_value=True,
-        ),
-        patch.object(
-            control_room_service,
-            "mark_remote_attempt_started",
-            new=mark_started,
         ),
         patch(
             "app.services.control_room.business_external_outcome."
@@ -158,7 +153,6 @@ async def _run_adapter_error(
     return OutcomeRun(
         response=response,
         adapter=adapter,
-        mark_started=mark_started,
         mark_ambiguous=mark_ambiguous,
         record_execution=record_execution,
         complete_reservation=complete_reservation,
@@ -174,7 +168,6 @@ def _assert_pending_reconciliation(run: OutcomeRun) -> None:
     assert detail["idempotency_key"] == IDEMPOTENCY_KEY
     assert detail["remote_outcome"] == "ambiguous"
     assert detail["reconciliation_required"] is True
-    run.mark_started.assert_awaited_once()
     run.mark_ambiguous.assert_awaited_once()
     assert (
         run.mark_ambiguous.await_args.kwargs["error_code"]
@@ -222,7 +215,6 @@ async def test_definitive_4xx_after_started_is_failed(status_code):
     )
 
     assert run.response["_http_error_status"] == 502
-    run.mark_started.assert_awaited_once()
     run.mark_ambiguous.assert_not_awaited()
     assert run.record_execution.await_args.kwargs["status"] == "failed"
     assert run.complete_reservation.await_args.kwargs["status"] == "failed"
@@ -236,7 +228,6 @@ async def test_adapter_configuration_error_is_failed_without_reconciliation():
     )
 
     assert run.response["_http_error_status"] == 502
-    run.mark_started.assert_awaited_once()
     run.mark_ambiguous.assert_not_awaited()
     assert run.complete_reservation.await_args.kwargs["status"] == "failed"
 
@@ -249,7 +240,6 @@ async def test_error_before_remote_attempt_started_is_failed():
     )
 
     assert run.response["_http_error_status"] == 502
-    run.mark_started.assert_not_awaited()
     run.mark_ambiguous.assert_not_awaited()
     run.adapter.execute.assert_not_called()
     assert run.complete_reservation.await_args.kwargs["status"] == "failed"

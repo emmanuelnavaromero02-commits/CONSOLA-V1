@@ -297,3 +297,4 @@ async def test_approved_external_workflow_reaches_reserved_adapter_path(monkeypa
     assert result["executed"] is True
     reserve.assert_awaited_once()
     run.assert_awaited_once()
+    assert callable(run.await_args.kwargs["prepare"])

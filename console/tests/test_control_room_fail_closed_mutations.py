@@ -187,7 +187,11 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
         ),
         patch.object(control_room_service, "require_approved_execution", AsyncMock()),
         patch.object(
-            control_room_service, "lock_pending_action_reservation", AsyncMock()
+            control_room_service,
+            "lock_pending_action_reservation",
+            AsyncMock(
+                return_value={"metadata": {"remote_attempt": {"status": "started"}}}
+            ),
         ),
         patch.object(control_room_service, "_set_execution_status", AsyncMock()),
         patch.object(control_room_service, "_record_item_event", AsyncMock()),
