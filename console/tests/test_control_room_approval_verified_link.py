@@ -88,7 +88,13 @@ async def test_approve_accepts_verified_decision_link_for_owned_item():
         patch.object(control_room_service, "_ensure_item_row", ensure),
         patch(
             "app.services.control_room.business_action_approval.lock_authoritative_business_item",
-            AsyncMock(),
+            AsyncMock(
+                return_value={
+                    "item_id": "item-1",
+                    "decision_id": 91,
+                    "status": "decision_created",
+                }
+            ),
         ),
         patch.object(control_room_service, "link_control_room_decision", link_decision),
         patch.object(

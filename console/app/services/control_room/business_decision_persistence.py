@@ -11,6 +11,9 @@ from app.services.control_room.business_repository import (
     decision_provenance,
     link_control_room_decision,
 )
+from app.services.control_room.business_terminal_workflow_guard import (
+    require_nonterminal_workflow,
+)
 from app.services.control_room.business_workflow_provenance import (
     WorkflowStage,
     workflow_has_eligible_provenance,
@@ -66,6 +69,21 @@ async def create_and_link_decision(
     ensure_item_row: ItemWriter,
     record_item_event: ItemWriter,
 ) -> Any:
+    owner_user_id = expected_item_owner(item, user)
+    existing_state = await conn.fetchrow(
+        """SELECT item_id, status
+             FROM control_room_items
+            WHERE workspace_id = $1
+              AND item_id = $2
+              AND owner_user_id IS NOT DISTINCT FROM $3
+            FOR UPDATE""",
+        workspace_id,
+        item["id"],
+        owner_user_id,
+    )
+    require_nonterminal_workflow(
+        existing_state or item, operation="create or link a decision"
+    )
     initial_item = {
         **dict(item),
         "decision_id": None,
@@ -80,7 +98,6 @@ async def create_and_link_decision(
         critical=True,
         allow_diagnostic_transition=True,
     )
-    owner_user_id = expected_item_owner(item, user)
     locked = await conn.fetchrow(
         """SELECT item_id, decision_id, selected_option_id, owner_user_id, metadata,
                   status, execution_status
@@ -95,6 +112,7 @@ async def create_and_link_decision(
     )
     if not locked:
         raise HTTPException(404, "control room item not found")
+    require_nonterminal_workflow(locked, operation="create or link a decision")
     locked_item = {
         **dict(item),
         **dict(locked),

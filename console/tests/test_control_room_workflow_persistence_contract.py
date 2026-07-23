@@ -232,7 +232,7 @@ async def test_decision_creation_locks_item_before_inserting_decision():
         ensure_item_row=ensure,
         record_item_event=AsyncMock(),
     )
-    assert calls[:3] == ["ensure", "lock", "decision"]
+    assert calls[:4] == ["lock", "ensure", "lock", "decision"]
 
 
 @pytest.mark.asyncio

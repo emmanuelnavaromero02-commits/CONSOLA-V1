@@ -46,6 +46,14 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).not.toContain(">Reabrir<");
   });
 
+  it("does not advertise approval actions for terminal items", () => {
+    expect(pageSource).toContain('const terminalStatuses = new Set(["approved", "dismissed", "resolved"])');
+    expect(pageSource).toContain('function canApproveRecommendation(item: Pick<ControlItem, "status">)');
+    expect(pageSource).toContain("return !terminalStatuses.has(item.status)");
+    expect(pageSource).toContain("{canApproveRecommendation(item) ? (");
+    expect(pageSource).not.toContain('item.status === "approved" ? "Recomendación aprobada"');
+  });
+
   it("surfaces advisory agent monitor alerts distinctly", () => {
     expect(pageSource).toContain('type AlertSourceFilter = "all" | "agent" | "system" | "intelligence"');
     expect(pageSource).toContain("Agente monitor");

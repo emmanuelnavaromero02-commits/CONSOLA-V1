@@ -1950,6 +1950,10 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
         side_effect=[
+            {
+                "item_id": anomaly["id"],
+                "status": "open",
+            },
             _authoritative_item_row({**anomaly, "selected_option_id": None}),
             _authoritative_item_row({**anomaly, "selected_option_id": None}),
             decision_row,
@@ -2005,14 +2009,14 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
         )
 
     assert result["decision"]["id"] == 42
-    assert mock_pool.fetchrow.call_count == 6
-    insert_sql = mock_pool.fetchrow.call_args_list[2].args[0]
+    assert mock_pool.fetchrow.call_count == 7
+    insert_sql = mock_pool.fetchrow.call_args_list[3].args[0]
     assert "INSERT INTO decisions" in insert_sql
     assert "workspace_id" in insert_sql
-    assert mock_pool.fetchrow.call_args_list[2].args[-1] == "workspace-A"
-    action_sql = mock_pool.fetchrow.call_args_list[3].args[0]
+    assert mock_pool.fetchrow.call_args_list[3].args[-1] == "workspace-A"
+    action_sql = mock_pool.fetchrow.call_args_list[4].args[0]
     assert "INSERT INTO decision_actions" in action_sql
-    link_sql = mock_pool.fetchrow.call_args_list[5].args[0]
+    link_sql = mock_pool.fetchrow.call_args_list[6].args[0]
     assert "UPDATE control_room_items" in link_sql
     assert "RETURNING item_id" in link_sql
     audit_event.assert_awaited_once()

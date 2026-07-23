@@ -1004,6 +1004,10 @@ function activeOpen(item: ControlItem): boolean {
   return !terminalStatuses.has(item.status);
 }
 
+function canApproveRecommendation(item: Pick<ControlItem, "status">): boolean {
+  return !terminalStatuses.has(item.status);
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   if (isApiError(error) && error.message) return error.message;
   if (error instanceof Error && error.message) return error.message;
@@ -3942,15 +3946,17 @@ function DetailPage({
             onApplyLesson={onApplyLesson}
           />
           <div className="flex flex-wrap gap-2 border-t pt-4">
-            <button
-              type="button"
-              onClick={() => onApprove(item)}
-              disabled={busyAction !== "" || item.status === "approved"}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {busyAction === `approve:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
-              {item.status === "approved" ? "Recomendación aprobada" : "Aprobar recomendación"}
-            </button>
+            {canApproveRecommendation(item) ? (
+              <button
+                type="button"
+                onClick={() => onApprove(item)}
+                disabled={busyAction !== ""}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {busyAction === `approve:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
+                Aprobar recomendación
+              </button>
+            ) : null}
             <button type="button" onClick={() => onDismiss(item)} disabled={busyAction !== "" || terminalStatuses.has(item.status)} className="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-destructive/40 px-3 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50">
               {busyAction === `dismiss:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <XCircle aria-hidden className="h-4 w-4" />}
               Descartar

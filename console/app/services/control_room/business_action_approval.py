@@ -19,6 +19,9 @@ from app.services.control_room.business_action_mutations import (
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
 )
+from app.services.control_room.business_terminal_workflow_guard import (
+    require_nonterminal_workflow,
+)
 from app.services.control_room.business_workflow_provenance import (
     WorkflowStage,
     workflow_has_eligible_provenance,
@@ -58,7 +61,7 @@ async def require_approvable_decision(
     item_row = await conn.fetchrow(
         """
         SELECT item_id, decision_id, selected_option_id, owner_user_id,
-               item_kind, metadata
+               item_kind, status, metadata
           FROM control_room_items
          WHERE workspace_id = $1 AND item_id = $2
          FOR UPDATE
@@ -71,6 +74,8 @@ async def require_approvable_decision(
     workspace_wide = can_read_workspace_wide(user)
     if item_row and not workspace_wide and owner != actor:
         raise HTTPException(404, "decision not found")
+    if item_row:
+        require_nonterminal_workflow(item_row, operation="approve a decision")
     own_link = bool(item_row and item_row.get("decision_id") == decision_id)
     creator = actor_id(decision.get("created_by_id"))
     if not workspace_wide and not own_link and creator != actor:
@@ -188,13 +193,14 @@ async def approve_business_item(
         workspace_id=workspace_id,
         decision_id=decision_id,
     )
-    await lock_authoritative_business_item(
+    locked = await lock_authoritative_business_item(
         conn,
         user=user,
         item=item,
         decision_id=decision_id,
         allowed_stages=(WorkflowStage.DECISION_CREATED,),
     )
+    require_nonterminal_workflow(locked or item, operation="approve a decision")
     if not approved.linked:
         await link_decision(
             conn,
