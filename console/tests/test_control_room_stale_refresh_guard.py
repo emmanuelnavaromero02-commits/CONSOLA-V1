@@ -20,6 +20,7 @@ from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
 )
 from app.services.control_room.business_workflow_reconciliation import (
+    reconcile_workflow_metadata,
     workflow_metadata_patches,
 )
 
@@ -185,6 +186,33 @@ async def test_reconciliation_rejects_same_time_losing_fingerprint_before_patch(
     patches = await workflow_metadata_patches(_WorkflowConnection(existing), [loser])
 
     assert patches == {}
+
+
+@pytest.mark.asyncio
+async def test_modern_row_without_time_exports_total_order_baseline():
+    candidates = []
+    for value, title in ((3, "Correction A"), (4, "Correction B")):
+        row = _row(value, "", title=title)
+        row["metadata"] = {}
+        candidates.append(row)
+    loser, winner = sorted(candidates, key=business_observation_order)
+    existing = {
+        **winner,
+        "decision_id": 42,
+        "status": "decision_created",
+        "selected_option_id": "review",
+        "execution_status": "dry_run_validated",
+        "metadata": {CURRENT_ELIGIBILITY_FINGERPRINT_KEY: "modern"},
+    }
+
+    result = await reconcile_workflow_metadata(
+        _WorkflowConnection(existing),
+        [loser],
+    )
+
+    key = ("workspace-a", "business-1")
+    assert result.patches == {}
+    assert result.existing_orders[key] == business_observation_order(existing)
 
 
 def test_upserts_guard_semantics_and_workflow_with_the_same_order_token():

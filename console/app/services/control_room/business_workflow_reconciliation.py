@@ -177,10 +177,14 @@ async def reconcile_workflow_metadata(
         metadata = _mapping(existing.get("metadata"))
         existing_order = business_observation_order(_item(existing))
         current_order = business_observation_order(current)
-        if _order_has_instant(existing_order):
-            existing_orders[key] = existing_order
         has_modern_fingerprint = bool(metadata.get(CURRENT_ELIGIBILITY_FINGERPRINT_KEY))
         has_observation_order = bool(metadata.get(OBSERVATION_ORDER_KEY))
+        if (
+            _order_has_instant(existing_order)
+            or has_modern_fingerprint
+            or has_observation_order
+        ):
+            existing_orders[key] = existing_order
         if (has_observation_order or has_modern_fingerprint) and (
             current_order < existing_order
         ):
