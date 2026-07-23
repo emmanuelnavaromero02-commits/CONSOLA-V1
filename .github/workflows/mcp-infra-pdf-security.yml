@@ -35,5 +35,31 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_mcp_infra_pdf_ingest.py \
+            tests/test_mcp_infra_pdf_capacity.py \
+            tests/test_mcp_infra_pdf_compose_capacity.py \
             tests/test_pypdf_security.py \
-            tests/test_mcp_infra_pdf_ci_contract.py
+            tests/test_mcp_infra_pdf_ci_contract.py \
+            tests/test_lint_gate_contract.py \
+            tests/test_security_gate_contract.py \
+            tests/test_ci_detector_self_protection.py
+
+  pdf-gate:
+    name: pdf-gate
+    needs:
+      - functional-pdf
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Enforce fail-closed PDF results
+        shell: bash
+        env:
+          FUNCTIONAL_PDF_RESULT: ${{ needs['functional-pdf'].result }}
+        run: |
+          set -euo pipefail
+
+          result="${FUNCTIONAL_PDF_RESULT-}"
+          if [[ "$result" != "success" ]]; then
+            echo "::error::functional-pdf must be success; got '${result:-<missing>}'"
+            exit 1
+          fi

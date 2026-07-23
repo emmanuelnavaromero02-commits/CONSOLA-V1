@@ -60,6 +60,7 @@ jobs:
           # narrower threshold below.
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
+            scripts/ci_changed_areas.py \
             --severity-level medium \
             -f json -o bandit-report.json || true
           # v1.45.17 audit follow-up: fail the job on MEDIUM+
@@ -70,6 +71,7 @@ jobs:
           # before v1.0, but HIGH-confidence regressions still fail CI now.
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
+            scripts/ci_changed_areas.py \
             --severity-level medium \
             --confidence-level high
 
@@ -172,10 +174,97 @@ jobs:
   no-security-scan-needed:
     needs: changes
     if: |
-      needs.changes.outputs.python_runtime != 'true' &&
-      needs.changes.outputs.python_deps != 'true' &&
-      needs.changes.outputs.node_deps != 'true' &&
-      needs.changes.outputs.infra != 'true'
+      needs.changes.outputs.python_runtime == 'false' &&
+      needs.changes.outputs.python_deps == 'false' &&
+      needs.changes.outputs.node_deps == 'false' &&
+      needs.changes.outputs.infra == 'false'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No runtime code, dependency, or workflow files changed; security scans skipped."
+
+  security-gate:
+    name: security-gate
+    needs:
+      - changes
+      - bandit
+      - pip-audit
+      - npm-audit
+      - no-security-scan-needed
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Enforce fail-closed security results
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          PYTHON_RUNTIME: ${{ needs.changes.outputs.python_runtime }}
+          PYTHON_DEPS: ${{ needs.changes.outputs.python_deps }}
+          NODE_DEPS: ${{ needs.changes.outputs.node_deps }}
+          INFRA: ${{ needs.changes.outputs.infra }}
+          BANDIT_RESULT: ${{ needs.bandit.result }}
+          PIP_AUDIT_RESULT: ${{ needs['pip-audit'].result }}
+          NPM_AUDIT_RESULT: ${{ needs['npm-audit'].result }}
+          NO_SECURITY_SCAN_NEEDED_RESULT: ${{ needs['no-security-scan-needed'].result }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+          expect_bool() {
+            local name="$1"
+            local value="$2"
+            case "$value" in
+              true|false) ;;
+              *) fail "$name must be exactly true or false; got '${value:-<missing>}'" ;;
+            esac
+          }
+          expect_result() {
+            local name="$1"
+            local actual="$2"
+            local expected="$3"
+            if [[ "$actual" != "$expected" ]]; then
+              fail "$name must be $expected; got '${actual:-<missing>}'"
+            fi
+          }
+
+          changes_result="${CHANGES_RESULT-}"
+          python_runtime="${PYTHON_RUNTIME-}"
+          python_deps="${PYTHON_DEPS-}"
+          node_deps="${NODE_DEPS-}"
+          infra="${INFRA-}"
+          if [[ "$changes_result" != "success" ]]; then
+            fail "changes must be success; got '${changes_result:-<missing>}'"
+          fi
+          expect_bool "python_runtime" "$python_runtime"
+          expect_bool "python_deps" "$python_deps"
+          expect_bool "node_deps" "$node_deps"
+          expect_bool "infra" "$infra"
+
+          expected_bandit="skipped"
+          expected_pip_audit="skipped"
+          expected_npm_audit="skipped"
+          if [[ "$python_runtime" == "true" || "$infra" == "true" ]]; then
+            expected_bandit="success"
+          fi
+          if [[ "$python_deps" == "true" || "$infra" == "true" ]]; then
+            expected_pip_audit="success"
+          fi
+          if [[ "$node_deps" == "true" || "$infra" == "true" ]]; then
+            expected_npm_audit="success"
+          fi
+
+          expected_no_security="skipped"
+          if [[ "$expected_bandit" == "skipped" &&
+                "$expected_pip_audit" == "skipped" &&
+                "$expected_npm_audit" == "skipped" ]]; then
+            expected_no_security="success"
+          fi
+
+          expect_result "bandit" "${BANDIT_RESULT-}" "$expected_bandit"
+          expect_result "pip-audit" "${PIP_AUDIT_RESULT-}" "$expected_pip_audit"
+          expect_result "npm-audit" "${NPM_AUDIT_RESULT-}" "$expected_npm_audit"
+          expect_result "no-security-scan-needed" \
+            "${NO_SECURITY_SCAN_NEEDED_RESULT-}" "$expected_no_security"

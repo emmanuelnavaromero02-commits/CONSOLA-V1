@@ -8,7 +8,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
+
+from app.rag.pdf_capacity import (
+    PdfCapacityExhausted,
+    PdfWorkerLease,
+    acquire_pdf_worker_lease,
+)
 
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
@@ -23,10 +30,17 @@ PDF_PROCESS_TIMEOUT_SECONDS = 10
 
 
 class RagIngestError(ValueError):
-    def __init__(self, status_code: int, detail: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+        self.headers = headers
 
 
 def _too_large(detail: str) -> RagIngestError:
@@ -126,3 +140,35 @@ def extract_pdf_text(encoded_content: Any) -> str:
     if not content:
         raise RagIngestError(400, "Could not extract text from PDF")
     return content
+
+
+async def extract_pdf_text_with_capacity(encoded_content: Any) -> str:
+    try:
+        lease = acquire_pdf_worker_lease()
+    except PdfCapacityExhausted as exc:
+        raise RagIngestError(
+            429,
+            "PDF processing capacity exhausted",
+            headers={"Retry-After": "5"},
+        ) from exc
+    try:
+        return await run_in_threadpool(
+            _extract_pdf_text_with_lease,
+            encoded_content,
+            lease,
+        )
+    except BaseException:
+        lease.release_if_not_started()
+        raise
+
+
+def _extract_pdf_text_with_lease(
+    encoded_content: Any,
+    lease: PdfWorkerLease,
+) -> str:
+    if not lease.start():
+        raise RuntimeError("PDF worker lease was cancelled before start")
+    try:
+        return extract_pdf_text(encoded_content)
+    finally:
+        lease.release()

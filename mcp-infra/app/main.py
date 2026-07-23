@@ -24,13 +24,12 @@ from urllib.parse import unquote
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from starlette.concurrency import run_in_threadpool
 
 from app import registry
 from app.rag.embeddings import EmbeddingProviderError
 from app.rag.ingest import (
     RagIngestError,
-    extract_pdf_text,
+    extract_pdf_text_with_capacity,
     read_ingest_body,
     validate_text_content,
 )
@@ -1615,7 +1614,7 @@ async def rag_rest_ingest(request: Request, internal_service: str = Depends(veri
     try:
         body = await read_ingest_body(request)
     except RagIngestError as exc:
-        raise HTTPException(exc.status_code, exc.detail) from exc
+        raise HTTPException(exc.status_code, exc.detail, headers=exc.headers) from exc
     fake_req = InvokeRequest(tool="ingest_document", args={}, security_context=body.get("security_context") or {})
     ctx = _require_context_permission(fake_req, "datasets.write", internal_service)
     _require_rag_context_scope(ctx)
@@ -1629,9 +1628,9 @@ async def rag_rest_ingest(request: Request, internal_service: str = Depends(veri
     content = body.get("content", "")
     if body.get("mime_type") == "application/pdf":
         try:
-            content = await run_in_threadpool(extract_pdf_text, content)
+            content = await extract_pdf_text_with_capacity(content)
         except RagIngestError as exc:
-            raise HTTPException(exc.status_code, exc.detail) from exc
+            raise HTTPException(exc.status_code, exc.detail, headers=exc.headers) from exc
     else:
         try:
             content = validate_text_content(content)
