@@ -77,6 +77,7 @@ keyring_material_valid() {
   CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID="$current_id" \
     CONTROL_ROOM_EVIDENCE_SIGNING_KEY="$current_key" \
     CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS="$previous_keys" \
+    SECURITY_CONTEXT_SIGNING_KEY="${SECURITY_CONTEXT_SIGNING_KEY:-}" \
     python3 "$KEYRING_VALIDATOR" >/dev/null 2>&1
 }
 

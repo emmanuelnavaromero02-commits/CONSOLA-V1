@@ -13,6 +13,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 ENTRYPOINT = REPO / "scripts/aws-entrypoint.sh"
+UPDATE_HELPER = REPO / "infra/terraform/deploy/ensure_evidence_env.sh"
 DEPLOY = REPO / "infra/terraform/deploy"
 AWS_COMPOSE = DEPLOY / "docker-compose.aws.yml"
 CARTRIDGES_COMPOSE = DEPLOY / "docker-compose.cartridges.yml"
@@ -211,6 +212,31 @@ def test_entrypoint_rejects_invalid_keyring_before_pair_publish(
     assert "{not-json}" not in combined_log
     assert not Path(env["MODECISSIONS_ENV_FILE"]).exists()
     assert not Path(f"{env['MODECISSIONS_ENV_FILE']}.control-room-evidence").exists()
+
+
+def test_update_rejects_evidence_key_equal_to_shared_security_key(
+    tmp_path: Path,
+) -> None:
+    env = _entrypoint_env(tmp_path)
+    shared = tmp_path / ".env"
+    shared.write_text(
+        f'SECURITY_CONTEXT_SIGNING_KEY="{CURRENT_KEY}"\n',
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(UPDATE_HELPER), str(shared)],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert CURRENT_KEY not in result.stdout + result.stderr
+    assert not (tmp_path / ".env.control-room-evidence").exists()
+    assert not (tmp_path / "install.calls").exists()
 
 
 @pytest.mark.parametrize("failed_name", EVIDENCE_NAMES)
