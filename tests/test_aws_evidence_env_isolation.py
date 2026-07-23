@@ -276,18 +276,24 @@ def test_compose_resolves_private_env_only_for_console(
     )
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
+    expected_private = expected_private.resolve()
+
+    def resolved_env_files(service: dict) -> set[Path]:
+        return {
+            Path(item["path"] if isinstance(item, dict) else item).resolve()
+            for item in service.get("env_file", [])
+        }
+
     consumers = {
         name
         for name, service in services.items()
-        if str(expected_private)
-        in {
-            item["path"] if isinstance(item, dict) else item
-            for item in service.get("env_file", [])
-        }
+        if expected_private in resolved_env_files(service)
     }
     assert consumers == {"console"}
-    console_paths = [item["path"] for item in services["console"]["env_file"]]
-    assert console_paths == [str(shared), str(expected_private)]
+    console_paths = [
+        Path(item["path"]).resolve() for item in services["console"]["env_file"]
+    ]
+    assert console_paths == [shared.resolve(), expected_private]
     assert not set(EVIDENCE_NAMES) & services["console"].get("environment", {}).keys()
 
     raw = yaml.safe_load(AWS_COMPOSE.read_text(encoding="utf-8"))
