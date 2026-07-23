@@ -48,6 +48,7 @@ on:
       - "tests/test_aws_env_pair_transaction.py"
       - "tests/test_aws_ssm_deploy_workflow.py"
       - "tests/test_aws_evidence_env_isolation.py"
+      - "tests/test_aws_evidence_update_env.py"
       - "tests/test_control_room_ci_contract.py"
       - "tests/test_control_room_evidence_keyring_runtime.py"
       - "tests/test_control_room_evidence_signing_wiring.py"
@@ -111,6 +112,7 @@ jobs:
             tests/test_aws_env_pair_transaction.py \
             tests/test_aws_ssm_deploy_workflow.py \
             tests/test_aws_evidence_env_isolation.py \
+            tests/test_aws_evidence_update_env.py \
             tests/test_control_room_ci_contract.py \
             tests/test_control_room_evidence_keyring_runtime.py \
             tests/test_control_room_evidence_signing_wiring.py \
@@ -155,6 +157,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1059, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=42, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1083, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=47, label="Live PostgreSQL/RLS")
           PY
