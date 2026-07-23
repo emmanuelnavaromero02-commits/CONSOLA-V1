@@ -110,6 +110,17 @@ def test_dependency_changes_trigger_security_without_full_stack_by_default():
     assert flags["release_full_stack"] is False
 
 
+def test_mcp_infra_pdf_changes_run_functional_security_tests():
+    for changed_file in (
+        "mcp-infra/requirements.txt",
+        "mcp-infra/app/rag/ingest.py",
+        "mcp-infra/app/main.py",
+    ):
+        targets = str(_flags(changed_file)["root_test_targets"])
+        assert "tests/test_mcp_infra_pdf_ingest.py" in targets
+        assert "tests/test_pypdf_security.py" in targets
+
+
 def test_console_page_route_changes_do_not_trigger_full_stack_release_gate():
     flags = _flags("console/app/routers/pages.py")
 

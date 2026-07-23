@@ -198,6 +198,16 @@ def _root_test_targets(files: list[str]) -> str:
         for path in files
         if re.match(r"^tests/test.*\.py$", path) and Path(path).exists()
     }
+    if _any(
+        files,
+        r"^mcp-infra/requirements\.txt$",
+        r"^mcp-infra/app/rag/ingest\.py$",
+        r"^mcp-infra/app/main\.py$",
+    ):
+        targets.update({
+            "tests/test_mcp_infra_pdf_ingest.py",
+            "tests/test_pypdf_security.py",
+        })
     if any(path.startswith("omega_lakehouse/") for path in files):
         targets.add("tests/lakehouse")
     for cartridge in _changed_cartridges(files):
