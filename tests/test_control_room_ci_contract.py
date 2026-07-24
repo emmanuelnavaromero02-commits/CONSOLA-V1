@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 1256
+FOCAL_MINIMUM = 1268
 POSTGRES_MINIMUM = 48
 
 REQUIRED_RELATED_TESTS = (
@@ -27,6 +27,7 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_aws_secrets_manager_config.py",
     "tests/test_control_room_ci_contract.py",
     "tests/test_control_room_gate_contract.py",
+    "tests/test_control_room_path_policy.py",
     "tests/test_control_room_evidence_keyring_runtime.py",
     "tests/test_control_room_evidence_signing_wiring.py",
     "tests/test_intelligence_engine_contract.py",

@@ -73,6 +73,7 @@ _EXACT_PATHS = frozenset(
         "tests/test_control_room_evidence_keyring_runtime.py",
         "tests/test_control_room_evidence_signing_wiring.py",
         "tests/test_control_room_gate_contract.py",
+        "tests/test_control_room_path_policy.py",
         "tests/test_intelligence_engine_contract.py",
         "tests/test_mcp_infra_pdf_ci_contract.py",
         "tests/test_operational_rls_console_refinement.py",
@@ -83,6 +84,7 @@ _EXACT_PATHS = frozenset(
 )
 
 _PREFIXES = (
+    "console/app/",
     "console/app/domains/decisions/",
     "console/app/services/adapters/",
     "console/app/services/control_room/",
@@ -91,7 +93,11 @@ _PREFIXES = (
     "infra/init/",
     "infra/terraform-gcp/",
     "infra/terraform/deploy/",
+    "mcp-infra/app/tools/control_room",
 )
+
+_INNOCUOUS_EXACT_PATHS = frozenset({"README.md"})
+_INNOCUOUS_PREFIXES = ("docs/",)
 
 _PATTERNS = tuple(
     re.compile(pattern)
@@ -117,16 +123,28 @@ def _is_control_room_app_path(path: str) -> bool:
     return relative.startswith("control-room/") or "/control-room/" in relative
 
 
+def _is_protected_path(path: str) -> bool:
+    return (
+        path in _EXACT_PATHS
+        or path.startswith(_PREFIXES)
+        or _is_control_room_app_path(path)
+        or any(pattern.fullmatch(path) for pattern in _PATTERNS)
+    )
+
+
+def _is_explicitly_innocuous(path: str) -> bool:
+    if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return False
+    return path in _INNOCUOUS_EXACT_PATHS or path.startswith(_INNOCUOUS_PREFIXES)
+
+
 def control_room_changed(files: Iterable[str]) -> bool:
     """Return whether any exact changed path affects protected Control Room CI."""
 
-    for path in files:
-        if path in _EXACT_PATHS:
-            return True
-        if path.startswith(_PREFIXES):
-            return True
-        if _is_control_room_app_path(path):
-            return True
-        if any(pattern.fullmatch(path) for pattern in _PATTERNS):
+    paths = tuple(files)
+    if not paths:
+        return True
+    for path in paths:
+        if _is_protected_path(path) or not _is_explicitly_innocuous(path):
             return True
     return False

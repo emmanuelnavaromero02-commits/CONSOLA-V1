@@ -70,6 +70,7 @@ jobs:
             tests/test_aws_secrets_manager_config.py \
             tests/test_control_room_ci_contract.py \
             tests/test_control_room_gate_contract.py \
+            tests/test_control_room_path_policy.py \
             tests/test_control_room_evidence_keyring_runtime.py \
             tests/test_control_room_evidence_signing_wiring.py \
             tests/test_intelligence_engine_contract.py \
@@ -114,7 +115,7 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1256, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1268, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=48, label="Live PostgreSQL/RLS")
           PY
 
