@@ -103,12 +103,18 @@ def _is_namespaced_variant(
     candidate_tokens: tuple[str, ...],
     technical_id: tuple[str, ...],
 ) -> bool:
-    if len(technical_id) < 2 or len(candidate_tokens) <= len(technical_id):
+    if len(candidate_tokens) <= len(technical_id):
         return False
     prefix = candidate_tokens[: -len(technical_id)]
-    return candidate_tokens[-len(technical_id) :] == technical_id and (
-        prefix[0] in _NAMESPACE_MARKERS
-        or bool(_EXPLICIT_NAMESPACE_BOUNDARY.search(value))
+    if candidate_tokens[-len(technical_id) :] != technical_id:
+        return False
+    return (
+        len(prefix) == 1
+        and prefix[0] in _NAMESPACE_MARKERS
+        or any(
+            _canonical_identifier(value[boundary.end() :]) == technical_id
+            for boundary in _EXPLICIT_NAMESPACE_BOUNDARY.finditer(value)
+        )
     )
 
 

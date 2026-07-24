@@ -132,6 +132,59 @@ def test_visible_title_matching_transformed_technical_id_is_rejected(
 
 
 @pytest.mark.parametrize(
+    ("visible_title", "technical_id"),
+    (
+        ("analytics.headcount", "headcount"),
+        ("analyticsHeadcount", "headcount"),
+        ("tenantHeadcount", "headcount"),
+        ("tenant/headcount", "headcount"),
+        ("tenant:headcount", "headcount"),
+        ("tenant[headcount]", "headcount"),
+    ),
+)
+def test_single_token_namespaced_technical_id_is_rejected(
+    visible_title: str,
+    technical_id: str,
+) -> None:
+    item = business_item(
+        module=visible_title,
+        source_dataset=technical_id,
+        module_id=technical_id,
+        domain="People",
+    )
+
+    section = build_business_experience(snapshot(items=(item,))).sections[0]
+
+    assert section.title == "People"
+
+
+@pytest.mark.parametrize(
+    ("business_title", "technical_id"),
+    (
+        ("Global Headcount", "headcount"),
+        ("Headcount Planning", "headcount"),
+        ("Platform Strategy", "platform"),
+        ("Q1: Global Headcount", "headcount"),
+        ("Analytics Workforce Headcount", "headcount"),
+    ),
+)
+def test_single_token_suffix_is_not_rejected_without_namespace(
+    business_title: str,
+    technical_id: str,
+) -> None:
+    item = business_item(
+        module=business_title,
+        source_dataset=technical_id,
+        module_id=technical_id,
+        domain="People",
+    )
+
+    section = build_business_experience(snapshot(items=(item,))).sections[0]
+
+    assert section.title == business_title
+
+
+@pytest.mark.parametrize(
     "identifier_field",
     ("module_id", "source_dataset", "dataset", "gold_table"),
 )
