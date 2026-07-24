@@ -109,18 +109,12 @@ def _decision(item: Mapping[str, object]) -> ExperienceDecision | None:
     if not surface_workflow_provenance_verified(item):
         return None
     decision_id = item.get("decision_id")
-    if isinstance(decision_id, bool):
-        return None
-    try:
-        reference = int(decision_id) if decision_id is not None else None
-    except (TypeError, ValueError):
-        return None
-    if reference is None:
+    if type(decision_id) is not int or decision_id <= 0:
         return None
     status = str(item.get("status") or "").strip().lower()
     if status not in _DECISION_STATES:
         return None
-    return ExperienceDecision(reference=reference, status=status)
+    return ExperienceDecision(reference=decision_id, status=status)
 
 
 def _fact(item: Mapping[str, object]) -> ExperienceFact | None:

@@ -7,6 +7,8 @@ from collections.abc import Mapping, Sequence
 _SECRET_KEYS = frozenset(
     {
         "access_key",
+        "access_key_id",
+        "account_key",
         "aws_access_key_id",
         "aws_secret_access_key",
         "access_token",
@@ -28,6 +30,7 @@ _SECRET_KEYS = frozenset(
         "refresh_token",
         "sas_token",
         "secret",
+        "secret_access_key",
         "secret_key",
         "service_account_key",
         "session_token",

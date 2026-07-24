@@ -5,6 +5,10 @@ on:
     paths:
       - "console/app/main.py"
       - "console/app/routers/control_room.py"
+      - "console/app/routers/control_room_surfaces.py"
+      - "console/app/schemas/__init__.py"
+      - "console/app/schemas/control_room_diagnostic_enums.py"
+      - "console/app/schemas/control_room_surfaces.py"
       - "console/app/dependencies.py"
       - "console/app/domains/decisions/**"
       - "console/app/domains/pipeline/control_room_refresh.py"
@@ -160,6 +164,6 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1144, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1164, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=48, label="Live PostgreSQL/RLS")
           PY

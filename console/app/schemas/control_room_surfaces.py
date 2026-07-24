@@ -70,7 +70,7 @@ class ExperienceSection(_StrictModel):
     module_id: str
     title: str
     domain: str
-    facts: list[ExperienceFact] = Field(default_factory=list)
+    facts: list[ExperienceFact]
 
 
 class ControlRoomExperienceResponse(_StrictModel):

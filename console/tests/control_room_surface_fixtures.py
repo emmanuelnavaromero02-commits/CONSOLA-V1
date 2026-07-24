@@ -38,6 +38,7 @@ def business_item(item_id: str = "business-1", **updates: object) -> dict[str, o
         "entity_id": "employee-1001",
         "entity_label": "Observed employee",
         "title": "Observed business condition",
+        "module_id": "people_overview",
         "module": "People",
         "domain": "People",
         "severity": "high",
@@ -66,6 +67,7 @@ def source_state(
         "tenant_id": TENANT_ID,
         "workspace_id": WORKSPACE_ID,
         "title": "Source unavailable",
+        "module_id": "people_overview",
         "module": "People",
         "domain": "People",
         "cartridge": "sap_hcm",
@@ -116,7 +118,6 @@ def snapshot(
     diagnostics: tuple[dict[str, object], ...] = (),
     sources: tuple[dict[str, object], ...] = (),
     installations: tuple[dict[str, object], ...] = (),
-    workflow_overlay_verified: bool = False,
 ) -> SurfaceSnapshot:
     return SurfaceSnapshot(
         generated_at=GENERATED_AT,
@@ -125,7 +126,6 @@ def snapshot(
         diagnostics=diagnostics,
         sources=sources,
         installations=installations,
-        workflow_overlay_verified=workflow_overlay_verified,
     )
 
 

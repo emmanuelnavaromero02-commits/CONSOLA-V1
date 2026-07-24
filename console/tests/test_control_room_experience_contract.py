@@ -9,9 +9,13 @@ from pydantic import ValidationError
 from app.routers import control_room as routes
 from app.schemas.control_room_surfaces import ExperienceFact
 from app.services.control_room.business_experience import build_business_experience
+from app.services.control_room.business_projection import project_business_item
+from app.services.control_room.business_state_overlay import overlay_business_state
 from app.services.control_room.business_workflow_provenance import (
+    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
+    business_observation_fingerprint,
     workflow_eligibility_provenance,
 )
 from control_room_surface_fixtures import (
@@ -175,10 +179,22 @@ def test_experience_exposes_only_decisions_with_eligible_provenance():
         workspace_id=WORKSPACE_ID,
         decision_id=42,
     )
-    item["metadata"] = {DECISION_PROVENANCE_KEY: provenance}
-    backed = build_business_experience(
-        snapshot(items=(item,), workflow_overlay_verified=True)
+    state = {
+        "status": "decision_created",
+        "decision_id": 42,
+        "metadata": {
+            DECISION_PROVENANCE_KEY: provenance,
+            CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(item),
+        },
+    }
+    projected = overlay_business_state(
+        [item],
+        {str(item["id"]): state},
+        item_statuses={"open", "decision_created", "approved", "resolved"},
+        projector=project_business_item,
+        sort_key=lambda value: str(value.get("id")),
     )
+    backed = build_business_experience(snapshot(items=tuple(projected)))
     assert backed.sections[0].facts[0].decision
     assert backed.sections[0].facts[0].decision.reference == 42
 
