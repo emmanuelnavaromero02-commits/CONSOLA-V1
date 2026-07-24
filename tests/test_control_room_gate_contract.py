@@ -121,6 +121,7 @@ def _detector_diff(repo: Path, base: str, head: str) -> dict[str, str]:
     result = subprocess.run(
         ["python3", str(SCRIPT), "--base", base, "--head", head],
         cwd=repo,
+        env={key: value for key, value in os.environ.items() if key != "GITHUB_OUTPUT"},
         capture_output=True,
         text=True,
         timeout=10,
