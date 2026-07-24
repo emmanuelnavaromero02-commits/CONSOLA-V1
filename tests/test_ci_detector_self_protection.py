@@ -56,6 +56,7 @@ def _commit(repo: Path, message: str) -> str:
         ".github/workflows/control-room-postgres-rls.yml",
         "tests/ci_gate_contract_helpers.py",
         "tests/test_control_room_gate_contract.py",
+        "tests/test_control_room_path_policy.py",
     ],
 )
 def test_detector_classifies_protected_paths_as_infra_control_room(path: str) -> None:
@@ -121,6 +122,28 @@ def test_changed_path_cannot_inject_github_output(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode != 0
+    assert not output.exists()
+
+
+def test_changed_test_path_cannot_inject_pytest_arguments(tmp_path: Path) -> None:
+    repo = tmp_path / "pytest-argument-injection"
+    _init_repo(repo)
+    name = "tests/test_victim.py --ignore tests/test_victim.py"
+    changed = repo / name
+    changed.parent.mkdir(parents=True)
+    changed.write_text("def test_placeholder(): pass\n", encoding="utf-8")
+    output = tmp_path / "github-output"
+
+    result = subprocess.run(
+        ["python3", str(DETECTOR), "--files", name],
+        cwd=repo,
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "unsafe whitespace" in result.stderr
     assert not output.exists()
 
 

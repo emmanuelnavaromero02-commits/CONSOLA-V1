@@ -201,6 +201,8 @@ def _cartridge_needs_root_contracts(files: list[str], cartridge: str) -> bool:
 
 
 def _space_join(paths: set[str]) -> str:
+    if any(any(char.isspace() for char in path) for path in paths):
+        raise ValueError("test target contains unsafe whitespace")
     return " ".join(sorted(paths))
 
 
