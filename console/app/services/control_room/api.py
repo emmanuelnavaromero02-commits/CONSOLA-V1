@@ -4501,6 +4501,7 @@ async def _collect_items(
     include_source_state_items: bool = False,
     persist: bool = False,
     use_catalog: bool = True,
+    item_projector: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if persist:
         raise ValueError("use refresh_dashboard_state() for explicit persistence")
@@ -4536,7 +4537,11 @@ async def _collect_items(
         )
 
     diagnostics = diagnostic_items(items)
-    items = await _overlay_item_state(filter_business_items(items), user)
+    items = await _overlay_item_state(
+        filter_business_items(items),
+        user,
+        projector=item_projector,
+    )
     diagnostics.extend(diagnostic_items(items))
     items = filter_business_items(items)
     return {

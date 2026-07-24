@@ -26,9 +26,11 @@ from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
 from app.services.permissions import require_permission
 from app.services.security_context import build_security_context, verify_signed_security_context
+from app.routers.control_room_surfaces import router as surfaces_router
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
+router.include_router(surfaces_router)
 
 
 def _require_readiness_cartridge(user: dict, cartridge_id: str) -> None:
