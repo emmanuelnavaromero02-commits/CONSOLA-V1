@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,8 @@ from tests.ci_gate_contract_helpers import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+DETECTOR = ROOT / "scripts/ci_changed_areas.py"
 SECURITY_JOB = load_job("security.yml", "security-gate")
 SECURITY_SCRIPT = SECURITY_JOB["steps"][0]["run"]
 PROTECTED_ENV = {
@@ -27,16 +31,53 @@ PROTECTED_ENV = {
 }
 
 
-def test_detector_classifies_its_own_path_as_infra_only() -> None:
-    outputs = detector_outputs("scripts/ci_changed_areas.py")
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+
+
+def _init_repo(repo: Path) -> None:
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "CI")
+    _git(repo, "config", "user.email", "ci@example.test")
+
+
+def _commit(repo: Path, message: str) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/ci_changed_areas.py",
+        "scripts/ci_control_room_paths.py",
+        ".github/workflows/control-room-postgres-rls.yml",
+        "tests/ci_gate_contract_helpers.py",
+        "tests/test_control_room_gate_contract.py",
+        "tests/test_control_room_path_policy.py",
+    ],
+)
+def test_detector_classifies_protected_paths_as_infra_control_room(path: str) -> None:
+    outputs = detector_outputs(path)
     assert {
         name: outputs[name]
-        for name in ("python_runtime", "python_deps", "node_deps", "infra")
+        for name in (
+            "python_runtime",
+            "python_deps",
+            "node_deps",
+            "infra",
+            "control_room",
+        )
     } == {
         "python_runtime": "false",
         "python_deps": "false",
         "node_deps": "false",
-        "infra": "true",
+        "infra": (
+            "true" if path.startswith(("scripts/", ".github/workflows/")) else "false"
+        ),
+        "control_room": "true",
     }
 
 
@@ -45,7 +86,7 @@ def test_detector_change_requires_all_security_scanners(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_both_bandit_commands_scan_the_detector() -> None:
+def test_both_bandit_commands_scan_both_detectors() -> None:
     bandit_job = load_job("security.yml", "bandit")
     script = next(
         step["run"]
@@ -57,6 +98,85 @@ def test_both_bandit_commands_scan_the_detector() -> None:
     for command in commands:
         targets = command.split("--severity-level", 1)[0]
         assert "scripts/ci_changed_areas.py" in targets
+        assert "scripts/ci_control_room_paths.py" in targets
+
+
+def test_changed_path_cannot_inject_github_output(tmp_path: Path) -> None:
+    repo = tmp_path / "output-injection"
+    _init_repo(repo)
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    name = "cartridges/evil\ncontrol_room<<EOF\nfalse\nEOF\nx=/requirements.txt"
+    changed = repo / name
+    changed.parent.mkdir(parents=True)
+    changed.write_text("unsafe\n", encoding="utf-8")
+    head = _commit(repo, "unsafe path")
+    output = tmp_path / "github-output"
+
+    result = subprocess.run(
+        ["python3", str(DETECTOR), "--base", base, "--head", head],
+        cwd=repo,
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert not output.exists()
+
+
+def test_changed_test_path_cannot_inject_pytest_arguments(tmp_path: Path) -> None:
+    repo = tmp_path / "pytest-argument-injection"
+    _init_repo(repo)
+    name = "tests/test_victim.py --ignore tests/test_victim.py"
+    changed = repo / name
+    changed.parent.mkdir(parents=True)
+    changed.write_text("def test_placeholder(): pass\n", encoding="utf-8")
+    output = tmp_path / "github-output"
+
+    result = subprocess.run(
+        ["python3", str(DETECTOR), "--files", name],
+        cwd=repo,
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "unsafe whitespace" in result.stderr
+    assert not output.exists()
+
+
+def test_non_linear_push_fails_before_writing_outputs(tmp_path: Path) -> None:
+    repo = tmp_path / "non-linear"
+    _init_repo(repo)
+    protected = repo / "console/app/main.py"
+    protected.parent.mkdir(parents=True)
+    protected.write_text("protected\n", encoding="utf-8")
+    root = _commit(repo, "root")
+    protected.unlink()
+    before = _commit(repo, "old history")
+    _git(repo, "checkout", "-q", "-b", "rewritten", root)
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+    head = _commit(repo, "new history")
+    output = tmp_path / "push-output"
+
+    result = subprocess.run(
+        ["python3", str(DETECTOR)],
+        cwd=repo,
+        env={
+            **os.environ,
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_EVENT_BEFORE": before,
+            "GITHUB_SHA": head,
+            "GITHUB_OUTPUT": str(output),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
