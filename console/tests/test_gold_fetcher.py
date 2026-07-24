@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.intelligence import gold_fetcher
 
@@ -32,7 +34,11 @@ class _FakeConn:
     async def fetch(self, sql: str, *args: object):
         self.fetch_calls.append((sql, args))
         if "information_schema.columns" in sql:
-            return [{"column_name": "tenant_id"}, {"column_name": "workspace_id"}, {"column_name": "headcount"}]
+            return [
+                {"column_name": "tenant_id"},
+                {"column_name": "workspace_id"},
+                {"column_name": "headcount"},
+            ]
         return [{"tenant_id": args[1], "workspace_id": args[0], "headcount": 1288}]
 
     async def close(self):
@@ -88,6 +94,51 @@ async def test_gold_fetcher_scopes_text_or_uuid_gold_columns(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gold_fetcher_rejects_partial_runtime_scope_before_connect(monkeypatch):
+    connect = AsyncMock()
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")
+    monkeypatch.setattr(gold_fetcher.asyncpg, "connect", connect)
+
+    with pytest.raises(HTTPException) as error:
+        await gold_fetcher.query_gold_dataset_rows(
+            "sap_successfactors_headcount_by_company",
+            {"workspace_id": "workspace-a"},
+            20,
+        )
+
+    assert error.value.status_code == 403
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gold_fetcher_rejects_table_without_tenant_scope(monkeypatch):
+    class WorkspaceOnlyConn(_FakeConn):
+        async def fetch(self, sql: str, *args: object):
+            self.fetch_calls.append((sql, args))
+            if "information_schema.columns" in sql:
+                return [{"column_name": "workspace_id"}, {"column_name": "headcount"}]
+            raise AssertionError("data rows must not be fetched without tenant scope")
+
+    conn = WorkspaceOnlyConn()
+
+    async def fake_connect(_dsn: str, command_timeout: int):
+        return conn
+
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")
+    monkeypatch.setattr(gold_fetcher.asyncpg, "connect", fake_connect)
+
+    with pytest.raises(HTTPException) as error:
+        await gold_fetcher.query_gold_dataset_rows(
+            "sap_successfactors_headcount_by_company",
+            {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+            20,
+        )
+
+    assert error.value.status_code == 403
+    assert "tenant scoped" in str(error.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
     monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")
     monkeypatch.setenv("OMEGA_GOLD_ROW_CACHE_TTL_SECONDS", "60")
@@ -104,8 +155,12 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
         "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
         "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
     }
-    first = await gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", base_user, 20)
-    second = await gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", base_user, 20)
+    first = await gold_fetcher.query_gold_dataset_rows(
+        "sap_successfactors_employee_360", base_user, 20
+    )
+    second = await gold_fetcher.query_gold_dataset_rows(
+        "sap_successfactors_employee_360", base_user, 20
+    )
     other = await gold_fetcher.query_gold_dataset_rows(
         "sap_successfactors_employee_360",
         {**base_user, "workspace_id": "00000000-0000-0000-0000-000000000002"},
@@ -118,25 +173,42 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
 
 
 def test_clear_gold_row_cache_removes_only_requested_scope():
-    gold_fetcher._GOLD_ROW_CACHE[
-        ("dataset_a", "tenant-1", "workspace-1", 20)
-    ] = (999999999.0, [{"value": 1}])
-    gold_fetcher._GOLD_ROW_CACHE[
-        ("dataset_a", "tenant-1", "workspace-2", 20)
-    ] = (999999999.0, [{"value": 2}])
-    gold_fetcher._GOLD_ROW_CACHE_LOCKS[
-        ("dataset_a", "tenant-1", "workspace-1", 20)
-    ] = asyncio.Lock()
-    gold_fetcher._GOLD_ROW_CACHE_LOCKS[
-        ("dataset_a", "tenant-1", "workspace-2", 20)
-    ] = asyncio.Lock()
+    gold_fetcher._GOLD_ROW_CACHE[("dataset_a", "tenant-1", "workspace-1", 20)] = (
+        999999999.0,
+        [{"value": 1}],
+    )
+    gold_fetcher._GOLD_ROW_CACHE[("dataset_a", "tenant-1", "workspace-2", 20)] = (
+        999999999.0,
+        [{"value": 2}],
+    )
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[("dataset_a", "tenant-1", "workspace-1", 20)] = (
+        asyncio.Lock()
+    )
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS[("dataset_a", "tenant-1", "workspace-2", 20)] = (
+        asyncio.Lock()
+    )
 
     gold_fetcher.clear_gold_row_cache("tenant-1", "workspace-1")
 
-    assert ("dataset_a", "tenant-1", "workspace-1", 20) not in gold_fetcher._GOLD_ROW_CACHE
-    assert ("dataset_a", "tenant-1", "workspace-1", 20) not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert (
+        "dataset_a",
+        "tenant-1",
+        "workspace-1",
+        20,
+    ) not in gold_fetcher._GOLD_ROW_CACHE
+    assert (
+        "dataset_a",
+        "tenant-1",
+        "workspace-1",
+        20,
+    ) not in gold_fetcher._GOLD_ROW_CACHE_LOCKS
     assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE
-    assert ("dataset_a", "tenant-1", "workspace-2", 20) in gold_fetcher._GOLD_ROW_CACHE_LOCKS
+    assert (
+        "dataset_a",
+        "tenant-1",
+        "workspace-2",
+        20,
+    ) in gold_fetcher._GOLD_ROW_CACHE_LOCKS
 
 
 @pytest.mark.asyncio
@@ -158,7 +230,12 @@ async def test_gold_fetcher_singleflights_concurrent_cold_reads(monkeypatch):
     }
 
     results = await asyncio.gather(
-        *(gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", user, 20) for _ in range(8))
+        *(
+            gold_fetcher.query_gold_dataset_rows(
+                "sap_successfactors_employee_360", user, 20
+            )
+            for _ in range(8)
+        )
     )
 
     assert results == [results[0]] * 8

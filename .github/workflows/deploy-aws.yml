@@ -153,7 +153,14 @@ jobs:
               "chmod 600 /home/ubuntu/.ssh/known_hosts",
               "sudo -u ubuntu git fetch --tags origin",
               f"sudo -u ubuntu git checkout --detach {shlex.quote(deploy_ref)}",
-              "sudo bash infra/bootstrap-keys.sh infra/terraform/deploy/.env",
+              (
+                  "sudo env MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE=false "
+                  "bash infra/bootstrap-keys.sh infra/terraform/deploy/.env"
+              ),
+              (
+                  "sudo bash infra/terraform/deploy/ensure_evidence_env.sh "
+                  "infra/terraform/deploy/.env"
+              ),
               "trap 'sudo docker logout ghcr.io >/dev/null 2>&1 || true' EXIT",
               (
                   f"printf %s {shlex.quote(ghcr_token)} | "

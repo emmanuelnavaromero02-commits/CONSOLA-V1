@@ -3,12 +3,184 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.business_projection import (
+    project_public_business_item as _project_public_business_item,
+)
+from app.services.control_room.business_action_templates import (
+    primary_template_for_business_item,
+    template_ids_for_business_item,
+    templates_for_business_item,
+)
+from app.services.control_room.business_execution_payload import (
+    build_action_payload,
+    build_execution_payload,
+)
+from app.services.control_room.business_impact_projection import (
+    build_impact_payload,
+    build_priority_payload,
+)
+from app.services.control_room.business_impact_rules import calculate_item_impact
+
+for _builder in (
+    build_action_payload,
+    build_execution_payload,
+    build_impact_payload,
+    build_priority_payload,
+    calculate_item_impact,
+    primary_template_for_business_item,
+    template_ids_for_business_item,
+    templates_for_business_item,
+):
+    _core.__dict__.setdefault(_builder.__name__, _builder)
 
 
-_RESERVED_GLOBALS = {"__name__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__"}
+_RESERVED_GLOBALS = {
+    "__name__",
+    "__package__",
+    "__loader__",
+    "__spec__",
+    "__file__",
+    "__cached__",
+    "__builtins__",
+}
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
+_core.__dict__.setdefault("_project_public_item", _project_public_business_item)
+
+from app.services.control_room.business_builder_policy import (
+    business_action_templates_builder,
+    business_impact_builder,
+    business_primary_template_builder,
+    business_priority_builder,
+    business_template_ids_builder,
+)
+from app.services.adapter_idempotency import adapter_guarantees_idempotency
+from app.services.control_room.business_decision_persistence import (
+    create_and_link_decision as _create_and_link_business_decision,
+    persist_option_selection as _persist_business_option_selection,
+)
+from app.services.control_room.business_action_approval import (
+    approve_business_item as _approve_business_item,
+)
+from app.services.control_room.business_approve_with_optional_decision import (
+    approve_with_optional_decision as _approve_with_optional_decision,
+)
+from app.services.control_room.business_action_mutations import (
+    persist_alert_state as _persist_alert_state,
+    persist_control as _persist_control,
+    persist_status_transition as _persist_status_transition,
+    persist_step as _persist_step,
+    require_exact_count as _require_exact_count,
+)
+from app.services.control_room.business_alert_operation_with_audit import (
+    persist_alert_operation_with_audit as _persist_alert_operation_with_audit,
+)
+from app.services.control_room.business_dismiss_reopen_with_audit import (
+    dismiss_with_audit as _dismiss_with_audit,
+    reopen_with_audit as _reopen_with_audit,
+)
+from app.services.control_room.business_action_reservation import (
+    ActionReservation,
+    ReservationState,
+    acquire_action_reservation,
+    acquire_guarded_action_reservation,
+    complete_action_reservation,
+)
+from app.services.control_room.business_action_attempt import (
+    mark_remote_attempt_ambiguous,
+    mark_remote_attempt_started,
+    remote_attempt_status,
+)
+from app.services.control_room.business_external_outcome import (
+    ambiguous_adapter_error_response,
+)
+from app.services.control_room.business_action_failure import (
+    finalize_aborted_action_reservation,
+    run_reserved_external_action,
+)
+from app.services.control_room.business_reservation_errors import ReservationUnavailable
+from app.services.control_room.business_execution_precondition import (
+    dry_run_metadata,
+    lock_pending_action_reservation,
+    require_matching_dry_run,
+)
+from app.services.control_room.business_execution_approval import (
+    execution_lifecycle_block,
+    require_approved_execution,
+)
+from app.services.control_room.business_external_projection import (
+    reserved_action_response as _build_reserved_action_response,
+)
+from app.services.control_room.business_mutation_guard import (
+    lock_authoritative_business_item,
+)
+from app.services.control_room.business_operational_state import (
+    locked_operational_metadata,
+    merged_alert_state,
+    merged_control_state,
+    merged_learned_rules,
+    merged_lesson_state,
+)
+from app.services.control_room.business_workflow_provenance import WorkflowStage
+from app.services.control_room.business_workflow_quarantine import (
+    workflow_reopen_allowed,
+)
+
+_core.__dict__.setdefault(
+    "_create_and_link_business_decision", _create_and_link_business_decision
+)
+_core.__dict__.setdefault(
+    "_persist_business_option_selection", _persist_business_option_selection
+)
+_core.__dict__.setdefault("_approve_business_item", _approve_business_item)
+_core.__dict__.setdefault(
+    "_approve_with_optional_decision", _approve_with_optional_decision
+)
+_core.__dict__.setdefault("_persist_alert_state", _persist_alert_state)
+_core.__dict__.setdefault(
+    "_persist_alert_operation_with_audit", _persist_alert_operation_with_audit
+)
+_core.__dict__.setdefault("_persist_control", _persist_control)
+_core.__dict__.setdefault("_persist_status_transition", _persist_status_transition)
+_core.__dict__.setdefault("_persist_step", _persist_step)
+_core.__dict__.setdefault("_require_exact_count", _require_exact_count)
+_core.__dict__.setdefault("_dismiss_with_audit", _dismiss_with_audit)
+_core.__dict__.setdefault("_reopen_with_audit", _reopen_with_audit)
+for _helper in (
+    acquire_action_reservation,
+    acquire_guarded_action_reservation,
+    complete_action_reservation,
+    mark_remote_attempt_ambiguous,
+    mark_remote_attempt_started,
+    remote_attempt_status,
+    ambiguous_adapter_error_response,
+    finalize_aborted_action_reservation,
+    run_reserved_external_action,
+    lock_authoritative_business_item,
+    locked_operational_metadata,
+    lock_pending_action_reservation,
+    merged_alert_state,
+    merged_control_state,
+    merged_learned_rules,
+    merged_lesson_state,
+    require_matching_dry_run,
+    require_approved_execution,
+    workflow_reopen_allowed,
+):
+    _core.__dict__.setdefault(_helper.__name__, _helper)
+_core.__dict__.setdefault("ActionReservation", ActionReservation)
+_core.__dict__.setdefault("ReservationState", ReservationState)
+_core.__dict__.setdefault("ReservationUnavailable", ReservationUnavailable)
+_core.__dict__.setdefault("WorkflowStage", WorkflowStage)
+_core.__dict__.setdefault("dry_run_metadata", dry_run_metadata)
+_core.__dict__.setdefault("execution_lifecycle_block", execution_lifecycle_block)
+_core.__dict__.setdefault(
+    "_build_reserved_action_response", _build_reserved_action_response
+)
+_core.__dict__.setdefault(
+    "adapter_guarantees_idempotency", adapter_guarantees_idempotency
+)
 
 
 def _bind_to_core(fn):
@@ -31,7 +203,9 @@ def _bind_to_core(fn):
 # Action preview, dry-run, execution, and operator workflows.
 @_bind_to_core
 def _external_writeback_enabled() -> bool:
-    return os.environ.get("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "false").strip().lower() in {
+    return os.environ.get(
+        "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "false"
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -41,7 +215,9 @@ def _external_writeback_enabled() -> bool:
 
 @_bind_to_core
 def _external_delivery_enabled() -> bool:
-    return os.environ.get("CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY", "false").strip().lower() in {
+    return os.environ.get(
+        "CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY", "false"
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -75,7 +251,9 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
             "requires_dry_run": True,
             "permission": "control_room.execute",
             "status": "supported",
-            "description": description_by_template.get(template_id, "Ejecuta una accion interna auditada; no escribe en ERP."),
+            "description": description_by_template.get(
+                template_id, "Ejecuta una accion interna auditada; no escribe en ERP."
+            ),
         }
     template_type = str(template.get("template_type") or template_id)
     has_adapter = WriteBackAdapterFactory.has_adapter(template_type)
@@ -131,528 +309,92 @@ def _impact_payload(
     explanation: str,
     currency: str = "USD",
 ) -> dict[str, Any]:
-    estimate_value = round(float(estimate or 0), 2) if estimate is not None else None
-    severity_weight = SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2)
-    impact_points = 0 if estimate_value is None else min(42, int(abs(estimate_value) / 10_000))
-    threshold_state = str(item.get("threshold_state") or "")
-    threshold_points = {"critical": 12, "warning": 6}.get(threshold_state, 0)
-    priority_score = min(
-        100,
-        max(0, severity_weight * 14 + impact_points + int(confidence * 20) + threshold_points),
-    )
-    return {
-        "item_id": item.get("id"),
-        "status": status,
-        "estimate": estimate_value,
-        "currency": currency,
-        "confidence": round(max(0.0, min(1.0, confidence)), 2),
-        "priority_score": priority_score,
-        "drivers": drivers,
-        "formula": formula,
-        "explanation": explanation,
-    }
-
-
-@_bind_to_core
-def _priority_payload(item: dict[str, Any], impact: dict[str, Any] | None = None) -> dict[str, Any]:
-    impact = impact or _impact_for_item(item)
-    score = int(impact.get("priority_score") or 0)
-    drivers: list[dict[str, Any]] = [
-        {
-            "label": "Severidad",
-            "value": item.get("severity") or "medium",
-            "points": SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2) * 14,
-        }
-    ]
-    if impact.get("status") == "ok" and impact.get("estimate") is not None:
-        drivers.append({
-            "label": "Impacto economico",
-            "value": impact.get("estimate"),
-            "currency": impact.get("currency") or "USD",
-            "points": min(42, int(abs(float(impact.get("estimate") or 0)) / 10_000)),
-        })
-    else:
-        drivers.append({"label": "Impacto economico", "value": "no disponible", "points": 0})
-
-    threshold_state = str(item.get("threshold_state") or "default")
-    threshold_points = {"critical": 16, "warning": 8}.get(threshold_state, 0)
-    if threshold_points:
-        drivers.append({"label": "Umbral", "value": threshold_state, "points": threshold_points})
-        score += threshold_points
-
-    source_status = ""
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
-    if item.get("kind") == "source_state":
-        source_status = str(details.get("source_status") or item.get("status") or "")
-    source_points = {
-        "invalid_schema": 24,
-        "unavailable": 22,
-        "missing": 20,
-        "blocked": 18,
-        "no_permission": 18,
-        "empty": 8,
-    }.get(source_status, 0)
-    if source_points:
-        drivers.append({"label": "Salud fuente", "value": source_status, "points": source_points})
-        score += source_points
-
-    lesson_count = int(item.get("lesson_count") or 0)
-    lesson_points = min(12, lesson_count * 4)
-    if lesson_points:
-        drivers.append({"label": "Patron aprendido", "value": lesson_count, "points": lesson_points})
-        score += lesson_points
-
-    if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
-        drivers.append({"label": "Estado cerrado", "value": item.get("status"), "points": -35})
-        score -= 35
-
-    score = max(0, min(100, score))
-    band = "critical" if score >= 90 else "high" if score >= 75 else "medium" if score >= 55 else "low"
-    return {
-        "score": score,
-        "band": band,
-        "drivers": drivers,
-        "formula": "severity + impact + confidence + thresholds + source_health + learned_patterns",
-    }
-
-
-@_bind_to_core
-def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
-    if item.get("kind") == "source_state":
-        return _impact_payload(
-            item=item,
-            estimate=None,
-            status="unavailable",
-            confidence=0.2,
-            drivers=[{"label": "Estado fuente", "value": details.get("source_status") or item.get("status")}],
-            formula="Sin impacto monetario hasta restaurar materializacion.",
-            explanation="La fuente no entrega datos suficientes para calcular dinero sin inventar cifras.",
-        )
-
-    stored = _num(item.get("impact_estimate"))
-    if stored is not None and stored > 0:
-        return _impact_payload(
-            item=item,
-            estimate=stored,
-            status="ok",
-            confidence=_num(item.get("confidence")) or 0.6,
-            drivers=[{"label": "Impacto persistido", "value": stored, "currency": item.get("impact_currency") or "USD"}],
-            formula="Impacto persistido en control_room_items.",
-            explanation="Estimacion recuperada del estado operativo persistido.",
-            currency=str(item.get("impact_currency") or "USD"),
-        )
-
-    anomaly_type = str(item.get("anomaly_type") or "")
-    cartridge = str(item.get("cartridge") or "")
-
-    if cartridge == "replicon" and anomaly_type in {"low_margin", "wip_variance"}:
-        revenue = _num(details.get("revenue_usd"))
-        margin_usd = _num(details.get("margen_bruto_usd"))
-        wip = _num(details.get("wip_usd")) or 0
-        margin_gap = 0.0
-        if revenue is not None and margin_usd is not None:
-            margin_gap = max(0.0, revenue * 0.20 - margin_usd)
-        exposure = margin_gap + (abs(wip) if abs(wip) >= 5000 else 0)
-        if exposure > 0:
-            return _impact_payload(
-                item=item,
-                estimate=exposure,
-                status="ok",
-                confidence=0.78,
-                drivers=[
-                    {"label": "Brecha margen objetivo 20%", "value": round(margin_gap, 2), "currency": "USD"},
-                    {"label": "WIP bajo revision", "value": round(abs(wip), 2), "currency": "USD"},
-                ],
-                formula="max(0, revenue_usd * 20% - margen_bruto_usd) + abs(wip_usd si >= 5000)",
-                explanation="Usa P&L Replicon materializado; no escribe en Replicon.",
-            )
-
-    if cartridge == "replicon" and anomaly_type == "non_billable_ratio":
-        hours = _num(details.get("horas_no_facturables"))
-        rate = (
-            _num(details.get("billing_rate_usd"))
-            or _num(details.get("billing_rate"))
-            or _num(details.get("rate_usd"))
-            or _num(details.get("currenthourlybillingamount"))
-        )
-        if hours is not None and rate is not None:
-            return _impact_payload(
-                item=item,
-                estimate=hours * rate,
-                status="ok",
-                confidence=0.7,
-                drivers=[
-                    {"label": "Horas no facturables", "value": round(hours, 2)},
-                    {"label": "Tarifa Replicon", "value": round(rate, 2), "currency": "USD"},
-                ],
-                formula="horas_no_facturables * tarifa_replicon",
-                explanation="Calcula exposicion de horas no facturables con tarifa real disponible.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type == "negative_revenue":
-        revenue = _num(details.get("revenue"))
-        if revenue is not None:
-            return _impact_payload(
-                item=item,
-                estimate=abs(revenue),
-                status="ok",
-                confidence=0.74,
-                drivers=[{"label": "Revenue negativo", "value": revenue, "currency": "USD"}],
-                formula="abs(revenue)",
-                explanation="Usa revenue materializado por cliente/periodo.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type == "aged_sales_backlog":
-        open_value = _num(details.get("open_value"))
-        if open_value is not None:
-            return _impact_payload(
-                item=item,
-                estimate=open_value,
-                status="ok",
-                confidence=0.62,
-                drivers=[
-                    {"label": "Backlog abierto", "value": round(open_value, 2), "currency": "USD"},
-                    {"label": "Antiguedad maxima", "value": _num(details.get("oldest_age_days")) or 0, "unit": "dias"},
-                ],
-                formula="open_value",
-                explanation="Exposicion comercial, no perdida confirmada.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type == "supplier_spend_concentration":
-        spend = _num(details.get("total_spend"))
-        if spend is not None:
-            return _impact_payload(
-                item=item,
-                estimate=spend,
-                status="ok",
-                confidence=0.45,
-                drivers=[{"label": "Gasto concentrado", "value": round(spend, 2), "currency": "USD"}],
-                formula="total_spend",
-                explanation="Exposicion de compras bajo revision, no ahorro garantizado.",
-            )
-
-    if cartridge == "sap_s4hana" and anomaly_type in {"missing_address", "missing_tax_id", "duplicate_business_partner"}:
-        exposure = (
-            _num(details.get("open_value"))
-            or _num(details.get("balance_usd"))
-            or _num(details.get("exposure_usd"))
-            or _num(details.get("total_spend"))
-        )
-        if exposure is not None and exposure > 0:
-            return _impact_payload(
-                item=item,
-                estimate=exposure,
-                status="ok",
-                confidence=0.52,
-                drivers=[
-                    {"label": "Exposicion BP", "value": round(exposure, 2), "currency": "USD"},
-                    {"label": "Tipo maestro", "value": anomaly_type},
-                ],
-                formula="open_value | balance_usd | exposure_usd | total_spend",
-                explanation="Usa exposicion comercial/proveedor disponible para el maestro BP.",
-            )
-
-    if cartridge == "sap_hcm" and anomaly_type == "terminated_but_active":
-        monthly_cost = (
-            _num(details.get("monthly_cost_usd"))
-            or _num(details.get("salary_monthly_usd"))
-            or _num(details.get("costo_mensual_usd"))
-        )
-        if monthly_cost is not None and monthly_cost > 0:
-            return _impact_payload(
-                item=item,
-                estimate=monthly_cost * 3,
-                status="ok",
-                confidence=0.66,
-                drivers=[
-                    {"label": "Costo mensual empleado", "value": round(monthly_cost, 2), "currency": "USD"},
-                    {"label": "Ventana control", "value": 3, "unit": "meses"},
-                ],
-                formula="monthly_cost_usd * 3 meses de exposicion",
-                explanation="Estima cola de costo/acceso para empleado terminado pero activo.",
-            )
-
-    if cartridge == "sap_successfactors" and anomaly_type in {"missing_manager", "missing_department", "missing_job_code"}:
-        affected = (
-            _num(details.get("affected_employees"))
-            or _num(details.get("direct_reports"))
-            or _num(details.get("headcount"))
-        )
-        monthly_cost = _num(details.get("avg_monthly_cost_usd")) or _num(details.get("salary_monthly_usd"))
-        if affected is not None and monthly_cost is not None and affected > 0 and monthly_cost > 0:
-            return _impact_payload(
-                item=item,
-                estimate=affected * monthly_cost * 0.15,
-                status="ok",
-                confidence=0.48,
-                drivers=[
-                    {"label": "Personas afectadas", "value": round(affected, 2)},
-                    {"label": "Costo mensual promedio", "value": round(monthly_cost, 2), "currency": "USD"},
-                ],
-                formula="affected_employees * avg_monthly_cost_usd * 15%",
-                explanation="Proxy de riesgo operativo SF cuando hay base de costo y poblacion afectada.",
-            )
-
-    monthly_cost = (
-        _num(details.get("monthly_cost_usd"))
-        or _num(details.get("salary_monthly_usd"))
-        or _num(details.get("costo_mensual_usd"))
-    )
-    if monthly_cost is not None and monthly_cost > 0:
-        return _impact_payload(
-            item=item,
-            estimate=monthly_cost,
-            status="ok",
-            confidence=0.55,
-            drivers=[{"label": "Costo mensual", "value": round(monthly_cost, 2), "currency": "USD"}],
-            formula="monthly_cost_usd",
-            explanation="Usa costo directo disponible en la fuente.",
-        )
-
-    return _impact_payload(
+    return build_impact_payload(
         item=item,
-        estimate=None,
-        status="unavailable",
-        confidence=0.25,
-        drivers=[],
-        formula="Sin base monetaria disponible en el dataset.",
-        explanation="La senal es operativa; falta cost basis para convertirla a dinero sin inventar cifras.",
+        estimate=estimate,
+        status=status,
+        confidence=confidence,
+        drivers=drivers,
+        formula=formula,
+        explanation=explanation,
+        severity_weights=SEVERITY_WEIGHT,
+        currency=currency,
     )
 
 
 @_bind_to_core
+@business_priority_builder
+def _priority_payload(
+    item: dict[str, Any],
+    impact: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return build_priority_payload(
+        item,
+        impact or _impact_for_item(item),
+        severity_weights=SEVERITY_WEIGHT,
+        terminal_statuses=TERMINAL_ITEM_STATUSES,
+    )
+
+
+@_bind_to_core
+@business_impact_builder
+def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
+    return calculate_item_impact(item, number=_num, payload=_impact_payload)
+
+
+@_bind_to_core
+@business_template_ids_builder
 def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
-    anomaly_type = str(item.get("anomaly_type") or "")
-    cartridge = str(item.get("cartridge") or "")
-    module_id = str(item.get("module_id") or "")
-    if item.get("kind") == "source_state":
-        return ["restore_data_source", "create_followup_task", "request_owner_review"]
-    if cartridge == "replicon":
-        if anomaly_type in {"low_margin", "wip_variance", "non_billable_ratio"}:
-            return ["prepare_billing_review", "prepare_replicon_adjustment", "create_followup_task"]
-        return ["prepare_replicon_adjustment", "request_owner_review", "create_followup_task"]
-    if cartridge == "sap_s4hana":
-        if anomaly_type in {"negative_revenue", "aged_sales_backlog"} or module_id == "sap_s4hana_sales":
-            return ["prepare_s4_revenue_review", "prepare_sap_review", "create_followup_task"]
-        if anomaly_type in {"missing_address", "missing_tax_id", "duplicate_business_partner"}:
-            return ["prepare_s4_business_partner_review", "prepare_sap_review", "create_followup_task"]
-        if anomaly_type == "supplier_spend_concentration" or module_id == "sap_s4hana_procurement":
-            return ["prepare_s4_procurement_review", "prepare_sap_review", "create_followup_task"]
-        return ["prepare_sap_review", "request_owner_review", "create_followup_task"]
-    if cartridge == "sap_hcm":
-        if anomaly_type == "terminated_but_active":
-            return ["prepare_hcm_access_review", "request_owner_review", "create_followup_task"]
-        return ["prepare_hcm_org_review", "request_owner_review", "create_followup_task"]
-    if cartridge == "sap_successfactors":
-        if module_id == "sap_successfactors_recruiting":
-            return ["prepare_successfactors_recruiting_review", "prepare_successfactors_review", "create_followup_task"]
-        return ["prepare_successfactors_review", "request_owner_review", "create_followup_task"]
-    return ["request_owner_review", "create_followup_task"]
+    return template_ids_for_business_item(item)
 
 
 @_bind_to_core
+@business_action_templates_builder
 def _action_templates_for_item(item: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        _template_with_writeback(ACTION_TEMPLATES[template_id])
-        for template_id in _template_ids_for_item(item)
-        if template_id in ACTION_TEMPLATES
-    ]
+    return templates_for_business_item(
+        item,
+        templates=ACTION_TEMPLATES,
+        decorate=_template_with_writeback,
+    )
 
 
 @_bind_to_core
+@business_primary_template_builder
 def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    templates = _action_templates_for_item(item)
-    return templates[0] if templates else dict(ACTION_TEMPLATES["request_owner_review"])
+    return primary_template_for_business_item(
+        item,
+        templates=ACTION_TEMPLATES,
+        decorate=_template_with_writeback,
+    )
 
 
 @_bind_to_core
-def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
-    action_kind = str(template.get("action_kind") or "owner_review")
-    writeback = _writeback_capability(template)
-    base = {
-        "action_kind": action_kind,
-        "template_id": template.get("template_id"),
-        "entity": {
-            "kind": item.get("entity_kind"),
-            "id": item.get("entity_id"),
-            "label": item.get("entity_label"),
-        },
-        "source_dataset": item.get("source_dataset"),
-        "severity": item.get("severity"),
-        "recommendation": item.get("recommendation"),
-        "writeback": writeback,
-    }
-    if action_kind == "billing_review":
-        return {
-            **base,
-            "replicon": {
-                "project": details.get("project_name") or details.get("proyecto") or item.get("entity_label"),
-                "revenue_manager": details.get("revenue_manager"),
-                "revenue_usd": _num(details.get("revenue_usd")),
-                "margin_pct": _num(details.get("margen_bruto_pct")),
-                "wip_usd": _num(details.get("wip_usd")),
-                "billing_gap_usd": _num(details.get("billing_gap_usd")),
-            },
-            "prepared_actions": [
-                "validar WIP y facturacion contra contrato",
-                "confirmar owner financiero",
-                "preparar ajuste Replicon sin ejecutarlo",
-            ],
-        }
-    if action_kind == "replicon_adjustment":
-        return {
-            **base,
-            "replicon": {
-                "consultant": details.get("consultant_name") or details.get("consultor") or item.get("entity_label"),
-                "project": details.get("project_name") or details.get("proyecto"),
-                "allocation_pct": _num(details.get("pct_asignacion")),
-                "billable_hours": _num(details.get("billable_hours")),
-                "non_billable_hours": _num(details.get("horas_no_facturables")),
-            },
-            "prepared_actions": [
-                "validar asignacion/timesheet",
-                "preparar ajuste para owner",
-            ],
-        }
-    if action_kind == "investigation_note":
-        return {
-            **base,
-            "note": {
-                "summary": item.get("root_cause") or item.get("description") or item.get("title"),
-                "recommendation": item.get("recommendation"),
-                "evidence_sql": item.get("sql"),
-            },
-            "prepared_actions": [
-                "registrar nota de investigacion",
-                "mantener evidencia ligada al item",
-            ],
-        }
-    if action_kind == "decision_monitoring":
-        return {
-            **base,
-            "monitoring": {
-                "metric": item.get("metric") or item.get("anomaly_type"),
-                "severity": item.get("severity"),
-                "entity": item.get("entity_label") or item.get("entity_id"),
-                "source_dataset": item.get("source_dataset"),
-            },
-            "prepared_actions": [
-                "marcar decision para seguimiento",
-                "vincular control y leccion esperada",
-            ],
-        }
-    if action_kind in {"s4_revenue_review", "s4_business_partner_review", "s4_procurement_review", "sap_review"}:
-        return {
-            **base,
-            "sap_s4hana": {
-                "business_partner": details.get("business_partner"),
-                "customer": details.get("customer_code") or details.get("customer_name"),
-                "supplier": details.get("supplier_code") or details.get("supplier_name"),
-                "open_value": _num(details.get("open_value")),
-                "revenue": _num(details.get("revenue")),
-                "spend": _num(details.get("total_spend")),
-            },
-            "prepared_actions": [
-                "validar maestro/partida en SAP",
-                "adjuntar evidencia a decision",
-                "bloquear write-back hasta aprobacion",
-            ],
-        }
-    if action_kind in {"hcm_access_review", "hcm_org_review"}:
-        return {
-            **base,
-            "sap_hcm": {
-                "pernr": details.get("pernr") or item.get("entity_id"),
-                "position": details.get("position") or details.get("plans"),
-                "cost_center": details.get("cost_center") or details.get("kostl"),
-                "monthly_cost_usd": _num(details.get("monthly_cost_usd") or details.get("salary_monthly_usd")),
-            },
-            "prepared_actions": [
-                "validar baja/posicion/centro de costo",
-                "preparar bloqueo o correccion para aprobacion",
-            ],
-        }
-    if action_kind in {"successfactors_employee_review", "successfactors_recruiting_review"}:
-        return {
-            **base,
-            "sap_successfactors": {
-                "user_id": details.get("user_id") or item.get("entity_id"),
-                "manager": details.get("manager_id") or details.get("manager"),
-                "department": details.get("department"),
-                "job_code": details.get("job_code"),
-                "requisition": details.get("requisition_id"),
-            },
-            "prepared_actions": [
-                "validar owner en SuccessFactors",
-                "preparar correccion o excepcion auditada",
-            ],
-        }
-    return {
-        **base,
-        "prepared_actions": [
-            "solicitar revision de owner",
-            "mantener evidencia y fecha de control",
-        ],
-    }
+def _action_payload_for_template(
+    item: dict[str, Any], template: dict[str, Any]
+) -> dict[str, Any]:
+    return build_action_payload(
+        item,
+        template,
+        number=_num,
+        writeback_for=_writeback_capability,
+    )
 
 
 @_bind_to_core
-def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]) -> dict[str, Any]:
-    impact = _impact_for_item(item)
-    action_payload = _action_payload_for_template(item, template)
-    writeback = _writeback_capability(template)
-    return {
-        "mode": mode,
-        "external_writeback_enabled": _external_writeback_enabled(),
-        "supervised_execution_enabled": True,
-        "execution_contract": "supervised_execution",
-        "dry_run": mode != "execute_live",
-        "template": template,
-        "target_system": template.get("cartridge_id") if template.get("cartridge_id") != "platform" else item.get("cartridge"),
-        "item": {
-            "id": item.get("id"),
-            "title": item.get("title"),
-            "kind": item.get("kind"),
-            "cartridge": item.get("cartridge"),
-            "domain": item.get("domain"),
-            "source_dataset": item.get("source_dataset"),
-            "entity_kind": item.get("entity_kind"),
-            "entity_id": item.get("entity_id"),
-            "entity_label": item.get("entity_label"),
-            "anomaly_type": item.get("anomaly_type"),
-            "severity": item.get("severity"),
-            "selected_option_id": item.get("selected_option_id"),
-        },
-        "impact": impact,
-        "action_payload": action_payload,
-        "writeback": writeback,
-        "operations": [
-            {
-                "operation": template.get("action_kind"),
-                "status": "pending_execution" if mode == "execute_live" else "preview" if mode == "preview" else "validated",
-                "requires_approval": True,
-                "external_write": bool(writeback.get("external")),
-                "internal_write": bool(writeback.get("supported")) and not bool(writeback.get("external")),
-                "payload": action_payload,
-                "writeback": writeback,
-                "evidence": {
-                    "sql": item.get("sql"),
-                    "recommendation": item.get("recommendation"),
-                    "root_cause": item.get("root_cause"),
-                },
-            }
-        ],
-        "guardrails": {
-            "human_approval_required": True,
-            "supervised_execution_available": True,
-            "external_writeback_blocked_by_default": not _external_writeback_enabled(),
-            "writeback_blocked_by_default": not _external_writeback_enabled(),
-            "feature_flag": "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
-            "supported_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
-        },
-    }
+def _execution_payload(
+    item: dict[str, Any], mode: str, template: dict[str, Any]
+) -> dict[str, Any]:
+    external_enabled = _external_writeback_enabled()
+    return build_execution_payload(
+        item,
+        mode,
+        template,
+        impact=_impact_for_item(item),
+        action_payload=_action_payload_for_template(item, template),
+        writeback=_writeback_capability(template),
+        external_writeback_enabled=external_enabled,
+        supported_internal_templates=SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES,
+    )
 
 
 @_bind_to_core
@@ -665,74 +407,19 @@ async def create_decision_for_item(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    workspace_id = _workspace_id(user)
-    title = f"{item['title']} - {item['entity_label']}"
-    description = (
-        f"{item['description']}\n\n"
-        f"Recomendacion OMEGA: {item['recommendation']}\n\n"
-        f"Fuente: {item['source_dataset']} ({item['cartridge']})."
-    )
-    kpis = [{
-        "label": "Severidad",
-        "value": item["severity"],
-        "source": item["source_dataset"],
-    }, {
-        "label": "Entidad",
-        "value": item["entity_label"],
-        "source": item["cartridge"],
-    }, {
-        "label": "Estado OMEGA",
-        "value": item.get("status") or "open",
-        "source": "control_room",
-    }]
     pool = await auth.pool()
 
-    async def _write(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
-        row = await conn.fetchrow(
-            """INSERT INTO decisions
-                  (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-               VALUES ($1, $2, CURRENT_DATE + 7, $3::jsonb, $4, NULL, 'shared', $5)
-               RETURNING *""",
-            title,
-            description,
-            json.dumps(kpis),
-            user["id"],
-            scoped_workspace_id,
-        )
-        await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            row["id"],
-            "Decision creada desde Sala de Control",
-            item["recommendation"],
-            user.get("email") or "user",
-        )
-        await _ensure_item_row(conn, user=user, item=item, status="decision_created")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'decision_created',
-                       decision_id = $1,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                row["id"],
-                scoped_workspace_id,
-                item["id"],
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+    async def _write(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> Any:
+        return await _create_and_link_business_decision(
             conn,
             user=user,
             item=item,
-            event_type="decision_created",
-            metadata={"decision_id": row["id"]},
+            workspace_id=scoped_workspace_id,
+            ensure_item_row=_ensure_item_row,
+            record_item_event=_record_item_event,
         )
-        return row
 
     row = await _run_with_db_scope(pool, user, _write)
     await audit_service.record_event(
@@ -747,8 +434,10 @@ async def create_decision_for_item(
         metadata={"decision_id": row["id"], "item": item},
         critical=True,
     )
-    item = {**item, "decision_id": row["id"], "status": "decision_created"}
-    return {"decision": dict(row), "item": _with_omega(item), "anomaly": _with_omega(item)}
+    item = _project_public_item(
+        item, _with_omega, decision_id=row["id"], status="decision_created"
+    )
+    return {"decision": dict(row), "item": item, "anomaly": item}
 
 
 @_bind_to_core
@@ -771,36 +460,18 @@ async def select_item_option(
 
     pool = await auth.pool()
 
-    async def _write_selection(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status="in_review")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = CASE
-                           WHEN status = ANY($4::text[]) THEN status
-                           ELSE 'in_review'
-                       END,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                       selected_option_id = $5,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                json.dumps({"selected_option_id": option_id}),
-                scoped_workspace_id,
-                item["id"],
-                sorted(TERMINAL_ITEM_STATUSES),
-                option_id,
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+    async def _write_selection(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
+        await _persist_business_option_selection(
             conn,
             user=user,
             item=item,
-            event_type="option_selected",
-            metadata={"option_id": option_id},
+            workspace_id=scoped_workspace_id,
+            option_id=option_id,
+            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+            ensure_item_row=_ensure_item_row,
+            record_item_event=_record_item_event,
         )
 
     await _run_with_db_scope(pool, user, _write_selection)
@@ -816,7 +487,9 @@ async def select_item_option(
         metadata={"option_id": option_id, "item": item},
         critical=False,
     )
-    item = _with_omega({**item, "selected_option_id": option_id, "status": "in_review"})
+    item = _project_public_item(
+        item, _with_omega, selected_option_id=option_id, status="in_review"
+    )
     return {"selected": True, "option_id": option_id, "item": item, "anomaly": item}
 
 
@@ -827,7 +500,7 @@ async def get_item_impact(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     return _impact_for_item(item)
 
 
@@ -855,19 +528,17 @@ async def record_item_step(
         "control_id": str(control_id or "").strip()[:120],
     }
 
-    async def _write_step(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
-        await _ensure_item_row(
+    async def _write_step(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
+        await _persist_step(
             conn,
             user=user,
             item=item,
-            status=item.get("status") or "open",
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
+            workspace_id=scoped_workspace_id,
             event_type=event_type,
             metadata=metadata,
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_step)
@@ -907,7 +578,9 @@ async def update_item_control(
         raise HTTPException(400, "control_id is required")
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     current_controls = item.get("omega", {}).get("control", {}).get("items") or []
-    control = next((row for row in current_controls if str(row.get("id")) == control_key), None)
+    control = next(
+        (row for row in current_controls if str(row.get("id")) == control_key), None
+    )
     if not control:
         raise HTTPException(404, "control item not found")
 
@@ -920,19 +593,24 @@ async def update_item_control(
         due_at = parsed_due.isoformat()
     elif body.get("days") is not None:
         try:
-            due_at = (datetime.now(UTC) + timedelta(days=max(0, int(body.get("days"))))).isoformat()
+            due_at = (
+                datetime.now(UTC) + timedelta(days=max(0, int(body.get("days"))))
+            ).isoformat()
         except (TypeError, ValueError):
             due_at = control.get("due_at")
     else:
         due_at = control.get("due_at")
 
-    owner = str(body.get("owner") or body.get("owner_email") or control.get("owner") or user.get("email") or "operaciones").strip()
+    owner = str(
+        body.get("owner")
+        or body.get("owner_email")
+        or control.get("owner")
+        or user.get("email")
+        or "operaciones"
+    ).strip()
     note = str(body.get("note") or "").strip()[:500]
     now = datetime.now(UTC).isoformat()
-    existing_state = _control_state(item)
-    next_control = {
-        **control,
-        **existing_state.get(control_key, {}),
+    control_changes = {
         "id": control_key,
         "status": next_status,
         "st": CONTROL_ITEM_STATUS_LABELS[next_status],
@@ -942,53 +620,44 @@ async def update_item_control(
         "updated_at": now,
         "updated_by": user.get("email") or "user",
     }
-    next_state = {
-        **existing_state,
-        control_key: next_control,
-    }
     item_status = str(item.get("status") or "open")
-    target_status = item_status if item_status in TERMINAL_ITEM_STATUSES else "in_review"
+    target_status = (
+        item_status if item_status in TERMINAL_ITEM_STATUSES else "in_review"
+    )
     pool = await auth.pool()
     event_type = "control_updated" if next_status != "closed" else "control_checked"
 
-    async def _write_control(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status=target_status)
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = CASE
-                           WHEN status = ANY($4::text[]) THEN status
-                           ELSE $5::text
-                       END,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                json.dumps({"control_state": next_state}),
-                scoped_workspace_id,
-                item["id"],
-                sorted(TERMINAL_ITEM_STATUSES),
-                target_status,
-            )
-        except Exception:
-            pass
-        await _record_item_event(
+    async def _write_control(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> None:
+        await _persist_control(
             conn,
             user=user,
             item=item,
+            workspace_id=scoped_workspace_id,
+            target_status=target_status,
+            terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+            control_id=control_key,
+            baseline_control=control,
+            control_changes=control_changes,
             event_type=event_type,
-            metadata={
+            event_metadata={
                 "control_id": control_key,
                 "control_status": next_status,
                 "owner": owner,
                 "due_at": due_at,
                 "note": note,
             },
+            ensure_item_row=_ensure_item_row,
         )
 
     await _run_with_db_scope(pool, user, _write_control)
+    next_state = merged_control_state(
+        {"control_state": _control_state(item)},
+        control_id=control_key,
+        baseline=control,
+        changes=control_changes,
+    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1007,9 +676,12 @@ async def update_item_control(
         },
         critical=True,
     )
-    public_item = _with_omega({**item, "status": target_status, "control_state": next_state})
+    public_item = _project_public_item(
+        item, _with_omega, status=target_status, control_state=next_state
+    )
     updated_control = next(
-        row for row in public_item.get("omega", {}).get("control", {}).get("items", [])
+        row
+        for row in public_item.get("omega", {}).get("control", {}).get("items", [])
         if str(row.get("id")) == control_key
     )
     return {
@@ -1034,10 +706,14 @@ async def create_item_lesson(
         raise HTTPException(400, "lesson rule must contain at least 8 characters")
     rule = rule[:700]
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    decision_id = int(item["decision_id"]) if item.get("decision_id") is not None else None
+    decision_id = (
+        int(item["decision_id"]) if item.get("decision_id") is not None else None
+    )
     pool = await auth.pool()
 
-    async def _write_lesson(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+    async def _write_lesson(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> list[str]:
         await _ensure_item_row(
             conn,
             user=user,
@@ -1051,28 +727,28 @@ async def create_item_lesson(
             decision_id=decision_id,
             lessons=[rule],
         )
-        try:
-            await conn.execute(
-                """
+        operational_metadata = await locked_operational_metadata(
+            conn,
+            workspace_id=scoped_workspace_id,
+            item_id=str(item["id"]),
+            owner_user_id=expected_business_item_owner(item, user),
+        )
+        learned_rules = merged_learned_rules(operational_metadata, rule=rule)
+        update_result = await conn.execute(
+            """
                 UPDATE control_room_items
                    SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
                        last_seen_at = NOW()
                  WHERE workspace_id = $1
                    AND item_id = $2
+                   AND owner_user_id IS NOT DISTINCT FROM $4
                 """,
-                scoped_workspace_id,
-                item["id"],
-                json.dumps(
-                    {
-                        "learned_rules": _merge_rule(
-                            item.get("omega", {}).get("lessons", {}).get("rules"),
-                            rule,
-                        )
-                    }
-                ),
-            )
-        except Exception:
-            pass
+            scoped_workspace_id,
+            item["id"],
+            json.dumps({"learned_rules": learned_rules}),
+            expected_business_item_owner(item, user),
+        )
+        _require_exact_count(update_result, "UPDATE")
         await _record_item_event(
             conn,
             user=user,
@@ -1080,8 +756,9 @@ async def create_item_lesson(
             event_type="lesson_recorded",
             metadata={"decision_id": decision_id, "lessons": [rule], "manual": True},
         )
+        return learned_rules
 
-    await _run_with_db_scope(pool, user, _write_lesson)
+    learned_rules = await _run_with_db_scope(pool, user, _write_lesson)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1096,23 +773,26 @@ async def create_item_lesson(
     )
     lessons = await _load_lesson_rows(user, item_id=item["id"], limit=20)
     if not lessons:
-        lessons = [{
-            "id": None,
-            "item_id": item["id"],
-            "cartridge_id": item.get("cartridge") or "platform",
-            "anomaly_type": item.get("anomaly_type") or "control_room_item",
-            "rule": rule,
-            "source_decision_id": decision_id,
-            "confidence": _impact_for_item(item).get("confidence") or 0.7,
-            "metadata": {"manual": True},
-            "created_at": datetime.now(UTC).isoformat(),
-        }]
-    public_item = _with_omega({
-        **item,
-        "related_lessons": lessons[:5],
-        "lesson_count": len(lessons),
-        "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule),
-    })
+        lessons = [
+            {
+                "id": None,
+                "item_id": item["id"],
+                "cartridge_id": item.get("cartridge") or "platform",
+                "anomaly_type": item.get("anomaly_type") or "control_room_item",
+                "rule": rule,
+                "source_decision_id": decision_id,
+                "confidence": _impact_for_item(item).get("confidence") or 0.7,
+                "metadata": {"manual": True},
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        ]
+    public_item = _project_public_item(
+        item,
+        _with_omega,
+        related_lessons=lessons[:5],
+        lesson_count=len(lessons),
+        learned_rules=learned_rules,
+    )
     return {
         "created": True,
         "lesson": lessons[0],
@@ -1141,7 +821,9 @@ async def apply_item_lesson(
     )
     item_lessons = await _load_lesson_rows(user, item_id=item["id"], limit=100)
     lessons = _dedupe_lessons([*related_lessons, *item_lessons])
-    lesson = next((row for row in lessons if int(row.get("id") or 0) == int(lesson_id)), None)
+    lesson = next(
+        (row for row in lessons if int(row.get("id") or 0) == int(lesson_id)), None
+    )
     if not lesson or not _lesson_matches_item(lesson, item):
         raise HTTPException(404, "lesson not applicable to this control room item")
 
@@ -1162,20 +844,31 @@ async def apply_item_lesson(
     if note:
         application["note"] = note
 
-    applications = _lesson_applications(item)
-    applications = [entry for entry in applications if int(entry.get("lesson_id") or 0) != int(lesson_id)]
-    applications.insert(0, application)
-    applications = applications[:20]
-    learned_rules = _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule)
-    target_status = item.get("status") if item.get("status") in TERMINAL_ITEM_STATUSES else "in_review"
+    target_status = (
+        item.get("status")
+        if item.get("status") in TERMINAL_ITEM_STATUSES
+        else "in_review"
+    )
 
     pool = await auth.pool()
 
-    async def _write_application(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> None:
+    async def _write_application(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> tuple[list[str], list[dict[str, Any]]]:
         await _ensure_item_row(conn, user=user, item=item, status=target_status)
-        try:
-            await conn.execute(
-                """
+        metadata = await locked_operational_metadata(
+            conn,
+            workspace_id=scoped_workspace_id,
+            item_id=str(item["id"]),
+            owner_user_id=expected_business_item_owner(item, user),
+        )
+        learned_rules, applications = merged_lesson_state(
+            metadata,
+            application=application,
+            rule=rule,
+        )
+        update_result = await conn.execute(
+            """
                 UPDATE control_room_items
                    SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
                        status = CASE
@@ -1186,18 +879,21 @@ async def apply_item_lesson(
                        last_seen_at = NOW()
                  WHERE workspace_id = $1
                    AND item_id = $2
+                   AND owner_user_id IS NOT DISTINCT FROM $6
                 """,
-                scoped_workspace_id,
-                item["id"],
-                json.dumps({
+            scoped_workspace_id,
+            item["id"],
+            json.dumps(
+                {
                     "learned_rules": learned_rules,
                     "lesson_applications": applications,
-                }),
-                sorted(TERMINAL_ITEM_STATUSES),
-                target_status,
-            )
-        except Exception:
-            pass
+                }
+            ),
+            sorted(TERMINAL_ITEM_STATUSES),
+            target_status,
+            expected_business_item_owner(item, user),
+        )
+        _require_exact_count(update_result, "UPDATE")
 
         await _record_item_event(
             conn,
@@ -1211,8 +907,11 @@ async def apply_item_lesson(
                 "note": note,
             },
         )
+        return learned_rules, applications
 
-    await _run_with_db_scope(pool, user, _write_application)
+    learned_rules, applications = await _run_with_db_scope(
+        pool, user, _write_application
+    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1229,15 +928,22 @@ async def apply_item_lesson(
         },
         critical=True,
     )
-    related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[:5]
-    public_item = _with_omega({
-        **item,
-        "status": target_status,
-        "related_lessons": related,
-        "lesson_count": max(len(related), int(item.get("lesson_count") or 0), 1),
-        "learned_rules": learned_rules,
-        "lesson_applications": applications,
-    })
+    related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[
+        :5
+    ]
+    public_item = _project_public_item(
+        item,
+        _with_omega,
+        status=target_status,
+        related_lessons=related,
+        lesson_count=max(
+            len(related),
+            int(item.get("lesson_count") or 0),
+            1,
+        ),
+        learned_rules=learned_rules,
+        lesson_applications=applications,
+    )
     return {
         "applied": True,
         "lesson": lesson,
@@ -1284,14 +990,24 @@ def _action_run_idempotency_key(
         return f"{mode}:{template_id}:{safe_provided}"[:512]
     decision_id = str(item.get("decision_id") or "no-decision")
     item_id = str(item.get("id") or "")
-    status_part = f":{status}" if status in {"blocked", "failed", "dry_run_failed"} else ""
+    status_part = (
+        f":{status}" if status in {"blocked", "failed", "dry_run_failed"} else ""
+    )
     return f"{mode}:{item_id}:{template_id}:{decision_id}{status_part}"[:512]
 
 
 @_bind_to_core
-def _action_run_public(row: Any, *, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+def _action_run_public(
+    row: Any, *, fallback: dict[str, Any] | None = None
+) -> dict[str, Any]:
     data = _row_to_public(row) if row else dict(fallback or {})
-    for key in ("input", "dry_run_result", "execution_result", "side_effect", "metadata"):
+    for key in (
+        "input",
+        "dry_run_result",
+        "execution_result",
+        "side_effect",
+        "metadata",
+    ):
         data[key] = _details(data.get(key))
     return data
 
@@ -1309,10 +1025,10 @@ async def _record_action_run_event(
     critical: bool = False,
 ) -> None:
     if action_run_id is None:
-        return
+        raise RuntimeError("control room action run event requires an action run id")
     tenant_id, workspace_id = _workspace_scope(user)
     try:
-        await pool.execute(
+        insert_result = await pool.execute(
             """
             INSERT INTO action_run_events (
                 tenant_id, workspace_id, action_run_id, item_id, event_type,
@@ -1330,6 +1046,7 @@ async def _record_action_run_event(
             user.get("email"),
             json.dumps(metadata),
         )
+        _require_exact_count(insert_result, "INSERT")
     except Exception:
         if critical:
             raise
@@ -1356,7 +1073,9 @@ async def _record_action_run(
     critical: bool = False,
 ) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
-    action_type = str(template.get("template_id") or template.get("action_kind") or "unknown")
+    action_type = str(
+        template.get("template_id") or template.get("action_kind") or "unknown"
+    )
     adapter_name = _adapter_name_for_template(template)
     key = idempotency_key or _action_run_idempotency_key(
         item=item,
@@ -1364,7 +1083,14 @@ async def _record_action_run(
         mode=mode,
         status=status,
     )
-    terminal = status in {"preview_generated", "dry_run_completed", "dry_run_failed", "blocked", "completed", "failed"}
+    terminal = status in {
+        "preview_generated",
+        "dry_run_completed",
+        "dry_run_failed",
+        "blocked",
+        "completed",
+        "failed",
+    }
     meta = {
         "template": template,
         "source_dataset": item.get("source_dataset"),
@@ -1468,6 +1194,8 @@ async def _record_action_run(
             json.dumps(meta),
             terminal,
         )
+        if action_run_id is None:
+            raise RuntimeError("control room action run was not persisted")
         fallback["id"] = action_run_id
         await _record_action_run_event(
             pool,
@@ -1493,39 +1221,6 @@ async def _record_action_run(
 
 
 @_bind_to_core
-async def _latest_successful_dry_run(
-    pool: Any,
-    *,
-    user: dict,
-    item: dict[str, Any],
-    template: dict[str, Any],
-) -> dict[str, Any] | None:
-    workspace_id = _workspace_id(user)
-    row = await pool.fetchrow(
-        """
-        SELECT id, tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
-               action_type, adapter_name, mode, status, risk_level,
-               requires_approval, approval_status, idempotency_key,
-               actor_id, actor_email, input, dry_run_result, execution_result,
-               side_effect, error_code, error_message, metadata,
-               created_at, updated_at, completed_at
-          FROM action_runs
-         WHERE workspace_id = $1
-           AND item_id = $2
-           AND action_type = $3
-           AND mode = 'dry_run'
-           AND status = 'dry_run_completed'
-         ORDER BY completed_at DESC NULLS LAST, updated_at DESC
-         LIMIT 1
-        """,
-        workspace_id,
-        item["id"],
-        str(template.get("template_id") or ""),
-    )
-    return _action_run_public(row) if row else None
-
-
-@_bind_to_core
 def _dry_run_checks(
     *,
     user: dict,
@@ -1533,30 +1228,64 @@ def _dry_run_checks(
     template: dict[str, Any],
     payload: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str], bool]:
-    capability = payload.get("writeback") if isinstance(payload.get("writeback"), dict) else _writeback_capability(template)
+    capability = (
+        payload.get("writeback")
+        if isinstance(payload.get("writeback"), dict)
+        else _writeback_capability(template)
+    )
     checks: list[dict[str, Any]] = []
 
     def add(name: str, passed: bool, *, detail: str, required: bool = True) -> None:
-        checks.append({
-            "name": name,
-            "status": "passed" if passed else "failed",
-            "required": required,
-            "detail": detail,
-        })
+        checks.append(
+            {
+                "name": name,
+                "status": "passed" if passed else "failed",
+                "required": required,
+                "detail": detail,
+            }
+        )
 
     tenant_id, workspace_id = _workspace_scope(user)
-    add("tenant_scope", bool(tenant_id), detail="tenant resolved from authenticated user")
-    add("workspace_scope", bool(workspace_id), detail="workspace resolved from authenticated user")
-    add("actor", bool(user.get("id") or user.get("email")), detail="actor is authenticated")
-    add("input_schema", bool(payload.get("item") and payload.get("operations")), detail="execution payload has item and operation")
-    add("risk", str(template.get("risk_level") or "") in {"low", "medium", "high", "critical"}, detail="risk level is recognized")
+    add(
+        "tenant_scope",
+        bool(tenant_id),
+        detail="tenant resolved from authenticated user",
+    )
+    add(
+        "workspace_scope",
+        bool(workspace_id),
+        detail="workspace resolved from authenticated user",
+    )
+    add(
+        "actor",
+        bool(user.get("id") or user.get("email")),
+        detail="actor is authenticated",
+    )
+    add(
+        "input_schema",
+        bool(payload.get("item") and payload.get("operations")),
+        detail="execution payload has item and operation",
+    )
+    add(
+        "risk",
+        str(template.get("risk_level") or "") in {"low", "medium", "high", "critical"},
+        detail="risk level is recognized",
+    )
     add("approval", True, detail="approval/confirmation gate is declared")
-    add("data", bool(item.get("source_dataset") and item.get("entity_id")), detail="source dataset and entity are present")
+    add(
+        "data",
+        bool(item.get("source_dataset") and item.get("entity_id")),
+        detail="source dataset and entity are present",
+    )
     if capability.get("external"):
         add(
             "adapter",
             bool(capability.get("adapter_available")),
-            detail=str(capability.get("adapter") or capability.get("reason") or "external adapter unavailable"),
+            detail=str(
+                capability.get("adapter")
+                or capability.get("reason")
+                or "external adapter unavailable"
+            ),
         )
         add(
             "external_writeback_flag",
@@ -1575,17 +1304,25 @@ def _dry_run_checks(
         for check in checks
         if check["status"] != "passed" and not bool(check.get("required", True))
     ]
-    ok = all(check["status"] == "passed" for check in checks if bool(check.get("required", True)))
+    ok = all(
+        check["status"] == "passed"
+        for check in checks
+        if bool(check.get("required", True))
+    )
     return checks, warnings, ok
 
 
 @_bind_to_core
 def _uses_asyncpg_pool(pool: Any) -> bool:
-    return pool.__class__.__module__.startswith("asyncpg") and callable(getattr(pool, "acquire", None))
+    return pool.__class__.__module__.startswith("asyncpg") and callable(
+        getattr(pool, "acquire", None)
+    )
 
 
 @_bind_to_core
-async def _run_with_db_scope(pool: Any, user: dict, work: Callable[[Any, str | None, str], Awaitable[Any]]) -> Any:
+async def _run_with_db_scope(
+    pool: Any, user: dict, work: Callable[[Any, str | None, str], Awaitable[Any]]
+) -> Any:
     return await run_with_db_scope(pool, user, work)
 
 
@@ -1610,7 +1347,9 @@ async def action_preview(
     }
     pool = await auth.pool()
 
-    async def _write(conn: Any, _tenant_id: str | None, _workspace_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def _write(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         await _ensure_item_row(
             conn,
             user=user,
@@ -1638,7 +1377,9 @@ async def action_preview(
             status="preview_generated",
             input_payload=payload,
             execution_result=result,
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
             metadata={"legacy_table": "control_room_action_executions"},
             critical=True,
         )
@@ -1676,8 +1417,16 @@ async def action_preview(
         metadata={"template_id": template["template_id"], "payload": payload},
         critical=True,
     )
-    public_item = _with_omega({**item, "execution_status": "preview_generated"})
-    return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
+    public_item = _project_public_item(
+        item, _with_omega, execution_status="preview_generated"
+    )
+    return {
+        "execution": execution,
+        "action_run": action_run,
+        "payload": payload,
+        "result": result,
+        "item": public_item,
+    }
 
 
 @_bind_to_core
@@ -1722,7 +1471,9 @@ async def action_dry_run(
     }
     pool = await auth.pool()
 
-    async def _write(conn: Any, _tenant_id: str | None, _workspace_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def _write(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         await _ensure_item_row(
             conn,
             user=user,
@@ -1751,10 +1502,16 @@ async def action_dry_run(
             status=action_run_status,
             input_payload=payload,
             dry_run_result=result,
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
             error_code=None if validation_ok else "dry_run_validation_failed",
             error_message=None if validation_ok else result["message"],
-            metadata={"legacy_table": "control_room_action_executions", "checks": validation_checks},
+            metadata={
+                "legacy_table": "control_room_action_executions",
+                "checks": validation_checks,
+                **dry_run_metadata(item, template_id=str(template["template_id"])),
+            },
             critical=True,
         )
         await _set_execution_status(
@@ -1790,11 +1547,23 @@ async def action_dry_run(
         ip=ip,
         user_agent=user_agent,
         status="success" if validation_ok else "failed",
-        metadata={"template_id": template["template_id"], "result": result, "action_run_id": action_run.get("id")},
+        metadata={
+            "template_id": template["template_id"],
+            "result": result,
+            "action_run_id": action_run.get("id"),
+        },
         critical=True,
     )
-    public_item = _with_omega({**item, "execution_status": execution_status})
-    return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
+    public_item = _project_public_item(
+        item, _with_omega, execution_status=execution_status
+    )
+    return {
+        "execution": execution,
+        "action_run": action_run,
+        "payload": payload,
+        "result": result,
+        "item": public_item,
+    }
 
 
 @_bind_to_core
@@ -1804,9 +1573,10 @@ async def list_item_action_runs(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
+
     async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
         return await conn.fetch(
             """
@@ -1857,8 +1627,9 @@ async def list_item_outcomes(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
+
     async def _load(conn: Any, _tenant_id: str | None, workspace_id: str) -> Any:
         return await conn.fetch(
             """
@@ -1896,10 +1667,15 @@ async def record_item_outcome(
     action_taken = str(body.get("action_taken") or body.get("action") or "").strip()
     if not action_taken:
         raise HTTPException(400, "action_taken is required")
-    option_id = str(body.get("option_id") or item.get("selected_option_id") or "").strip() or None
+    option_id = (
+        str(body.get("option_id") or item.get("selected_option_id") or "").strip()
+        or None
+    )
     predicted_value = _outcome_num(body.get("predicted_value"))
     if predicted_value is None:
-        predicted_value = _outcome_num(item.get("impact_estimate") or _impact_for_item(item).get("estimate"))
+        predicted_value = _outcome_num(
+            item.get("impact_estimate") or _impact_for_item(item).get("estimate")
+        )
     actual_value = _outcome_num(body.get("actual_value"))
     prediction_error = None
     if actual_value is not None and predicted_value is not None:
@@ -1922,12 +1698,33 @@ async def record_item_outcome(
         "measured_impact": body.get("measured_impact"),
         "outcome_status": body.get("outcome_status"),
         "observed_at": body.get("observed_at"),
-        "evidence": body.get("evidence") if isinstance(body.get("evidence"), dict) else {},
+        "evidence": body.get("evidence")
+        if isinstance(body.get("evidence"), dict)
+        else {},
     }
+
     async def _write(conn: Any, tenant_id: str | None, workspace_id: str) -> Any:
         from app.services.intelligence.history import link_outcome_to_snapshot
 
-        await _ensure_item_row(conn, user=user, item=item, status=item.get("status") or "in_review", critical=True)
+        await _ensure_item_row(
+            conn,
+            user=user,
+            item=item,
+            status=item.get("status") or "in_review",
+            critical=True,
+        )
+        learned_rules = None
+        if learned_rule:
+            operational_metadata = await locked_operational_metadata(
+                conn,
+                workspace_id=workspace_id,
+                item_id=str(item["id"]),
+                owner_user_id=expected_business_item_owner(item, user),
+            )
+            learned_rules = merged_learned_rules(
+                operational_metadata,
+                rule=learned_rule,
+            )
         row = await conn.fetchrow(
             """
             INSERT INTO prediction_outcomes (
@@ -1960,48 +1757,60 @@ async def record_item_outcome(
             body=body,
         )
         if learned_rule:
-            await _persist_lessons(conn, user=user, item=item, decision_id=item.get("decision_id"), lessons=[learned_rule])
-        await conn.execute(
+            await _persist_lessons(
+                conn,
+                user=user,
+                item=item,
+                decision_id=item.get("decision_id"),
+                lessons=[learned_rule],
+            )
+        metadata_patch = {
+            "last_outcome": {
+                "action_taken": action_taken,
+                "actual_value": actual_value,
+                "prediction_error": prediction_error,
+                "outcome_summary": outcome_summary,
+                "learned_rule": learned_rule,
+            }
+        }
+        if learned_rules is not None:
+            metadata_patch["learned_rules"] = learned_rules
+        update_result = await conn.execute(
             """
             UPDATE control_room_items
                SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
                    last_seen_at = NOW()
              WHERE workspace_id = $1
                AND item_id = $2
+               AND owner_user_id IS NOT DISTINCT FROM $4
             """,
             workspace_id,
             item["id"],
-            json.dumps({
-                "last_outcome": {
-                    "action_taken": action_taken,
-                    "actual_value": actual_value,
-                    "prediction_error": prediction_error,
-                    "outcome_summary": outcome_summary,
-                    "learned_rule": learned_rule,
-                },
-                "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), learned_rule or ""),
-            }),
+            json.dumps(metadata_patch),
+            expected_business_item_owner(item, user),
+        )
+        _require_exact_count(update_result, "UPDATE")
+        outcome = _outcome_public(row)
+        await _record_item_event(
+            conn,
+            user=user,
+            item=item,
+            event_type="outcome_recorded",
+            metadata={
+                "outcome_id": outcome.get("id"),
+                "action_taken": action_taken,
+                "option_id": option_id,
+                "prediction_error": prediction_error,
+                "learned_rule": learned_rule,
+                "measured_impact": body.get("measured_impact"),
+                "action_run_id": body.get("action_run_id"),
+            },
+            critical=True,
         )
         return row, tenant_id, workspace_id
 
     row, tenant_id, workspace_id = await _run_with_db_scope(pool, user, _write)
     outcome = _outcome_public(row)
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="outcome_recorded",
-        metadata={
-            "outcome_id": outcome.get("id"),
-            "action_taken": action_taken,
-            "option_id": option_id,
-            "prediction_error": prediction_error,
-            "learned_rule": learned_rule,
-            "measured_impact": body.get("measured_impact"),
-            "action_run_id": body.get("action_run_id"),
-        },
-        critical=True,
-    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -2027,7 +1836,7 @@ async def record_item_outcome(
         "recorded": True,
         "outcome": outcome,
         "lesson_recorded": bool(learned_rule),
-        "item": _with_omega({**item, "last_outcome": outcome}),
+        "item": _project_public_item(item, _with_omega, last_outcome=outcome),
     }
 
 
@@ -2080,8 +1889,15 @@ async def run_auto_item(
         decision = {"decision": {"id": item.get("decision_id")}, "item": item}
     steps.append({"step": "decision", "decision_id": item.get("decision_id")})
 
-    available_template_ids = {str(template.get("template_id")) for template in _action_templates_for_item(item)}
-    template_id = "create_followup_task" if "create_followup_task" in available_template_ids else _primary_template_for_item(item)["template_id"]
+    available_template_ids = {
+        str(template.get("template_id"))
+        for template in _action_templates_for_item(item)
+    }
+    template_id = (
+        "create_followup_task"
+        if "create_followup_task" in available_template_ids
+        else _primary_template_for_item(item)["template_id"]
+    )
     preview = await action_preview(
         item_id,
         user,
@@ -2099,7 +1915,13 @@ async def run_auto_item(
         fetcher=fetcher,
     )
     item = dry_run["item"]
-    steps.append({"step": "execution", "template_id": template_id, "status": item.get("execution_status")})
+    steps.append(
+        {
+            "step": "execution",
+            "template_id": template_id,
+            "status": item.get("execution_status"),
+        }
+    )
 
     control = await record_item_step(
         item_id,
@@ -2114,7 +1936,20 @@ async def run_auto_item(
 
     pool = await auth.pool()
 
-    async def _record_auto_run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> None:
+    async def _record_auto_run(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> None:
+        await lock_authoritative_business_item(
+            conn,
+            user=user,
+            item=item,
+            decision_id=int(item["decision_id"]),
+            allowed_stages={
+                WorkflowStage.DECISION_CREATED,
+                WorkflowStage.APPROVED,
+                WorkflowStage.EXECUTED,
+            },
+        )
         await _record_item_event(
             conn,
             user=user,
@@ -2168,7 +2003,14 @@ def _confirmed_for_execute(value: Any) -> bool:
     if value is True:
         return True
     if isinstance(value, str):
-        return value.strip().lower() in {"execute", "confirm", "confirmed", "true", "yes", "1"}
+        return value.strip().lower() in {
+            "execute",
+            "confirm",
+            "confirmed",
+            "true",
+            "yes",
+            "1",
+        }
     return False
 
 
@@ -2191,7 +2033,7 @@ async def _record_writeback_audit_event(
     status: str,
     metadata: dict[str, Any],
 ) -> None:
-    await db.execute(
+    insert_result = await db.execute(
         """
         INSERT INTO audit_events
         (user_id, email, action, resource_type, resource_id,
@@ -2210,6 +2052,7 @@ async def _record_writeback_audit_event(
         request_id_var.get(),
         json.dumps(metadata),
     )
+    _require_exact_count(insert_result, "INSERT")
 
 
 @_bind_to_core
@@ -2225,6 +2068,19 @@ async def _record_execute_block(
     ip: str | None,
     user_agent: str | None,
 ) -> None:
+    decision_id = int(item["decision_id"]) if item.get("decision_id") else None
+    await lock_authoritative_business_item(
+        pool,
+        user=user,
+        item=item,
+        decision_id=decision_id,
+        allowed_stages=(
+            WorkflowStage.DECISION_CREATED,
+            WorkflowStage.APPROVED,
+        )
+        if decision_id
+        else None,
+    )
     result = {
         "ok": False,
         "mode": "execute_live",
@@ -2262,11 +2118,19 @@ async def _record_execute_block(
             mode="execute",
             status="blocked",
         ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"legacy_table": "control_room_action_executions", "block_reason": error},
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
+        metadata={
+            "legacy_table": "control_room_action_executions",
+            "block_reason": error,
+        },
+        critical=True,
     )
     if str(item.get("execution_status") or "not_started") != "dry_run_validated":
-        await _set_execution_status(pool, user=user, item=item, execution_status="blocked", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="blocked", critical=True
+        )
     await _record_item_event(
         pool,
         user=user,
@@ -2300,60 +2164,60 @@ async def _record_execute_block(
 
 
 @_bind_to_core
-async def _existing_executed_writeback(
-    pool: Any,
+def _reserved_action_response(
+    reservation: ActionReservation,
+    *,
+    item: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return _build_reserved_action_response(
+        reservation,
+        item=item,
+        payload=payload,
+        action_run_public=_action_run_public,
+        details=_details,
+        project_item=_project_public_item,
+        omega_builder=_with_omega,
+    )
+
+
+@_bind_to_core
+async def _complete_execute_reservation(
+    db: Any,
     *,
     user: dict,
     item: dict[str, Any],
-    template: dict[str, Any],
-    idempotency_key: str | None,
-    critical: bool = False,
-) -> dict[str, Any] | None:
-    workspace_id = _workspace_id(user)
-    try:
-        if idempotency_key:
-            row = await pool.fetchrow(
-                """
-                SELECT id, item_id, template_id, mode, status, payload, result,
-                       error, actor_email, created_at, completed_at
-                  FROM control_room_action_executions
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                   AND template_id = $3
-                   AND mode = 'execute_live'
-                   AND status = 'executed'
-                   AND (payload->>'idempotency_key' = $4 OR result->>'idempotency_key' = $4)
-                 ORDER BY created_at DESC
-                 LIMIT 1
-                """,
-                workspace_id,
-                item["id"],
-                template["template_id"],
-                idempotency_key,
-            )
-        else:
-            row = await pool.fetchrow(
-                """
-                SELECT id, item_id, template_id, mode, status, payload, result,
-                       error, actor_email, created_at, completed_at
-                  FROM control_room_action_executions
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                   AND template_id = $3
-                   AND mode = 'execute_live'
-                   AND status = 'executed'
-                 ORDER BY created_at DESC
-                 LIMIT 1
-                """,
-                workspace_id,
-                item["id"],
-                template["template_id"],
-            )
-    except Exception:
-        if critical:
-            raise
-        return None
-    return _row_to_public(row) if row else None
+    reservation: ActionReservation,
+    status: str,
+    result: dict[str, Any],
+    side_effect: dict[str, Any] | None = None,
+    legacy_execution_id: int | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    row = await complete_action_reservation(
+        db,
+        workspace_id=_workspace_id(user),
+        reservation_id=reservation.id,
+        effective_key=reservation.effective_key,
+        status=status,
+        execution_result=result,
+        side_effect=side_effect,
+        legacy_execution_id=legacy_execution_id,
+        error_code=error_code,
+        error_message=error_message,
+    )
+    await _record_action_run_event(
+        db,
+        user=user,
+        item=item,
+        action_run_id=reservation.id,
+        event_type=f"action_run.{status}",
+        status=status,
+        metadata={"error_code": error_code},
+        critical=True,
+    )
+    return _action_run_public(row)
 
 
 @_bind_to_core
@@ -2411,29 +2275,23 @@ async def _execute_internal_followup_task_tx(
     user_agent: str | None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(user)
-    await db.execute(
-        "SELECT pg_advisory_xact_lock(hashtext($1))",
-        f"control_room_writeback:{workspace_id}:{item['id']}:{template['template_id']}",
-    )
-    existing = await _existing_executed_writeback(
+    reservation = await acquire_guarded_action_reservation(
         db,
         user=user,
         item=item,
-        template=template,
-        idempotency_key=None,
-        critical=True,
+        template_id=str(template["template_id"]),
+        adapter_name=_adapter_name_for_template(template),
+        operation="execute",
+        provided_key=idempotency_key,
+        input_payload=payload,
     )
-    if existing:
-        existing_result = _details(existing.get("result"))
-        public_item = _with_omega({**item, "execution_status": "executed"})
-        return {
-            "executed": True,
-            "idempotent": True,
-            "execution": existing,
-            "payload": _details(existing.get("payload")) or payload,
-            "result": {**existing_result, "idempotent": True},
-            "item": public_item,
-        }
+    if reservation.state is not ReservationState.ACQUIRED:
+        return _reserved_action_response(
+            reservation,
+            item=item,
+            payload=payload,
+        )
+    idempotency_key = reservation.effective_key
     decision_id = int(item["decision_id"])
     visible = await db.fetchrow(
         "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
@@ -2507,31 +2365,23 @@ async def _execute_internal_followup_task_tx(
         result=result,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         db,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed",
-        input_payload={**payload, "idempotency_key": idempotency_key},
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect={
             "target": "decision_actions",
             "decision_id": decision_id,
             "decision_action_id": public_action.get("id"),
         },
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
     )
-    await db.execute(
+    update_result = await db.execute(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
@@ -2539,20 +2389,25 @@ async def _execute_internal_followup_task_tx(
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
+           AND owner_user_id IS NOT DISTINCT FROM $4
         """,
         workspace_id,
         item["id"],
-        json.dumps({
-            "execution_status": "executed",
-            "writeback_result": {
-                "adapter": "internal_followup_task",
-                "target": "decision_actions",
-                "decision_action_id": public_action.get("id"),
-                "execution_id": execution.get("id"),
-                "action_run_id": action_run.get("id"),
-            },
-        }),
+        json.dumps(
+            {
+                "execution_status": "executed",
+                "writeback_result": {
+                    "adapter": "internal_followup_task",
+                    "target": "decision_actions",
+                    "decision_action_id": public_action.get("id"),
+                    "execution_id": execution.get("id"),
+                    "action_run_id": action_run.get("id"),
+                },
+            }
+        ),
+        expected_business_item_owner(item, user),
     )
+    _require_exact_count(update_result, "UPDATE")
     await _record_item_event(
         db,
         user=user,
@@ -2588,7 +2443,7 @@ async def _execute_internal_followup_task_tx(
             "after": after,
         },
     )
-    public_item = _with_omega({**item, "execution_status": "executed"})
+    public_item = _project_public_item(item, _with_omega, execution_status="executed")
     return {
         "executed": True,
         "idempotent": False,
@@ -2613,8 +2468,30 @@ async def _execute_internal_investigation_note(
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
-    note_payload = payload.get("action_payload") if isinstance(payload.get("action_payload"), dict) else {}
-    note = _details(note_payload.get("note")).get("summary") or item.get("root_cause") or item.get("description") or item.get("title")
+    reservation = await acquire_guarded_action_reservation(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+        adapter_name=_adapter_name_for_template(template),
+        operation="execute",
+        provided_key=idempotency_key,
+        input_payload=payload,
+    )
+    if reservation.state is not ReservationState.ACQUIRED:
+        return _reserved_action_response(reservation, item=item, payload=payload)
+    idempotency_key = reservation.effective_key
+    note_payload = (
+        payload.get("action_payload")
+        if isinstance(payload.get("action_payload"), dict)
+        else {}
+    )
+    note = (
+        _details(note_payload.get("note")).get("summary")
+        or item.get("root_cause")
+        or item.get("description")
+        or item.get("title")
+    )
     side_effect = {
         "target": "control_room_item_events",
         "event_type": "investigation_note_created",
@@ -2644,25 +2521,17 @@ async def _execute_internal_investigation_note(
         result=result,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         pool,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed",
-        input_payload={**payload, "idempotency_key": idempotency_key},
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect=side_effect,
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
     )
     await _record_item_event(
         pool,
@@ -2677,7 +2546,9 @@ async def _execute_internal_investigation_note(
         },
         critical=True,
     )
-    await _set_execution_status(pool, user=user, item=item, execution_status="executed", critical=True)
+    await _set_execution_status(
+        pool, user=user, item=item, execution_status="executed", critical=True
+    )
     await _record_writeback_audit_event(
         pool,
         user=user,
@@ -2695,7 +2566,7 @@ async def _execute_internal_investigation_note(
             "side_effect": side_effect,
         },
     )
-    public_item = _with_omega({**item, "execution_status": "executed"})
+    public_item = _project_public_item(item, _with_omega, execution_status="executed")
     return {
         "executed": True,
         "idempotent": False,
@@ -2720,6 +2591,19 @@ async def _execute_internal_decision_monitoring(
     user_agent: str | None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(user)
+    reservation = await acquire_guarded_action_reservation(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+        adapter_name=_adapter_name_for_template(template),
+        operation="execute",
+        provided_key=idempotency_key,
+        input_payload=payload,
+    )
+    if reservation.state is not ReservationState.ACQUIRED:
+        return _reserved_action_response(reservation, item=item, payload=payload)
+    idempotency_key = reservation.effective_key
     monitoring_state = {
         "enabled": True,
         "decision_id": item.get("decision_id"),
@@ -2758,27 +2642,19 @@ async def _execute_internal_decision_monitoring(
         result=result,
         critical=True,
     )
-    action_run = await _record_action_run(
+    action_run = await _complete_execute_reservation(
         pool,
         user=user,
         item=item,
-        template=template,
-        mode="execute",
         status="completed",
-        input_payload={**payload, "idempotency_key": idempotency_key},
-        execution_result=result,
+        reservation=reservation,
+        result=result,
         side_effect=side_effect,
-        idempotency_key=_action_run_idempotency_key(
-            item=item,
-            template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"legacy_table": "control_room_action_executions"},
-        critical=True,
+        legacy_execution_id=int(execution["id"])
+        if execution.get("id") is not None
+        else None,
     )
-    await pool.execute(
+    update_result = await pool.execute(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
@@ -2786,11 +2662,16 @@ async def _execute_internal_decision_monitoring(
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
+           AND owner_user_id IS NOT DISTINCT FROM $4
         """,
         workspace_id,
         item["id"],
-        json.dumps({"decision_monitoring": monitoring_state, "execution_status": "executed"}),
+        json.dumps(
+            {"decision_monitoring": monitoring_state, "execution_status": "executed"}
+        ),
+        expected_business_item_owner(item, user),
     )
+    _require_exact_count(update_result, "UPDATE")
     await _record_item_event(
         pool,
         user=user,
@@ -2821,7 +2702,12 @@ async def _execute_internal_decision_monitoring(
             "side_effect": side_effect,
         },
     )
-    public_item = _with_omega({**item, "execution_status": "executed", "decision_monitoring": monitoring_state})
+    public_item = _project_public_item(
+        item,
+        _with_omega,
+        execution_status="executed",
+        decision_monitoring=monitoring_state,
+    )
     return {
         "executed": True,
         "idempotent": False,
@@ -2864,7 +2750,11 @@ def _external_action_data(
 
 @_bind_to_core
 def _writeback_template_type(template: dict[str, Any]) -> str:
-    return str(template.get("template_type") or template.get("template_id") or "").strip().lower()
+    return (
+        str(template.get("template_type") or template.get("template_id") or "")
+        .strip()
+        .lower()
+    )
 
 
 @_bind_to_core
@@ -2906,9 +2796,11 @@ async def _record_adapter_success_lesson(
     result: dict[str, Any],
     adapter_name: str,
     template_type: str,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
-    cartridge_id = str(item.get("cartridge") or template.get("cartridge_id") or "platform")
+    cartridge_id = str(
+        item.get("cartridge") or template.get("cartridge_id") or "platform"
+    )
     anomaly_type = str(item.get("anomaly_type") or "control_room_item")
     decision_id = int(item["decision_id"]) if item.get("decision_id") else None
     confidence = _impact_for_item(item).get("confidence") or 0.85
@@ -2920,37 +2812,38 @@ async def _record_adapter_success_lesson(
         "autonomous_learning": True,
         "source": "adapter_success",
         "execution_id": execution.get("id"),
-        "result_status": result.get("status") or result.get("adapter_result", {}).get("status"),
+        "result_status": result.get("status")
+        or result.get("adapter_result", {}).get("status"),
         "suggested_action": {
             "template_id": template.get("template_id"),
             "template_type": template_type,
             "label": template.get("label"),
             "action_kind": template.get("action_kind"),
-            "target": result.get("target") or template.get("cartridge_id") or item.get("cartridge"),
+            "target": result.get("target")
+            or template.get("cartridge_id")
+            or item.get("cartridge"),
             "adapter": adapter_name,
         },
     }
-    try:
-        await pool.execute(
-            """
-            INSERT INTO control_room_lessons (
-                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
-                rule, source_decision_id, confidence, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-            """,
-            tenant_id,
-            workspace_id,
-            item["id"],
-            cartridge_id,
-            anomaly_type,
-            rule,
-            decision_id,
-            confidence,
-            json.dumps(metadata),
+    insert_result = await pool.execute(
+        """
+        INSERT INTO control_room_lessons (
+            tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+            rule, source_decision_id, confidence, metadata
         )
-    except Exception:
-        return None
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        """,
+        tenant_id,
+        workspace_id,
+        item["id"],
+        cartridge_id,
+        anomaly_type,
+        rule,
+        decision_id,
+        confidence,
+        json.dumps(metadata),
+    )
+    _require_exact_count(insert_result, "INSERT")
     return {
         "item_id": item["id"],
         "cartridge_id": cartridge_id,
@@ -2970,13 +2863,33 @@ async def _execute_external_writeback(
     item: dict[str, Any],
     template: dict[str, Any],
     payload: dict[str, Any],
-    idempotency_key: str | None,
+    reservation: ActionReservation,
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
+    from app.services.control_room import business_external_effect as external_effect
 
-    cartridge_id = str(template.get("cartridge_id") or item.get("cartridge") or "").strip()
+    await require_approved_execution(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+    )
+    locked_reservation = await lock_pending_action_reservation(
+        pool,
+        user=user,
+        item=item,
+        template_id=str(template["template_id"]),
+        reservation_id=reservation.id,
+        effective_key=reservation.effective_key,
+    )
+    if remote_attempt_status(locked_reservation) != "started":
+        raise HTTPException(409, "remote attempt was not durably prepared")
+    idempotency_key = reservation.effective_key
+    cartridge_id = str(
+        template.get("cartridge_id") or item.get("cartridge") or ""
+    ).strip()
     if not cartridge_id:
         await _record_execute_block(
             pool,
@@ -3035,10 +2948,18 @@ async def _execute_external_writeback(
         "message": "Audit preflight recorded before external write-back.",
     }
 
+    remote_attempt_started = False
     try:
-        credentials = _writeback_credentials_for_action(item=item, template=template, payload=payload)
+        credentials = _writeback_credentials_for_action(
+            item=item, template=template, payload=payload
+        )
         adapter = WriteBackAdapterFactory.get_adapter(template_type)
+        if not adapter_guarantees_idempotency(template_type, adapter):
+            raise NotImplementedError(
+                "external write-back adapter does not guarantee idempotency"
+            )
         adapter_name = adapter.__class__.__name__
+        remote_attempt_started = True
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
             adapter_result = await adapter_result
@@ -3053,6 +2974,17 @@ async def _execute_external_writeback(
             "message": str(exc),
             "remote_status": exc.status_code,
         }
+        reconciliation = await ambiguous_adapter_error_response(
+            pool,
+            error=exc,
+            remote_attempt_started=remote_attempt_started,
+            workspace_id=_workspace_id(user),
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+            result=result,
+        )
+        if reconciliation is not None:
+            return reconciliation
         execution = await _record_action_execution(
             pool,
             user=user,
@@ -3065,28 +2997,23 @@ async def _execute_external_writeback(
             error="circuit_breaker_open",
             critical=True,
         )
-        action_run = await _record_action_run(
+        action_run = await _complete_execute_reservation(
             pool,
             user=user,
             item=item,
-            template=template,
-            mode="execute",
             status="failed",
-            input_payload=action_data,
-            execution_result=result,
+            reservation=reservation,
+            result=result,
             error_code="circuit_breaker_open",
             error_message=str(exc),
-            idempotency_key=_action_run_idempotency_key(
-                item=item,
-                template=template,
-                mode="execute",
-                provided=idempotency_key,
-            ),
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-            metadata={"external_write": True, "target": target, "adapter": adapter_name},
-            critical=True,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+            side_effect={"target": target, "adapter": adapter_name},
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="failed", critical=True
+        )
         await _record_item_event(
             pool,
             user=user,
@@ -3120,7 +3047,7 @@ async def _execute_external_writeback(
                 "validation_result": public_validation_result,
             },
         )
-        raise HTTPException(503, result) from exc
+        return {"_http_error_status": 503, "_http_error_detail": result}
     except AdapterExecutionError as exc:
         result = {
             "ok": False,
@@ -3131,6 +3058,17 @@ async def _execute_external_writeback(
             "message": str(exc),
             "remote_status": exc.status_code,
         }
+        reconciliation = await ambiguous_adapter_error_response(
+            pool,
+            error=exc,
+            remote_attempt_started=remote_attempt_started,
+            workspace_id=_workspace_id(user),
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+            result=result,
+        )
+        if reconciliation is not None:
+            return reconciliation
         execution = await _record_action_execution(
             pool,
             user=user,
@@ -3143,28 +3081,23 @@ async def _execute_external_writeback(
             error="external_writeback_failed",
             critical=True,
         )
-        action_run = await _record_action_run(
+        action_run = await _complete_execute_reservation(
             pool,
             user=user,
             item=item,
-            template=template,
-            mode="execute",
             status="failed",
-            input_payload=action_data,
-            execution_result=result,
+            reservation=reservation,
+            result=result,
             error_code="external_writeback_failed",
             error_message=str(exc),
-            idempotency_key=_action_run_idempotency_key(
-                item=item,
-                template=template,
-                mode="execute",
-                provided=idempotency_key,
-            ),
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-            metadata={"external_write": True, "target": target, "adapter": adapter_name},
-            critical=True,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+            side_effect={"target": target, "adapter": adapter_name},
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="failed", critical=True
+        )
         await _record_item_event(
             pool,
             user=user,
@@ -3198,7 +3131,9 @@ async def _execute_external_writeback(
                 "validation_result": public_validation_result,
             },
         )
-        raise HTTPException(502, result) from exc
+        return {"_http_error_status": 502, "_http_error_detail": result}
+    except external_effect.RemoteSideEffectCommitted:
+        raise
     except Exception as exc:
         result = {
             "ok": False,
@@ -3220,28 +3155,23 @@ async def _execute_external_writeback(
             error=type(exc).__name__,
             critical=True,
         )
-        action_run = await _record_action_run(
+        action_run = await _complete_execute_reservation(
             pool,
             user=user,
             item=item,
-            template=template,
-            mode="execute",
             status="failed",
-            input_payload=action_data,
-            execution_result=result,
+            reservation=reservation,
+            result=result,
             error_code=type(exc).__name__,
             error_message=str(exc),
-            idempotency_key=_action_run_idempotency_key(
-                item=item,
-                template=template,
-                mode="execute",
-                provided=idempotency_key,
-            ),
-            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-            metadata={"external_write": True, "target": target, "adapter": adapter_name},
-            critical=True,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+            side_effect={"target": target, "adapter": adapter_name},
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status="failed", critical=True
+        )
         await _record_item_event(
             pool,
             user=user,
@@ -3275,7 +3205,8 @@ async def _execute_external_writeback(
                 "validation_result": public_validation_result,
             },
         )
-        raise HTTPException(502, result) from exc
+        status = 501 if isinstance(exc, NotImplementedError) else 502
+        return {"_http_error_status": status, "_http_error_detail": result}
 
     ok = bool(public_adapter_result.get("ok", True))
     execution_status = "executed" if ok else "failed"
@@ -3303,106 +3234,104 @@ async def _execute_external_writeback(
         "adapter_result": public_adapter_result,
         "writeback_result": public_adapter_result,
     }
-    execution = await _record_action_execution(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="execute_live",
-        status=execution_status,
-        payload=action_data,
-        result=result,
-        error=None if ok else message,
-        critical=True,
-    )
-    action_run = await _record_action_run(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        mode="execute",
-        status="completed" if ok else "failed",
-        input_payload=action_data,
-        execution_result=result,
-        side_effect={"target": target, "adapter": adapter_name, "after": after},
-        error_code=None if ok else "external_writeback_failed",
-        error_message=None if ok else message,
-        idempotency_key=_action_run_idempotency_key(
+    with external_effect.remote_effect_boundary(result, target, adapter_name, after):
+        execution = await _record_action_execution(
+            pool,
+            user=user,
             item=item,
             template=template,
-            mode="execute",
-            provided=idempotency_key,
-        ),
-        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
-        metadata={"external_write": True, "target": target, "adapter": adapter_name},
-        critical=True,
-    )
-    await _set_execution_status(pool, user=user, item=item, execution_status=execution_status, critical=True)
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="action_executed" if ok else "action_failed",
-        metadata={
-            "template_id": template["template_id"],
-            "template_type": template_type,
-            "execution_id": execution.get("id"),
-            "action_run_id": action_run.get("id"),
-            "target": target,
-            "adapter": adapter_name,
-        },
-        critical=True,
-    )
-    await _record_writeback_audit_event(
-        pool,
-        user=user,
-        action="control_room.action.execute",
-        resource_type="control_room_item",
-        resource_id=item["id"],
-        ip=ip,
-        user_agent=user_agent,
-        status="success" if ok else "failure",
-        metadata={
-            "template_id": template["template_id"],
-            "template_type": template_type,
-            "target": target,
-            "adapter": adapter_name,
-            "execution_id": execution.get("id"),
-            "action_run_id": action_run.get("id"),
-            "before": before,
-            "after": after,
-            "validation_result": public_validation_result,
-            "adapter_result": public_adapter_result,
-        },
-    )
-    if not ok:
-        raise HTTPException(502, message)
-    learning_lesson = await _record_adapter_success_lesson(
-        pool,
-        user=user,
-        item=item,
-        template=template,
-        execution=execution,
-        result=result,
-        adapter_name=adapter_name,
-        template_type=template_type,
-    )
-    suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
-    public_item = _with_omega({
-        **item,
-        "execution_status": "executed",
-        "suggested_actions": suggested_actions,
-    })
-    return {
-        "executed": True,
-        "idempotent": False,
-        "execution": execution,
-        "action_run": action_run,
-        "payload": action_data,
-        "result": result,
-        "learning_lesson": learning_lesson,
-        "item": public_item,
-    }
+            mode="execute_live",
+            status=execution_status,
+            payload=action_data,
+            result=result,
+            error=None if ok else message,
+            critical=True,
+        )
+        action_run = await _complete_execute_reservation(
+            pool,
+            user=user,
+            item=item,
+            status="completed" if ok else "failed",
+            reservation=reservation,
+            result=result,
+            side_effect={"target": target, "adapter": adapter_name, "after": after},
+            error_code=None if ok else "external_writeback_failed",
+            error_message=None if ok else message,
+            legacy_execution_id=int(execution["id"])
+            if execution.get("id") is not None
+            else None,
+        )
+        await _set_execution_status(
+            pool, user=user, item=item, execution_status=execution_status, critical=True
+        )
+        await _record_item_event(
+            pool,
+            user=user,
+            item=item,
+            event_type="action_executed" if ok else "action_failed",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "target": target,
+                "adapter": adapter_name,
+            },
+            critical=True,
+        )
+        await _record_writeback_audit_event(
+            pool,
+            user=user,
+            action="control_room.action.execute",
+            resource_type="control_room_item",
+            resource_id=item["id"],
+            ip=ip,
+            user_agent=user_agent,
+            status="success" if ok else "failure",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "target": target,
+                "adapter": adapter_name,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "before": before,
+                "after": after,
+                "validation_result": public_validation_result,
+                "adapter_result": public_adapter_result,
+            },
+        )
+        if not ok:
+            return {"_http_error_status": 502, "_http_error_detail": message}
+        learning_lesson = await _record_adapter_success_lesson(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            execution=execution,
+            result=result,
+            adapter_name=adapter_name,
+            template_type=template_type,
+        )
+        suggested_actions = _suggested_actions_from_lessons(
+            item, [learning_lesson] if learning_lesson else []
+        )
+        public_item = _project_public_item(
+            item,
+            _with_omega,
+            execution_status="executed",
+            suggested_actions=suggested_actions,
+        )
+        return {
+            "executed": True,
+            "idempotent": False,
+            "execution": execution,
+            "action_run": action_run,
+            "payload": action_data,
+            "result": result,
+            "learning_lesson": learning_lesson,
+            "item": public_item,
+        }
 
 
 @_bind_to_core
@@ -3426,7 +3355,12 @@ async def execute_item(
         async def _run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
             return await work(conn)
 
-        return await _run_with_db_scope(pool, user, _run)
+        try:
+            return await _run_with_db_scope(pool, user, _run)
+        except ReservationUnavailable as exc:
+            raise HTTPException(
+                503, "execution idempotency reservation failed"
+            ) from exc
 
     await _with_scoped_db(
         lambda db: _ensure_item_row(
@@ -3435,6 +3369,30 @@ async def execute_item(
             item=item,
             status=item.get("status") or "in_review",
             critical=True,
+        )
+    )
+    lifecycle_block = execution_lifecycle_block(item)
+    if lifecycle_block is not None:
+        await _with_scoped_db(
+            lambda db: _record_execute_block(
+                db,
+                user=user,
+                item=item,
+                template=template,
+                payload=payload,
+                ip=ip,
+                user_agent=user_agent,
+                message=lifecycle_block.message,
+                error=lifecycle_block.code,
+            )
+        )
+        raise HTTPException(409, lifecycle_block.message)
+    await _with_scoped_db(
+        lambda db: require_approved_execution(
+            db,
+            user=user,
+            item=item,
+            template_id=str(template["template_id"]),
         )
     )
     capability = _writeback_capability(template)
@@ -3448,11 +3406,16 @@ async def execute_item(
                 payload=payload,
                 ip=ip,
                 user_agent=user_agent,
-                message=str(capability.get("reason") or "No hay adapter ERP aprobado para este template."),
+                message=str(
+                    capability.get("reason")
+                    or "No hay adapter ERP aprobado para este template."
+                ),
                 error="adapter_missing",
             )
         )
-        raise HTTPException(501, "external ERP write-back adapter is not available for this template")
+        raise HTTPException(
+            501, "external ERP write-back adapter is not available for this template"
+        )
 
     if capability.get("external") and not _external_writeback_enabled():
         await _with_scoped_db(
@@ -3468,7 +3431,9 @@ async def execute_item(
                 error="CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false",
             )
         )
-        raise HTTPException(409, "external ERP write-back is not available in Control Room V1")
+        raise HTTPException(
+            409, "external ERP write-back is not available in Control Room V1"
+        )
 
     if not capability.get("supported") and not capability.get("external"):
         await _with_scoped_db(
@@ -3484,7 +3449,9 @@ async def execute_item(
                 error="unsupported_writeback_template",
             )
         )
-        raise HTTPException(501, "execution template is not supported in Control Room V1")
+        raise HTTPException(
+            501, "execution template is not supported in Control Room V1"
+        )
 
     if not _confirmed_for_execute(confirm_execute):
         await _with_scoped_db(
@@ -3502,132 +3469,6 @@ async def execute_item(
         )
         raise HTTPException(409, "explicit execution confirmation is required")
 
-    if not item.get("decision_id"):
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Se requiere decision aprobada antes de la ejecucion supervisada.",
-                error="decision_required",
-            )
-        )
-        raise HTTPException(409, "decision is required before execution")
-
-    if str(item.get("status") or "") in TERMINAL_ITEM_STATUSES:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Item cerrado no puede ejecutar acciones supervisadas.",
-                error="terminal_item",
-            )
-        )
-        raise HTTPException(409, "terminal control room item cannot execute supervised action")
-
-    try:
-        existing = await _with_scoped_db(
-            lambda db: _existing_executed_writeback(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
-                critical=True,
-            )
-        )
-    except Exception as exc:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="No se pudo validar idempotencia antes de la ejecucion supervisada.",
-                error="idempotency_lookup_failed",
-            )
-        )
-        raise HTTPException(503, "execution idempotency lookup failed") from exc
-    if existing:
-        existing_result = _details(existing.get("result"))
-        public_item = _with_omega({**item, "execution_status": "executed"})
-        return {
-            "executed": True,
-            "idempotent": True,
-            "execution": existing,
-            "payload": _details(existing.get("payload")) or payload,
-            "result": {**existing_result, "idempotent": True},
-            "item": public_item,
-        }
-
-    if str(item.get("execution_status") or "not_started") != "dry_run_validated":
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Se requiere dry-run validado antes de la ejecucion supervisada.",
-                error="dry_run_required",
-            )
-        )
-        raise HTTPException(409, "dry-run validation is required before execution")
-
-    try:
-        successful_dry_run = await _with_scoped_db(
-            lambda db: _latest_successful_dry_run(
-                db,
-                user=user,
-                item=item,
-                template=template,
-            )
-        )
-    except Exception as exc:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="No se pudo validar el action_run de dry-run antes de ejecutar.",
-                error="dry_run_lookup_failed",
-            )
-        )
-        raise HTTPException(503, "dry-run action run lookup failed") from exc
-    if not successful_dry_run:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message="Se requiere action_run de dry-run exitoso antes de la ejecucion supervisada.",
-                error="dry_run_action_run_required",
-            )
-        )
-        raise HTTPException(409, "successful dry-run action run is required before execution")
-
     if str(template.get("template_id") or "") == "create_followup_task":
         return await _with_scoped_db(
             lambda db: _execute_internal_followup_task(
@@ -3636,7 +3477,9 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3650,7 +3493,9 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3664,25 +3509,74 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                idempotency_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
                 ip=ip,
                 user_agent=user_agent,
             )
         )
 
     if capability.get("external") and capability.get("supported"):
-        return await _with_scoped_db(
-            lambda db: _execute_external_writeback(
+        adapter = WriteBackAdapterFactory.get_adapter(
+            _writeback_template_type(template)
+        )
+        if not adapter_guarantees_idempotency(
+            _writeback_template_type(template), adapter
+        ):
+            raise HTTPException(
+                501, "external write-back adapter must support idempotency"
+            )
+        reservation = await _with_scoped_db(
+            lambda db: acquire_guarded_action_reservation(
+                db,
+                user=user,
+                item=item,
+                template_id=str(template["template_id"]),
+                adapter_name=adapter.__class__.__name__,
+                operation="execute",
+                provided_key=(
+                    str(idempotency_key).strip() if idempotency_key else None
+                ),
+                input_payload=payload,
+            )
+        )
+        if reservation.state is not ReservationState.ACQUIRED:
+            return _reserved_action_response(reservation, item=item, payload=payload)
+        response = await run_reserved_external_action(
+            run_scoped=_with_scoped_db,
+            prepare=lambda db: mark_remote_attempt_started(
+                db,
+                workspace_id=_workspace_id(user),
+                reservation_id=reservation.id,
+                effective_key=reservation.effective_key,
+                adapter=adapter.__class__.__name__,
+                target=str(
+                    template.get("cartridge_id")
+                    or item.get("cartridge")
+                    or "external_system"
+                ),
+            ),
+            execute=lambda db: _execute_external_writeback(
                 db,
                 user=user,
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+                reservation=reservation,
                 ip=ip,
                 user_agent=user_agent,
-            )
+            ),
+            finalize=finalize_aborted_action_reservation,
+            workspace_id=_workspace_id(user),
+            reservation=reservation,
         )
+        if response.get("_http_error_status"):
+            raise HTTPException(
+                int(response["_http_error_status"]),
+                response.get("_http_error_detail"),
+            )
+        return response
 
     await _with_scoped_db(
         lambda db: _record_execute_block(
@@ -3729,96 +3623,39 @@ async def approve_item(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    if decision_id is None:
-        created = await create_decision_for_item(
-            item_id,
-            user,
-            ip=ip,
-            user_agent=user_agent,
-            fetcher=fetcher,
-        )
-        decision_id = int(created["decision"]["id"])
-
     pool = await auth.pool()
     lessons = _lessons_for_item(item)
-
-    async def _write_approval(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
-        visible = await conn.fetchrow(
-            "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
-            decision_id,
-            scoped_workspace_id,
-        )
-        if not visible:
-            raise HTTPException(404, "decision not found")
-        action = await conn.fetchrow(
-            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *""",
-            decision_id,
-            f"Aprobacion de recomendacion OMEGA: {item['title']}",
-            item["recommendation"],
-            user.get("email") or "user",
-        )
-        await _ensure_item_row(conn, user=user, item=item, status="approved")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'approved',
-                       decision_id = $1,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                       resolved_at = COALESCE(resolved_at, NOW()),
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                decision_id,
-                scoped_workspace_id,
-                item["id"],
-                json.dumps({"lessons": lessons}),
-            )
-        except Exception:
-            pass
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="approved",
-            metadata={"decision_id": decision_id, "action_id": dict(action).get("id")},
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="lesson_recorded",
-            metadata={"decision_id": decision_id, "lessons": lessons},
-        )
-        await _persist_lessons(
-            conn,
-            user=user,
-            item=item,
-            decision_id=decision_id,
-            lessons=lessons,
-        )
-        return action
-
-    action = await _run_with_db_scope(pool, user, _write_approval)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.approve",
-        resource_type="control_room_item",
-        resource_id=item_id,
+    approval = await _approve_with_optional_decision(
+        pool,
+        user=user,
+        item=item,
+        decision_id=decision_id,
+        lessons=lessons,
+        confidence=float(_impact_for_item(item).get("confidence") or 0.7),
+        run_scoped=_run_with_db_scope,
+        ensure_item_row=_ensure_item_row,
+        record_item_event=_record_item_event,
+        create_and_link=_create_and_link_business_decision,
+        approve_item=_approve_business_item,
+        link_decision=link_control_room_decision,
+        approve_link=approve_control_room_decision,
+        record_audit_event=audit_service.record_event,
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"decision_id": decision_id, "item": item},
-        critical=True,
     )
+    decision_id = approval.decision_id
+    action = approval.action
+    item = approval.item
     public_action = dict(action)
     if hasattr(public_action.get("ts"), "isoformat"):
         public_action["ts"] = public_action["ts"].isoformat()
-    item = _with_omega({**item, "decision_id": decision_id, "status": "approved", "lessons": lessons})
+    item = _project_public_item(
+        item,
+        _with_omega,
+        decision_id=decision_id,
+        status="approved",
+        lessons=lessons,
+    )
     return {
         "approved": True,
         "decision_id": decision_id,
@@ -3860,46 +3697,22 @@ async def dismiss_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-
-    async def _write_dismissed(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status="dismissed")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'dismissed',
-                       dismissed_at = COALESCE(dismissed_at, NOW()),
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                """,
-                workspace_id,
-                item["id"],
-            )
-        except Exception:
-            pass
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="dismissed",
-            metadata={"reason": reason or ""},
-        )
-
-    await _run_with_db_scope(pool, user, _write_dismissed)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.dismiss",
-        resource_type="control_room_item",
-        resource_id=item_id,
+    await _dismiss_with_audit(
+        pool,
+        user=user,
+        item=item,
+        reason=reason or "",
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"reason": reason or "", "item": item},
-        critical=True,
+        run_scoped=_run_with_db_scope,
+        persist_status_transition=_persist_status_transition,
+        ensure_item_row=_ensure_item_row,
+        record_audit_event=audit_service.record_event,
     )
-    return {"dismissed": True, "item": _with_omega({**item, "status": "dismissed"})}
+    return {
+        "dismissed": True,
+        "item": _project_public_item(item, _with_omega, status="dismissed"),
+    }
 
 
 @_bind_to_core
@@ -3914,48 +3727,29 @@ async def reopen_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     pool = await auth.pool()
-
-    async def _write_reopened(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status="open")
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = 'open',
-                       decision_id = NULL,
-                       resolved_at = NULL,
-                       dismissed_at = NULL,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                """,
-                workspace_id,
-                item["id"],
-            )
-        except Exception:
-            pass
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="reopened",
-            metadata={"reason": reason or ""},
-        )
-
-    await _run_with_db_scope(pool, user, _write_reopened)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.reopen",
-        resource_type="control_room_item",
-        resource_id=item_id,
+    await _reopen_with_audit(
+        pool,
+        user=user,
+        item=item,
+        reason=reason or "",
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"reason": reason or "", "item": item},
-        critical=True,
+        run_scoped=_run_with_db_scope,
+        persist_status_transition=_persist_status_transition,
+        ensure_item_row=_ensure_item_row,
+        record_audit_event=audit_service.record_event,
+        lock_item=lock_authoritative_business_item,
+        reopen_allowed=workflow_reopen_allowed,
     )
-    return {"reopened": True, "item": _with_omega({**item, "status": "open", "decision_id": None})}
+    return {
+        "reopened": True,
+        "item": _project_public_item(
+            item,
+            _with_omega,
+            status="open",
+            decision_id=None,
+        ),
+    }
 
 
 @_bind_to_core
@@ -3990,93 +3784,76 @@ async def _operate_alert(
     body = body if isinstance(body, dict) else {}
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     current_status = str(item.get("status") or "open")
-    if current_status in TERMINAL_ITEM_STATUSES and next_state != "false_positive":
+    if current_status in TERMINAL_ITEM_STATUSES:
         raise HTTPException(409, "terminal control room item has no active alert")
     if not _alert_for_item(item) and next_state != "false_positive":
         raise HTTPException(404, "active alert not found")
 
     now = datetime.now(UTC).isoformat()
-    existing_state = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
-    owner_email = str(body.get("owner_email") or body.get("owner") or user.get("email") or "").strip()
+    owner_email = str(
+        body.get("owner_email") or body.get("owner") or user.get("email") or ""
+    ).strip()
     note = str(body.get("note") or "").strip()
     reason = str(body.get("reason") or "").strip()
-    alert_state = {
-        **existing_state,
+    alert_changes = {
         "state": next_state,
         "updated_at": now,
         "updated_by": user.get("email") or "user",
     }
+    alert_defaults: dict[str, Any] = {}
     if note:
-        alert_state["note"] = note
+        alert_changes["note"] = note
     if reason:
-        alert_state["reason"] = reason
+        alert_changes["reason"] = reason
     if next_state == "acknowledged":
-        alert_state["acknowledged_at"] = existing_state.get("acknowledged_at") or now
+        alert_defaults["acknowledged_at"] = now
     elif next_state == "snoozed":
-        alert_state["snoozed_until"] = _snoozed_until_from_body(body)
-        alert_state["snoozed_at"] = now
+        alert_changes["snoozed_until"] = _snoozed_until_from_body(body)
+        alert_changes["snoozed_at"] = now
     elif next_state == "assigned":
-        alert_state["owner"] = owner_email or "operaciones"
-        alert_state["assigned_at"] = now
+        alert_changes["owner"] = owner_email or "operaciones"
+        alert_changes["assigned_at"] = now
     elif next_state == "false_positive":
-        alert_state["false_positive_at"] = now
-        alert_state["reason"] = reason or "Marcado como falso positivo desde Sala de Control"
-
-    target_status = "dismissed" if next_state == "false_positive" else (
-        current_status if current_status not in {"open", ""} else "in_review"
-    )
-    pool = await auth.pool()
-
-    async def _write_alert_state(conn: Any, _tenant_id: str | None, workspace_id: str) -> None:
-        await _ensure_item_row(conn, user=user, item=item, status=target_status)
-        try:
-            await conn.execute(
-                """
-                UPDATE control_room_items
-                   SET status = CASE
-                           WHEN $5::text = 'dismissed' THEN 'dismissed'
-                           WHEN status = ANY($4::text[]) THEN status
-                           ELSE $5::text
-                       END,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-                       dismissed_at = CASE
-                           WHEN $5::text = 'dismissed' THEN COALESCE(dismissed_at, NOW())
-                           ELSE dismissed_at
-                       END,
-                       last_seen_at = NOW()
-                 WHERE workspace_id = $2
-                   AND item_id = $3
-                """,
-                json.dumps({"alert_state": alert_state}),
-                workspace_id,
-                item["id"],
-                sorted(TERMINAL_ITEM_STATUSES),
-                target_status,
-            )
-        except Exception:
-            pass
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type=event_type,
-            metadata={"alert_state": alert_state, "note": note, "reason": reason},
+        alert_changes["false_positive_at"] = now
+        alert_changes["reason"] = (
+            reason or "Marcado como falso positivo desde Sala de Control"
         )
 
-    await _run_with_db_scope(pool, user, _write_alert_state)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action=audit_action,
-        resource_type="control_room_alert",
-        resource_id=item_id,
+    target_status = (
+        "dismissed"
+        if next_state == "false_positive"
+        else (current_status if current_status not in {"open", ""} else "in_review")
+    )
+    alert_state = merged_alert_state(
+        {"alert_state": item.get("alert_state")},
+        changes=alert_changes,
+        defaults=alert_defaults,
+    )
+    pool = await auth.pool()
+    await _persist_alert_operation_with_audit(
+        pool,
+        user=user,
+        item=item,
+        target_status=target_status,
+        terminal_statuses=sorted(TERMINAL_ITEM_STATUSES),
+        alert_changes=alert_changes,
+        alert_defaults=alert_defaults,
+        alert_state=alert_state,
+        event_type=event_type,
+        note=note,
+        reason=reason,
+        audit_action=audit_action,
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"alert_state": alert_state, "item": item},
-        critical=next_state == "false_positive",
+        critical_audit=next_state == "false_positive",
+        run_scoped=_run_with_db_scope,
+        persist_alert_state=_persist_alert_state,
+        ensure_item_row=_ensure_item_row,
+        record_audit_event=audit_service.record_event,
     )
-    public_item = _with_omega({**item, "status": target_status, "alert_state": alert_state})
+    public_item = _project_public_item(
+        item, _with_omega, status=target_status, alert_state=alert_state
+    )
     return {
         "ok": True,
         "alert": _alert_for_item(public_item),
@@ -4177,62 +3954,60 @@ async def mark_alert_false_positive(
 
 
 __all__ = (
-    '_external_writeback_enabled',
-    '_external_delivery_enabled',
-    '_writeback_capability',
-    '_template_with_writeback',
-    '_impact_payload',
-    '_priority_payload',
-    '_impact_for_item',
-    '_template_ids_for_item',
-    '_action_templates_for_item',
-    '_primary_template_for_item',
-    '_action_payload_for_template',
-    '_execution_payload',
-    'create_decision_for_item',
-    'select_item_option',
-    'get_item_impact',
-    'record_item_step',
-    'update_item_control',
-    'create_item_lesson',
-    'apply_item_lesson',
-    '_resolve_template',
-    '_adapter_name_for_template',
-    '_action_run_idempotency_key',
-    '_action_run_public',
-    '_record_action_run_event',
-    '_record_action_run',
-    '_latest_successful_dry_run',
-    '_dry_run_checks',
-    'action_preview',
-    'action_dry_run',
-    'list_item_action_runs',
-    '_outcome_num',
-    '_outcome_public',
-    'list_item_outcomes',
-    'record_item_outcome',
-    'run_auto_item',
-    '_confirmed_for_execute',
-    '_supports_transactional_acquire',
-    '_record_writeback_audit_event',
-    '_record_execute_block',
-    '_existing_executed_writeback',
-    '_execute_internal_followup_task',
-    '_execute_internal_followup_task_tx',
-    '_execute_internal_investigation_note',
-    '_execute_internal_decision_monitoring',
-    '_external_action_data',
-    '_execute_external_writeback',
-    'execute_item',
-    'create_decision_for_anomaly',
-    'approve_item',
-    'approve_anomaly',
-    'dismiss_item',
-    'reopen_item',
-    '_snoozed_until_from_body',
-    '_operate_alert',
-    'acknowledge_alert',
-    'snooze_alert',
-    'assign_alert',
-    'mark_alert_false_positive'
+    "_external_writeback_enabled",
+    "_external_delivery_enabled",
+    "_writeback_capability",
+    "_template_with_writeback",
+    "_impact_payload",
+    "_priority_payload",
+    "_impact_for_item",
+    "_template_ids_for_item",
+    "_action_templates_for_item",
+    "_primary_template_for_item",
+    "_action_payload_for_template",
+    "_execution_payload",
+    "create_decision_for_item",
+    "select_item_option",
+    "get_item_impact",
+    "record_item_step",
+    "update_item_control",
+    "create_item_lesson",
+    "apply_item_lesson",
+    "_resolve_template",
+    "_adapter_name_for_template",
+    "_action_run_idempotency_key",
+    "_action_run_public",
+    "_record_action_run_event",
+    "_record_action_run",
+    "_dry_run_checks",
+    "action_preview",
+    "action_dry_run",
+    "list_item_action_runs",
+    "_outcome_num",
+    "_outcome_public",
+    "list_item_outcomes",
+    "record_item_outcome",
+    "run_auto_item",
+    "_confirmed_for_execute",
+    "_supports_transactional_acquire",
+    "_record_writeback_audit_event",
+    "_record_execute_block",
+    "_execute_internal_followup_task",
+    "_execute_internal_followup_task_tx",
+    "_execute_internal_investigation_note",
+    "_execute_internal_decision_monitoring",
+    "_external_action_data",
+    "_execute_external_writeback",
+    "execute_item",
+    "create_decision_for_anomaly",
+    "approve_item",
+    "approve_anomaly",
+    "dismiss_item",
+    "reopen_item",
+    "_snoozed_until_from_body",
+    "_operate_alert",
+    "acknowledge_alert",
+    "snooze_alert",
+    "assign_alert",
+    "mark_alert_false_positive",
 )

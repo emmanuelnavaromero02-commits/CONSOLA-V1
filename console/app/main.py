@@ -6,6 +6,8 @@ UI minimalista: chat con asistente + estado de servidores MCP.
 
 from __future__ import annotations
 
+# fmt: off
+
 import asyncio
 import json
 import logging
@@ -150,12 +152,20 @@ from app.domains.decisions.access import (
     decision_visible_clause as _dec_visible_clause_impl,
     is_decision_workspace_admin as _dec_is_workspace_admin_impl,
 )
+from app.domains.decisions.business_visibility import (
+    fetch_business_decisions as _fetch_business_decisions,
+    filter_decision_rows as _filter_decision_rows,
+    preserve_control_room_provenance as _preserve_control_room_provenance,
+)
 from app.domains.decisions.payloads import (
     coerce_date as _coerce_date_impl,
     coerce_datetime as _coerce_dt_impl,
     decision_update_assignments as _decision_update_assignments_impl,
     decision_update_sql_and_params as _decision_update_sql_and_params_impl,
     decision_row_to_dict as _dec_row_to_dict_impl,
+)
+from app.services.control_room.business_repository import (
+    decision_kpis_with_provenance as _decision_kpis_with_provenance,
 )
 from app.domains.iam.roles import (
     GLOBAL_ASSIGNABLE_ROLES as _IAM_GLOBAL_ASSIGNABLE_ROLES,
@@ -4273,6 +4283,7 @@ async def _build_sync_run_status(
     cartridge: str,
     row: dict[str, Any],
     user: dict | None,
+    persist_control_room_state: bool = False,
 ) -> dict[str, Any]:
     return await _build_sync_run_status_impl(
         cartridge=cartridge,
@@ -4288,6 +4299,7 @@ async def _build_sync_run_status(
         control_room_cache_invalidate=_sync_control_room_cache_invalidate,
         logger_debug=logger.debug,
         stale_after_seconds=_SYNC_NOW_STALE_AFTER_SECONDS,
+        persist_control_room_state=persist_control_room_state,
     )
 
 
@@ -4413,7 +4425,10 @@ async def _existing_sync_now_response(
     ):
         return _sync_public_payload(existing_row, existing_extra)
     return await _build_sync_run_status(
-        cartridge=cartridge, row=existing_row, user=user
+        cartridge=cartridge,
+        row=existing_row,
+        user=user,
+        persist_control_room_state=True,
     )
 
 
@@ -4435,7 +4450,10 @@ async def _active_sync_now_response(
     if not active_row:
         return None
     active_status = await _build_sync_run_status(
-        cartridge=cartridge, row=active_row, user=user
+        cartridge=cartridge,
+        row=active_row,
+        user=user,
+        persist_control_room_state=True,
     )
     if str(active_status.get("status") or "").lower() not in _SYNC_TERMINAL_STATUSES:
         return active_status
@@ -4508,7 +4526,12 @@ async def _sync_now_status_or_diagnostics(
             user=user,
             upsert_debug=upsert_debug,
         )
-    return await _build_sync_run_status(cartridge=cartridge, row=row, user=user)
+    return await _build_sync_run_status(
+        cartridge=cartridge,
+        row=row,
+        user=user,
+        persist_control_room_state=True,
+    )
 
 
 async def _trigger_sync_extract_all_components(
@@ -6660,7 +6683,15 @@ async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
         row = await conn.fetchrow(sql, *params)
-    return dict(row) if row else None
+        if not row:
+            return None
+        visible = await _filter_decision_rows(
+            conn,
+            workspace_id=workspace_id,
+            rows=[row],
+            tenant_id=_tenant_id,
+        )
+    return visible[0] if visible else None
 
 
 def _dec_can_edit(row: dict, user: dict) -> bool:
@@ -6694,7 +6725,13 @@ async def api_decisions_list(
     )
     pool = await _dec_pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, _workspace_id):
-        rows = await conn.fetch(sql, *params)
+        rows = await _fetch_business_decisions(
+            conn,
+            sql=sql,
+            params=params,
+            workspace_id=workspace_id,
+            tenant_id=_tenant_id,
+        )
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 
@@ -6724,7 +6761,9 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_permissi
             title,
             body.get("description") or "",
             _coerce_date(body.get("commitment_date")),
-            _json_dec.dumps(body.get("kpis") or []),
+            _json_dec.dumps(
+                _decision_kpis_with_provenance(body.get("kpis"), "manual")
+            ),
             user["id"],
             body.get("assignee_id"),
             body.get("visibility")
@@ -6808,6 +6847,13 @@ async def api_decisions_update(
             403, "you can only edit decisions you created or are assigned to"
         )
 
+    if "kpis" in body:
+        body = {
+            **body,
+            "kpis": _preserve_control_room_provenance(
+                existing.get("kpis"), body.get("kpis")
+            ),
+        }
     sets, params = _decision_update_assignments(body)
     if not sets:
         raise HTTPException(400, "no updatable fields supplied")

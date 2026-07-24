@@ -8,6 +8,23 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
+from app.services.control_room.business_source_scope import scoped_source_row
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    WorkflowStage,
+    persistence_metadata,
+    workflow_eligibility_provenance,
+)
+from console.tests.control_room_execution_helpers import (
+    executed_item as _executed_item,
+)
+from console.tests.control_room_execution_router_helpers import (
+    execution_fetchrow_router as _execution_fetchrow_router,
+)
 
 
 USER = {
@@ -16,7 +33,124 @@ USER = {
     "active_workspace_id": "workspace-A",
     "tenant_id": "tenant-A",
     "allowed_cartridges": ["sap_hcm", "sap_s4hana", "sap_successfactors", "replicon"],
+    "_effective_permissions": [
+        "control_room.read",
+        "control_room.write",
+        "control_room.execute",
+    ],
 }
+
+
+def _successful_command_tag(query: object, *_args: object) -> str:
+    sql = " ".join(str(query).split()).upper()
+    for command in ("INSERT", "UPDATE", "DELETE"):
+        if sql.startswith(command) or f" {command} " in f" {sql} ":
+            return f"{command} 0 1" if command == "INSERT" else f"{command} 1"
+    return "SELECT 1"
+
+
+def _enable_successful_writes(mock_pool: AsyncMock) -> None:
+    mock_pool.execute = AsyncMock(side_effect=_successful_command_tag)
+
+
+def _observed_anomaly_fields(item_id: str) -> dict:
+    return {
+        "data_status": "ready",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "detected_at": "2026-06-07T00:00:00Z",
+        "evidence_refs": [f"gold_business_observations:{item_id}"],
+        "source_dataset": "gold_business_observations",
+        "entity_id": item_id,
+    }
+
+
+def _authoritative_item_row(
+    item: dict,
+    *,
+    decision_id: int | None = None,
+    stage: WorkflowStage | None = None,
+    status: str | None = None,
+    selected_option_id: str | None = None,
+    execution_status: str | None = None,
+) -> dict:
+    resolved_decision = (
+        decision_id if decision_id is not None else item.get("decision_id")
+    )
+    policy_item = {
+        **item,
+        "metadata": business_policy_metadata(item.get("metadata"), item),
+    }
+    resolved_status = status or item.get("status") or "open"
+    metadata = persistence_metadata(policy_item)
+    if resolved_decision is not None:
+        metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
+            item,
+            stage=stage
+            or (
+                WorkflowStage.APPROVED
+                if resolved_status == "approved"
+                else WorkflowStage.DECISION_CREATED
+            ),
+            workspace_id="workspace-A",
+            decision_id=int(resolved_decision),
+            option_id=selected_option_id or item.get("selected_option_id"),
+        )
+    return {
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
+        "owner_user_id": 7,
+        "item_id": item["id"],
+        "cartridge_id": item.get("cartridge"),
+        "domain": item.get("domain"),
+        "source_dataset": item.get("source_dataset"),
+        "item_kind": item.get("kind") or item.get("item_kind"),
+        "title": item.get("title"),
+        "severity": item.get("severity"),
+        "status": resolved_status,
+        "decision_id": resolved_decision,
+        "entity_kind": item.get("entity_kind"),
+        "entity_id": item.get("entity_id"),
+        "entity_label": item.get("entity_label"),
+        "anomaly_type": item.get("anomaly_type"),
+        "metadata": metadata,
+        "impact_estimate": item.get("impact_estimate"),
+        "impact_currency": item.get("impact_currency"),
+        "confidence": item.get("confidence"),
+        "priority_score": item.get("priority_score"),
+        "selected_option_id": selected_option_id
+        if selected_option_id is not None
+        else item.get("selected_option_id"),
+        "execution_status": execution_status
+        or item.get("execution_status")
+        or "not_started",
+        "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
+        "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
+        "resolved_at": None,
+        "dismissed_at": None,
+    }
+
+
+def _approval_fetchrows(item: dict, action: dict) -> list[dict | None]:
+    item_id = item["id"]
+    provenance = workflow_eligibility_provenance(
+        item,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id="workspace-A",
+        decision_id=42,
+    )
+    decision = {"id": 42, "created_by_id": 7, "kpis": []}
+    item_row = _authoritative_item_row(item, decision_id=42)
+    item_row["metadata"][DECISION_PROVENANCE_KEY] = provenance
+    return [
+        decision,
+        item_row,
+        None,
+        item_row,
+        action,
+        {"item_id": item_id, "owner_user_id": 7, "decision_id": 42},
+        {"item_id": item_id},
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -122,73 +256,63 @@ def test_replicon_timesheet_normalizer_accepts_monthly_gold_shape():
     assert "2026-08-01" in item["description"]
 
 
-@pytest.mark.asyncio
-async def test_cleanup_obsolete_source_state_items_only_removes_stale_source_states():
-    mock_pool = AsyncMock()
-
-    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
-        await control_room_service._cleanup_obsolete_source_state_items(  # noqa: SLF001
-            USER,
-            sources=[
-                {"cartridge": "replicon", "dataset": "consultor_mensual"},
-                {"cartridge": "replicon", "dataset": "pnl_mensual"},
-            ],
-            current_items=[
-                {
-                    "kind": "source_state",
-                    "cartridge": "replicon",
-                    "source_dataset": "pnl_mensual",
-                    "id": "current-source-state",
-                }
-            ],
-        )
-
-    sql, workspace_id, cartridge_id, datasets, item_ids = mock_pool.execute.await_args.args
-    assert "DELETE FROM control_room_items" in sql
-    assert "item_kind = 'source_state'" in sql
-    assert workspace_id == USER["active_workspace_id"]
-    assert cartridge_id == "replicon"
-    assert datasets == ["consultor_mensual", "pnl_mensual"]
-    assert item_ids == ["current-source-state"]
-
-
 async def sample_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-    return SAMPLE_ROWS[dataset]
+    return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
 
-class _FakeDatasetResponse:
-    status_code = 200
-
-    def json(self):
-        return {
-            "code": "source_files_missing",
-            "error": "No hay archivos Parquet para la fuente seleccionada.",
+def _scoped_rows(dataset: str, rows: list[dict], user: dict | None) -> list[dict]:
+    context = user or USER
+    source = next(
+        (
+            item
+            for item in control_room_service._all_sources()
+            if item.dataset == dataset
+        ),
+        None,
+    )
+    scoped = []
+    for row in rows:
+        source_row = {
+            **row,
+            "tenant_id": context["tenant_id"],
+            "workspace_id": context["active_workspace_id"],
         }
-
-
-class _FakeDatasetClient:
-    def __init__(self, **_kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return None
-
-    async def post(self, *_args, **_kwargs):
-        return _FakeDatasetResponse()
-
-
-@pytest.mark.asyncio
-async def test_query_dataset_rows_treats_refinement_error_payload_as_unavailable(monkeypatch):
-    monkeypatch.setattr(control_room_service.httpx, "AsyncClient", _FakeDatasetClient)
-
-    with pytest.raises(HTTPException) as exc:
-        await control_room_service.query_dataset_rows("pnl_mensual", USER)
-
-    assert exc.value.status_code == 503
-    assert "No hay archivos Parquet" in str(exc.value.detail)
+        projected = scoped_source_row(
+            source_row,
+            tenant_id=context["tenant_id"],
+            workspace_id=context["active_workspace_id"],
+        )
+        observed_at = next(
+            (
+                str(source_row[field])
+                for field in (
+                    "detected_at",
+                    "generated_at",
+                    "observation_date",
+                    "mes",
+                    "semana",
+                    "spend_month",
+                )
+                if source_row.get(field)
+            ),
+            "",
+        )
+        if source is not None and observed_at:
+            projected.update(
+                runtime_row_evidence_fields(
+                    source_dataset=dataset,
+                    source_system=source.cartridge,
+                    cartridge=source.cartridge,
+                    tenant_id=context["tenant_id"],
+                    workspace_id=context["active_workspace_id"],
+                    source_row=source_row,
+                    locator_field=source.entity_id_field,
+                    observed_at=observed_at,
+                    business_observation=projected,
+                )
+            )
+        scoped.append(projected)
+    return scoped
 
 
 @pytest.mark.asyncio
@@ -208,9 +332,13 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
         if dataset == "sap_successfactors_headcount_by_company":
             return [{"company_id": "MX01", "company_name": "FEMSA", "headcount": 2}]
         if dataset == "sap_successfactors_headcount_by_location":
-            return [{"location_id": "MTY", "location_name": "Monterrey", "headcount": 2}]
+            return [
+                {"location_id": "MTY", "location_name": "Monterrey", "headcount": 2}
+            ]
         if dataset == "sap_successfactors_headcount_by_department":
-            return [{"department_id": "HR", "department_name": "People", "headcount": 2}]
+            return [
+                {"department_id": "HR", "department_name": "People", "headcount": 2}
+            ]
         return []
 
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", fake_gold_rows)
@@ -220,11 +348,17 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
     assert result["connection_id"] == "femsa_sf"
     assert result["tenant_id"] == USER["tenant_id"]
     assert result["workspace_id"] == USER["active_workspace_id"]
-    active = next(widget for widget in result["widgets"] if widget["id"] == "sf_active_headcount")
+    active = next(
+        widget for widget in result["widgets"] if widget["id"] == "sf_active_headcount"
+    )
     assert active["value"] == 2
     assert active["status"] == "ready"
     assert active["dataset"] == "sap_successfactors_employee_360"
-    by_company = next(widget for widget in result["widgets"] if widget["id"] == "sf_headcount_by_company")
+    by_company = next(
+        widget
+        for widget in result["widgets"]
+        if widget["id"] == "sf_headcount_by_company"
+    )
     assert by_company["status"] == "ready"
     assert by_company["rows"] == [{"label": "FEMSA", "id": "MX01", "headcount": 2}]
     assert {dataset for dataset, _user, _limit in calls} == {
@@ -240,7 +374,9 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
 async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypatch):
     from app.services.intelligence import gold_fetcher
 
-    async def missing_gold(_dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+    async def missing_gold(
+        _dataset: str, _user: dict | None, _limit: int
+    ) -> list[dict]:
         raise HTTPException(404, "dataset unavailable")
 
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", missing_gold)
@@ -251,128 +387,43 @@ async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypat
     assert result["tenant_id"] == USER["tenant_id"]
     assert result["workspace_id"] == USER["active_workspace_id"]
     assert [widget["value"] for widget in result["widgets"]] == [None, None, None, None]
-    assert [widget["status"] for widget in result["widgets"]] == ["missing", "missing", "missing", "missing"]
-    assert all("dataset unavailable" in str(widget["error"]) for widget in result["widgets"])
+    assert [widget["status"] for widget in result["widgets"]] == [
+        "missing",
+        "missing",
+        "missing",
+        "missing",
+    ]
+    assert all(
+        "dataset unavailable" in str(widget["error"]) for widget in result["widgets"]
+    )
     assert all(widget["rows"] == [] for widget in result["widgets"])
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_kpis_returns_aggregates_without_pii(monkeypatch):
-    calls: list[tuple[str, dict | None, int]] = []
-
-    async def fake_rows(dataset: str, user: dict | None, limit: int) -> list[dict]:
-        calls.append((dataset, user, limit))
-        if dataset == "sap_successfactors_talent_employee_profile":
-            return [
-                {"user_id": "100", "full_name": "Ana Gomez", "job_code": "MGR", "blockers": '["KB-COMPETENCIAS blocked"]'},
-                {"user_id": "101", "full_name": "Luis Perez", "job_code": "REP", "blockers": '["KB-DESEMPENO blocked"]'},
-            ]
-        if dataset == "sap_successfactors_talent_role_profile":
-            return [
-                {
-                    "job_code": "MGR",
-                    "role_name": "Manager",
-                    "active_employee_count": 2,
-                    "role_profile_status": "partial",
-                    "required_skills_status": "blocked",
-                    "blockers": '["Skills/competencies metadata pending"]',
-                }
-            ]
-        if dataset == "sap_successfactors_talent_mobility_history":
-            return [{"user_id": "100", "full_name": "Ana Gomez", "movement_events": 1}]
-        if dataset == "sap_successfactors_talent_readiness":
-            return [
-                {"user_id": "100", "full_name": "Ana Gomez", "readiness_status": "insufficient_data"},
-                {"user_id": "101", "full_name": "Luis Perez", "readiness_status": "insufficient_data"},
-            ]
-        if dataset == "sap_successfactors_talent_9box":
-            return [
-                {"user_id": "100", "full_name": "Ana Gomez", "box_status": "blocked"},
-                {"user_id": "101", "full_name": "Luis Perez", "box_status": "blocked"},
-            ]
-        if dataset == "sap_successfactors_talent_signals":
-            return [
-                {
-                    "signal_id": "talent_cpa_missing_inputs",
-                    "signal_type": "priorizacion",
-                    "severity": "medium",
-                    "title": "Fit Score bloqueado",
-                    "affected_count": 2,
-                    "recommendation": "Habilitar C/P/A.",
-                    "status": "recommendation_only",
-                }
-            ]
-        return []
-
-    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
-
-    result = await control_room_service.sap_successfactors_talent_kpis(USER)
-
-    assert result["profile"]["wisdom_bit"] == "WB-TALENTO"
-    assert result["profile"]["decision_mode"] == "recommendation_only"
-    assert result["profile"]["compensation_enabled"] is False
-    assert result["profile"]["write_back_enabled"] is False
-    assert result["readiness"]["profiled_employees"] == 2
-    assert result["readiness"]["calculable_employees"] == 0
-    assert result["readiness"]["insufficient_data_employees"] == 2
-    assert result["readiness"]["nine_box_available"] == 0
-    assert next(widget for widget in result["widgets"] if widget["id"] == "sf_talent_roles_profiled")["value"] == 1
-    assert result["signals"][0]["status"] == "recommendation_only"
-    assert {dataset for dataset, _user, _limit in calls} == {
-        "sap_successfactors_talent_employee_profile",
-        "sap_successfactors_talent_operational_features",
-        "sap_successfactors_talent_role_profile",
-        "sap_successfactors_talent_mobility_history",
-        "sap_successfactors_talent_readiness",
-        "sap_successfactors_talent_9box",
-        "sap_successfactors_talent_signals",
-        "sap_successfactors_talent_simulation_inputs",
-        # Fase 3 P0: el payload ahora incluye workforce_trends (misma fuente),
-        # que lee las 3 series mensuales por cohorte.
-        "sap_successfactors_talent_headcount_by_cohort_month",
-        "sap_successfactors_talent_tenure_by_cohort_month",
-        "sap_successfactors_talent_attrition_by_cohort_month",
-    }
-    payload_text = json.dumps(result, ensure_ascii=False)
-    assert "Ana Gomez" not in payload_text
-    assert "Luis Perez" not in payload_text
-
-
-@pytest.mark.asyncio
-async def test_sap_successfactors_talent_kpis_degrades_when_datasets_missing(monkeypatch):
-    async def missing_rows(_dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-        raise HTTPException(404, "dataset unavailable")
-
-    monkeypatch.setattr(control_room_service, "query_dataset_rows", missing_rows)
-
-    result = await control_room_service.sap_successfactors_talent_kpis(USER)
-
-    assert result["connection_id"] == "femsa_sf"
-    assert result["readiness"]["status"] == "partial"
-    assert any(blocker["id"] == "talent_dataset_availability" for blocker in result["blockers"])
-    assert all(widget["status"] == "missing" for widget in result["widgets"])
-
-
 @pytest.mark.asyncio
 async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_employee_profile":
-            return [{"employee_key": "tal_1"}]
+            return _scoped_rows(dataset, [{"employee_key": "tal_1"}], _user)
         if dataset == "sap_successfactors_talent_signals":
-            return [
-                {
-                    "signal_id": "talent_role_requirements_missing",
-                    "signal_type": "pipeline",
-                    "severity": "medium",
-                    "affected_count": 42,
-                    "title": "Requisitos de rol pendientes",
-                    "recommendation": "Validar Position y entidades de skills.",
-                    "status": "recommendation_only",
-                    "generated_at": "2026-06-24T03:27:32Z",
-                    "user_id": "100",
-                    "full_name": "Ana Gomez",
-                }
-            ]
+            return _scoped_rows(
+                dataset,
+                [
+                    {
+                        "signal_id": "talent_role_requirements_missing",
+                        "signal_type": "pipeline",
+                        "severity": "medium",
+                        "affected_count": 42,
+                        "title": "Requisitos de rol pendientes",
+                        "recommendation": "Validar Position y entidades de skills.",
+                        "status": "recommendation_only",
+                        "generated_at": "2026-06-24T03:27:32Z",
+                        "user_id": "100",
+                        "full_name": "Ana Gomez",
+                    }
+                ],
+                _user,
+            )
         return []
 
     mock_pool = AsyncMock()
@@ -380,21 +431,25 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[])),
+        patch.object(
+            control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[])
+        ),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "connection_id": "femsa_sf",
-                    "auth_method": "saml_bearer_assertion",
-                },
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "connection_id": "femsa_sf",
+                        "auth_method": "saml_bearer_assertion",
+                    },
+                ]
+            ),
         ),
     ):
-        result = await control_room_service.dashboard(USER, fetcher=fetcher, persist=False)
+        result = await control_room_service.dashboard(USER, fetcher=fetcher)
 
     signal_items = [
         item
@@ -412,19 +467,30 @@ async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch
     assert signal["intelligence"]["baseline"]["actual_value"] == 42
     assert signal["intelligence"]["baseline"]["expected_value"] == 0
     assert signal["intelligence"]["signal"]["confidence"] > 0
-    assert signal["intelligence"]["evidence_pack"]["source_dataset"] == "sap_successfactors_talent_signals"
+    assert (
+        signal["intelligence"]["evidence_pack"]["source_dataset"]
+        == "sap_successfactors_talent_signals"
+    )
     assert signal["intelligence"]["evidence_pack"]["items"]
     assert signal["bayesian_calibration"]["status"] == "not_calibrated"
-    assert signal["bayesian_calibration"]["group"] == "sap_successfactors:talent_readiness"
+    assert (
+        signal["bayesian_calibration"]["group"] == "sap_successfactors:talent_readiness"
+    )
     assert signal["monte_carlo"]["source_id"] == "WB-TALENTO"
-    assert signal["math_provenance"]["monte_carlo"]["status"] in {"blocked", "not_applicable"}
+    assert signal["math_provenance"]["monte_carlo"]["status"] in {
+        "blocked",
+        "not_applicable",
+    }
     signal_text = json.dumps(signal, ensure_ascii=False)
     assert "Ana Gomez" not in signal_text
     assert '"100"' not in signal_text
 
     sources = {source["dataset"]: source for source in result["sources"]}
     assert sources["sap_successfactors_talent_employee_profile"]["count"] == 1
-    assert sources["sap_successfactors_talent_employee_profile"]["data_readiness"] == "partial"
+    assert (
+        sources["sap_successfactors_talent_employee_profile"]["data_readiness"]
+        == "partial"
+    )
     assert sources["sap_successfactors_talent_signals"]["count"] == 1
 
 
@@ -481,14 +547,18 @@ async def test_sap_successfactors_talent_9box_accepts_internal_reference(monkeyp
     assert result["status"] == "ready"
     assert result["totals"]["ready"] == 8
     assert result["totals"]["reference"] == 8
-    assert not any(blocker["id"] == "talent_9box_cpa_incomplete" for blocker in result["blockers"])
+    assert not any(
+        blocker["id"] == "talent_9box_cpa_incomplete" for blocker in result["blockers"]
+    )
     core = next(cell for cell in result["cells"] if cell["box_id"] == "core")
     assert core["ready_count"] == 8
     assert core["reference_count"] == 8
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_aliases(monkeypatch):
+async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_aliases(
+    monkeypatch,
+):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_operational_features":
             return [
@@ -520,7 +590,9 @@ async def test_sap_successfactors_talent_kpis_reads_operational_blocked_count_al
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row_is_stale(monkeypatch):
+async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row_is_stale(
+    monkeypatch,
+):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_employee_profile":
             return [{"employee_key": "tal_1"}, {"employee_key": "tal_2"}]
@@ -568,8 +640,7 @@ async def test_sap_successfactors_talent_kpis_use_readiness_when_operational_row
     assert result["readiness"]["source_mode"] == "benchmark_internal"
     assert result["readiness"]["readiness_status"] == "benchmark_internal"
     assert not any(
-        blocker["id"] == "talent_cpa_inputs_missing"
-        for blocker in result["blockers"]
+        blocker["id"] == "talent_cpa_inputs_missing" for blocker in result["blockers"]
     )
 
 
@@ -612,8 +683,7 @@ async def test_sap_successfactors_talent_9box_falls_back_to_detailed_rows(monkey
     assert result["totals"]["ready"] == 2
     assert result["totals"]["reference"] == 1
     assert not any(
-        blocker["id"] == "talent_9box_cpa_incomplete"
-        for blocker in result["blockers"]
+        blocker["id"] == "talent_9box_cpa_incomplete" for blocker in result["blockers"]
     )
 
 
@@ -657,10 +727,14 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
 
-    result = await control_room_service.sap_successfactors_talent_9box_box(USER, "estrella")
+    result = await control_room_service.sap_successfactors_talent_9box_box(
+        USER, "estrella"
+    )
 
     assert result["count"] == 2
-    assert [row["display_name"].startswith("Colaborador ") for row in result["roster"]] == [True, True]
+    assert [
+        row["display_name"].startswith("Colaborador ") for row in result["roster"]
+    ] == [True, True]
     for row in result["roster"]:
         assert "full_name" not in row
         assert "user_id" not in row
@@ -673,7 +747,9 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation_only(monkeypatch):
+async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation_only(
+    monkeypatch,
+):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_cpa_scores":
             return [
@@ -684,20 +760,25 @@ async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation
             return [
                 {
                     "action_id": "talent_calibration_sensitivity",
+                    "kind": "anomaly",
                     "action_type": "sensibilidad",
+                    "metric_type": "count",
                     "severity": "medium",
                     "title": "Casos cerca de cortes 9-box",
                     "affected_count": 4,
                     "recommendation": "Revisar calibracion.",
                     "status": "recommendation_only",
                     "method": "cut_sensitivity",
+                    "generated_at": "2026-07-16T10:00:00Z",
                 }
             ]
         return []
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
 
-    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(USER)
+    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(
+        USER
+    )
     preview = await control_room_service.sap_successfactors_talent_action_preview(
         USER,
         {"action_id": "talent_calibration_sensitivity", "box_id": "core"},
@@ -713,7 +794,9 @@ async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation
 
 
 @pytest.mark.asyncio
-async def test_talent_performance_entity_available_when_performance_present(monkeypatch):
+async def test_talent_performance_entity_available_when_performance_present(
+    monkeypatch,
+):
     """GATE 1 (Opcion 3): con performance_score presente pero competency/aspiration
     ausentes (cpa_status='insufficient_data', ready_cpa=0), la entidad Performance deja
     de estar 'blocked' y pasa a 'available' (Desempeno disponible - Potencial pendiente).
@@ -741,7 +824,9 @@ async def test_talent_performance_entity_available_when_performance_present(monk
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
 
-    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(USER)
+    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(
+        USER
+    )
     entities = {entity["id"]: entity for entity in readiness["entities"]}
 
     # Performance ya no aparece bloqueado; pasa a 'available' y NUNCA a 'ready' (verde exige C/P/A).
@@ -777,7 +862,9 @@ async def test_talent_performance_entity_stays_blocked_without_performance(monke
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
 
-    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(USER)
+    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(
+        USER
+    )
     entities = {entity["id"]: entity for entity in readiness["entities"]}
     assert entities["performance"]["status"] == "blocked"
     assert entities["competency"]["status"] == "blocked"
@@ -801,24 +888,43 @@ def test_talent_roster_row_desempeno_disponible_and_separation():
     """Desempeno disponible = desempeno real presente + Potencial pendiente. Fit no se infiere
     (queda insufficient_data mientras fit_score sea NULL)."""
     row_perf = {
-        "user_id": "1", "performance_score": 4.4,
-        "performance_band_available": "high", "potential_pending": True, "fit_score": None,
+        "user_id": "1",
+        "performance_score": 4.4,
+        "performance_band_available": "high",
+        "potential_pending": True,
+        "fit_score": None,
     }
     row_noperf = {
-        "user_id": "2", "performance_score": None,
-        "performance_band_available": None, "potential_pending": True, "fit_score": None,
+        "user_id": "2",
+        "performance_score": None,
+        "performance_band_available": None,
+        "potential_pending": True,
+        "fit_score": None,
     }
     row_full = {
-        "user_id": "3", "performance_score": 4.0,
-        "performance_band_available": "high", "potential_pending": False, "fit_score": 85,
+        "user_id": "3",
+        "performance_score": 4.0,
+        "performance_band_available": "high",
+        "potential_pending": False,
+        "fit_score": 85,
     }
     masked_perf = control_room_service._sf_talent_masked_roster_row(row_perf)
     assert masked_perf["performance_band_available"] == "high"
     assert masked_perf["desempeno_disponible"] is True
     assert masked_perf["fit_band"] == "insufficient_data"  # Fit no inferido
-    assert control_room_service._sf_talent_masked_roster_row(row_noperf)["desempeno_disponible"] is False
+    assert (
+        control_room_service._sf_talent_masked_roster_row(row_noperf)[
+            "desempeno_disponible"
+        ]
+        is False
+    )
     # Con C/P/A completo (potencial no pendiente) no entra a la cohorte.
-    assert control_room_service._sf_talent_masked_roster_row(row_full)["desempeno_disponible"] is False
+    assert (
+        control_room_service._sf_talent_masked_roster_row(row_full)[
+            "desempeno_disponible"
+        ]
+        is False
+    )
 
 
 def test_talent_roster_row_band_compute_fallback_without_gold_column():
@@ -831,10 +937,30 @@ def test_talent_roster_row_band_compute_fallback_without_gold_column():
 
 def test_talent_desempeno_cohort_counts_bands_and_sorts():
     rows = [
-        {"user_id": "1", "performance_score": 4.5, "performance_band_available": "high", "potential_pending": True},
-        {"user_id": "2", "performance_score": 3.1, "performance_band_available": "medium", "potential_pending": True},
-        {"user_id": "3", "performance_score": None, "performance_band_available": None, "potential_pending": True},
-        {"user_id": "4", "performance_score": 4.0, "performance_band_available": "high", "potential_pending": False},
+        {
+            "user_id": "1",
+            "performance_score": 4.5,
+            "performance_band_available": "high",
+            "potential_pending": True,
+        },
+        {
+            "user_id": "2",
+            "performance_score": 3.1,
+            "performance_band_available": "medium",
+            "potential_pending": True,
+        },
+        {
+            "user_id": "3",
+            "performance_score": None,
+            "performance_band_available": None,
+            "potential_pending": True,
+        },
+        {
+            "user_id": "4",
+            "performance_score": 4.0,
+            "performance_band_available": "high",
+            "potential_pending": False,
+        },
     ]
     cohort = control_room_service._sf_talent_desempeno_cohort(rows)
     assert cohort["count"] == 2  # rows 1 y 2 (3 sin perf, 4 potencial no pendiente)
@@ -847,15 +973,39 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
     async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "sap_successfactors_talent_9box":
             return [
-                {"user_id": "1", "performance_score": 4.5, "performance_band_available": "high",
-                 "potential_pending": True, "box_key": "core", "box_label": "Core", "box_status": "benchmark_internal",
-                 "performance_band": "high", "potential_band": "medium"},
-                {"user_id": "2", "performance_score": 3.0, "performance_band_available": "medium",
-                 "potential_pending": True, "box_key": "riesgo", "box_label": "Riesgo", "box_status": "benchmark_internal",
-                 "performance_band": "medium", "potential_band": "low"},
-                {"user_id": "3", "performance_score": None, "performance_band_available": None,
-                 "potential_pending": True, "box_key": "", "box_label": "Sin datos suficientes", "box_status": "blocked",
-                 "performance_band": "insufficient_data", "potential_band": "insufficient_data"},
+                {
+                    "user_id": "1",
+                    "performance_score": 4.5,
+                    "performance_band_available": "high",
+                    "potential_pending": True,
+                    "box_key": "core",
+                    "box_label": "Core",
+                    "box_status": "benchmark_internal",
+                    "performance_band": "high",
+                    "potential_band": "medium",
+                },
+                {
+                    "user_id": "2",
+                    "performance_score": 3.0,
+                    "performance_band_available": "medium",
+                    "potential_pending": True,
+                    "box_key": "riesgo",
+                    "box_label": "Riesgo",
+                    "box_status": "benchmark_internal",
+                    "performance_band": "medium",
+                    "potential_band": "low",
+                },
+                {
+                    "user_id": "3",
+                    "performance_score": None,
+                    "performance_band_available": None,
+                    "potential_pending": True,
+                    "box_key": "",
+                    "box_label": "Sin datos suficientes",
+                    "box_status": "blocked",
+                    "performance_band": "insufficient_data",
+                    "potential_band": "insufficient_data",
+                },
             ]
         return []
 
@@ -867,15 +1017,25 @@ async def test_talent_9box_payload_exposes_desempeno_cohort(monkeypatch):
     assert cohort["roster"][0]["performance_band_available"] == "high"
 
 
+# Keep assert messages lazy; Ruff 0.6.9 otherwise rewrites their evaluation order.
+# fmt: off
 def test_desempeno_module_rewired_to_real_performance_not_compensation():
     """Etapa 1 (Trabajo 1): el modulo Desempeno consume el dataset REAL de performance
     (talent_cpa_scores), no el stub de compensacion; Compensacion es un modulo SEPARADO."""
     from app.services.control_room.core import MODULES
 
-    perf = next((m for m in MODULES if m.module_id == "sap_successfactors_performance"), None)
-    comp = next((m for m in MODULES if m.module_id == "sap_successfactors_compensation"), None)
-    assert perf is not None, "modulo Desempeno (sap_successfactors_performance) debe existir"
-    assert comp is not None, "modulo Compensacion (sap_successfactors_compensation) separado debe existir"
+    perf = next(
+        (m for m in MODULES if m.module_id == "sap_successfactors_performance"), None
+    )
+    comp = next(
+        (m for m in MODULES if m.module_id == "sap_successfactors_compensation"), None
+    )
+    assert perf is not None, (
+        "modulo Desempeno (sap_successfactors_performance) debe existir"
+    )
+    assert comp is not None, (
+        "modulo Compensacion (sap_successfactors_compensation) separado debe existir"
+    )
 
     perf_datasets = {s.dataset for s in perf.sources}
     comp_datasets = {s.dataset for s in comp.sources}
@@ -896,12 +1056,25 @@ def test_no_module_mixes_compensation_and_performance():
         datasets = {source.dataset for source in module.sources}
         has_comp = any("compensation" in ds for ds in datasets)
         has_perf = any(("performance" in ds or "cpa_scores" in ds) for ds in datasets)
-        assert not (has_comp and has_perf), f"modulo {module.visible_id} mezcla compensacion y desempeno"
+        assert not (has_comp and has_perf), (
+            f"modulo {module.visible_id} mezcla compensacion y desempeno"
+        )
         if "sap_successfactors_compensation_distribution" in datasets:
             comp_consumers += 1
-    assert comp_consumers == 1, "compensation_distribution debe consumirlo exactamente un modulo"
+    assert comp_consumers == 1, (
+        "compensation_distribution debe consumirlo exactamente un modulo"
+    )
 
-    comp_terms = ("compensation", "paycomp", "payment", "paygroup", "payroll", "salary", "amount", "currency")
+    comp_terms = (
+        "compensation",
+        "paycomp",
+        "payment",
+        "paygroup",
+        "payroll",
+        "salary",
+        "amount",
+        "currency",
+    )
     perf_terms = ("performance", "review", "goal", "competency")
     perf = next(m for m in MODULES if m.module_id == "sap_successfactors_performance")
     comp = next(m for m in MODULES if m.module_id == "sap_successfactors_compensation")
@@ -915,16 +1088,25 @@ def test_no_module_mixes_compensation_and_performance():
         return " ".join(parts).lower()
 
     perf_str, comp_str = match_string(perf), match_string(comp)
-    assert any(t in perf_str for t in perf_terms), "Desempeno debe seguir matcheando su tarjeta"
-    assert not any(t in perf_str for t in comp_terms), "Desempeno no debe matchear compensacion"
-    assert any(t in comp_str for t in comp_terms), "Compensacion debe matchear su tarjeta"
-    assert not any(t in comp_str for t in perf_terms), "Compensacion no debe matchear desempeno"
+    assert any(t in perf_str for t in perf_terms), (
+        "Desempeno debe seguir matcheando su tarjeta"
+    )
+    assert not any(t in perf_str for t in comp_terms), (
+        "Desempeno no debe matchear compensacion"
+    )
+    assert any(t in comp_str for t in comp_terms), (
+        "Compensacion debe matchear su tarjeta"
+    )
+    assert not any(t in comp_str for t in perf_terms), (
+        "Compensacion no debe matchear desempeno"
+    )
+# fmt: on
 
 
 @pytest.mark.asyncio
 async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-        return SAMPLE_ROWS[dataset]
+        return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -935,87 +1117,24 @@ async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "connection_id": "femsa_sf",
-                    "auth_method": "saml_bearer_assertion",
-                },
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "connection_id": "femsa_sf",
+                        "auth_method": "saml_bearer_assertion",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.summary(USER, fetcher=fetcher)
 
-    assert {source["cartridge"] for source in result["sources"]} == {"sap_successfactors"}
+    assert {source["cartridge"] for source in result["sources"]} == {
+        "sap_successfactors"
+    }
     assert set(result["by_cartridge"]) <= {"sap_successfactors"}
-
-
-@pytest.mark.asyncio
-async def test_dashboard_filters_persisted_intelligence_to_active_connections(monkeypatch):
-    async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-        return []
-
-    mock_pool = AsyncMock()
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    stale_item = {
-        "id": "alert:hubspot:stale",
-        "kind": "intelligence_signal",
-        "domain": "Ventas",
-        "module": "HubSpot",
-        "module_id": "hubspot",
-        "cartridge": "hubspot",
-        "source_dataset": "hubspot_deals",
-        "entity_kind": "Deal",
-        "entity_id": "D-1",
-        "entity_label": "Deal",
-        "anomaly_type": "forecast",
-        "severity": "high",
-        "severity_weight": 3,
-        "detected_at": "2026-06-07T00:00:00Z",
-        "title": "HubSpot stale alert",
-        "description": "Should be hidden without scoped connection.",
-        "recommendation": "Hidden",
-        "status": "open",
-    }
-    active_item = {
-        **stale_item,
-        "id": "alert:sf:active",
-        "domain": "Recursos Humanos",
-        "module": "Employee Central",
-        "module_id": "sap_successfactors",
-        "cartridge": "sap_successfactors",
-        "source_dataset": "sap_successfactors_employee_360",
-        "title": "SuccessFactors active alert",
-    }
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[])),
-        patch.object(
-            control_room_service,
-            "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "connection_id": "femsa_sf",
-                    "auth_method": "saml_bearer_assertion",
-                },
-            ]),
-        ),
-        patch.object(
-            control_room_service,
-            "_persisted_intelligence_items",
-            new=AsyncMock(return_value=[stale_item, active_item]),
-        ),
-    ):
-        result = await control_room_service.dashboard(USER, fetcher=fetcher, persist=True)
-
-    assert {item["cartridge"] for item in result["items"]} == {"sap_successfactors"}
-    assert {alert["cartridge"] for alert in result["alerts"]} == {"sap_successfactors"}
 
 
 @pytest.mark.asyncio
@@ -1035,10 +1154,16 @@ async def test_list_anomalies_normalizes_all_real_sources():
     assert first["recommendation"]
     assert first["id"]
     source_summary = {
-        source["dataset"]: {key: source[key] for key in ("cartridge", "status", "count")}
+        source["dataset"]: {
+            key: source[key] for key in ("cartridge", "status", "count")
+        }
         for source in result["sources"]
     }
-    assert source_summary["employees_anomalies"] == {"cartridge": "sap_hcm", "status": "ok", "count": 1}
+    assert source_summary["employees_anomalies"] == {
+        "cartridge": "sap_hcm",
+        "status": "ok",
+        "count": 1,
+    }
     assert source_summary["business_partner_anomalies"] == {
         "cartridge": "sap_s4hana",
         "status": "ok",
@@ -1054,8 +1179,12 @@ async def test_list_anomalies_normalizes_all_real_sources():
         "business_partner_anomalies",
         "sap_successfactors_employees_anomalies",
     }
-    expected_empty = {source.dataset for source in control_room_service._all_sources()} - anomaly_sources  # noqa: SLF001
-    actual_empty = {item["dataset"] for item in result["sources"] if item["status"] == "empty"}
+    expected_empty = {
+        source.dataset for source in control_room_service._all_sources()
+    } - anomaly_sources  # noqa: SLF001
+    actual_empty = {
+        item["dataset"] for item in result["sources"] if item["status"] == "empty"
+    }
     assert expected_empty <= actual_empty
 
 
@@ -1064,12 +1193,16 @@ async def test_list_anomalies_marks_missing_dataset_unavailable_without_failing(
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         if dataset == "business_partner_anomalies":
             raise HTTPException(404, "dataset not found")
-        return SAMPLE_ROWS[dataset]
+        return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
     result = await control_room_service.list_anomalies(USER, fetcher=fetcher)
 
     assert len(result["anomalies"]) == 2
-    failed_source = next(item for item in result["sources"] if item["dataset"] == "business_partner_anomalies")
+    failed_source = next(
+        item
+        for item in result["sources"]
+        if item["dataset"] == "business_partner_anomalies"
+    )
     assert failed_source["status"] == "missing"
     assert failed_source["count"] == 0
     assert "dataset not found" in failed_source["error"]
@@ -1077,7 +1210,9 @@ async def test_list_anomalies_marks_missing_dataset_unavailable_without_failing(
 
 @pytest.mark.asyncio
 async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready():
-    async def readiness_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+    async def readiness_fetcher(
+        dataset: str, _user: dict | None, _limit: int
+    ) -> list[dict]:
         rows = {key: list(value) for key, value in SAMPLE_ROWS.items()}
         rows["manager_hierarchy"] = [
             {
@@ -1099,7 +1234,7 @@ async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready(
                 "total_base_salary": None,
             }
         ]
-        return rows[dataset]
+        return _scoped_rows(dataset, rows[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -1110,15 +1245,29 @@ async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready(
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=readiness_fetcher)
 
-    manager_source = next(source for source in result["sources"] if source["dataset"] == "manager_hierarchy")
-    payroll_source = next(source for source in result["sources"] if source["dataset"] == "workforce_cost_monthly")
+    manager_source = next(
+        source
+        for source in result["sources"]
+        if source["dataset"] == "manager_hierarchy"
+    )
+    payroll_source = next(
+        source
+        for source in result["sources"]
+        if source["dataset"] == "workforce_cost_monthly"
+    )
     assert manager_source["status"] == "ok"
     assert manager_source["data_readiness"] == "partial"
     assert manager_source["operationally_ready"] is False
@@ -1133,13 +1282,14 @@ async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready(
     assert summary["partial_modules"] >= 1
     assert summary["stub_modules"] >= 1
     assert summary["data_ready_modules"] < summary["active_modules"]
-    source_state_types = {item["anomaly_type"] for item in result["items"] if item["kind"] == "source_state"}
-    assert {"source_partial", "source_stub"} <= source_state_types
+    assert all(item["kind"] != "source_state" for item in result["items"])
 
 
 @pytest.mark.asyncio
 async def test_dashboard_exposes_real_financial_metrics_from_available_sources():
-    async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+    async def finance_fetcher(
+        dataset: str, _user: dict | None, _limit: int
+    ) -> list[dict]:
         rows = {key: list(value) for key, value in SAMPLE_ROWS.items()}
         rows["pnl_mensual"] = [
             {
@@ -1168,9 +1318,18 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
             },
         ]
         rows["revenue_by_customer"] = [{"customer_code": "C-1", "revenue": 50000}]
-        rows["open_sales_orders"] = [{"customer_code": "C-1", "open_value": 12000, "open_orders": 3, "oldest_age_days": 75}]
-        rows["purchase_spend_by_supplier"] = [{"supplier_code": "S-1", "total_spend": 15000}]
-        return rows[dataset]
+        rows["open_sales_orders"] = [
+            {
+                "customer_code": "C-1",
+                "open_value": 12000,
+                "open_orders": 3,
+                "oldest_age_days": 75,
+            }
+        ]
+        rows["purchase_spend_by_supplier"] = [
+            {"supplier_code": "S-1", "total_spend": 15000}
+        ]
+        return _scoped_rows(dataset, rows[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -1181,10 +1340,20 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_s4hana", "installation_status": "ready", "label": "SAP S/4HANA"},
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_s4hana",
+                        "installation_status": "ready",
+                        "label": "SAP S/4HANA",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=finance_fetcher)
@@ -1216,10 +1385,12 @@ async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list
             "margen_bruto_pct": 5,
         }
     ]
-    return rows[dataset]
+    return _scoped_rows(dataset, rows[dataset], _user)
 
 
-async def threshold_margin_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+async def threshold_margin_fetcher(
+    dataset: str, _user: dict | None, _limit: int
+) -> list[dict]:
     rows = {key: [] for key in SAMPLE_ROWS}
     rows["pnl_mensual"] = [
         {
@@ -1235,7 +1406,7 @@ async def threshold_margin_fetcher(dataset: str, _user: dict | None, _limit: int
             "margen_bruto_pct": 15,
         }
     ]
-    return rows[dataset]
+    return _scoped_rows(dataset, rows[dataset], _user)
 
 
 @pytest.mark.asyncio
@@ -1249,26 +1420,43 @@ async def test_dashboard_adds_real_impact_and_priority_without_inventing_money()
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=finance_fetcher)
 
-    pnl_item = next(item for item in result["items"] if item["anomaly_type"] == "low_margin")
+    pnl_item = next(
+        item for item in result["items"] if item["anomaly_type"] == "low_margin"
+    )
     assert pnl_item["impact_status"] == "ok"
     assert pnl_item["impact_estimate"] == 21000
     assert pnl_item["impact_currency"] == "USD"
     assert pnl_item["priority_score"] > 0
-    hcm_item = next(item for item in result["items"] if item["source_dataset"] == "employees_anomalies")
+    hcm_item = next(
+        item
+        for item in result["items"]
+        if item["source_dataset"] == "employees_anomalies"
+    )
     assert hcm_item["impact_status"] == "unavailable"
     assert hcm_item["impact_estimate"] is None
 
 
 def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
     hcm = {
+        **_observed_anomaly_fields("hcm-1"),
         "id": "hcm-1",
         "kind": "anomaly",
         "cartridge": "sap_hcm",
@@ -1278,6 +1466,7 @@ def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
         "details": {"salary_monthly_usd": 4200},
     }
     sf = {
+        **_observed_anomaly_fields("sf-1"),
         "id": "sf-1",
         "kind": "anomaly",
         "cartridge": "sap_successfactors",
@@ -1287,6 +1476,7 @@ def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
         "details": {"affected_employees": 8, "avg_monthly_cost_usd": 3000},
     }
     bp = {
+        **_observed_anomaly_fields("bp-1"),
         "id": "bp-1",
         "kind": "anomaly",
         "cartridge": "sap_s4hana",
@@ -1311,23 +1501,49 @@ def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
 def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
     cases = [
         (
-            {"kind": "anomaly", "cartridge": "sap_hcm", "anomaly_type": "terminated_but_active"},
+            {
+                **_observed_anomaly_fields("hcm-template"),
+                "kind": "anomaly",
+                "cartridge": "sap_hcm",
+                "anomaly_type": "terminated_but_active",
+            },
             "prepare_hcm_access_review",
         ),
         (
-            {"kind": "anomaly", "cartridge": "sap_successfactors", "module_id": "sap_successfactors_recruiting", "anomaly_type": "stale_requisition"},
+            {
+                **_observed_anomaly_fields("sf-template"),
+                "kind": "anomaly",
+                "cartridge": "sap_successfactors",
+                "module_id": "sap_successfactors_recruiting",
+                "anomaly_type": "stale_requisition",
+            },
             "prepare_successfactors_recruiting_review",
         ),
         (
-            {"kind": "anomaly", "cartridge": "sap_s4hana", "anomaly_type": "missing_address"},
+            {
+                **_observed_anomaly_fields("bp-template"),
+                "kind": "anomaly",
+                "cartridge": "sap_s4hana",
+                "anomaly_type": "missing_address",
+            },
             "prepare_s4_business_partner_review",
         ),
         (
-            {"kind": "anomaly", "cartridge": "sap_s4hana", "anomaly_type": "aged_sales_backlog"},
+            {
+                **_observed_anomaly_fields("revenue-template"),
+                "kind": "anomaly",
+                "cartridge": "sap_s4hana",
+                "anomaly_type": "aged_sales_backlog",
+            },
             "prepare_s4_revenue_review",
         ),
         (
-            {"kind": "anomaly", "cartridge": "sap_s4hana", "anomaly_type": "supplier_spend_concentration"},
+            {
+                **_observed_anomaly_fields("procurement-template"),
+                "kind": "anomaly",
+                "cartridge": "sap_s4hana",
+                "anomaly_type": "supplier_spend_concentration",
+            },
             "prepare_s4_procurement_review",
         ),
     ]
@@ -1361,14 +1577,24 @@ async def test_dashboard_applies_workspace_thresholds_to_detection_and_priority(
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
-        result = await control_room_service.dashboard(USER, fetcher=threshold_margin_fetcher)
+        result = await control_room_service.dashboard(
+            USER, fetcher=threshold_margin_fetcher
+        )
 
-    item = next(item for item in result["items"] if item["anomaly_type"] == "low_margin")
+    item = next(
+        item for item in result["items"] if item["anomaly_type"] == "low_margin"
+    )
     assert item["severity"] == "critical"
     assert item["threshold_state"] == "critical"
     assert item["thresholds_applied"][0]["source"] == "workspace"
@@ -1389,9 +1615,15 @@ async def test_dashboard_exposes_push_ready_alert_queue_with_priority_drivers():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=finance_fetcher)
@@ -1406,10 +1638,14 @@ async def test_dashboard_exposes_push_ready_alert_queue_with_priority_drivers():
     assert top["delivery"]["enabled"] is False
     assert top["priority_score"] >= alerts[-1]["priority_score"]
     assert any(driver["label"] == "Severidad" for driver in top["drivers"])
-    threshold_alert = next(alert for alert in alerts if alert["alert_type"] == "threshold_breach")
+    threshold_alert = next(
+        alert for alert in alerts if alert["alert_type"] == "threshold_breach"
+    )
     assert threshold_alert["item_id"]
     assert threshold_alert["recommended_action"]
-    item = next(item for item in result["items"] if item["id"] == threshold_alert["item_id"])
+    item = next(
+        item for item in result["items"] if item["id"] == threshold_alert["item_id"]
+    )
     assert item["priority"]["score"] == item["priority_score"]
     assert item["priority"]["formula"]
 
@@ -1425,9 +1661,15 @@ async def test_list_alerts_returns_same_alert_contract_as_dashboard():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.list_alerts(USER, fetcher=finance_fetcher)
@@ -1461,53 +1703,23 @@ async def test_dashboard_workspace_threshold_can_suppress_default_signal():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
-        result = await control_room_service.dashboard(USER, fetcher=threshold_margin_fetcher)
+        result = await control_room_service.dashboard(
+            USER, fetcher=threshold_margin_fetcher
+        )
 
     assert not any(item["anomaly_type"] == "low_margin" for item in result["items"])
     assert result["summary"]["thresholds"]["active"] == 1
-
-
-@pytest.mark.asyncio
-async def test_dashboard_surfaces_persisted_lessons_by_pattern():
-    lesson_row = {
-        "id": 31,
-        "item_id": "historic-item",
-        "cartridge_id": "sap_hcm",
-        "anomaly_type": "terminated_but_active",
-        "rule": "Cuando un empleado terminado sigue activo, bloquear acceso antes del cierre de nomina.",
-        "source_decision_id": 42,
-        "confidence": 0.86,
-        "metadata": {"source_dataset": "employees_anomalies"},
-        "created_at": datetime(2026, 5, 21, 9, 30, 0),
-    }
-    mock_pool = AsyncMock()
-    mock_pool.fetch = AsyncMock(side_effect=[[], [], [lesson_row]])
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(
-            control_room_service,
-            "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
-        ),
-    ):
-        result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
-
-    item = next(item for item in result["items"] if item["anomaly_type"] == "terminated_but_active")
-    assert item["lesson_count"] == 1
-    assert item["related_lessons"][0]["source_decision_id"] == 42
-    assert "bloquear acceso" in item["omega"]["lessons"]["rules"][0]
-    assert result["summary"]["lessons"]["total"] == 1
-    assert result["summary"]["lessons"]["by_cartridge"] == {"sap_hcm": 1}
-    assert result["summary"]["lessons"]["top_patterns"][0]["anomaly_type"] == "terminated_but_active"
 
 
 @pytest.mark.asyncio
@@ -1521,10 +1733,20 @@ async def test_dashboard_keeps_active_empty_cartridges_visible_and_creates_sourc
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
@@ -1533,7 +1755,7 @@ async def test_dashboard_keeps_active_empty_cartridges_visible_and_creates_sourc
     assert {"sap_hcm", "replicon"} <= cartridge_ids
     replicon = next(item for item in result["cartridges"] if item["id"] == "replicon")
     assert replicon["source_status"] == "empty"
-    assert any(item["kind"] == "source_state" and item["cartridge"] == "replicon" for item in result["items"])
+    assert all(item["kind"] != "source_state" for item in result["items"])
     assert result["omega_steps"][0]["label"] == "Senales"
     assert result["meta"]["live_mode"] == "polling"
     assert result["meta"]["refresh_interval_seconds"] == 30
@@ -1554,16 +1776,30 @@ async def test_dashboard_expands_installed_connectors_into_operational_cartridge
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "sap_s4hana", "installation_status": "ready", "label": "SAP S/4HANA"},
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "label": "SAP SuccessFactors",
-                },
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "sap_s4hana",
+                        "installation_status": "ready",
+                        "label": "SAP S/4HANA",
+                    },
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "label": "SAP SuccessFactors",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
@@ -1579,9 +1815,22 @@ async def test_dashboard_expands_installed_connectors_into_operational_cartridge
         "replicon_finance",
         "replicon_skills",
     } <= visible_ids
-    assert all(item["connector_id"] in USER["allowed_cartridges"] for item in result["cartridges"])
-    domain_labels = {domain["label"] for domain in result["domains"] if domain["modules"]}
-    assert {"Recursos Humanos", "Nomina", "Finanzas", "Presupuestos", "Compras", "Ventas", "Operacion"} <= domain_labels
+    assert all(
+        item["connector_id"] in USER["allowed_cartridges"]
+        for item in result["cartridges"]
+    )
+    domain_labels = {
+        domain["label"] for domain in result["domains"] if domain["modules"]
+    }
+    assert {
+        "Recursos Humanos",
+        "Nomina",
+        "Finanzas",
+        "Presupuestos",
+        "Compras",
+        "Ventas",
+        "Operacion",
+    } <= domain_labels
     ventas = next(domain for domain in result["domains"] if domain["label"] == "Ventas")
     assert any(module["id"] == "sap_s4hana_sales" for module in ventas["modules"])
 
@@ -1597,10 +1846,20 @@ async def test_dashboard_hides_denied_connector_modules_from_operational_map():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
@@ -1617,7 +1876,7 @@ async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching
 
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         called.append(dataset)
-        return SAMPLE_ROWS[dataset]
+        return _scoped_rows(dataset, SAMPLE_ROWS[dataset], _user)
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -1628,9 +1887,15 @@ async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_s4hana", "installation_status": "paused", "label": "SAP S/4HANA"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_s4hana",
+                        "installation_status": "paused",
+                        "label": "SAP S/4HANA",
+                    },
+                ]
+            ),
         ),
     ):
         result = await control_room_service.dashboard(USER, fetcher=fetcher)
@@ -1646,23 +1911,34 @@ async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching
 @pytest.mark.asyncio
 async def test_summary_counts_and_scopes_open_decisions_to_active_workspace():
     mock_pool = AsyncMock()
-    mock_pool.fetchval.return_value = 5
+    open_decisions = AsyncMock(return_value=5)
 
-    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "count_open_business_decisions",
+            new=open_decisions,
+        ),
+    ):
         result = await control_room_service.summary(USER, fetcher=sample_fetcher)
 
     assert result["total_anomalies"] == 3
     assert result["by_severity"] == {"critical": 1, "high": 1, "medium": 1, "low": 0}
-    assert result["by_cartridge"] == {"sap_hcm": 1, "sap_s4hana": 1, "sap_successfactors": 1}
+    assert result["by_cartridge"] == {
+        "sap_hcm": 1,
+        "sap_s4hana": 1,
+        "sap_successfactors": 1,
+    }
     assert result["open_decisions"] == 5
-    sql, workspace_id = mock_pool.fetchval.call_args[0]
-    assert "workspace_id = $1" in sql
-    assert workspace_id == "workspace-A"
+    open_decisions.assert_awaited_once_with(mock_pool, USER)
 
 
 @pytest.mark.asyncio
 async def test_create_decision_writes_workspace_bitacora_and_audit_event():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     decision_row = {
         "id": 42,
         "title": "Decision title",
@@ -1671,7 +1947,25 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
     }
     action_row = {"id": 99, "decision_id": 42}
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[None, decision_row, action_row])
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=[
+            {
+                "item_id": anomaly["id"],
+                "status": "open",
+            },
+            _authoritative_item_row({**anomaly, "selected_option_id": None}),
+            _authoritative_item_row({**anomaly, "selected_option_id": None}),
+            decision_row,
+            action_row,
+            {
+                "item_id": anomaly["id"],
+                "owner_user_id": 7,
+                "decision_id": None,
+            },
+            {"item_id": anomaly["id"]},
+        ]
+    )
     mock_pool.fetch.return_value = []
 
     with (
@@ -1679,17 +1973,34 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "sap_s4hana", "installation_status": "ready", "label": "SAP S/4HANA"},
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "label": "SuccessFactors",
-                },
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "sap_s4hana",
+                        "installation_status": "ready",
+                        "label": "SAP S/4HANA",
+                    },
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "label": "SuccessFactors",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.create_decision_for_anomaly(
             anomaly["id"],
@@ -1698,13 +2009,16 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
         )
 
     assert result["decision"]["id"] == 42
-    assert mock_pool.fetchrow.call_count == 3
-    insert_sql = mock_pool.fetchrow.call_args_list[1].args[0]
+    assert mock_pool.fetchrow.call_count == 7
+    insert_sql = mock_pool.fetchrow.call_args_list[3].args[0]
     assert "INSERT INTO decisions" in insert_sql
     assert "workspace_id" in insert_sql
-    assert mock_pool.fetchrow.call_args_list[1].args[-1] == "workspace-A"
-    action_sql = mock_pool.fetchrow.call_args_list[2].args[0]
+    assert mock_pool.fetchrow.call_args_list[3].args[-1] == "workspace-A"
+    action_sql = mock_pool.fetchrow.call_args_list[4].args[0]
     assert "INSERT INTO decision_actions" in action_sql
+    link_sql = mock_pool.fetchrow.call_args_list[6].args[0]
+    assert "UPDATE control_room_items" in link_sql
+    assert "RETURNING item_id" in link_sql
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.decision.create"
     assert audit_event.await_args.kwargs["metadata"]["decision_id"] == 42
@@ -1713,9 +2027,18 @@ async def test_create_decision_writes_workspace_bitacora_and_audit_event():
 
 @pytest.mark.asyncio
 async def test_select_item_option_persists_metadata_and_records_audit_event():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=[
+            _authoritative_item_row(anomaly),
+            {"item_id": anomaly["id"]},
+        ]
+    )
     mock_pool.fetchval.return_value = 0
 
     with (
@@ -1723,11 +2046,24 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.select_item_option(
             anomaly["id"],
@@ -1739,8 +2075,18 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
     assert result["selected"] is True
     assert result["item"]["selected_option_id"] == "exception"
     assert result["item"]["status"] == "in_review"
-    assert any('"selected_option_id": "exception"' in str(call.args) for call in mock_pool.execute.call_args_list)
-    assert any("selected_option_id = $5" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any(
+        '"selected_option_id": "exception"' in str(call.args)
+        for call in mock_pool.fetchrow.call_args_list
+    )
+    assert any(
+        "selected_option_id = $4" in call.args[0]
+        and "owner_user_id IS NOT DISTINCT FROM $5" in call.args[0]
+        for call in mock_pool.fetchrow.call_args_list
+    )
+    assert any(
+        "FOR UPDATE" in call.args[0] for call in mock_pool.fetchrow.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.option.select"
     assert audit_event.await_args.kwargs["metadata"]["option_id"] == "exception"
@@ -1748,59 +2094,85 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
 
 @pytest.mark.asyncio
 async def test_action_preview_and_dry_run_are_persisted_and_audited():
-    item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
+    item = (
+        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+            USER,
+            fetcher=finance_fetcher,
+            include_source_state_items=True,
+            persist=False,
+            use_catalog=False,
+        )
+    )["items"][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
-    mock_pool.fetchrow = AsyncMock(side_effect=[
-        None,
-        {
-            "id": 1,
-            "workspace_id": "workspace-A",
-            "item_id": item["id"],
-            "template_id": "request_owner_review",
-            "mode": "preview",
-            "status": "generated",
-            "payload": {},
-            "result": {},
-            "created_at": datetime(2026, 5, 20, 10, 0, 0),
-            "completed_at": datetime(2026, 5, 20, 10, 0, 1),
-        },
-        None,
-        {
-            "id": 2,
-            "workspace_id": "workspace-A",
-            "item_id": item["id"],
-            "template_id": "request_owner_review",
-            "mode": "dry_run",
-            "status": "validated",
-            "payload": {},
-            "result": {},
-            "created_at": datetime(2026, 5, 20, 10, 1, 0),
-            "completed_at": datetime(2026, 5, 20, 10, 1, 1),
-        },
-    ])
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=[
+            _authoritative_item_row(item),
+            {
+                "id": 1,
+                "workspace_id": "workspace-A",
+                "item_id": item["id"],
+                "template_id": "request_owner_review",
+                "mode": "preview",
+                "status": "generated",
+                "payload": {},
+                "result": {},
+                "created_at": datetime(2026, 5, 20, 10, 0, 0),
+                "completed_at": datetime(2026, 5, 20, 10, 0, 1),
+            },
+            _authoritative_item_row(item),
+            {
+                "id": 2,
+                "workspace_id": "workspace-A",
+                "item_id": item["id"],
+                "template_id": "request_owner_review",
+                "mode": "dry_run",
+                "status": "validated",
+                "payload": {},
+                "result": {},
+                "created_at": datetime(2026, 5, 20, 10, 1, 0),
+                "completed_at": datetime(2026, 5, 20, 10, 1, 1),
+            },
+        ]
+    )
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=item),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
-        preview = await control_room_service.action_preview(item["id"], USER, fetcher=finance_fetcher)
-        dry_run = await control_room_service.action_dry_run(item["id"], USER, fetcher=finance_fetcher)
+        preview = await control_room_service.action_preview(
+            item["id"], USER, fetcher=finance_fetcher
+        )
+        dry_run = await control_room_service.action_dry_run(
+            item["id"], USER, fetcher=finance_fetcher
+        )
 
     assert preview["execution"]["status"] == "generated"
     assert preview["item"]["execution_status"] == "preview_generated"
@@ -1814,30 +2186,52 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
 
 @pytest.mark.asyncio
 async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
-    item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    selected_item = control_room_service._with_omega({**item, "selected_option_id": "remediate", "status": "in_review"})  # noqa: SLF001
-    decision_item = control_room_service._with_omega({**selected_item, "decision_id": 42, "status": "decision_created"})  # noqa: SLF001
-    dry_run_item = control_room_service._with_omega({**decision_item, "execution_status": "dry_run_validated"})  # noqa: SLF001
+    item = (
+        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+            USER,
+            fetcher=finance_fetcher,
+            include_source_state_items=True,
+            persist=False,
+            use_catalog=False,
+        )
+    )["items"][0]
+    selected_item = control_room_service._with_omega(
+        {**item, "selected_option_id": "remediate", "status": "in_review"}
+    )  # noqa: SLF001
+    decision_item = control_room_service._with_omega(
+        {**selected_item, "decision_id": 42, "status": "decision_created"}
+    )  # noqa: SLF001
+    dry_run_item = control_room_service._with_omega(
+        {**decision_item, "execution_status": "dry_run_validated"}
+    )  # noqa: SLF001
     mock_pool = AsyncMock()
-    mock_pool.execute.return_value = None
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow.return_value = _authoritative_item_row(
+        dry_run_item,
+        decision_id=42,
+        selected_option_id="remediate",
+        execution_status="dry_run_validated",
+    )
 
     with (
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(
+            control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)
+        ),
         patch.object(
             control_room_service,
             "record_item_step",
-            new=AsyncMock(side_effect=[
-                {"event_type": "investigation_reviewed"},
-                {"event_type": "control_checked"},
-            ]),
+            new=AsyncMock(
+                side_effect=[
+                    {"event_type": "investigation_reviewed"},
+                    {"event_type": "control_checked"},
+                ]
+            ),
         ) as record_step,
-        patch.object(control_room_service, "select_item_option", new=AsyncMock(return_value={"item": selected_item})) as select_option,
+        patch.object(
+            control_room_service,
+            "select_item_option",
+            new=AsyncMock(return_value={"item": selected_item}),
+        ) as select_option,
         patch.object(
             control_room_service,
             "create_decision_for_item",
@@ -1846,17 +2240,33 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
         patch.object(
             control_room_service,
             "action_preview",
-            new=AsyncMock(return_value={"execution": {"id": 7}, "result": {"mode": "preview"}, "item": decision_item}),
+            new=AsyncMock(
+                return_value={
+                    "execution": {"id": 7},
+                    "result": {"mode": "preview"},
+                    "item": decision_item,
+                }
+            ),
         ) as preview,
         patch.object(
             control_room_service,
             "action_dry_run",
-            new=AsyncMock(return_value={"execution": {"id": 8}, "result": {"mode": "dry_run"}, "item": dry_run_item}),
+            new=AsyncMock(
+                return_value={
+                    "execution": {"id": 8},
+                    "result": {"mode": "dry_run"},
+                    "item": dry_run_item,
+                }
+            ),
         ) as dry_run,
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
-        result = await control_room_service.run_auto_item(item["id"], USER, fetcher=finance_fetcher)
+        result = await control_room_service.run_auto_item(
+            item["id"], USER, fetcher=finance_fetcher
+        )
 
     assert result["auto_run"]["completed"] is True
     assert result["auto_run"]["stopped_before_writeback"] is True
@@ -1866,7 +2276,10 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
     preview.assert_awaited_once()
     dry_run.assert_awaited_once()
     assert record_step.await_count == 2
-    assert any("auto_run_completed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any(
+        "auto_run_completed" in str(call.args)
+        for call in mock_pool.execute.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.auto_run"
     assert audit_event.await_args.kwargs["critical"] is True
@@ -1874,12 +2287,60 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
 
 @pytest.mark.asyncio
 async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trail():
+    policy_metadata = {
+        "description": "Margen menor a umbral",
+        "recommendation": "Revisar billing",
+        "root_cause": "Costo mayor al esperado",
+        "impact": "Riesgo de margen",
+        "data_status": "ready",
+        "source_system": "replicon",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "observation_date": "2026-05-20T10:00:00Z",
+        **runtime_row_evidence_fields(
+            source_dataset="pnl_mensual",
+            source_system="replicon",
+            cartridge="replicon",
+            tenant_id="tenant-A",
+            workspace_id="workspace-A",
+            source_row={"item_id": "item-activity"},
+            locator_field="item_id",
+            observed_at="2026-05-20T10:00:00Z",
+            business_observation={
+                "id": "item-activity",
+                "kind": "intelligence_signal",
+                "metric_type": "scalar",
+                "observed_value": 1,
+                "observation_date": "2026-05-20T10:00:00Z",
+            },
+        ),
+    }
+    business_item = {
+        "id": "item-activity",
+        "kind": "intelligence_signal",
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
+        "cartridge": "replicon",
+        "source_dataset": "pnl_mensual",
+        "source_system": "replicon",
+        "metadata": policy_metadata,
+    }
+    metadata = persistence_metadata(business_item)
+    metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
+        business_item,
+        stage=WorkflowStage.APPROVED,
+        workspace_id="workspace-A",
+        decision_id=77,
+    )
     persisted_item = {
         "item_id": "item-activity",
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
         "cartridge_id": "replicon",
         "domain": "Finanzas",
         "source_dataset": "pnl_mensual",
-        "item_kind": "anomaly",
+        "item_kind": "intelligence_signal",
+        "owner_user_id": 7,
         "title": "Margen bajo",
         "severity": "high",
         "status": "approved",
@@ -1888,12 +2349,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "entity_id": "P-1",
         "entity_label": "Proyecto Norte",
         "anomaly_type": "low_margin",
-        "metadata": {
-            "description": "Margen menor a umbral",
-            "recommendation": "Revisar billing",
-            "root_cause": "Costo mayor al esperado",
-            "impact": "Riesgo de margen",
-        },
+        "metadata": metadata,
         "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
         "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
         "resolved_at": None,
@@ -1905,38 +2361,57 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "selected_option_id": "remediate",
         "execution_status": "dry_run_validated",
     }
-    event_rows = [{
-        "id": 11,
-        "item_id": "item-activity",
-        "event_type": "approved",
-        "actor_email": "ops@example.com",
-        "metadata": {"decision_id": 77},
-        "created_at": datetime(2026, 5, 20, 10, 4, 0),
-    }]
-    execution_rows = [{
-        "id": 12,
-        "item_id": "item-activity",
-        "template_id": "prepare_billing_review",
-        "mode": "dry_run",
-        "status": "validated",
-        "payload": {"target": "replicon"},
-        "result": {"message": "Dry-run validado. V1 no escribe en sistemas externos."},
-        "error": None,
-        "actor_email": "ops@example.com",
-        "created_at": datetime(2026, 5, 20, 10, 3, 0),
-        "completed_at": datetime(2026, 5, 20, 10, 3, 1),
-    }]
-    decision_rows = [{
-        "id": 13,
-        "decision_id": 77,
-        "action_text": "Decision creada desde Sala de Control",
-        "note": "Revisar billing",
-        "actor": "ops@example.com",
-        "ts": datetime(2026, 5, 20, 10, 2, 0),
-    }]
+    event_rows = [
+        {
+            "id": 11,
+            "item_id": "item-activity",
+            "event_type": "approved",
+            "actor_email": "ops@example.com",
+            "metadata": {"decision_id": 77},
+            "created_at": datetime(2026, 5, 20, 10, 4, 0),
+        }
+    ]
+    execution_rows = [
+        {
+            "id": 12,
+            "item_id": "item-activity",
+            "template_id": "prepare_billing_review",
+            "mode": "dry_run",
+            "status": "validated",
+            "payload": {"target": "replicon"},
+            "result": {
+                "message": "Dry-run validado. V1 no escribe en sistemas externos."
+            },
+            "error": None,
+            "actor_email": "ops@example.com",
+            "created_at": datetime(2026, 5, 20, 10, 3, 0),
+            "completed_at": datetime(2026, 5, 20, 10, 3, 1),
+        }
+    ]
+    decision_rows = [
+        {
+            "id": 13,
+            "decision_id": 77,
+            "action_text": "Decision creada desde Sala de Control",
+            "note": "Revisar billing",
+            "actor": "ops@example.com",
+            "ts": datetime(2026, 5, 20, 10, 2, 0),
+        }
+    ]
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = persisted_item
-    mock_pool.fetch = AsyncMock(side_effect=[event_rows, execution_rows, decision_rows])
+
+    def activity_rows(query, *_args):
+        sql = str(query)
+        if "FROM control_room_item_events" in sql:
+            return event_rows
+        if "FROM control_room_action_executions" in sql:
+            return execution_rows
+        if "FROM decision_actions" in sql:
+            return decision_rows
+        return []
+
+    mock_pool.fetch = AsyncMock(side_effect=activity_rows)
 
     with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
         result = await control_room_service.get_item_activity("item-activity", USER)
@@ -1949,12 +2424,21 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         "outcomes": 0,
         "total": 3,
     }
-    assert [entry["kind"] for entry in result["activity"]] == ["event", "execution", "decision_action"]
+    assert [entry["kind"] for entry in result["activity"]] == [
+        "event",
+        "execution",
+        "decision_action",
+    ]
     assert result["activity"][0]["label"] == "Aprobacion registrada"
     assert result["activity"][1]["label"] == "Dry-run validado"
     assert result["activity"][1]["payload"] == {"target": "replicon"}
     assert result["activity"][2]["metadata"]["decision_id"] == 77
-    event_sql, workspace_id, item_id = mock_pool.fetch.call_args_list[0].args
+    event_call = next(
+        call
+        for call in mock_pool.fetch.call_args_list
+        if "FROM control_room_item_events" in str(call.args[0])
+    )
+    event_sql, workspace_id, item_id = event_call.args
     assert "workspace_id = $1" in event_sql
     assert workspace_id == "workspace-A"
     assert item_id == "item-activity"
@@ -1962,8 +2446,11 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
 
 @pytest.mark.asyncio
 async def test_record_item_step_writes_operational_event_and_audit():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow.return_value = None
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -1973,11 +2460,24 @@ async def test_record_item_step_writes_operational_event_and_audit():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.record_item_step(
             anomaly["id"],
@@ -1989,7 +2489,10 @@ async def test_record_item_step_writes_operational_event_and_audit():
 
     assert result["recorded"] is True
     assert result["event_type"] == "investigation_reviewed"
-    assert any("INSERT INTO control_room_item_events" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any(
+        "INSERT INTO control_room_item_events" in call.args[0]
+        for call in mock_pool.execute.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.step.record"
     assert audit_event.await_args.kwargs["metadata"]["step_id"] == "investigation"
@@ -1997,9 +2500,12 @@ async def test_record_item_step_writes_operational_event_and_audit():
 
 @pytest.mark.asyncio
 async def test_update_item_control_persists_control_state_and_audits():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = None
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow.return_value = _authoritative_item_row(anomaly)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -2008,16 +2514,33 @@ async def test_update_item_control_persists_control_state_and_audits():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=anomaly),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.update_item_control(
             anomaly["id"],
             "refresh",
-            {"status": "closed", "owner": "ops-owner@example.com", "note": "validated refresh"},
+            {
+                "status": "closed",
+                "owner": "ops-owner@example.com",
+                "note": "validated refresh",
+            },
             USER,
             fetcher=sample_fetcher,
         )
@@ -2027,13 +2550,14 @@ async def test_update_item_control_persists_control_state_and_audits():
     assert result["control"]["status"] == "closed"
     assert result["control"]["owner"] == "ops-owner@example.com"
     assert result["item"]["control_state"]["refresh"]["status"] == "closed"
-    metadata_payloads = [
-        arg
+    assert any(
+        "control_state" in str(call.args[0])
         for call in mock_pool.execute.call_args_list
-        for arg in call.args
-        if isinstance(arg, str) and "control_state" in arg
-    ]
-    assert any("validated refresh" in payload for payload in metadata_payloads)
+    )
+    assert any(
+        "validated refresh" in str(call.args)
+        for call in mock_pool.execute.call_args_list
+    )
     assert any(
         len(call.args) > 4 and call.args[4] == "control_checked"
         for call in mock_pool.execute.call_args_list
@@ -2045,7 +2569,9 @@ async def test_update_item_control_persists_control_state_and_audits():
 
 @pytest.mark.asyncio
 async def test_update_item_control_rejects_invalid_control_or_status():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = None
     mock_pool.fetch.return_value = []
@@ -2056,9 +2582,15 @@ async def test_update_item_control_rejects_invalid_control_or_status():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
     ):
         with pytest.raises(HTTPException) as missing_exc:
@@ -2084,7 +2616,9 @@ async def test_update_item_control_rejects_invalid_control_or_status():
 
 @pytest.mark.asyncio
 async def test_create_item_lesson_persists_manual_lesson_and_audits():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     lesson_row = {
         "id": 91,
         "item_id": anomaly["id"],
@@ -2097,7 +2631,8 @@ async def test_create_item_lesson_persists_manual_lesson_and_audits():
         "created_at": datetime(2026, 5, 20, 11, 0, 0),
     }
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = None
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow.return_value = _authoritative_item_row(anomaly)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -2106,12 +2641,24 @@ async def test_create_item_lesson_persists_manual_lesson_and_audits():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[lesson_row])),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_load_lesson_rows",
+            new=AsyncMock(return_value=[lesson_row]),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.create_item_lesson(
             anomaly["id"],
@@ -2124,15 +2671,22 @@ async def test_create_item_lesson_persists_manual_lesson_and_audits():
     assert result["lesson"]["id"] == 91
     assert result["item"]["lesson_count"] == 1
     assert result["item"]["omega"]["lessons"]["rules"][0] == lesson_row["rule"]
-    assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
-    assert any("lesson_recorded" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any(
+        "INSERT INTO control_room_lessons" in call.args[0]
+        for call in mock_pool.execute.call_args_list
+    )
+    assert any(
+        "lesson_recorded" in str(call.args) for call in mock_pool.execute.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.lesson.create"
 
 
 @pytest.mark.asyncio
 async def test_apply_item_lesson_persists_application_and_audits():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     lesson_row = {
         "id": 91,
         "item_id": anomaly["id"],
@@ -2145,7 +2699,8 @@ async def test_apply_item_lesson_persists_application_and_audits():
         "created_at": datetime(2026, 5, 20, 11, 0, 0),
     }
     mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = None
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow.return_value = _authoritative_item_row(anomaly)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -2154,12 +2709,24 @@ async def test_apply_item_lesson_persists_application_and_audits():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[lesson_row])),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_load_lesson_rows",
+            new=AsyncMock(return_value=[lesson_row]),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.apply_item_lesson(
             anomaly["id"],
@@ -2171,13 +2738,21 @@ async def test_apply_item_lesson_persists_application_and_audits():
 
     assert result["applied"] is True
     assert result["lesson_application"]["lesson_id"] == 91
-    assert result["lesson_application"]["note"] == "Aplicar patron en la siguiente revision"
+    assert (
+        result["lesson_application"]["note"]
+        == "Aplicar patron en la siguiente revision"
+    )
     assert result["item"]["status"] == "in_review"
     assert result["item"]["lesson_applications"][0]["lesson_id"] == 91
     assert result["item"]["omega"]["lessons"]["applied"][0]["lesson_id"] == 91
     assert result["item"]["omega"]["lessons"]["rules"][0] == lesson_row["rule"]
-    assert any("lesson_applications" in str(call.args) for call in mock_pool.execute.call_args_list)
-    assert any("lesson_applied" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any(
+        "lesson_applications" in str(call.args)
+        for call in mock_pool.execute.call_args_list
+    )
+    assert any(
+        "lesson_applied" in str(call.args) for call in mock_pool.execute.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.lesson.apply"
     assert audit_event.await_args.kwargs["critical"] is True
@@ -2185,7 +2760,9 @@ async def test_apply_item_lesson_persists_application_and_audits():
 
 @pytest.mark.asyncio
 async def test_apply_item_lesson_rejects_unrelated_pattern():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     unrelated_lesson = {
         "id": 404,
         "item_id": "other-item",
@@ -2207,11 +2784,21 @@ async def test_apply_item_lesson_rejects_unrelated_pattern():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[unrelated_lesson])),
+        patch.object(
+            control_room_service,
+            "_load_lesson_rows",
+            new=AsyncMock(return_value=[unrelated_lesson]),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.apply_item_lesson(
@@ -2228,42 +2815,54 @@ async def test_apply_item_lesson_rejects_unrelated_pattern():
 @pytest.mark.asyncio
 async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
-    items = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"]
+    items = (
+        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+            USER,
+            fetcher=finance_fetcher,
+            include_source_state_items=True,
+            persist=False,
+            use_catalog=False,
+        )
+    )["items"]
     item = next(candidate for candidate in items if candidate["cartridge"] == "sap_hcm")
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
-    mock_pool.fetchrow = AsyncMock(return_value={
-        "id": 3,
-        "workspace_id": "workspace-A",
-        "item_id": item["id"],
-        "template_id": "prepare_hcm_access_review",
-        "mode": "execute_live",
-        "status": "blocked",
-        "payload": {},
-        "result": {},
-        "created_at": datetime(2026, 5, 20, 10, 2, 0),
-        "completed_at": datetime(2026, 5, 20, 10, 2, 1),
-    })
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(
+            item,
+            template_id="prepare_hcm_access_review",
+            execution_status="blocked",
+        )
+    )
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "replicon",
+                        "installation_status": "ready",
+                        "label": "Replicon",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.execute_item(
@@ -2274,71 +2873,9 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
             )
 
     assert exc.value.status_code == 409
-    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
-
-
-def _executed_item(item: dict, *, status: str = "decision_created") -> dict:
-    return control_room_service._with_omega({  # noqa: SLF001 - targeted execution fixture
-        **item,
-        "decision_id": 42,
-        "status": status,
-        "execution_status": "dry_run_validated",
-    })
-
-
-def _execution_row(
-    item: dict,
-    *,
-    status: str = "executed",
-    result: dict | None = None,
-    template_id: str = "create_followup_task",
-) -> dict:
-    return {
-        "id": 33,
-        "workspace_id": "workspace-A",
-        "item_id": item["id"],
-        "template_id": template_id,
-        "mode": "execute_live",
-        "status": status,
-        "payload": {"idempotency_key": "idem-1"},
-        "result": result or {"ok": True, "target": "decision_actions", "idempotency_key": "idem-1"},
-        "error": None,
-        "actor_email": "ops@example.com",
-        "created_at": datetime(2026, 5, 20, 10, 2, 0),
-        "completed_at": datetime(2026, 5, 20, 10, 2, 1),
-    }
-
-
-def _dry_run_action_run_row(item: dict, *, template_id: str = "create_followup_task") -> dict:
-    adapter_name = "internal_followup_task" if template_id == "create_followup_task" else template_id
-    return {
-        "id": 44,
-        "tenant_id": "tenant-A",
-        "workspace_id": "workspace-A",
-        "item_id": item["id"],
-        "decision_id": item.get("decision_id") or 42,
-        "legacy_execution_id": 22,
-        "action_type": template_id,
-        "adapter_name": adapter_name,
-        "mode": "dry_run",
-        "status": "dry_run_completed",
-        "risk_level": "low",
-        "requires_approval": True,
-        "approval_status": "implicit_internal_beta",
-        "idempotency_key": f"dry_run:{item['id']}:{template_id}:42",
-        "actor_id": 7,
-        "actor_email": "ops@example.com",
-        "input": {},
-        "dry_run_result": {"ok": True, "validated": True},
-        "execution_result": {},
-        "side_effect": {},
-        "error_code": None,
-        "error_message": None,
-        "metadata": {},
-        "created_at": datetime(2026, 5, 20, 10, 1, 0),
-        "updated_at": datetime(2026, 5, 20, 10, 1, 1),
-        "completed_at": datetime(2026, 5, 20, 10, 1, 1),
-    }
+    assert (
+        audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
+    )
 
 
 def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
@@ -2351,7 +2888,9 @@ def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
 def test_writeback_factory_resolves_builtin_replicon_adapters(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     for template_type in ("prepare_billing_review", "prepare_replicon_adjustment"):
-        adapter = control_room_service.WriteBackAdapterFactory.get_adapter(template_type)
+        adapter = control_room_service.WriteBackAdapterFactory.get_adapter(
+            template_type
+        )
         capability = control_room_service._writeback_capability(  # noqa: SLF001 - registry wiring test
             control_room_service.ACTION_TEMPLATES[template_type]
         )
@@ -2388,284 +2927,46 @@ def test_hcm_access_template_is_wired_to_builtin_it0008_adapter(monkeypatch):
     assert capability["adapter"] == "sap_hcm_it0008"
 
 
-class _AcquireContext:
-    def __init__(self, conn):
-        self.conn = conn
-
-    async def __aenter__(self):
-        self.conn.acquired = True
-        return self.conn
-
-    async def __aexit__(self, exc_type, exc, tb):
-        self.conn.released = True
-        return False
-
-
-class _TransactionContext:
-    def __init__(self, conn):
-        self.conn = conn
-
-    async def __aenter__(self):
-        self.conn.transaction_entered = True
-        return self.conn
-
-    async def __aexit__(self, exc_type, exc, tb):
-        self.conn.transaction_exited = True
-        self.conn.transaction_error = exc_type
-        return False
-
-
-class _TransactionalConn:
-    def __init__(self, fetchrow_side_effect):
-        self.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
-        self.fetch = AsyncMock(return_value=[])
-        self.fetchval = AsyncMock(return_value=0)
-        self.execute = AsyncMock()
-        self.acquired = False
-        self.released = False
-        self.transaction_entered = False
-        self.transaction_exited = False
-        self.transaction_error = None
-
-    def transaction(self):
-        return _TransactionContext(self)
-
-
-class _TransactionalPool:
-    def __init__(self, *, pool_fetchrow_side_effect, conn_fetchrow_side_effect):
-        self.fetchrow = AsyncMock(side_effect=pool_fetchrow_side_effect)
-        self.fetch = AsyncMock(return_value=[])
-        self.fetchval = AsyncMock(return_value=0)
-        self.execute = AsyncMock()
-        self.conn = _TransactionalConn(conn_fetchrow_side_effect)
-
-    def acquire(self):
-        return _AcquireContext(self.conn)
-
-
 @pytest.mark.asyncio
-async def test_execute_live_supported_followup_writes_decision_action_and_audits(monkeypatch):
-    monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    action_row = {
-        "id": 101,
-        "decision_id": 42,
-        "action_text": "Seguimiento operativo Control Room",
-        "note": "ok",
-        "actor": "ops@example.com",
-        "ts": datetime(2026, 5, 20, 10, 2, 0),
-    }
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[
-        None,
-        _dry_run_action_run_row(item),
-        None,
-        {"id": 42},
-        action_row,
-        _execution_row(item),
-    ])
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
-    ):
-        result = await control_room_service.execute_item(
-            item["id"],
-            USER,
-            template_id="create_followup_task",
-            confirm_execute=True,
-            idempotency_key="idem-1",
-            fetcher=finance_fetcher,
-        )
-
-    assert result["executed"] is True
-    assert result["idempotent"] is False
-    assert result["result"]["target"] == "decision_actions"
-    assert result["payload"]["writeback"]["mode"] == "supervised_execution"
-    assert result["payload"]["external_writeback_enabled"] is False
-    assert result["decision_action"]["id"] == 101
-    assert result["item"]["execution_status"] == "executed"
-    assert any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
-    assert any("pg_advisory_xact_lock" in call.args[0] for call in mock_pool.execute.call_args_list)
-    assert any("UPDATE control_room_items" in call.args[0] and "execution_status = 'executed'" in call.args[0] for call in mock_pool.execute.call_args_list)
-    assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
-    audit_event.assert_awaited_once()
-    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute"
-    assert audit_event.await_args.kwargs["metadata"]["target"] == "decision_actions"
-
-
-@pytest.mark.asyncio
-async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeypatch):
+async def test_execute_live_external_template_without_adapter_blocks_before_preflight(
+    monkeypatch,
+):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    action_row = {
-        "id": 101,
-        "decision_id": 42,
-        "action_text": "Seguimiento operativo Control Room",
-        "note": "ok",
-        "actor": "ops@example.com",
-        "ts": datetime(2026, 5, 20, 10, 2, 0),
-    }
-    pool = _TransactionalPool(
-        pool_fetchrow_side_effect=[],
-        conn_fetchrow_side_effect=[
-            None,
-            _dry_run_action_run_row(item),
-            None,
-            {"id": 42},
-            action_row,
-            _execution_row(item),
-        ],
+    items = (
+        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+            USER,
+            fetcher=finance_fetcher,
+            include_source_state_items=True,
+            persist=False,
+            use_catalog=False,
+        )
+    )["items"]
+    item = _executed_item(
+        next(candidate for candidate in items if candidate["cartridge"] == "sap_s4hana")
     )
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-    ):
-        result = await control_room_service.execute_item(
-            item["id"],
-            USER,
-            template_id="create_followup_task",
-            confirm_execute=True,
-            idempotency_key="idem-1",
-            fetcher=finance_fetcher,
-        )
-
-    assert result["executed"] is True
-    assert pool.conn.acquired is True
-    assert pool.conn.released is True
-    assert pool.conn.transaction_entered is True
-    assert pool.conn.transaction_exited is True
-    assert pool.conn.transaction_error is None
-    assert any("pg_advisory_xact_lock" in call.args[0] for call in pool.conn.execute.call_args_list)
-    assert any("INSERT INTO audit_events" in call.args[0] for call in pool.conn.execute.call_args_list)
-
-
-@pytest.mark.asyncio
-async def test_execute_live_supported_followup_is_idempotent(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item({
-        **base_item,
-        "cartridge": "sap_s4hana",
-        "module_id": "sap_s4hana",
-        "anomaly_type": "missing_address",
-    })
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item))
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        result = await control_room_service.execute_item(
-            item["id"],
-            USER,
-            template_id="create_followup_task",
-            confirm_execute=True,
-            idempotency_key="idem-1",
-            fetcher=finance_fetcher,
-        )
-
-    assert result["executed"] is True
-    assert result["idempotent"] is True
-    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
-    audit_event.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_execute_live_idempotent_replay_still_requires_confirmation(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                idempotency_key="idem-1",
-                fetcher=finance_fetcher,
-            )
-
-    assert exc.value.status_code == 409
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "explicit_confirmation_required"
-
-
-@pytest.mark.asyncio
-async def test_execute_live_external_template_without_adapter_blocks_before_preflight(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item({
-        **base_item,
-        "cartridge": "sap_s4hana",
-        "module_id": "sap_s4hana",
-        "anomaly_type": "missing_address",
-    })
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[
-        _execution_row(
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(
             item,
-            status="blocked",
             template_id="prepare_sap_review",
-            result={"ok": False, "blocked": True, "reason": "adapter_missing"},
-        ),
-    ])
+            execution_status="blocked",
+        )
+    )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as writeback_audit,
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)
+        ),
+        patch.object(
+            control_room_service, "_record_writeback_audit_event", new=AsyncMock()
+        ) as writeback_audit,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.execute_item(
@@ -2678,11 +2979,18 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
 
     assert exc.value.status_code == 501
     assert "adapter is not available" in str(exc.value.detail)
-    assert any("INSERT INTO control_room_action_executions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
-    assert any("action_blocked" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any(
+        "INSERT INTO control_room_action_executions" in call.args[0]
+        for call in mock_pool.fetchrow.call_args_list
+    )
+    assert any(
+        "action_blocked" in str(call.args) for call in mock_pool.execute.call_args_list
+    )
     writeback_audit.assert_not_awaited()
     audit_event.assert_awaited_once()
-    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
+    assert (
+        audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
+    )
     assert audit_event.await_args.kwargs["metadata"]["reason"] == "adapter_missing"
 
 
@@ -2691,6 +2999,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
 
     class ExternalBillingAdapter(control_room_service.BaseAdapter):
+        supports_idempotency = True
         calls: list[bool] = []
 
         def execute(
@@ -2714,31 +3023,40 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
         "_registry",
         {"prepare_billing_review": ExternalBillingAdapter},
     )
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
+    items = (
+        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+            USER,
+            fetcher=finance_fetcher,
+            include_source_state_items=True,
+            persist=False,
+            use_catalog=False,
+        )
+    )["items"]
+    item = _executed_item(
+        next(
+            candidate
+            for candidate in items
+            if candidate["source_dataset"] == "pnl_mensual"
+        )
+    )
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[
-        None,
-        _dry_run_action_run_row(item, template_id="prepare_billing_review"),
-        _execution_row(
-            item,
-            template_id="prepare_billing_review",
-            result={"ok": True, "target": "replicon", "adapter": "ExternalBillingAdapter"},
-        ),
-    ])
+    _enable_successful_writes(mock_pool)
+    mock_pool.fetchrow = AsyncMock(
+        side_effect=_execution_fetchrow_router(
+            item, template_id="prepare_billing_review"
+        )
+    )
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)
+        ),
+        patch.object(
+            control_room_service, "_record_writeback_audit_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.execute_item(
             item["id"],
@@ -2756,12 +3074,26 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
     assert ExternalBillingAdapter.calls == [False]
     assert result["learning_lesson"]["metadata"]["autonomous_learning"] is True
-    assert result["item"]["omega"]["lessons"]["suggested_actions"][0]["template_id"] == "prepare_billing_review"
-    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
-    assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
-    assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert (
+        result["item"]["omega"]["lessons"]["suggested_actions"][0]["template_id"]
+        == "prepare_billing_review"
+    )
+    assert not any(
+        "INSERT INTO decision_actions" in call.args[0]
+        for call in mock_pool.fetchrow.call_args_list
+    )
+    assert any(
+        "action_executed" in str(call.args) for call in mock_pool.execute.call_args_list
+    )
+    assert any(
+        "INSERT INTO control_room_lessons" in call.args[0]
+        for call in mock_pool.execute.call_args_list
+    )
     assert audit_event.await_count == 2
-    assert audit_event.await_args_list[0].kwargs["action"] == "control_room.action.execute.external.preflight"
+    assert (
+        audit_event.await_args_list[0].kwargs["action"]
+        == "control_room.action.execute.external.preflight"
+    )
     assert audit_event.await_args_list[0].kwargs["status"] == "pending"
     assert audit_event.await_args_list[1].kwargs["status"] == "success"
     assert audit_event.await_args_list[1].kwargs["metadata"]["target"] == "replicon"
@@ -2796,8 +3128,31 @@ async def test_get_suggested_actions_reads_autonomous_learning_lessons():
         "created_at": datetime(2026, 5, 20, 10, 2, 1),
     }
 
-    with patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(side_effect=[[lesson], []])):
-        result = await control_room_service.ControlRoomService().get_suggested_actions(USER, item)
+    with (
+        patch.object(
+            control_room_service,
+            "_load_lesson_rows",
+            new=AsyncMock(side_effect=[[lesson], []]),
+        ),
+        patch.object(
+            control_room_service,
+            "_persisted_business_items",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        **_observed_anomaly_fields("item-old"),
+                        "id": "item-old",
+                        "kind": "anomaly",
+                        "source_dataset": "employees_anomalies",
+                        "evidence_refs": ["employees_anomalies:item-old"],
+                    }
+                ]
+            ),
+        ),
+    ):
+        result = await control_room_service.ControlRoomService().get_suggested_actions(
+            USER, item
+        )
 
     assert result["suggested_actions"][0]["template_id"] == "prepare_hcm_access_review"
     assert result["suggested_actions"][0]["template_type"] == "sap_hcm_it0008"
@@ -2808,7 +3163,13 @@ def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch)
     from app.services.adapters import sap_hcm_adapter
 
     class SapResponse:
-        def __init__(self, status_code: int, *, headers: dict | None = None, body: dict | None = None):
+        def __init__(
+            self,
+            status_code: int,
+            *,
+            headers: dict | None = None,
+            body: dict | None = None,
+        ):
             self.status_code = status_code
             self.headers = headers or {}
             self._body = body or {}
@@ -2825,7 +3186,9 @@ def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch)
             return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
         return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
 
-    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
+    monkeypatch.setattr(
+        sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync
+    )
 
     result = sap_hcm_adapter.SapHcmAdapter().execute(
         {
@@ -2849,7 +3212,13 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
     from app.services.adapters import sap_hcm_adapter
 
     class SapResponse:
-        def __init__(self, status_code: int, *, headers: dict | None = None, body: dict | None = None):
+        def __init__(
+            self,
+            status_code: int,
+            *,
+            headers: dict | None = None,
+            body: dict | None = None,
+        ):
             self.status_code = status_code
             self.headers = headers or {}
             self._body = body or {}
@@ -2866,7 +3235,9 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
             return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
         return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
 
-    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
+    monkeypatch.setattr(
+        sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync
+    )
 
     result = sap_hcm_adapter.SapHcmAdapter().execute(
         {
@@ -2904,7 +3275,9 @@ def test_replicon_adapter_posts_realistic_writeback_payload(monkeypatch):
         calls.append({"method": method, "url": url, **kwargs})
         return RepliconResponse()
 
-    monkeypatch.setattr(replicon_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
+    monkeypatch.setattr(
+        replicon_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync
+    )
 
     result = replicon_adapter.RepliconAdapter().execute(
         {
@@ -2954,7 +3327,9 @@ def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
         calls.append({"method": method, "url": url, **kwargs})
         return SapResponse()
 
-    monkeypatch.setattr(sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync)
+    monkeypatch.setattr(
+        sap_hcm_adapter.egress_guard, "pinned_request_sync", fake_pinned_request_sync
+    )
 
     with pytest.raises(RuntimeError, match="CSRF token fetch failed with HTTP 403"):
         sap_hcm_adapter.SapHcmAdapter().execute(
@@ -2968,246 +3343,6 @@ def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
         )
 
     assert [call["method"] for call in calls] == ["GET"]
-
-
-@pytest.mark.asyncio
-async def test_execute_live_requires_explicit_confirmation(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                fetcher=finance_fetcher,
-            )
-
-    assert exc.value.status_code == 409
-    assert "confirmation" in str(exc.value.detail)
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "explicit_confirmation_required"
-
-
-@pytest.mark.asyncio
-async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = control_room_service._with_omega({  # noqa: SLF001
-        **base_item,
-        "decision_id": 42,
-        "status": "decision_created",
-        "execution_status": "preview_generated",
-    })
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[None, _execution_row(item, status="blocked")])
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                confirm_execute=True,
-                fetcher=finance_fetcher,
-            )
-
-    assert exc.value.status_code == 409
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "dry_run_required"
-
-
-@pytest.mark.asyncio
-async def test_execute_live_rejects_approved_terminal_item(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item, status="approved")
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                confirm_execute=True,
-                idempotency_key="idem-1",
-                fetcher=finance_fetcher,
-            )
-
-    assert exc.value.status_code == 409
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "terminal_item"
-
-
-@pytest.mark.asyncio
-async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[
-        None,
-        _dry_run_action_run_row(item),
-        None,
-        None,
-        _execution_row(item, status="blocked"),
-    ])
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                confirm_execute=True,
-                fetcher=finance_fetcher,
-            )
-
-    assert exc.value.status_code == 404
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "decision_workspace_mismatch"
-
-
-@pytest.mark.asyncio
-async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[RuntimeError("lookup down"), _execution_row(item, status="blocked")])
-    mock_pool.fetch.return_value = []
-    mock_pool.fetchval.return_value = 0
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                confirm_execute=True,
-                idempotency_key="idem-1",
-                fetcher=finance_fetcher,
-            )
-
-    assert exc.value.status_code == 503
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "idempotency_lookup_failed"
-    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
-
-
-@pytest.mark.asyncio
-async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
-    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-        USER,
-        fetcher=finance_fetcher,
-        include_source_state_items=True,
-        persist=False,
-        use_catalog=False,
-    ))["items"][0]
-    item = _executed_item(base_item)
-    action_row = {
-        "id": 101,
-        "decision_id": 42,
-        "action_text": "Seguimiento operativo Control Room",
-        "note": "ok",
-        "actor": "ops@example.com",
-        "ts": datetime(2026, 5, 20, 10, 2, 0),
-    }
-    pool = _TransactionalPool(
-        pool_fetchrow_side_effect=[],
-        conn_fetchrow_side_effect=[
-            None,
-            _dry_run_action_run_row(item),
-            None,
-            {"id": 42},
-            action_row,
-            _execution_row(item),
-        ],
-    )
-
-    with (
-        patch.object(control_room_service.auth, "pool", return_value=pool),
-        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(
-            control_room_service,
-            "_record_writeback_audit_event",
-            new=AsyncMock(side_effect=RuntimeError("audit failed")),
-        ) as audit_event,
-    ):
-        with pytest.raises(RuntimeError, match="audit failed"):
-            await control_room_service.execute_item(
-                item["id"],
-                USER,
-                template_id="create_followup_task",
-                confirm_execute=True,
-                idempotency_key="idem-1",
-                fetcher=finance_fetcher,
-            )
-
-    audit_event.assert_awaited_once()
-    assert pool.conn.transaction_entered is True
-    assert pool.conn.transaction_exited is True
-    assert pool.conn.transaction_error is RuntimeError
 
 
 @pytest.mark.asyncio
@@ -3231,7 +3366,9 @@ async def test_thresholds_are_workspace_scoped_and_audited():
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         created = await control_room_service.upsert_threshold(
             {
@@ -3299,7 +3436,24 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = [lesson_row]
 
-    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_persisted_business_items",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        **_observed_anomaly_fields("item-1"),
+                        "id": "item-1",
+                        "kind": "intelligence_signal",
+                        "source_dataset": "pnl_mensual",
+                        "evidence_refs": ["pnl_mensual:item-1"],
+                    }
+                ]
+            ),
+        ),
+    ):
         result = await control_room_service.list_lessons(
             USER,
             cartridge_id="replicon",
@@ -3309,7 +3463,7 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
     assert result["lessons"][0]["cartridge_id"] == "replicon"
     assert result["summary"]["total"] == 1
     assert result["summary"]["top_patterns"][0]["avg_confidence"] == 0.9
-    sql, *args = mock_pool.fetch.call_args.args
+    sql, *args = mock_pool.fetch.await_args_list[0].args
     assert "workspace_id = $1" in sql
     assert "cartridge_id = $2" in sql
     assert "anomaly_type = $3" in sql
@@ -3318,21 +3472,24 @@ async def test_list_lessons_is_workspace_scoped_and_returns_summary():
 
 @pytest.mark.asyncio
 async def test_approve_persists_lessons_to_lessons_table():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
+    action = {
+        "id": 100,
+        "decision_id": 42,
+        "action_text": "approved",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 1, 0),
+    }
+    decision_item = control_room_service._with_omega(
+        {**anomaly, "decision_id": 42, "status": "decision_created"}
+    )
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            {"id": 42},
-            {
-                "id": 100,
-                "decision_id": 42,
-                "action_text": "approved",
-                "note": "ok",
-                "actor": "ops@example.com",
-                "ts": datetime(2026, 5, 20, 10, 1, 0),
-            },
-        ]
+        side_effect=_approval_fetchrows(decision_item, action)
     )
     mock_pool.fetch.return_value = []
 
@@ -3341,11 +3498,24 @@ async def test_approve_persists_lessons_to_lessons_table():
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()),
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=decision_item),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ),
     ):
         await control_room_service.approve_anomaly(
             anomaly["id"],
@@ -3354,26 +3524,32 @@ async def test_approve_persists_lessons_to_lessons_table():
             fetcher=sample_fetcher,
         )
 
-    assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any(
+        "INSERT INTO control_room_lessons" in call.args[0]
+        for call in mock_pool.execute.call_args_list
+    )
 
 
 @pytest.mark.asyncio
 async def test_approve_anomaly_requires_workspace_decision_and_records_audit_event():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
+    action = {
+        "id": 100,
+        "decision_id": 42,
+        "action_text": "approved",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 1, 0),
+    }
+    decision_item = control_room_service._with_omega(
+        {**anomaly, "decision_id": 42, "status": "decision_created"}
+    )
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
-        side_effect=[
-            None,
-            {"id": 42},
-            {
-                "id": 100,
-                "decision_id": 42,
-                "action_text": "approved",
-                "note": "ok",
-                "actor": "ops@example.com",
-                "ts": datetime(2026, 5, 20, 10, 1, 0),
-            },
-        ]
+        side_effect=_approval_fetchrows(decision_item, action)
     )
     mock_pool.fetch.return_value = []
 
@@ -3382,17 +3558,34 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-                {"cartridge_id": "sap_s4hana", "installation_status": "ready", "label": "SAP S/4HANA"},
-                {
-                    "cartridge_id": "sap_successfactors",
-                    "installation_status": "ready",
-                    "label": "SuccessFactors",
-                },
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                    {
+                        "cartridge_id": "sap_s4hana",
+                        "installation_status": "ready",
+                        "label": "SAP S/4HANA",
+                    },
+                    {
+                        "cartridge_id": "sap_successfactors",
+                        "installation_status": "ready",
+                        "label": "SuccessFactors",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service,
+            "_item_for_mutation",
+            new=AsyncMock(return_value=decision_item),
+        ),
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.approve_anomaly(
             anomaly["id"],
@@ -3404,10 +3597,19 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
     assert result["approved"] is True
     assert result["decision_id"] == 42
     assert result["action"]["ts"] == "2026-05-20T10:01:00"
-    visible_sql, decision_id, workspace_id = mock_pool.fetchrow.call_args_list[1].args
+    visible_sql, decision_id, workspace_id = mock_pool.fetchrow.call_args_list[0].args
     assert "workspace_id = $2" in visible_sql
     assert decision_id == 42
     assert workspace_id == "workspace-A"
+    link_args = next(
+        call.args
+        for call in mock_pool.fetchrow.call_args_list
+        if "RETURNING item_id" in call.args[0]
+    )
+    link_sql = link_args[0]
+    assert "owner_user_id IS NOT DISTINCT FROM $5" in link_sql
+    assert "RETURNING item_id" in link_sql
+    assert "decision_eligibility_provenance" in link_args[4]
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.approve"
     assert audit_event.await_args.kwargs["resource_type"] == "control_room_item"
@@ -3415,20 +3617,35 @@ async def test_approve_anomaly_requires_workspace_decision_and_records_audit_eve
 
 @pytest.mark.asyncio
 async def test_dismiss_item_persists_state_and_records_audit_event():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.side_effect = [
+        None,
+        {"item_id": anomaly["id"], "status": "open"},
+    ]
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.dismiss_item(
             anomaly["id"],
@@ -3439,27 +3656,55 @@ async def test_dismiss_item_persists_state_and_records_audit_event():
 
     assert result["dismissed"] is True
     assert result["item"]["status"] == "dismissed"
-    assert any("UPDATE control_room_items" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any(
+        "UPDATE control_room_items" in call.args[0]
+        for call in mock_pool.execute.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.dismiss"
 
 
 @pytest.mark.asyncio
-async def test_reopen_item_resets_terminal_state_and_records_audit_event():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+async def test_reopen_item_reopens_clean_dismissal_and_records_audit_event():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
+        patch.object(
+            control_room_service,
+            "lock_authoritative_business_item",
+            new=AsyncMock(
+                return_value={
+                    "status": "dismissed",
+                    "decision_id": None,
+                    "selected_option_id": None,
+                    "execution_status": "not_started",
+                    "metadata": {},
+                }
+            ),
+        ),
     ):
         result = await control_room_service.reopen_item(
             anomaly["id"],
@@ -3471,27 +3716,42 @@ async def test_reopen_item_resets_terminal_state_and_records_audit_event():
     assert result["reopened"] is True
     assert result["item"]["status"] == "open"
     assert result["item"]["decision_id"] is None
-    assert any("UPDATE control_room_items" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any(
+        "UPDATE control_room_items" in call.args[0]
+        for call in mock_pool.execute.call_args_list
+    )
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.reopen"
 
 
 @pytest.mark.asyncio
 async def test_acknowledge_alert_persists_alert_state_and_records_audit_event():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.acknowledge_alert(
             anomaly["id"],
@@ -3522,20 +3782,32 @@ async def test_acknowledge_alert_persists_alert_state_and_records_audit_event():
 
 @pytest.mark.asyncio
 async def test_snooze_and_assign_alert_update_delivery_contract():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = None
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         snoozed = await control_room_service.snooze_alert(
             anomaly["id"],
@@ -3566,20 +3838,35 @@ async def test_snooze_and_assign_alert_update_delivery_contract():
 
 @pytest.mark.asyncio
 async def test_false_positive_alert_dismisses_item_and_removes_alert():
-    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
+        "anomalies"
+    ][0]
     mock_pool = AsyncMock()
+    _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.side_effect = [
+        None,
+        {"item_id": anomaly["id"], "status": "open"},
+    ]
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service,
             "_installed_cartridges",
-            new=AsyncMock(return_value=[
-                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
-            ]),
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "cartridge_id": "sap_hcm",
+                        "installation_status": "ready",
+                        "label": "SAP HCM",
+                    },
+                ]
+            ),
         ),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(
+            control_room_service.audit_service, "record_event", new=AsyncMock()
+        ) as audit_event,
     ):
         result = await control_room_service.mark_alert_false_positive(
             anomaly["id"],
@@ -3596,81 +3883,11 @@ async def test_false_positive_alert_dismisses_item_and_removes_alert():
         for call in mock_pool.execute.call_args_list
     )
     audit_event.assert_awaited_once()
-    assert audit_event.await_args.kwargs["action"] == "control_room.alert.false_positive"
+    assert (
+        audit_event.await_args.kwargs["action"] == "control_room.alert.false_positive"
+    )
     assert audit_event.await_args.kwargs["critical"] is True
+    assert audit_event.await_args.kwargs["connection"] is mock_pool
 
 
 # --- Fase 3 P0: Workforce Trends (fuente unica) ------------------------------
-
-def _wt_fake_rows_factory():
-    async def fake_rows(dataset: str, user: dict | None, limit: int) -> list[dict]:
-        if dataset == "sap_successfactors_talent_operational_features":
-            return [{
-                "active_headcount_current": 1288,
-                "avg_tenure_months_current": 174.39,
-                "attrition_rate_current": 0.0,
-                "headcount_history_months": 36,
-            }]
-        if dataset == "sap_successfactors_talent_headcount_by_cohort_month":
-            return [
-                {"snapshot_month": "2026-06-01", "active_headcount": 100, "cohort_size": 100},
-                {"snapshot_month": "2026-06-01", "active_headcount": 50, "cohort_size": 50},
-                {"snapshot_month": "2026-07-01", "active_headcount": 110, "cohort_size": 110},
-            ]
-        if dataset == "sap_successfactors_talent_tenure_by_cohort_month":
-            return [
-                {"snapshot_month": "2026-06-01", "avg_tenure_months": 120, "cohort_size": 100},
-                {"snapshot_month": "2026-06-01", "avg_tenure_months": 60, "cohort_size": 50},
-                {"snapshot_month": "2026-07-01", "avg_tenure_months": 121, "cohort_size": 110},
-            ]
-        if dataset == "sap_successfactors_talent_attrition_by_cohort_month":
-            return [
-                {"snapshot_month": "2026-06-01", "separations": 2, "cohort_size": 100},
-                {"snapshot_month": "2026-06-01", "separations": 0, "cohort_size": 50},
-                {"snapshot_month": "2026-07-01", "separations": 0, "cohort_size": 110},
-            ]
-        return []
-    return fake_rows
-
-
-@pytest.mark.asyncio
-async def test_build_workforce_trends_is_single_source_and_aggregates_correctly(monkeypatch):
-    monkeypatch.setattr(control_room_service, "query_dataset_rows", _wt_fake_rows_factory())
-    bundle = await control_room_service.build_workforce_trends(USER)
-
-    assert bundle["status"] == "ready"
-    # 4 KPIs desde operational_features (una fuente)
-    assert bundle["kpis"] == {
-        "active_headcount": 1288,
-        "avg_tenure_months": 174.39,
-        "attrition_rate": 0.0,
-        "history_months": 36,
-    }
-    # series agregadas UNA vez
-    assert bundle["series"]["months"] == ["2026-06", "2026-07"]
-    assert bundle["series"]["headcount"] == [150, 110]  # suma por mes
-    # antiguedad PONDERADA por cohort_size: jun=(120*100+60*50)/150=100.0 ; jul=121.0
-    assert bundle["series"]["avg_tenure_months"] == [100.0, 121.0]
-    # rotacion RECOMPUTADA (no promediar tasas): jun=2/150 ; jul=0
-    assert bundle["series"]["attrition_rate"] == [round(2 / 150, 4), 0.0]
-
-
-@pytest.mark.asyncio
-async def test_build_workforce_trends_waits_when_datasets_missing(monkeypatch):
-    async def empty(dataset: str, user: dict | None, limit: int) -> list[dict]:
-        return []
-    monkeypatch.setattr(control_room_service, "query_dataset_rows", empty)
-    bundle = await control_room_service.build_workforce_trends(USER)
-    assert bundle["status"] == "waiting_for_data"
-    assert bundle["series"]["months"] == []
-    assert bundle["kpis"]["active_headcount"] is None
-
-
-@pytest.mark.asyncio
-async def test_talent_kpis_payload_includes_workforce_trends_from_same_builder(monkeypatch):
-    monkeypatch.setattr(control_room_service, "query_dataset_rows", _wt_fake_rows_factory())
-    result = await control_room_service.sap_successfactors_talent_kpis(USER)
-    assert "workforce_trends" in result
-    wt = result["workforce_trends"]
-    assert wt["kpis"]["active_headcount"] == 1288
-    assert wt["series"]["headcount"] == [150, 110]

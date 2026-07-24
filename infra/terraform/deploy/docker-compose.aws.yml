@@ -96,7 +96,9 @@ services:
     container_name: mode_console
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
-        required: false
+        required: true
+      - path: ${MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE:-${AWS_ENV_FILE:-.env}.control-room-evidence}
+        required: true
     environment:
       APP_ENV:             ${APP_ENV:-production}
       COOKIE_SECURE:       ${COOKIE_SECURE:-true}

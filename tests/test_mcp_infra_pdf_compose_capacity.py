@@ -7,6 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 
@@ -137,7 +138,16 @@ def test_local_compose_effective_pdf_limits() -> None:
     )
 
 
-def test_aws_compose_effective_pdf_limits() -> None:
+def test_aws_compose_effective_pdf_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shared_env = tmp_path / "shared.env"
+    evidence_env = tmp_path / "evidence.env"
+    shared_env.touch()
+    evidence_env.touch()
+    monkeypatch.setenv("AWS_ENV_FILE", str(shared_env))
+    monkeypatch.setenv("MODECISSIONS_CONTROL_ROOM_EVIDENCE_ENV_FILE", str(evidence_env))
+
     _assert_capacity_limits(_effective_service([AWS_COMPOSE, AWS_CARTRIDGES_COMPOSE]))
 
 

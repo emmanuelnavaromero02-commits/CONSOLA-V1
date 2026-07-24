@@ -10,7 +10,10 @@ surfaces fall back to the installed catalog so they are never dead; as soon
 as a real connection exists the view scopes down to it automatically. The
 scoping guarantee itself is still covered by test_control_room_service.py.
 """
+
 from __future__ import annotations
+
+# fmt: off
 
 from unittest.mock import AsyncMock, patch
 
@@ -182,7 +185,7 @@ async def test_control_room_scoped_dashboard_omits_empty_domains(monkeypatch):
             ]),
         ),
     ):
-        result = await control_room_service.dashboard(user, fetcher=fetcher, persist=False)
+        result = await control_room_service.dashboard(user, fetcher=fetcher)
 
     assert [domain["label"] for domain in result["domains"]] == ["Recursos Humanos"]
     assert all(domain["modules"] for domain in result["domains"])

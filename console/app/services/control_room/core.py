@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import base64
 import hashlib
 import inspect
@@ -19,9 +21,84 @@ from app.security import get_internal_api_key
 from app.version import app_version
 from app.services import audit_service, auth
 from app.services.db_scope import SET_SCOPE_SQL, run_with_db_scope
+from app.services.adapter_idempotency import template_supports_idempotency
 from app.services.control_room.readiness_manifest import dataset_readiness_registry
+from app.services.control_room.business_eligibility import (
+    BUSINESS_EVIDENCE_FIELDS,
+    BUSINESS_MATERIALIZATION_FIELDS,
+    BUSINESS_OBSERVATION_FIELDS,
+    BusinessEligibilityError,
+    EligibilityReason,
+    classify_business_item,
+    require_business_eligible,
+)
+from app.services.control_room.business_observation_codec import (
+    nonempty_mapping_fields,
+    with_observation_envelope,
+)
+from app.services.control_room.business_access import (
+    actor_id as business_actor_id,
+    can_read_workspace_wide as business_can_read_workspace_wide,
+    expected_item_owner as expected_business_item_owner,
+    owner_projection as business_owner_projection,
+    owner_scope_id,
+    workspace_scope as business_workspace_scope,
+)
+from app.services.control_room.business_agentops import (
+    _agentops_alert_rows,
+    _agentops_calibration_projection,
+    _agentops_calibration_rows,
+    _agentops_execution_rows,
+    _agentops_monte_carlo_rows,
+    _agentops_orchestration_rows,
+    _agentops_origin_rows,
+)
+from app.services.control_room.business_builder_policy import (
+    blocked_impact_payload,
+    blocked_priority_payload,
+    business_builder_allowed,
+    diagnostic_projection,
+    projection_context,
+)
+from app.services.control_room.business_lineage import item_kinds, parent_references
+from app.services.control_room.business_projection import (
+    business_parent_context,
+    diagnostic_items,
+    duplicate_item_ids,
+    eligible_item_ids,
+    evolve_business_item,
+    filter_business_items,
+    filter_by_eligible_parent,
+    lineage_parent_ids,
+    project_business_item,
+    strip_business_fields,
+)
+from app.services.control_room.business_item_persistence import persist_item_rows
+from app.services.control_room.business_item_reader import (
+    fetch_eligible_persisted_items,
+    resolve_scoped_business_item_lookup,
+)
+from app.services.control_room.business_metadata import business_item_metadata
+from app.services.control_room.business_persisted_row import persisted_business_item
+from app.services.control_room.business_repository import (
+    approve_control_room_decision,
+    decision_provenance,
+    fetch_lineage_rows,
+    link_control_room_decision,
+)
+from app.services.control_room.business_state_rows import state_rows
+from app.services.control_room.business_state_persistence import persist_refresh_items
+from app.services.control_room.business_state_overlay import (
+    load_overlay_state,
+    overlay_business_state,
+)
+from app.services.control_room.business_runtime_projection import (
+    persisted_business_projection,
+)
+from app.services.control_room.business_decision_summary import (
+    count_open_business_decisions,
+)
 from app.services.security_context import build_security_context, rls_user_context
-
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500").rstrip("/")
 VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
@@ -150,6 +227,9 @@ class WriteBackAdapterFactory:
 
         existing = cls._registry.get(template_type)
         if existing is None or not issubclass(existing, BaseAdapter):
+            registered_cls.supports_idempotency = template_supports_idempotency(
+                template_type
+            )
             cls._registry[template_type] = registered_cls
 
     @classmethod

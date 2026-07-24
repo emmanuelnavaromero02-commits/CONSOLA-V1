@@ -4,6 +4,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.services.control_room.business_runtime_evidence import (
+    canonical_runtime_row_reference,
+)
+
 
 FORBIDDEN_SCOPE_KEYS = {"tenant_id", "workspace_id", "security_context"}
 MARKET_CONTEXT_EVIDENCE_TYPE = "market_context"
@@ -36,45 +40,85 @@ def _short_text(value: Any, *, field: str, max_length: int) -> str:
     return text
 
 
-def normalize_evidence_refs(value: Any, *, max_items: int = 20) -> list[dict[str, str]]:
+def _normalized_reference(
+    item: dict[str, Any],
+    *,
+    allow_server_dataset_rows: bool,
+) -> dict[str, Any]:
+    evidence_type = _short_text(
+        item.get("type"), field="evidence_refs.type", max_length=64
+    )
+    if evidence_type != "dataset_row":
+        return {
+            "type": evidence_type,
+            "id": _short_text(item.get("id"), field="evidence_refs.id", max_length=256),
+        }
+
+    canonical = canonical_runtime_row_reference(item)
+    if not allow_server_dataset_rows or canonical is None:
+        raise HTTPException(422, "dataset_row evidence must be server-attested")
+    return {**canonical, "id": canonical["source_record_id"]}
+
+
+def normalize_evidence_refs(
+    value: Any,
+    *,
+    max_items: int = 20,
+    allow_server_dataset_rows: bool = False,
+) -> list[dict[str, Any]]:
     if value is None:
         return []
     if not isinstance(value, list) or len(value) > max_items:
-        raise HTTPException(422, f"evidence_refs must be a list with at most {max_items} items")
-    refs: list[dict[str, str]] = []
+        raise HTTPException(
+            422, f"evidence_refs must be a list with at most {max_items} items"
+        )
+    refs: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
             raise HTTPException(422, "evidence_refs entries must be objects")
         if _forbidden_path(item):
             raise HTTPException(422, "evidence_refs cannot include scope fields")
         refs.append(
-            {
-                "type": _short_text(item.get("type"), field="evidence_refs.type", max_length=64),
-                "id": _short_text(item.get("id"), field="evidence_refs.id", max_length=256),
-            }
+            _normalized_reference(
+                item,
+                allow_server_dataset_rows=allow_server_dataset_rows,
+            )
         )
     return refs
 
 
-def merge_evidence_refs(*values: Any, max_items: int = 20) -> list[dict[str, str]]:
-    merged: list[dict[str, str]] = []
+def merge_evidence_refs(
+    *values: Any,
+    max_items: int = 20,
+    allow_server_dataset_rows: bool = False,
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for value in values:
-        for ref in normalize_evidence_refs(value, max_items=max_items):
+        for ref in normalize_evidence_refs(
+            value,
+            max_items=max_items,
+            allow_server_dataset_rows=allow_server_dataset_rows,
+        ):
             key = (ref["type"], ref["id"])
             if key in seen:
                 continue
             merged.append(ref)
             seen.add(key)
             if len(merged) > max_items:
-                raise HTTPException(422, f"evidence_refs must be a list with at most {max_items} items")
+                raise HTTPException(
+                    422, f"evidence_refs must be a list with at most {max_items} items"
+                )
     return merged
 
 
-def market_context_refs(refs: Any) -> list[dict[str, str]]:
+def market_context_refs(refs: Any) -> list[dict[str, Any]]:
     return [
         ref
-        for ref in normalize_evidence_refs(refs)
+        for ref in normalize_evidence_refs(
+            refs,
+            allow_server_dataset_rows=True,
+        )
         if ref["type"] == MARKET_CONTEXT_EVIDENCE_TYPE
     ]
 

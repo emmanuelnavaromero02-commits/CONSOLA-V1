@@ -24,9 +24,7 @@ async def run_sync_control_room_gold_refresh(
     if not datasets:
         return sync_control_room.gold_refresh_skipped_payload(checked_at)
     ctx = build_security_context(user)
-    tenant_id = str(
-        ctx.get("tenant_id") or ctx.get("active_tenant_id") or ""
-    ).strip()
+    tenant_id = str(ctx.get("tenant_id") or ctx.get("active_tenant_id") or "").strip()
     workspace_id = str(
         ctx.get("workspace_id") or ctx.get("active_workspace_id") or ""
     ).strip()
@@ -80,17 +78,24 @@ async def run_sync_control_room_status(
     control_room_gold_refresh: dict[str, Any],
     user: dict[str, Any] | None,
     control_room_service: Any | None = None,
+    persist_dashboard_state: bool = False,
 ) -> dict[str, Any]:
     ready = False
     checked_at: str | None = None
     snapshot: dict[str, Any] = {}
-    if cartridge == "sap_successfactors" and (bronze_ready or silver_ready or gold_ready):
+    if cartridge == "sap_successfactors" and (
+        bronze_ready or silver_ready or gold_ready
+    ):
         try:
             if control_room_service is None:
                 from app.services import control_room_service as service
 
                 control_room_service = service
-            dashboard_payload = await control_room_service.dashboard(user, persist=True)
+            dashboard_payload = await (
+                control_room_service.refresh_dashboard_state(user)
+                if persist_dashboard_state
+                else control_room_service.dashboard(user)
+            )
             gold_kpis = (
                 await control_room_service.sap_successfactors_gold_kpis(user)
                 if gold_ready
@@ -109,7 +114,9 @@ async def run_sync_control_room_status(
             publish_failed = (
                 str(control_room_gold_refresh.get("status") or "").lower() == "failed"
             )
-            ready = bool(gold_ready and gold_kpis and talent_kpis and not publish_failed)
+            ready = bool(
+                gold_ready and gold_kpis and talent_kpis and not publish_failed
+            )
             update = sync_progress.sync_control_room_step_update(
                 control_room_snapshot=snapshot,
                 control_room_ready=ready,
@@ -124,11 +131,31 @@ async def run_sync_control_room_status(
         update = sync_progress.sync_control_room_waiting_step_update(
             running_children=running_children
         )
+    elif bronze_ready or silver_ready or gold_ready:
+        try:
+            if control_room_service is None:
+                from app.services import control_room_service as service
+
+                control_room_service = service
+            dashboard_payload = await (
+                control_room_service.refresh_dashboard_state(user)
+                if persist_dashboard_state
+                else control_room_service.dashboard(user)
+            )
+            checked_at = datetime.now(timezone.utc).isoformat()
+            snapshot = sync_progress.sync_control_room_snapshot(
+                dashboard_payload,
+                control_room_gold_refresh,
+            )
+            ready = bool(gold_ready)
+            update = sync_progress.sync_control_room_generic_step_update(
+                gold_ready=gold_ready
+            )
+        except Exception as exc:  # noqa: BLE001
+            checked_at = datetime.now(timezone.utc).isoformat()
+            update = sync_progress.sync_control_room_error_step_update(exc)
     else:
-        ready = bool(gold_ready)
-        update = sync_progress.sync_control_room_generic_step_update(
-            gold_ready=gold_ready
-        )
+        update = sync_progress.sync_control_room_generic_step_update(gold_ready=0)
     return {
         "ready": ready,
         "checked_at": checked_at,

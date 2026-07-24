@@ -15,7 +15,10 @@ endpoints (``GET/POST /api/decisions``, ``GET/PATCH/DELETE
 /api/decisions/{id}`` and ``POST /api/decisions/{id}/actions``) all
 scope by the active workspace.
 """
+
 from __future__ import annotations
+
+# fmt: off
 
 import importlib
 import os
@@ -147,6 +150,8 @@ class _FakePool:
 
     async def fetch(self, sql, *params):
         self.calls.append(("fetch", sql, params))
+        if "FROM control_room_items" in sql or "FROM decision_actions" in sql:
+            return []
         return self._fetch_result
 
     async def execute(self, sql, *params):
@@ -333,6 +338,48 @@ async def test_list_decisions_returns_same_workspace_secret_with_db_scope(
 
 
 @pytest.mark.asyncio
+async def test_decision_routes_hide_historical_source_state_rows(
+    console_main, monkeypatch
+):
+    decision = _fake_decision_row("workspace-A")
+
+    class _HistoricalPool(_FakePool):
+        async def fetch(self, sql, *params):
+            self.calls.append(("fetch", sql, params))
+            if "FROM control_room_items" in sql:
+                return [
+                    {
+                        "decision_id": 1,
+                        "item_id": "source-state-1",
+                        "item_kind": "source_state",
+                        "source_dataset": "gold_source",
+                        "metadata": {"data_status": "missing"},
+                    }
+                ]
+            if "FROM decision_actions" in sql:
+                return []
+            return [decision]
+
+    fake = _HistoricalPool(fetchrow_result=decision)
+
+    async def _factory():
+        return fake
+
+    monkeypatch.setattr(console_main, "_dec_pool", _factory)
+    user = {"id": 7, "role": "user", "active_workspace_id": "workspace-A"}
+
+    assert await console_main.api_decisions_list(
+        status="", overdue="", user=user
+    ) == {"decisions": []}
+
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await console_main.api_decisions_get(decision_id=1, user=user)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_create_decision_inserts_active_workspace_id(console_main, monkeypatch):
     fake = _FakePool(fetchrow_result=_fake_decision_row())
 
@@ -415,9 +462,13 @@ async def test_update_decision_happy_path_same_workspace(console_main, monkeypat
     )
     assert out["title"] == "new-title"
 
-    # The 2nd call is the UPDATE — verify it pins workspace_id.
+    # The business-source read precedes the UPDATE; verify the write itself.
     _assert_db_scope(fake, "workspace-A")
-    op2, sql2, params2 = _non_scope_calls(fake)[1]
+    op2, sql2, params2 = next(
+        call
+        for call in _non_scope_calls(fake)
+        if call[0] == "fetchrow" and "UPDATE decisions" in call[1]
+    )
     assert op2 == "fetchrow"
     assert "workspace_id" in sql2
     assert "workspace-A" in params2
@@ -438,9 +489,13 @@ async def test_delete_decision_happy_path_same_workspace(console_main, monkeypat
     out = await console_main.api_decisions_delete(decision_id=1, user=user)
     assert out == {"deleted": True, "id": 1}
 
-    # The 2nd call is the DELETE — verify it pins workspace_id.
+    # The business-source read precedes the DELETE; verify the write itself.
     _assert_db_scope(fake, "workspace-A")
-    op2, sql2, params2 = _non_scope_calls(fake)[1]
+    op2, sql2, params2 = next(
+        call
+        for call in _non_scope_calls(fake)
+        if call[0] == "execute" and "DELETE FROM decisions" in call[1]
+    )
     assert op2 == "execute"
     assert "workspace_id = $2" in sql2
     assert params2 == (1, "workspace-A")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import hmac
 import hashlib
 import json
@@ -47,6 +49,19 @@ def _signing_key() -> str:
 def _canonical_context(ctx: dict[str, Any]) -> bytes:
     payload = {key: value for key, value in ctx.items() if key != _SIGNATURE_FIELD}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def sign_server_payload(payload: bytes, *, purpose: str) -> str:
+    """Sign a server-owned payload with a purpose-derived key."""
+    normalized_purpose = str(purpose or "").strip()
+    if not isinstance(payload, bytes) or not normalized_purpose:
+        raise ValueError("payload bytes and signing purpose are required")
+    purpose_key = hmac.new(
+        _signing_key().encode("utf-8"),
+        normalized_purpose.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return hmac.new(purpose_key, payload, hashlib.sha256).hexdigest()
 
 
 def sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:

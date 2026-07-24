@@ -19,6 +19,9 @@ from app.services.intelligence.history import (
     link_outcome_to_snapshot,
     persist_decision_intelligence_snapshot,
 )
+from app.services.intelligence.control_room_observation import (
+    canonical_signal_metadata,
+)
 
 
 def _actor_id(value: Any) -> int | None:
@@ -44,6 +47,7 @@ def _can_read_workspace_wide(user: dict) -> bool:
 
 def _owner_user_id(user: dict) -> int | None:
     return _actor_id(user.get("id"))
+
 
 async def persist_artifacts(
     tenant_id: str | None,
@@ -514,6 +518,7 @@ async def publish_control_room_item(
     metadata = {
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
+        "cartridge": signal.get("cartridge_id"),
         "source_system": source_system,
         "source_dataset": source_dataset,
         "dataset": signal.get("dataset"),
@@ -580,6 +585,7 @@ async def publish_control_room_item(
         "sql": (evidence_items or [{}])[0].get("query_text"),
         "intelligence": public_json(artifact),
     }
+    metadata = canonical_signal_metadata(signal, metadata, item_kind=SIGNAL_KIND)
     if priority_payload.get("score") is not None:
         priority_score = int(priority_payload["score"])
     else:

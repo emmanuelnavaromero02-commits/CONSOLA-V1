@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import importlib
 import sys
 import types
@@ -305,7 +307,7 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
             "skipped": [],
         }
 
-    async def dashboard(user=None, persist=False):
+    async def refresh_dashboard_state(user=None):
         return {
             "meta": {"source_count": 1, "item_count": 1},
             "summary": {"total_items": 1, "data_ready_sources": 1},
@@ -318,7 +320,7 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
         return {"talent": True}
 
     control_room_stub = _module(
-        dashboard=dashboard,
+        refresh_dashboard_state=refresh_dashboard_state,
         sap_successfactors_gold_kpis=gold_kpis,
         sap_successfactors_talent_kpis=talent_kpis,
     )
@@ -348,6 +350,7 @@ async def test_sync_now_publishes_gold_refresh_to_control_room(
         cartridge="sap_successfactors",
         row=row,
         user=user,
+        persist_control_room_state=True,
     )
 
     assert result["control_room_ready"] is True
@@ -831,7 +834,10 @@ async def test_sync_now_successfactors_uses_aggregate_extract_all_dag(
     async def fetch(**_kwargs):
         return dict(stored)
 
-    async def build_status(*, cartridge, row, user=None):
+    async def build_status(
+        *, cartridge, row, user=None, persist_control_room_state=False
+    ):
+        assert persist_control_room_state is True
         return console_main._sync_public_payload(row, row["extra"])
 
     async def trigger(dag_id, conf, user_arg, dag_run_id=None):
@@ -1165,7 +1171,10 @@ async def test_sync_now_continues_after_active_run_reconciles_terminal(
     async def fetch(**_kwargs):
         return dict(stored)
 
-    async def build_status(*, cartridge, row, user=None):
+    async def build_status(
+        *, cartridge, row, user=None, persist_control_room_state=False
+    ):
+        assert persist_control_room_state is True
         if row["run_id"] == old_row["run_id"]:
             return {"run_id": row["run_id"], "status": "failed"}
         return console_main._sync_public_payload(row, row["extra"])
@@ -1302,7 +1311,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
             ]
         }
 
-    async def dashboard(user=None, persist=False):
+    async def refresh_dashboard_state(user=None):
         return {
             "meta": {"source_count": 3, "item_count": 7},
             "summary": {"total_items": 7, "data_ready_sources": 3},
@@ -1312,7 +1321,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
         return {"row_count": 7}
 
     control_room_stub = _module(
-        dashboard=dashboard,
+        refresh_dashboard_state=refresh_dashboard_state,
         sap_successfactors_gold_kpis=sf_kpis,
         sap_successfactors_talent_kpis=sf_kpis,
     )
@@ -1353,6 +1362,7 @@ async def test_build_sync_run_status_runs_agentops_after_successfactors_material
         cartridge="sap_successfactors",
         row=row,
         user=user,
+        persist_control_room_state=True,
     )
 
     assert agentops_calls == [

@@ -72,6 +72,7 @@ async def record_event(
     risk_level: str | None = None,
     conversation_id: str | None = None,
     critical: bool = False,
+    connection: Any | None = None,
 ) -> None:
     """Durably record an audit event before returning.
 
@@ -81,23 +82,29 @@ async def record_event(
     closed when the audit trail cannot be written.
 
     ``tool_args`` must contain only non-sensitive parameters: scrub secrets,
-    vault values, and credentials before invoking this function.
+    vault values, and credentials before invoking this function. When
+    ``connection`` is supplied, the insert uses that caller-owned transaction
+    and never commits independently.
     """
     try:
-        pool = await _audit_auth_module().pool()
-        exists = await pool.fetchval("SELECT to_regclass('public.audit_events')")
+        db = connection if connection is not None else await _audit_auth_module().pool()
+        exists = await db.fetchval("SELECT to_regclass('public.audit_events')")
         if not exists:
             if critical:
-                raise RuntimeError("critical audit table public.audit_events is missing")
+                raise RuntimeError(
+                    "critical audit table public.audit_events is missing"
+                )
             return
         meta_json = json.dumps(metadata, default=str) if metadata is not None else None
-        tool_args_json = json.dumps(tool_args, default=str) if tool_args is not None else None
+        tool_args_json = (
+            json.dumps(tool_args, default=str) if tool_args is not None else None
+        )
         event_user_id = _audit_user_id(user_id)
         event_request_id = request_id or request_id_var.get()
-        has_request_id = await _audit_events_has_request_id(pool)
+        has_request_id = await _audit_events_has_request_id(db)
 
         if has_request_id:
-            await pool.execute(
+            await db.execute(
                 # v1.43.2 Claude B5: ON CONFLICT DO NOTHING swallows
                 # exact-duplicate inserts (same user/action/resource at
                 # the same created_at timestamp) so a retry of the same
@@ -132,7 +139,7 @@ async def record_event(
                 conversation_id,
             )
         else:
-            await pool.execute(
+            await db.execute(
                 """
                 INSERT INTO audit_events
                 (user_id, email, action, resource_type, resource_id,

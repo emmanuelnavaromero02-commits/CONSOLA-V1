@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import re
 from typing import Any
 
@@ -914,6 +916,7 @@ async def build_sync_run_status(
     control_room_cache_invalidate: Any,
     logger_debug: Any,
     stale_after_seconds: int,
+    persist_control_room_state: bool = False,
 ) -> dict[str, Any]:
     working_state = sync_run_working_state(row)
     extra = working_state["extra"]
@@ -992,6 +995,7 @@ async def build_sync_run_status(
         running_children=running_children,
         control_room_gold_refresh=control_room_gold_refresh,
         user=user,
+        persist_dashboard_state=persist_control_room_state,
     )
     control_room_ready = bool(control_room_status["ready"])
     control_room_checked_at = control_room_status["checked_at"]

@@ -4,12 +4,14 @@ import inspect
 from typing import Any
 
 from .base import BaseAdapter
+from app.services.adapter_idempotency import adapter_guarantees_idempotency
 from .replicon_adapter import RepliconAdapter
 from .sap_hcm_adapter import SapHcmAdapter
 
 
 class SapHcmIt0008Adapter(BaseAdapter):
     cartridge_id = "sap_hcm"
+    supports_idempotency = True
 
     async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]):
         payload = {
@@ -24,6 +26,7 @@ class SapHcmIt0008Adapter(BaseAdapter):
 
 class RepliconWriteBackAdapter(BaseAdapter):
     cartridge_id = "replicon"
+    supports_idempotency = True
 
     async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]):
         result = RepliconAdapter().execute(action_data, credentials, dry_run=False)
@@ -47,6 +50,13 @@ class WriteBackAdapterFactory:
     @classmethod
     def has_adapter(cls, template_type: str) -> bool:
         return cls.supports(template_type)
+
+    @classmethod
+    def supports_idempotency(cls, template_type: str) -> bool:
+        adapter_cls = cls._MAPPING.get(str(template_type or ""))
+        return bool(
+            adapter_cls and adapter_guarantees_idempotency(template_type, adapter_cls)
+        )
 
     @classmethod
     def create(cls, template_type: str) -> BaseAdapter:

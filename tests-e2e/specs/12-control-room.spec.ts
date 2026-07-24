@@ -278,14 +278,6 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       item.id !== targetItem.id && !["approved", "dismissed", "resolved"].includes(String(item.status || ""))
     ));
     if (autoItem?.id) {
-      const autoResetResponse = await page.request.post(
-        `${LEGACY}/api/control-room/items/${encodeURIComponent(autoItem.id)}/reopen`,
-        {
-          headers: { "X-CSRF-Token": csrf },
-          data: { reason: "E2E reset before automatic mode" },
-        },
-      );
-      expect(autoResetResponse.status(), "auto-run item must be reopenable").toBe(200);
       const autoRunResponse = await page.request.post(
         `${LEGACY}/api/control-room/items/${encodeURIComponent(autoItem.id)}/auto-run`,
         {
@@ -308,15 +300,6 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       expect(autoActivityTypes).toContain("auto_run_completed");
       expect(autoActivityTypes).toContain("action_dry_run");
     }
-    const reopenResponse = await page.request.post(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/reopen`,
-      {
-        headers: { "X-CSRF-Token": csrf },
-        data: { reason: "E2E reset before decision flow" },
-      },
-    );
-    expect(reopenResponse.status(), "control-room item must be reopenable before E2E mutation").toBe(200);
-
     const consoleErrors: string[] = [];
     const forbidden3000: string[] = [];
 
@@ -515,15 +498,6 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       )),
       "lessons endpoint must return item or decision-linked memory",
     ).toBe(true);
-
-    const cleanupResponse = await page.request.post(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(openedItemId)}/reopen`,
-      {
-        headers: { "X-CSRF-Token": await csrfToken(page) },
-        data: { reason: "E2E cleanup after approval assertion" },
-      },
-    );
-    expect(cleanupResponse.status(), "E2E cleanup must reopen the mutated control-room item").toBe(200);
 
     expect(forbidden3000, "control-room assets and APIs must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room must not emit console.error").toEqual([]);

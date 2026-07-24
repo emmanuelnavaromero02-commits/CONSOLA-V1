@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from app.services.control_room.business_observation_codec import (
+    ENVELOPE_KEY,
+    METADATA_SEMANTIC_SURFACE_PATHS,
+    POLICY_FIELDS,
+    with_observation_envelope,
+)
+from app.services.control_room.business_eligibility import TECHNICAL_STATES
+
+
+POLICY_METADATA_FIELDS = POLICY_FIELDS | frozenset({ENVELOPE_KEY})
+BUSINESS_ARTIFACT_FIELDS = frozenset(
+    {
+        "action_templates",
+        "alert",
+        "alert_state",
+        "approval_status",
+        "bayesian_calibration",
+        "control_state",
+        "confidence",
+        "decision_actions",
+        "decision_id",
+        "decision_intelligence",
+        "execution_status",
+        "impact_drivers",
+        "impact_estimate",
+        "impact_currency",
+        "impact_formula",
+        "intelligence",
+        "monte_carlo",
+        "omega",
+        "options",
+        "priority",
+        "priority_score",
+        "recommended_actions",
+        "selected_option_id",
+        "suggested_actions",
+        "threshold_state",
+        "thresholds_applied",
+        "workflow",
+        "workflow_state",
+        "workflow_status",
+    }
+)
+REPLACED_POLICY_KEYS = tuple(sorted(POLICY_METADATA_FIELDS | BUSINESS_ARTIFACT_FIELDS))
+_DIAGNOSTIC_KIND_FIELDS = tuple(sorted(POLICY_FIELDS & {"item_kind", "kind"}))
+_DIAGNOSTIC_STATE_FIELDS = tuple(
+    sorted(
+        POLICY_FIELDS
+        & {
+            "data_readiness",
+            "data_status",
+            "evaluation_status",
+            "readiness_status",
+            "source_status",
+        }
+    )
+)
+
+
+def _without_policy_fields(values: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): value
+        for key, value in values.items()
+        if str(key) not in POLICY_METADATA_FIELDS
+    }
+
+
+def strip_business_artifacts(value: Any, *, strip_root: bool = True) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): strip_business_artifacts(nested)
+            for key, nested in value.items()
+            if not strip_root or str(key) not in BUSINESS_ARTIFACT_FIELDS
+        }
+    if isinstance(value, list):
+        return [strip_business_artifacts(entry) for entry in value]
+    if isinstance(value, tuple):
+        return tuple(strip_business_artifacts(entry) for entry in value)
+    return value
+
+
+def _clean_surface_path(
+    values: Mapping[str, Any], path: tuple[str, ...]
+) -> dict[str, Any]:
+    if not path:
+        return _without_policy_fields(values)
+    clean = dict(values)
+    child = values.get(path[0])
+    if isinstance(child, Mapping):
+        clean_child = _clean_surface_path(child, path[1:])
+        if clean_child:
+            clean[path[0]] = clean_child
+        else:
+            clean.pop(path[0], None)
+    return clean
+
+
+def _clean_metadata_surfaces(values: Mapping[str, Any]) -> dict[str, Any]:
+    clean = dict(values)
+    for path in METADATA_SEMANTIC_SURFACE_PATHS:
+        clean = _clean_surface_path(clean, path)
+    return clean
+
+
+def _jsonb_path(path: tuple[str, ...]) -> str:
+    return "'{" + ",".join(path) + "}'"
+
+
+def _clean_jsonb_surface(
+    column: str, path: tuple[str, ...], keys_parameter: str
+) -> str:
+    source = column if not path else f"({column} #> {_jsonb_path(path)})"
+    clean = f"({source} - {keys_parameter}::text[])"
+    children = sorted(
+        {
+            candidate[len(path)]
+            for candidate in METADATA_SEMANTIC_SURFACE_PATHS
+            if len(candidate) > len(path) and candidate[: len(path)] == path
+        }
+    )
+    for child in children:
+        child_path = (*path, child)
+        original_child = f"({column} #> {_jsonb_path(child_path)})"
+        cleaned_child = _clean_jsonb_surface(column, child_path, keys_parameter)
+        replacement = (
+            f"CASE WHEN jsonb_typeof({original_child}) = 'object' "
+            f"THEN {cleaned_child} ELSE COALESCE({original_child}, 'null'::jsonb) END"
+        )
+        updated = f"jsonb_set({clean}, {_jsonb_path((child,))}, {replacement}, false)"
+        clean = (
+            f"CASE WHEN jsonb_typeof({original_child}) = 'object' "
+            f"AND ({cleaned_child}) = '{{}}'::jsonb "
+            f"THEN ({clean} - '{child}') ELSE {updated} END"
+        )
+    return clean
+
+
+def diagnostic_policy_sql(column: str) -> str:
+    surfaces = tuple(
+        column if not path else f"({column} #> {_jsonb_path(path)})"
+        for path in METADATA_SEMANTIC_SURFACE_PATHS
+    )
+    states = ",".join(f"'{value}'" for value in sorted(TECHNICAL_STATES))
+    checks = [
+        f"lower(COALESCE({surface}->>'{field}', '')) = 'source_state'"
+        for surface in surfaces
+        for field in _DIAGNOSTIC_KIND_FIELDS
+    ]
+    checks.extend(
+        f"lower(COALESCE({surface}->>'{field}', '')) IN ({states})"
+        for surface in surfaces
+        for field in _DIAGNOSTIC_STATE_FIELDS
+    )
+    return f"({' OR '.join(checks)})"
+
+
+def policy_metadata_without_fields_sql(column: str, keys_parameter: str) -> str:
+    return _clean_jsonb_surface(column, (), keys_parameter)
+
+
+def business_policy_metadata(
+    metadata: Mapping[str, Any] | None,
+    item: Mapping[str, Any],
+) -> dict[str, Any]:
+    original = strip_business_artifacts(dict(metadata or {}))
+    clean = _clean_metadata_surfaces(original)
+    for key in POLICY_METADATA_FIELDS:
+        if key not in item:
+            continue
+        value = item.get(key)
+        if value is None or value == "":
+            continue
+        clean[key] = value
+    details = item.get("details")
+    if isinstance(details, Mapping):
+        clean_details = strip_business_artifacts(_without_policy_fields(details))
+        if clean_details:
+            clean["details"] = clean_details
+    return with_observation_envelope(clean, item)
+
+
+__all__ = (
+    "BUSINESS_ARTIFACT_FIELDS",
+    "POLICY_METADATA_FIELDS",
+    "REPLACED_POLICY_KEYS",
+    "business_policy_metadata",
+    "diagnostic_policy_sql",
+    "policy_metadata_without_fields_sql",
+    "strip_business_artifacts",
+)

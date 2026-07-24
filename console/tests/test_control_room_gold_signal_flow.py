@@ -8,6 +8,16 @@ from fastapi import HTTPException
 import pytest
 
 from app.services import control_room_service, intelligence_engine
+from app.services.control_room.business_projection import project_business_item
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
+from app.services.control_room.business_workflow_provenance import (
+    DECISION_PROVENANCE_KEY,
+    WorkflowStage,
+    persistence_metadata,
+    workflow_eligibility_provenance,
+)
 from app.services.intelligence import persistence as intelligence_persistence
 
 
@@ -383,7 +393,9 @@ async def test_publish_control_room_item_persists_decision_intelligence_impact()
     assert metadata["decision_intelligence"] == decision
     assert metadata["intelligence"]["decision_intelligence"] == decision
     assert metadata["control_origin"] == "intelligence_signal"
-    assert metadata["math_provenance"]["ruleset_version"] == "control_room_gold_signal.v1"
+    assert (
+        metadata["math_provenance"]["ruleset_version"] == "control_room_gold_signal.v1"
+    )
     assert metadata["priority"]["score"] == 91
     assert metadata["priority"]["drivers"]["severity"] == 26
     assert metadata["monte_carlo"]["mode"] == "derived_mode"
@@ -411,6 +423,8 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
         "freshness_at": "2026-06-01",
         "freshness_field": "mes",
         "data_status": "gold_ready",
+        "metric_type": "scalar",
+        "observation_date": "2026-06-01",
         "evidence_pack_id": 42,
         "evidence_pack": {
             "id": 42,
@@ -424,6 +438,23 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
                 }
             ],
         },
+        **runtime_row_evidence_fields(
+            source_dataset="consultor_mensual",
+            source_system="replicon",
+            cartridge="replicon",
+            tenant_id=TENANT_A,
+            workspace_id=WORKSPACE_A,
+            source_row={"signal_id": "intel:replicon-gold"},
+            locator_field="signal_id",
+            observed_at="2026-06-01",
+            business_observation={
+                "id": "intel:replicon-gold",
+                "kind": "intelligence_signal",
+                "metric_type": "scalar",
+                "observed_value": 40,
+                "observation_date": "2026-06-01",
+            },
+        ),
         "module": "Intelligence Engine",
         "description": "Horas facturables mensuales por consultor: Andrea Morales bajo baseline.",
         "recommendation": "Pedir seguimiento al manager",
@@ -562,10 +593,12 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
         items = await control_room_service._persisted_intelligence_items(REPLICON_USER)
 
     _assert_scope_call(conn)
-    sql, workspace_arg, tenant_arg = conn.fetch.await_args.args
+    sql, workspace_arg, kinds, tenant_arg, page_size = conn.fetch.await_args.args
     assert "tenant_id::text" in sql
     assert workspace_arg == WORKSPACE_A
+    assert kinds == ["intelligence_signal", "agent_alert"]
     assert tenant_arg == TENANT_A
+    assert page_size == 200
     assert len(items) == 1
     item = items[0]
     assert item["tenant_id"] == TENANT_A
@@ -591,15 +624,30 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
 
 @pytest.mark.asyncio
 async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_workspace():
-    async def scoped_fetch(query: str, workspace_id: str, tenant_id: str):
+    async def scoped_fetch(
+        query: str,
+        workspace_id: str,
+        kinds: list[str],
+        tenant_id: str,
+        _page_size: int,
+    ):
         assert "workspace_id = $1" in query
-        assert "tenant_id::text = $2" in query
+        assert "item_kind = ANY($2::text[])" in query
+        assert "tenant_id::text = $3" in query
+        assert kinds == ["intelligence_signal", "agent_alert"]
         if workspace_id == WORKSPACE_A and tenant_id == TENANT_A:
             return [
                 {
                     "item_id": "intel:a",
-                    "metadata": {},
+                    "metadata": {
+                        "data_status": "ready",
+                        "metric_type": "scalar",
+                        "observed_value": 1,
+                        "observation_date": "2026-07-16",
+                        "evidence_refs": ["gold_metrics:intel:a"],
+                    },
                     "item_kind": "intelligence_signal",
+                    "source_dataset": "gold_metrics",
                 }
             ]
         return []
@@ -627,26 +675,50 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
         workspace_id=WORKSPACE_B,
         call_index=1,
     )
-    assert conn.fetch.await_args_list[0].args[1:] == (WORKSPACE_A, TENANT_A)
-    assert conn.fetch.await_args_list[1].args[1:] == (WORKSPACE_B, TENANT_B)
+    assert conn.fetch.await_args_list[0].args[1:] == (
+        WORKSPACE_A,
+        ["intelligence_signal", "agent_alert"],
+        TENANT_A,
+        200,
+    )
+    assert conn.fetch.await_args_list[1].args[1:] == (
+        WORKSPACE_B,
+        ["intelligence_signal", "agent_alert"],
+        TENANT_B,
+        200,
+    )
 
 
 @pytest.mark.asyncio
 async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin():
     async def scoped_fetch(
-        query: str, workspace_id: str, tenant_id: str, owner_id: int
+        query: str,
+        workspace_id: str,
+        kinds: list[str],
+        tenant_id: str,
+        owner_id: int,
+        _page_size: int,
     ):
         assert "workspace_id = $1" in query
-        assert "tenant_id::text = $2" in query
-        assert "owner_user_id = $3" in query
+        assert "item_kind = ANY($2::text[])" in query
+        assert "tenant_id::text = $3" in query
+        assert "owner_user_id = $4" in query
+        assert kinds == ["intelligence_signal", "agent_alert"]
         assert workspace_id == WORKSPACE_A
         assert tenant_id == TENANT_A
         assert owner_id == 11
         return [
             {
                 "item_id": "intel:owned",
-                "metadata": {},
+                "metadata": {
+                    "data_status": "ready",
+                    "metric_type": "scalar",
+                    "observed_value": 1,
+                    "observation_date": "2026-07-16",
+                    "evidence_refs": ["gold_metrics:intel:owned"],
+                },
                 "item_kind": "intelligence_signal",
+                "source_dataset": "gold_metrics",
             }
         ]
 
@@ -664,22 +736,27 @@ async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin(
 
     assert [item["id"] for item in items] == ["intel:owned"]
     _assert_scope_call(conn)
-    assert conn.fetch.await_args.args[1:] == (WORKSPACE_A, TENANT_A, 11)
+    assert conn.fetch.await_args.args[1:] == (
+        WORKSPACE_A,
+        ["intelligence_signal", "agent_alert"],
+        TENANT_A,
+        11,
+        200,
+    )
 
 
 @pytest.mark.asyncio
 async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_admin():
     async def scoped_fetchrow(
-        query: str, workspace_id: str, item_id: str, tenant_id: str, owner_id: int
+        query: str, workspace_id: str, item_id: str, tenant_id: str
     ):
         assert "workspace_id = $1" in query
         assert "item_id = $2" in query
         assert "tenant_id::text = $3" in query
-        assert "owner_user_id = $4" in query
+        assert "owner_user_id =" not in query
         assert workspace_id == WORKSPACE_A
         assert item_id == "intel:other"
         assert tenant_id == TENANT_A
-        assert owner_id == 11
         return None
 
     conn = _ScopedConnection(fetchrow_side_effect=scoped_fetchrow)
@@ -702,5 +779,96 @@ async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_
         WORKSPACE_A,
         "intel:other",
         TENANT_A,
-        11,
     )
+
+
+@pytest.mark.asyncio
+async def test_persisted_derived_item_keeps_state_until_parent_validation():
+    policy_metadata = {
+        "parent_item_id": "parent-1",
+        "data_status": "ready",
+        "source_system": "replicon",
+        "metric_type": "scalar",
+        "observed_value": 1,
+        "observation_date": "2026-07-20",
+        **runtime_row_evidence_fields(
+            source_dataset="gold_workforce",
+            source_system="replicon",
+            cartridge="replicon",
+            tenant_id=TENANT_A,
+            workspace_id=WORKSPACE_A,
+            source_row={"item_id": "derived-1"},
+            locator_field="item_id",
+            observed_at="2026-07-20",
+            business_observation={
+                "id": "derived-1",
+                "kind": "agent_alert",
+                "metric_type": "scalar",
+                "observed_value": 1,
+                "observation_date": "2026-07-20",
+            },
+        ),
+    }
+    business_item = project_business_item(
+        {
+            "id": "derived-1",
+            "kind": "agent_alert",
+            "tenant_id": TENANT_A,
+            "workspace_id": WORKSPACE_A,
+            "cartridge": "replicon",
+            "source_dataset": "gold_workforce",
+            "metadata": policy_metadata,
+        },
+        eligible_parent_ids={"parent-1"},
+    )
+    metadata = persistence_metadata(business_item)
+    metadata[DECISION_PROVENANCE_KEY] = workflow_eligibility_provenance(
+        business_item,
+        stage=WorkflowStage.DECISION_CREATED,
+        workspace_id=WORKSPACE_A,
+        decision_id=42,
+    )
+    row = {
+        "tenant_id": TENANT_A,
+        "workspace_id": WORKSPACE_A,
+        "item_id": "derived-1",
+        "cartridge_id": "replicon",
+        "domain": "Operacion",
+        "source_dataset": "gold_workforce",
+        "source_system": "replicon",
+        "item_kind": "agent_alert",
+        "title": "Derived alert",
+        "severity": "high",
+        "status": "in_review",
+        "decision_id": 42,
+        "entity_kind": "employee",
+        "entity_id": "7",
+        "entity_label": "Employee 7",
+        "anomaly_type": "capacity_risk",
+        "metadata": metadata,
+        "first_seen_at": None,
+        "last_seen_at": None,
+        "resolved_at": None,
+        "dismissed_at": None,
+        "impact_estimate": 12,
+        "impact_currency": "USD",
+        "confidence": 0.9,
+        "priority_score": 88,
+        "selected_option_id": "review",
+        "execution_status": "dry_run_validated",
+    }
+    conn = _ScopedConnection(fetchrow_return=row)
+
+    with patch.object(
+        control_room_service.auth,
+        "pool",
+        return_value=_ScopedPool(conn),
+    ):
+        item = await control_room_service._persisted_item_for_mutation(
+            "derived-1", REPLICON_USER
+        )
+
+    assert item["decision_id"] == 42
+    assert item["selected_option_id"] == "review"
+    assert item["execution_status"] == "dry_run_validated"
+    assert item["priority_score"] == 88

@@ -1,0 +1,165 @@
+name: Control Room PostgreSQL RLS
+
+on:
+  pull_request:
+    paths:
+      - "console/app/main.py"
+      - "console/app/routers/control_room.py"
+      - "console/app/dependencies.py"
+      - "console/app/domains/decisions/**"
+      - "console/app/domains/pipeline/control_room_refresh.py"
+      - "console/app/domains/pipeline/sync_state.py"
+      - "console/app/services/permissions.py"
+      - "console/app/services/audit_service.py"
+      - "console/app/services/security_context.py"
+      - "console/app/services/adapter_idempotency.py"
+      - "console/app/services/adapters/**"
+      - "console/app/services/db_scope.py"
+      - "console/app/services/banxico_readiness.py"
+      - "console/app/services/inegi_readiness.py"
+      - "console/app/services/sec_edgar_readiness.py"
+      - "console/app/services/intelligence/decision_orchestrator.py"
+      - "console/app/services/intelligence/control_room_observation.py"
+      - "console/app/services/intelligence/evidence_refs.py"
+      - "console/app/services/intelligence/gold_fetcher.py"
+      - "console/app/services/intelligence/persistence.py"
+      - "console/app/services/intelligence/readiness.py"
+      - "console/app/services/control_room/**"
+      - "console/tests/control_room_*.py"
+      - "console/tests/conftest.py"
+      - "console/tests/test_audit_service_transactional.py"
+      - "console/tests/test_control_room*.py"
+      - "console/tests/test_decision*.py"
+      - "console/tests/test_intelligence_control_room_canonical_persistence.py"
+      - "console/tests/test_intelligence_evidence_refs_attestation.py"
+      - "console/tests/test_gold_fetcher.py"
+      - "console/tests/test_ops_summary_and_version.py"
+      - "console/tests/test_pipeline_extract.py"
+      - "console/tests/test_scoped_surface_hardening.py"
+      - "tests/decision_orchestrator_harness.py"
+      - "tests/test_control_room*.py"
+      - "tests/test_control_room_live_postgres*.py"
+      - "tests/test_decision*.py"
+      - "tests/test_pipeline_control_room_refresh.py"
+      - "tests/test_agentops_scheduled_monitor_contract.py"
+      - "tests/test_aws_beta_operations.py"
+      - "tests/test_aws_bootstrap_shared_env_boundary.py"
+      - "tests/test_aws_evidence_compose_isolation.py"
+      - "tests/test_aws_env_pair_transaction.py"
+      - "tests/test_aws_ssm_deploy_workflow.py"
+      - "tests/test_aws_evidence_env_isolation.py"
+      - "tests/test_aws_evidence_update_env.py"
+      - "tests/test_aws_secrets_manager_config.py"
+      - "tests/test_control_room_ci_contract.py"
+      - "tests/test_control_room_evidence_keyring_runtime.py"
+      - "tests/test_control_room_evidence_signing_wiring.py"
+      - "tests/test_intelligence_engine_contract.py"
+      - "tests/test_v1_router_mount.py"
+      - "tests/test_operational_rls_console_refinement.py"
+      - "tests/test_operational_rls_policy_guard.py"
+      - "tests/conftest.py"
+      - "infra/.env.example"
+      - "infra/bootstrap-keys.sh"
+      - "infra/bootstrap.sh"
+      - "infra/docker-compose.yml"
+      - "infra/init/**"
+      - "infra/terraform-gcp/**"
+      - "infra/terraform/deploy/**"
+      - "infra/terraform/infra/secretsmanager.tf"
+      - "scripts/aws-env-pair.sh"
+      - "scripts/aws-entrypoint.sh"
+      - "scripts/validate-evidence-keyring.py"
+      - ".github/workflows/deploy-aws.yml"
+      - ".github/workflows/control-room-postgres-rls.yml"
+
+jobs:
+  control-room-postgres-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r tests/requirements.txt \
+            -r console/requirements.txt
+
+      - name: Run focal Control Room tests
+        continue-on-error: true
+        env:
+          PYTHONPATH: .:console
+        run: |
+          pytest -ra --junitxml=/tmp/control-room-focal.xml \
+            console/tests/test_audit_service_transactional.py \
+            console/tests/test_control_room*.py \
+            console/tests/test_scoped_surface_hardening.py \
+            console/tests/test_decision*.py \
+            console/tests/test_gold_fetcher.py \
+            console/tests/test_intelligence_control_room_canonical_persistence.py \
+            console/tests/test_intelligence_evidence_refs_attestation.py \
+            console/tests/test_ops_summary_and_version.py \
+            console/tests/test_pipeline_extract.py \
+            tests/test_decision*.py \
+            tests/test_pipeline_control_room_refresh.py \
+            tests/test_agentops_scheduled_monitor_contract.py \
+            tests/test_aws_beta_operations.py \
+            tests/test_aws_bootstrap_shared_env_boundary.py \
+            tests/test_aws_evidence_compose_isolation.py \
+            tests/test_aws_env_pair_transaction.py \
+            tests/test_aws_ssm_deploy_workflow.py \
+            tests/test_aws_evidence_env_isolation.py \
+            tests/test_aws_evidence_update_env.py \
+            tests/test_aws_secrets_manager_config.py \
+            tests/test_control_room_ci_contract.py \
+            tests/test_control_room_evidence_keyring_runtime.py \
+            tests/test_control_room_evidence_signing_wiring.py \
+            tests/test_intelligence_engine_contract.py \
+            tests/test_v1_router_mount.py
+
+      - name: Run live PostgreSQL/RLS tests
+        if: always()
+        continue-on-error: true
+        env:
+          PYTHONPATH: .:console
+        run: |
+          pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
+            tests/test_operational_rls_console_refinement.py \
+            tests/test_operational_rls_policy_guard.py \
+            tests/test_control_room_live_postgres*.py
+
+      - name: Verify focal and live PostgreSQL/RLS reports
+        if: always()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          def verify_junit(path: str, *, minimum: int, label: str) -> None:
+              if not Path(path).is_file():
+                  raise SystemExit(f"{label} report missing; tests did not complete")
+              root = ET.parse(path).getroot()
+              suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
+              counts = {
+                  name: sum(int(suite.attrib.get(name, 0)) for suite in suites)
+                  for name in ("tests", "skipped", "failures", "errors")
+              }
+              tests = counts["tests"]
+              if tests < minimum:
+                  raise SystemExit(
+                      f"{label} collected only {tests} tests; expected >= {minimum}"
+                  )
+              bad = {
+                  name: counts[name] for name in ("skipped", "failures", "errors")
+              }
+              if any(bad.values()):
+                  raise SystemExit(f"{label} JUnit is not clean: {bad}")
+
+          verify_junit("/tmp/control-room-focal.xml", minimum=1109, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=48, label="Live PostgreSQL/RLS")
+          PY

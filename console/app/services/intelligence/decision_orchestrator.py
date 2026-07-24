@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# fmt: off
+
 import json
 import os
 from dataclasses import dataclass
@@ -8,10 +10,16 @@ from decimal import Decimal
 from typing import Any
 
 from app.services import auth, external_actions
+from app.services.control_room.business_orchestrator import eligible_orchestrator_source
+from app.services.control_room.business_access import (
+    can_read_workspace_wide,
+    owner_scope_id,
+)
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence.evidence_refs import (
     external_evidence_metadata,
     merge_evidence_refs,
+    normalize_evidence_refs,
 )
 from app.services.intelligence.utils import json_dumps, public_json, sample_hash
 
@@ -311,8 +319,15 @@ def normalize_signal(payload: dict[str, Any], source: dict[str, Any]) -> dict[st
     source_data = _source_summary(source)
     metadata = source_data["metadata"]
     evidence_refs = merge_evidence_refs(
-        metadata.get("evidence_refs"),
-        payload.get("evidence_refs"),
+        normalize_evidence_refs(
+            metadata.get("evidence_refs"),
+            allow_server_dataset_rows=True,
+        ),
+        normalize_evidence_refs(
+            payload.get("evidence_refs"),
+            allow_server_dataset_rows=False,
+        ),
+        allow_server_dataset_rows=True,
     )
     return {
         "source_type": payload.get("source_type"),
@@ -572,10 +587,12 @@ def _orchestration_id(
 async def _load_source(
     conn: Any,
     *,
+    tenant_id: str | None,
     workspace_id: str,
     source_type: str,
     source_id: str,
     payload: dict[str, Any],
+    owner_id: int | None = None,
 ) -> dict[str, Any]:
     if source_type == "manual_fixture":
         if not _manual_fixture_allowed():
@@ -595,39 +612,79 @@ async def _load_source(
         clause = "AND item_kind = 'agent_alert'" if source_type == "agent_alert" else ""
         row = await conn.fetchrow(
             f"""
-            SELECT tenant_id, workspace_id, item_id AS source_id, item_kind,
-                   title, severity, status, domain, source_dataset,
+            SELECT tenant_id, workspace_id, owner_user_id,
+                   item_id AS source_id, item_kind,
+                   title, severity, status, domain, cartridge_id, source_dataset,
                    entity_kind, entity_id, entity_label, anomaly_type, metadata
               FROM control_room_items
              WHERE workspace_id = $1
                AND item_id = $2
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
+               AND ($4::bigint IS NULL OR owner_user_id = $4)
                {clause}
              LIMIT 1
             """,
             workspace_id,
             source_id,
+            tenant_id,
+            owner_id,
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
-        return _row_dict(row)
+        source = await eligible_orchestrator_source(
+            conn,
+            _row_dict(row),
+            source_type=source_type,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            owner_id=owner_id,
+        )
+        if source is None:
+            raise DecisionOrchestratorError(409, "item_not_business_eligible")
+        return source
     if source_type == "intelligence_signal":
         row = await conn.fetchrow(
             """
-            SELECT tenant_id, workspace_id, signal_id AS source_id, domain,
-                   dataset, entity_kind, entity_id, entity_label, metric,
-                   severity, signal_type, status, confidence, summary,
-                   metadata
-              FROM intelligence_signals
-             WHERE workspace_id = $1
-               AND signal_id = $2
+            SELECT signal.tenant_id, signal.workspace_id, signal.owner_user_id,
+                   signal.signal_id AS source_id, signal.domain,
+                   signal.dataset, signal.entity_kind, signal.entity_id,
+                   signal.entity_label, signal.metric, signal.actual_value,
+                   signal.period_key, signal.severity, signal.signal_type,
+                   signal.status, signal.confidence, signal.summary,
+                   COALESCE(item.metadata, '{}'::jsonb)
+                     || COALESCE(signal.metadata, '{}'::jsonb) AS metadata,
+                   COALESCE(item.source_dataset, signal.dataset) AS source_dataset,
+                   COALESCE(item.item_kind, 'intelligence_signal') AS item_kind
+              FROM intelligence_signals signal
+              LEFT JOIN control_room_items item
+                ON item.workspace_id = signal.workspace_id
+               AND item.item_id = signal.signal_id
+               AND item.tenant_id IS NOT DISTINCT FROM signal.tenant_id
+               AND ($4::bigint IS NULL OR item.owner_user_id = $4)
+             WHERE signal.workspace_id = $1
+               AND signal.signal_id = $2
+               AND ($3::uuid IS NULL OR signal.tenant_id = $3::uuid)
+               AND ($4::bigint IS NULL OR signal.owner_user_id = $4)
              LIMIT 1
             """,
             workspace_id,
             source_id,
+            tenant_id,
+            owner_id,
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
-        return _row_dict(row)
+        source = await eligible_orchestrator_source(
+            conn,
+            _row_dict(row),
+            source_type=source_type,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            owner_id=owner_id,
+        )
+        if source is None:
+            raise DecisionOrchestratorError(409, "item_not_business_eligible")
+        return source
     if source_type == "monte_carlo_simulation":
         row = await conn.fetchrow(
             """
@@ -635,13 +692,15 @@ async def _load_source(
                    source_type AS simulation_source_type, source_id AS simulation_source_id,
                    output_metric AS metric, distribution_summary, sensitivity,
                    evidence_refs, assumptions, option_comparison
-              FROM monte_carlo_simulations
+             FROM monte_carlo_simulations
              WHERE workspace_id = $1
                AND simulation_id = $2
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
              LIMIT 1
             """,
             workspace_id,
             source_id,
+            tenant_id,
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
@@ -663,13 +722,15 @@ async def _load_source(
                    predicted_metric AS metric, actual_status, horizon_days,
                    model_version, calibration_group, prior, posterior,
                    metrics, evidence_refs, explanation AS summary
-              FROM calibration_observations
+             FROM calibration_observations
              WHERE workspace_id = $1
                AND (observation_id = $2 OR id::text = $2)
+               AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
              LIMIT 1
             """,
             workspace_id,
             source_id,
+            tenant_id,
         )
         if not row:
             raise DecisionOrchestratorError(404, "orchestrator source not found")
@@ -767,12 +828,17 @@ async def orchestrate(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
 
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        source_owner_id = owner_scope_id(user)
+        if not can_read_workspace_wide(user) and source_owner_id is None:
+            raise DecisionOrchestratorError(404, "orchestrator source not found")
         source = await _load_source(
             conn,
+            tenant_id=tenant_id,
             workspace_id=workspace_id,
             source_type=source_type,
             source_id=source_id,
             payload=body,
+            owner_id=source_owner_id,
         )
         plan = build_orchestration_plan(body, source)
         orchestration_id = _orchestration_id(

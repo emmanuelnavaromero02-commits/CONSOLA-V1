@@ -13,9 +13,18 @@
 set -euo pipefail
 
 ENV_FILE="${1:-infra/.env}"
+# Local infra/bootstrap.sh renders its own keyring. This helper only creates
+# evidence keys when a caller opts in explicitly; AWS must always leave them
+# in the private evidence env rendered by scripts/aws-entrypoint.sh.
+BOOTSTRAP_CONTROL_ROOM_EVIDENCE="${MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE:-false}"
+if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" != "true" && "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" != "false" ]]; then
+  echo "ERROR: MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE must be true or false" >&2
+  exit 1
+fi
 
 KEYS=(
   "SECURITY_CONTEXT_SIGNING_KEY"
+  "CONTROL_ROOM_EVIDENCE_SIGNING_KEY"
   "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT"
   "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE"
   "INTERNAL_API_KEY_CONSOLE_TO_VAULT"
@@ -84,6 +93,9 @@ chmod 600 "${ENV_FILE}" || true
 
 added=0
 for key in "${KEYS[@]}"; do
+  if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" == "false" && "$key" == "CONTROL_ROOM_EVIDENCE_SIGNING_KEY" ]]; then
+    continue
+  fi
   if grep -q "^${key}=" "${ENV_FILE}"; then
     echo "[bootstrap-keys] ${key} already exists, skipping"
   else
@@ -93,6 +105,18 @@ for key in "${KEYS[@]}"; do
     added=$((added + 1))
   fi
 done
+
+if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" == "true" ]]; then
+  if ! grep -q '^CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID=' "${ENV_FILE}"; then
+    printf 'CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID=evidence-%s\n' \
+      "$(date -u +%Y%m%d%H%M%S)" >> "${ENV_FILE}"
+    added=$((added + 1))
+  fi
+  if ! grep -q '^CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS=' "${ENV_FILE}"; then
+    printf 'CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS={}\n' >> "${ENV_FILE}"
+    added=$((added + 1))
+  fi
+fi
 
 for key in "${DB_KEYS[@]}"; do
   if grep -q "^${key}=" "${ENV_FILE}"; then
@@ -105,4 +129,8 @@ for key in "${DB_KEYS[@]}"; do
   fi
 done
 
-echo "[bootstrap-keys] Done. $((${#KEYS[@]} + ${#DB_KEYS[@]})) keys ensured in ${ENV_FILE} (${added} new)"
+ensured=$((${#KEYS[@]} + ${#DB_KEYS[@]} + 2))
+if [[ "$BOOTSTRAP_CONTROL_ROOM_EVIDENCE" == "false" ]]; then
+  ensured=$((ensured - 3))
+fi
+echo "[bootstrap-keys] Done. ${ensured} keys ensured in ${ENV_FILE} (${added} new)"

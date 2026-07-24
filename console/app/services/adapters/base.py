@@ -24,10 +24,18 @@ class ExecutionResult:
 
 
 class AdapterExecutionError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None, response: Any = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        response: Any = None,
+        outcome_ambiguous: bool | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.response = response
+        self.outcome_ambiguous = outcome_ambiguous
 
 
 class AdapterConfigurationError(AdapterExecutionError):
@@ -42,5 +50,7 @@ class BaseAdapter(ABC):
     cartridge_id: str
 
     @abstractmethod
-    async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]) -> ExecutionResult:
+    async def execute(
+        self, action_data: dict[str, Any], credentials: dict[str, Any]
+    ) -> ExecutionResult:
         """Execute a real remote write-back action."""

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-import os
-import time
-from copy import deepcopy
+# fmt: off
+
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -11,6 +9,18 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from app.dependencies import require_authenticated
 from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
+from app.services.control_room.authorization_cache import (
+    READ_CACHE as _CONTROL_ROOM_READ_CACHE,
+    READ_CACHE_LOCKS as _CONTROL_ROOM_READ_CACHE_LOCKS,
+    cache_get_or_set as _control_room_cache_get_or_set,
+    cache_invalidate as _control_room_cache_invalidate,
+)
+from app.services.control_room.cache_identity import (
+    authorization_cache_identity as _control_room_cache_identity,
+)
+from app.services.control_room.business_cartridge_scope import (
+    business_cartridge_allowed,
+)
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
 from app.services.intelligence import market_decision_validation
@@ -19,81 +29,11 @@ from app.services.security_context import build_security_context, verify_signed_
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
-_CONTROL_ROOM_READ_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
-_CONTROL_ROOM_READ_CACHE_LOCKS: dict[tuple[Any, ...], asyncio.Lock] = {}
 
 
-def _control_room_cache_ttl() -> float:
-    raw = os.environ.get("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "15")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return 15.0
-    return max(0.0, min(value, 300.0))
-
-
-def _control_room_cache_identity(user: dict | None) -> tuple[Any, ...]:
-    ctx = build_security_context(user)
-    allowed = tuple(sorted(str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()))
-    return (
-        str(ctx.get("tenant_id") or (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip(),
-        str(ctx.get("workspace_id") or (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip(),
-        str(ctx.get("role") or (user or {}).get("role") or "").strip(),
-        str((user or {}).get("id") or ctx.get("sub") or "").strip(),
-        allowed,
-    )
-
-
-def _control_room_cache_key(namespace: str, user: dict | None) -> tuple[Any, ...]:
-    return (namespace, _control_room_cache_identity(user))
-
-
-def _control_room_cache_get(namespace: str, user: dict | None) -> Any | None:
-    ttl = _control_room_cache_ttl()
-    if ttl <= 0:
-        return None
-    key = _control_room_cache_key(namespace, user)
-    cached = _CONTROL_ROOM_READ_CACHE.get(key)
-    if not cached:
-        return None
-    expires_at, value = cached
-    if expires_at <= time.monotonic():
-        _CONTROL_ROOM_READ_CACHE.pop(key, None)
-        return None
-    return deepcopy(value)
-
-
-def _control_room_cache_set(namespace: str, user: dict | None, value: Any) -> Any:
-    ttl = _control_room_cache_ttl()
-    if ttl > 0:
-        _CONTROL_ROOM_READ_CACHE[_control_room_cache_key(namespace, user)] = (
-            time.monotonic() + ttl,
-            deepcopy(value),
-        )
-    return value
-
-
-async def _control_room_cache_get_or_set(namespace: str, user: dict | None, loader) -> Any:
-    cached = _control_room_cache_get(namespace, user)
-    if cached is not None:
-        return cached
-    ttl = _control_room_cache_ttl()
-    if ttl <= 0:
-        return await loader()
-    key = _control_room_cache_key(namespace, user)
-    lock = _CONTROL_ROOM_READ_CACHE_LOCKS.setdefault(key, asyncio.Lock())
-    async with lock:
-        cached = _control_room_cache_get(namespace, user)
-        if cached is not None:
-            return cached
-        return _control_room_cache_set(namespace, user, await loader())
-
-
-def _control_room_cache_invalidate(user: dict | None) -> None:
-    identity = _control_room_cache_identity(user)
-    keys = [key for key in _CONTROL_ROOM_READ_CACHE if len(key) == 2 and key[1] == identity]
-    for key in keys:
-        _CONTROL_ROOM_READ_CACHE.pop(key, None)
+def _require_readiness_cartridge(user: dict, cartridge_id: str) -> None:
+    if not business_cartridge_allowed(user, cartridge_id):
+        raise HTTPException(403, "cartridge not allowed for active workspace")
 
 
 async def _invalidate_after_write(user: dict, operation: Any) -> Any:
@@ -141,6 +81,7 @@ def _control_room_internal_user(
         "active_tenant_id": tenant_id,
         "active_workspace_id": workspace_id,
         "allowed_cartridges": list(ctx.get("allowed_cartridges") or []),
+        "_effective_permissions": sorted(permissions),
         "agent_id": ctx.get("agent_id"),
         "agent_slug": ctx.get("agent_slug"),
         "agent_run_id": ctx.get("agent_run_id"),
@@ -229,6 +170,7 @@ async def _control_room_internal_view(
     if view == "banxico_readiness":
         from app.services.banxico_readiness import banxico_readiness
 
+        _require_readiness_cartridge(user, "banxico")
         return await _control_room_cache_get_or_set(
             "banxico-readiness",
             user,
@@ -237,6 +179,7 @@ async def _control_room_internal_view(
     if view == "inegi_readiness":
         from app.services.inegi_readiness import inegi_readiness
 
+        _require_readiness_cartridge(user, "inegi")
         return await _control_room_cache_get_or_set(
             "inegi-readiness",
             user,
@@ -245,6 +188,7 @@ async def _control_room_internal_view(
     if view == "sec_edgar_readiness":
         from app.services.sec_edgar_readiness import sec_edgar_readiness
 
+        _require_readiness_cartridge(user, "sec_edgar")
         return await _control_room_cache_get_or_set(
             "sec-edgar-readiness",
             user,
@@ -350,6 +294,7 @@ async def control_room_sap_successfactors_talent_metadata_readiness(user: dict =
 async def control_room_banxico_readiness(user: dict = Depends(require_authenticated)):
     from app.services.banxico_readiness import banxico_readiness
 
+    _require_readiness_cartridge(user, "banxico")
     return await _control_room_cache_get_or_set("banxico-readiness", user, lambda: banxico_readiness(user))
 
 
@@ -357,6 +302,7 @@ async def control_room_banxico_readiness(user: dict = Depends(require_authentica
 async def control_room_inegi_readiness(user: dict = Depends(require_authenticated)):
     from app.services.inegi_readiness import inegi_readiness
 
+    _require_readiness_cartridge(user, "inegi")
     return await _control_room_cache_get_or_set("inegi-readiness", user, lambda: inegi_readiness(user))
 
 
@@ -364,21 +310,22 @@ async def control_room_inegi_readiness(user: dict = Depends(require_authenticate
 async def control_room_sec_edgar_readiness(user: dict = Depends(require_authenticated)):
     from app.services.sec_edgar_readiness import sec_edgar_readiness
 
+    _require_readiness_cartridge(user, "sec_edgar")
     return await _control_room_cache_get_or_set("sec-edgar-readiness", user, lambda: sec_edgar_readiness(user))
 
 
 @router.post(
     "/sap-successfactors/talent/actions/preview",
-    dependencies=[Depends(require_csrf), Depends(require_permission("datasets.read"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def control_room_sap_successfactors_talent_action_preview(
-    body: dict = Body(default_factory=dict),
-    user: dict = Depends(require_authenticated),
+    body: dict = Body(default_factory=dict), user: dict = Depends(require_authenticated)
 ):
-    return await control_room_service.sap_successfactors_talent_action_preview(
-        user,
-        body if isinstance(body, dict) else {},
-    )
+    preview = control_room_service.sap_successfactors_talent_action_preview
+    return await preview(user, body if isinstance(body, dict) else {})
 
 
 @router.get(
@@ -412,7 +359,7 @@ async def control_room_sap_successfactors_market_validation_run(
 
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
-    """Lightweight, pollable operational summary (persisted state only)."""
+    """Pollable operational summary over the canonical business projection."""
     return await control_room_service.ops_summary(user)
 
 

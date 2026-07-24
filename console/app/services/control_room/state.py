@@ -3,6 +3,25 @@ from __future__ import annotations
 import types
 
 from app.services.control_room import core as _core
+from app.services.control_room.business_alert_projection import build_business_alert
+from app.services.control_room.business_action_mutations import require_exact_count
+from app.services.control_room.business_command_item import (
+    load_persisted_command_item,
+    resolve_command_item,
+)
+from app.services.control_room.business_execution_status import (
+    persist_execution_status,
+)
+from app.services.control_room.business_item_ensure_command import (
+    ensure_authoritative_item_row,
+)
+from app.services.control_room.business_omega_projection import (
+    OmegaProjectionRuntime,
+    build_omega_projection,
+)
+from app.services.control_room.business_state_rows import (
+    diagnostic_metadata as _business_diagnostic_metadata,
+)
 
 
 _RESERVED_GLOBALS = {
@@ -17,6 +36,17 @@ _RESERVED_GLOBALS = {
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
+_core.__dict__.setdefault("business_diagnostic_metadata", _business_diagnostic_metadata)
+_core.__dict__.setdefault("build_business_alert", build_business_alert)
+_core.__dict__.setdefault("build_omega_projection", build_omega_projection)
+_core.__dict__.setdefault("load_persisted_command_item", load_persisted_command_item)
+_core.__dict__.setdefault("OmegaProjectionRuntime", OmegaProjectionRuntime)
+_core.__dict__.setdefault("resolve_command_item", resolve_command_item)
+_core.__dict__.setdefault("require_exact_count", require_exact_count)
+_core.__dict__.setdefault("persist_execution_status", persist_execution_status)
+_core.__dict__.setdefault(
+    "ensure_authoritative_item_row", ensure_authoritative_item_row
+)
 
 
 def _bind_to_core(fn):
@@ -36,7 +66,6 @@ def _bind_to_core(fn):
     return rebound
 
 
-# Persistent state, thresholds, lessons, and alert overlays.
 @_bind_to_core
 def _row_to_public(row: Any) -> dict[str, Any]:
     data = dict(row)
@@ -48,27 +77,12 @@ def _row_to_public(row: Any) -> dict[str, Any]:
 
 @_bind_to_core
 def _actor_id(value: Any) -> int | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    text = str(value).strip()
-    if not text.isdigit():
-        return None
-    parsed = int(text)
-    return parsed if parsed > 0 else None
+    return business_actor_id(value)
 
 
 @_bind_to_core
 def _can_read_workspace_wide(user: dict | None) -> bool:
-    role = str((user or {}).get("role") or "").strip()
-    scoped = str(
-        (user or {}).get("workspace_role") or (user or {}).get("platform_role") or ""
-    ).strip()
-    return role in {"admin", "owner", "super_admin"} or scoped in {
-        "workspace_admin",
-        "tenant_admin",
-    }
+    return business_can_read_workspace_wide(user)
 
 
 @_bind_to_core
@@ -120,7 +134,10 @@ async def _load_threshold_rows(
     if enabled_only:
         where.append("enabled = TRUE")
     try:
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+
+        async def _load(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> list[Any]:
             return await conn.fetch(
                 f"""
                 SELECT id, cartridge_id, anomaly_type, metric, warning_value,
@@ -170,7 +187,10 @@ async def _load_lesson_rows(
         where.append(f"item_id = ${len(params)}")
     params.append(max(1, min(int(limit or 100), 500)))
     try:
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> list[Any]:
+
+        async def _load(
+            conn: Any, _tenant_id: str | None, _workspace_id: str
+        ) -> list[Any]:
             return await conn.fetch(
                 f"""
                 SELECT id, item_id, cartridge_id, anomaly_type, rule,
@@ -291,6 +311,7 @@ def _attach_lessons_to_items(
 ) -> list[dict[str, Any]]:
     if not items:
         return []
+    business_ids = eligible_item_ids(items)
     if not lesson_rows:
         return [
             _with_omega(
@@ -299,7 +320,8 @@ def _attach_lessons_to_items(
                     "related_lessons": item.get("related_lessons") or [],
                     "lesson_count": 0,
                     "suggested_actions": item.get("suggested_actions") or [],
-                }
+                },
+                eligible_parent_ids=business_ids,
             )
             for item in items
         ]
@@ -328,7 +350,8 @@ def _attach_lessons_to_items(
                     "lesson_count": len(related),
                     "learned_rules": rules[:5],
                     "suggested_actions": _suggested_actions_from_lessons(item, related),
-                }
+                },
+                eligible_parent_ids=business_ids,
             )
         )
     enriched.sort(key=_status_sort_key)
@@ -597,282 +620,27 @@ def _decision_intelligence_for_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @_bind_to_core
-def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
-    decision_id = item.get("decision_id")
-    status = item.get("status") or "open"
-    approved = status == "approved"
-    is_source_state = item.get("kind") == "source_state"
-    primary_system = item.get("cartridge") or "platform"
-    impact = _impact_for_item(item)
-    action_templates = _action_templates_for_item(item)
-    execution_status = str(item.get("execution_status") or "not_started")
-    if execution_status not in EXECUTION_STATUSES:
-        execution_status = "not_started"
-    option_label = (
-        "Restaurar fuente de datos" if is_source_state else "Remediar dato/proceso"
-    )
-    action_label = (
-        "Validar materializacion y permisos"
-        if is_source_state
-        else "Validar owner y remediacion"
-    )
-    selected_option_id = str(item.get("selected_option_id") or "remediate")
-    impact_money = (
-        f"${impact['estimate']:,.0f} {impact['currency']} en revision"
-        if impact.get("status") == "ok" and impact.get("estimate") is not None
-        else "Impacto no calculable"
-    )
-    options = [
-        {
-            "id": "remediate",
-            "label": option_label,
-            "action": option_label,
-            "money": impact_money,
-            "time": "1-2 ciclos",
-            "score": 92,
-            "risk": "Bajo",
-            "auto": True,
-            "recommendation": item.get("recommendation"),
-            "selected": False,
-        },
-        {
-            "id": "exception",
-            "label": "Aprobar excepcion temporal",
-            "action": "Aprobar excepcion temporal",
-            "money": "Costo medio",
-            "time": "Mismo dia",
-            "score": 68,
-            "risk": "Medio",
-            "auto": False,
-            "recommendation": "Usar solo con responsable y fecha de control.",
-            "selected": False,
-        },
-        {
-            "id": "monitor",
-            "label": "Monitorear sin cambio inmediato",
-            "action": "Monitorear sin cambio inmediato",
-            "money": "Sin gasto inmediato",
-            "time": "Siguiente refresh",
-            "score": 45,
-            "risk": "Alto",
-            "auto": False,
-            "recommendation": "No recomendado para severidad alta o critica.",
-            "selected": False,
-        },
-    ]
-    intelligence = (
-        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
-    )
-    decision_intelligence = _decision_intelligence_for_item(item)
-    if decision_intelligence:
-        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
-    intelligence_options = (
-        intelligence.get("options")
-        if isinstance(intelligence.get("options"), list)
-        else []
-    )
-    if intelligence_options:
-        options = [
-            {
-                "id": str(
-                    option.get("option_id") or option.get("id") or f"option_{index + 1}"
-                ),
-                "label": str(option.get("label") or "Opcion supervisada"),
-                "action": str(
-                    option.get("action_kind")
-                    or option.get("label")
-                    or "accion_supervisada"
-                ),
-                "money": f"${float(option.get('impact_expected') or 0):,.0f} USD esperado",
-                "time": f"{float(option.get('time_cost') or 0):,.0f} puntos tiempo",
-                "score": int(round(float(option.get("score") or 0))),
-                "risk": f"{float(option.get('risk') or 0):,.0f}",
-                "auto": False,
-                "recommendation": str(
-                    option.get("score_explanation") or item.get("recommendation") or ""
-                ),
-                "selected": bool(option.get("selected")),
-            }
-            for index, option in enumerate(intelligence_options[:3])
-            if isinstance(option, dict)
-        ] or options
-    if selected_option_id not in {option["id"] for option in options}:
-        selected_option_id = options[0]["id"] if options else "remediate"
-    for option in options:
-        option["selected"] = option["id"] == selected_option_id
-    lessons = _lessons_for_item(item)
-    lesson_count = int(item.get("lesson_count") or 0)
-    persisted_priority = item.get("priority") if isinstance(item.get("priority"), dict) else {}
-    if persisted_priority.get("score") is not None:
-        score = max(0, min(100, int(persisted_priority.get("score") or 0)))
-        band = persisted_priority.get("band") or (
-            "critical"
-            if score >= 90
-            else "high"
-            if score >= 75
-            else "medium"
-            if score >= 55
-            else "low"
-        )
-        raw_drivers = persisted_priority.get("drivers")
-        if isinstance(raw_drivers, dict):
-            drivers = [
-                {
-                    "label": str(key).replace("_", " ").title(),
-                    "value": value,
-                    "points": value,
-                }
-                for key, value in raw_drivers.items()
-            ]
-        elif isinstance(raw_drivers, list):
-            drivers = raw_drivers
-        else:
-            drivers = []
-        priority = {
-            **persisted_priority,
-            "score": score,
-            "band": band,
-            "drivers": drivers,
-        }
-    else:
-        priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
-    alert_state = _alert_state(item)
-    control_items = _control_items_for_item(
+def _with_omega(
+    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
+) -> dict[str, Any]:
+    return build_omega_projection(
         item,
-        status=status,
-        decision_id=decision_id,
-        approved=approved,
+        eligible_parent_ids=eligible_parent_ids,
+        runtime=OmegaProjectionRuntime(
+            impact_builder=_impact_for_item,
+            action_templates_builder=_action_templates_for_item,
+            decision_intelligence_builder=_decision_intelligence_for_item,
+            lessons_builder=_lessons_for_item,
+            priority_builder=_priority_payload,
+            alert_state_builder=_alert_state,
+            control_state_builder=_control_state,
+            control_items_builder=_control_items_for_item,
+            external_writeback_enabled=_external_writeback_enabled,
+            execution_statuses=EXECUTION_STATUSES,
+            terminal_statuses=TERMINAL_ITEM_STATUSES,
+            supported_writeback_templates=SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES,
+        ),
     )
-    control_closed = all(
-        str(control.get("status")) == "closed" for control in control_items
-    )
-    return {
-        **item,
-        "alert_state": alert_state,
-        "control_state": _control_state(item),
-        "impact_estimate": impact.get("estimate"),
-        "impact_currency": impact.get("currency"),
-        "impact_status": impact.get("status"),
-        "confidence": impact.get("confidence"),
-        "priority_score": priority["score"],
-        "priority": priority,
-        "impact_drivers": impact.get("drivers"),
-        "impact_formula": impact.get("formula"),
-        "impact_explanation": impact.get("explanation"),
-        "thresholds_applied": item.get("thresholds_applied") or [],
-        "threshold_state": item.get("threshold_state") or "default",
-        "selected_option_id": selected_option_id,
-        "execution_status": execution_status,
-        "action_templates": action_templates,
-        "related_lessons": item.get("related_lessons") or [],
-        "lesson_count": lesson_count,
-        "lesson_applications": item.get("lesson_applications")
-        if isinstance(item.get("lesson_applications"), list)
-        else [],
-        "decision_intelligence": decision_intelligence,
-        "intelligence": intelligence,
-        "omega": {
-            "signals": {
-                "source": item.get("source_dataset"),
-                "severity": item.get("severity"),
-                "detected_at": item.get("detected_at"),
-                "status": status,
-                "priority_score": priority["score"],
-                "priority_band": priority["band"],
-                "threshold_state": item.get("threshold_state") or "default",
-            },
-            "investigation": {
-                "root_cause": item.get("root_cause"),
-                "impact": item.get("impact"),
-                "evidence": item.get("details") or {},
-                "money": impact,
-                "thresholds": item.get("thresholds_applied") or [],
-            },
-            "options": options,
-            "decision": {
-                "decision_id": decision_id,
-                "status": status,
-                "label": f"Decision #{decision_id}" if decision_id else "Pendiente",
-            },
-            "execution": {
-                "status": execution_status,
-                "external_writeback_enabled": _external_writeback_enabled(),
-                "supervised_execution_enabled": True,
-                "execution_contract": "supervised_execution",
-                "supported_writeback_templates": sorted(
-                    SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES
-                ),
-                "templates": action_templates,
-                "actions": [
-                    {
-                        "id": "preview",
-                        "sys": "omega",
-                        "act": "Generar preview de accion",
-                        "label": "Preview seguro",
-                        "done": execution_status
-                        in {"preview_generated", "dry_run_validated", "executed"},
-                        "approved": execution_status
-                        in {"preview_generated", "dry_run_validated", "executed"},
-                        "auto": True,
-                    },
-                    {
-                        "id": "dry_run",
-                        "sys": primary_system,
-                        "act": "Validar dry-run sin write-back",
-                        "label": "Dry-run seguro",
-                        "done": execution_status in {"dry_run_validated", "executed"},
-                        "approved": execution_status
-                        in {"dry_run_validated", "executed"},
-                        "auto": True,
-                    },
-                    {
-                        "id": "owner_review",
-                        "sys": primary_system,
-                        "act": action_label,
-                        "label": action_label,
-                        "done": approved,
-                        "approved": approved,
-                        "auto": False,
-                    },
-                    {
-                        "id": "internal_writeback",
-                        "sys": "omega",
-                        "act": "Crear seguimiento operativo supervisado",
-                        "label": "Ejecucion supervisada",
-                        "done": execution_status == "executed",
-                        "approved": execution_status == "executed",
-                        "auto": False,
-                    },
-                    {
-                        "id": "audit_log",
-                        "sys": "omega",
-                        "act": "Registrar bitacora y evidencia",
-                        "label": "Registrar bitacora y evidencia",
-                        "done": bool(decision_id),
-                        "approved": bool(decision_id),
-                        "auto": True,
-                    },
-                ],
-            },
-            "control": {
-                "owner": item.get("module") or item.get("cartridge"),
-                "cadence": "Proximo refresh operativo",
-                "status": "cerrado" if control_closed else "abierto",
-                "items": control_items,
-            },
-            "lessons": {
-                "rules": lessons,
-                "applied": item.get("lesson_applications")
-                if isinstance(item.get("lesson_applications"), list)
-                else [],
-                "suggested_actions": item.get("suggested_actions")
-                if isinstance(item.get("suggested_actions"), list)
-                else [],
-            },
-            "decision_intelligence": decision_intelligence,
-            "intelligence": intelligence,
-        },
-    }
 
 
 @_bind_to_core
@@ -889,8 +657,6 @@ def _status_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str, str]:
 
 @_bind_to_core
 def _alert_type_for_item(item: dict[str, Any]) -> str:
-    if item.get("kind") == "source_state":
-        return "source_health"
     if str(item.get("threshold_state") or "default") in {"critical", "warning"}:
         return "threshold_breach"
     if int(item.get("lesson_count") or 0) > 0:
@@ -937,85 +703,15 @@ def _alert_state(item: dict[str, Any]) -> dict[str, Any]:
 
 @_bind_to_core
 def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str, Any]:
-    metadata = {
-        "module": item.get("module"),
-        "description": item.get("description"),
-        "recommendation": item.get("recommendation"),
-        "root_cause": item.get("root_cause"),
-        "impact": item.get("impact"),
-        "details": item.get("details") if isinstance(item.get("details"), dict) else {},
-        "sql": item.get("sql"),
-        "impact_payload": impact,
-        "thresholds_applied": item.get("thresholds_applied") or [],
-        "threshold_state": item.get("threshold_state") or "default",
-    }
-    for key in (
-        "source_system",
-        "dataset",
-        "gold_table",
-        "freshness_at",
-        "freshness_field",
-        "data_status",
-        "control_origin",
-        "advisory",
-        "hypothesis",
-        "expected_outcome",
-    ):
-        if item.get(key) is not None:
-            metadata[key] = item.get(key)
-    for key in (
-        "capabilities",
-        "priority",
-        "math_provenance",
-        "monte_carlo",
-        "bayesian_calibration",
-        "analysis_evidence",
-    ):
-        value = item.get(key)
-        if isinstance(value, dict):
-            metadata[key] = value
-    alert_state = (
-        item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    return business_item_metadata(
+        item,
+        impact,
+        decision_intelligence=_decision_intelligence_for_item,
     )
-    if alert_state:
-        metadata["alert_state"] = alert_state
-    control_state = (
-        item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
-    )
-    if control_state:
-        metadata["control_state"] = control_state
-    learned_rules = (
-        item.get("learned_rules") if isinstance(item.get("learned_rules"), list) else []
-    )
-    if learned_rules:
-        metadata["learned_rules"] = learned_rules[:10]
-    lessons = item.get("lessons") if isinstance(item.get("lessons"), list) else []
-    if lessons:
-        metadata["lessons"] = lessons[:10]
-    lesson_applications = (
-        item.get("lesson_applications")
-        if isinstance(item.get("lesson_applications"), list)
-        else []
-    )
-    if lesson_applications:
-        metadata["lesson_applications"] = lesson_applications[:20]
-    intelligence = (
-        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
-    )
-    decision_intelligence = _decision_intelligence_for_item(item)
-    if decision_intelligence:
-        metadata["decision_intelligence"] = decision_intelligence
-        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
-    if intelligence:
-        metadata["intelligence"] = intelligence
-    return metadata
 
 
 @_bind_to_core
 def _alert_message(item: dict[str, Any], alert_type: str) -> str:
-    if alert_type == "source_health":
-        details = item.get("details") if isinstance(item.get("details"), dict) else {}
-        return f"{item.get('source_dataset')} esta {details.get('source_status') or 'sin datos operativos'}."
     if alert_type == "threshold_breach":
         thresholds = item.get("thresholds_applied") or []
         if thresholds:
@@ -1034,109 +730,30 @@ def _alert_message(item: dict[str, Any], alert_type: str) -> str:
 
 
 @_bind_to_core
-def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
-    if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
-        return None
-    alert_state = _alert_state(item)
-    alert_status = str(alert_state.get("state") or "open")
-    if alert_status == "false_positive":
-        return None
-    priority = (
-        item.get("priority")
-        if isinstance(item.get("priority"), dict)
-        else _priority_payload(item)
+def _alert_for_item(
+    item: dict[str, Any], *, eligible_parent_ids: set[str] | None = None
+) -> dict[str, Any] | None:
+    return build_business_alert(
+        item,
+        eligible_parent_ids=eligible_parent_ids,
+        terminal_statuses=TERMINAL_ITEM_STATUSES,
+        severity_weights=ALERT_SEVERITY_WEIGHT,
+        alert_state_builder=_alert_state,
+        priority_builder=_priority_payload,
+        alert_type_builder=_alert_type_for_item,
+        alert_message_builder=_alert_message,
+        external_delivery_enabled=_external_delivery_enabled,
     )
-    score = int(priority.get("score") or item.get("priority_score") or 0)
-    alert_type = _alert_type_for_item(item)
-    threshold_state = str(item.get("threshold_state") or "default")
-    is_agent_alert = item.get("kind") == "agent_alert" or item.get("source") == "agent"
-    should_alert = (
-        is_agent_alert
-        or alert_type in {"source_health", "threshold_breach", "learned_pattern"}
-        or item.get("severity") in {"critical", "high"}
-        or score >= 55
-    )
-    if not should_alert:
-        return None
-    severity = str(priority.get("band") or item.get("severity") or "medium")
-    if severity not in ALERT_SEVERITY_WEIGHT:
-        severity = "medium"
-    delivery_status = {
-        "open": "not_configured",
-        "acknowledged": "acknowledged",
-        "assigned": "assigned",
-        "snoozed": "snoozed",
-    }.get(alert_status, "not_configured")
-    delivery_enabled = _external_delivery_enabled()
-    push_ready = delivery_enabled and alert_status == "open"
-    delivery_reason = (
-        "Push externo habilitado para conectores de delivery."
-        if push_ready
-        else "Push externo deshabilitado en V1 hasta configurar conectores de delivery."
-    )
-    return {
-        "id": f"alert:{item.get('id')}",
-        "item_id": item.get("id"),
-        "alert_type": alert_type,
-        "source": item.get("source") or "system",
-        "advisory": bool(item.get("advisory")),
-        "agent_id": item.get("agent_id"),
-        "agent_run_id": item.get("agent_run_id"),
-        "analysis_type": item.get("analysis_type"),
-        "engine": item.get("engine"),
-        "engine_run_id": item.get("engine_run_id"),
-        "analysis_evidence": item.get("analysis_evidence")
-        if isinstance(item.get("analysis_evidence"), dict)
-        else {},
-        "deduped": bool(item.get("deduped")),
-        "occurrence_count": int(item.get("occurrence_count") or 1),
-        "hypothesis": item.get("hypothesis"),
-        "expected_outcome": item.get("expected_outcome"),
-        "severity": severity,
-        "priority_score": score,
-        "domain": item.get("domain"),
-        "module": item.get("module"),
-        "module_id": item.get("module_id") or item.get("cartridge"),
-        "cartridge": item.get("cartridge"),
-        "connector_id": item.get("connector_id") or item.get("cartridge"),
-        "source_dataset": item.get("source_dataset"),
-        "title": item.get("title"),
-        "message": _alert_message(item, alert_type),
-        "status": alert_status,
-        "owner": alert_state.get("owner"),
-        "note": alert_state.get("note"),
-        "reason": alert_state.get("reason"),
-        "acknowledged_at": alert_state.get("acknowledged_at"),
-        "assigned_at": alert_state.get("assigned_at"),
-        "snoozed_until": alert_state.get("snoozed_until"),
-        "threshold_state": threshold_state,
-        "lesson_count": int(item.get("lesson_count") or 0),
-        "impact_estimate": item.get("impact_estimate"),
-        "impact_currency": item.get("impact_currency") or "USD",
-        "recommended_action": item.get("recommendation"),
-        "drivers": priority.get("drivers") or [],
-        "route_key": f"{item.get('cartridge')}:{item.get('anomaly_type')}:{item.get('module_id') or item.get('cartridge')}",
-        "push_ready": push_ready,
-        "delivery": {
-            "status": delivery_status,
-            "channels": ["email", "slack", "teams"],
-            "enabled": delivery_enabled,
-            "reason": delivery_reason
-            if alert_status == "open"
-            else f"Alerta en estado {alert_status}; {delivery_reason}",
-        },
-        "created_at": item.get("first_seen_at")
-        or item.get("detected_at")
-        or datetime.now(UTC).isoformat(),
-        "updated_at": alert_state.get("updated_at")
-        or item.get("last_seen_at")
-        or datetime.now(UTC).isoformat(),
-    }
 
 
 @_bind_to_core
 def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
-    alerts = [alert for item in items if (alert := _alert_for_item(item))]
+    business_ids = eligible_item_ids(items)
+    alerts = [
+        alert
+        for item in items
+        if (alert := _alert_for_item(item, eligible_parent_ids=business_ids))
+    ]
     alerts.sort(
         key=lambda alert: (
             -int(alert.get("priority_score") or 0),
@@ -1177,325 +794,80 @@ def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 @_bind_to_core
+def _diagnostic_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    return business_diagnostic_metadata(item)
+
+
+@_bind_to_core
+async def _persist_item_state(items: list[dict[str, Any]], user: dict | None) -> None:
+    tenant_id, workspace_id = _workspace_scope(user)
+    await persist_refresh_items(
+        items,
+        user=user or {},
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        actor_id=_actor_id((user or {}).get("id")),
+        workspace_wide=_can_read_workspace_wide(user),
+        pool_factory=auth.pool,
+        run_scoped=_run_with_db_scope,
+        impact_builder=_impact_for_item,
+        metadata_builder=_metadata_for_item,
+        diagnostic_builder=_diagnostic_metadata,
+    )
+
+
+@_bind_to_core
 async def _overlay_item_state(
-    items: list[dict[str, Any]], user: dict | None, *, persist: bool = False
+    items: list[dict[str, Any]], user: dict | None
 ) -> list[dict[str, Any]]:
     if not items:
         return []
-    if not persist:
-        baseline = [_with_omega(item) for item in items]
-        baseline.sort(key=_status_sort_key)
-        return baseline
     tenant_id, workspace_id = _workspace_scope(user)
-    pool = await auth.pool()
     item_ids = [item["id"] for item in items]
+    owner_id = (
+        None if _can_read_workspace_wide(user) else _actor_id((user or {}).get("id"))
+    )
 
-    async def _upsert_and_load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> dict[str, dict[str, Any]]:
-        if persist:
-            for item in items:
-                impact = _impact_for_item(item)
-                try:
-                    await conn.execute(
-                        """
-                        INSERT INTO control_room_items (
-                            tenant_id, workspace_id, item_id, cartridge_id, domain,
-                            source_dataset, item_kind, title, severity, status,
-                            entity_kind, entity_id, entity_label, anomaly_type, metadata,
-                            impact_estimate, impact_currency, confidence, priority_score,
-                            selected_option_id, execution_status,
-                            first_seen_at, last_seen_at
-                        )
-                        VALUES (
-                            $1, $2, $3, $4, $5,
-                            $6, $7, $8, $9, 'open',
-                            $10, $11, $12, $13, $14::jsonb,
-                            $15, $16, $17, $18, $19, $20,
-                            NOW(), NOW()
-                        )
-                        ON CONFLICT (workspace_id, item_id) DO UPDATE
-                        SET cartridge_id = EXCLUDED.cartridge_id,
-                            domain = EXCLUDED.domain,
-                            source_dataset = EXCLUDED.source_dataset,
-                            item_kind = EXCLUDED.item_kind,
-                            title = EXCLUDED.title,
-                            severity = EXCLUDED.severity,
-                            entity_kind = EXCLUDED.entity_kind,
-                            entity_id = EXCLUDED.entity_id,
-                            entity_label = EXCLUDED.entity_label,
-                            anomaly_type = EXCLUDED.anomaly_type,
-                            metadata = control_room_items.metadata || EXCLUDED.metadata,
-                            impact_estimate = EXCLUDED.impact_estimate,
-                            impact_currency = EXCLUDED.impact_currency,
-                            confidence = EXCLUDED.confidence,
-                            priority_score = EXCLUDED.priority_score,
-                            last_seen_at = NOW(),
-                            status = CASE
-                                WHEN control_room_items.status = ANY($21::text[])
-                                THEN control_room_items.status
-                                ELSE control_room_items.status
-                            END
-                        """,
-                        tenant_id,
-                        workspace_id,
-                        item["id"],
-                        item["cartridge"],
-                        item["domain"],
-                        item["source_dataset"],
-                        item["kind"],
-                        item["title"],
-                        item["severity"],
-                        item.get("entity_kind"),
-                        item.get("entity_id"),
-                        item.get("entity_label"),
-                        item.get("anomaly_type"),
-                        json.dumps(_metadata_for_item(item, impact), default=str),
-                        impact.get("estimate"),
-                        impact.get("currency") or "USD",
-                        impact.get("confidence"),
-                        impact.get("priority_score") or 0,
-                        item.get("selected_option_id"),
-                        item.get("execution_status") or "not_started",
-                        sorted(TERMINAL_ITEM_STATUSES),
-                    )
-                except Exception:
-                    break
-
-        rows = await conn.fetch(
-            """
-            SELECT item_id, status, decision_id, metadata, first_seen_at, last_seen_at,
-                   resolved_at, dismissed_at, impact_estimate, impact_currency,
-                   confidence, priority_score, selected_option_id, execution_status
-              FROM control_room_items
-             WHERE workspace_id = $1
-               AND item_id = ANY($2::text[])
-            """,
-            workspace_id,
-            item_ids,
+    async def _load(
+        conn: Any, _tenant_id: str | None, _workspace_id: str
+    ) -> dict[str, dict[str, Any]]:
+        if not _can_read_workspace_wide(user) and owner_id is None:
+            return {}
+        return await load_overlay_state(
+            conn,
+            workspace_id=workspace_id,
+            item_ids=item_ids,
+            tenant_id=tenant_id,
+            owner_id=owner_id,
         )
-        return {row["item_id"]: _row_to_public(row) for row in rows}
 
     try:
-        state_by_id = await _run_with_db_scope(pool, user or {}, _upsert_and_load)
+        pool = await auth.pool()
+        state_by_id = await _run_with_db_scope(pool, user or {}, _load)
     except Exception:
         state_by_id = {}
 
-    merged = []
-    for item in items:
-        state = state_by_id.get(item["id"], {})
-        metadata = _details(state.get("metadata"))
-        status = str(state.get("status") or item.get("status") or "open")
-        if status not in ITEM_STATUSES:
-            status = "open"
-        intelligence = (
-            metadata.get("intelligence")
-            if isinstance(metadata.get("intelligence"), dict)
-            else item.get("intelligence")
-        )
-        if not isinstance(intelligence, dict):
-            intelligence = {}
-        decision_intelligence = metadata.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = intelligence.get("decision_intelligence")
-        if not isinstance(decision_intelligence, dict):
-            decision_intelligence = (
-                item.get("decision_intelligence")
-                if isinstance(item.get("decision_intelligence"), dict)
-                else {}
-            )
-        if decision_intelligence:
-            intelligence = {
-                **intelligence,
-                "decision_intelligence": decision_intelligence,
-            }
-        merged.append(
-            _with_omega(
-                {
-                    **item,
-                    "status": status,
-                    "decision_id": state.get("decision_id") or item.get("decision_id"),
-                    "impact_estimate": state.get("impact_estimate"),
-                    "impact_currency": state.get("impact_currency"),
-                    "confidence": state.get("confidence"),
-                    "priority_score": state.get("priority_score"),
-                    "selected_option_id": state.get("selected_option_id")
-                    or metadata.get("selected_option_id"),
-                    "execution_status": state.get("execution_status")
-                    or metadata.get("execution_status"),
-                    "thresholds_applied": metadata.get("thresholds_applied")
-                    or item.get("thresholds_applied")
-                    or [],
-                    "threshold_state": metadata.get("threshold_state")
-                    or item.get("threshold_state")
-                    or "default",
-                    "alert_state": metadata.get("alert_state")
-                    if isinstance(metadata.get("alert_state"), dict)
-                    else item.get("alert_state"),
-                    "control_state": metadata.get("control_state")
-                    if isinstance(metadata.get("control_state"), dict)
-                    else item.get("control_state"),
-                    "lessons": metadata.get("lessons"),
-                    "learned_rules": metadata.get("learned_rules"),
-                    "lesson_applications": metadata.get("lesson_applications")
-                    if isinstance(metadata.get("lesson_applications"), list)
-                    else [],
-                    "decision_intelligence": decision_intelligence,
-                    "intelligence": intelligence,
-                    "first_seen_at": state.get("first_seen_at"),
-                    "last_seen_at": state.get("last_seen_at"),
-                    "resolved_at": state.get("resolved_at"),
-                    "dismissed_at": state.get("dismissed_at"),
-                }
-            )
-        )
-    merged.sort(key=_status_sort_key)
-    return merged
+    return overlay_business_state(
+        items,
+        state_by_id,
+        item_statuses=ITEM_STATUSES,
+        projector=_with_omega,
+        sort_key=_status_sort_key,
+    )
 
 
 @_bind_to_core
 async def _persisted_item_for_mutation(
     item_id: str, user: dict
 ) -> dict[str, Any] | None:
-    tenant_id, workspace_id = _workspace_scope(user)
-    params: list[Any] = [workspace_id, item_id]
-    tenant_clause = ""
-    if tenant_id:
-        params.append(tenant_id)
-        tenant_clause = f"AND tenant_id::text = ${len(params)}"
-    owner_clause = ""
-    if not _can_read_workspace_wide(user):
-        owner_id = _actor_id((user or {}).get("id"))
-        if owner_id is None:
-            return None
-        params.append(owner_id)
-        owner_clause = f"AND owner_user_id = ${len(params)}"
-    pool = await auth.pool()
-    try:
-        async def _load(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
-            return await conn.fetchrow(
-                f"""
-                SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
-                       severity, status, decision_id, entity_kind, entity_id,
-                       entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
-                       resolved_at, dismissed_at, impact_estimate, impact_currency,
-                       confidence, priority_score, selected_option_id, execution_status
-                  FROM control_room_items
-                 WHERE workspace_id = $1
-                   AND item_id = $2
-                   {tenant_clause}
-                   {owner_clause}
-                """,
-                *params,
-            )
-
-        row = await _run_with_db_scope(pool, user, _load)
-    except Exception:
-        return None
-    if not row:
-        return None
-    try:
-        row_item_id = row["item_id"]
-    except Exception:
-        return None
-    if row_item_id != item_id:
-        return None
-
-    public_row = _row_to_public(row)
-    metadata = _details(public_row.get("metadata"))
-    severity = _severity(public_row["severity"])
-    status = str(public_row["status"] or "open")
-    if status not in ITEM_STATUSES:
-        status = "open"
-    escaped_item_id = item_id.replace("'", "''")
-    intelligence = (
-        metadata.get("intelligence")
-        if isinstance(metadata.get("intelligence"), dict)
-        else {}
+    return await load_persisted_command_item(
+        item_id,
+        user,
+        pool_factory=auth.pool,
+        run_scoped=_run_with_db_scope,
+        item_statuses=ITEM_STATUSES,
+        severity_weights=SEVERITY_WEIGHT,
     )
-    decision_intelligence = metadata.get("decision_intelligence")
-    if not isinstance(decision_intelligence, dict):
-        decision_intelligence = intelligence.get("decision_intelligence")
-    if not isinstance(decision_intelligence, dict):
-        decision_intelligence = {}
-    if decision_intelligence:
-        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
-    item = {
-        "id": public_row["item_id"],
-        "kind": public_row["item_kind"],
-        "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
-        "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
-        "domain": public_row["domain"],
-        "module": metadata.get("module") or public_row["cartridge_id"],
-        "cartridge": public_row["cartridge_id"],
-        "source_dataset": public_row["source_dataset"],
-        "entity_kind": public_row["entity_kind"] or "Entidad",
-        "entity_id": public_row["entity_id"] or "",
-        "entity_label": public_row["entity_label"]
-        or public_row["entity_id"]
-        or public_row["source_dataset"]
-        or "Entidad",
-        "anomaly_type": public_row["anomaly_type"] or "control_room_item",
-        "severity": severity,
-        "severity_weight": SEVERITY_WEIGHT[severity],
-        "detected_at": "",
-        "details": metadata.get("details")
-        if isinstance(metadata.get("details"), dict)
-        else {},
-        "title": public_row["title"],
-        "description": metadata.get("description") or public_row["title"],
-        "recommendation": metadata.get("recommendation")
-        or "Revisar, decidir y registrar evidencia.",
-        "root_cause": metadata.get("root_cause")
-        or "Senal persistida en Sala de Control.",
-        "impact": metadata.get("impact") or "Riesgo operativo.",
-        "sql": metadata.get("sql")
-        or f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'",
-        "status": status,
-        "decision_id": public_row["decision_id"],
-        "impact_estimate": public_row.get("impact_estimate"),
-        "impact_currency": public_row.get("impact_currency"),
-        "confidence": public_row.get("confidence"),
-        "priority_score": public_row.get("priority_score"),
-        "thresholds_applied": metadata.get("thresholds_applied") or [],
-        "threshold_state": metadata.get("threshold_state") or "default",
-        "control_origin": metadata.get("control_origin"),
-        "capabilities": metadata.get("capabilities")
-        if isinstance(metadata.get("capabilities"), dict)
-        else {},
-        "math_provenance": metadata.get("math_provenance")
-        if isinstance(metadata.get("math_provenance"), dict)
-        else {},
-        "monte_carlo": metadata.get("monte_carlo")
-        if isinstance(metadata.get("monte_carlo"), dict)
-        else {},
-        "bayesian_calibration": metadata.get("bayesian_calibration")
-        if isinstance(metadata.get("bayesian_calibration"), dict)
-        else {},
-        "priority": metadata.get("priority")
-        if isinstance(metadata.get("priority"), dict)
-        else {},
-        "selected_option_id": public_row.get("selected_option_id")
-        or metadata.get("selected_option_id"),
-        "execution_status": public_row.get("execution_status")
-        or metadata.get("execution_status"),
-        "alert_state": metadata.get("alert_state")
-        if isinstance(metadata.get("alert_state"), dict)
-        else {},
-        "control_state": metadata.get("control_state")
-        if isinstance(metadata.get("control_state"), dict)
-        else {},
-        "lessons": metadata.get("lessons"),
-        "learned_rules": metadata.get("learned_rules"),
-        "lesson_applications": metadata.get("lesson_applications")
-        if isinstance(metadata.get("lesson_applications"), list)
-        else [],
-        "decision_intelligence": decision_intelligence,
-        "intelligence": intelligence,
-        "first_seen_at": public_row.get("first_seen_at"),
-        "last_seen_at": public_row.get("last_seen_at"),
-        "resolved_at": public_row.get("resolved_at"),
-        "dismissed_at": public_row.get("dismissed_at"),
-    }
-    return _with_omega(item)
 
 
 @_bind_to_core
@@ -1505,10 +877,30 @@ async def _item_for_mutation(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    persisted = await _persisted_item_for_mutation(item_id, user)
-    if persisted:
-        return persisted
-    return await get_item(item_id, user, fetcher=fetcher)
+    return await resolve_command_item(
+        item_id,
+        user,
+        load_persisted=lambda target: _persisted_item_for_mutation(target, user),
+        collect_items=lambda: _collect_items(
+            user,
+            fetcher=fetcher,
+            include_source_state_items=True,
+        ),
+        normalize_lineage=_persisted_intelligence_payload,
+        pool_factory=auth.pool,
+        run_scoped=_run_with_db_scope,
+        projector=_with_omega,
+    )
+
+
+@_bind_to_core
+async def _item_for_read(
+    item_id: str,
+    user: dict,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    return await _item_for_mutation(item_id, user, fetcher=fetcher)
 
 
 @_bind_to_core
@@ -1643,7 +1035,7 @@ async def get_item_activity(
     *,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    item = await _item_for_read(item_id, user, fetcher=fetcher)
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
     event_rows: list[Any] = []
@@ -1651,6 +1043,7 @@ async def get_item_activity(
     decision_action_rows: list[Any] = []
     action_run_rows: list[Any] = []
     outcome_rows: list[Any] = []
+
     async def _load_item_activity(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
     ) -> tuple[list[Any], list[Any], list[Any]]:
@@ -1696,14 +1089,9 @@ async def get_item_activity(
             )
         return list(events), list(executions), list(decision_actions)
 
-    try:
-        event_rows, execution_rows, decision_action_rows = await _run_with_db_scope(
-            pool, user, _load_item_activity
-        )
-    except Exception:
-        event_rows = []
-        execution_rows = []
-        decision_action_rows = []
+    event_rows, execution_rows, decision_action_rows = await _run_with_db_scope(
+        pool, user, _load_item_activity
+    )
 
     async def _load_scoped_activity(
         conn: Any, _tenant_id: str | None, scoped_workspace_id: str
@@ -1739,13 +1127,9 @@ async def get_item_activity(
         )
         return runs, outcomes
 
-    try:
-        action_run_rows, outcome_rows = await _run_with_db_scope(
-            pool, user, _load_scoped_activity
-        )
-    except Exception:
-        action_run_rows = []
-        outcome_rows = []
+    action_run_rows, outcome_rows = await _run_with_db_scope(
+        pool, user, _load_scoped_activity
+    )
 
     activity = [
         *(_event_to_activity(row) for row in event_rows),
@@ -1780,27 +1164,23 @@ async def _record_item_event(
     critical: bool = False,
 ) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
-    try:
-        await pool.execute(
-            """
-            INSERT INTO control_room_item_events (
-                tenant_id, workspace_id, item_id, event_type,
-                actor_id, actor_email, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-            """,
-            tenant_id,
-            workspace_id,
-            item["id"],
-            event_type,
-            user.get("id"),
-            user.get("email"),
-            json.dumps(metadata),
+    result = await pool.execute(
+        """
+        INSERT INTO control_room_item_events (
+            tenant_id, workspace_id, item_id, event_type,
+            actor_id, actor_email, metadata
         )
-    except Exception:
-        if critical:
-            raise
-        return
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        """,
+        tenant_id,
+        workspace_id,
+        item["id"],
+        event_type,
+        user.get("id"),
+        user.get("email"),
+        json.dumps(metadata),
+    )
+    require_exact_count(result, "INSERT")
 
 
 @_bind_to_core
@@ -1827,32 +1207,30 @@ async def _persist_lessons(
 ) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
     for rule in lessons:
-        try:
-            await pool.execute(
-                """
-                INSERT INTO control_room_lessons (
-                    tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
-                    rule, source_decision_id, confidence, metadata
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-                """,
-                tenant_id,
-                workspace_id,
-                item["id"],
-                item.get("cartridge") or "platform",
-                item.get("anomaly_type") or "control_room_item",
-                rule,
-                decision_id,
-                _impact_for_item(item).get("confidence") or 0.7,
-                json.dumps(
-                    {
-                        "source_dataset": item.get("source_dataset"),
-                        "status": item.get("status"),
-                    }
-                ),
+        result = await pool.execute(
+            """
+            INSERT INTO control_room_lessons (
+                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+                rule, source_decision_id, confidence, metadata
             )
-        except Exception:
-            return
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            item.get("cartridge") or "platform",
+            item.get("anomaly_type") or "control_room_item",
+            rule,
+            decision_id,
+            _impact_for_item(item).get("confidence") or 0.7,
+            json.dumps(
+                {
+                    "source_dataset": item.get("source_dataset"),
+                    "status": item.get("status"),
+                }
+            ),
+        )
+        require_exact_count(result, "INSERT")
 
 
 @_bind_to_core
@@ -1864,26 +1242,13 @@ async def _set_execution_status(
     execution_status: str,
     critical: bool = False,
 ) -> None:
-    workspace_id = _workspace_id(user)
-    try:
-        await pool.execute(
-            """
-            UPDATE control_room_items
-               SET execution_status = $1,
-                   metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                   last_seen_at = NOW()
-             WHERE workspace_id = $2
-               AND item_id = $3
-            """,
-            execution_status,
-            workspace_id,
-            item["id"],
-            json.dumps({"execution_status": execution_status}),
-        )
-    except Exception:
-        if critical:
-            raise
-        return
+    await persist_execution_status(
+        pool,
+        workspace_id=_workspace_id(user),
+        item_id=item["id"],
+        owner_user_id=expected_business_item_owner(item, user),
+        execution_status=execution_status,
+    )
 
 
 @_bind_to_core
@@ -1894,64 +1259,18 @@ async def _ensure_item_row(
     item: dict[str, Any],
     status: str = "open",
     critical: bool = False,
+    allow_diagnostic_transition: bool = False,
 ) -> None:
-    tenant_id, workspace_id = _workspace_scope(user)
-    impact = _impact_for_item(item)
-    try:
-        await pool.execute(
-            """
-            INSERT INTO control_room_items (
-                tenant_id, workspace_id, item_id, cartridge_id, domain,
-                source_dataset, item_kind, title, severity, status,
-                entity_kind, entity_id, entity_label, anomaly_type, metadata,
-                impact_estimate, impact_currency, confidence, priority_score,
-                selected_option_id, execution_status
-            )
-            VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15::jsonb,
-                $16, $17, $18, $19, $20, $21
-            )
-            ON CONFLICT (workspace_id, item_id) DO UPDATE
-            SET last_seen_at = NOW(),
-                impact_estimate = EXCLUDED.impact_estimate,
-                impact_currency = EXCLUDED.impact_currency,
-                confidence = EXCLUDED.confidence,
-                priority_score = EXCLUDED.priority_score,
-                status = CASE
-                    WHEN control_room_items.status = ANY($22::text[])
-                    THEN control_room_items.status
-                    ELSE EXCLUDED.status
-                END
-            """,
-            tenant_id,
-            workspace_id,
-            item["id"],
-            item["cartridge"],
-            item["domain"],
-            item["source_dataset"],
-            item["kind"],
-            item["title"],
-            item["severity"],
-            status,
-            item.get("entity_kind"),
-            item.get("entity_id"),
-            item.get("entity_label"),
-            item.get("anomaly_type"),
-            json.dumps(_metadata_for_item(item, impact), default=str),
-            impact.get("estimate"),
-            impact.get("currency") or "USD",
-            impact.get("confidence"),
-            impact.get("priority_score") or 0,
-            item.get("selected_option_id"),
-            item.get("execution_status") or "not_started",
-            sorted(TERMINAL_ITEM_STATUSES),
-        )
-    except Exception:
-        if critical:
-            raise
-        return
+    await ensure_authoritative_item_row(
+        pool,
+        user=user,
+        item=item,
+        status=status,
+        allow_diagnostic_transition=allow_diagnostic_transition,
+        impact_builder=_impact_for_item,
+        metadata_builder=_metadata_for_item,
+        terminal_statuses=TERMINAL_ITEM_STATUSES,
+    )
 
 
 @_bind_to_core
@@ -2023,7 +1342,9 @@ async def upsert_threshold(
     metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
     pool = await auth.pool()
 
-    async def _write_threshold(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> Any:
+    async def _write_threshold(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> Any:
         return await conn.fetchrow(
             """
             INSERT INTO control_room_thresholds (
@@ -2085,6 +1406,10 @@ async def list_lessons(
         item_id=item_id,
         limit=100,
     )
+    lessons = filter_by_eligible_parent(
+        lessons,
+        eligible_item_ids(await _persisted_business_items(user)),
+    )
     return {
         "lessons": lessons,
         "summary": _lesson_insights(lessons),
@@ -2105,7 +1430,12 @@ async def get_suggested_actions(
         limit=100,
     )
     item_lessons = await _load_lesson_rows(user, item_id=item.get("id"), limit=100)
-    lessons = _dedupe_lessons([*lesson_rows, *item_lessons])
+    persisted_items = await _persisted_business_items(user)
+    business_ids = eligible_item_ids([*persisted_items, item])
+    lessons = filter_by_eligible_parent(
+        _dedupe_lessons([*lesson_rows, *item_lessons]),
+        business_ids,
+    )
     suggestions = _suggested_actions_from_lessons(item, lessons, limit=limit)
     return {
         "item_id": item.get("id"),
@@ -2157,9 +1487,12 @@ __all__ = (
     "_alert_message",
     "_alert_for_item",
     "_alert_payload",
+    "_diagnostic_metadata",
+    "_persist_item_state",
     "_overlay_item_state",
     "_persisted_item_for_mutation",
     "_item_for_mutation",
+    "_item_for_read",
     "_event_to_activity",
     "_execution_to_activity",
     "_decision_action_to_activity",

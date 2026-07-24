@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MONITOR_SOURCE = (
-    ROOT / "console/app/domains/agentops/successfactors_talent_monitor.py"
-)
+MONITOR_SOURCE = ROOT / "console/app/domains/agentops/successfactors_talent_monitor.py"
 
 
 def test_agent_schedule_runs_migration_enforces_one_run_per_fire_time():
@@ -15,10 +14,15 @@ def test_agent_schedule_runs_migration_enforces_one_run_per_fire_time():
     assert "scheduled_fire_at   TIMESTAMPTZ NOT NULL" in sql
     assert "agent_schedule_runs_fire_uidx" in sql
     assert "ON agent_schedule_runs (agent_id, schedule_key, scheduled_fire_at)" in sql
-    assert "agent_run_id        BIGINT REFERENCES agent_runs(id) ON DELETE SET NULL" in sql
+    assert (
+        "agent_run_id        BIGINT REFERENCES agent_runs(id) ON DELETE SET NULL" in sql
+    )
     assert "ALTER TABLE agent_schedule_runs FORCE ROW LEVEL SECURITY" in sql
     assert "omega_rls_workspace_matches(tenant_id, workspace_id)" in sql
-    assert "GRANT USAGE, SELECT ON SEQUENCE agent_schedule_runs_id_seq TO omega_console" in sql
+    assert (
+        "GRANT USAGE, SELECT ON SEQUENCE agent_schedule_runs_id_seq TO omega_console"
+        in sql
+    )
 
 
 def test_airflow_agent_runner_sends_exact_schedule_fire_to_console():
@@ -35,7 +39,9 @@ def test_airflow_agent_runner_sends_exact_schedule_fire_to_console():
 
 
 def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
-    source = (ROOT / "console/app/services/agent_runtime.py").read_text(encoding="utf-8")
+    source = (ROOT / "console/app/services/agent_runtime.py").read_text(
+        encoding="utf-8"
+    )
     section = source.split("async def run_scheduled_monitor", 1)[1]
     assert '"mcp-infra__wisdom_bits__run"' in section
     assert '"mcp-infra__control_room__raise_analysis_alert"' in section
@@ -55,15 +61,15 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
     assert 'dataset == "sap_successfactors_talent_simulation_inputs"' in source
     assert 'ready_statuses = {"ready"}' in source
     assert "async def _get_gold_pool()" in source
-    assert "os.environ.get(\"GOLD_DATABASE_URL\")" in source
+    assert 'os.environ.get("GOLD_DATABASE_URL")' in source
     assert "async def _monitor_resolve_decision_engine_inputs" in source
     assert '"engine_inputs": decision_engine_inputs' in section
     load_agent_section = source.split("async def load_agent(", 1)[1].split(
         "async def load_agent_by_slug", 1
     )[0]
-    gold_lookup_section = source.split("async def _monitor_latest_gold_row", 1)[1].split(
-        "async def _monitor_resolve_dataset_inputs", 1
-    )[0]
+    gold_lookup_section = source.split("async def _monitor_latest_gold_row", 1)[
+        1
+    ].split("async def _monitor_resolve_dataset_inputs", 1)[0]
     assert "pool = await _get_pool()" in load_agent_section
     assert "pool = await _get_gold_pool()" in gold_lookup_section
     assert "scheduled monitor requires extra.monitor contract" in section
@@ -72,20 +78,24 @@ def test_agent_runtime_scheduled_monitor_is_deterministic_and_auditable():
 
 
 def test_agent_runtime_keeps_wisdombit_as_decision_source_after_simulation():
-    source = (ROOT / "console/app/services/agent_runtime.py").read_text(encoding="utf-8")
+    source = (ROOT / "console/app/services/agent_runtime.py").read_text(
+        encoding="utf-8"
+    )
     section = source.split(
         'if engine in {"decision_orchestrator", "decision__orchestrate", "orchestrator"}:',
         1,
     )[1].split('if engine in {"control_room_alert"', 1)[0]
 
     assert 'source_type = "monte_carlo_simulation"' not in section
-    assert "source_type = \"wisdom_bit\"" in section
+    assert 'source_type = "wisdom_bit"' in section
     assert "source_id = wisdom_bit_id" in section
     assert "upstream_monte_carlo_simulation_id" in section
 
 
 def test_agent_runtime_audit_normalizes_structured_tool_errors():
-    source = (ROOT / "console/app/services/agent_runtime.py").read_text(encoding="utf-8")
+    source = (ROOT / "console/app/services/agent_runtime.py").read_text(
+        encoding="utf-8"
+    )
     audit_section = source.split("async def _audit_agent_tool", 1)[1].split(
         "def _make_invoke", 1
     )[0]
@@ -120,23 +130,41 @@ def test_sync_agentops_candidates_require_workspace_scope():
 
 
 def test_scheduled_agents_fail_closed_without_monitor_contract():
-    source = (ROOT / "console/app/main.py").read_text(encoding="utf-8")
+    source = ast.unparse(
+        ast.parse((ROOT / "console/app/main.py").read_text(encoding="utf-8"))
+    ).replace("'", '"')
     section = source.split("async def api_agents_invoke_scheduled", 1)[1]
-    assert "scheduled_user_context = scheduled_scope if scheduled_scope.get(\"workspace_id\") else None" in section
+    assert (
+        'scheduled_user_context = scheduled_scope if scheduled_scope.get("workspace_id") else None'
+        in section
+    )
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in section
     assert "_repair_loaded_successfactors_talent_monitor_if_needed" in section
     assert "scheduled agents require monitor role and monitor contract" in section
     assert "run_scheduled_monitor" in section
-    assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in section
+    assert (
+        "result = await _agent_runtime.run(agent, message, history=[], user=None)"
+        not in section
+    )
 
-    v1_source = (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
+    v1_source = ast.unparse(
+        ast.parse(
+            (ROOT / "console/app/routers/v1/agents.py").read_text(encoding="utf-8")
+        )
+    ).replace("'", '"')
     v1_section = v1_source.split("async def api_agents_invoke_scheduled", 1)[1]
-    assert "scheduled_user_context = scheduled_scope if scheduled_scope.get(\"workspace_id\") else None" in v1_section
+    assert (
+        'scheduled_user_context = scheduled_scope if scheduled_scope.get("workspace_id") else None'
+        in v1_section
+    )
     assert "load_agent(agent_id, user_context=scheduled_user_context)" in v1_section
     assert "_repair_loaded_successfactors_talent_monitor_if_needed" in v1_section
     assert "scheduled agents require monitor role and monitor contract" in v1_section
     assert "run_scheduled_monitor" in v1_section
-    assert "result = await _agent_runtime.run(agent, message, history=[], user=None)" not in v1_section
+    assert (
+        "result = await _agent_runtime.run(agent, message, history=[], user=None)"
+        not in v1_section
+    )
 
 
 def test_successfactors_monitor_runtime_repair_before_agent_reads():
@@ -145,7 +173,7 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
     assert "def _successfactors_talent_monitor_needs_runtime_repair" in source
     assert '"sap_successfactors_talent_monitor"' in monitor_source
     assert (
-        "role != \"monitor\" or not has_operational_monitor_contract(agent)"
+        'role != "monitor" or not has_operational_monitor_contract(agent)'
         in monitor_source
     )
     list_section = source.split("async def api_agents_list", 1)[1].split(
@@ -173,7 +201,7 @@ def test_successfactors_monitor_runtime_repair_before_agent_reads():
         "def coerce_successfactors_talent_monitor_payload",
         1,
     )[1]
-    assert 'slug != SUCCESSFACTORS_TALENT_MONITOR_SLUG' in coerce_section
+    assert "slug != SUCCESSFACTORS_TALENT_MONITOR_SLUG" in coerce_section
     assert 'patched["extra"] = merged_extra' in coerce_section
     assert 'patched["role"] = "monitor"' in coerce_section
     assert 'patched["allowed_tools"] = merge_agent_tools' in coerce_section

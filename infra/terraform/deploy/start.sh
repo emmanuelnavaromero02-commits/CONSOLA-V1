@@ -14,7 +14,8 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-bash /opt/modecissions/infra/bootstrap-keys.sh .env
+MODECISSIONS_BOOTSTRAP_CONTROL_ROOM_EVIDENCE=false \
+  bash /opt/modecissions/infra/bootstrap-keys.sh .env
 
 set -a
 source .env

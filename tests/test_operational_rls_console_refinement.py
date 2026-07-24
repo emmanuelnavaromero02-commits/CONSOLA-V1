@@ -59,7 +59,9 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 def _require_docker() -> None:
     result = _docker("info", check=False)
     if result.returncode != 0:
-        pytest.skip(f"Docker is required for live operational RLS tests: {result.stderr.strip()}")
+        pytest.skip(
+            f"Docker is required for live operational RLS tests: {result.stderr.strip()}"
+        )
 
 
 def _ensure_postgres_image() -> None:
@@ -350,6 +352,15 @@ def _role_dsn(dsn: str, role: str, password: str) -> str:
     return dsn.replace(f"{POSTGRES_USER}:{POSTGRES_PASSWORD}", f"{role}:{password}")
 
 
+@pytest.fixture(scope="module")
+def omega_console_live_dsn(postgres_with_real_init_schema: str) -> str:
+    return _role_dsn(
+        postgres_with_real_init_schema,
+        "omega_console",
+        OMEGA_CONSOLE_PASSWORD,
+    )
+
+
 async def _visible_rows(
     dsn: str,
     *,
@@ -417,9 +428,13 @@ async def _visible_rows(
                 )
                 result.update(
                     {
-                        "control_room_items": [row["item_id"] for row in control_room_items],
+                        "control_room_items": [
+                            row["item_id"] for row in control_room_items
+                        ],
                         "rag_sources": [row["name"] for row in rag_sources],
-                        "entity_watermarks": [row["entity_name"] for row in entity_watermarks],
+                        "entity_watermarks": [
+                            row["entity_name"] for row in entity_watermarks
+                        ],
                     }
                 )
             return result
@@ -528,7 +543,9 @@ def test_console_and_refinement_roles_are_nobypassrls(postgres_with_real_init_sc
     assert roles == {"omega_console": False, "omega_refinement": False}
 
 
-def test_final_owner_policies_for_critical_tables_are_scoped(postgres_with_real_init_schema):
+def test_final_owner_policies_for_critical_tables_are_scoped(
+    postgres_with_real_init_schema,
+):
     rows = asyncio.run(_load_owner_policies(postgres_with_real_init_schema))
     by_table: dict[str, list[asyncpg.Record]] = {}
     for row in rows:
@@ -543,14 +560,18 @@ def test_final_owner_policies_for_critical_tables_are_scoped(postgres_with_real_
             if "omega_console" in row["roles"] or "omega_refinement" in row["roles"]
         ]
         assert owner_rows, f"{table} must have a console/refinement scoped policy"
-        assert any(row["policyname"] == "console_refinement_scope_rls" for row in owner_rows)
+        assert any(
+            row["policyname"] == "console_refinement_scope_rls" for row in owner_rows
+        )
         for row in owner_rows:
             assert row["policyname"] != f"{table}_platform_owner_rls"
             assert row["qual"].strip().lower() not in {"true", "(true)"}
             assert row["with_check"].strip().lower() not in {"true", "(true)"}
 
 
-def test_console_and_refinement_cannot_cross_workspace_rows(postgres_with_real_init_schema):
+def test_console_and_refinement_cannot_cross_workspace_rows(
+    postgres_with_real_init_schema,
+):
     result = asyncio.run(_run_isolation_probe(postgres_with_real_init_schema))
     probe = result["probe"]
 
