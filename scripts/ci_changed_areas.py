@@ -15,6 +15,11 @@ import re
 import subprocess
 from pathlib import Path
 
+try:
+    from scripts.ci_control_room_paths import control_room_changed
+except ModuleNotFoundError:
+    from ci_control_room_paths import control_room_changed
+
 
 SERVICES = {
     "console": "./console",
@@ -89,7 +94,9 @@ def _default_base_head() -> tuple[str, str]:
     head = os.environ.get("GITHUB_SHA", "HEAD")
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     event_path = os.environ.get("GITHUB_EVENT_PATH", "")
-    if event_name == "pull_request" and event_path:
+    if event_name == "pull_request":
+        if not event_path:
+            raise RuntimeError("GITHUB_EVENT_PATH is required for pull_request")
         event = json.loads(Path(event_path).read_text(encoding="utf-8"))
         return event["pull_request"]["base"]["sha"], event["pull_request"]["head"]["sha"]
     if event_name == "push":
@@ -98,18 +105,23 @@ def _default_base_head() -> tuple[str, str]:
             event = json.loads(Path(event_path).read_text(encoding="utf-8"))
             before = event.get("before", "")
         if before and not _zero_sha(before):
+            subprocess.run(["git", "merge-base", "--is-ancestor", before, head], check=True)
             return before, head
-    try:
-        return _run(["git", "rev-parse", f"{head}^"]), head
-    except subprocess.CalledProcessError:
-        return head, head
+        if _zero_sha(before):
+            raise RuntimeError("push event has no safe before SHA")
+        if not before:
+            raise RuntimeError("push event is missing its before SHA")
+    return _run(["git", "rev-parse", f"{head}^"]), head
 
 
 def _changed_files(base: str, head: str) -> list[str]:
-    if base == head:
-        return []
-    output = _run(["git", "diff", "--name-only", f"{base}...{head}"])
-    return [line.strip() for line in output.splitlines() if line.strip()]
+    output = subprocess.check_output(["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}", "--"])
+    parts = output.split(b"\0")
+    if parts[-1] != b"":
+        raise RuntimeError("git diff did not return a NUL-terminated path list")
+    if any(not path for path in parts[:-1]):
+        raise RuntimeError("git diff returned an empty path")
+    return [os.fsdecode(path) for path in parts[:-1]]
 
 
 def _any(files: list[str], *patterns: str) -> bool:
@@ -260,7 +272,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
         for root in PY_RUNTIME_ROOTS
     )
     frontend = _any(files, r"^console-next/", r"^console/app/static/console-next/")
-    infra = _any(files, r"^infra/", r"^\.github/workflows/", r"^scripts/ci_changed_areas\.py$", r"^scripts/(wait_for_health|smoke|production|run-e2e|v1_stress)")
+    infra = _any(files, r"^infra/", r"^\.github/workflows/", r"^scripts/ci_(?:changed_areas|control_room_paths)\.py$", r"^scripts/(wait_for_health|smoke|production|run-e2e|v1_stress)")
     cartridge = _any(files, r"^cartridges/")
     dataset = _any(files, r"^cartridges/[^/]+/datasets/.*\.sql$", r"^tests/test_.*datasets.*\.py$")
     deps_python = _any(files, r"(^|/)requirements\.txt$")
@@ -303,6 +315,7 @@ def _flags(files: list[str]) -> dict[str, bool | str]:
     )
 
     flags: dict[str, bool | str] = {
+        "control_room": control_room_changed(files),
         "python": py_file,
         "python_runtime": py_runtime,
         "frontend": frontend,
@@ -340,6 +353,11 @@ def _write_outputs(flags: dict[str, bool | str], files: list[str]) -> None:
             rendered = "true" if value else "false"
         else:
             rendered = value
+            if "\n" in rendered or "\r" in rendered:
+                raise ValueError(f"{key} contains an unsafe line break")
+            shell_targets = {"root_test_targets", "cartridge_test_targets", "cartridge_requirement_paths"}
+            if key in shell_targets and not re.fullmatch(r"(?:[A-Za-z0-9_./-]+(?: [A-Za-z0-9_./-]+)*)?", rendered):
+                raise ValueError(f"{key} contains an unsafe shell target")
         lines.append(f"{key}={rendered}")
     text = "\n".join(lines) + "\n"
     if output_path:
@@ -356,7 +374,9 @@ def main() -> int:
     parser.add_argument("--files", nargs="*")
     args = parser.parse_args()
 
-    if args.files is not None and len(args.files) > 0:
+    if (args.base is None) != (args.head is None):
+        parser.error("--base and --head must be provided together")
+    if args.files is not None:
         files = args.files
     else:
         base, head = (args.base, args.head) if args.base and args.head else _default_base_head()
