@@ -1,12 +1,14 @@
 from pathlib import Path
 
+from scripts.ci_control_room_paths import control_room_changed
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 1449
+FOCAL_MINIMUM = 1609
 POSTGRES_MINIMUM = 48
 
-REQUIRED_PATHS = (
+P11_RELEVANT_PATHS = (
     "console/app/main.py",
     "console/app/routers/control_room.py",
     "console/app/routers/control_room_surfaces.py",
@@ -92,9 +94,12 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_aws_evidence_update_env.py",
     "tests/test_aws_secrets_manager_config.py",
     "tests/test_control_room_ci_contract.py",
+    "tests/test_control_room_gate_contract.py",
+    "tests/test_control_room_path_policy.py",
     "tests/test_control_room_evidence_keyring_runtime.py",
     "tests/test_control_room_evidence_signing_wiring.py",
     "tests/test_intelligence_engine_contract.py",
+    "tests/test_mcp_infra_pdf_ci_contract.py",
     "tests/test_v1_router_mount.py",
 )
 
@@ -115,10 +120,9 @@ def _workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_control_room_workflow_has_required_path_triggers():
-    triggers = _workflow_text().split("jobs:", 1)[0]
-    for path in (*REQUIRED_PATHS, *REQUIRED_RELATED_TESTS):
-        assert f'"{path}"' in triggers
+def test_p11_paths_activate_the_fail_closed_detector():
+    for path in P11_RELEVANT_PATHS:
+        assert control_room_changed((path,)), path
 
 
 def test_control_room_workflow_runs_all_related_contract_suites():

@@ -2,82 +2,30 @@ name: Control Room PostgreSQL RLS
 
 on:
   pull_request:
-    paths:
-      - "console/app/main.py"
-      - "console/app/routers/control_room.py"
-      - "console/app/routers/control_room_surfaces.py"
-      - "console/app/schemas/__init__.py"
-      - "console/app/schemas/control_room_diagnostic_enums.py"
-      - "console/app/schemas/control_room_surfaces.py"
-      - "console/app/dependencies.py"
-      - "console/app/domains/decisions/**"
-      - "console/app/domains/pipeline/control_room_refresh.py"
-      - "console/app/domains/pipeline/sync_state.py"
-      - "console/app/services/permissions.py"
-      - "console/app/services/audit_service.py"
-      - "console/app/services/security_context.py"
-      - "console/app/services/adapter_idempotency.py"
-      - "console/app/services/adapters/**"
-      - "console/app/services/db_scope.py"
-      - "console/app/services/banxico_readiness.py"
-      - "console/app/services/inegi_readiness.py"
-      - "console/app/services/sec_edgar_readiness.py"
-      - "console/app/services/intelligence/decision_orchestrator.py"
-      - "console/app/services/intelligence/control_room_observation.py"
-      - "console/app/services/intelligence/evidence_refs.py"
-      - "console/app/services/intelligence/gold_fetcher.py"
-      - "console/app/services/intelligence/persistence.py"
-      - "console/app/services/intelligence/readiness.py"
-      - "console/app/services/control_room/**"
-      - "console/tests/control_room_*.py"
-      - "console/tests/conftest.py"
-      - "console/tests/test_audit_service_transactional.py"
-      - "console/tests/test_control_room*.py"
-      - "console/tests/test_decision*.py"
-      - "console/tests/test_intelligence_control_room_canonical_persistence.py"
-      - "console/tests/test_intelligence_evidence_refs_attestation.py"
-      - "console/tests/test_gold_fetcher.py"
-      - "console/tests/test_ops_summary_and_version.py"
-      - "console/tests/test_pipeline_extract.py"
-      - "console/tests/test_scoped_surface_hardening.py"
-      - "tests/decision_orchestrator_harness.py"
-      - "tests/test_control_room*.py"
-      - "tests/test_control_room_live_postgres*.py"
-      - "tests/test_decision*.py"
-      - "tests/test_pipeline_control_room_refresh.py"
-      - "tests/test_agentops_scheduled_monitor_contract.py"
-      - "tests/test_aws_beta_operations.py"
-      - "tests/test_aws_bootstrap_shared_env_boundary.py"
-      - "tests/test_aws_evidence_compose_isolation.py"
-      - "tests/test_aws_env_pair_transaction.py"
-      - "tests/test_aws_ssm_deploy_workflow.py"
-      - "tests/test_aws_evidence_env_isolation.py"
-      - "tests/test_aws_evidence_update_env.py"
-      - "tests/test_aws_secrets_manager_config.py"
-      - "tests/test_control_room_ci_contract.py"
-      - "tests/test_control_room_evidence_keyring_runtime.py"
-      - "tests/test_control_room_evidence_signing_wiring.py"
-      - "tests/test_intelligence_engine_contract.py"
-      - "tests/test_v1_router_mount.py"
-      - "tests/test_operational_rls_console_refinement.py"
-      - "tests/test_operational_rls_policy_guard.py"
-      - "tests/conftest.py"
-      - "infra/.env.example"
-      - "infra/bootstrap-keys.sh"
-      - "infra/bootstrap.sh"
-      - "infra/docker-compose.yml"
-      - "infra/init/**"
-      - "infra/terraform-gcp/**"
-      - "infra/terraform/deploy/**"
-      - "infra/terraform/infra/secretsmanager.tf"
-      - "scripts/aws-env-pair.sh"
-      - "scripts/aws-entrypoint.sh"
-      - "scripts/validate-evidence-keyring.py"
-      - ".github/workflows/deploy-aws.yml"
-      - ".github/workflows/control-room-postgres-rls.yml"
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      control_room: ${{ steps.detect.outputs.control_room }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        run: python3 scripts/ci_changed_areas.py
+
   control-room-postgres-rls:
+    needs: changes
+    if: needs.changes.outputs.control_room == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -121,9 +69,12 @@ jobs:
             tests/test_aws_evidence_update_env.py \
             tests/test_aws_secrets_manager_config.py \
             tests/test_control_room_ci_contract.py \
+            tests/test_control_room_gate_contract.py \
+            tests/test_control_room_path_policy.py \
             tests/test_control_room_evidence_keyring_runtime.py \
             tests/test_control_room_evidence_signing_wiring.py \
             tests/test_intelligence_engine_contract.py \
+            tests/test_mcp_infra_pdf_ci_contract.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
@@ -164,6 +115,63 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=1449, label="Focal Control Room")
+          verify_junit("/tmp/control-room-focal.xml", minimum=1609, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=48, label="Live PostgreSQL/RLS")
           PY
+
+  no-control-room-needed:
+    needs: changes
+    if: needs.changes.outputs.control_room == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No Control Room changes detected"
+
+  control-room-gate:
+    name: control-room-gate
+    needs:
+      - changes
+      - control-room-postgres-rls
+      - no-control-room-needed
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Enforce fail-closed Control Room results
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CONTROL_ROOM: ${{ needs.changes.outputs.control_room }}
+          CONTROL_ROOM_TESTS_RESULT: ${{ needs['control-room-postgres-rls'].result }}
+          NO_CONTROL_ROOM_NEEDED_RESULT: ${{ needs['no-control-room-needed'].result }}
+        run: |
+          set -euo pipefail
+
+          changes="${CHANGES_RESULT-}"
+          control_room="${CONTROL_ROOM-}"
+          tests="${CONTROL_ROOM_TESTS_RESULT-}"
+          noop="${NO_CONTROL_ROOM_NEEDED_RESULT-}"
+
+          if [[ "$changes" != "success" ]]; then
+            echo "::error::changes must be success; got '${changes:-<missing>}'"
+            exit 1
+          fi
+
+          case "$control_room" in
+            true)
+              if [[ "$tests" != "success" || "$noop" != "skipped" ]]; then
+                echo "::error::relevant changes require tests=success and noop=skipped; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+                exit 1
+              fi
+              ;;
+            false)
+              if [[ "$tests" != "skipped" || "$noop" != "success" ]]; then
+                echo "::error::irrelevant changes require tests=skipped and noop=success; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::control_room must be exactly true or false; got '${control_room:-<missing>}'"
+              exit 1
+              ;;
+          esac
