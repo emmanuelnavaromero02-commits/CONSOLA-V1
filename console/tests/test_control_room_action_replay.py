@@ -104,6 +104,40 @@ async def test_guarded_reservation_cannot_create_after_failed_guard():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", (403, 404))
+async def test_access_rejections_never_attempt_replay(status_code: int):
+    replay = AsyncMock()
+    reserve = AsyncMock()
+    with (
+        patch(
+            "app.services.control_room.business_action_reservation.require_approved_execution",
+            side_effect=HTTPException(status_code, "not visible"),
+        ),
+        patch(
+            "app.services.control_room.business_action_reservation.matching_action_replay",
+            replay,
+        ),
+        patch(
+            "app.services.control_room.business_action_reservation.acquire_action_reservation",
+            reserve,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await acquire_guarded_action_reservation(
+                object(),
+                user=_user(),
+                item=_item(),
+                template_id="create_followup_task",
+                adapter_name="internal_followup_task",
+                operation="execute",
+            )
+
+    assert exc.value.status_code == status_code
+    replay.assert_not_awaited()
+    reserve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_replay_rejects_mismatched_stored_contract():
     authorization = {"effective_permissions": ["control_room.execute"]}
     contract = action_reservation_contract(
