@@ -38,8 +38,10 @@ def _text(item: Mapping[str, object], *keys: str) -> str:
 
 
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_ALNUM_BOUNDARY = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
 _IDENTIFIER_BOUNDARY = re.compile(r"[./:\\_\-\s\[\]]+")
-_TECHNICAL_TIERS = frozenset({"bronze", "silver", "gold", "raw", "staging"})
+_EXPLICIT_NAMESPACE_BOUNDARY = re.compile(r"[./:\\\[\]]")
+_NAMESPACE_MARKERS = frozenset({"analytics", "tenant"})
 
 
 def _title_candidates(
@@ -59,25 +61,55 @@ def _is_technical_title(
     identity: BusinessSurfaceIdentity,
     value: str,
 ) -> bool:
+    candidate_tokens = _canonical_identifier(value)
     technical_ids = {
-        identity.module_id.casefold(),
-        *(
-            candidate.casefold()
-            for candidate in _title_candidates(
+        tokens
+        for candidate in (
+            identity.module_id,
+            *_title_candidates(
                 item,
+                "module_id",
                 "source_dataset",
                 "dataset",
                 "gold_table",
-            )
-        ),
+            ),
+        )
+        if (tokens := _canonical_identifier(candidate))
     }
+    return any(
+        candidate_tokens == technical_id
+        or _is_namespaced_variant(
+            value,
+            candidate_tokens=candidate_tokens,
+            technical_id=technical_id,
+        )
+        for technical_id in technical_ids
+    )
+
+
+def _canonical_identifier(value: str) -> tuple[str, ...]:
     expanded = _CAMEL_BOUNDARY.sub(" ", value)
-    tokens = {
+    expanded = _ALNUM_BOUNDARY.sub(" ", expanded)
+    return tuple(
         token.casefold()
         for token in _IDENTIFIER_BOUNDARY.split(expanded)
         if token.strip()
-    }
-    return value.casefold() in technical_ids or bool(tokens & _TECHNICAL_TIERS)
+    )
+
+
+def _is_namespaced_variant(
+    value: str,
+    *,
+    candidate_tokens: tuple[str, ...],
+    technical_id: tuple[str, ...],
+) -> bool:
+    if len(technical_id) < 2 or len(candidate_tokens) <= len(technical_id):
+        return False
+    prefix = candidate_tokens[: -len(technical_id)]
+    return candidate_tokens[-len(technical_id) :] == technical_id and (
+        prefix[0] in _NAMESPACE_MARKERS
+        or bool(_EXPLICIT_NAMESPACE_BOUNDARY.search(value))
+    )
 
 
 def resolve_business_surface_identity(
