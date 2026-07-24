@@ -5,6 +5,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.control_room_diagnostic_enums import (
+    DiagnosticInstallationStatus,
+    DiagnosticItemKind,
+    DiagnosticItemStatus,
+    DiagnosticReadinessStatus,
+    DiagnosticSourceStatus,
+)
+
 
 EXPERIENCE_SCHEMA_VERSION = "control-room-experience/v1"
 DIAGNOSTICS_SCHEMA_VERSION = "control-room-diagnostics/v1"
@@ -39,12 +47,13 @@ class ExperienceDecision(_StrictModel):
     status: Literal["decision_created", "approved", "resolved"]
 
 
-class ExperienceCta(_StrictModel):
-    label: str
-    href: str
-
-
 class ExperienceFact(_StrictModel):
+    """Read-only v1 fact.
+
+    A future action contract must bind item/template IDs, permissions,
+    prerequisites, enabled state, approval, and a validated endpoint.
+    """
+
     kind: Literal["anomaly", "signal", "alert", "kpi"]
     title: str
     severity: Literal["critical", "high", "medium", "low"]
@@ -53,12 +62,14 @@ class ExperienceFact(_StrictModel):
     entity_label: str | None = None
     metric: ExperienceMetric | None = None
     decision: ExperienceDecision | None = None
-    cta: ExperienceCta | None = None
 
 
 class ExperienceSection(_StrictModel):
+    id: str
+    cartridge_id: str
+    module_id: str
     title: str
-    domain: str | None = None
+    domain: str
     facts: list[ExperienceFact] = Field(default_factory=list)
 
 
@@ -74,9 +85,9 @@ class DiagnosticSource(_StrictModel):
     dataset: str
     module: str | None = None
     domain: str | None = None
-    status: str
-    data_readiness: str | None = None
-    count: int = 0
+    status: DiagnosticSourceStatus
+    data_readiness: DiagnosticReadinessStatus | None = None
+    count: int | None = Field(default=None, ge=0)
     operationally_ready: bool = False
     checked_at: datetime | None = None
     reason: str | None = None
@@ -86,23 +97,23 @@ class DiagnosticSource(_StrictModel):
 
 
 class DiagnosticItem(_StrictModel):
-    kind: str
+    kind: DiagnosticItemKind
     title: str
     cartridge: str | None = None
     dataset: str | None = None
     module: str | None = None
     domain: str | None = None
-    status: str | None = None
-    data_status: str | None = None
-    readiness_status: str | None = None
-    source_status: str | None = None
+    status: DiagnosticItemStatus | None = None
+    data_status: DiagnosticReadinessStatus | None = None
+    readiness_status: DiagnosticReadinessStatus | None = None
+    source_status: DiagnosticSourceStatus | None = None
     observed_at: datetime | None = None
     error: str | None = None
 
 
 class DiagnosticInstallation(_StrictModel):
     cartridge_id: str
-    status: str
+    status: DiagnosticInstallationStatus
     current_step: str | None = None
     label: str | None = None
     category: str | None = None
@@ -127,7 +138,6 @@ __all__ = (
     "DiagnosticInstallation",
     "DiagnosticItem",
     "DiagnosticSource",
-    "ExperienceCta",
     "ExperienceDecision",
     "ExperienceFact",
     "ExperienceMetric",

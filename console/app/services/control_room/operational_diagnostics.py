@@ -10,8 +10,25 @@ from app.schemas.control_room_surfaces import (
     DiagnosticItem,
     DiagnosticSource,
 )
-from app.services.control_room.business_projection import diagnostic_items
+from app.services.control_room.business_projection import (
+    diagnostic_items,
+    filter_business_items,
+    strip_business_fields,
+)
+from app.services.control_room.business_surface_identity import (
+    resolve_business_surface_identity,
+)
 from app.services.control_room.diagnostic_redaction import redact_diagnostic_value
+from app.services.control_room.diagnostic_states import (
+    DiagnosticReadinessStatus,
+    DiagnosticSourceStatus,
+    evaluated_count_state,
+    normalize_installation_status,
+    normalize_item_kind,
+    normalize_item_status,
+    normalize_readiness_status,
+    normalize_source_status,
+)
 from app.services.control_room.surface_snapshot import (
     SurfaceSnapshot,
     validate_snapshot_scope,
@@ -68,26 +85,61 @@ def _controlled_error(
     return message if _text(row, *keys) else None
 
 
+def _optional_readiness(value: str) -> DiagnosticReadinessStatus | None:
+    return normalize_readiness_status(value) if value else None
+
+
+def _optional_source_status(value: str) -> DiagnosticSourceStatus | None:
+    return normalize_source_status(value) if value else None
+
+
+def _count(
+    row: Mapping[str, object],
+    *,
+    source_status: DiagnosticSourceStatus,
+    readiness: DiagnosticReadinessStatus | None,
+    checked_at: datetime | None,
+) -> int | None:
+    if "count" not in row:
+        return None
+    value = row.get("count")
+    if type(value) is not int or value < 0:
+        return None
+    if value > 0:
+        return value
+    if (
+        checked_at is not None
+        and readiness is not None
+        and evaluated_count_state(source_status, readiness)
+    ):
+        return 0
+    return None
+
+
 def _source(raw: Mapping[str, object]) -> DiagnosticSource | None:
     row = _mapping(raw)
     cartridge = _text(row, "cartridge", "connector_id")
     dataset = _text(row, "dataset", "source_dataset")
     if not cartridge or not dataset:
         return None
-    try:
-        count = max(0, int(row.get("count") or 0))
-    except (TypeError, ValueError):
-        count = 0
+    status = normalize_source_status(_text(row, "status"))
+    readiness = _optional_readiness(_text(row, "data_readiness"))
+    checked_at = _utc_datetime(row.get("checked_at"))
     return DiagnosticSource(
         cartridge=cartridge[:120],
         dataset=dataset[:200],
         module=_text(row, "module")[:200] or None,
         domain=_text(row, "domain")[:200] or None,
-        status=_text(row, "status")[:80] or "unknown",
-        data_readiness=_text(row, "data_readiness")[:80] or None,
-        count=count,
+        status=status,
+        data_readiness=readiness,
+        count=_count(
+            row,
+            source_status=status,
+            readiness=readiness,
+            checked_at=checked_at,
+        ),
         operationally_ready=row.get("operationally_ready") is True,
-        checked_at=_utc_datetime(row.get("checked_at")),
+        checked_at=checked_at,
         reason=_text(row, "readiness_reason", "reason")[:500] or None,
         blockers=_string_list(row.get("readiness_blockers")),
         warnings=_string_list(row.get("contract_warnings")),
@@ -97,17 +149,21 @@ def _source(raw: Mapping[str, object]) -> DiagnosticSource | None:
 
 def _diagnostic_item(raw: Mapping[str, object]) -> DiagnosticItem:
     row = _mapping(raw)
+    status = _text(row, "status")
+    data_status = _text(row, "data_status")
+    readiness_status = _text(row, "readiness_status")
+    source_status = _text(row, "source_status")
     return DiagnosticItem(
-        kind=_text(row, "kind", "item_kind")[:80] or "diagnostic",
+        kind=normalize_item_kind(_text(row, "kind", "item_kind")),
         title=_text(row, "title")[:240] or "Technical diagnostic",
         cartridge=_text(row, "cartridge", "connector_id")[:120] or None,
         dataset=_text(row, "source_dataset", "dataset")[:200] or None,
         module=_text(row, "module")[:200] or None,
         domain=_text(row, "domain")[:200] or None,
-        status=_text(row, "status")[:80] or None,
-        data_status=_text(row, "data_status")[:80] or None,
-        readiness_status=_text(row, "readiness_status")[:80] or None,
-        source_status=_text(row, "source_status")[:80] or None,
+        status=normalize_item_status(status) if status else None,
+        data_status=_optional_readiness(data_status),
+        readiness_status=_optional_readiness(readiness_status),
+        source_status=_optional_source_status(source_status),
         observed_at=_utc_datetime(row.get("checked_at") or row.get("observed_at")),
         error=_controlled_error(row, "error", message="Diagnostic error reported"),
     )
@@ -120,7 +176,9 @@ def _installation(raw: Mapping[str, object]) -> DiagnosticInstallation | None:
         return None
     return DiagnosticInstallation(
         cartridge_id=cartridge_id[:120],
-        status=_text(row, "installation_status", "status")[:80] or "unknown",
+        status=normalize_installation_status(
+            _text(row, "installation_status", "status")
+        ),
         current_step=_text(row, "current_step")[:200] or None,
         label=_text(row, "label")[:200] or None,
         category=_text(row, "category")[:120] or None,
@@ -140,7 +198,16 @@ def build_operational_diagnostics(
     validate_snapshot_scope(snapshot)
     sources = [value for raw in snapshot.sources if (value := _source(raw))]
     sources.sort(key=lambda row: (row.cartridge, row.dataset))
-    technical = [*snapshot.diagnostics, *diagnostic_items(snapshot.items)]
+    unsectioned = [
+        strip_business_fields(item)
+        for item in filter_business_items(snapshot.items)
+        if resolve_business_surface_identity(item) is None
+    ]
+    technical = [
+        *snapshot.diagnostics,
+        *diagnostic_items(snapshot.items),
+        *unsectioned,
+    ]
     items: list[DiagnosticItem] = []
     seen_items: set[tuple[str, str, str]] = set()
     for raw in technical:

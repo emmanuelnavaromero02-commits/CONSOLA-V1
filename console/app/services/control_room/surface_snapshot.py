@@ -19,7 +19,6 @@ class SurfaceSnapshot:
     diagnostics: tuple[Mapping[str, object], ...]
     sources: tuple[Mapping[str, object], ...]
     installations: tuple[Mapping[str, object], ...]
-    workflow_overlay_verified: bool = False
 
 
 def _scope(user: Mapping[str, object]) -> SurfaceScope:
@@ -77,7 +76,6 @@ async def collect_surface_snapshot(
         diagnostics=_rows(payload.get("diagnostics")),
         sources=_rows(payload.get("sources")),
         installations=_rows(payload.get("installations")),
-        workflow_overlay_verified=True,
     )
     validate_snapshot_scope(snapshot)
     return snapshot

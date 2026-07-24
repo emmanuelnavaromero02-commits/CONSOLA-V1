@@ -6,7 +6,6 @@ from datetime import UTC, date, datetime, time
 from app.schemas.control_room_surfaces import (
     EXPERIENCE_SCHEMA_VERSION,
     ControlRoomExperienceResponse,
-    ExperienceCta,
     ExperienceDecision,
     ExperienceFact,
     ExperienceMetric,
@@ -18,6 +17,14 @@ from app.services.control_room.business_observation import (
     semantic_states,
 )
 from app.services.control_room.business_projection import filter_business_items
+from app.services.control_room.business_surface_identity import (
+    BusinessSurfaceIdentity,
+    resolve_business_surface_identity,
+    surface_section_title,
+)
+from app.services.control_room.business_surface_provenance import (
+    surface_workflow_provenance_verified,
+)
 from app.services.control_room.business_semantic_slots import (
     MetricKind,
     resolve_metric_kind,
@@ -31,7 +38,6 @@ from app.services.control_room.surface_snapshot import (
 
 _DECISION_STATES = {"decision_created", "approved", "resolved"}
 _SEVERITIES = {"critical", "high", "medium", "low"}
-_CTA_PREFIXES = ("/control-room/", "/api/control-room/")
 
 
 def _text(item: Mapping[str, object], *keys: str) -> str:
@@ -99,12 +105,8 @@ def _metric(item: Mapping[str, object]) -> ExperienceMetric | None:
     )
 
 
-def _decision(
-    item: Mapping[str, object],
-    *,
-    workflow_overlay_verified: bool,
-) -> ExperienceDecision | None:
-    if not workflow_overlay_verified:
+def _decision(item: Mapping[str, object]) -> ExperienceDecision | None:
+    if not surface_workflow_provenance_verified(item):
         return None
     decision_id = item.get("decision_id")
     if isinstance(decision_id, bool):
@@ -121,22 +123,7 @@ def _decision(
     return ExperienceDecision(reference=reference, status=status)
 
 
-def _cta(item: Mapping[str, object]) -> ExperienceCta | None:
-    value = item.get("resolved_cta")
-    if not isinstance(value, Mapping):
-        return None
-    label = str(value.get("label") or "").strip()
-    href = str(value.get("href") or "").strip()
-    if not label or not href.startswith(_CTA_PREFIXES):
-        return None
-    return ExperienceCta(label=label[:80], href=href[:500])
-
-
-def _fact(
-    item: Mapping[str, object],
-    *,
-    workflow_overlay_verified: bool,
-) -> ExperienceFact | None:
+def _fact(item: Mapping[str, object]) -> ExperienceFact | None:
     observed_at = _observed_at(item)
     if observed_at is None:
         return None
@@ -161,11 +148,15 @@ def _fact(
         stale="stale" in semantic_states(item),
         entity_label=entity_label[:240] if entity_label else None,
         metric=_metric(item),
-        decision=_decision(
-            item,
-            workflow_overlay_verified=workflow_overlay_verified,
-        ),
-        cta=_cta(item),
+        decision=_decision(item),
+    )
+
+
+def _fact_sort_key(fact: ExperienceFact) -> tuple[float, str, str]:
+    return (
+        -fact.observed_at.timestamp(),
+        fact.title,
+        fact.model_dump_json(exclude_none=True),
     )
 
 
@@ -173,26 +164,30 @@ def build_business_experience(
     snapshot: SurfaceSnapshot,
 ) -> ControlRoomExperienceResponse:
     validate_snapshot_scope(snapshot)
-    grouped: dict[tuple[str, str], list[ExperienceFact]] = {}
+    grouped: dict[
+        BusinessSurfaceIdentity,
+        tuple[set[str], list[ExperienceFact]],
+    ] = {}
     for item in filter_business_items(snapshot.items):
-        fact = _fact(
-            item,
-            workflow_overlay_verified=snapshot.workflow_overlay_verified,
-        )
-        if fact is None:
+        identity = resolve_business_surface_identity(item)
+        fact = _fact(item)
+        if identity is None or fact is None:
             continue
-        domain = str(item.get("domain") or "").strip()
-        title = str(item.get("module") or domain or "Business signals").strip()
-        grouped.setdefault((domain, title), []).append(fact)
+        titles, facts = grouped.setdefault(identity, (set(), []))
+        titles.add(surface_section_title(item, identity))
+        facts.append(fact)
 
     sections: list[ExperienceSection] = []
-    for (domain, title), facts in sorted(grouped.items()):
-        facts.sort(key=lambda fact: (-fact.observed_at.timestamp(), fact.title))
+    for identity, (titles, facts) in sorted(grouped.items()):
+        facts.sort(key=_fact_sort_key)
         if facts:
             sections.append(
                 ExperienceSection(
-                    title=title,
-                    domain=domain or None,
+                    id=identity.section_id,
+                    cartridge_id=identity.cartridge_id,
+                    module_id=identity.module_id,
+                    title=min(titles, key=lambda value: (value.casefold(), value)),
+                    domain=identity.domain,
                     facts=facts,
                 )
             )

@@ -7,6 +7,8 @@ from collections.abc import Mapping, Sequence
 _SECRET_KEYS = frozenset(
     {
         "access_key",
+        "aws_access_key_id",
+        "aws_secret_access_key",
         "access_token",
         "api_key",
         "authorization",
@@ -22,10 +24,14 @@ _SECRET_KEYS = frozenset(
         "dsn",
         "password",
         "private_key",
+        "private_key_data",
         "refresh_token",
+        "sas_token",
         "secret",
         "secret_key",
+        "service_account_key",
         "session_token",
+        "subscription_key",
         "token",
     }
 )
@@ -63,6 +69,8 @@ _ADDRESS = re.compile(
 )
 _SECRET_KEY_SUFFIXES = (
     "_access_key",
+    "_access_key_id",
+    "_account_key",
     "_api_key",
     "_authorization",
     "_authorization_header",
@@ -76,8 +84,13 @@ _SECRET_KEY_SUFFIXES = (
     "_dsn",
     "_password",
     "_private_key",
+    "_private_key_data",
+    "_sas_token",
     "_secret",
+    "_secret_access_key",
     "_secret_key",
+    "_service_account_key",
+    "_subscription_key",
     "_token",
 )
 _PII_KEY_SUFFIXES = (
@@ -92,8 +105,15 @@ _PII_KEY_SUFFIXES = (
 )
 
 
+_ACRONYM_BOUNDARY = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
+_KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
+
+
 def _key(value: object) -> str:
-    return str(value).strip().lower().replace("-", "_")
+    text = _ACRONYM_BOUNDARY.sub(r"\1_\2", str(value).strip())
+    text = _CAMEL_BOUNDARY.sub(r"\1_\2", text)
+    return _KEY_SEPARATOR.sub("_", text).strip("_").lower()
 
 
 def _sensitive_field(field: str) -> bool:

@@ -26,7 +26,11 @@ BUSINESS_ONLY_FIELDS = BUSINESS_ARTIFACT_FIELDS
 class ProjectedBusinessItem(dict[str, Any]):
     """Dictionary payload with non-serializable lineage context."""
 
-    __slots__ = ("_eligible_parent_ids", "_lineage_depth")
+    __slots__ = (
+        "_eligible_parent_ids",
+        "_lineage_depth",
+        "_surface_workflow_provenance_verified",
+    )
 
     def __init__(
         self,
@@ -40,6 +44,9 @@ class ProjectedBusinessItem(dict[str, Any]):
             frozenset(eligible_parent_ids) if eligible_parent_ids is not None else None
         )
         self._lineage_depth = lineage_depth
+        self._surface_workflow_provenance_verified = (
+            getattr(item, "_surface_workflow_provenance_verified", False) is True
+        )
 
 
 def business_parent_context(item: Mapping[str, Any]) -> set[str] | None:
