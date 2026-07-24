@@ -2385,7 +2385,17 @@ async def _execute_internal_followup_task_tx(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               metadata = jsonb_set(
+                   jsonb_set(
+                       COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                       '{decision_eligibility_provenance,stage}',
+                       '"executed"'::jsonb,
+                       false
+                   ),
+                   '{decision_eligibility_provenance,reason}',
+                   '"explicit_execution"'::jsonb,
+                   false
+               ),
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
@@ -2658,7 +2668,17 @@ async def _execute_internal_decision_monitoring(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               metadata = jsonb_set(
+                   jsonb_set(
+                       COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                       '{decision_eligibility_provenance,stage}',
+                       '"executed"'::jsonb,
+                       false
+                   ),
+                   '{decision_eligibility_provenance,reason}',
+                   '"explicit_execution"'::jsonb,
+                   false
+               ),
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2

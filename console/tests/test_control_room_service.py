@@ -2331,6 +2331,7 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
         stage=WorkflowStage.APPROVED,
         workspace_id="workspace-A",
         decision_id=77,
+        option_id="remediate",
     )
     persisted_item = {
         "item_id": "item-activity",

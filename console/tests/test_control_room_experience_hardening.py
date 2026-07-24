@@ -106,6 +106,33 @@ def test_source_dataset_is_stable_module_fallback():
     assert section.id.startswith("business-section-")
 
 
+def test_technical_dataset_is_never_used_as_visible_section_title():
+    item = business_item(
+        module_id="",
+        module="gold_people_facts",
+        source_dataset="gold_people_facts",
+        domain="People",
+    )
+
+    section = build_business_experience(snapshot(items=(item,))).sections[0]
+
+    assert section.module_id == "gold_people_facts"
+    assert section.title == "People"
+    assert "gold_people_facts" not in section.title
+
+
+def test_namespaced_technical_dataset_is_not_a_visible_section_title():
+    item = business_item(
+        module="analytics.gold_people_facts",
+        source_dataset="gold_people_facts",
+        domain="People",
+    )
+
+    section = build_business_experience(snapshot(items=(item,))).sections[0]
+
+    assert section.title == "People"
+
+
 def test_item_without_structural_identity_is_diagnostics_only():
     item = business_item(domain="")
 
@@ -217,6 +244,31 @@ def test_valid_provenance_is_verified_per_item_in_mixed_snapshot():
             .facts[0]
         )
         assert invalid.decision is None
+
+
+def test_selected_option_must_match_persisted_provenance_exactly():
+    item = business_item(status="open", selected_option_id="original-option")
+    state = _state(item)
+    state["status"] = "approved"
+    state["selected_option_id"] = "tampered-option"
+    state["metadata"][DECISION_PROVENANCE_KEY]["stage"] = WorkflowStage.APPROVED.value
+
+    projected = _overlay([item], {str(item["id"]): state})
+    fact = build_business_experience(snapshot(items=projected)).sections[0].facts[0]
+
+    assert fact.decision is None
+
+
+def test_mismatched_stage_does_not_overlay_shared_workflow_fields():
+    item = business_item(status="open")
+    state = _state(item)
+    state["status"] = "approved"
+
+    projected = _overlay([item], {str(item["id"]): state})[0]
+
+    assert projected["status"] == "open"
+    assert projected["decision_id"] is None
+    assert projected["execution_status"] == "not_started"
 
 
 def test_experience_openapi_has_no_cta_contract():

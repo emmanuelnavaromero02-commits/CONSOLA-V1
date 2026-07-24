@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
@@ -36,6 +37,43 @@ def _text(item: Mapping[str, object], *keys: str) -> str:
     return ""
 
 
+_TECHNICAL_TITLE = re.compile(
+    r"(?i)(?:^|[./:\\])(?:bronze|gold|raw|silver|staging)(?:[_ .-]|$)"
+)
+
+
+def _title_candidates(
+    item: Mapping[str, object],
+    *keys: str,
+) -> tuple[str, ...]:
+    return tuple(
+        value
+        for values in _containers(item)
+        for key in keys
+        if (value := str(values.get(key) or "").strip())
+    )
+
+
+def _is_technical_title(
+    item: Mapping[str, object],
+    identity: BusinessSurfaceIdentity,
+    value: str,
+) -> bool:
+    technical_ids = {
+        identity.module_id.casefold(),
+        *(
+            candidate.casefold()
+            for candidate in _title_candidates(
+                item,
+                "source_dataset",
+                "dataset",
+                "gold_table",
+            )
+        ),
+    }
+    return value.casefold() in technical_ids or bool(_TECHNICAL_TITLE.search(value))
+
+
 def resolve_business_surface_identity(
     item: Mapping[str, object],
 ) -> BusinessSurfaceIdentity | None:
@@ -60,7 +98,22 @@ def surface_section_title(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
 ) -> str:
-    return _text(item, "module", "module_label", "module_name") or identity.module_id
+    candidates = _title_candidates(
+        item,
+        "module",
+        "module_label",
+        "module_name",
+        "business_label",
+        "cartridge_label",
+        "connector_label",
+        "domain_label",
+    )
+    for candidate in candidates:
+        if not _is_technical_title(item, identity, candidate):
+            return candidate
+    if not _is_technical_title(item, identity, identity.domain):
+        return identity.domain
+    return "Business context"
 
 
 __all__ = (

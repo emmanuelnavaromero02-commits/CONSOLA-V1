@@ -24,13 +24,26 @@ async def test_live_terminal_status_cannot_degrade_or_reopen_option(
     user = _user(tenant_id, workspace_id)
     conn = await asyncpg.connect(postgres_with_real_init_schema)
     try:
-        await conn.execute(
-            """UPDATE control_room_items
-                  SET execution_status = 'executed'
+        await service._set_execution_status(
+            conn,
+            user=user,
+            item=item,
+            execution_status="executed",
+            critical=True,
+        )
+        stored = await conn.fetchrow(
+            """SELECT execution_status,
+                      metadata->'decision_eligibility_provenance'->>'stage'
+                          AS workflow_stage
+                 FROM control_room_items
                 WHERE workspace_id = $1 AND item_id = $2""",
             workspace_id,
             item["id"],
         )
+        assert dict(stored) == {
+            "execution_status": "executed",
+            "workflow_stage": "executed",
+        }
         with pytest.raises(HTTPException) as status_exc:
             await service._set_execution_status(
                 conn,

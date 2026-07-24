@@ -23,7 +23,8 @@ from app.services.control_room.business_state_rows import state_rows
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
-    decision_eligibility_provenance,
+    WorkflowStage,
+    workflow_eligibility_provenance,
 )
 from tests.test_operational_rls_console_refinement import postgres_with_real_init_schema
 
@@ -115,10 +116,12 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
         technical_id = "same-id"
         legitimate_id = "legit-id"
         legitimate = _business_item(legitimate_id, tenant_id, workspace_id)
-        provenance = decision_eligibility_provenance(
+        provenance = workflow_eligibility_provenance(
             legitimate,
+            stage=WorkflowStage.EXECUTED,
             decision_id=77,
             workspace_id=workspace_id,
+            option_id="review",
         )
         await conn.execute(
             "INSERT INTO tenants(id, name, slug) VALUES ($1, 'Tenant', $2)",
@@ -157,7 +160,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
              'decision_created', 42, $5::jsonb,
              'repair', 'executed', NOW(), NOW()),
             ($1, $2, 7, $4, 'sap_hcm', 'People', 'gold_people', 'anomaly', 'Legit', 'medium',
-             'decision_created', 77, $6::jsonb, 'review', 'executed', NOW(), NOW());
+             'approved', 77, $6::jsonb, 'review', 'executed', NOW(), NOW());
             """,
             tenant_id,
             workspace_id,
@@ -281,7 +284,7 @@ async def test_postgres_transition_cleans_technical_semantics_and_preserves_owne
 
         kept = by_id[legitimate_id]
         kept_metadata = _jsonb(kept["metadata"])
-        assert kept["status"] == "in_review"
+        assert kept["status"] == "approved"
         assert kept["decision_id"] == 77
         assert kept["selected_option_id"] == "review"
         assert kept["execution_status"] == "executed"

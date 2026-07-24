@@ -253,8 +253,11 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
 
     check = await asyncpg.connect(postgres_with_real_init_schema)
     try:
-        execution_status = await check.fetchval(
-            """SELECT execution_status FROM control_room_items
+        execution_state = await check.fetchrow(
+            """SELECT execution_status,
+                      metadata->'decision_eligibility_provenance'->>'stage'
+                          AS workflow_stage
+                 FROM control_room_items
                 WHERE workspace_id=$1 AND item_id=$2""",
             workspace_id,
             item["id"],
@@ -276,7 +279,10 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
         await check.close()
 
     assert Adapter.calls == 1
-    assert execution_status == "executed"
+    assert dict(execution_state) == {
+        "execution_status": "executed",
+        "workflow_stage": "executed",
+    }
     assert finalized["id"] == reservation.id
     assert projection_status == "completed"
     assert run_count == 1

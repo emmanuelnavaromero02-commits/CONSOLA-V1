@@ -57,7 +57,14 @@ def _text(row: Mapping[str, object], *keys: str) -> str:
 def _string_list(value: object) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return []
-    return [str(item)[:500] for item in value if str(item).strip()]
+    sanitized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        redacted = redact_diagnostic_value(item)
+        if isinstance(redacted, str) and redacted.strip():
+            sanitized.append(redacted[:500])
+    return sanitized
 
 
 def _utc_datetime(value: object) -> datetime | None:

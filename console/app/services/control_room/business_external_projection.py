@@ -139,8 +139,18 @@ async def project_committed_external_effect(
         """
         UPDATE control_room_items
            SET execution_status = 'executed',
-               metadata = COALESCE(metadata, '{}'::jsonb)
-                          || '{"execution_status":"executed"}'::jsonb,
+               metadata = jsonb_set(
+                   jsonb_set(
+                       COALESCE(metadata, '{}'::jsonb)
+                       || '{"execution_status":"executed"}'::jsonb,
+                       '{decision_eligibility_provenance,stage}',
+                       '"executed"'::jsonb,
+                       false
+                   ),
+                   '{decision_eligibility_provenance,reason}',
+                   '"explicit_execution"'::jsonb,
+                   false
+               ),
                last_seen_at = NOW()
          WHERE workspace_id = $1::uuid
            AND item_id = $2

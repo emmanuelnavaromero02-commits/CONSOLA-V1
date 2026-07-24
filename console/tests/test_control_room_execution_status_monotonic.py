@@ -69,6 +69,8 @@ async def test_execution_status_update_writes_status_and_metadata() -> None:
         critical=True,
     )
 
-    _, args = conn.calls[0]
+    sql, args = conn.calls[0]
     assert args[0] == "executed"
     assert json.loads(str(args[3])) == {"execution_status": "executed"}
+    assert "{decision_eligibility_provenance,stage}" in sql
+    assert "{decision_eligibility_provenance,reason}" in sql

@@ -14,9 +14,11 @@ from app.services.control_room.business_surface_provenance import (
     set_surface_workflow_provenance,
 )
 from app.services.control_room.business_workflow_provenance import (
-    WorkflowStage,
     workflow_has_eligible_provenance,
     workflow_is_quarantined,
+)
+from app.services.control_room.business_workflow_state import (
+    expected_workflow_stage,
 )
 
 
@@ -84,35 +86,43 @@ def _workflow_state(
     persisted_diagnostic: bool,
 ) -> tuple[dict[str, Any], bool]:
     linked_workflow = _has_linked_workflow(state)
+    provenance_item = (
+        {
+            **scoped_item,
+            "selected_option_id": state.get("selected_option_id"),
+        }
+        if scoped_item is not None
+        else None
+    )
     eligible_provenance = (
-        scoped_item is not None
+        provenance_item is not None
         and not persisted_diagnostic
         and not workflow_is_quarantined(state)
         and workflow_has_eligible_provenance(
             metadata,
-            scoped_item,
+            provenance_item,
             decision_id=state.get("decision_id"),
         )
     )
-    decision_provenance_verified = (
-        state.get("decision_id") is not None
-        and eligible_provenance
+    expected_stage = expected_workflow_stage(state)
+    stage_provenance_verified = (
+        eligible_provenance
+        and expected_stage is not None
         and workflow_has_eligible_provenance(
             metadata,
-            scoped_item,
+            provenance_item,
             decision_id=state.get("decision_id"),
-            allowed_stages={
-                WorkflowStage.DECISION_CREATED,
-                WorkflowStage.APPROVED,
-                WorkflowStage.EXECUTED,
-            },
+            allowed_stages={expected_stage},
         )
+    )
+    decision_provenance_verified = (
+        state.get("decision_id") is not None and stage_provenance_verified
     )
     trusted = (
         scoped_item is not None
         and not persisted_diagnostic
         and not workflow_is_quarantined(state)
-        and (overlay_artifacts if not linked_workflow else eligible_provenance)
+        and (overlay_artifacts if not linked_workflow else stage_provenance_verified)
     )
     if trusted:
         workflow = {

@@ -223,6 +223,14 @@ async def test_live_internal_effect_is_once_under_concurrency(
             item["id"],
             event_type,
         )
+        workflow_stage = await check.fetchval(
+            """SELECT metadata->'decision_eligibility_provenance'->>'stage'
+                 FROM control_room_items
+                WHERE workspace_id=$1 AND item_id=$2""",
+            workspace_id,
+            item["id"],
+        )
         assert (run_count, event_count) == (1, 1)
+        assert workflow_stage == "executed"
     finally:
         await check.close()
