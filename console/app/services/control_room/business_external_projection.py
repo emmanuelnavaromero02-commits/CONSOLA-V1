@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+import app.services.control_room.business_execution_provenance_sql as _exec_sql
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
@@ -136,21 +137,10 @@ async def project_committed_external_effect(
     if result.get("local_projection_status") == "completed":
         return receipt if item_row.get("execution_status") == "executed" else None
     projected = await conn.fetchrow(
-        """
+        f"""
         UPDATE control_room_items
            SET execution_status = 'executed',
-               metadata = jsonb_set(
-                   jsonb_set(
-                       COALESCE(metadata, '{}'::jsonb)
-                       || '{"execution_status":"executed"}'::jsonb,
-                       '{decision_eligibility_provenance,stage}',
-                       '"executed"'::jsonb,
-                       false
-                   ),
-                   '{decision_eligibility_provenance,reason}',
-                   '"explicit_execution"'::jsonb,
-                   false
-               ),
+               metadata = {_exec_sql.EXECUTED_METADATA_STATUS_SQL},
                last_seen_at = NOW()
          WHERE workspace_id = $1::uuid
            AND item_id = $2
@@ -230,10 +220,15 @@ def reserved_action_response(
     action_run = action_run_public(reservation.row)
     result = details(action_run.get("execution_result"))
     is_external_write = result.get("external_write") is True
+    executed = bool(result.get("executed", True))
+    projection_status = str(result.get("local_projection_status") or "")
+    execution_committed = executed and (
+        not is_external_write
+        or projection_status in {"", "completed"}
+        or str(item.get("execution_status") or "") == "executed"
+    )
     if result.get("local_projection_status") == "pending_reconciliation" or (
-        is_external_write
-        and result.get("executed") is True
-        and str(item.get("execution_status") or "") != "executed"
+        is_external_write and executed and not execution_committed
     ):
         raise HTTPException(
             409,
@@ -244,7 +239,7 @@ def reserved_action_response(
             },
         )
     return {
-        "executed": bool(result.get("executed", True)),
+        "executed": executed,
         "idempotent": True,
         "execution": {},
         "action_run": action_run,
@@ -253,7 +248,11 @@ def reserved_action_response(
         "item": project_item(
             item,
             omega_builder,
-            execution_status=str(item.get("execution_status") or "not_started"),
+            execution_status=(
+                "executed"
+                if execution_committed
+                else str(item.get("execution_status") or "not_started")
+            ),
         ),
     }
 

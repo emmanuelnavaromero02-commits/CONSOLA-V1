@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+import app.services.control_room.business_execution_provenance_sql as _exec_sql
 from app.services.control_room.business_item_persistence import parse_command_tag
 from app.services.control_room.business_workflow_state import (
     TERMINAL_EXECUTION_STATUSES,
@@ -30,23 +31,13 @@ async def persist_execution_status(
     execution_status: str,
 ) -> None:
     result = await conn.execute(
-        """
+        f"""
         UPDATE control_room_items
            SET execution_status = $1,
                metadata = CASE
                    WHEN $1 = ANY($6::text[]) THEN
-                       jsonb_set(
-                           jsonb_set(
-                               COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                               '{decision_eligibility_provenance,stage}',
-                               '"executed"'::jsonb,
-                               false
-                           ),
-                           '{decision_eligibility_provenance,reason}',
-                           '"explicit_execution"'::jsonb,
-                           false
-                       )
-                   ELSE COALESCE(metadata, '{}'::jsonb) || $4::jsonb
+                       {_exec_sql.EXECUTED_METADATA_ARG4_SQL}
+                   ELSE COALESCE(metadata, '{{}}'::jsonb) || $4::jsonb
                END,
                last_seen_at = NOW()
          WHERE workspace_id = $2

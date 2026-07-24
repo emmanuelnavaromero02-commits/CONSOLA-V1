@@ -37,9 +37,9 @@ def _text(item: Mapping[str, object], *keys: str) -> str:
     return ""
 
 
-_TECHNICAL_TITLE = re.compile(
-    r"(?i)(?:^|[./:\\])(?:bronze|gold|raw|silver|staging)(?:[_ .-]|$)"
-)
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_IDENTIFIER_BOUNDARY = re.compile(r"[./:\\_\-\s\[\]]+")
+_TECHNICAL_TIERS = frozenset({"bronze", "silver", "gold", "raw", "staging"})
 
 
 def _title_candidates(
@@ -71,7 +71,13 @@ def _is_technical_title(
             )
         ),
     }
-    return value.casefold() in technical_ids or bool(_TECHNICAL_TITLE.search(value))
+    expanded = _CAMEL_BOUNDARY.sub(" ", value)
+    tokens = {
+        token.casefold()
+        for token in _IDENTIFIER_BOUNDARY.split(expanded)
+        if token.strip()
+    }
+    return value.casefold() in technical_ids or bool(tokens & _TECHNICAL_TIERS)
 
 
 def resolve_business_surface_identity(
