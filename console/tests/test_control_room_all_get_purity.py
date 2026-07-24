@@ -201,7 +201,11 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
         if "GET" in (route.methods or set())
     }
     assert len(GET_PATHS) == 29
-    assert discovered == set(GET_PATHS)
+    assert set(GET_PATHS).issubset(discovered)
+    assert discovered - set(GET_PATHS) == {
+        "/api/control-room/experience",
+        "/api/control-room/diagnostics",
+    }
 
     sentinel = MutationSentinel()
     global_before = sentinel.snapshot()
