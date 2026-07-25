@@ -962,7 +962,7 @@ def _resolve_template(item: dict[str, Any], template_id: str | None) -> dict[str
     for template in templates:
         if template["template_id"] == template_id:
             return template
-    raise HTTPException(400, "action template is not valid for this item")
+    raise HTTPException(404, "action template is not valid for this item")
 
 
 @_bind_to_core

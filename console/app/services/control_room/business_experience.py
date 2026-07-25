@@ -131,7 +131,7 @@ def _decision(item: Mapping[str, object]) -> ExperienceDecision | None:
     return ExperienceDecision(reference=decision_id, status=status)
 
 
-def _fact(
+def project_experience_fact(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
 ) -> ExperienceFact | None:
@@ -168,7 +168,7 @@ def _fact(
     )
 
 
-def _fact_sort_key(fact: ExperienceFact) -> tuple[float, str, str]:
+def experience_fact_sort_key(fact: ExperienceFact) -> tuple[float, str, str]:
     return (
         -fact.observed_at.timestamp(),
         fact.title,
@@ -191,7 +191,7 @@ def build_business_experience(
         )
         if identity is None or not structural_identity_is_safe(item, identity):
             continue
-        fact = _fact(item, identity)
+        fact = project_experience_fact(item, identity)
         if fact is None:
             continue
         titles, facts = grouped.setdefault(identity, (set(), []))
@@ -211,7 +211,7 @@ def build_business_experience(
 
     sections: list[ExperienceSection] = []
     for identity, (titles, facts) in sorted(grouped.items()):
-        facts.sort(key=_fact_sort_key)
+        facts.sort(key=experience_fact_sort_key)
         if facts:
             sections.append(
                 ExperienceSection(
@@ -231,4 +231,8 @@ def build_business_experience(
     )
 
 
-__all__ = ("build_business_experience",)
+__all__ = (
+    "build_business_experience",
+    "experience_fact_sort_key",
+    "project_experience_fact",
+)
