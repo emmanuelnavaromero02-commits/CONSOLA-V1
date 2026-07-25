@@ -95,7 +95,17 @@ def test_structural_identity_exactly_240_is_preserved(
 
 
 @pytest.mark.parametrize("field", ("domain", "cartridge_id", "module_id"))
-def test_structural_identity_over_240_fails_closed(field: str) -> None:
-    item, _value = _identity_item(field, 241)
+def test_structural_identity_over_240_uses_only_valid_fallback(field: str) -> None:
+    item, value = _identity_item(field, 241)
 
-    assert build_business_experience(snapshot(items=(item,))).sections == []
+    response = build_business_experience(snapshot(items=(item,)))
+    fallback = {
+        "domain": None,
+        "cartridge_id": "sap_hcm",
+        "module_id": "gold_business_observations",
+    }[field]
+    if fallback is None:
+        assert response.sections == []
+        return
+    assert getattr(response.sections[0], field) == fallback
+    assert getattr(response.sections[0], field) != value
