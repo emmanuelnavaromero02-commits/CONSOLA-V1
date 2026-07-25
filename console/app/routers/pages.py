@@ -246,21 +246,25 @@ async def security_page(request: Request):
 
 
 @router.get(
-    "/control-room", dependencies=[Depends(require_permission("workspace.access"))]
+    "/control-room", dependencies=[Depends(require_permission("datasets.read"))]
 )
 async def control_room_page(request: Request):
     return _console_next_response(request, "control-room/index.html")
 
 
 @router.get(
-    "/control-room/", dependencies=[Depends(require_permission("workspace.access"))]
+    "/control-room/", dependencies=[Depends(require_permission("datasets.read"))]
 )
 async def control_room_page_slash(request: Request):
     return _console_next_response(request, "control-room/index.html")
 
 
 @router.get(
-    "/control-room/talent", dependencies=[Depends(require_permission("workspace.access"))]
+    "/control-room/talent",
+    dependencies=[
+        Depends(require_permission("operations.read")),
+        Depends(require_permission("datasets.read")),
+    ],
 )
 async def control_room_talent_page(request: Request):
     return _console_next_response(request, "control-room/talent/index.html")
@@ -268,7 +272,10 @@ async def control_room_talent_page(request: Request):
 
 @router.get(
     "/control-room/talent/",
-    dependencies=[Depends(require_permission("workspace.access"))],
+    dependencies=[
+        Depends(require_permission("operations.read")),
+        Depends(require_permission("datasets.read")),
+    ],
 )
 async def control_room_talent_page_slash(request: Request):
     return _console_next_response(request, "control-room/talent/index.html")
