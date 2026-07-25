@@ -3,130 +3,62 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const pageSource = readFileSync(join(process.cwd(), "src/app/(shell)/control-room/page.tsx"), "utf8");
-const analyticAppsPanelSource = readFileSync(join(process.cwd(), "src/components/control-room/AnalyticAppsPanel.tsx"), "utf8");
+const sourceFiles = [
+  "src/app/(shell)/control-room/page.tsx",
+  "src/components/control-room/experience/ControlRoomExperiencePage.tsx",
+  "src/components/control-room/experience/ExperienceSection.tsx",
+  "src/components/control-room/experience/ExperienceFact.tsx",
+  "src/lib/control-room/experience-client.ts",
+  "src/lib/control-room/use-control-room-experience.ts",
+];
+const source = sourceFiles
+  .map((path) => readFileSync(join(process.cwd(), path), "utf8"))
+  .join("\n");
 
-describe("Control Room page functional contract", () => {
-  it("keeps existing read surfaces wired after the visual redesign", () => {
-    expect(pageSource).toContain("getControlRoomDashboard");
-    expect(pageSource).toContain("getControlRoomActivity");
-    expect(pageSource).toContain("getControlRoomImpact");
-    expect(pageSource).toContain("getControlRoomLessons");
-    expect(pageSource).toContain("getControlRoomThresholds");
-    expect(pageSource).toContain("getSuccessFactorsGoldKpis");
-    expect(pageSource).toContain("getSuccessFactorsTalentKpis");
-    expect(pageSource).toContain("getSuccessFactorsDecisionModel");
-    expect(pageSource).toContain("SuccessFactorsGoldPanel");
-    expect(pageSource).toContain("MarketDecisionEvidencePanel");
-    expect(pageSource).toContain("SourceInventoryPanel");
+describe("Control Room Business Experience boundary", () => {
+  it("delegates the root page to the new read-only composition", () => {
+    const page = readFileSync(
+      join(process.cwd(), "src/app/(shell)/control-room/page.tsx"),
+      "utf8",
+    );
+
+    expect(page).toContain("ControlRoomExperiencePage");
+    expect(page.split("\n").length).toBeLessThanOrEqual(180);
   });
 
-  it("keeps OMEGA detail capabilities accessible", () => {
-    expect(pageSource).toContain("ImpactSnapshot");
-    expect(pageSource).toContain("ActivityTrail");
-    expect(pageSource).toContain("ThresholdRulesBoard");
-    expect(pageSource).toContain("LessonsBoard");
-    expect(pageSource).toContain("onApplyLesson");
-    expect(pageSource).toContain("ExecutionStep");
-    expect(pageSource).toContain("ControlStep");
+  it("uses only the Experience endpoint", () => {
+    const endpointMatches = source.match(/\/api\/control-room\/[a-z-]+/g) ?? [];
+    expect([...new Set(endpointMatches)]).toEqual(["/api/control-room/experience"]);
   });
 
-  it("keeps supervised execution and approval flows wired to existing endpoints", () => {
-    expect(pageSource).toContain("/action-preview");
-    expect(pageSource).toContain("/action-dry-run");
-    expect(pageSource).toContain("/execute");
-    expect(pageSource).toContain("/auto-run");
-    expect(pageSource).toContain("/approve");
-    expect(pageSource).toContain("/dismiss");
-    expect(pageSource).toContain("/alerts/");
+  it("disconnects every legacy root surface and mutation", () => {
+    for (const forbidden of [
+      "getControlRoomDashboard",
+      "SuccessFactorsGoldPanel",
+      "AnalyticAppsPanel",
+      "AgentsOpsPanel",
+      "MarketDecisionEvidencePanel",
+      "/diagnostics",
+      "/activity",
+      "/impact",
+      "/lessons",
+      "/thresholds",
+      "/approve",
+      "/execute",
+      "/auto-run",
+      "includeUnready",
+      "Sync Now",
+      "setInterval(",
+    ]) {
+      expect(source).not.toContain(forbidden);
+    }
   });
 
-  it("does not advertise a generic workflow reopen without server eligibility", () => {
-    expect(pageSource).not.toContain("/reopen");
-    expect(pageSource).not.toContain(">Reabrir<");
-  });
-
-  it("does not advertise approval actions for terminal items", () => {
-    expect(pageSource).toContain('const terminalStatuses = new Set(["approved", "dismissed", "resolved"])');
-    expect(pageSource).toContain('function canApproveRecommendation(item: Pick<ControlItem, "status">)');
-    expect(pageSource).toContain("return !terminalStatuses.has(item.status)");
-    expect(pageSource).toContain("{canApproveRecommendation(item) ? (");
-    expect(pageSource).not.toContain('item.status === "approved" ? "Recomendación aprobada"');
-  });
-
-  it("surfaces advisory agent monitor alerts distinctly", () => {
-    expect(pageSource).toContain('type AlertSourceFilter = "all" | "agent" | "system" | "intelligence"');
-    expect(pageSource).toContain("Agente monitor");
-    expect(pageSource).toContain("Advisory");
-    expect(pageSource).toContain("occurrence_count");
-    expect(pageSource).toContain("expected_outcome");
-  });
-
-  it("keeps Sync Now scope explicit in the Control Room header", () => {
-    expect(pageSource).toContain("Alcance de sincronización");
-    expect(pageSource).toContain('const [controlSyncTarget, setControlSyncTarget] = useState<SyncTarget>("all")');
-    expect(pageSource).toContain("syncTargetSupportsTalent");
-    expect(pageSource).toContain("activeSyncConnectorId");
-    expect(pageSource).toContain('<option value="talent">Talento</option>');
-    expect(pageSource).toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target })");
-    expect(pageSource).toContain("SYNC_NOW_MAX_POLL_ATTEMPTS = 600");
-    expect(pageSource).toContain("SYNC_NOW_POLL_INTERVAL_MS = 3000");
-    expect(pageSource).not.toContain("startCartridgeSyncNow(activeCartridge, { mode: \"incremental\", target: \"all\" })");
-    expect(pageSource).not.toContain("attempt < 40");
-  });
-
-  it("renders analytic modules natively inside Control Room", () => {
-    expect(pageSource).toContain("AnalyticAppsPanel");
-    expect(pageSource).toContain("listApps");
-    expect(pageSource).toContain("includeUnready: true");
-    expect(pageSource).toContain("analyticsCartridge");
-    expect(pageSource).toContain("selectedModule?.connector_id");
-    expect(pageSource).toContain("loadAnalyticsApps");
-    expect(analyticAppsPanelSource).toContain("NativeAnalyticModule");
-    expect(analyticAppsPanelSource).toContain("Modulos de decision");
-    expect(analyticAppsPanelSource).toContain("SuccessFactorsNativeModule");
-    expect(analyticAppsPanelSource).toContain("TalentNativeModule");
-    expect(analyticAppsPanelSource).toContain("AgentOpsNativeModule");
-    expect(analyticAppsPanelSource).not.toContain("/api/data/");
-    expect(analyticAppsPanelSource).not.toContain("Abrir completa");
-    expect(analyticAppsPanelSource).not.toContain("Apps no disponibles");
-    expect(analyticAppsPanelSource).not.toContain("/embed");
-    expect(analyticAppsPanelSource).not.toContain("iframe");
-  });
-
-  it("keeps heavy Control Room sections in a single-open accordion", () => {
-    expect(pageSource).toContain("type ControlRoomSectionId");
-    expect(pageSource).toContain('controlRoomSectionFromHash() || "operations"');
-    expect(pageSource).toContain("window.addEventListener(\"hashchange\", syncSectionFromHash)");
-    expect(pageSource).toContain("activateControlRoomSection");
-    expect(pageSource).toContain("ControlRoomAccordionSection");
-    expect(pageSource).toContain('id="operations"');
-    expect(pageSource).toContain('id="apps"');
-    expect(pageSource).toContain('id="signals"');
-    expect(pageSource).toContain('id="rules"');
-    expect(pageSource).toContain('id="lessons"');
-    expect(pageSource).toContain("aria-expanded={open}");
-  });
-
-  it("surfaces deterministic math provenance and control origins", () => {
-    expect(pageSource).toContain("OriginBadge");
-    expect(pageSource).toContain("type ControlOrigin");
-    expect(pageSource).toContain("math_provenance");
-    expect(pageSource).toContain("monte_carlo");
-    expect(pageSource).toContain("bayesianCalibrationStatus");
-    expect(pageSource).toContain("bayesian_calibration");
-    expect(pageSource).toContain("generic_gold_signal");
-    expect(pageSource).toContain("bayesian_calibration");
-    expect(pageSource).toContain("monte_carlo");
-  });
-
-  it("keeps the executive room self-contained and does not depend on the reference HTML", () => {
-    expect(pageSource).not.toContain("sourceCatalogHref");
-    expect(pageSource).not.toContain("sourceDataHref");
-    expect(pageSource).not.toContain("sourceSchemaHref");
-    expect(pageSource).not.toContain("/viewer?type=schema");
-    expect(pageSource).not.toContain("/data/catalog");
-    expect(pageSource).not.toContain("sap.html");
-    expect(pageSource).not.toContain("mock");
+  it("disables every automatic query retry and refetch trigger", () => {
+    expect(source).toContain("retry: false");
+    expect(source).toContain("refetchOnMount: false");
+    expect(source).toContain("refetchOnReconnect: false");
+    expect(source).toContain("refetchOnWindowFocus: false");
+    expect(source).toContain("refetchInterval: false");
   });
 });
