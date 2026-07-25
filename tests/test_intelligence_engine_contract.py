@@ -280,7 +280,7 @@ def test_console_user_vault_calls_do_not_bypass_security_context():
         assert "x-security-context" in source or "_vault_headers_for_user" in source
 
 
-def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
+def test_control_room_persists_intelligence_behind_business_experience():
     service = read("console/app/services/control_room/api.py")
     state = read("console/app/services/control_room/state.py")
     omega_projection = read(
@@ -294,17 +294,9 @@ def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     assert "build_omega_projection(" in state
     assert '"decision_intelligence": decision_intelligence' in omega_projection
     assert '"omega":' in omega_projection
-    assert '"intelligence_signal"' in ui
-    assert "function IntelligencePanel" in ui
-    assert "function DecisionIntelligencePanel" in ui
-    assert "function isDecisionIntelligence" in ui
-    assert "Decisión bajo incertidumbre" in ui
-    assert "Probabilidad" in ui
-    assert "Impacto esperado" in ui
-    assert "Costo de esperar" in ui
-    assert "Valor de información" in ui
-    assert "Registrar resultado" in ui
-    assert "Evidencia considerada" in ui
+    assert "ControlRoomExperiencePage" in ui
+    assert '"intelligence_signal"' not in ui
+    assert "IntelligencePanel" not in ui
     assert '"/decision-intelligence/runs"' in router
     assert '"/decision-intelligence/history"' in router
     assert '"/decision-intelligence/calibration"' in router
