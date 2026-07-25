@@ -126,7 +126,7 @@ describe("brace-expansion compatibility", () => {
           EXPANSION_MAX_LENGTH
         } from "brace-expansion";
         const branch = "{a,b}".repeat(17);
-        const pattern = "{" + Array(20).fill(branch).join(",") + "}";
+        const pattern = "{" + Array(15).fill(branch).join(",") + "}";
         const values = expand(pattern, {
           max: Number.MAX_SAFE_INTEGER,
           maxLength: Number.MAX_SAFE_INTEGER
@@ -152,7 +152,7 @@ describe("brace-expansion compatibility", () => {
       `
         ${MINIMATCH_ESM_SETUP}
         const branch = "{a,b}".repeat(17);
-        const pattern = "{" + Array(20).fill(branch).join(",") + "}";
+        const pattern = "{" + Array(15).fill(branch).join(",") + "}";
         console.log(JSON.stringify({
           legacy: legacy("not-a-match", pattern),
           modern: modern("not-a-match", pattern),

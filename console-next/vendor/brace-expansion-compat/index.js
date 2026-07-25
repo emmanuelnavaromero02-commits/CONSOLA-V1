@@ -8,6 +8,7 @@ const MAX_PATTERN_LENGTH = 16_384;
 const MAX_BRANCH_TOKENS = 1_024;
 const MAX_NESTING_DEPTH = 64;
 const MAX_SEQUENCE_TOKENS = 128;
+const MAX_BRACE_GROUPS = 256;
 const NUMERIC_SEQUENCE = /-?\d+\.\.-?\d+(?:\.\.-?\d+)?/g;
 
 function inspectPattern(pattern) {
@@ -21,6 +22,7 @@ function inspectPattern(pattern) {
   let depth = 0;
   let maxDepth = 0;
   let commas = 0;
+  let groups = 0;
   let escaped = false;
 
   for (const character of pattern) {
@@ -29,6 +31,10 @@ function inspectPattern(pattern) {
     } else if (character === "\\") {
       escaped = true;
     } else if (character === "{") {
+      groups += 1;
+      if (groups > MAX_BRACE_GROUPS) {
+        return { complexity: 1, safe: false };
+      }
       depth += 1;
       maxDepth = Math.max(maxDepth, depth);
     } else if (character === "}") {
