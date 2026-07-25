@@ -204,6 +204,7 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
     assert set(GET_PATHS).issubset(discovered)
     assert discovered - set(GET_PATHS) == {
         "/api/control-room/experience",
+        "/api/control-room/experience/v2",
         "/api/control-room/diagnostics",
     }
 
