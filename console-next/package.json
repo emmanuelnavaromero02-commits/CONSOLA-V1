@@ -35,6 +35,7 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
+    "brace-expansion": "file:vendor/brace-expansion-compat",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.6",
     "postcss": "8.5.18",
@@ -44,6 +45,7 @@
     "vitest": "^4.1.7"
   },
   "overrides": {
+    "brace-expansion": "$brace-expansion",
     "postcss": "8.5.18",
     "sharp": "0.35.3"
   }
