@@ -54,11 +54,12 @@ describe("Control Room Business Experience boundary", () => {
     }
   });
 
-  it("disables every automatic query retry and refetch trigger", () => {
+  it("uses bounded remount freshness without retry, polling or ambient refetch", () => {
     expect(source).toContain("retry: false");
-    expect(source).toContain("refetchOnMount: false");
+    expect(source).toContain("refetchOnMount: true");
     expect(source).toContain("refetchOnReconnect: false");
     expect(source).toContain("refetchOnWindowFocus: false");
     expect(source).toContain("refetchInterval: false");
+    expect(source).toContain("staleTime: 15_000");
   });
 });

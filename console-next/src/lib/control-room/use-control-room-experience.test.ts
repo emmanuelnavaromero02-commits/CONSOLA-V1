@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ControlRoomExperience } from "./experience-contract";
@@ -15,17 +15,98 @@ const payload: ControlRoomExperience = {
 };
 
 describe("controlRoomExperienceQueryOptions", () => {
-  it("keys cache entries by workspace and disables automatic refetch", () => {
+  it("keys cache entries by workspace and bounds automatic refetch", () => {
     const fetcher = vi.fn(async () => payload);
     const options = controlRoomExperienceQueryOptions("workspace-a", fetcher);
 
     expect(options.queryKey).toEqual(["control-room", "experience", "workspace-a"]);
     expect(controlRoomExperienceKey("workspace-b")).not.toEqual(options.queryKey);
     expect(options.retry).toBe(false);
-    expect(options.refetchOnMount).toBe(false);
+    expect(options.refetchOnMount).toBe(true);
     expect(options.refetchOnReconnect).toBe(false);
     expect(options.refetchOnWindowFocus).toBe(false);
     expect(options.refetchInterval).toBe(false);
+    expect(options.staleTime).toBe(15_000);
+  });
+
+  it("reuses a fresh remount and fetches exactly once after the cache is stale", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Number.POSITIVE_INFINITY, retry: false } },
+    });
+    const fetcher = vi.fn(async () => payload);
+    const options = controlRoomExperienceQueryOptions("workspace-a", fetcher);
+    const key = controlRoomExperienceKey("workspace-a");
+
+    const firstObserver = new QueryObserver(client, options);
+    const stopFirst = firstObserver.subscribe(() => undefined);
+    await vi.waitFor(() => expect(firstObserver.getCurrentResult().isSuccess).toBe(true));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    stopFirst();
+
+    const freshObserver = new QueryObserver(client, options);
+    const stopFresh = freshObserver.subscribe(() => undefined);
+    await Promise.resolve();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    stopFresh();
+
+    client.setQueryData(key, payload, { updatedAt: Date.now() - 15_001 });
+    const staleObserver = new QueryObserver(client, options);
+    const stopStale = staleObserver.subscribe(() => undefined);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    stopStale();
+    client.clear();
+  });
+
+  it("keeps workspace cache entries isolated", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const fetcher = vi.fn(async (workspaceId: string | null) => ({
+      ...payload,
+      scope: { ...payload.scope, workspace_id: workspaceId ?? "unscoped" },
+    }));
+
+    await client.fetchQuery(controlRoomExperienceQueryOptions("workspace-a", fetcher));
+    await client.fetchQuery(controlRoomExperienceQueryOptions("workspace-b", fetcher));
+
+    expect(fetcher.mock.calls).toEqual([["workspace-a"], ["workspace-b"]]);
+    expect(client.getQueryData(controlRoomExperienceKey("workspace-a"))).toMatchObject({
+      scope: { workspace_id: "workspace-a" },
+    });
+    expect(client.getQueryData(controlRoomExperienceKey("workspace-b"))).toMatchObject({
+      scope: { workspace_id: "workspace-b" },
+    });
+    client.clear();
+  });
+
+  it("retains the last payload when a stale remount refresh fails", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { gcTime: Number.POSITIVE_INFINITY, retry: false } },
+    });
+    let fail = false;
+    const fetcher = vi.fn(async () => {
+      if (fail) throw new Error("internal failure");
+      return payload;
+    });
+    const options = controlRoomExperienceQueryOptions("workspace-a", fetcher);
+    const key = controlRoomExperienceKey("workspace-a");
+    const firstObserver = new QueryObserver(client, options);
+    const stopFirst = firstObserver.subscribe(() => undefined);
+    await vi.waitFor(() => expect(firstObserver.getCurrentResult().isSuccess).toBe(true));
+    stopFirst();
+
+    fail = true;
+    client.setQueryData(key, payload, { updatedAt: Date.now() - 15_001 });
+    const staleObserver = new QueryObserver(client, options);
+    const stopStale = staleObserver.subscribe(() => undefined);
+    await vi.waitFor(() =>
+      expect(staleObserver.getCurrentResult().isRefetchError).toBe(true),
+    );
+
+    expect(staleObserver.getCurrentResult().data).toEqual(payload);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    stopStale();
+    client.clear();
   });
 
   it("retains the last valid payload after an explicit refresh fails", async () => {
@@ -48,5 +129,6 @@ describe("controlRoomExperienceQueryOptions", () => {
     ).rejects.toThrow("internal failure");
 
     expect(client.getQueryData(key)).toEqual(payload);
+    client.clear();
   });
 });
