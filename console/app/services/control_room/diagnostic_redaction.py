@@ -77,7 +77,7 @@ _SENSITIVE_VALUE = re.compile(
     r"(?:\"[^\"]*\"|'[^']*'|[^\n,;&}]+)"
 )
 _BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
-_URI_CREDENTIALS = re.compile(r"([a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@")
+_URI_CREDENTIALS = re.compile(r"([a-z][a-z0-9+.-]*://)[^/@\s:]*:[^/@\s]+@")
 _PRIVATE_KEY_BLOCK = re.compile(
     r"(?is)-----BEGIN[^\n-]*PRIVATE KEY-----.*?" r"-----END[^\n-]*PRIVATE KEY-----"
 )
