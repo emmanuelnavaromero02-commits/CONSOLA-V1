@@ -6,6 +6,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 
+from app.services.control_room.business_copy_detection import (
+    canonicalize_detection_separators,
+    raw_copy_within_scan_limit,
+)
 from app.services.control_room.business_copy_unicode import security_skeleton
 
 
@@ -35,8 +39,11 @@ def _text(item: Mapping[str, object], *keys: str) -> str:
     for values in _containers(item):
         for key in keys:
             value = values.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
+            if not raw_copy_within_scan_limit(value):
+                continue
+            projected = value.strip()
+            if projected:
+                return projected
     return ""
 
 
@@ -55,21 +62,6 @@ _NAMESPACE_MARKERS = frozenset(
         "test",
     }
 )
-_LOOKALIKE_SEPARATORS = str.maketrans(
-    {
-        "∕": "/",
-        "⁄": "/",
-        "⧸": "/",
-        "꞉": ":",
-        "﹕": ":",
-        "∶": ":",
-        "ː": ":",
-        "˸": ":",
-        "։": ":",
-        "׃": ":",
-        "⁚": ":",
-    }
-)
 
 
 def _title_candidates(
@@ -80,7 +72,7 @@ def _title_candidates(
         value
         for values in _containers(item)
         for key in keys
-        if isinstance((value := values.get(key)), str) and value.strip()
+        if isinstance((value := values.get(key)), str)
     )
 
 
@@ -89,6 +81,8 @@ def is_technical_surface_copy(
     identity: BusinessSurfaceIdentity,
     value: str,
 ) -> bool:
+    if not raw_copy_within_scan_limit(value):
+        return False
     candidate_tokens = _canonical_identifier(value)
     technical_ids = {
         tokens
@@ -102,6 +96,7 @@ def is_technical_surface_copy(
                 "gold_table",
             ),
         )
+        if raw_copy_within_scan_limit(candidate)
         if (tokens := _canonical_identifier(candidate))
     }
     return any(
@@ -116,10 +111,12 @@ def is_technical_surface_copy(
 
 
 def _comparison_text(value: str) -> str:
-    return security_skeleton(value).translate(_LOOKALIKE_SEPARATORS)
+    return canonicalize_detection_separators(security_skeleton(value))
 
 
 def _canonical_identifier(value: str) -> tuple[str, ...]:
+    if not raw_copy_within_scan_limit(value):
+        return ()
     normalized = _comparison_text(value)
     expanded = _CAMEL_BOUNDARY.sub(" ", normalized)
     expanded = _ALNUM_BOUNDARY.sub(" ", expanded)
@@ -253,10 +250,18 @@ def surface_section_title(
             if projected:
                 return projected
             continue
+        if not raw_copy_within_scan_limit(candidate):
+            continue
         projected = candidate.strip()
+        if not projected:
+            continue
         if not is_technical_surface_copy(item, identity, projected):
             return projected
-    if not is_technical_surface_copy(item, identity, identity.domain):
+    if raw_copy_within_scan_limit(identity.domain) and not is_technical_surface_copy(
+        item,
+        identity,
+        identity.domain,
+    ):
         projected = visible_copy(identity.domain) if visible_copy else identity.domain
         if projected:
             return projected

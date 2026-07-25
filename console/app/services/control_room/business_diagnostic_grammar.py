@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import islice
 
-from app.services.control_room.business_copy_unicode import security_skeleton
+from app.services.control_room.business_copy_detection import (
+    MAX_VISIBLE_COPY_SCAN_LENGTH,
+    canonicalize_detection_separators,
+)
 
 
-_MAX_GRAMMAR_LENGTH = 8192
 _MAX_GRAMMAR_TOKENS = 64
 _WORD = re.compile(r"[^\W_]+")
 _SEPARATOR_CHARACTERS = frozenset("-_:=")
@@ -20,21 +23,6 @@ _STATE_FIELDS = (
     ("source", "status"),
     ("source", "state"),
 )
-_STATE_VALUES = (
-    ("ready",),
-    ("degraded",),
-    ("ok",),
-    ("missing",),
-    ("blocked",),
-    ("stub",),
-    ("error",),
-    ("empty",),
-    ("schema", "only"),
-    ("unavailable",),
-    ("invalid", "schema"),
-    ("insufficient", "data"),
-    ("no", "permission"),
-)
 _PAID_LEAVE_PREFIX = ("sin", "permiso", "retribuido")
 _PAID_LEAVE_METRICS = frozenset({"ausencia", "ausencias"})
 
@@ -46,14 +34,27 @@ class _Token:
     end: int
 
 
-def _tokens(value: str) -> tuple[str, tuple[_Token, ...]]:
-    normalized = security_skeleton(value[:_MAX_GRAMMAR_LENGTH]).casefold()
-    matches = tuple(_WORD.finditer(normalized))
+@dataclass(frozen=True)
+class _TokenStream:
+    normalized: str
+    tokens: tuple[_Token, ...]
+    overflow: bool
+
+
+def _tokens(value: str) -> _TokenStream:
+    if len(value) > MAX_VISIBLE_COPY_SCAN_LENGTH:
+        return _TokenStream("", (), True)
+    normalized = canonicalize_detection_separators(value).casefold()
+    matches = tuple(islice(_WORD.finditer(normalized), _MAX_GRAMMAR_TOKENS + 1))
     tokens = tuple(
         _Token(match.group(), match.start(), match.end())
         for match in matches[:_MAX_GRAMMAR_TOKENS]
     )
-    return normalized, tokens
+    return _TokenStream(
+        normalized=normalized,
+        tokens=tokens,
+        overflow=len(matches) > _MAX_GRAMMAR_TOKENS,
+    )
 
 
 def _supported_separator(value: str) -> bool:
@@ -81,25 +82,32 @@ def _matches(
     return True
 
 
+def _has_nonempty_assignment(value: str, start: int) -> bool:
+    cursor = start
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    has_whitespace_separator = cursor > start
+    if cursor < len(value) and value[cursor] in _SEPARATOR_CHARACTERS:
+        cursor += 1
+    elif not has_whitespace_separator:
+        return False
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    return cursor < len(value)
+
+
 def is_diagnostic_state_copy(value: str) -> bool:
-    normalized, tokens = _tokens(value)
+    stream = _tokens(value)
+    if stream.overflow:
+        return True
+    normalized, tokens = stream.normalized, stream.tokens
     for start in range(len(tokens)):
         for field in _STATE_FIELDS:
             if not _matches(normalized, tokens, start, field):
                 continue
-            value_index = start + len(field)
-            if value_index >= len(tokens):
-                continue
-            assignment = normalized[
-                tokens[value_index - 1].end : tokens[value_index].start
-            ]
-            if not _supported_separator(assignment):
-                continue
-            if ":" in assignment or "=" in assignment:
+            field_end = tokens[start + len(field) - 1].end
+            if _has_nonempty_assignment(normalized, field_end):
                 return True
-            for state in _STATE_VALUES:
-                if _matches(normalized, tokens, start, field + state):
-                    return True
     return False
 
 
@@ -123,7 +131,10 @@ def _is_paid_leave_metric(
 
 
 def is_spanish_permission_diagnostic(value: str) -> bool:
-    normalized, tokens = _tokens(value)
+    stream = _tokens(value)
+    if stream.overflow:
+        return True
+    normalized, tokens = stream.normalized, stream.tokens
     if not _matches(normalized, tokens, 0, ("sin", "permiso")):
         return False
     return not _is_paid_leave_metric(normalized, tokens)

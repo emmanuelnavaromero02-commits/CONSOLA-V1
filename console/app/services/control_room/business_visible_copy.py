@@ -9,14 +9,14 @@ from app.services.control_room.business_copy_hazards import (
     contains_unsafe_unicode,
     is_diagnostic_copy,
 )
+from app.services.control_room.business_copy_detection import (
+    MAX_VISIBLE_COPY_SCAN_LENGTH,
+)
 from app.services.control_room.business_copy_sensitivity import contains_sensitive_copy
 from app.services.control_room.business_surface_identity import (
     BusinessSurfaceIdentity,
     is_technical_surface_copy,
 )
-
-
-MAX_VISIBLE_COPY_SCAN_LENGTH = 8192
 
 
 class VisibleCopyCause(StrEnum):

@@ -36,7 +36,7 @@ def first_visible_business_copy(
     for values in semantic_maps(item):
         for key in keys:
             value = values.get(key)
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(value, str):
                 continue
             projected = visible_business_copy(
                 item,
