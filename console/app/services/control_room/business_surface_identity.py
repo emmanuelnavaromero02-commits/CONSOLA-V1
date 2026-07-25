@@ -32,16 +32,16 @@ def _containers(item: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
 def _text(item: Mapping[str, object], *keys: str) -> str:
     for values in _containers(item):
         for key in keys:
-            value = str(values.get(key) or "").strip()
-            if value:
-                return value
+            value = values.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return ""
 
 
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _ALNUM_BOUNDARY = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
 _IDENTIFIER_BOUNDARY = re.compile(r"\s+")
-_EXPLICIT_NAMESPACE_BOUNDARY = re.compile(r"[./\\\[\]]")
+_EXPLICIT_NAMESPACE_BOUNDARY = re.compile(r"[./\\:\[\]]")
 _NAMESPACE_MARKERS = frozenset(
     {
         "analytics",
@@ -53,7 +53,21 @@ _NAMESPACE_MARKERS = frozenset(
         "test",
     }
 )
-_LOOKALIKE_SEPARATORS = str.maketrans({"∕": "/", "⁄": "/", "⧸": "/"})
+_LOOKALIKE_SEPARATORS = str.maketrans(
+    {
+        "∕": "/",
+        "⁄": "/",
+        "⧸": "/",
+        "꞉": ":",
+        "﹕": ":",
+        "∶": ":",
+        "ː": ":",
+        "˸": ":",
+        "։": ":",
+        "׃": ":",
+        "⁚": ":",
+    }
+)
 
 
 def _title_candidates(
@@ -102,7 +116,9 @@ def is_technical_surface_copy(
 def _comparison_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value).translate(_LOOKALIKE_SEPARATORS)
     return "".join(
-        character for character in normalized if unicodedata.category(character) != "Mn"
+        character
+        for character in normalized
+        if not unicodedata.category(character).startswith("M")
     )
 
 
