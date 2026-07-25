@@ -16,15 +16,17 @@ from app.services.control_room.business_observation import (
     semantic_maps,
     semantic_states,
 )
+from app.services.control_room.business_experience_copy import (
+    MAX_STRUCTURAL_IDENTITY_LENGTH,
+    first_visible_business_copy,
+    structural_identity_is_safe,
+    visible_business_copy,
+)
 from app.services.control_room.business_projection import filter_business_items
 from app.services.control_room.business_surface_identity import (
     BusinessSurfaceIdentity,
-    resolve_business_surface_identity,
+    resolve_bounded_business_surface_identity,
     surface_section_title,
-)
-from app.services.control_room.business_visible_copy import (
-    VisibleCopyCause,
-    classify_visible_business_copy,
 )
 from app.services.control_room.business_surface_provenance import (
     surface_workflow_provenance_verified,
@@ -42,16 +44,6 @@ from app.services.control_room.surface_snapshot import (
 
 _DECISION_STATES = {"decision_created", "approved", "resolved"}
 _SEVERITIES = {"critical", "high", "medium", "low"}
-_MAX_STRUCTURAL_IDENTITY_LENGTH = 240
-
-
-def _text(item: Mapping[str, object], *keys: str) -> str:
-    for values in semantic_maps(item):
-        for key in keys:
-            value = values.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return ""
 
 
 def _utc_datetime(value: object) -> datetime | None:
@@ -84,48 +76,6 @@ def _observed_at(item: Mapping[str, object]) -> datetime | None:
     return None
 
 
-def _visible_copy(
-    item: Mapping[str, object],
-    identity: BusinessSurfaceIdentity,
-    value: object,
-    *,
-    max_length: int,
-) -> str | None:
-    return classify_visible_business_copy(
-        value,
-        item=item,
-        identity=identity,
-        max_length=max_length,
-    ).text
-
-
-def _safe_structural_identity(
-    item: Mapping[str, object],
-    identity: BusinessSurfaceIdentity,
-) -> bool:
-    for value in (
-        identity.domain,
-        identity.cartridge_id,
-        identity.module_id,
-    ):
-        if len(value) > _MAX_STRUCTURAL_IDENTITY_LENGTH:
-            return False
-        result = classify_visible_business_copy(
-            value,
-            item=item,
-            identity=identity,
-            max_length=_MAX_STRUCTURAL_IDENTITY_LENGTH,
-        )
-        if result.allowed and result.text != value:
-            return False
-        if (
-            not result.allowed
-            and result.cause is not VisibleCopyCause.TECHNICAL_IDENTIFIER
-        ):
-            return False
-    return True
-
-
 def _metric(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
@@ -143,12 +93,24 @@ def _metric(
         selected = slots.affected_count
     if not selected.valid or selected.value is None:
         return None
-    raw_name = _text(item, "metric_name", "metric", "anomaly_type")
-    name = _visible_copy(item, identity, raw_name, max_length=160)
+    name = first_visible_business_copy(
+        item,
+        identity,
+        "metric_name",
+        "metric",
+        "anomaly_type",
+        max_length=160,
+    )
     if name is None:
         name = metric_kind.value.value
-    raw_unit = _text(item, "unit", "metric_unit", "currency")
-    unit = _visible_copy(item, identity, raw_unit, max_length=64)
+    unit = first_visible_business_copy(
+        item,
+        identity,
+        "unit",
+        "metric_unit",
+        "currency",
+        max_length=64,
+    )
     return ExperienceMetric(
         name=name,
         kind=metric_kind.value.value,
@@ -185,10 +147,10 @@ def _fact(
     severity = str(item.get("severity") or "medium").lower()
     if severity not in _SEVERITIES:
         severity = "medium"
-    title = _visible_copy(item, identity, item.get("title"), max_length=240)
+    title = visible_business_copy(item, identity, item.get("title"), max_length=240)
     if title is None:
         return None
-    entity_label = _visible_copy(
+    entity_label = visible_business_copy(
         item,
         identity,
         item.get("entity_label"),
@@ -223,8 +185,11 @@ def build_business_experience(
         tuple[set[str], list[ExperienceFact]],
     ] = {}
     for item in filter_business_items(snapshot.items):
-        identity = resolve_business_surface_identity(item)
-        if identity is None or not _safe_structural_identity(item, identity):
+        identity = resolve_bounded_business_surface_identity(
+            item,
+            max_length=MAX_STRUCTURAL_IDENTITY_LENGTH,
+        )
+        if identity is None or not structural_identity_is_safe(item, identity):
             continue
         fact = _fact(item, identity)
         if fact is None:
@@ -234,7 +199,7 @@ def build_business_experience(
             surface_section_title(
                 item,
                 identity,
-                visible_copy=lambda value: _visible_copy(
+                visible_copy=lambda value: visible_business_copy(
                     item,
                     identity,
                     value,

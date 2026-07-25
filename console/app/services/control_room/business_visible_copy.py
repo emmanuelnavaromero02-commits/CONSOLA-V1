@@ -66,11 +66,11 @@ def classify_visible_business_copy(
 ) -> VisibleCopyResult:
     if not isinstance(value, str):
         return VisibleCopyResult(False, None, VisibleCopyCause.INVALID_TYPE)
+    if len(value) > MAX_VISIBLE_COPY_SCAN_LENGTH:
+        return VisibleCopyResult(False, None, VisibleCopyCause.TOO_LONG)
     text = value.strip()
     if not text:
         return VisibleCopyResult(False, None, VisibleCopyCause.EMPTY)
-    if len(text) > MAX_VISIBLE_COPY_SCAN_LENGTH:
-        return VisibleCopyResult(False, None, VisibleCopyCause.TOO_LONG)
     if cause := _rejection_cause(text, item=item, identity=identity):
         return VisibleCopyResult(False, None, cause)
     projected = text[:max_length]

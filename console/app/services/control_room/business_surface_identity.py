@@ -77,7 +77,7 @@ def _title_candidates(
     *keys: str,
 ) -> tuple[str, ...]:
     return tuple(
-        value.strip()
+        value
         for values in _containers(item)
         for key in keys
         if isinstance((value := values.get(key)), str) and value.strip()
@@ -180,6 +180,57 @@ def resolve_business_surface_identity(
     )
 
 
+def _bounded_identity_text(
+    item: Mapping[str, object],
+    *keys: str,
+    max_length: int,
+) -> str:
+    for values in _containers(item):
+        for key in keys:
+            value = values.get(key)
+            if (
+                isinstance(value, str)
+                and value
+                and len(value) <= max_length
+                and value == value.strip()
+            ):
+                return value
+    return ""
+
+
+def resolve_bounded_business_surface_identity(
+    item: Mapping[str, object],
+    *,
+    max_length: int,
+) -> BusinessSurfaceIdentity | None:
+    domain = _bounded_identity_text(item, "domain", max_length=max_length)
+    cartridge_id = _bounded_identity_text(
+        item,
+        "cartridge_id",
+        "cartridge",
+        "connector_id",
+        max_length=max_length,
+    )
+    module_id = _bounded_identity_text(
+        item,
+        "module_id",
+        max_length=max_length,
+    ) or _bounded_identity_text(
+        item,
+        "source_dataset",
+        "dataset",
+        "gold_table",
+        max_length=max_length,
+    )
+    if not domain or not cartridge_id or not module_id:
+        return None
+    return BusinessSurfaceIdentity(
+        domain=domain,
+        cartridge_id=cartridge_id,
+        module_id=module_id,
+    )
+
+
 def surface_section_title(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
@@ -197,10 +248,13 @@ def surface_section_title(
         "domain_label",
     )
     for candidate in candidates:
-        if is_technical_surface_copy(item, identity, candidate):
+        if visible_copy:
+            projected = visible_copy(candidate)
+            if projected:
+                return projected
             continue
-        projected = visible_copy(candidate) if visible_copy else candidate
-        if projected:
+        projected = candidate.strip()
+        if not is_technical_surface_copy(item, identity, projected):
             return projected
     if not is_technical_surface_copy(item, identity, identity.domain):
         projected = visible_copy(identity.domain) if visible_copy else identity.domain
@@ -212,6 +266,7 @@ def surface_section_title(
 __all__ = (
     "BusinessSurfaceIdentity",
     "is_technical_surface_copy",
+    "resolve_bounded_business_surface_identity",
     "resolve_business_surface_identity",
     "surface_section_title",
 )

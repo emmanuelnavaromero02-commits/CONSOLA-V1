@@ -10,6 +10,10 @@ from app.services.control_room.business_copy_unicode import (
     security_detection_forms,
     security_skeleton,
 )
+from app.services.control_room.business_diagnostic_grammar import (
+    is_diagnostic_state_copy,
+    is_spanish_permission_diagnostic,
+)
 
 _UNSAFE_BIDI = frozenset(
     {"LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"}
@@ -61,20 +65,9 @@ _DIAGNOSTIC_SIGNATURES = tuple(
         r"^blocked(?: |$)",
         r"^error source unavailable(?: [1-5][0-9]{2})?(?: |$)",
         r"^(?:access|permission) denied(?: |$)",
-        r"^sin permiso(?:$| (?:de acceso|para (?:este |el )?"
-        r"(?:usuario|workspace|tenant|recurso|servicio))(?: |$))",
         r"^(?:sin datos(?: disponibles?)?|no hay datos|faltan datos)(?: |$)",
         r"^source unavailable(?: |$)",
-        r"source state (?:missing|blocked|stub|empty|unavailable|error)" r"(?: |$)",
-        r"^(?:status|state|data status|readiness status|source status|source state) "
-        r"(?:missing|blocked|stub|error|empty|schema only|unavailable|"
-        r"invalid schema|insufficient data|no permission)(?: |$)",
     )
-)
-_STATUS_ASSIGNMENT = re.compile(
-    r"(?i)(?<![\w])"
-    r"(?:status|data[_ ]status|readiness[_ ]status|source[_ ]status|source[_ ]state)"
-    r"\s*=\s*[a-z0-9_.-]+(?![\w])"
 )
 _TECHNICAL_PREFIX = re.compile(
     r"(?i)^\s*"
@@ -110,8 +103,10 @@ def contains_unsafe_unicode(value: str) -> bool:
 def is_diagnostic_copy(value: str) -> bool:
     for candidate in security_detection_forms(value):
         comparison = candidate.casefold()
-        if _STATUS_ASSIGNMENT.search(comparison) or _TECHNICAL_PREFIX.search(
-            comparison
+        if (
+            is_diagnostic_state_copy(candidate)
+            or is_spanish_permission_diagnostic(candidate)
+            or _TECHNICAL_PREFIX.search(comparison)
         ):
             return True
         diagnostic = _diagnostic_form(candidate)
