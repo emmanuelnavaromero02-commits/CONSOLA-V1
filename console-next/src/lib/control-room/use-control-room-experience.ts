@@ -22,11 +22,11 @@ export function controlRoomExperienceQueryOptions(
     queryKey: controlRoomExperienceKey(workspaceId),
     queryFn: () => fetcher(workspaceId),
     retry: false,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     refetchInterval: false,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 15_000,
   } as const;
 }
 
