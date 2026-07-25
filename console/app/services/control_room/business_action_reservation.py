@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.services.control_room.business_access import workspace_scope
 from app.services.control_room.business_action_key import effective_action_key
+from app.services.control_room.business_action_replay import (
+    action_reservation_contract,
+    canonical_json,
+    json_mapping,
+    matching_action_replay,
+)
 from app.services.control_room.business_action_attempt import has_remote_attempt
 from app.services.control_room.business_reservation_errors import reservation_fetchrow
 from app.services.control_room.business_execution_approval import (
@@ -16,10 +23,6 @@ from app.services.control_room.business_execution_approval import (
 )
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
-)
-from app.services.control_room.business_workflow_provenance import (
-    ELIGIBILITY_POLICY_VERSION,
-    business_observation_fingerprint,
 )
 
 
@@ -43,22 +46,6 @@ class ActionReservation:
     effective_key: str
     state: ReservationState
     row: dict[str, Any]
-
-
-def _canonical(value: Any) -> str:
-    return json.dumps(value, default=str, separators=(",", ":"), sort_keys=True)
-
-
-def _json(value: Any) -> dict[str, Any]:
-    if isinstance(value, Mapping):
-        return dict(value)
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {}
-        return dict(parsed) if isinstance(parsed, Mapping) else {}
-    return {}
 
 
 def _state(status: Any) -> ReservationState:
@@ -117,17 +104,13 @@ async def acquire_action_reservation(
         operation=operation,
         provided=provided_key,
     )
-    contract = {
-        "version": 1,
-        "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "workspace_id": workspace_id,
-        "item_id": str(item.get("id") or item.get("item_id") or ""),
-        "fingerprint": business_observation_fingerprint(item),
-        "decision_id": item.get("decision_id"),
-        "template_id": template_id,
-        "operation": operation,
-        "authorization": dict(authorization_contract or {}),
-    }
+    contract = action_reservation_contract(
+        workspace_id=workspace_id,
+        item=item,
+        template_id=template_id,
+        operation=operation,
+        authorization_contract=authorization_contract,
+    )
     row = await reservation_fetchrow(
         conn,
         """
@@ -151,8 +134,8 @@ async def acquire_action_reservation(
         key,
         actor_id,
         actor_email,
-        _canonical(dict(input_payload or {})),
-        _canonical({"reservation_contract": contract}),
+        canonical_json(dict(input_payload or {})),
+        canonical_json({"reservation_contract": contract}),
     )
     if row:
         return _reservation(row, key, acquired=True)
@@ -167,9 +150,11 @@ async def acquire_action_reservation(
     )
     if not existing:
         raise ReservationConflict("action reservation conflict was not observable")
-    metadata = _json(existing.get("metadata"))
+    metadata = json_mapping(existing.get("metadata"))
     stored = metadata.get("reservation_contract")
-    if isinstance(stored, Mapping) and _canonical(stored) != _canonical(contract):
+    if isinstance(stored, Mapping) and canonical_json(stored) != canonical_json(
+        contract
+    ):
         raise ReservationConflict("action reservation contract mismatch")
     if _state(
         existing.get("status")
@@ -209,13 +194,30 @@ async def acquire_guarded_action_reservation(
     provided_key: str | None = None,
     input_payload: Mapping[str, Any] | None = None,
 ) -> ActionReservation:
-    await require_approved_execution(
-        conn,
-        user=user,
-        item=item,
-        template_id=template_id,
-    )
     tenant_id, workspace_id = workspace_scope(user)
+    try:
+        await require_approved_execution(
+            conn,
+            user=user,
+            item=item,
+            template_id=template_id,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+        authorization = execution_authorization_contract(user)
+        replay = await matching_action_replay(
+            conn,
+            workspace_id=workspace_id,
+            item=item,
+            template_id=template_id,
+            operation=operation,
+            authorization_contract=authorization,
+        )
+        if replay is None:
+            raise
+        key, row = replay
+        return _reservation(row, key, acquired=False)
     return await acquire_action_reservation(
         conn,
         tenant_id=tenant_id,
@@ -268,8 +270,8 @@ async def complete_action_reservation(
         int(reservation_id),
         effective_key,
         status,
-        _canonical(dict(execution_result)),
-        _canonical(dict(side_effect or {})),
+        canonical_json(dict(execution_result)),
+        canonical_json(dict(side_effect or {})),
         legacy_execution_id,
         error_code,
         error_message,

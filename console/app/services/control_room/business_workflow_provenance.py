@@ -86,7 +86,9 @@ def workflow_eligibility_provenance(
         raise ValueError(f"{parsed_stage.value} requires decision_id")
     if parsed_stage is WorkflowStage.OPTION_SELECTED and decision_id is not None:
         raise ValueError("option_selected must not include decision_id")
-    selected_option = str(option_id or "").strip()
+    selected_option = str(
+        option_id if option_id is not None else item.get("selected_option_id") or ""
+    ).strip()
     if parsed_stage is WorkflowStage.OPTION_SELECTED and not selected_option:
         raise ValueError("option_selected requires option_id")
     payload = {
@@ -155,11 +157,12 @@ def workflow_has_eligible_provenance(
     )
     expected_workspace = _identity_value(item, "workspace_id")
     stored_workspace = str(value.get("workspace_id") or "").strip()
-    expected_option = str(
-        current_metadata.get("selected_option_id")
-        or item.get("selected_option_id")
-        or ""
-    ).strip()
+    option_value = (
+        item.get("selected_option_id")
+        if "selected_option_id" in item
+        else current_metadata.get("selected_option_id")
+    )
+    expected_option = str(option_value or "").strip()
     common = (
         value.get("eligible_at_link") is True
         and value.get("policy_version") == ELIGIBILITY_POLICY_VERSION
@@ -185,7 +188,7 @@ def workflow_has_eligible_provenance(
     stored_option = str(value.get("option_id") or "").strip()
     if stage is WorkflowStage.OPTION_SELECTED:
         return bool(expected_option) and stored_option == expected_option
-    return not stored_option or not expected_option or stored_option == expected_option
+    return stored_option == expected_option
 
 
 def persistence_metadata(item: Mapping[str, Any]) -> dict[str, Any]:

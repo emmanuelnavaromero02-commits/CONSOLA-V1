@@ -818,7 +818,10 @@ async def _persist_item_state(items: list[dict[str, Any]], user: dict | None) ->
 
 @_bind_to_core
 async def _overlay_item_state(
-    items: list[dict[str, Any]], user: dict | None
+    items: list[dict[str, Any]],
+    user: dict | None,
+    *,
+    projector: Callable[..., dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if not items:
         return []
@@ -851,7 +854,7 @@ async def _overlay_item_state(
         items,
         state_by_id,
         item_statuses=ITEM_STATUSES,
-        projector=_with_omega,
+        projector=projector or _with_omega,
         sort_key=_status_sort_key,
     )
 

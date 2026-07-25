@@ -98,9 +98,13 @@ def artifact_overlay_allowed(
         return False
     provenance = persisted_metadata.get(DECISION_PROVENANCE_KEY)
     if isinstance(provenance, Mapping):
+        provenance_item = {
+            **scoped_item,
+            "selected_option_id": persisted_state.get("selected_option_id"),
+        }
         if not workflow_has_eligible_provenance(
             persisted_metadata,
-            scoped_item,
+            provenance_item,
             decision_id=persisted_state.get("decision_id"),
         ):
             return False

@@ -210,6 +210,9 @@ async def test_live_internal_effect_is_once_under_concurrency(
     check = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         assert sorted(result["idempotent"] for result in results) == [False, True]
+        assert {result["item"]["execution_status"] for result in results} == {
+            "executed"
+        }
         run_count = await check.fetchval(
             "SELECT COUNT(*) FROM action_runs "
             "WHERE workspace_id=$1 AND item_id=$2 AND mode='execute'",
@@ -223,6 +226,18 @@ async def test_live_internal_effect_is_once_under_concurrency(
             item["id"],
             event_type,
         )
+        workflow_provenance = await check.fetchrow(
+            """SELECT metadata->'decision_eligibility_provenance'->>'stage' AS stage,
+                      metadata->'decision_eligibility_provenance'->>'reason' AS reason
+                 FROM control_room_items
+                WHERE workspace_id=$1 AND item_id=$2""",
+            workspace_id,
+            item["id"],
+        )
         assert (run_count, event_count) == (1, 1)
+        assert dict(workflow_provenance) == {
+            "stage": "executed",
+            "reason": "explicit_execution",
+        }
     finally:
         await check.close()

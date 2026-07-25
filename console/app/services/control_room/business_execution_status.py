@@ -5,10 +5,11 @@ from typing import Any
 
 from fastapi import HTTPException
 
+import app.services.control_room.business_execution_provenance_sql as _exec_sql
 from app.services.control_room.business_item_persistence import parse_command_tag
-
-
-TERMINAL_EXECUTION_STATUSES = frozenset({"executed", "resolved", "terminal"})
+from app.services.control_room.business_workflow_state import (
+    TERMINAL_EXECUTION_STATUSES,
+)
 
 
 def _status_conflict() -> HTTPException:
@@ -30,10 +31,14 @@ async def persist_execution_status(
     execution_status: str,
 ) -> None:
     result = await conn.execute(
-        """
+        f"""
         UPDATE control_room_items
            SET execution_status = $1,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+               metadata = CASE
+                   WHEN $1 = ANY($6::text[]) THEN
+                       {_exec_sql.EXECUTED_METADATA_ARG4_SQL}
+                   ELSE COALESCE(metadata, '{{}}'::jsonb) || $4::jsonb
+               END,
                last_seen_at = NOW()
          WHERE workspace_id = $2
            AND item_id = $3

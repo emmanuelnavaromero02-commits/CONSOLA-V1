@@ -17,7 +17,6 @@ from app.services.control_room.business_workflow_provenance import (
     CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
     DECISION_PROVENANCE_KEY,
     WORKFLOW_QUARANTINE_KEY,
-    WorkflowStage,
     business_observation_fingerprint,
     quarantine_workflow_metadata,
     workflow_eligibility_provenance,
@@ -25,6 +24,9 @@ from app.services.control_room.business_workflow_provenance import (
 )
 from app.services.control_room.business_workflow_quarantine import (
     workflow_is_quarantined,
+)
+from app.services.control_room.business_workflow_state import (
+    expected_workflow_stage,
 )
 
 
@@ -78,17 +80,6 @@ def _has_workflow(row: Mapping[str, Any]) -> bool:
     )
 
 
-def _stage(row: Mapping[str, Any]) -> WorkflowStage:
-    execution = str(row.get("execution_status") or "not_started")
-    if execution not in {"", "not_started"}:
-        return WorkflowStage.EXECUTED
-    if str(row.get("status") or "") in {"approved", "resolved"}:
-        return WorkflowStage.APPROVED
-    if row.get("decision_id") is not None:
-        return WorkflowStage.DECISION_CREATED
-    return WorkflowStage.OPTION_SELECTED
-
-
 def _legacy_is_demonstrable(existing: Mapping[str, Any]) -> bool:
     item = _item(existing)
     return bool(
@@ -115,11 +106,12 @@ def _quarantine_patch(
     reason = str(quarantine.get("reason") or "").strip()
     if not reason:
         reason = "observation_changed" if changed else "workflow_not_business_eligible"
+    stage = expected_workflow_stage(existing)
     quarantined = quarantine_workflow_metadata(
         metadata,
         item=_item(existing),
         decision_id=existing.get("decision_id"),
-        stage=_stage(existing).value,
+        stage=stage.value if stage is not None else "unknown",
         reason=reason,
     )
     return {WORKFLOW_QUARANTINE_KEY: quarantined[WORKFLOW_QUARANTINE_KEY]}
@@ -203,14 +195,22 @@ async def reconcile_workflow_metadata(
                 WORKFLOW_QUARANTINE_KEY,
             )
         )
+        expected_stage = expected_workflow_stage(existing)
+        provenance_item = {
+            **current,
+            "workspace_id": key[0],
+            "selected_option_id": existing.get("selected_option_id"),
+        }
         if (
-            workflow_has_eligible_provenance(
+            expected_stage is not None
+            and workflow_has_eligible_provenance(
                 metadata,
-                {**current, "workspace_id": key[0]},
+                provenance_item,
                 decision_id=decision_id,
                 use_stored_fingerprint=not (
                     has_observation_order or has_modern_fingerprint
                 ),
+                allowed_stages={expected_stage},
             )
             and classify_business_item(current).eligible
             and not workflow_is_quarantined(existing)
@@ -228,11 +228,12 @@ async def reconcile_workflow_metadata(
             and classify_business_item(current).eligible
             and business_observation_fingerprint(_item(existing))
             == business_observation_fingerprint(current)
+            and (stage := expected_workflow_stage(existing)) is not None
         ):
             patches[key] = {
                 DECISION_PROVENANCE_KEY: workflow_eligibility_provenance(
                     current,
-                    stage=_stage(existing),
+                    stage=stage,
                     workspace_id=key[0],
                     decision_id=decision_id,
                     option_id=str(existing.get("selected_option_id") or "") or None,

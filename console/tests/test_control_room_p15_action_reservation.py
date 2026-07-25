@@ -240,6 +240,10 @@ async def test_dry_run_is_revalidated_after_lock_before_reservation():
             "app.services.control_room.business_action_reservation.acquire_action_reservation",
             reserve,
         ),
+        patch(
+            "app.services.control_room.business_action_reservation.matching_action_replay",
+            AsyncMock(return_value=None),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await acquire_guarded_action_reservation(

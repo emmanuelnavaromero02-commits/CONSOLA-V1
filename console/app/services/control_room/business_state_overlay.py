@@ -10,9 +10,15 @@ from app.services.control_room.business_artifact_overlay import (
     scoped_overlay_item,
 )
 from app.services.control_room.business_projection import eligible_item_ids
+from app.services.control_room.business_surface_provenance import (
+    set_surface_workflow_provenance,
+)
 from app.services.control_room.business_workflow_provenance import (
     workflow_has_eligible_provenance,
     workflow_is_quarantined,
+)
+from app.services.control_room.business_workflow_state import (
+    expected_workflow_stage,
 )
 
 
@@ -78,24 +84,48 @@ def _workflow_state(
     *,
     overlay_artifacts: bool,
     persisted_diagnostic: bool,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bool]:
     linked_workflow = _has_linked_workflow(state)
+    provenance_item = (
+        {
+            **scoped_item,
+            "selected_option_id": state.get("selected_option_id"),
+        }
+        if scoped_item is not None
+        else None
+    )
+    eligible_provenance = (
+        provenance_item is not None
+        and not persisted_diagnostic
+        and not workflow_is_quarantined(state)
+        and workflow_has_eligible_provenance(
+            metadata,
+            provenance_item,
+            decision_id=state.get("decision_id"),
+        )
+    )
+    expected_stage = expected_workflow_stage(state)
+    stage_provenance_verified = (
+        eligible_provenance
+        and expected_stage is not None
+        and workflow_has_eligible_provenance(
+            metadata,
+            provenance_item,
+            decision_id=state.get("decision_id"),
+            allowed_stages={expected_stage},
+        )
+    )
+    decision_provenance_verified = (
+        state.get("decision_id") is not None and stage_provenance_verified
+    )
     trusted = (
         scoped_item is not None
         and not persisted_diagnostic
         and not workflow_is_quarantined(state)
-        and (
-            overlay_artifacts
-            if not linked_workflow
-            else workflow_has_eligible_provenance(
-                metadata,
-                scoped_item,
-                decision_id=state.get("decision_id"),
-            )
-        )
+        and (overlay_artifacts if not linked_workflow else stage_provenance_verified)
     )
     if trusted:
-        return {
+        workflow = {
             "status": state.get("status") or item.get("status") or "open",
             "decision_id": state.get("decision_id") or item.get("decision_id"),
             "selected_option_id": state.get("selected_option_id")
@@ -110,17 +140,19 @@ def _workflow_state(
             if isinstance(metadata.get("lesson_applications"), list)
             else [],
         }
-    return {
-        "status": item.get("status") or "open",
-        "decision_id": item.get("decision_id"),
-        "selected_option_id": item.get("selected_option_id"),
-        "execution_status": item.get("execution_status") or "not_started",
-        "lessons": item.get("lessons"),
-        "learned_rules": item.get("learned_rules"),
-        "lesson_applications": item.get("lesson_applications")
-        if isinstance(item.get("lesson_applications"), list)
-        else [],
-    }
+    else:
+        workflow = {
+            "status": item.get("status") or "open",
+            "decision_id": item.get("decision_id"),
+            "selected_option_id": item.get("selected_option_id"),
+            "execution_status": item.get("execution_status") or "not_started",
+            "lessons": item.get("lessons"),
+            "learned_rules": item.get("learned_rules"),
+            "lesson_applications": item.get("lesson_applications")
+            if isinstance(item.get("lesson_applications"), list)
+            else [],
+        }
+    return workflow, decision_provenance_verified
 
 
 def overlay_business_state(
@@ -140,7 +172,7 @@ def overlay_business_state(
         scoped_item = scoped_overlay_item(item, state)
         overlay_artifacts = artifact_overlay_allowed(item, state, metadata)
         persisted_diagnostic = persisted_state_is_diagnostic(state, metadata)
-        workflow = _workflow_state(
+        workflow, workflow_provenance_verified = _workflow_state(
             item,
             state,
             metadata,
@@ -164,70 +196,73 @@ def overlay_business_state(
                 **intelligence,
                 "decision_intelligence": decision_intelligence,
             }
-        merged.append(
-            projector(
-                {
-                    **item,
-                    **owner_projection(item, state),
-                    **workflow,
-                    "impact_estimate": (
-                        state.get("impact_estimate")
-                        if overlay_artifacts
-                        else item.get("impact_estimate")
-                    ),
-                    "impact_currency": (
-                        state.get("impact_currency")
-                        if overlay_artifacts
-                        else item.get("impact_currency")
-                    ),
-                    "confidence": (
-                        state.get("confidence")
-                        if overlay_artifacts
-                        else item.get("confidence")
-                    ),
-                    "priority_score": (
-                        state.get("priority_score")
-                        if overlay_artifacts
-                        else item.get("priority_score")
-                    ),
-                    "thresholds_applied": (
-                        metadata.get("thresholds_applied")
-                        or item.get("thresholds_applied")
-                        or []
-                    )
+        projected = projector(
+            {
+                **item,
+                **owner_projection(item, state),
+                **workflow,
+                "impact_estimate": (
+                    state.get("impact_estimate")
                     if overlay_artifacts
-                    else (item.get("thresholds_applied") or []),
-                    "threshold_state": (
-                        metadata.get("threshold_state")
-                        or item.get("threshold_state")
-                        or "default"
-                    )
+                    else item.get("impact_estimate")
+                ),
+                "impact_currency": (
+                    state.get("impact_currency")
                     if overlay_artifacts
-                    else (item.get("threshold_state") or "default"),
-                    "alert_state": (
-                        metadata.get("alert_state")
-                        if isinstance(metadata.get("alert_state"), Mapping)
-                        else item.get("alert_state")
-                    )
+                    else item.get("impact_currency")
+                ),
+                "confidence": (
+                    state.get("confidence")
                     if overlay_artifacts
-                    else item.get("alert_state"),
-                    "control_state": (
-                        metadata.get("control_state")
-                        if isinstance(metadata.get("control_state"), Mapping)
-                        else item.get("control_state")
-                    )
+                    else item.get("confidence")
+                ),
+                "priority_score": (
+                    state.get("priority_score")
                     if overlay_artifacts
-                    else item.get("control_state"),
-                    "decision_intelligence": decision_intelligence,
-                    "intelligence": intelligence,
-                    "first_seen_at": state.get("first_seen_at"),
-                    "last_seen_at": state.get("last_seen_at"),
-                    "resolved_at": state.get("resolved_at"),
-                    "dismissed_at": state.get("dismissed_at"),
-                },
-                eligible_parent_ids=business_ids,
-            )
+                    else item.get("priority_score")
+                ),
+                "thresholds_applied": (
+                    metadata.get("thresholds_applied")
+                    or item.get("thresholds_applied")
+                    or []
+                )
+                if overlay_artifacts
+                else (item.get("thresholds_applied") or []),
+                "threshold_state": (
+                    metadata.get("threshold_state")
+                    or item.get("threshold_state")
+                    or "default"
+                )
+                if overlay_artifacts
+                else (item.get("threshold_state") or "default"),
+                "alert_state": (
+                    metadata.get("alert_state")
+                    if isinstance(metadata.get("alert_state"), Mapping)
+                    else item.get("alert_state")
+                )
+                if overlay_artifacts
+                else item.get("alert_state"),
+                "control_state": (
+                    metadata.get("control_state")
+                    if isinstance(metadata.get("control_state"), Mapping)
+                    else item.get("control_state")
+                )
+                if overlay_artifacts
+                else item.get("control_state"),
+                "decision_intelligence": decision_intelligence,
+                "intelligence": intelligence,
+                "first_seen_at": state.get("first_seen_at"),
+                "last_seen_at": state.get("last_seen_at"),
+                "resolved_at": state.get("resolved_at"),
+                "dismissed_at": state.get("dismissed_at"),
+            },
+            eligible_parent_ids=business_ids,
         )
+        set_surface_workflow_provenance(
+            projected,
+            verified=workflow_provenance_verified,
+        )
+        merged.append(projected)
     merged.sort(key=sort_key)
     return merged
 

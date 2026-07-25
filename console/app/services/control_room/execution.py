@@ -109,6 +109,7 @@ from app.services.control_room.business_execution_approval import (
     execution_lifecycle_block,
     require_approved_execution,
 )
+from app.services.control_room.business_execution_entry import prepare_execution_entry
 from app.services.control_room.business_external_projection import (
     reserved_action_response as _build_reserved_action_response,
 )
@@ -122,7 +123,7 @@ from app.services.control_room.business_operational_state import (
     merged_learned_rules,
     merged_lesson_state,
 )
-from app.services.control_room.business_workflow_provenance import WorkflowStage
+import app.services.control_room.business_execution_provenance_sql as _exec_sql
 from app.services.control_room.business_workflow_quarantine import (
     workflow_reopen_allowed,
 )
@@ -166,13 +167,14 @@ for _helper in (
     merged_lesson_state,
     require_matching_dry_run,
     require_approved_execution,
+    prepare_execution_entry,
     workflow_reopen_allowed,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
 _core.__dict__.setdefault("ActionReservation", ActionReservation)
 _core.__dict__.setdefault("ReservationState", ReservationState)
 _core.__dict__.setdefault("ReservationUnavailable", ReservationUnavailable)
-_core.__dict__.setdefault("WorkflowStage", WorkflowStage)
+_core.__dict__.update(_exec_sql=_exec_sql, WorkflowStage=_exec_sql.WorkflowStage)
 _core.__dict__.setdefault("dry_run_metadata", dry_run_metadata)
 _core.__dict__.setdefault("execution_lifecycle_block", execution_lifecycle_block)
 _core.__dict__.setdefault(
@@ -1945,9 +1947,9 @@ async def run_auto_item(
             item=item,
             decision_id=int(item["decision_id"]),
             allowed_stages={
-                WorkflowStage.DECISION_CREATED,
-                WorkflowStage.APPROVED,
-                WorkflowStage.EXECUTED,
+                _exec_sql.WorkflowStage.DECISION_CREATED,
+                _exec_sql.WorkflowStage.APPROVED,
+                _exec_sql.WorkflowStage.EXECUTED,
             },
         )
         await _record_item_event(
@@ -2075,8 +2077,8 @@ async def _record_execute_block(
         item=item,
         decision_id=decision_id,
         allowed_stages=(
-            WorkflowStage.DECISION_CREATED,
-            WorkflowStage.APPROVED,
+            _exec_sql.WorkflowStage.DECISION_CREATED,
+            _exec_sql.WorkflowStage.APPROVED,
         )
         if decision_id
         else None,
@@ -2382,10 +2384,10 @@ async def _execute_internal_followup_task_tx(
         else None,
     )
     update_result = await db.execute(
-        """
+        f"""
         UPDATE control_room_items
            SET execution_status = 'executed',
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               metadata = {_exec_sql.EXECUTED_METADATA_ARG3_SQL},
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
@@ -2655,10 +2657,10 @@ async def _execute_internal_decision_monitoring(
         else None,
     )
     update_result = await pool.execute(
-        """
+        f"""
         UPDATE control_room_items
            SET execution_status = 'executed',
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               metadata = {_exec_sql.EXECUTED_METADATA_ARG3_SQL},
                last_seen_at = NOW()
          WHERE workspace_id = $1
            AND item_id = $2
@@ -3362,31 +3364,21 @@ async def execute_item(
                 503, "execution idempotency reservation failed"
             ) from exc
 
-    await _with_scoped_db(
-        lambda db: _ensure_item_row(
-            db,
-            user=user,
-            item=item,
-            status=item.get("status") or "in_review",
-            critical=True,
-        )
+    replay_response = await prepare_execution_entry(
+        run_scoped=_with_scoped_db,
+        ensure_item_row=_ensure_item_row,
+        record_execute_block=_record_execute_block,
+        response_for_reservation=_reserved_action_response,
+        user=user,
+        item=item,
+        template=template,
+        payload=payload,
+        confirmed=_confirmed_for_execute(confirm_execute),
+        ip=ip,
+        user_agent=user_agent,
     )
-    lifecycle_block = execution_lifecycle_block(item)
-    if lifecycle_block is not None:
-        await _with_scoped_db(
-            lambda db: _record_execute_block(
-                db,
-                user=user,
-                item=item,
-                template=template,
-                payload=payload,
-                ip=ip,
-                user_agent=user_agent,
-                message=lifecycle_block.message,
-                error=lifecycle_block.code,
-            )
-        )
-        raise HTTPException(409, lifecycle_block.message)
+    if replay_response is not None:
+        return replay_response
     await _with_scoped_db(
         lambda db: require_approved_execution(
             db,

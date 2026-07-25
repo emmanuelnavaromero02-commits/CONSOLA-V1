@@ -182,7 +182,11 @@ async def test_live_refresh_backfills_only_demonstrable_legacy_workflow(
         assert legit["execution_status"] == "executed"
         assert workflow_has_eligible_provenance(
             legit_meta,
-            {**legitimate, "workspace_id": workspace_id},
+            {
+                **legitimate,
+                "workspace_id": workspace_id,
+                "selected_option_id": "review",
+            },
             decision_id=ids["legitimate"],
         )
 

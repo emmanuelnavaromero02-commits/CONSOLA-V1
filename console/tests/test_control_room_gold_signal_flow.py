@@ -827,6 +827,7 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
         stage=WorkflowStage.DECISION_CREATED,
         workspace_id=WORKSPACE_A,
         decision_id=42,
+        option_id="review",
     )
     row = {
         "tenant_id": TENANT_A,
@@ -839,7 +840,7 @@ async def test_persisted_derived_item_keeps_state_until_parent_validation():
         "item_kind": "agent_alert",
         "title": "Derived alert",
         "severity": "high",
-        "status": "in_review",
+        "status": "decision_created",
         "decision_id": 42,
         "entity_kind": "employee",
         "entity_id": "7",
