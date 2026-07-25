@@ -1,0 +1,49 @@
+{
+  "schema_version": "control-room-experience/v1",
+  "generated_at": "2026-07-25T12:30:00Z",
+  "scope": {
+    "tenant_id": "tenant-fixture",
+    "workspace_id": "workspace-fixture"
+  },
+  "sections": [
+    {
+      "id": "opaque-performance-key",
+      "cartridge_id": "fixture-cartridge",
+      "module_id": "fixture-module",
+      "title": "Performance",
+      "domain": "Personas",
+      "facts": [
+        {
+          "kind": "kpi",
+          "title": "Rotación voluntaria",
+          "severity": "medium",
+          "observed_at": "2026-07-24T00:00:00Z",
+          "stale": false,
+          "entity_label": "Operación México",
+          "metric": {
+            "name": "Rotación",
+            "kind": "percentage",
+            "value": 0,
+            "unit": "%"
+          },
+          "decision": {
+            "reference": 42,
+            "status": "decision_created"
+          }
+        },
+        {
+          "kind": "signal",
+          "title": "Cobertura de posiciones críticas",
+          "severity": "low",
+          "observed_at": "2026-04-01T00:00:00Z",
+          "stale": true,
+          "metric": {
+            "name": "Cobertura",
+            "kind": "percentage",
+            "value": 78.5
+          }
+        }
+      ]
+    }
+  ]
+}

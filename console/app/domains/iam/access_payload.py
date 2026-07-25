@@ -67,7 +67,7 @@ def access_ui_capabilities(
         "can_view_bronze": _can("datasets.write") and is_platform_admin,
         "can_view_explorer": _can("pipelines.read"),
         "can_view_studio": _can("studio.read") and is_platform_admin,
-        "can_view_control_room": _can("workspace.access"),
+        "can_view_control_room": _can("datasets.read"),
         "can_view_monitor": _can("monitor.read"),
         "can_view_workflows": _can("operations.read") and is_platform_admin,
         "can_view_metrics": _can("operations.read"),
