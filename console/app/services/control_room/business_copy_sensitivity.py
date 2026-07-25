@@ -3,9 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import re
-import unicodedata
 from collections.abc import Mapping
 
+from app.services.control_room.business_copy_unicode import security_detection_forms
 from app.services.control_room.diagnostic_redaction import redact_diagnostic_value
 
 
@@ -32,23 +32,6 @@ _UNICODE_EMAIL = re.compile(
 _URI_PASSWORD = re.compile(
     r"(?i)(?<![A-Z0-9+.-])[A-Z][A-Z0-9+.-]*://[^/@\s:]*:[^/@\s]+@"
 )
-
-
-def _security_skeleton(value: str) -> str:
-    return "".join(
-        character
-        for character in unicodedata.normalize("NFKD", value)
-        if not unicodedata.category(character).startswith("M")
-    )
-
-
-def _detection_forms(value: str) -> tuple[str, ...]:
-    forms = (
-        value,
-        unicodedata.normalize("NFKC", value),
-        _security_skeleton(value),
-    )
-    return tuple(dict.fromkeys(forms))
 
 
 def _decoded_json_segment(segment: str) -> tuple[bool, object]:
@@ -79,7 +62,7 @@ def _contains_jwt(value: str) -> bool:
 
 
 def contains_sensitive_copy(value: str) -> bool:
-    for candidate in _detection_forms(value):
+    for candidate in security_detection_forms(value):
         if (
             redact_diagnostic_value(candidate) != candidate
             or _RECOGNIZABLE_SECRET.search(candidate)

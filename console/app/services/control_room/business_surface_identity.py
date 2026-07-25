@@ -6,6 +6,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 
+from app.services.control_room.business_copy_unicode import security_skeleton
+
 
 @dataclass(frozen=True, order=True)
 class BusinessSurfaceIdentity:
@@ -114,12 +116,7 @@ def is_technical_surface_copy(
 
 
 def _comparison_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value).translate(_LOOKALIKE_SEPARATORS)
-    return "".join(
-        character
-        for character in normalized
-        if not unicodedata.category(character).startswith("M")
-    )
+    return security_skeleton(value).translate(_LOOKALIKE_SEPARATORS)
 
 
 def _canonical_identifier(value: str) -> tuple[str, ...]:

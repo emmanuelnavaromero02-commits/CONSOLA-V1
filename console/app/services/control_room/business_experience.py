@@ -42,6 +42,7 @@ from app.services.control_room.surface_snapshot import (
 
 _DECISION_STATES = {"decision_created", "approved", "resolved"}
 _SEVERITIES = {"critical", "high", "medium", "low"}
+_MAX_STRUCTURAL_IDENTITY_LENGTH = 240
 
 
 def _text(item: Mapping[str, object], *keys: str) -> str:
@@ -107,12 +108,16 @@ def _safe_structural_identity(
         identity.cartridge_id,
         identity.module_id,
     ):
+        if len(value) > _MAX_STRUCTURAL_IDENTITY_LENGTH:
+            return False
         result = classify_visible_business_copy(
             value,
             item=item,
             identity=identity,
-            max_length=240,
+            max_length=_MAX_STRUCTURAL_IDENTITY_LENGTH,
         )
+        if result.allowed and result.text != value:
+            return False
         if (
             not result.allowed
             and result.cause is not VisibleCopyCause.TECHNICAL_IDENTIFIER

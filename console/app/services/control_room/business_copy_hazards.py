@@ -6,6 +6,10 @@ import re
 import unicodedata
 from collections.abc import Mapping
 
+from app.services.control_room.business_copy_unicode import (
+    security_detection_forms,
+    security_skeleton,
+)
 
 _UNSAFE_BIDI = frozenset(
     {"LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"}
@@ -49,19 +53,22 @@ _DIAGNOSTIC_ONLY = frozenset(
 _DIAGNOSTIC_SIGNATURES = tuple(
     re.compile(pattern)
     for pattern in (
-        r"dataset(?: [a-z0-9]+){0,4} (?:no materializado|sin materializar)"
-        r"(?: ahora| todavia| pendiente)?",
-        r"error(?: http)? [1-5][0-9]{2}",
-        r"error source unavailable(?: [1-5][0-9]{2})?",
-        r"(?:access|permission) denied",
-        r"(?:sin datos(?: disponibles?)?|no hay datos)(?: ahora| todavia)?",
-        r"faltan datos(?: (?:ahora|todavia|de(?: [a-z0-9]+){1,3}))?",
-        r"source unavailable(?: now| [1-5][0-9]{2})?",
-        r"source state (?:missing|blocked|stub|empty|unavailable|error)"
-        r"(?: refresh)? pending",
-        r"(?:status|data status|readiness status|source status) "
+        r"^dataset(?: [a-z0-9]+){0,4} "
+        r"(?:missing|blocked|stub|error|empty|unavailable|no permission|"
+        r"schema only|invalid schema|insufficient data|no materializado|"
+        r"sin materializar)(?: |$)",
+        r"^error(?: http)? [1-5][0-9]{2}(?: |$)",
+        r"^blocked(?: |$)",
+        r"^error source unavailable(?: [1-5][0-9]{2})?(?: |$)",
+        r"^(?:access|permission) denied(?: |$)",
+        r"^sin permiso(?:$| (?:de acceso|para (?:este |el )?"
+        r"(?:usuario|workspace|tenant|recurso|servicio))(?: |$))",
+        r"^(?:sin datos(?: disponibles?)?|no hay datos|faltan datos)(?: |$)",
+        r"^source unavailable(?: |$)",
+        r"source state (?:missing|blocked|stub|empty|unavailable|error)" r"(?: |$)",
+        r"^(?:status|state|data status|readiness status|source status|source state) "
         r"(?:missing|blocked|stub|error|empty|schema only|unavailable|"
-        r"invalid schema|insufficient data)",
+        r"invalid schema|insufficient data|no permission)(?: |$)",
     )
 )
 _STATUS_ASSIGNMENT = re.compile(
@@ -76,11 +83,11 @@ _TECHNICAL_PREFIX = re.compile(
     r"\s*[:=]\s*\S"
 )
 _INCOMPLETE_STRUCTURED = re.compile(
-    r"""(?x)
+    r"""(?ix)
     (?:
-        \{\s*["'][^"'\n]{1,80}["']\s*:
+        \{\s*(?:["'][^"'\n]{0,80}["']|[a-z_][a-z0-9_.-]{0,79})\s*:
         |
-        \[\s*(?:["']|[\[{])
+        \[\s*(?:["']|[\[{]|[-+]?(?:\d|\.\d)|true\b|false\b|null\b|none\b)
     )
     """
 )
@@ -88,16 +95,8 @@ _MAX_STRUCTURED_STARTS = 16
 _JSON_DECODER = json.JSONDecoder()
 
 
-def _without_marks(value: str) -> str:
-    return "".join(
-        character
-        for character in unicodedata.normalize("NFKD", value)
-        if not unicodedata.category(character).startswith("M")
-    )
-
-
 def _diagnostic_form(value: str) -> str:
-    return " ".join(re.findall(r"[^\W_]+", _without_marks(value).casefold()))
+    return " ".join(re.findall(r"[^\W_]+", security_skeleton(value).casefold()))
 
 
 def contains_unsafe_unicode(value: str) -> bool:
@@ -109,13 +108,18 @@ def contains_unsafe_unicode(value: str) -> bool:
 
 
 def is_diagnostic_copy(value: str) -> bool:
-    comparison = _without_marks(unicodedata.normalize("NFKC", value)).casefold()
-    if _STATUS_ASSIGNMENT.search(comparison) or _TECHNICAL_PREFIX.search(comparison):
-        return True
-    diagnostic = _diagnostic_form(value)
-    return diagnostic in _DIAGNOSTIC_ONLY or any(
-        signature.fullmatch(diagnostic) for signature in _DIAGNOSTIC_SIGNATURES
-    )
+    for candidate in security_detection_forms(value):
+        comparison = candidate.casefold()
+        if _STATUS_ASSIGNMENT.search(comparison) or _TECHNICAL_PREFIX.search(
+            comparison
+        ):
+            return True
+        diagnostic = _diagnostic_form(candidate)
+        if diagnostic in _DIAGNOSTIC_ONLY or any(
+            signature.match(diagnostic) for signature in _DIAGNOSTIC_SIGNATURES
+        ):
+            return True
+    return False
 
 
 def _balanced_candidate(value: str, start: int) -> str | None:
@@ -155,7 +159,7 @@ def _structured_value(candidate: str) -> bool:
     return isinstance(parsed, (Mapping, list))
 
 
-def contains_structured_copy(value: str) -> bool:
+def _contains_structured_form(value: str) -> bool:
     if _INCOMPLETE_STRUCTURED.search(value):
         return True
     starts = [index for index, character in enumerate(value) if character in {"{", "["}]
@@ -173,6 +177,13 @@ def contains_structured_copy(value: str) -> bool:
         if candidate and _structured_value(candidate):
             return True
     return False
+
+
+def contains_structured_copy(value: str) -> bool:
+    return any(
+        _contains_structured_form(candidate)
+        for candidate in security_detection_forms(value)
+    )
 
 
 __all__ = (
