@@ -30,8 +30,7 @@ async def load_enabled_action_template_ids(
         return frozenset(
             template_id
             for row in rows
-            if (template_id := str(row.get("template_id") or ""))
-            in ACTION_TEMPLATES
+            if (template_id := str(row.get("template_id") or "")) in ACTION_TEMPLATES
         )
 
     return await run_with_db_scope(pool, dict(user), _read)

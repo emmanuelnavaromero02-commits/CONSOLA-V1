@@ -128,11 +128,7 @@ def resolve_business_experience_actions(
                 requires_approval=bool(template.get("requires_approval", True)),
                 prerequisites=prerequisites,
                 disabled_reason=(
-                    None
-                    if enabled
-                    else _STALE_REASON
-                    if stale
-                    else _INCOMPLETE_REASON
+                    None if enabled else _STALE_REASON if stale else _INCOMPLETE_REASON
                 ),
                 method="POST",
                 endpoint=preview_action_endpoint(str(item_id)),

@@ -37,9 +37,9 @@ def _fact(item, *, user=OPERATOR, enabled=ENABLED_TEMPLATES):
 
 
 def test_experience_v1_contract_remains_unchanged():
-    payload = build_business_experience(
-        snapshot(items=(business_item(),))
-    ).model_dump(mode="json", exclude_none=True)
+    payload = build_business_experience(snapshot(items=(business_item(),))).model_dump(
+        mode="json", exclude_none=True
+    )
 
     assert payload["schema_version"] == "control-room-experience/v1"
     fact = payload["sections"][0]["facts"][0]
@@ -108,9 +108,12 @@ def test_stale_action_is_safe_disabled_and_limited_to_one():
     action = fact.actions[0]
     assert action.enabled is False
     assert action.disabled_reason == "Actualiza los datos antes de continuar."
-    assert next(
-        value for value in action.prerequisites if value.code == "freshness"
-    ).satisfied is False
+    assert (
+        next(
+            value for value in action.prerequisites if value.code == "freshness"
+        ).satisfied
+        is False
+    )
 
 
 def test_incomplete_source_binding_disables_action_without_internal_detail():

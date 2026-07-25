@@ -39,7 +39,9 @@ class ReadOnlyCatalogPool:
 @pytest.mark.asyncio
 async def test_catalog_is_one_scoped_read_and_filters_unknown_templates():
     pool = ReadOnlyCatalogPool()
-    with patch.object(control_room_service.auth, "pool", new=AsyncMock(return_value=pool)):
+    with patch.object(
+        control_room_service.auth, "pool", new=AsyncMock(return_value=pool)
+    ):
         result = await load_enabled_action_template_ids(OPERATOR)
 
     assert result == frozenset({"request_owner_review"})
@@ -94,9 +96,7 @@ def test_v2_openapi_is_versioned_strict_and_read_only():
     operation = schema["paths"]["/api/control-room/experience/v2"]["get"]
 
     assert "post" not in schema["paths"]["/api/control-room/experience/v2"]
-    response = operation["responses"]["200"]["content"]["application/json"][
-        "schema"
-    ]
+    response = operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert response["$ref"].endswith("ControlRoomExperienceV2Response")
     for model in (
         "ControlRoomExperienceV2Response",
