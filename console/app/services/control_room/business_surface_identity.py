@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+import unicodedata
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 
@@ -39,9 +40,20 @@ def _text(item: Mapping[str, object], *keys: str) -> str:
 
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _ALNUM_BOUNDARY = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
-_IDENTIFIER_BOUNDARY = re.compile(r"[./:\\_\-\s\[\]]+")
-_EXPLICIT_NAMESPACE_BOUNDARY = re.compile(r"[./:\\\[\]]")
-_NAMESPACE_MARKERS = frozenset({"analytics", "tenant"})
+_IDENTIFIER_BOUNDARY = re.compile(r"\s+")
+_EXPLICIT_NAMESPACE_BOUNDARY = re.compile(r"[./\\\[\]]")
+_NAMESPACE_MARKERS = frozenset(
+    {
+        "analytics",
+        "dev",
+        "development",
+        "prod",
+        "production",
+        "tenant",
+        "test",
+    }
+)
+_LOOKALIKE_SEPARATORS = str.maketrans({"∕": "/", "⁄": "/", "⧸": "/"})
 
 
 def _title_candidates(
@@ -49,14 +61,14 @@ def _title_candidates(
     *keys: str,
 ) -> tuple[str, ...]:
     return tuple(
-        value
+        value.strip()
         for values in _containers(item)
         for key in keys
-        if (value := str(values.get(key) or "").strip())
+        if isinstance((value := values.get(key)), str) and value.strip()
     )
 
 
-def _is_technical_title(
+def is_technical_surface_copy(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
     value: str,
@@ -87,9 +99,23 @@ def _is_technical_title(
     )
 
 
+def _comparison_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value).translate(_LOOKALIKE_SEPARATORS)
+    return "".join(
+        character for character in normalized if unicodedata.category(character) != "Mn"
+    )
+
+
 def _canonical_identifier(value: str) -> tuple[str, ...]:
-    expanded = _CAMEL_BOUNDARY.sub(" ", value)
+    normalized = _comparison_text(value)
+    expanded = _CAMEL_BOUNDARY.sub(" ", normalized)
     expanded = _ALNUM_BOUNDARY.sub(" ", expanded)
+    expanded = "".join(
+        " "
+        if character.isspace() or unicodedata.category(character).startswith("P")
+        else character
+        for character in expanded
+    )
     return tuple(
         token.casefold()
         for token in _IDENTIFIER_BOUNDARY.split(expanded)
@@ -112,8 +138,11 @@ def _is_namespaced_variant(
         len(prefix) == 1
         and prefix[0] in _NAMESPACE_MARKERS
         or any(
-            _canonical_identifier(value[boundary.end() :]) == technical_id
-            for boundary in _EXPLICIT_NAMESPACE_BOUNDARY.finditer(value)
+            _canonical_identifier(_comparison_text(value)[boundary.end() :])
+            == technical_id
+            for boundary in _EXPLICIT_NAMESPACE_BOUNDARY.finditer(
+                _comparison_text(value)
+            )
         )
     )
 
@@ -141,6 +170,8 @@ def resolve_business_surface_identity(
 def surface_section_title(
     item: Mapping[str, object],
     identity: BusinessSurfaceIdentity,
+    *,
+    visible_copy: Callable[[str], str | None] | None = None,
 ) -> str:
     candidates = _title_candidates(
         item,
@@ -153,15 +184,21 @@ def surface_section_title(
         "domain_label",
     )
     for candidate in candidates:
-        if not _is_technical_title(item, identity, candidate):
-            return candidate
-    if not _is_technical_title(item, identity, identity.domain):
-        return identity.domain
+        if is_technical_surface_copy(item, identity, candidate):
+            continue
+        projected = visible_copy(candidate) if visible_copy else candidate
+        if projected:
+            return projected
+    if not is_technical_surface_copy(item, identity, identity.domain):
+        projected = visible_copy(identity.domain) if visible_copy else identity.domain
+        if projected:
+            return projected
     return "Business context"
 
 
 __all__ = (
     "BusinessSurfaceIdentity",
+    "is_technical_surface_copy",
     "resolve_business_surface_identity",
     "surface_section_title",
 )

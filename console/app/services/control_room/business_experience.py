@@ -22,6 +22,10 @@ from app.services.control_room.business_surface_identity import (
     resolve_business_surface_identity,
     surface_section_title,
 )
+from app.services.control_room.business_visible_copy import (
+    VisibleCopyCause,
+    classify_visible_business_copy,
+)
 from app.services.control_room.business_surface_provenance import (
     surface_workflow_provenance_verified,
 )
@@ -43,9 +47,9 @@ _SEVERITIES = {"critical", "high", "medium", "low"}
 def _text(item: Mapping[str, object], *keys: str) -> str:
     for values in semantic_maps(item):
         for key in keys:
-            value = str(values.get(key) or "").strip()
-            if value:
-                return value
+            value = values.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return ""
 
 
@@ -79,7 +83,48 @@ def _observed_at(item: Mapping[str, object]) -> datetime | None:
     return None
 
 
-def _metric(item: Mapping[str, object]) -> ExperienceMetric | None:
+def _visible_copy(
+    item: Mapping[str, object],
+    identity: BusinessSurfaceIdentity,
+    value: object,
+    *,
+    max_length: int,
+) -> str | None:
+    return classify_visible_business_copy(
+        value,
+        item=item,
+        identity=identity,
+        max_length=max_length,
+    ).text
+
+
+def _safe_structural_identity(
+    item: Mapping[str, object],
+    identity: BusinessSurfaceIdentity,
+) -> bool:
+    for value in (
+        identity.domain,
+        identity.cartridge_id,
+        identity.module_id,
+    ):
+        result = classify_visible_business_copy(
+            value,
+            item=item,
+            identity=identity,
+            max_length=240,
+        )
+        if (
+            not result.allowed
+            and result.cause is not VisibleCopyCause.TECHNICAL_IDENTIFIER
+        ):
+            return False
+    return True
+
+
+def _metric(
+    item: Mapping[str, object],
+    identity: BusinessSurfaceIdentity,
+) -> ExperienceMetric | None:
     metric_kind = resolve_metric_kind(item)
     if (
         not metric_kind.declared
@@ -93,15 +138,17 @@ def _metric(item: Mapping[str, object]) -> ExperienceMetric | None:
         selected = slots.affected_count
     if not selected.valid or selected.value is None:
         return None
-    name = _text(item, "metric_name", "metric", "anomaly_type")
-    if not name:
+    raw_name = _text(item, "metric_name", "metric", "anomaly_type")
+    name = _visible_copy(item, identity, raw_name, max_length=160)
+    if name is None:
         name = metric_kind.value.value
-    unit = _text(item, "unit", "metric_unit", "currency") or None
+    raw_unit = _text(item, "unit", "metric_unit", "currency")
+    unit = _visible_copy(item, identity, raw_unit, max_length=64)
     return ExperienceMetric(
-        name=name[:160],
+        name=name,
         kind=metric_kind.value.value,
         value=selected.value,
-        unit=unit[:64] if unit else None,
+        unit=unit,
     )
 
 
@@ -117,7 +164,10 @@ def _decision(item: Mapping[str, object]) -> ExperienceDecision | None:
     return ExperienceDecision(reference=decision_id, status=status)
 
 
-def _fact(item: Mapping[str, object]) -> ExperienceFact | None:
+def _fact(
+    item: Mapping[str, object],
+    identity: BusinessSurfaceIdentity,
+) -> ExperienceFact | None:
     observed_at = _observed_at(item)
     if observed_at is None:
         return None
@@ -130,18 +180,23 @@ def _fact(item: Mapping[str, object]) -> ExperienceFact | None:
     severity = str(item.get("severity") or "medium").lower()
     if severity not in _SEVERITIES:
         severity = "medium"
-    title = str(item.get("title") or "").strip()
-    if not title:
+    title = _visible_copy(item, identity, item.get("title"), max_length=240)
+    if title is None:
         return None
-    entity_label = str(item.get("entity_label") or "").strip() or None
+    entity_label = _visible_copy(
+        item,
+        identity,
+        item.get("entity_label"),
+        max_length=240,
+    )
     return ExperienceFact(
         kind=kind,
-        title=title[:240],
+        title=title,
         severity=severity,
         observed_at=observed_at,
         stale="stale" in semantic_states(item),
-        entity_label=entity_label[:240] if entity_label else None,
-        metric=_metric(item),
+        entity_label=entity_label,
+        metric=_metric(item, identity),
         decision=_decision(item),
     )
 
@@ -164,11 +219,24 @@ def build_business_experience(
     ] = {}
     for item in filter_business_items(snapshot.items):
         identity = resolve_business_surface_identity(item)
-        fact = _fact(item)
-        if identity is None or fact is None:
+        if identity is None or not _safe_structural_identity(item, identity):
+            continue
+        fact = _fact(item, identity)
+        if fact is None:
             continue
         titles, facts = grouped.setdefault(identity, (set(), []))
-        titles.add(surface_section_title(item, identity))
+        titles.add(
+            surface_section_title(
+                item,
+                identity,
+                visible_copy=lambda value: _visible_copy(
+                    item,
+                    identity,
+                    value,
+                    max_length=240,
+                ),
+            )
+        )
         facts.append(fact)
 
     sections: list[ExperienceSection] = []
