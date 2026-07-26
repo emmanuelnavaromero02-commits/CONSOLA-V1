@@ -35,10 +35,7 @@ def action_item_is_current(
         "dry_run": _DRY_RUN_ACTION_STATUSES,
         "execute": _EXECUTE_ACTION_STATUSES,
     }[operation]
-    return (
-        status in allowed_statuses
-        and execution in NONTERMINAL_EXECUTION_STATUSES
-    )
+    return status in allowed_statuses and execution in NONTERMINAL_EXECUTION_STATUSES
 
 
 def action_item_is_stale(item: Mapping[str, Any]) -> bool:
