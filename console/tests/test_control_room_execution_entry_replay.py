@@ -42,6 +42,30 @@ def _runner(conn: object) -> tuple[AsyncMock, object]:
 
 
 @pytest.mark.asyncio
+async def test_ready_execution_defers_item_write_until_atomic_reservation() -> None:
+    run_scoped = AsyncMock(side_effect=AssertionError("write scope reached"))
+    ensure = AsyncMock()
+    result = await prepare_execution_entry(
+        run_scoped=run_scoped,
+        run_replay_scoped=run_scoped,
+        ensure_item_row=ensure,
+        record_execute_block=AsyncMock(),
+        response_for_reservation=Mock(),
+        user=USER,
+        item={**ITEM, "execution_status": "dry_run_validated"},
+        template=TEMPLATE,
+        payload={},
+        confirmed=True,
+        ip=None,
+        user_agent=None,
+    )
+
+    assert result is None
+    run_scoped.assert_not_awaited()
+    ensure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_exact_completed_retry_replays_without_writes() -> None:
     run_replay_scoped, _conn = _runner(object())
     run_scoped = AsyncMock(side_effect=AssertionError("write scope reached"))

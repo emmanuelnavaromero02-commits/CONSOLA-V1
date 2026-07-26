@@ -10,6 +10,7 @@ from app.services import control_room_service
 from console.tests.control_room_execution_helpers import (
     enable_successful_writes,
     executed_item,
+    explicit_action,
 )
 from console.tests.control_room_execution_router_helpers import (
     TransactionalPool,
@@ -35,6 +36,7 @@ async def _base_item() -> dict:
 async def test_execute_live_requires_explicit_confirmation(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     item = executed_item(await _base_item())
+    item, binding_id = explicit_action(item, template_id="create_followup_task")
     mock_pool = AsyncMock()
     enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
@@ -57,6 +59,7 @@ async def test_execute_live_requires_explicit_confirmation(monkeypatch):
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=binding_id,
                 fetcher=finance_fetcher,
             )
 
@@ -79,6 +82,7 @@ async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypat
             "execution_status": "preview_generated",
         }
     )
+    item, binding_id = explicit_action(item, template_id="create_followup_task")
     mock_pool = AsyncMock()
     enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
@@ -103,6 +107,7 @@ async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypat
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=binding_id,
                 confirm_execute=True,
                 fetcher=finance_fetcher,
             )
@@ -115,6 +120,7 @@ async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypat
 async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     item = executed_item(await _base_item())
+    item, binding_id = explicit_action(item, template_id="create_followup_task")
     mock_pool = AsyncMock()
     enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
@@ -139,6 +145,7 @@ async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=binding_id,
                 confirm_execute=True,
                 fetcher=finance_fetcher,
             )
@@ -156,6 +163,7 @@ async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(
 ):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     item = executed_item(await _base_item())
+    item, binding_id = explicit_action(item, template_id="create_followup_task")
     mock_pool = AsyncMock()
     enable_successful_writes(mock_pool)
     base_router = execution_fetchrow_router(item, execution_status="blocked")
@@ -183,6 +191,7 @@ async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=binding_id,
                 confirm_execute=True,
                 idempotency_key="idem-1",
                 fetcher=finance_fetcher,
@@ -200,6 +209,7 @@ async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(
 async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     item = executed_item(await _base_item())
+    item, binding_id = explicit_action(item, template_id="create_followup_task")
     action_row = {
         "id": 101,
         "decision_id": 42,
@@ -231,6 +241,7 @@ async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch)
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=binding_id,
                 confirm_execute=True,
                 idempotency_key="idem-1",
                 fetcher=finance_fetcher,

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -8,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from console.tests import control_room_execution_helpers as execution_helpers
 
 
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -15,7 +14,8 @@ WORKSPACE = "22222222-2222-2222-2222-222222222222"
 USER = {
     "id": 7,
     "email": "ops@example.com",
-    "role": "analyst",
+    "role": "admin",
+    "allowed_cartridges": ["sap_hcm"],
     "active_tenant_id": TENANT,
     "active_workspace_id": WORKSPACE,
 }
@@ -29,6 +29,7 @@ def _item() -> dict[str, Any]:
         "owner_user_id": 7,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
+        "source_system": "sap_hcm",
         "source_dataset": "gold_people",
         "anomaly_type": "headcount_variance",
         "status": "open",
@@ -37,7 +38,7 @@ def _item() -> dict[str, Any]:
         "observed_value": 3,
         "population_count": 10,
         "observation_date": "2026-07-21",
-        "evidence_refs": [{"type": "dataset_row", "source_record_id": "row-1"}],
+        "evidence_refs": ["gold_people:row-1"],
         "alert_state": {"state": "open", "ticket": "initial"},
         "lesson_applications": [],
         "omega": {
@@ -263,7 +264,10 @@ async def test_outcome_and_event_share_one_connection_and_transaction() -> None:
 
 @pytest.mark.asyncio
 async def test_auto_run_revalidates_generation_before_final_event() -> None:
-    original = _item()
+    original = execution_helpers.explicit_action(
+        execution_helpers.runtime_evidenced_item(_item()),
+        template_id="create_followup_task",
+    )[0]
     changed = {**original, "observed_value": 4}
     pool = TransactionPool(locked_row=changed)
     selected = {**original, "selected_option_id": "remediate", "status": "in_review"}
@@ -285,11 +289,6 @@ async def test_auto_run_revalidates_generation_before_final_event() -> None:
                 return_value={"execution": {"id": 2}, "result": {}, "item": dry_run}
             ),
         ),
-        patch.object(
-            control_room_service,
-            "_action_templates_for_item",
-            return_value=[{"template_id": "create_followup_task"}],
-        ),
         patch.object(control_room_service.auth, "pool", AsyncMock(return_value=pool)),
         patch.object(control_room_service.audit_service, "record_event", AsyncMock()),
     ):
@@ -297,4 +296,4 @@ async def test_auto_run_revalidates_generation_before_final_event() -> None:
             await control_room_service.run_auto_item(original["id"], USER)
 
     assert error.value.status_code == 409
-    assert not any("auto_run_completed" in sql for _, _, sql in pool.calls)
+    assert all("auto_run_completed" not in sql for _, _, sql in pool.calls)

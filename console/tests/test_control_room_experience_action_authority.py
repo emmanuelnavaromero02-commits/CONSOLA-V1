@@ -11,7 +11,11 @@ from app.services import control_room_service
 from app.services.control_room.business_action_authority import (
     action_item_is_current,
 )
-from control_room_surface_fixtures import OPERATOR, business_item
+from control_room_surface_fixtures import OPERATOR, action_item, business_item
+
+
+def _binding_id(item):
+    return item["metadata"]["explicit_action_bindings"][0]["binding_id"]
 
 
 @pytest.mark.parametrize("status", ("approved", "dismissed", "resolved"))
@@ -56,7 +60,7 @@ def test_action_operation_has_explicit_current_states(
     ),
 )
 async def test_preview_replay_rejects_stale_or_terminal_before_db(updates):
-    item = business_item(**updates)
+    item = action_item(**updates)
     lookup = AsyncMock(return_value=item)
     pool = AsyncMock(side_effect=AssertionError("database reached"))
     with (
@@ -68,6 +72,7 @@ async def test_preview_replay_rejects_stale_or_terminal_before_db(updates):
                 str(item["id"]),
                 OPERATOR,
                 template_id="request_owner_review",
+                binding_id=_binding_id(item),
             )
 
     assert exc.value.status_code == 409
@@ -76,7 +81,7 @@ async def test_preview_replay_rejects_stale_or_terminal_before_db(updates):
 
 @pytest.mark.asyncio
 async def test_execute_replay_rejects_stale_item_before_db():
-    item = business_item(data_status="stale", status="approved")
+    item = action_item(data_status="stale", status="approved")
     pool = AsyncMock(side_effect=AssertionError("database reached"))
     with (
         patch.object(
@@ -91,6 +96,7 @@ async def test_execute_replay_rejects_stale_item_before_db():
                 str(item["id"]),
                 OPERATOR,
                 template_id="request_owner_review",
+                binding_id=_binding_id(item),
                 confirm_execute=True,
             )
 
@@ -100,7 +106,7 @@ async def test_execute_replay_rejects_stale_item_before_db():
 
 @pytest.mark.asyncio
 async def test_preview_revalidates_disabled_template_before_dml():
-    item = business_item()
+    item = action_item()
     conn = AsyncMock()
     conn.fetchrow.return_value = None
     conn.execute.side_effect = AssertionError("DML reached")
@@ -126,6 +132,7 @@ async def test_preview_revalidates_disabled_template_before_dml():
                 str(item["id"]),
                 OPERATOR,
                 template_id="request_owner_review",
+                binding_id=_binding_id(item),
             )
 
     assert exc.value.status_code == 404

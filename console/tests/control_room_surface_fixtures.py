@@ -4,6 +4,9 @@ from datetime import UTC, datetime
 
 from app.schemas.control_room_surfaces import SurfaceScope
 from app.services.control_room.surface_snapshot import SurfaceSnapshot
+from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
+)
 from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 
 
@@ -55,6 +58,18 @@ def business_item(item_id: str = "business-1", **updates: object) -> dict[str, o
         item,
         locator_field="entity_id",
         observed_at=str(item["detected_at"]),
+    )
+
+
+def action_item(
+    item_id: str = "business-1",
+    *,
+    template_id: str = "request_owner_review",
+    **updates: object,
+) -> dict[str, object]:
+    return attach_explicit_action_binding(
+        business_item(item_id, **updates),
+        template_id=template_id,
     )
 
 
@@ -135,6 +150,7 @@ __all__ = (
     "TENANT_ID",
     "VIEWER",
     "WORKSPACE_ID",
+    "action_item",
     "business_item",
     "installation",
     "snapshot",

@@ -114,7 +114,11 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
             "_item_for_mutation",
             new=AsyncMock(return_value=item),
         ),
-        patch.object(control_room_service, "_resolve_template", return_value=template),
+        patch.object(
+            control_room_service,
+            "require_explicit_action_template",
+            return_value=template,
+        ),
         patch.object(control_room_service, "_execution_payload", return_value={}),
         patch.object(
             control_room_service.auth,

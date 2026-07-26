@@ -10,6 +10,8 @@ from app.services import control_room_service
 from console.tests.control_room_execution_helpers import (
     enable_successful_writes,
     executed_item,
+    explicit_action,
+    explicit_binding_id,
 )
 from console.tests.control_room_execution_router_helpers import (
     TransactionalPool,
@@ -28,9 +30,10 @@ async def _pnl_item() -> dict:
             use_catalog=False,
         )
     )["items"]
-    return executed_item(
+    item = executed_item(
         next(item for item in items if item["source_dataset"] == "pnl_mensual")
     )
+    return explicit_action(item, template_id="create_followup_task")[0]
 
 
 def _action_row() -> dict:
@@ -71,6 +74,7 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
             item["id"],
             USER,
             template_id="create_followup_task",
+            binding_id=explicit_binding_id(item, template_id="create_followup_task"),
             confirm_execute=True,
             idempotency_key="idem-1",
             fetcher=finance_fetcher,
@@ -121,6 +125,7 @@ async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeyp
             item["id"],
             USER,
             template_id="create_followup_task",
+            binding_id=explicit_binding_id(item, template_id="create_followup_task"),
             confirm_execute=True,
             idempotency_key="idem-1",
             fetcher=finance_fetcher,
@@ -168,6 +173,7 @@ async def test_execute_live_supported_followup_is_idempotent(monkeypatch):
             item["id"],
             USER,
             template_id="create_followup_task",
+            binding_id=explicit_binding_id(item, template_id="create_followup_task"),
             confirm_execute=True,
             idempotency_key="idem-1",
             fetcher=finance_fetcher,
@@ -216,6 +222,7 @@ async def test_completed_replay_does_not_require_template_to_remain_enabled(
             item["id"],
             USER,
             template_id="create_followup_task",
+            binding_id=explicit_binding_id(item, template_id="create_followup_task"),
             confirm_execute=True,
             idempotency_key="idem-1",
             fetcher=finance_fetcher,
@@ -251,6 +258,9 @@ async def test_execute_live_idempotent_replay_still_requires_confirmation(monkey
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=explicit_binding_id(
+                    item, template_id="create_followup_task"
+                ),
                 idempotency_key="idem-1",
                 fetcher=finance_fetcher,
             )

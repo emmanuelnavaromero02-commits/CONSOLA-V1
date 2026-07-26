@@ -7,9 +7,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.services import control_room_service
-from app.services.control_room.business_runtime_evidence import (
-    runtime_row_evidence_fields,
+from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
 )
+from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 from test_control_room_permissions import _build_real_control_room_router_client
 
 
@@ -20,6 +21,7 @@ USER = {
     "workspace_role": "workspace_admin",
     "active_tenant_id": "tenant-A",
     "active_workspace_id": "workspace-A",
+    "allowed_cartridges": ["sap_successfactors"],
 }
 
 
@@ -36,25 +38,20 @@ def _talent_item() -> dict:
         "recommendation": "Validar cohorte con RRHH.",
         "severity": "high",
         "affected_count": 4,
+        "observed_value": 4,
+        "population_count": 10,
+        "entity_id": "talent-cohort-1",
         "method": "cut_sensitivity",
         "detected_at": "2026-07-16T10:00:00Z",
         "metric_type": "count",
         "evaluation_status": "success",
+        "data_status": "ready",
     }
-    item.update(
-        runtime_row_evidence_fields(
-            source_dataset="sap_successfactors_talent_action_candidates",
-            source_system="sap_successfactors",
-            cartridge="sap_successfactors",
-            tenant_id="tenant-A",
-            workspace_id="workspace-A",
-            source_row={"action_id": "talent-action-1"},
-            locator_field="action_id",
-            observed_at="2026-07-16T10:00:00Z",
-            business_observation=item,
-        )
+    return bind_runtime_row_evidence(
+        item,
+        locator_field="entity_id",
+        observed_at="2026-07-16T10:00:00Z",
     )
-    return item
 
 
 @pytest.mark.asyncio
@@ -98,31 +95,33 @@ async def test_talent_preview_propagates_diagnostic_conflict():
 
 @pytest.mark.asyncio
 async def test_talent_preview_uses_real_item_and_server_template():
-    template = {
-        "template_id": "prepare_successfactors_talent_review",
-        "label": "Preparar revision de talento",
-        "action_kind": "successfactors_talent_review",
-    }
+    template_id = "prepare_successfactors_review"
+    item = attach_explicit_action_binding(_talent_item(), template_id=template_id)
+    binding = item["metadata"]["explicit_action_bindings"][0]
     with (
         patch.object(
             control_room_service,
             "_item_for_mutation",
-            AsyncMock(return_value=_talent_item()),
+            AsyncMock(return_value=item),
         ) as lookup,
         patch.object(
             control_room_service, "query_dataset_rows", AsyncMock(return_value=[])
         ),
-        patch.object(control_room_service, "_resolve_template", return_value=template),
     ):
         result = await control_room_service.sap_successfactors_talent_action_preview(
-            USER, {"action_id": "talent-action-1"}
+            USER,
+            {
+                "action_id": "talent-action-1",
+                "template_id": template_id,
+                "binding_id": binding["binding_id"],
+            },
         )
 
     lookup.assert_awaited_once_with("talent-action-1", USER)
     assert result["action_id"] == "talent-action-1"
     assert result["method"] == "cut_sensitivity"
-    assert result["template_id"] == template["template_id"]
-    assert result["template"]["action_kind"] == "successfactors_talent_review"
+    assert result["template_id"] == template_id
+    assert result["template"]["action_kind"] == "successfactors_employee_review"
 
 
 def test_talent_preview_route_requires_control_room_write():
@@ -144,3 +143,62 @@ def test_talent_preview_route_requires_control_room_write():
         )
     assert response.status_code == 403
     service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_talent_metadata_and_preview_remain_recommendation_only(monkeypatch):
+    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_talent_cpa_scores":
+            return [
+                {"user_id": "100", "cpa_status": "ready"},
+                {"user_id": "101", "cpa_status": "insufficient_data"},
+            ]
+        if dataset == "sap_successfactors_talent_action_candidates":
+            return [
+                {
+                    "action_id": "talent_calibration_sensitivity",
+                    "kind": "anomaly",
+                    "action_type": "sensibilidad",
+                    "metric_type": "count",
+                    "severity": "medium",
+                    "title": "Casos cerca de cortes 9-box",
+                    "affected_count": 4,
+                    "recommendation": "Revisar calibracion.",
+                    "status": "recommendation_only",
+                    "method": "cut_sensitivity",
+                    "generated_at": "2026-07-16T10:00:00Z",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
+    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(
+        USER
+    )
+    with monkeypatch.context() as context:
+        context.setattr(
+            control_room_service,
+            "require_explicit_action_template",
+            lambda _item, _user, _template_id, _binding_id: {
+                "template_id": "prepare_successfactors_talent_review",
+                "label": "Preparar revision de talento",
+                "action_kind": "successfactors_talent_review",
+            },
+        )
+        preview = await control_room_service.sap_successfactors_talent_action_preview(
+            USER,
+            {
+                "action_id": "talent_calibration_sensitivity",
+                "box_id": "core",
+                "template_id": "prepare_successfactors_talent_review",
+                "binding_id": "a" * 64,
+            },
+        )
+
+    assert readiness["status"] == "partial"
+    assert readiness["summary"]["cpa_ready_employees"] == 1
+    assert preview["status"] == "preview_only"
+    assert preview["write_back_enabled"] is False
+    assert preview["compensation_enabled"] is False
+    assert preview["recommendation_only"] is True
+    assert preview["external_mutations"] == []

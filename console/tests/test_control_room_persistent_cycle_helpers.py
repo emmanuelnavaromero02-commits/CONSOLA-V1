@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock
 
 from app.services import control_room_service
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
+)
 from app.services.control_room.business_execution_precondition import dry_run_metadata
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
@@ -24,6 +27,7 @@ USER = {
     "id": 7,
     "email": "ops@example.com",
     "tenant_id": "tenant-A",
+    "role": "admin",
     "active_workspace_id": "workspace-A",
     "allowed_cartridges": ["replicon"],
     "_effective_permissions": [
@@ -94,7 +98,20 @@ def item(**overrides):
             business_observation=base,
         )
     )
-    return control_room_service._with_omega({**base, **overrides})  # noqa: SLF001
+    projected = control_room_service._with_omega({**base, **overrides})  # noqa: SLF001
+    return attach_explicit_action_binding(
+        projected,
+        template_id="create_followup_task",
+    )
+
+
+def binding_id(value: dict, template_id: str = "create_followup_task") -> str:
+    bindings = value["metadata"]["explicit_action_bindings"]
+    return str(
+        next(binding for binding in bindings if binding["template_id"] == template_id)[
+            "binding_id"
+        ]
+    )
 
 
 def legacy_execution(

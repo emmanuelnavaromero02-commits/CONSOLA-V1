@@ -21,6 +21,7 @@ from app.services.control_room.business_workflow_provenance import (
 )
 from console.tests.control_room_execution_helpers import (
     executed_item as _executed_item,
+    explicit_action,
 )
 from console.tests.control_room_execution_router_helpers import (
     execution_fetchrow_router as _execution_fetchrow_router,
@@ -32,6 +33,7 @@ USER = {
     "email": "ops@example.com",
     "active_workspace_id": "workspace-A",
     "tenant_id": "tenant-A",
+    "role": "admin",
     "allowed_cartridges": ["sap_hcm", "sap_s4hana", "sap_successfactors", "replicon"],
     "_effective_permissions": [
         "control_room.read",
@@ -744,53 +746,6 @@ async def test_sap_successfactors_talent_9box_roster_masks_people(monkeypatch):
     assert "Ana Gomez" not in roster_text
     assert "Luis Perez" not in roster_text
     assert '"100"' not in roster_text
-
-
-@pytest.mark.asyncio
-async def test_sap_successfactors_talent_metadata_and_preview_are_recommendation_only(
-    monkeypatch,
-):
-    async def fake_rows(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
-        if dataset == "sap_successfactors_talent_cpa_scores":
-            return [
-                {"user_id": "100", "cpa_status": "ready"},
-                {"user_id": "101", "cpa_status": "insufficient_data"},
-            ]
-        if dataset == "sap_successfactors_talent_action_candidates":
-            return [
-                {
-                    "action_id": "talent_calibration_sensitivity",
-                    "kind": "anomaly",
-                    "action_type": "sensibilidad",
-                    "metric_type": "count",
-                    "severity": "medium",
-                    "title": "Casos cerca de cortes 9-box",
-                    "affected_count": 4,
-                    "recommendation": "Revisar calibracion.",
-                    "status": "recommendation_only",
-                    "method": "cut_sensitivity",
-                    "generated_at": "2026-07-16T10:00:00Z",
-                }
-            ]
-        return []
-
-    monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
-
-    readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(
-        USER
-    )
-    preview = await control_room_service.sap_successfactors_talent_action_preview(
-        USER,
-        {"action_id": "talent_calibration_sensitivity", "box_id": "core"},
-    )
-
-    assert readiness["status"] == "partial"
-    assert readiness["summary"]["cpa_ready_employees"] == 1
-    assert preview["status"] == "preview_only"
-    assert preview["write_back_enabled"] is False
-    assert preview["compensation_enabled"] is False
-    assert preview["recommendation_only"] is True
-    assert preview["external_mutations"] == []
 
 
 @pytest.mark.asyncio
@@ -2108,6 +2063,7 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
     template_id = "prepare_billing_review"
+    item, binding_id = explicit_action(item, template_id=template_id)
     fetchrow_results = iter(
         [
             _authoritative_item_row(item),
@@ -2182,10 +2138,18 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
         ) as audit_event,
     ):
         preview = await control_room_service.action_preview(
-            item["id"], USER, template_id=template_id, fetcher=finance_fetcher
+            item["id"],
+            USER,
+            template_id=template_id,
+            binding_id=binding_id,
+            fetcher=finance_fetcher,
         )
         dry_run = await control_room_service.action_dry_run(
-            item["id"], USER, template_id=template_id, fetcher=finance_fetcher
+            item["id"],
+            USER,
+            template_id=template_id,
+            binding_id=binding_id,
+            fetcher=finance_fetcher,
         )
 
     assert preview["execution"]["status"] == "generated"
@@ -2209,6 +2173,7 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
             use_catalog=False,
         )
     )["items"][0]
+    item, _binding_id = explicit_action(item, template_id="create_followup_task")
     selected_item = control_room_service._with_omega(
         {**item, "selected_option_id": "remediate", "status": "in_review"}
     )  # noqa: SLF001
@@ -2840,6 +2805,7 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
         )
     )["items"]
     item = next(candidate for candidate in items if candidate["cartridge"] == "sap_hcm")
+    item, binding_id = explicit_action(item, template_id="prepare_hcm_access_review")
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
@@ -2884,6 +2850,7 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
                 item["id"],
                 USER,
                 template_id="prepare_hcm_access_review",
+                binding_id=binding_id,
                 fetcher=finance_fetcher,
             )
 
@@ -2959,6 +2926,7 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
     item = _executed_item(
         next(candidate for candidate in items if candidate["cartridge"] == "sap_s4hana")
     )
+    item, binding_id = explicit_action(item, template_id="prepare_sap_review")
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
@@ -2988,6 +2956,7 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
                 item["id"],
                 USER,
                 template_id="prepare_sap_review",
+                binding_id=binding_id,
                 confirm_execute=True,
                 fetcher=finance_fetcher,
             )
@@ -3054,6 +3023,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
             if candidate["source_dataset"] == "pnl_mensual"
         )
     )
+    item, binding_id = explicit_action(item, template_id="prepare_billing_review")
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetchrow = AsyncMock(
@@ -3077,6 +3047,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
             item["id"],
             USER,
             template_id="prepare_billing_review",
+            binding_id=binding_id,
             confirm_execute=True,
             idempotency_key="idem-ext-1",
             fetcher=finance_fetcher,

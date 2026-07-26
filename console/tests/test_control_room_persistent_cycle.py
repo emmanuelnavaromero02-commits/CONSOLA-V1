@@ -10,6 +10,7 @@ from app.services import control_room_service
 from console.tests.test_control_room_persistent_cycle_helpers import (
     USER,
     action_run_row as _action_run_row,
+    binding_id as _binding_id,
     enable_successful_writes as _enable_successful_writes,
     guarded_fetchrows as _guarded_fetchrows,
     item as _item,
@@ -79,6 +80,7 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
             item["id"],
             USER,
             template_id="create_followup_task",
+            binding_id=_binding_id(item),
         )
         item_after_dry_run = control_room_service._with_omega(
             {
@@ -93,6 +95,7 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
             item["id"],
             USER,
             template_id="create_followup_task",
+            binding_id=_binding_id(item),
             confirm_execute=True,
             idempotency_key="cycle-1",
         )
@@ -166,6 +169,7 @@ async def test_dry_run_fails_closed_when_action_run_cannot_persist():
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=_binding_id(item),
             )
 
     execute_sql = "\n".join(
@@ -210,6 +214,7 @@ async def test_execute_blocks_when_visual_dry_run_has_no_persistent_action_run()
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=_binding_id(item),
                 confirm_execute=True,
             )
 
@@ -251,6 +256,7 @@ async def test_execute_block_preserves_successful_dry_run_status():
                 item["id"],
                 USER,
                 template_id="create_followup_task",
+                binding_id=_binding_id(item),
                 confirm_execute=False,
             )
 

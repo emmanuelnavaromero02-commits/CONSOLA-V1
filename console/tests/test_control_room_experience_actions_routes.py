@@ -15,6 +15,7 @@ from app.services.control_room.business_action_catalog import (
 from control_room_surface_fixtures import (
     OPERATOR,
     VIEWER,
+    action_item,
     business_item,
     snapshot,
 )
@@ -69,7 +70,7 @@ async def test_catalog_is_one_scoped_read_and_filters_unknown_templates():
 
 @pytest.mark.asyncio
 async def test_v2_route_loads_catalog_once_for_many_items():
-    items = tuple(business_item(f"business-{index}") for index in range(20))
+    items = tuple(action_item(f"business-{index}") for index in range(20))
     collect = AsyncMock(return_value=snapshot(items=items))
     catalog = AsyncMock(return_value=frozenset({"request_owner_review"}))
     with (
@@ -89,7 +90,7 @@ async def test_v2_route_loads_catalog_once_for_many_items():
 
 @pytest.mark.asyncio
 async def test_v2_route_does_not_query_action_catalog_without_write_permission():
-    collect = AsyncMock(return_value=snapshot(items=(business_item(),)))
+    collect = AsyncMock(return_value=snapshot(items=(action_item(),)))
     catalog = AsyncMock(side_effect=AssertionError("action catalog queried"))
     with (
         patch.object(surfaces, "collect_surface_snapshot", collect),
@@ -137,7 +138,8 @@ def test_preview_route_retains_write_permission_and_exact_server_path():
 
 @pytest.mark.asyncio
 async def test_preview_rejects_missing_or_substituted_template_as_not_found():
-    item = business_item()
+    item = action_item()
+    binding_id = item["metadata"]["explicit_action_bindings"][0]["binding_id"]
     for template_id in ("missing_template", "prepare_billing_review"):
         with patch.object(
             control_room_service,
@@ -149,6 +151,7 @@ async def test_preview_rejects_missing_or_substituted_template_as_not_found():
                     str(item["id"]),
                     OPERATOR,
                     template_id=template_id,
+                    binding_id=binding_id,
                 )
         assert exc.value.status_code == 404
 
@@ -159,13 +162,16 @@ async def test_preview_scope_rejection_happens_before_template_resolution():
     resolver = AsyncMock(side_effect=AssertionError("template resolution leaked"))
     with (
         patch.object(control_room_service, "_item_for_mutation", new=lookup),
-        patch.object(control_room_service, "_resolve_template", new=resolver),
+        patch.object(
+            control_room_service, "require_explicit_action_template", new=resolver
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.action_preview(
                 "replayed-item",
                 {**OPERATOR, "active_workspace_id": "foreign-workspace"},
                 template_id="request_owner_review",
+                binding_id="a" * 64,
             )
 
     assert exc.value.status_code == 404
