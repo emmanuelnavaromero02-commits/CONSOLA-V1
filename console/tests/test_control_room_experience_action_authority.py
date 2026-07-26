@@ -165,12 +165,16 @@ def _client(user: dict) -> TestClient:
         "/api/control-room/items/business-1/execute",
     ),
 )
-def test_action_routes_require_explicit_strict_binding(path: str):
+def test_legacy_item_action_routes_are_gone_without_parsing_authority(path: str):
     client = _client(OPERATOR)
     with (
-        patch.object(control_room_service, "action_preview", new=AsyncMock()),
-        patch.object(control_room_service, "action_dry_run", new=AsyncMock()),
-        patch.object(control_room_service, "execute_item", new=AsyncMock()),
+        patch.object(
+            control_room_service, "action_preview", new=AsyncMock()
+        ) as preview,
+        patch.object(
+            control_room_service, "action_dry_run", new=AsyncMock()
+        ) as dry_run,
+        patch.object(control_room_service, "execute_item", new=AsyncMock()) as execute,
     ):
         missing = client.post(path, headers={"authorization": "Bearer test"}, json={})
         extra = client.post(
@@ -179,5 +183,10 @@ def test_action_routes_require_explicit_strict_binding(path: str):
             json={"template_id": "request_owner_review", "endpoint": "//evil"},
         )
 
-    assert missing.status_code == 422
-    assert extra.status_code == 422
+    assert missing.status_code == 410
+    assert missing.content == b""
+    assert extra.status_code == 410
+    assert extra.content == b""
+    preview.assert_not_awaited()
+    dry_run.assert_not_awaited()
+    execute.assert_not_awaited()

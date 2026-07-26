@@ -97,8 +97,7 @@ async def _delete_foreign_item(scopes: LiveActionScopes, item_id: str) -> None:
     conn = await asyncpg.connect(scopes.admin_dsn)
     try:
         await conn.execute(
-            "DELETE FROM control_room_items "
-            "WHERE workspace_id=$1::uuid AND item_id=$2",
+            "DELETE FROM control_room_items WHERE workspace_id=$1::uuid AND item_id=$2",
             scopes.workspace_ids[1],
             item_id,
         )
@@ -142,8 +141,8 @@ async def test_post_execute_cannot_mutate_another_tenant(
                         "idempotency_key": f"foreign-{uuid4().hex}",
                     },
                 )
-        assert response.status_code == 404
-        assert response.json() == {"detail": "control room item not found"}
+        assert response.status_code == 410
+        assert response.content == b""
         assert await _foreign_state(scopes, foreign_item_id) == before
     finally:
         await pool.close()

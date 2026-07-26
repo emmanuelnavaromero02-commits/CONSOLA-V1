@@ -1873,8 +1873,6 @@ async def sap_successfactors_talent_anomalies(user: dict | None) -> dict[str, An
             "affected_count": _sf_talent_int(row.get("affected_count")),
             "recommendation": str(row.get("recommendation") or ""),
             "status": str(row.get("status") or "recommendation_only"),
-            "method": str(row.get("method") or "wisdombit"),
-            "preview_available": True,
         }
         for idx, row in enumerate(result["rows"])
     ]

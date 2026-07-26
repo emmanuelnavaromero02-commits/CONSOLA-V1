@@ -119,7 +119,7 @@ def test_v2_openapi_is_versioned_strict_and_read_only():
         assert schema["components"]["schemas"][model]["additionalProperties"] is False
 
 
-def test_preview_route_retains_write_permission_and_exact_server_path():
+def test_legacy_item_preview_route_is_gone_and_has_no_authority_contract():
     route = next(
         route
         for route in routes.router.routes
@@ -132,7 +132,8 @@ def test_preview_route_retains_write_permission_and_exact_server_path():
     }
 
     assert route.methods == {"POST"}
-    assert permissions == {"control_room.write"}
+    assert route.status_code == 410
+    assert permissions == set()
 
 
 @pytest.mark.asyncio

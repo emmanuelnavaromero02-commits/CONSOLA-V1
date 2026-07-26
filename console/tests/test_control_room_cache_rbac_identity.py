@@ -44,10 +44,10 @@ def _user(**changes) -> dict:
 def _dashboard_loader(monkeypatch) -> AsyncMock:
     async def response(user):
         return {
-            "user_id": user["id"],
-            "tenant_id": user["active_tenant_id"],
-            "workspace_id": user["active_workspace_id"],
-            "workspace_role": user["workspace_role"],
+            "subject": user["id"],
+            "scope_a": user["active_tenant_id"],
+            "scope_b": user["active_workspace_id"],
+            "audience": user["workspace_role"],
             "cartridges": list(user["allowed_cartridges"]),
         }
 
@@ -65,8 +65,8 @@ async def test_downgraded_user_cannot_receive_workspace_admin_cache(monkeypatch)
     admin_result = await control_room.control_room_dashboard(admin)
     analyst_result = await control_room.control_room_dashboard(analyst)
 
-    assert admin_result["workspace_role"] == "workspace_admin"
-    assert analyst_result["workspace_role"] == "analyst"
+    assert admin_result["audience"] == "workspace_admin"
+    assert analyst_result["audience"] == "analyst"
     assert loader.await_count == 2
 
 
@@ -92,17 +92,17 @@ async def test_effective_permission_change_uses_a_distinct_cache_key(monkeypatch
 @pytest.mark.parametrize(
     ("changes", "expected_field"),
     [
-        ({"id": 18}, "user_id"),
+        ({"id": 18}, "subject"),
         (
             {"tenant_id": "tenant-b", "active_tenant_id": "tenant-b"},
-            "tenant_id",
+            "scope_a",
         ),
         (
             {
                 "workspace_id": "workspace-b",
                 "active_workspace_id": "workspace-b",
             },
-            "workspace_id",
+            "scope_b",
         ),
         ({"allowed_cartridges": ["replicon"]}, "cartridges"),
     ],
@@ -143,7 +143,7 @@ async def test_inflight_downgrade_never_caches_admin_payload_for_analyst(
         role_at_authorization = user["workspace_role"]
         started.set()
         await release.wait()
-        return {"workspace_role": role_at_authorization}
+        return {"audience": role_at_authorization}
 
     loader = AsyncMock(side_effect=response)
     monkeypatch.setattr(control_room.control_room_service, "dashboard", loader)
@@ -154,10 +154,8 @@ async def test_inflight_downgrade_never_caches_admin_payload_for_analyst(
     user["workspace_role"] = "analyst"
     release.set()
 
-    assert await admin_request == {"workspace_role": "workspace_admin"}
-    assert await control_room.control_room_dashboard(user) == {
-        "workspace_role": "analyst"
-    }
+    assert await admin_request == {"audience": "workspace_admin"}
+    assert await control_room.control_room_dashboard(user) == {"audience": "analyst"}
     assert loader.await_count == 2
 
 

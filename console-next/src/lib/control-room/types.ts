@@ -332,7 +332,6 @@ export interface SfTalentWidget {
   id: string;
   title: string;
   value: number | null;
-  dataset: string;
   href?: string;
   status?: DataReadiness | SourceState | "ready" | "partial";
   detail?: string;
@@ -359,9 +358,6 @@ export interface SfTalentBlocker {
 
 export interface SfTalentKpisPayload {
   generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
   profile: {
     industry: string;
     company_profile: string;
@@ -391,7 +387,6 @@ export interface SfTalentKpisPayload {
 
 export interface SfWorkforceTrends {
   status: "ready" | "partial" | "waiting_for_data" | string;
-  datasets?: Record<string, string>;
   kpis: {
     active_headcount: number | null;
     avg_tenure_months: number | null;
@@ -443,10 +438,6 @@ export interface SfTalentDesempenoCohort {
 
 export interface SfTalentNineBoxPayload {
   generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
-  dataset: string;
   status: DataReadiness | SourceState | "ready" | "partial";
   totals: {
     employees: number;
@@ -485,10 +476,6 @@ export interface SfTalentRosterRow {
 
 export interface SfTalentRosterPayload {
   generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
-  dataset: string;
   box: {
     box_id: string;
     box_label: string;
@@ -516,16 +503,10 @@ export interface SfTalentAnomaly {
   affected_count: number;
   recommendation: string;
   status: string;
-  method: string;
-  preview_available: boolean;
 }
 
 export interface SfTalentAnomaliesPayload {
   generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
-  dataset: string;
   status: DataReadiness | SourceState | "ready" | "partial";
   summary: {
     total: number;
@@ -569,9 +550,6 @@ export interface SfTalentExtractionTarget {
 
 export interface SfTalentMetadataReadinessPayload {
   generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
   status: DataReadiness | SourceState | "ready" | "partial";
   summary: {
     cpa_ready_employees: number;
@@ -937,7 +915,6 @@ export interface ControlItem {
   module_id?: string;
   cartridge: string;
   connector_id?: string;
-  source_dataset: string;
   entity_kind: string;
   entity_id: string;
   entity_label: string;
@@ -950,7 +927,6 @@ export interface ControlItem {
   recommendation: string;
   root_cause?: string;
   impact?: string;
-  sql?: string;
   status: string;
   decision_id?: number | null;
   selected_option_id?: string;
@@ -967,7 +943,6 @@ export interface ControlItem {
   };
   control_origin?: ControlOrigin | string | null;
   capabilities?: Record<string, unknown>;
-  math_provenance?: MathProvenance;
   monte_carlo?: MonteCarloSummary;
   bayesian_calibration?: BayesianCalibrationSummary;
   impact_drivers?: ImpactDriver[];
@@ -975,7 +950,6 @@ export interface ControlItem {
   related_lessons?: Lesson[];
   lesson_count?: number;
   lesson_applications?: LessonApplication[];
-  action_templates?: ActionTemplate[];
   decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
   analysis_type?: string | null;
@@ -1041,9 +1015,6 @@ export interface Dashboard {
     supervised_execution_enabled?: boolean;
     external_writeback_enabled?: boolean;
     write_back_enabled?: boolean;
-  };
-  workspace: {
-    workspace_id: string;
   };
   period: string;
   omega_steps: Array<{ id: string; label: string }>;

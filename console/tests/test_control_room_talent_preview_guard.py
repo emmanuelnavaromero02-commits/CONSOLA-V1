@@ -138,7 +138,7 @@ async def test_talent_preview_uses_real_item_and_server_template():
     assert result["template"]["action_kind"] == "successfactors_employee_review"
 
 
-def test_talent_preview_route_requires_control_room_write():
+def test_talent_preview_route_is_gone_without_reaching_service():
     analyst = {
         "id": 8,
         "email": "analyst@example.com",
@@ -155,7 +155,8 @@ def test_talent_preview_route_requires_control_room_write():
             headers={"authorization": "Bearer test"},
             json={"action_id": "talent-action-1"},
         )
-    assert response.status_code == 403
+    assert response.status_code == 410
+    assert response.content == b""
     service.assert_not_awaited()
 
 

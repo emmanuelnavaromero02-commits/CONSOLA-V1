@@ -98,7 +98,6 @@ ITEM_SHAPE = {"id": ITEM_ID, "kind": str, "omega": dict}
 PAYLOAD_SHAPES = {
     "/api/control-room/summary": {"total_anomalies": int, "sources": list},
     "/api/control-room/dashboard": {
-        "workspace": dict,
         "items": list,
         "summary": dict,
     },
