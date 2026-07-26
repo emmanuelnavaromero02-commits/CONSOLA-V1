@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pydantic import Field
 
 from app.schemas.control_room_public_projection import (
@@ -9,6 +11,9 @@ from app.schemas.control_room_public_projection import (
 )
 from app.schemas.control_room_summary_responses import (
     ControlRoomBusinessSummaryResponse,
+)
+from app.services.control_room.successfactors_gold_observations import (
+    _sf_gold_public_widget,
 )
 
 
@@ -222,6 +227,17 @@ class ControlRoomGoldWidget(PublicSlugIdentity):
 class ControlRoomGoldKpisResponse(PublicProjectionModel):
     generated_at: str | None = None
     widgets: list[ControlRoomGoldWidget] = Field(default_factory=list)
+
+    @classmethod
+    def project(cls, value: object) -> ControlRoomGoldKpisResponse:
+        raw = value if isinstance(value, Mapping) else {}
+        raw_widgets = raw.get("widgets")
+        widgets: list[object] = []
+        if isinstance(raw_widgets, (list, tuple)):
+            for raw_widget in raw_widgets:
+                if isinstance(raw_widget, Mapping):
+                    widgets.append(_sf_gold_public_widget(raw_widget))
+        return super().project({**raw, "widgets": widgets})  # type: ignore[return-value]
 
 
 class ControlRoomLegacyAlertsResponse(PublicProjectionModel):

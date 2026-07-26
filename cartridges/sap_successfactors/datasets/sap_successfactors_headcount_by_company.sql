@@ -8,10 +8,12 @@ WITH emp AS (
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(company_id, '(sin compania)')          AS company_id,
-    COALESCE(company_name, '(sin nombre)')          AS company_name,
+    company_id,
+    company_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(company_name), '') IS NOT NULL
+  AND LOWER(TRIM(company_name)) <> '(sin nombre)'
 GROUP BY company_id, company_name
-ORDER BY headcount DESC, company_id
+ORDER BY headcount DESC, company_name

@@ -82,7 +82,6 @@ def test_summary_restores_business_kpis_without_source_diagnostics_or_ids():
         {"label": "Recursos Humanos", "count": 2},
     ]
     assert projected["sources"] == [
-        {"label": "Personal y nomina", "count": 0},
         {"label": "Talento y organizacion", "count": 12},
     ]
     assert projected["financial"]["revenue_usd"] == 0
@@ -134,8 +133,7 @@ def test_gold_service_does_not_fabricate_or_fallback_to_technical_id():
     )
 
     assert rows[0]["company_name"] == rows[0]["label"] == "Comercio"
-    assert rows[1]["company_name"] is None
-    assert rows[1]["label"] is None
+    assert len(rows) == 1
     assert "technical-company-id" not in str(rows)
     assert "fallback-must-not-appear" not in str(rows)
 

@@ -319,7 +319,7 @@ def _scoped_rows(dataset: str, rows: list[dict], user: dict | None) -> list[dict
 
 @pytest.mark.asyncio
 async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
-    from app.services.intelligence import gold_fetcher
+    from app.services.intelligence import gold_fetcher, successfactors_gold_headcount
 
     calls: list[tuple[str, dict | None, int]] = []
 
@@ -331,19 +331,38 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
                 {"user_id": "101", "full_name": "B", "is_active": "true"},
                 {"user_id": "102", "full_name": "C", "is_active": False},
             ]
-        if dataset == "sap_successfactors_headcount_by_company":
-            return [{"company_id": "MX01", "company_name": "FEMSA", "headcount": 2}]
-        if dataset == "sap_successfactors_headcount_by_location":
-            return [
-                {"location_id": "MTY", "location_name": "Monterrey", "headcount": 2}
-            ]
-        if dataset == "sap_successfactors_headcount_by_department":
-            return [
-                {"department_id": "HR", "department_name": "People", "headcount": 2}
-            ]
         return []
 
+    async def fake_headcounts(user: dict | None, *, limit: int) -> dict[str, dict]:
+        assert user is USER
+        assert limit == 5
+        return {
+            "sap_successfactors_headcount_by_company": {
+                "rows": [{"company_name": "FEMSA", "headcount": 2}],
+                "total": 2,
+                "status": "ready",
+                "error": None,
+            },
+            "sap_successfactors_headcount_by_location": {
+                "rows": [{"location_name": "Monterrey", "headcount": 2}],
+                "total": 2,
+                "status": "ready",
+                "error": None,
+            },
+            "sap_successfactors_headcount_by_department": {
+                "rows": [{"department_name": "People", "headcount": 2}],
+                "total": 2,
+                "status": "ready",
+                "error": None,
+            },
+        }
+
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", fake_gold_rows)
+    monkeypatch.setattr(
+        successfactors_gold_headcount,
+        "query_successfactors_headcount_summaries",
+        fake_headcounts,
+    )
 
     result = await control_room_service.sap_successfactors_gold_kpis(USER)
 
@@ -382,17 +401,14 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
         {"label": "People", "department_name": "People", "headcount": 2}
     ]
     assert {dataset for dataset, _user, _limit in calls} == {
-        "sap_successfactors_employee_360",
-        "sap_successfactors_headcount_by_company",
-        "sap_successfactors_headcount_by_location",
-        "sap_successfactors_headcount_by_department",
+        "sap_successfactors_employee_360"
     }
     assert all(user is USER for _dataset, user, _limit in calls)
 
 
 @pytest.mark.asyncio
 async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypatch):
-    from app.services.intelligence import gold_fetcher
+    from app.services.intelligence import gold_fetcher, successfactors_gold_headcount
 
     async def missing_gold(
         _dataset: str, _user: dict | None, _limit: int
@@ -400,6 +416,15 @@ async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypat
         raise HTTPException(404, "dataset unavailable")
 
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", missing_gold)
+
+    async def missing_headcounts(_user: dict | None, *, limit: int):
+        raise HTTPException(404, "dataset unavailable")
+
+    monkeypatch.setattr(
+        successfactors_gold_headcount,
+        "query_successfactors_headcount_summaries",
+        missing_headcounts,
+    )
 
     result = await control_room_service.sap_successfactors_gold_kpis(USER)
 
@@ -419,7 +444,6 @@ async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypat
     assert all(widget["rows"] == [] for widget in result["widgets"])
 
 
-@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_dashboard_includes_successfactors_talent_gold_signals(monkeypatch):
     async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:

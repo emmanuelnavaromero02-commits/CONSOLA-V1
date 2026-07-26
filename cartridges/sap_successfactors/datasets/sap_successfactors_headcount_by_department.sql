@@ -10,10 +10,12 @@ WITH emp AS (
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(department_id, '(sin departamento)')   AS department_id,
-    COALESCE(department_name, '(sin nombre)')       AS department_name,
+    department_id,
+    department_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(department_name), '') IS NOT NULL
+  AND LOWER(TRIM(department_name)) <> '(sin nombre)'
 GROUP BY department_id, department_name
-ORDER BY headcount DESC, department_id
+ORDER BY headcount DESC, department_name

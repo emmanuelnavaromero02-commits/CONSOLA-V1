@@ -8,10 +8,12 @@ WITH emp AS (
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(location_id, '(sin ubicacion)')        AS location_id,
-    COALESCE(location_name, '(sin nombre)')         AS location_name,
+    location_id,
+    location_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(location_name), '') IS NOT NULL
+  AND LOWER(TRIM(location_name)) <> '(sin nombre)'
 GROUP BY location_id, location_name
-ORDER BY headcount DESC, location_id
+ORDER BY headcount DESC, location_name

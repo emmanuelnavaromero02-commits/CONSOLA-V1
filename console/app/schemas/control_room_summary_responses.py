@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import UTC, date, datetime
 
 from pydantic import Field
 
 from app.schemas.control_room_public_projection import PublicProjectionModel
+from app.services.control_room.business_evidence import has_evidence
 
 
 _CAPABILITY_LABELS = {
@@ -23,6 +25,40 @@ _DOMAIN_LABELS = {
     "ventas": "Ventas",
     "operacion": "Operacion",
 }
+_SOURCE_STATE_FIELDS = (
+    "status",
+    "source_status",
+    "data_status",
+    "data_readiness",
+    "readiness_status",
+    "evaluation_status",
+)
+_UNUSABLE_SOURCE_STATES = frozenset(
+    {
+        "blocked",
+        "error",
+        "failed",
+        "failure",
+        "invalid_schema",
+        "missing",
+        "no_permission",
+        "partial",
+        "schema_only",
+        "stub",
+        "unavailable",
+    }
+)
+_SUCCESSFUL_SOURCE_STATES = frozenset(
+    {"complete", "empty", "gold_ready", "materialized", "ok", "ready", "success"}
+)
+_SOURCE_OBSERVATION_DATE_FIELDS = (
+    "observed_at",
+    "observation_date",
+    "materialized_at",
+    "checked_at",
+    "as_of",
+    "snapshot_month",
+)
 
 
 class SummaryCounts(PublicProjectionModel):
@@ -105,6 +141,64 @@ def _count_breakdown(
     return sorted(rows, key=lambda row: str(row["label"]))
 
 
+def _source_states(item: Mapping[str, object]) -> set[str]:
+    return {
+        value.strip().casefold()
+        for key in _SOURCE_STATE_FIELDS
+        if isinstance((value := item.get(key)), str) and value.strip()
+    }
+
+
+def _valid_source_date(value: object) -> bool:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        return value <= datetime.now(UTC).date()
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return date.fromisoformat(text) <= datetime.now(UTC).date()
+            except ValueError:
+                return False
+    else:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed <= datetime.now(UTC)
+
+
+def _has_source_observation_date(item: Mapping[str, object]) -> bool:
+    values = [
+        item[key]
+        for key in _SOURCE_OBSERVATION_DATE_FIELDS
+        if key in item and item[key] is not None and item[key] != ""
+    ]
+    return bool(values) and all(_valid_source_date(value) for value in values)
+
+
+def _business_source_count(item: Mapping[str, object]) -> int | None:
+    count = item.get("count")
+    if type(count) is not int or count < 0:
+        return None
+    states = _source_states(item)
+    if states & _UNUSABLE_SOURCE_STATES or item.get("error"):
+        return None
+    if "empty" in states and count != 0:
+        return None
+    has_date = _has_source_observation_date(item)
+    stale = "stale" in states or item.get("stale") is True
+    if states - (_SUCCESSFUL_SOURCE_STATES | {"stale"}):
+        return None
+    if stale and (not has_date or not has_evidence(item)):
+        return None
+    if count == 0 and (not has_date or not states & _SUCCESSFUL_SOURCE_STATES):
+        return None
+    return count
+
+
 def _business_sources(value: object) -> list[dict[str, object]]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -113,8 +207,8 @@ def _business_sources(value: object) -> list[dict[str, object]]:
         if not isinstance(item, Mapping):
             continue
         label = _CAPABILITY_LABELS.get(str(item.get("cartridge") or "").casefold())
-        count = item.get("count")
-        if label is not None and type(count) is int:
+        count = _business_source_count(item)
+        if label is not None and count is not None:
             totals[label] = totals.get(label, 0) + count
     return [{"label": label, "count": count} for label, count in sorted(totals.items())]
 

@@ -10,6 +10,12 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
 }
 
+function businessLabel(value: string | null | undefined): string | null {
+  const normalized = value?.normalize("NFKC").trim();
+  if (!normalized || normalized.toLocaleLowerCase() === "(sin nombre)") return null;
+  return normalized;
+}
+
 function rowLabel(row: SfGoldWidgetRow): string | null {
   const candidates = [
     row.company_name,
@@ -17,10 +23,32 @@ function rowLabel(row: SfGoldWidgetRow): string | null {
     row.department_name,
     row.label,
     row.fact,
-    row.status,
   ];
-  const value = candidates.find((item) => typeof item === "string" && item.trim().length > 0);
-  return value?.trim() || null;
+  return candidates.map(businessLabel).find((item) => item !== null) ?? null;
+}
+
+function isHeadcountBreakdown(widget: SfGoldWidget): boolean {
+  return widgetSearchText(widget).includes("headcount_by_");
+}
+
+function observedHeadcount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function headcountRowLabel(widget: SfGoldWidget, row: SfGoldWidgetRow): string | null {
+  const identity = widgetSearchText(widget);
+  if (identity.includes("headcount_by_company")) return businessLabel(row.company_name);
+  if (identity.includes("headcount_by_location")) return businessLabel(row.location_name);
+  if (identity.includes("headcount_by_department")) return businessLabel(row.department_name);
+  return null;
+}
+
+function validWidgetRows(widget: SfGoldWidget): SfGoldWidgetRow[] {
+  const rows = widget.rows ?? [];
+  if (!isHeadcountBreakdown(widget)) return rows;
+  return rows.filter(
+    (row) => headcountRowLabel(widget, row) !== null && observedHeadcount(row.headcount) !== null,
+  );
 }
 
 function businessWidgetTitle(widget: SfGoldWidget): string {
@@ -107,7 +135,7 @@ function widgetValue(widgets: SfGoldKpisPayload["widgets"], terms: string[]): nu
     const value = `${item.id || ""} ${item.title || ""}`.toLowerCase();
     return terms.some((term) => value.includes(term));
   });
-  return typeof widget?.value === "number" ? widget.value : null;
+  return widget ? observedWidgetValue(widget) : null;
 }
 
 function sourceReadiness(source: SourceStatus): SuccessFactorsFront["status"] {
@@ -139,13 +167,30 @@ function unavailableBusinessDetail(status: SuccessFactorsFront["status"]): strin
 
 function widgetStatus(widget: SfGoldWidget | undefined): SuccessFactorsFront["status"] {
   if (!widget) return "missing";
-  if (widget.status) return widget.status;
-  if (typeof widget.value !== "number") return "missing";
-  return widget.value > 0 ? "ready" : "empty";
+  if (!isHeadcountBreakdown(widget)) {
+    if (widget.status) return widget.status;
+    if (typeof widget.value !== "number" || !Number.isFinite(widget.value)) return "missing";
+    return widget.value > 0 ? "ready" : "empty";
+  }
+  if (widget.status && !["ready", "ok"].includes(widget.status)) return widget.status;
+  if (observedWidgetValue(widget) !== null && validWidgetRows(widget).length) return widget.status || "ready";
+  return widget.status === "ready" || widget.status === "ok" ? "invalid_schema" : "missing";
+}
+
+function observedWidgetValue(widget: SfGoldWidget): number | null {
+  if (typeof widget.value !== "number" || !Number.isFinite(widget.value)) return null;
+  if (!isHeadcountBreakdown(widget)) return widget.value;
+  if (widget.status && !["ready", "ok"].includes(widget.status)) return null;
+  const rows = validWidgetRows(widget);
+  const visibleTotal = rows.reduce((total, row) => total + (observedHeadcount(row.headcount) ?? 0), 0);
+  if (observedHeadcount(widget.value) === null || !rows.length || widget.value < visibleTotal) return null;
+  return widget.value;
 }
 
 function widgetValueText(widget: SfGoldWidget | undefined): string {
-  return typeof widget?.value === "number" ? formatNumber(widget.value) : "N/D";
+  if (!widget) return "N/D";
+  const value = observedWidgetValue(widget);
+  return value === null ? "N/D" : formatNumber(value);
 }
 
 function widgetTone(status: SuccessFactorsFront["status"]): "good" | "warning" | "danger" | "neutral" {
@@ -342,8 +387,10 @@ function buildDecisionCapabilities(
   return definitions.map((definition) => {
     const modelMatches = modelText.filter((text) => definition.terms.some((term) => text.includes(term))).length;
     const sourceMatchesCount = sources.filter((source) => sourceMatches(source, definition.terms)).length;
-    const widgetMatchesCount = publicWidgets.filter((widget) =>
-      definition.terms.some((term) => widgetSearchText(widget).includes(term)),
+    const widgetMatchesCount = publicWidgets.filter(
+      (widget) =>
+        definition.terms.some((term) => widgetSearchText(widget).includes(term)) &&
+        ["ready", "ok"].includes(widgetStatus(widget)),
     ).length;
     const evidence = modelMatches + sourceMatchesCount + widgetMatchesCount;
     const matchingSources = sources.filter((source) => sourceMatches(source, definition.terms));
@@ -393,14 +440,14 @@ export function SuccessFactorsGoldPanel({
   const blockedSources = sources.filter((source) => source.status === "blocked" || source.data_readiness === "blocked" || source.data_readiness === "no_permission").length;
   const employeeWidget = widgets.find((widget) => widgetSearchText(widget).includes("employee_360"));
   const orgWidget = widgets.find((widget) => widgetSearchText(widget).includes("org_structure"));
-  const headcountWidgets = widgets.filter((widget) => widgetSearchText(widget).includes("headcount"));
+  const headcountWidgets = widgets.filter(isHeadcountBreakdown);
   const totalSignals = sources.filter((source) => sourceReadiness(source) !== "ready").length;
   const businessFronts = buildBusinessFronts(widgets, sources);
   const decisionCapabilities = buildDecisionCapabilities(decisionModel ?? null, widgets, sources);
   const readyCapabilities = decisionCapabilities.filter((item) => item.status === "ready" || item.status === "ok").length;
   const employeeStatus = widgetStatus(employeeWidget);
   const orgStatus = widgetStatus(orgWidget);
-  const readyHeadcountWidgets = headcountWidgets.filter((widget) => ["ready", "ok", "empty"].includes(widgetStatus(widget)));
+  const readyHeadcountWidgets = headcountWidgets.filter((widget) => ["ready", "ok"].includes(widgetStatus(widget)));
 
   const talentWidgets = talent?.widgets ?? [];
   const talentSignals = talent?.signals ?? [];
@@ -454,21 +501,21 @@ export function SuccessFactorsGoldPanel({
           <CommandMetric
             label="Plantilla activa"
             value={widgetValueText(employeeWidget)}
-            detail={employeeWidget && typeof employeeWidget.value === "number" ? "personas consideradas" : unavailableBusinessDetail(employeeStatus)}
+            detail={employeeWidget && observedWidgetValue(employeeWidget) !== null ? "personas consideradas" : unavailableBusinessDetail(employeeStatus)}
             icon={Users}
             tone={widgetTone(employeeStatus)}
           />
           <CommandMetric
             label="Estructura organizacional"
             value={widgetValueText(orgWidget)}
-            detail={orgWidget && typeof orgWidget.value === "number" ? "relaciones disponibles" : unavailableBusinessDetail(orgStatus)}
+            detail={orgWidget && observedWidgetValue(orgWidget) !== null ? "relaciones disponibles" : unavailableBusinessDetail(orgStatus)}
             icon={Network}
             tone={widgetTone(orgStatus)}
           />
           <CommandMetric
             label="Distribuciones"
-            value={readyHeadcountWidgets.length}
-            detail={headcountWidgets.length ? "compañía, ubicación y departamento" : "Información no disponible"}
+            value={readyHeadcountWidgets.length || "N/D"}
+            detail={readyHeadcountWidgets.length ? "compañía, ubicación y departamento" : "Información no disponible"}
             icon={Building2}
             tone={readyHeadcountWidgets.length ? "good" : "warning"}
           />
@@ -718,30 +765,31 @@ export function SuccessFactorsGoldPanel({
         {widgets.length ? (
           <div className="grid gap-3 xl:grid-cols-2">
             {widgets.map((widget, widgetIndex) => {
-              const rows = widget.rows ?? [];
-              const maxHeadcount = Math.max(1, ...rows.map((row) => typeof row.headcount === "number" ? row.headcount : 0));
               const status = widgetStatus(widget);
+              const rows = ["ready", "ok"].includes(status) ? validWidgetRows(widget) : isHeadcountBreakdown(widget) ? [] : validWidgetRows(widget);
+              const maxHeadcount = Math.max(1, ...rows.map((row) => observedHeadcount(row.headcount) ?? 0));
+              const observedValue = observedWidgetValue(widget);
               return (
                 <article key={`${widget.id || widget.title || "indicator"}:${widgetIndex}`} className="rounded-xl border bg-background p-4 shadow-sm dark:border-emerald-400/15 dark:bg-[#06111f]">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">{businessWidgetTitle(widget)}</p>
                       <strong className="mt-1 block text-2xl font-semibold text-foreground dark:text-white">{widgetValueText(widget)}</strong>
-                      <p className="text-xs text-muted-foreground">{typeof widget.value === "number" ? businessWidgetDetail(widget) : unavailableBusinessDetail(status)}</p>
+                      <p className="text-xs text-muted-foreground">{observedValue !== null ? businessWidgetDetail(widget) : unavailableBusinessDetail(status)}</p>
                     </div>
                     <ReadinessBadge status={status} compact />
                   </div>
                   <div className="mt-4 space-y-3">
                     {rows.slice(0, 6).map((row, index) => {
-                      const headcount = typeof row.headcount === "number" ? row.headcount : 0;
-                      const label = rowLabel(row);
+                      const headcount = observedHeadcount(row.headcount);
+                      const label = isHeadcountBreakdown(widget) ? headcountRowLabel(widget, row) : rowLabel(row);
                       return (
                         <div key={`${widget.id || widget.title || "indicator"}:${index}`} className="space-y-1">
                           <div className="flex items-center justify-between gap-3 text-sm">
                             {label ? <span className="min-w-0 truncate text-muted-foreground">{label}</span> : <span />}
-                            {typeof row.headcount === "number" ? <strong className="tabular-nums text-foreground dark:text-white">{formatNumber(headcount)}</strong> : null}
+                            {headcount !== null ? <strong className="tabular-nums text-foreground dark:text-white">{formatNumber(headcount)}</strong> : null}
                           </div>
-                          {typeof row.headcount === "number" ? <MiniBar value={headcount} max={maxHeadcount} /> : null}
+                          {headcount !== null ? <MiniBar value={headcount} max={maxHeadcount} /> : null}
                         </div>
                       );
                     })}
