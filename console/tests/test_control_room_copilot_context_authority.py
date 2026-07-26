@@ -32,7 +32,7 @@ def modules():
     return copilot, copilot_advanced
 
 
-def _client(router, user: dict) -> TestClient:
+def _client(router, user: dict, *, bypass_csrf: bool = True) -> TestClient:
     from starlette.middleware.base import BaseHTTPMiddleware
 
     from app.dependencies import require_authenticated
@@ -47,7 +47,8 @@ def _client(router, user: dict) -> TestClient:
     app.add_middleware(InjectUser)
     app.include_router(router.router)
     app.dependency_overrides[require_authenticated] = lambda: user
-    app.dependency_overrides[require_csrf] = lambda: None
+    if bypass_csrf:
+        app.dependency_overrides[require_csrf] = lambda: None
     return TestClient(app)
 
 
@@ -130,6 +131,29 @@ def test_snapshot_and_refresh_require_operations_read(modules, monkeypatch):
     refresh.assert_not_awaited()
 
 
+def test_operations_reader_without_write_cannot_refresh(modules, monkeypatch):
+    from app.services import permissions
+
+    copilot, _ = modules
+    latest = AsyncMock(return_value=_raw_snapshot())
+    refresh = AsyncMock(return_value=_raw_snapshot())
+    monkeypatch.setitem(
+        permissions.ROLE_PERMISSIONS,
+        "viewer",
+        {*permissions.ROLE_PERMISSIONS["viewer"], "operations.read"},
+    )
+    monkeypatch.setattr(copilot.copilot_context_service, "latest_snapshot", latest)
+    monkeypatch.setattr(
+        copilot.copilot_context_service, "collect_workspace_context", refresh
+    )
+
+    client = _client(copilot, VIEWER)
+    assert client.get("/api/copilot/context/snapshot").status_code == 200
+    assert client.post("/api/copilot/context/refresh", json={}).status_code == 403
+    latest.assert_awaited_once()
+    refresh.assert_not_awaited()
+
+
 def test_viewer_recommendations_keep_safe_alias_without_raw_ids(modules, monkeypatch):
     copilot, _ = modules
     monkeypatch.setattr(
@@ -137,35 +161,108 @@ def test_viewer_recommendations_keep_safe_alias_without_raw_ids(modules, monkeyp
         "list_recommendations",
         AsyncMock(return_value=_raw_recommendations()),
     )
+    dismiss = AsyncMock(
+        return_value={
+            "id": DB_ID,
+            "fingerprint": FINGERPRINT,
+            "status": "dismissed",
+        }
+    )
     monkeypatch.setattr(
         copilot.copilot_context_service,
         "dismiss_recommendation",
-        AsyncMock(
-            return_value={
-                "id": DB_ID,
-                "fingerprint": FINGERPRINT,
-                "status": "dismissed",
-            }
-        ),
+        dismiss,
     )
-    monkeypatch.setattr(copilot.audit_service, "record_event", AsyncMock())
+    audit = AsyncMock()
+    monkeypatch.setattr(copilot.audit_service, "record_event", audit)
 
     client = _client(copilot, VIEWER)
     listed = client.get("/api/copilot/recommendations")
     dismissed = client.post(
         f"/api/copilot/recommendations/{FINGERPRINT}/dismiss", json={}
     )
-    assert listed.status_code == dismissed.status_code == 200
+    assert listed.status_code == 200
+    assert dismissed.status_code == 403
     assert listed.json()["recommendations"][0]["id"] == FINGERPRINT
-    assert dismissed.json() == {
-        "id": FINGERPRINT,
-        "severity": "info",
-        "status": "dismissed",
-        "action_kind": "navigate",
-    }
     combined = listed.text + dismissed.text
     for private in (DB_ID, TENANT_ID, WORKSPACE_ID, SECRET, "evidence", "snapshot_id"):
         assert private not in combined
+    dismiss.assert_not_awaited()
+    audit.assert_not_awaited()
+
+
+def test_authorized_dismiss_passes_forensics_without_duplicate_audit(
+    modules, monkeypatch
+):
+    copilot, _ = modules
+    dismiss = AsyncMock(
+        return_value={
+            "id": DB_ID,
+            "fingerprint": FINGERPRINT,
+            "status": "dismissed",
+        }
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr(
+        copilot.copilot_context_service, "dismiss_recommendation", dismiss
+    )
+    monkeypatch.setattr(copilot.audit_service, "record_event", audit)
+
+    response = _client(copilot, OPERATOR).post(
+        f"/api/copilot/recommendations/{FINGERPRINT}/dismiss", json={}
+    )
+
+    assert response.status_code == 200
+    dismiss.assert_awaited_once()
+    assert dismiss.await_args.args == (OPERATOR, FINGERPRINT)
+    assert dismiss.await_args.kwargs["ip"]
+    assert dismiss.await_args.kwargs["user_agent"] == "testclient"
+    audit.assert_not_awaited()
+
+
+def test_shared_copilot_mutation_routes_declare_csrf_and_write(modules):
+    from app.services.csrf import require_csrf
+
+    copilot, _ = modules
+    expected = {
+        "/api/copilot/context/refresh": {"operations.read", "control_room.write"},
+        "/api/copilot/recommendations/{recommendation_id}/dismiss": {
+            "control_room.write"
+        },
+    }
+    for path, permission_set in expected.items():
+        route = next(route for route in copilot.router.routes if route.path == path)
+        dependencies = [item.dependency for item in route.dependencies]
+        assert require_csrf in dependencies
+        declared = {
+            dependency.required_permission
+            for dependency in dependencies
+            if hasattr(dependency, "required_permission")
+        }
+        assert permission_set <= declared
+
+
+def test_shared_mutations_reject_missing_csrf_before_service(modules, monkeypatch):
+    copilot, _ = modules
+    refresh = AsyncMock(return_value=_raw_snapshot())
+    dismiss = AsyncMock(return_value={"status": "dismissed"})
+    monkeypatch.setattr(
+        copilot.copilot_context_service, "collect_workspace_context", refresh
+    )
+    monkeypatch.setattr(
+        copilot.copilot_context_service, "dismiss_recommendation", dismiss
+    )
+    client = _client(copilot, OPERATOR, bypass_csrf=False)
+
+    assert client.post("/api/copilot/context/refresh", json={}).status_code == 403
+    assert (
+        client.post(
+            f"/api/copilot/recommendations/{FINGERPRINT}/dismiss", json={}
+        ).status_code
+        == 403
+    )
+    refresh.assert_not_awaited()
+    dismiss.assert_not_awaited()
 
 
 def test_operator_snapshot_is_typed_and_redacted(modules, monkeypatch):

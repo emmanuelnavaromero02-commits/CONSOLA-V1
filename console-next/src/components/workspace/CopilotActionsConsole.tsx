@@ -88,9 +88,9 @@ export function CopilotActionsConsole() {
     queryFn: getMeAccess,
     staleTime: 60_000,
   });
-  const canViewOperationalContext = new Set(
-    access.data?.permissions ?? [],
-  ).has("operations.read");
+  const permissions = new Set(access.data?.permissions ?? []);
+  const canViewOperationalContext = permissions.has("operations.read");
+  const canManageOperationalContext = permissions.has("control_room.write");
 
   const goalsQuery = useQuery<CopilotGoal[]>({
     queryKey: ["copilot", "actions", "goals"],
@@ -367,6 +367,7 @@ export function CopilotActionsConsole() {
                 || recommendationsQuery.isLoading
               }
               showOperationalContext={canViewOperationalContext}
+              canManageOperationalContext={canManageOperationalContext}
               refreshing={refreshContext.isPending}
               dismissingId={dismissRecommendation.variables}
               onRefresh={() => refreshContext.mutate()}
@@ -427,6 +428,7 @@ function LiveContextPanel({
   recommendations,
   loading,
   showOperationalContext,
+  canManageOperationalContext,
   refreshing,
   dismissingId,
   onRefresh,
@@ -436,6 +438,7 @@ function LiveContextPanel({
   recommendations: CopilotRecommendation[];
   loading: boolean;
   showOperationalContext: boolean;
+  canManageOperationalContext: boolean;
   refreshing: boolean;
   dismissingId?: string;
   onRefresh: () => void;
@@ -457,7 +460,7 @@ function LiveContextPanel({
               : "Señales disponibles para tu nivel de acceso"}
           </p>
         </div>
-        {showOperationalContext ? (
+        {showOperationalContext && canManageOperationalContext ? (
           <button
             type="button"
             onClick={onRefresh}
@@ -505,14 +508,16 @@ function LiveContextPanel({
                     <div className="line-clamp-2 text-sm font-medium">{item.title || "Recomendación"}</div>
                     {item.body ? <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.body}</div> : null}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onDismiss(item.id)}
-                    disabled={dismissingId === item.id}
-                    className="shrink-0 rounded-md border px-2 py-1 text-xs hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {dismissingId === item.id ? "..." : "Descartar"}
-                  </button>
+                  {canManageOperationalContext ? (
+                    <button
+                      type="button"
+                      onClick={() => onDismiss(item.id)}
+                      disabled={dismissingId === item.id}
+                      className="shrink-0 rounded-md border px-2 py-1 text-xs hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {dismissingId === item.id ? "..." : "Descartar"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}

@@ -351,6 +351,7 @@ async def get_live_context_snapshot(
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("operations.read")),
+        Depends(require_permission("control_room.write")),
     ],
 )
 async def refresh_live_context(
@@ -397,25 +398,22 @@ async def list_live_recommendations(
 
 @router.post(
     "/recommendations/{recommendation_id}/dismiss",
-    dependencies=[Depends(require_csrf)],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def dismiss_live_recommendation(
     recommendation_id: str,
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    result = await copilot_context_service.dismiss_recommendation(user, recommendation_id)
     ip, ua = _forensic(request)
-    await audit_service.record_event(
-        user_id=user["id"],
-        email=user.get("email"),
-        action="copilot.recommendation.dismiss",
-        resource_type="copilot_recommendation",
-        resource_id=str(result.get("id") or recommendation_id),
+    result = await copilot_context_service.dismiss_recommendation(
+        user,
+        recommendation_id,
         ip=ip,
         user_agent=ua,
-        status="success",
-        metadata={"fingerprint": result.get("fingerprint")},
     )
     return copilot_context_service.project_dismissed_recommendation(result)
 

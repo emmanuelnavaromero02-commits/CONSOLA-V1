@@ -28,8 +28,13 @@ from app.schemas.control_room_talent_responses import (
     ControlRoomTalentMetadataReadinessResponse,
     ControlRoomTalentOverviewResponse,
 )
-from app.services import auth, control_room_service, permissions, proactive_service
-from app.services._copilot_helpers import has_table_cached
+from app.services import (
+    auth,
+    control_room_service,
+    copilot_context_authority,
+    permissions,
+    proactive_service,
+)
 from app.services.control_room.business_copy_sensitivity import (
     contains_sensitive_copy,
 )
@@ -40,8 +45,8 @@ from app.services.db_scope import scoped_db, scoped_db_for_user, workspace_scope
 logger = logging.getLogger(__name__)
 
 
-SNAPSHOT_TABLE = "copilot_context_snapshots"
-RECOMMENDATIONS_TABLE = "copilot_recommendations"
+SNAPSHOT_TABLE = copilot_context_authority.SNAPSHOT_TABLE
+RECOMMENDATIONS_TABLE = copilot_context_authority.RECOMMENDATIONS_TABLE
 DEFAULT_INTERVAL_SECONDS = 3600
 DEFAULT_WORKSPACE_LIMIT = 200
 _SOURCE_LABELS = {
@@ -678,6 +683,7 @@ async def collect_workspace_context(
     generated_by: str = "manual",
     persist: bool = True,
 ) -> dict[str, Any]:
+    copilot_context_authority.require_refresh(user)
     tenant_id, workspace_id = workspace_scope_from_user(user)
     pool = await auth.pool()
     sources: list[dict[str, Any]] = []
@@ -779,10 +785,7 @@ def _summary_metrics(sources: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def _tables_ready(pool: Any) -> bool:
-    return bool(
-        await has_table_cached(pool, SNAPSHOT_TABLE)
-        and await has_table_cached(pool, RECOMMENDATIONS_TABLE)
-    )
+    return await copilot_context_authority.tables_ready(pool)
 
 
 async def _persist_snapshot(conn: Any, snapshot: dict[str, Any]) -> str:
@@ -922,96 +925,26 @@ async def list_recommendations(
     limit: int = 20,
     include_dismissed: bool = False,
 ) -> dict[str, Any]:
-    tenant_id, workspace_id = workspace_scope_from_user(user)
-    pool = await auth.pool()
-    if not await _tables_ready(pool):
-        return {
-            "available": False,
-            "reason": "copilot live context tables missing",
-            "recommendations": [],
-        }
-    limit = max(1, min(int(limit or 20), 100))
-    status_filter = "" if include_dismissed else "AND status <> 'dismissed'"
-    effective_permissions = sorted(permissions.get_effective_permissions(user))
-    async with scoped_db(pool, tenant_id, workspace_id) as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT id::text, snapshot_id::text, fingerprint, severity, category,
-                   title, body, evidence, action_label, action_href, action_kind,
-                   required_permission, status, first_seen_at, last_seen_at,
-                   resolved_at, dismissed_at
-              FROM copilot_recommendations
-             WHERE workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               {status_filter}
-               AND (
-                    required_permission IS NULL
-                    OR required_permission = ''
-                    OR required_permission = ANY($3::text[])
-               )
-             ORDER BY
-               CASE severity
-                 WHEN 'critical' THEN 0
-                 WHEN 'warning' THEN 1
-                 WHEN 'info' THEN 2
-                 ELSE 3
-               END,
-               last_seen_at DESC
-             LIMIT $4
-            """,
-            workspace_id,
-            tenant_id,
-            effective_permissions,
-            limit,
-        )
-    visible_rows = []
-    for row in rows:
-        public_row = _row_public(row)
-        required = str(public_row.get("required_permission") or "").strip()
-        if required and not permissions.has_permission(user, required):
-            continue
-        visible_rows.append(public_row)
-    return {
-        "available": True,
-        "tenant_id": tenant_id,
-        "workspace_id": workspace_id,
-        "recommendations": visible_rows,
-    }
+    return await copilot_context_authority.list_recommendations(
+        user,
+        limit=limit,
+        include_dismissed=include_dismissed,
+    )
 
 
-async def dismiss_recommendation(user: dict[str, Any], recommendation_id: str) -> dict[str, Any]:
-    tenant_id, workspace_id = workspace_scope_from_user(user)
-    pool = await auth.pool()
-    if not await _tables_ready(pool):
-        raise HTTPException(503, "copilot live context tables missing")
-    value = str(recommendation_id or "").strip()
-    if not value or len(value) > 200:
-        raise HTTPException(400, "invalid recommendation id")
-    effective_permissions = sorted(permissions.get_effective_permissions(user))
-    async with scoped_db(pool, tenant_id, workspace_id) as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE copilot_recommendations
-               SET status = 'dismissed',
-                   dismissed_at = NOW()
-             WHERE workspace_id = $1::uuid
-               AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
-               AND (id::text = $3 OR fingerprint = $3)
-               AND (
-                    required_permission IS NULL
-                    OR required_permission = ''
-                    OR required_permission = ANY($4::text[])
-               )
-             RETURNING id::text, fingerprint, status
-            """,
-            workspace_id,
-            tenant_id,
-            value,
-            effective_permissions,
-        )
-    if not row:
-        raise HTTPException(404, "recommendation not found")
-    return _row_public(row)
+async def dismiss_recommendation(
+    user: dict[str, Any],
+    recommendation_id: str,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    return await copilot_context_authority.dismiss_recommendation(
+        user,
+        recommendation_id,
+        ip=ip,
+        user_agent=user_agent,
+    )
 
 
 async def prompt_context_for_user(user: dict[str, Any], *, limit: int = 8) -> str | None:
