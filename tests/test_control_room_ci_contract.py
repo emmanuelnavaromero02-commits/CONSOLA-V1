@@ -5,7 +5,7 @@ from scripts.ci_control_room_paths import control_room_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 2205
+FOCAL_MINIMUM = 2210
 POSTGRES_MINIMUM = 54
 
 P11_RELEVANT_PATHS = (

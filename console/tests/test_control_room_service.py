@@ -2238,6 +2238,11 @@ async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
                 }
             ),
         ) as dry_run,
+        patch.object(
+            control_room_service,
+            "require_enabled_action_template_for_user",
+            new=AsyncMock(),
+        ),
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(
             control_room_service.audit_service, "record_event", new=AsyncMock()

@@ -107,6 +107,11 @@ async def test_talent_preview_uses_real_item_and_server_template():
         patch.object(
             control_room_service, "query_dataset_rows", AsyncMock(return_value=[])
         ),
+        patch.object(
+            control_room_service,
+            "require_enabled_action_template_for_user",
+            AsyncMock(),
+        ),
     ):
         result = await control_room_service.sap_successfactors_talent_action_preview(
             USER,
@@ -153,45 +158,34 @@ async def test_talent_metadata_and_preview_remain_recommendation_only(monkeypatc
                 {"user_id": "100", "cpa_status": "ready"},
                 {"user_id": "101", "cpa_status": "insufficient_data"},
             ]
-        if dataset == "sap_successfactors_talent_action_candidates":
-            return [
-                {
-                    "action_id": "talent_calibration_sensitivity",
-                    "kind": "anomaly",
-                    "action_type": "sensibilidad",
-                    "metric_type": "count",
-                    "severity": "medium",
-                    "title": "Casos cerca de cortes 9-box",
-                    "affected_count": 4,
-                    "recommendation": "Revisar calibracion.",
-                    "status": "recommendation_only",
-                    "method": "cut_sensitivity",
-                    "generated_at": "2026-07-16T10:00:00Z",
-                }
-            ]
         return []
 
     monkeypatch.setattr(control_room_service, "query_dataset_rows", fake_rows)
     readiness = await control_room_service.sap_successfactors_talent_metadata_readiness(
         USER
     )
+    item = attach_explicit_action_binding(
+        _talent_item(), template_id="prepare_successfactors_review"
+    )
+    binding = item["metadata"]["explicit_action_bindings"][0]
     with monkeypatch.context() as context:
         context.setattr(
             control_room_service,
-            "require_explicit_action_template",
-            lambda _item, _user, _template_id, _binding_id: {
-                "template_id": "prepare_successfactors_talent_review",
-                "label": "Preparar revision de talento",
-                "action_kind": "successfactors_talent_review",
-            },
+            "_item_for_mutation",
+            AsyncMock(return_value=item),
+        )
+        context.setattr(
+            control_room_service,
+            "require_enabled_action_template_for_user",
+            AsyncMock(),
         )
         preview = await control_room_service.sap_successfactors_talent_action_preview(
             USER,
             {
-                "action_id": "talent_calibration_sensitivity",
+                "action_id": item["id"],
                 "box_id": "core",
-                "template_id": "prepare_successfactors_talent_review",
-                "binding_id": "a" * 64,
+                "template_id": binding["template_id"],
+                "binding_id": binding["binding_id"],
             },
         )
 
