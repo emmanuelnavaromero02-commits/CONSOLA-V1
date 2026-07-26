@@ -2119,7 +2119,7 @@ async def sap_successfactors_talent_action_preview(
         body,
         load_item=_item_for_mutation,
         load_gold_rows=query_dataset_rows,
-        resolve_template=_resolve_template,
+        resolve_template=require_explicit_action_template,
         resolve_scope=_workspace_scope,
     )
 

@@ -54,6 +54,30 @@ class ExperienceActionPrerequisite(_StrictModel):
     satisfied: bool
 
 
+class ExperienceActionSource(_StrictModel):
+    dataset: str = Field(min_length=1, max_length=240)
+    system: str = Field(min_length=1, max_length=120)
+    cartridge: str = Field(min_length=1, max_length=120)
+
+
+class ExperienceActionProvenance(_StrictModel):
+    producer: Literal["control_room_action_policy"]
+    evidence: Literal["verified_business_observation"]
+
+
+class ExperienceActionBinding(_StrictModel):
+    version: Literal["control-room-action-binding/v1"]
+    policy_version: Literal["control-room-business-v2"]
+    item_id: str = Field(min_length=1, max_length=240)
+    template_id: str = Field(min_length=1, max_length=120)
+    tenant_id: str = Field(min_length=1, max_length=240)
+    workspace_id: str = Field(min_length=1, max_length=240)
+    observation_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source: ExperienceActionSource
+    provenance: ExperienceActionProvenance
+    binding_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class ExperienceAction(_StrictModel):
     item_id: str = Field(min_length=1, max_length=240)
     template_id: str = Field(min_length=1, max_length=120)
@@ -68,6 +92,7 @@ class ExperienceAction(_StrictModel):
     disabled_reason: DisabledReason | None = None
     method: Literal["POST"]
     endpoint: str = Field(min_length=1, max_length=320)
+    binding: ExperienceActionBinding
 
     @model_validator(mode="after")
     def validate_binding(self) -> Self:
@@ -83,6 +108,11 @@ class ExperienceAction(_StrictModel):
             raise ValueError("invalid action template binding")
         if not valid_preview_action_endpoint(self.endpoint, item_id=self.item_id):
             raise ValueError("invalid action endpoint")
+        if (
+            self.binding.item_id != self.item_id
+            or self.binding.template_id != self.template_id
+        ):
+            raise ValueError("action binding does not match the action")
         codes = [prerequisite.code for prerequisite in self.prerequisites]
         if len(set(codes)) != len(codes) or set(codes) != _PREREQUISITE_CODES:
             raise ValueError("invalid action prerequisites")
@@ -95,7 +125,6 @@ class ExperienceAction(_StrictModel):
 
 
 class ExperienceFactV2(_StrictModel):
-    item_id: str = Field(min_length=1, max_length=240)
     kind: Literal["anomaly", "signal", "alert", "kpi"]
     title: str
     severity: Literal["critical", "high", "medium", "low"]
@@ -108,10 +137,8 @@ class ExperienceFactV2(_StrictModel):
 
     @model_validator(mode="after")
     def validate_item_binding(self) -> Self:
-        if not valid_action_item_id(self.item_id):
-            raise ValueError("invalid experience item id")
-        if any(action.item_id != self.item_id for action in self.actions):
-            raise ValueError("action belongs to a different item")
+        if len({action.item_id for action in self.actions}) > 1:
+            raise ValueError("actions belong to different items")
         return self
 
 
@@ -135,7 +162,10 @@ __all__ = (
     "EXPERIENCE_ACTIONS_SCHEMA_VERSION",
     "ControlRoomExperienceV2Response",
     "ExperienceAction",
+    "ExperienceActionBinding",
     "ExperienceActionPrerequisite",
+    "ExperienceActionProvenance",
+    "ExperienceActionSource",
     "ExperienceFactV2",
     "ExperienceSectionV2",
 )

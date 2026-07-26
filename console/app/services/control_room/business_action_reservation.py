@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -193,8 +191,17 @@ async def acquire_guarded_action_reservation(
     operation: str,
     provided_key: str | None = None,
     input_payload: Mapping[str, Any] | None = None,
+    persist_item: Callable[..., Awaitable[Any]] | None = None,
 ) -> ActionReservation:
     tenant_id, workspace_id = workspace_scope(user)
+    if persist_item is not None:
+        await persist_item(
+            conn,
+            user=dict(user),
+            item=dict(item),
+            status=item.get("status") or "in_review",
+            critical=True,
+        )
     try:
         await require_approved_execution(
             conn,

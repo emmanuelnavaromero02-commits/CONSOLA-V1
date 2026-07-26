@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.services.control_room.business_action_binding import (
+    normalize_action_idempotency_key,
+)
 
 
 class _StrictRequest(BaseModel):
@@ -13,12 +17,18 @@ class ControlRoomActionRequest(_StrictRequest):
         max_length=120,
         pattern=r"^[a-z][a-z0-9_]*$",
     )
+    binding_id: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class ControlRoomExecuteRequest(ControlRoomActionRequest):
     confirm_execute: bool = False
     confirmation: bool | None = None
-    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    idempotency_key: str | None = None
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def normalize_idempotency_key(cls, value: object) -> object:
+        return normalize_action_idempotency_key(value)
 
     @model_validator(mode="after")
     def validate_confirmation(self) -> "ControlRoomExecuteRequest":

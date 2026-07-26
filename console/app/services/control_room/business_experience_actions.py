@@ -7,29 +7,20 @@ from app.schemas.control_room_experience_actions import (
     ExperienceAction,
     ExperienceActionPrerequisite,
 )
-from app.services.control_room.business_action_binding import (
-    preview_action_endpoint,
-    valid_action_item_id,
-)
+from app.services.control_room.business_action_binding import preview_action_endpoint
 from app.services.control_room.business_action_authority import (
     action_item_is_current,
     action_item_is_stale,
     action_source_binding_complete,
 )
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
-from app.services.control_room.business_action_templates import (
-    template_ids_for_business_item,
+from app.services.control_room.business_action_resolution import (
+    authorized_explicit_action_bindings,
 )
-from app.services.control_room.business_cartridge_scope import (
-    business_cartridge_allowed,
-)
-from app.services.control_room.business_eligibility import classify_business_item
-from app.services.control_room.business_source_scope import context_scope, scope_matches
 from app.services.control_room.business_surface_identity import BusinessSurfaceIdentity
 from app.services.control_room.business_visible_copy import (
     classify_visible_business_copy,
 )
-from app.services.permissions import has_permission
 
 
 _STALE_REASON = "Actualiza los datos antes de continuar."
@@ -64,35 +55,23 @@ def resolve_business_experience_actions(
     user: Mapping[str, Any],
     enabled_template_ids: Collection[str],
 ) -> list[ExperienceAction]:
-    item_id = item.get("id")
-    tenant_id, workspace_id = context_scope(user)
-    cartridge_id = str(item.get("cartridge") or item.get("cartridge_id") or "")
-    if not (
-        valid_action_item_id(item_id)
-        and has_permission(dict(user), "control_room.write")
-        and scope_matches(item, tenant_id=tenant_id, workspace_id=workspace_id)
-        and business_cartridge_allowed(user, cartridge_id, allow_platform=True)
-        and classify_business_item(item).eligible
-        and action_item_is_current(item, operation="preview")
-    ):
+    item_id = str(item.get("id") or "")
+    if not action_item_is_current(item, operation="preview"):
         return []
-
-    available_ids = set(enabled_template_ids)
-    template_ids = [
-        template_id
-        for template_id in template_ids_for_business_item(item)
-        if template_id in available_ids and template_id in ACTION_TEMPLATES
-    ]
+    bindings = authorized_explicit_action_bindings(
+        item,
+        user,
+        enabled_template_ids=enabled_template_ids,
+    )
     stale = action_item_is_stale(item)
     source_binding = action_source_binding_complete(item)
     if stale or not source_binding:
-        template_ids = template_ids[:1]
+        bindings = bindings[:1]
 
     actions: list[ExperienceAction] = []
-    for template_id in template_ids:
+    for binding in bindings:
+        template_id = binding.template_id
         template = ACTION_TEMPLATES[template_id]
-        if str(template.get("cartridge_id") or "") not in {"platform", cartridge_id}:
-            continue
         label = classify_visible_business_copy(
             template.get("label"),
             item=item,
@@ -120,6 +99,7 @@ def resolve_business_experience_actions(
                 ),
                 method="POST",
                 endpoint=preview_action_endpoint(str(item_id)),
+                binding=binding.public_values(),
             )
         )
     return actions

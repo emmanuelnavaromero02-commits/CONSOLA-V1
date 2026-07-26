@@ -8,7 +8,6 @@ from app.schemas.control_room_experience_actions import (
     ExperienceFactV2,
     ExperienceSectionV2,
 )
-from app.services.control_room.business_action_binding import valid_action_item_id
 from app.services.control_room.business_experience import (
     experience_fact_sort_key,
     project_experience_fact,
@@ -49,12 +48,7 @@ def build_business_experience_v2(
             item,
             max_length=MAX_STRUCTURAL_IDENTITY_LENGTH,
         )
-        item_id = item.get("id")
-        if (
-            identity is None
-            or not structural_identity_is_safe(item, identity)
-            or not valid_action_item_id(item_id)
-        ):
+        if identity is None or not structural_identity_is_safe(item, identity):
             continue
         fact = project_experience_fact(item, identity)
         if fact is None:
@@ -68,7 +62,6 @@ def build_business_experience_v2(
         fact_v2 = ExperienceFactV2.model_validate(
             {
                 **fact.model_dump(),
-                "item_id": str(item_id),
                 "actions": actions,
             }
         )

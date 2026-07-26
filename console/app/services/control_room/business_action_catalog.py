@@ -28,6 +28,7 @@ FROM control_room_action_templates
 WHERE template_id = $1
   AND enabled IS TRUE
 LIMIT 1
+FOR SHARE
 """
 
 

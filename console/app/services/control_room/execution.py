@@ -67,8 +67,15 @@ from app.services.control_room.business_action_authority import (
     require_action_item_evidence,
     require_action_item_prerequisites,
 )
+from app.services.control_room.business_action_binding import (
+    normalize_action_idempotency_key,
+)
 from app.services.control_room.business_action_catalog import (
     require_enabled_action_template,
+)
+from app.services.control_room.business_action_resolution import (
+    require_explicit_action_template,
+    single_explicit_action_binding,
 )
 from app.services.control_room.business_approve_with_optional_decision import (
     approve_with_optional_decision as _approve_with_optional_decision,
@@ -172,12 +179,15 @@ for _helper in (
     merged_control_state,
     merged_learned_rules,
     merged_lesson_state,
+    normalize_action_idempotency_key,
     require_matching_dry_run,
     require_approved_execution,
     prepare_execution_entry,
     require_action_item_evidence,
     require_action_item_prerequisites,
     require_enabled_action_template,
+    require_explicit_action_template,
+    single_explicit_action_binding,
     workflow_reopen_allowed,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
@@ -1344,15 +1354,14 @@ async def action_preview(
     user: dict,
     *,
     template_id: str | None = None,
+    binding_id: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     require_action_item_prerequisites(item, operation="preview")
-    if not template_id:
-        raise HTTPException(422, "template_id is required")
-    template = _resolve_template(item, template_id)
+    template = require_explicit_action_template(item, user, template_id, binding_id)
     payload = _execution_payload(item, "preview", template)
     result = {
         "ok": True,
@@ -1451,15 +1460,14 @@ async def action_dry_run(
     user: dict,
     *,
     template_id: str | None = None,
+    binding_id: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     require_action_item_prerequisites(item, operation="dry_run")
-    if not template_id:
-        raise HTTPException(422, "template_id is required")
-    template = _resolve_template(item, template_id)
+    template = require_explicit_action_template(item, user, template_id, binding_id)
     payload = _execution_payload(item, "dry_run", template)
     warnings = []
     if payload["impact"]["status"] != "ok":
@@ -1872,6 +1880,9 @@ async def run_auto_item(
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     if item.get("status") in TERMINAL_ITEM_STATUSES:
         raise HTTPException(409, "terminal control room item cannot run automatic mode")
+    binding = single_explicit_action_binding(item, user)
+    template_id = binding.template_id
+    binding_id = binding.binding_id
 
     steps: list[dict[str, Any]] = []
     investigation = await record_item_step(
@@ -1909,19 +1920,11 @@ async def run_auto_item(
         decision = {"decision": {"id": item.get("decision_id")}, "item": item}
     steps.append({"step": "decision", "decision_id": item.get("decision_id")})
 
-    available_template_ids = {
-        str(template.get("template_id"))
-        for template in _action_templates_for_item(item)
-    }
-    template_id = (
-        "create_followup_task"
-        if "create_followup_task" in available_template_ids
-        else _primary_template_for_item(item)["template_id"]
-    )
     preview = await action_preview(
         item_id,
         user,
         template_id=template_id,
+        binding_id=binding_id,
         ip=ip,
         user_agent=user_agent,
         fetcher=fetcher,
@@ -1930,6 +1933,7 @@ async def run_auto_item(
         item_id,
         user,
         template_id=template_id,
+        binding_id=binding_id,
         ip=ip,
         user_agent=user_agent,
         fetcher=fetcher,
@@ -2304,6 +2308,7 @@ async def _execute_internal_followup_task_tx(
         operation="execute",
         provided_key=idempotency_key,
         input_payload=payload,
+        persist_item=_ensure_item_row,
     )
     if reservation.state is not ReservationState.ACQUIRED:
         return _reserved_action_response(
@@ -2497,6 +2502,7 @@ async def _execute_internal_investigation_note(
         operation="execute",
         provided_key=idempotency_key,
         input_payload=payload,
+        persist_item=_ensure_item_row,
     )
     if reservation.state is not ReservationState.ACQUIRED:
         return _reserved_action_response(reservation, item=item, payload=payload)
@@ -2620,6 +2626,7 @@ async def _execute_internal_decision_monitoring(
         operation="execute",
         provided_key=idempotency_key,
         input_payload=payload,
+        persist_item=_ensure_item_row,
     )
     if reservation.state is not ReservationState.ACQUIRED:
         return _reserved_action_response(reservation, item=item, payload=payload)
@@ -3360,6 +3367,7 @@ async def execute_item(
     user: dict,
     *,
     template_id: str | None = None,
+    binding_id: str | None = None,
     confirm_execute: Any = False,
     idempotency_key: str | None = None,
     ip: str | None = None,
@@ -3368,9 +3376,11 @@ async def execute_item(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     require_action_item_evidence(item)
-    if not template_id:
-        raise HTTPException(422, "template_id is required")
-    template = _resolve_template(item, template_id)
+    template = require_explicit_action_template(item, user, template_id, binding_id)
+    try:
+        idempotency_key = normalize_action_idempotency_key(idempotency_key)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
     payload = _execution_payload(item, "execute_live", template)
     pool = await auth.pool()
 
@@ -3499,9 +3509,7 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                idempotency_key=idempotency_key,
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3515,9 +3523,7 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                idempotency_key=idempotency_key,
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3531,9 +3537,7 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                idempotency_key=idempotency_key,
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3557,16 +3561,15 @@ async def execute_item(
                 template_id=str(template["template_id"]),
                 adapter_name=adapter.__class__.__name__,
                 operation="execute",
-                provided_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                provided_key=idempotency_key,
                 input_payload=payload,
+                persist_item=_ensure_item_row,
             )
         )
         if reservation.state is not ReservationState.ACQUIRED:
             return _reserved_action_response(reservation, item=item, payload=payload)
         response = await run_reserved_external_action(
-            run_scoped=_with_scoped_db,
+            run_scoped=_with_scoped_replay,
             prepare=lambda db: mark_remote_attempt_started(
                 db,
                 workspace_id=_workspace_id(user),

@@ -770,6 +770,7 @@ async def control_room_action_preview(
             item_id,
             user,
             template_id=body.template_id,
+            binding_id=body.binding_id,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),
@@ -792,6 +793,7 @@ async def control_room_action_dry_run(
             item_id,
             user,
             template_id=body.template_id,
+            binding_id=body.binding_id,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),
@@ -838,10 +840,9 @@ async def control_room_execute_item(
             item_id,
             user,
             template_id=body.template_id,
+            binding_id=body.binding_id,
             confirm_execute=body.confirmed,
-            idempotency_key=(
-                body.idempotency_key.strip() if body.idempotency_key else None
-            ),
+            idempotency_key=body.idempotency_key,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),

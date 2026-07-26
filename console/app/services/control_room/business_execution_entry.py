@@ -88,6 +88,8 @@ async def prepare_execution_entry(
                 item=item,
                 payload=payload,
             )
+    if lifecycle_block is None:
+        return None
     await run_scoped(
         lambda conn: ensure_item_row(
             conn,
@@ -97,8 +99,6 @@ async def prepare_execution_entry(
             critical=True,
         )
     )
-    if lifecycle_block is None:
-        return None
     await run_scoped(
         lambda conn: record_execute_block(
             conn,

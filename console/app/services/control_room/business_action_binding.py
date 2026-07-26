@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 
@@ -53,7 +54,23 @@ def valid_preview_action_endpoint(endpoint: object, *, item_id: str) -> bool:
     return endpoint == expected
 
 
+def normalize_action_idempotency_key(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("idempotency_key must be a string")
+    if any(unicodedata.category(character) == "Cc" for character in value):
+        raise ValueError("idempotency_key contains control characters")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("idempotency_key must not be empty")
+    if len(normalized) > 128:
+        raise ValueError("idempotency_key exceeds 128 characters")
+    return normalized
+
+
 __all__ = (
+    "normalize_action_idempotency_key",
     "preview_action_endpoint",
     "valid_action_item_id",
     "valid_action_template_binding",

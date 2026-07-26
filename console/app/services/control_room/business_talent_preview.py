@@ -17,7 +17,9 @@ from app.services.control_room.business_runtime_evidence import (
 
 ItemLoader = Callable[[str, dict], Awaitable[dict[str, Any]]]
 GoldLoader = Callable[[str, dict | None, int], Awaitable[list[dict[str, Any]]]]
-TemplateResolver = Callable[[dict[str, Any], str | None], dict[str, Any]]
+TemplateResolver = Callable[
+    [dict[str, Any], dict[str, Any], str | None, str | None], dict[str, Any]
+]
 ScopeResolver = Callable[[dict | None], tuple[str | None, str | None]]
 _DATASET = "sap_successfactors_talent_action_candidates"
 
@@ -129,7 +131,8 @@ async def build_talent_action_preview(
     ):
         raise HTTPException(409, "item is not a SuccessFactors talent action")
     template_id = str(payload.get("template_id") or "").strip() or None
-    template = resolve_template(item, template_id)
+    binding_id = str(payload.get("binding_id") or "").strip() or None
+    template = resolve_template(item, user or {}, template_id, binding_id)
     tenant_id, workspace_id = resolve_scope(user)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
