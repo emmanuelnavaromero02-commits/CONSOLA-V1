@@ -30,6 +30,7 @@ async def _completed_replay(
     user: Mapping[str, Any],
     item: Mapping[str, Any],
     template_id: str,
+    input_payload: Mapping[str, Any],
 ) -> ActionReservation | None:
     _tenant_id, workspace_id = workspace_scope(user)
     replay = await matching_action_replay(
@@ -39,6 +40,7 @@ async def _completed_replay(
         template_id=template_id,
         operation="execute",
         authorization_contract=execution_authorization_contract(user),
+        input_payload=input_payload,
     )
     if replay is None:
         return None
@@ -80,6 +82,7 @@ async def prepare_execution_entry(
                 user=user,
                 item=item,
                 template_id=str(template["template_id"]),
+                input_payload=payload,
             )
         )
         if reservation is not None:

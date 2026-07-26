@@ -12,14 +12,8 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
 )
 from app.services.control_room.business_action_attempt import has_remote_attempt
-from app.services.control_room.business_projection import (
-    normalize_persisted_business_item,
-)
-from app.services.control_room.business_workflow_provenance import (
-    ELIGIBILITY_POLICY_VERSION,
-    WorkflowStage,
-    business_observation_fingerprint,
-    workflow_has_eligible_provenance,
+from app.services.control_room.business_external_receipt_contract import (
+    receipt_contract_matches,
 )
 
 
@@ -61,52 +55,6 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _contract_matches(
-    receipt: Mapping[str, Any], item_row: Mapping[str, Any], workspace_id: str
-) -> bool:
-    metadata = _mapping(receipt.get("metadata"))
-    contract = metadata.get("reservation_contract")
-    if not isinstance(contract, Mapping):
-        return False
-    result = _mapping(receipt.get("execution_result"))
-    if result.get("executed") is not True:
-        return False
-    if result.get("local_projection_status") not in {
-        "pending_reconciliation",
-        "completed",
-    }:
-        return False
-    decision_id = item_row.get("decision_id")
-    item_id = str(item_row.get("item_id") or "").strip()
-    if not item_id or decision_id is None:
-        return False
-    if any(
-        (
-            str(contract.get("workspace_id") or "") != workspace_id,
-            str(contract.get("item_id") or "") != item_id,
-            str(contract.get("decision_id") or "") != str(decision_id),
-            str(contract.get("policy_version") or "") != ELIGIBILITY_POLICY_VERSION,
-            str(contract.get("operation") or "") != "execute",
-            str(receipt.get("item_id") or "") != item_id,
-            str(receipt.get("decision_id") or "") != str(decision_id),
-        )
-    ):
-        return False
-    normalized = normalize_persisted_business_item(item_row)
-    if business_observation_fingerprint(normalized) != str(
-        contract.get("fingerprint") or ""
-    ):
-        return False
-    return str(item_row.get("status") or "").lower() == "approved" and (
-        workflow_has_eligible_provenance(
-            _mapping(item_row.get("metadata")),
-            normalized,
-            decision_id=decision_id,
-            allowed_stages=(WorkflowStage.APPROVED,),
-        )
-    )
-
-
 async def project_committed_external_effect(
     conn: Any,
     *,
@@ -131,7 +79,7 @@ async def project_committed_external_effect(
     if not item_value:
         return None
     item_row = dict(item_value)
-    if not _contract_matches(receipt, item_row, workspace_id):
+    if not receipt_contract_matches(receipt, item_row, workspace_id):
         return None
     result = _mapping(receipt.get("execution_result"))
     if result.get("local_projection_status") == "completed":

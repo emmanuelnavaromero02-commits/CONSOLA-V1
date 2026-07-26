@@ -1,6 +1,5 @@
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -22,6 +21,12 @@ from app.services.control_room.business_execution_approval import (
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
 )
+from app.services.control_room.business_legacy_reservation_guard import (
+    require_no_legacy_action_reservation,
+)
+from app.services.control_room.business_reservation_lease import (
+    reservation_lease_expired,
+)
 
 
 class ReservationState(StrEnum):
@@ -33,9 +38,6 @@ class ReservationState(StrEnum):
 
 class ReservationConflict(RuntimeError):
     pass
-
-
-RESERVATION_LEASE_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -69,17 +71,6 @@ def _reservation(
     )
 
 
-def _lease_expired(row: Mapping[str, Any]) -> bool:
-    updated_at = row.get("updated_at")
-    if not isinstance(updated_at, datetime):
-        return False
-    if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=UTC)
-    return updated_at <= datetime.now(UTC) - timedelta(
-        seconds=RESERVATION_LEASE_SECONDS
-    )
-
-
 async def acquire_action_reservation(
     conn: Any,
     *,
@@ -101,6 +92,7 @@ async def acquire_action_reservation(
         template_id=template_id,
         operation=operation,
         provided=provided_key,
+        input_payload=input_payload,
     )
     contract = action_reservation_contract(
         workspace_id=workspace_id,
@@ -108,6 +100,7 @@ async def acquire_action_reservation(
         template_id=template_id,
         operation=operation,
         authorization_contract=authorization_contract,
+        input_payload=input_payload,
     )
     row = await reservation_fetchrow(
         conn,
@@ -156,7 +149,7 @@ async def acquire_action_reservation(
         raise ReservationConflict("action reservation contract mismatch")
     if _state(
         existing.get("status")
-    ) is ReservationState.IN_PROGRESS and _lease_expired(existing):
+    ) is ReservationState.IN_PROGRESS and reservation_lease_expired(existing):
         if has_remote_attempt(existing):
             return _reservation(existing, key, acquired=False)
         reclaimed = await reservation_fetchrow(
@@ -220,11 +213,19 @@ async def acquire_guarded_action_reservation(
             template_id=template_id,
             operation=operation,
             authorization_contract=authorization,
+            input_payload=input_payload,
         )
         if replay is None:
             raise
         key, row = replay
         return _reservation(row, key, acquired=False)
+    await require_no_legacy_action_reservation(
+        conn,
+        workspace_id=workspace_id,
+        item=item,
+        template_id=template_id,
+        operation=operation,
+    )
     return await acquire_action_reservation(
         conn,
         tenant_id=tenant_id,

@@ -68,6 +68,19 @@ def test_target_digest_changes_dry_run_reservation_and_effective_key():
         template_id="create_followup_task",
         operation="execute",
     )
+    assert effective_action_key(
+        workspace_id=str(item_a["workspace_id"]),
+        item=item_a,
+        template_id="create_followup_task",
+        operation="execute",
+        input_payload={"impact": {"priority_score": 10}},
+    ) != effective_action_key(
+        workspace_id=str(item_a["workspace_id"]),
+        item=item_a,
+        template_id="create_followup_task",
+        operation="execute",
+        input_payload={"impact": {"priority_score": 11}},
+    )
 
 
 @pytest.mark.asyncio

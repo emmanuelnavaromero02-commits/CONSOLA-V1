@@ -5,8 +5,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.services.control_room.business_action_key import effective_action_key
+from app.services.control_room.business_action_digest import action_contract_digest
 from app.services.control_room.business_action_runtime_contract import (
     runtime_action_digests,
+)
+from app.services.control_room.business_execution_target import (
+    execution_reconciliation_context,
 )
 from app.services.control_room.business_reservation_errors import reservation_fetchrow
 from app.services.control_room.business_workflow_provenance import (
@@ -22,6 +26,7 @@ def action_reservation_contract(
     template_id: str,
     operation: str,
     authorization_contract: Mapping[str, Any] | None,
+    input_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "version": 2,
@@ -33,6 +38,8 @@ def action_reservation_contract(
         "template_id": template_id,
         "operation": operation,
         "authorization": dict(authorization_contract or {}),
+        "input_payload_digest": action_contract_digest(dict(input_payload or {})),
+        "reconciliation_context": execution_reconciliation_context(item),
         **runtime_action_digests(item, template_id=template_id),
     }
 
@@ -61,12 +68,14 @@ async def matching_action_replay(
     template_id: str,
     operation: str,
     authorization_contract: Mapping[str, Any],
+    input_payload: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     key = effective_action_key(
         workspace_id=workspace_id,
         item=item,
         template_id=template_id,
         operation=operation,
+        input_payload=input_payload,
     )
     row = await reservation_fetchrow(
         conn,
@@ -85,6 +94,7 @@ async def matching_action_replay(
         template_id=template_id,
         operation=operation,
         authorization_contract=authorization_contract,
+        input_payload=input_payload,
     )
     stored = json_mapping(row.get("metadata")).get("reservation_contract")
     if not isinstance(stored, Mapping) or canonical_json(stored) != canonical_json(

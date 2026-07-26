@@ -98,6 +98,7 @@ async def test_exact_completed_retry_replays_without_writes() -> None:
 
     assert result == {"idempotent": True}
     assert replay.await_args.kwargs["workspace_id"] == "workspace-a"
+    assert replay.await_args.kwargs["input_payload"] == {}
     run_scoped.assert_not_awaited()
     ensure.assert_not_awaited()
     record.assert_not_awaited()

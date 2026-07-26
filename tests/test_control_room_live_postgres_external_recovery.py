@@ -185,6 +185,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
             adapter_name="Adapter",
             operation="execute",
             input_payload=payload,
+            persist_item=service._ensure_item_row,
         )
         await mark_remote_attempt_started(
             setup,

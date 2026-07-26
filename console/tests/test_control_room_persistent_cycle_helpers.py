@@ -239,6 +239,8 @@ def guarded_fetchrows(value: dict, rows, *, has_dry_run: bool = True):
             return persisted_item_row(value)
         if "mode = 'dry_run'" in sql and "status = 'dry_run_completed'" in sql:
             return action_run_row(value) if has_dry_run else None
+        if "SELECT id" in sql and "FROM action_runs" in sql and "LIMIT 1" in sql:
+            return None
         if "INSERT INTO action_runs" in sql and "'pending'" in sql:
             reservation.update(
                 {

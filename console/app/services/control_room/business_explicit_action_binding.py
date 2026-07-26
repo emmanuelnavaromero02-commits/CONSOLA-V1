@@ -6,6 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.services.control_room.business_action_binding import valid_action_template_id
+from app.services.control_room.business_action_binding_limits import (
+    MAX_EXPLICIT_ACTION_BINDING_DEPTH,
+    MAX_EXPLICIT_ACTION_BINDINGS_BYTES,
+    binding_collection_within_limits,
+)
 from app.services.control_room.business_action_capability import (
     business_experience_template_allowed,
 )
@@ -232,7 +237,11 @@ def verified_explicit_action_bindings(
 ) -> tuple[VerifiedActionBinding, ...]:
     metadata = item.get("metadata")
     raw = metadata.get(ACTION_BINDINGS_FIELD) if isinstance(metadata, Mapping) else None
-    if not isinstance(raw, list) or len(raw) > MAX_EXPLICIT_ACTION_BINDINGS:
+    if (
+        not isinstance(raw, list)
+        or len(raw) > MAX_EXPLICIT_ACTION_BINDINGS
+        or not binding_collection_within_limits(raw)
+    ):
         return ()
     now = _now(clock)
     verified: list[VerifiedActionBinding] = []
@@ -279,7 +288,9 @@ __all__ = (
     "ACTION_BINDING_PRODUCER",
     "ACTION_BINDING_TTL_SECONDS",
     "ACTION_BINDING_VERSION",
+    "MAX_EXPLICIT_ACTION_BINDING_DEPTH",
     "MAX_EXPLICIT_ACTION_BINDINGS",
+    "MAX_EXPLICIT_ACTION_BINDINGS_BYTES",
     "VerifiedActionBinding",
     "attach_explicit_action_binding",
     "issue_explicit_action_binding",

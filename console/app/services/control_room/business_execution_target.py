@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.services.control_room.business_action_digest import action_contract_digest
@@ -31,22 +32,51 @@ _PAYLOAD_ITEM_FIELDS = (
     "metric",
     "anomaly_type",
     "cartridge",
-    "impact_estimate",
-    "impact_currency",
-    "confidence",
     "threshold_state",
     "selected_option_id",
 )
+_STORED_IMPACT_FIELDS = ("impact_estimate", "impact_currency", "confidence")
 
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _item_value(item: Mapping[str, Any], metadata: Mapping[str, Any], key: str) -> Any:
+    value = item.get(key)
+    return metadata.get(key) if value is None else value
+
+
 def _required_text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"action execution target is missing {label}")
     return value
+
+
+def _positive_number(value: Any) -> bool:
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return False
+    return number.is_finite() and number > 0
+
+
+def _payload_item_values(
+    item: Mapping[str, Any], metadata: Mapping[str, Any]
+) -> dict[str, Any]:
+    values = {key: _item_value(item, metadata, key) for key in _PAYLOAD_ITEM_FIELDS}
+    values.update(execution_reconciliation_context(item))
+    if _positive_number(_item_value(item, metadata, "impact_estimate")):
+        values.update(
+            {key: _item_value(item, metadata, key) for key in _STORED_IMPACT_FIELDS}
+        )
+    return values
+
+
+def execution_reconciliation_context(item: Mapping[str, Any]) -> dict[str, str]:
+    metadata = _mapping(item.get("metadata"))
+    value = _item_value(item, metadata, "threshold_state")
+    return {"threshold_state": value if value in {"critical", "warning"} else "default"}
 
 
 def _first_text(source: Mapping[str, Any], *keys: str) -> str:
@@ -116,8 +146,11 @@ def execution_target_contract(
     template_id = _required_text(template.get("template_id"), "template_id")
     entity_kind = _required_text(item.get("entity_kind"), "entity_kind")
     entity_id = _required_text(item.get("entity_id"), "entity_id")
-    details = _mapping(item.get("details"))
     metadata = _mapping(item.get("metadata"))
+    details = {
+        **_mapping(metadata.get("details")),
+        **_mapping(item.get("details")),
+    }
     connection = _mapping(metadata.get("connection"))
     locator_kind, locator_value = _effective_locator(item, template_id, details)
     if str(template.get("cartridge_id") or "") == "platform":
@@ -132,7 +165,7 @@ def execution_target_contract(
     else:
         target = _external_target(template, details, connection)
     payload_inputs = {
-        "item": {key: item.get(key) for key in _PAYLOAD_ITEM_FIELDS},
+        "item": _payload_item_values(item, metadata),
         "details": details,
     }
     return {
@@ -152,6 +185,7 @@ def execution_target_digest(
 
 __all__ = (
     "EXECUTION_TARGET_VERSION",
+    "execution_reconciliation_context",
     "execution_target_contract",
     "execution_target_digest",
 )

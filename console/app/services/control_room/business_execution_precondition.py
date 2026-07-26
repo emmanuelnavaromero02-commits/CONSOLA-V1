@@ -87,6 +87,7 @@ async def lock_pending_action_reservation(
     template_id: str,
     reservation_id: int,
     effective_key: str,
+    input_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     _tenant_id, workspace_id = workspace_scope(user)
     row = await conn.fetchrow(
@@ -111,6 +112,7 @@ async def lock_pending_action_reservation(
         template_id=template_id,
         operation="execute",
         authorization_contract=execution_authorization_contract(user),
+        input_payload=input_payload,
     )
     if not isinstance(stored, Mapping) or canonical_json(stored) != canonical_json(
         expected

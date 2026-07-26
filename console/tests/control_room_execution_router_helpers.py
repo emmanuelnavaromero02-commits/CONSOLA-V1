@@ -8,6 +8,7 @@ from app.services.control_room.business_action_replay import action_reservation_
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
 )
+from app.services.control_room.execution import _execution_payload
 from console.tests.control_room_execution_helpers import (
     USER,
     authoritative_item_row,
@@ -27,12 +28,18 @@ def execution_fetchrow_router(
     existing_reservation: bool = False,
     action_row: dict | None = None,
 ):
+    input_payload = _execution_payload(
+        item,
+        "execute_live",
+        dict(ACTION_TEMPLATES[template_id]),
+    )
     key = effective_action_key(
         workspace_id="workspace-A",
         item=item,
         template_id=template_id,
         operation="execute",
         provided="idem-1" if template_id == "create_followup_task" else None,
+        input_payload=input_payload,
     )
     pending = {
         "id": 55,
@@ -45,6 +52,7 @@ def execution_fetchrow_router(
                 template_id=template_id,
                 operation="execute",
                 authorization_contract=execution_authorization_contract(USER),
+                input_payload=input_payload,
             )
         },
         "execution_result": {

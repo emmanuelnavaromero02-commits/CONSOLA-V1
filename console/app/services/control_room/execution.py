@@ -2775,6 +2775,7 @@ async def _execute_external_writeback(
         template_id=str(template["template_id"]),
         reservation_id=reservation.id,
         effective_key=reservation.effective_key,
+        input_payload=payload,
     )
     if remote_attempt_status(locked_reservation) != "started":
         raise HTTPException(409, "remote attempt was not durably prepared")

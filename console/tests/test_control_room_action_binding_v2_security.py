@@ -9,7 +9,9 @@ from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_explicit_action_binding import (
     ACTION_BINDING_TTL_SECONDS,
     ACTION_BINDING_VERSION,
+    MAX_EXPLICIT_ACTION_BINDING_DEPTH,
     MAX_EXPLICIT_ACTION_BINDINGS,
+    MAX_EXPLICIT_ACTION_BINDINGS_BYTES,
     attach_explicit_action_binding,
     verified_explicit_action_bindings,
 )
@@ -149,6 +151,18 @@ def test_target_or_payload_substitution_invalidates_binding(
     assert verified_explicit_action_bindings(changed, clock=_clock()) == ()
 
 
+def test_threshold_state_payload_substitution_invalidates_binding():
+    item = attach_explicit_action_binding(
+        business_item(threshold_state="warning"),
+        template_id="request_owner_review",
+        clock=_clock(),
+    )
+    changed = deepcopy(item)
+    changed["threshold_state"] = "critical"
+
+    assert verified_explicit_action_bindings(changed, clock=_clock()) == ()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (
@@ -214,5 +228,47 @@ def test_binding_list_is_bounded_before_verification_work():
     item["metadata"]["explicit_action_bindings"] = [
         deepcopy(binding) for _ in range(MAX_EXPLICIT_ACTION_BINDINGS + 1)
     ]
+
+    assert verified_explicit_action_bindings(item, clock=_clock()) == ()
+
+
+@pytest.mark.parametrize(
+    "hostile_value",
+    (
+        "x" * (MAX_EXPLICIT_ACTION_BINDINGS_BYTES + 1),
+        {"nested": {"again": {"too": {"deep": "x"}}}},
+        10**4000,
+    ),
+    ids=("oversized", "too-deep", "oversized-number"),
+)
+def test_binding_size_and_depth_are_rejected_before_serialization(
+    hostile_value: object, monkeypatch: pytest.MonkeyPatch
+):
+    item = attach_explicit_action_binding(
+        business_item(), template_id="request_owner_review", clock=_clock()
+    )
+    _binding(item)["source"] = hostile_value
+    monkeypatch.setattr(
+        "app.services.control_room.business_explicit_action_binding.canonical_action_bytes",
+        lambda _value: pytest.fail("hostile binding reached canonical serialization"),
+    )
+
+    assert MAX_EXPLICIT_ACTION_BINDING_DEPTH == 4
+    assert verified_explicit_action_bindings(item, clock=_clock()) == ()
+
+
+def test_binding_json_structure_overhead_is_counted_before_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    item = attach_explicit_action_binding(
+        business_item(), template_id="request_owner_review", clock=_clock()
+    )
+    _binding(item)["source"]["dataset"] = "x" * (
+        MAX_EXPLICIT_ACTION_BINDINGS_BYTES - 256
+    )
+    monkeypatch.setattr(
+        "app.services.control_room.business_explicit_action_binding.canonical_action_bytes",
+        lambda _value: pytest.fail("oversized binding reached canonical serialization"),
+    )
 
     assert verified_explicit_action_bindings(item, clock=_clock()) == ()

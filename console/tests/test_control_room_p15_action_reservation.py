@@ -207,6 +207,11 @@ async def test_guard_and_reservation_share_connection_and_order():
         assert kwargs["template_id"] == "create_followup_task"
         order.append("approved")
 
+    async def no_legacy(conn, **kwargs):
+        assert conn is db
+        assert kwargs["template_id"] == "create_followup_task"
+        order.append("legacy")
+
     with (
         patch(
             "app.services.control_room.business_action_reservation.require_approved_execution",
@@ -215,6 +220,10 @@ async def test_guard_and_reservation_share_connection_and_order():
         patch(
             "app.services.control_room.business_action_reservation.acquire_action_reservation",
             side_effect=acquire,
+        ),
+        patch(
+            "app.services.control_room.business_action_reservation.require_no_legacy_action_reservation",
+            side_effect=no_legacy,
         ),
     ):
         result = await acquire_guarded_action_reservation(
@@ -233,7 +242,7 @@ async def test_guard_and_reservation_share_connection_and_order():
         )
 
     assert result is reservation
-    assert order == ["approved", "reserve"]
+    assert order == ["approved", "legacy", "reserve"]
 
 
 @pytest.mark.asyncio
