@@ -39,15 +39,8 @@ def _item() -> dict:
     }
 
 
-def test_empty_approve_body_remains_compatible() -> None:
-    payload = {
-        "approved": True,
-        "decision_id": 42,
-        "action": {"id": 8},
-        "item": {"id": "item-1", "status": "approved"},
-        "anomaly": {"id": "item-1", "status": "approved"},
-    }
-    approve = AsyncMock(return_value=payload)
+def test_empty_approve_body_is_rejected_before_service() -> None:
+    approve = AsyncMock()
     with patch.object(control_room_service, "approve_item", approve):
         response = _build_real_control_room_router_client(USER).post(
             "/api/control-room/items/item-1/approve",
@@ -55,11 +48,8 @@ def test_empty_approve_body_remains_compatible() -> None:
             content=b"",
         )
 
-    assert response.status_code == 200
-    assert response.json()["approved"] is True
-    assert "decision_id" not in response.json()
-    approve.assert_awaited_once()
-    assert approve.await_args.kwargs["decision_id"] is None
+    assert response.status_code == 422
+    approve.assert_not_awaited()
 
 
 @pytest.mark.asyncio

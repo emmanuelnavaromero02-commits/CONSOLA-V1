@@ -45,6 +45,10 @@ from app.schemas.control_room_legacy_responses import (
     ControlRoomThresholdsResponse,
     project_public_control_room_response,
 )
+from app.schemas.control_room_state_mutation_requests import (
+    ControlRoomApprovalRequest,
+    ControlRoomThresholdRequest,
+)
 from app.schemas.control_room_state_mutation_responses import (
     ControlRoomApprovalMutationResponse,
     ControlRoomDecisionMutationResponse,
@@ -1203,19 +1207,16 @@ async def control_room_execute_item(
 async def control_room_approve(
     anomaly_id: str,
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomApprovalRequest,
     user: dict = Depends(require_authenticated),
 ):
-    decision_id = None
-    if isinstance(body, dict) and body.get("decision_id") is not None:
-        decision_id = int(body["decision_id"])
     return project_approval_mutation_response(
         await _invalidate_after_write(
             user,
             control_room_service.approve_anomaly(
                 anomaly_id,
                 user,
-                decision_id=decision_id,
+                decision_id=body.decision_id,
                 ip=_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
             ),
@@ -1231,19 +1232,16 @@ async def control_room_approve(
 async def control_room_approve_item(
     item_id: str,
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomApprovalRequest,
     user: dict = Depends(require_authenticated),
 ):
-    decision_id = None
-    if isinstance(body, dict) and body.get("decision_id") is not None:
-        decision_id = int(body["decision_id"])
     return project_approval_mutation_response(
         await _invalidate_after_write(
             user,
             control_room_service.approve_item(
                 item_id,
                 user,
-                decision_id=decision_id,
+                decision_id=body.decision_id,
                 ip=_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
             ),
@@ -1322,14 +1320,16 @@ async def control_room_thresholds(user: dict = Depends(require_authenticated)):
 )
 async def control_room_upsert_threshold(
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomThresholdRequest = Body(
+        default_factory=ControlRoomThresholdRequest
+    ),
     user: dict = Depends(require_authenticated),
 ):
     return project_threshold_mutation_response(
         await _invalidate_after_write(
             user,
             control_room_service.upsert_threshold(
-                body if isinstance(body, dict) else {},
+                body.model_dump(exclude_unset=True),
                 user,
                 ip=_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
@@ -1345,14 +1345,16 @@ async def control_room_upsert_threshold(
 )
 async def control_room_patch_threshold(
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomThresholdRequest = Body(
+        default_factory=ControlRoomThresholdRequest
+    ),
     user: dict = Depends(require_authenticated),
 ):
     return project_threshold_mutation_response(
         await _invalidate_after_write(
             user,
             control_room_service.upsert_threshold(
-                body if isinstance(body, dict) else {},
+                body.model_dump(exclude_unset=True),
                 user,
                 ip=_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
