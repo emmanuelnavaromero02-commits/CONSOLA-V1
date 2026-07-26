@@ -19,13 +19,42 @@ from app.services.control_room.surface_snapshot import collect_surface_snapshot
 from app.services import control_room_service
 from control_room_surface_fixtures import (
     OPERATOR,
+    TENANT_ID,
     VIEWER,
+    WORKSPACE_ID,
     business_item,
     installation,
     snapshot,
     source_state,
     source_status,
 )
+
+
+PRIVATE_SURFACE_KEYS = {
+    "scope",
+    "tenant_id",
+    "workspace_id",
+    "dataset",
+    "source_dataset",
+    "cartridge",
+    "cartridge_id",
+    "connector_id",
+    "module",
+    "module_id",
+    "current_step",
+    "id",
+    "item_id",
+}
+
+
+def _all_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {
+            key for nested in value.values() for key in _all_keys(nested)
+        }
+    if isinstance(value, list):
+        return {key for nested in value for key in _all_keys(nested)}
+    return set()
 
 
 def _client(user: dict) -> TestClient:
@@ -57,6 +86,8 @@ def test_source_state_is_diagnostics_only():
         "source_state"
     ]
     assert "Observed business condition" not in json.dumps(diagnostics)
+    assert not (_all_keys(experience) & PRIVATE_SURFACE_KEYS)
+    assert not (_all_keys(diagnostics) & PRIVATE_SURFACE_KEYS)
 
 
 def test_diagnostics_recursively_redacts_secrets_and_sensitive_pii():
@@ -122,17 +153,36 @@ def test_diagnostics_recursively_redacts_secrets_and_sensitive_pii():
     assert payload["diagnostic_items"][0]["error"] == "Diagnostic error reported"
     assert payload["installations"][0]["error"] == "Installation error reported"
     assert nested == {"metadata": {"token": "[REDACTED]", "email": "[REDACTED]"}}
+    assert not (_all_keys(payload) & PRIVATE_SURFACE_KEYS)
 
 
 def test_viewer_reads_experience_but_not_diagnostics_and_operator_reads_both():
-    empty = snapshot()
-    collect = AsyncMock(return_value=empty)
+    current = snapshot(
+        items=(business_item(),),
+        diagnostics=(source_state(),),
+        sources=(source_status(),),
+        installations=(installation(),),
+    )
+    collect = AsyncMock(return_value=current)
     with patch.object(surface_routes, "collect_surface_snapshot", collect):
         viewer = _client(VIEWER)
-        assert viewer.get("/api/control-room/experience").status_code == 200
+        experience = viewer.get("/api/control-room/experience")
+        assert experience.status_code == 200
+        assert not (_all_keys(experience.json()) & PRIVATE_SURFACE_KEYS)
         assert viewer.get("/api/control-room/diagnostics").status_code == 403
         operator = _client(OPERATOR)
-        assert operator.get("/api/control-room/diagnostics").status_code == 200
+        diagnostics = operator.get("/api/control-room/diagnostics")
+        assert diagnostics.status_code == 200
+        assert not (_all_keys(diagnostics.json()) & PRIVATE_SURFACE_KEYS)
+        for technical_value in (
+            "gold_business_observations",
+            "people_overview",
+            "test_registry",
+            TENANT_ID,
+            WORKSPACE_ID,
+        ):
+            assert technical_value not in experience.text
+            assert technical_value not in diagnostics.text
 
     assert collect.await_count == 2
 

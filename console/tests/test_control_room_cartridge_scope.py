@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.routers import control_room as routes
+from app.schemas.control_room_auxiliary_responses import ControlRoomReadinessResponse
 from app.services import control_room_service
 from app.services.control_room import business_runtime_projection
 
@@ -18,6 +19,7 @@ def _user(allowed: list[str]) -> dict:
         "active_tenant_id": "tenant-a",
         "active_workspace_id": "workspace-a",
         "allowed_cartridges": allowed,
+        "_effective_permissions": ["datasets.read"],
     }
 
 
@@ -183,5 +185,11 @@ async def test_internal_readiness_allows_authorized_cartridge(
 
     result = await routes._control_room_internal_view(view, _user([cartridge]), {})
 
-    assert result == {"status": "ready"}
+    assert isinstance(result, ControlRoomReadinessResponse)
+    assert result.model_dump() == {
+        "status": "ready",
+        "series_count": 0,
+        "usable_count": 0,
+        "series": [],
+    }
     query.assert_awaited_once()

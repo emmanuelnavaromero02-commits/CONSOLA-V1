@@ -105,7 +105,6 @@ describe("TalentControlRoom native panels", () => {
           unit: "People",
           region: "Monterrey",
           readiness_status: "ready",
-          box_id: "estrella",
           box_label: "Estrella",
           performance_band: "high",
           potential_band: "high",
@@ -124,6 +123,29 @@ describe("TalentControlRoom native panels", () => {
     expect(markup).not.toContain("Ana Gomez");
     expect(markup).not.toContain("user_id");
     expect(markup).not.toContain("full_name");
+  });
+
+  it("renders minimal public projection fields without undefined values", () => {
+    const cells: SfTalentNineBoxCell[] = [
+      {
+        display_order: 0,
+        employee_count: 0,
+        ready_count: 0,
+        blocked_count: 0,
+      },
+    ];
+    const payload: SfTalentRosterPayload = {
+      status: "empty",
+      count: 1,
+      box: { display_order: 0 },
+      roster: [{}],
+    };
+
+    const markup = `${renderToStaticMarkup(<NineBoxMatrix cells={cells} onSelect={vi.fn()} />)}${renderToStaticMarkup(<MaskedTalentRoster payload={payload} loading={false} />)}`;
+
+    expect(markup).toContain("Segmento de talento");
+    expect(markup).toContain("Colaborador enmascarado");
+    expect(markup).not.toContain("undefined");
   });
 });
 

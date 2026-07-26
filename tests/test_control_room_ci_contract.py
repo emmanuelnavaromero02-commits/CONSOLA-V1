@@ -5,8 +5,8 @@ from scripts.ci_control_room_paths import control_room_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 2316
-POSTGRES_MINIMUM = 65
+FOCAL_MINIMUM = 2380
+POSTGRES_MINIMUM = 71
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -35,9 +35,11 @@ P11_RELEVANT_PATHS = (
     "console/app/services/intelligence/control_room_observation.py",
     "console/app/services/intelligence/evidence_refs.py",
     "console/app/services/intelligence/gold_fetcher.py",
+    "console/app/services/intelligence/market_decision_validation.py",
     "console/app/services/intelligence/persistence.py",
     "console/app/services/intelligence/readiness.py",
     "console/app/services/control_room/**",
+    "mcp-infra/app/tools/control_room.py",
     "console/tests/control_room_*.py",
     "console/tests/conftest.py",
     "console/tests/test_audit_service_transactional.py",
@@ -57,6 +59,7 @@ P11_RELEVANT_PATHS = (
     "tests/test_aws_evidence_update_env.py",
     "tests/test_aws_secrets_manager_config.py",
     "tests/test_intelligence_engine_contract.py",
+    "tests/test_mcp_control_room_read_permissions.py",
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
@@ -102,7 +105,9 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_control_room_evidence_keyring_runtime.py",
     "tests/test_control_room_evidence_signing_wiring.py",
     "tests/test_intelligence_engine_contract.py",
+    "tests/test_market_decision_validation_e2e.py",
     "tests/test_mcp_infra_pdf_ci_contract.py",
+    "tests/test_mcp_control_room_read_permissions.py",
     "tests/test_v1_router_mount.py",
 )
 

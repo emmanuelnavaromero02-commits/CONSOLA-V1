@@ -39,7 +39,7 @@ describe("ControlRoomExperienceContent", () => {
         ...experience,
         sections: [
           ...experience.sections,
-          { ...experience.sections[0], id: "empty", title: "Competencias", facts: [] },
+          { ...experience.sections[0], title: "Competencias", facts: [] },
         ],
       },
     });

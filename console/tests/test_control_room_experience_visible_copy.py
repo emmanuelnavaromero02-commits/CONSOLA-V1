@@ -227,10 +227,11 @@ def test_zero_stale_and_verified_decision_are_preserved() -> None:
     assert facts["Observed business condition"].metric
     assert facts["Observed business condition"].metric.value == 0
     assert facts["Observed business condition"].decision
-    assert facts["Observed business condition"].decision.reference == 42
+    assert facts["Observed business condition"].decision.status == "decision_created"
+    assert "reference" not in facts["Observed business condition"].decision.model_dump()
 
 
-def test_policy_is_typed_and_structural_contract_is_unchanged() -> None:
+def test_policy_is_typed_and_public_contract_omits_structural_identity() -> None:
     item = business_item()
     identity = resolve_business_surface_identity(item)
     assert identity is not None
@@ -246,8 +247,7 @@ def test_policy_is_typed_and_structural_contract_is_unchanged() -> None:
     assert result.allowed is False
     assert result.cause is VisibleCopyCause.DIAGNOSTIC_ONLY
     assert result.text is None
-    assert section.cartridge_id == "sap_hcm"
-    assert section.module_id == "people_overview"
+    assert set(section.model_dump()) == {"title", "domain", "facts"}
 
 
 def test_schema_version_and_openapi_shape_do_not_change() -> None:
@@ -260,13 +260,12 @@ def test_schema_version_and_openapi_shape_do_not_change() -> None:
 
     assert payload["schema_version"] == "control-room-experience/v1"
     assert set(payload["sections"][0]) == {
-        "id",
-        "cartridge_id",
-        "module_id",
         "title",
         "domain",
         "facts",
     }
+    assert "scope" not in payload
+    assert "reference" not in schema["ExperienceDecision"]["properties"]
     assert "cta" not in schema["ExperienceFact"]["properties"]
 
 

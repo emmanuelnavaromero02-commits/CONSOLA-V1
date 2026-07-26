@@ -93,7 +93,12 @@ GET_PATHS = {
     ),
 }
 
-READINESS_SHAPE = {"cartridge_id": str, "series": list, "usable_count": int}
+READINESS_SHAPE = {
+    "status": str,
+    "series_count": int,
+    "series": list,
+    "usable_count": int,
+}
 ITEM_SHAPE = {"id": ITEM_ID, "kind": str, "omega": dict}
 PAYLOAD_SHAPES = {
     "/api/control-room/summary": {"total_anomalies": int, "sources": list},
@@ -102,8 +107,6 @@ PAYLOAD_SHAPES = {
         "summary": dict,
     },
     "/api/control-room/sap-successfactors/gold-kpis": {
-        "tenant_id": TENANT_ID,
-        "workspace_id": WORKSPACE_ID,
         "widgets": list,
     },
     "/api/control-room/sap-successfactors/talent-kpis": {
@@ -145,7 +148,6 @@ PAYLOAD_SHAPES = {
         "market_context": dict,
     },
     "/api/control-room/ops/summary": {
-        "tenant": str,
         "items": dict,
         "action_executions": dict,
     },

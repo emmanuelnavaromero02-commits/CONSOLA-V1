@@ -76,11 +76,13 @@ def test_equal_labels_from_distinct_cartridges_create_distinct_sections():
     sections = build_business_experience(snapshot(items=(first, second))).sections
 
     assert len(sections) == 2
-    assert {section.cartridge_id for section in sections} == {
-        "sap_hcm",
-        "sap_successfactors",
-    }
-    assert len({section.id for section in sections}) == 2
+    assert all(
+        set(section.model_dump()) == {"title", "domain", "facts"}
+        for section in sections
+    )
+    assert "sap_successfactors" not in str(
+        [section.model_dump() for section in sections]
+    )
 
 
 def test_structural_ids_and_output_are_independent_of_input_order():
@@ -102,8 +104,8 @@ def test_source_dataset_is_stable_module_fallback():
 
     section = build_business_experience(snapshot(items=(item,))).sections[0]
 
-    assert section.module_id == "gold_people_facts"
-    assert section.id.startswith("business-section-")
+    assert section.title == "People"
+    assert "gold_people_facts" not in section.model_dump_json()
 
 
 def test_technical_dataset_is_never_used_as_visible_section_title():
@@ -116,9 +118,8 @@ def test_technical_dataset_is_never_used_as_visible_section_title():
 
     section = build_business_experience(snapshot(items=(item,))).sections[0]
 
-    assert section.module_id == "gold_people_facts"
     assert section.title == "People"
-    assert "gold_people_facts" not in section.title
+    assert "gold_people_facts" not in section.model_dump_json()
 
 
 def test_namespaced_technical_dataset_is_not_a_visible_section_title():
@@ -280,9 +281,6 @@ def test_experience_openapi_has_no_cta_contract():
     assert "ExperienceCta" not in schemas
     assert "cta" not in schemas["ExperienceFact"]["properties"]
     assert set(schemas["ExperienceSection"]["required"]) == {
-        "id",
-        "cartridge_id",
-        "module_id",
         "title",
         "domain",
         "facts",

@@ -37,7 +37,15 @@ async def test_control_room_dashboard_cache_is_scoped_by_workspace(monkeypatch):
     async def fake_dashboard(user):
         workspace_id = user.get("active_workspace_id") or user.get("workspace_id")
         calls.append(workspace_id)
-        return {"scope_marker": workspace_id, "items": []}
+        return {
+            "items": [
+                {
+                    "id": "dashboard",
+                    "kind": "scope",
+                    "count": 1 if workspace_id == USER["active_workspace_id"] else 2,
+                }
+            ]
+        }
 
     monkeypatch.setattr(control_room.control_room_service, "dashboard", fake_dashboard)
 
@@ -51,8 +59,9 @@ async def test_control_room_dashboard_cache_is_scoped_by_workspace(monkeypatch):
         }
     )
 
-    assert first == second
-    assert other != first
+    assert first.model_dump() == second.model_dump()
+    assert first.items[0].count == 1
+    assert other.items[0].count == 2
     assert calls == [
         USER["active_workspace_id"],
         "00000000-0000-0000-0000-000000000002",
@@ -62,7 +71,7 @@ async def test_control_room_dashboard_cache_is_scoped_by_workspace(monkeypatch):
 @pytest.mark.asyncio
 async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
-    fetch = AsyncMock(return_value={"headcount": 1288})
+    fetch = AsyncMock(return_value={"widgets": [{"id": "headcount", "value": 1288}]})
     monkeypatch.setattr(
         control_room.control_room_service, "sap_successfactors_gold_kpis", fetch
     )
@@ -70,14 +79,16 @@ async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
     first = await control_room.control_room_sap_successfactors_gold_kpis(USER)
     second = await control_room.control_room_sap_successfactors_gold_kpis(USER)
 
-    assert first == second == {"headcount": 1288}
+    assert first.model_dump() == second.model_dump()
+    assert first.widgets[0].id == "headcount"
+    assert first.widgets[0].value == 1288
     assert fetch.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_control_room_talent_kpis_cache_reuses_same_scope(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
-    fetch = AsyncMock(return_value={"profile": {"wisdom_bit": "WB-TALENTO"}})
+    fetch = AsyncMock(return_value={"profile": {"industry": "technology"}})
     monkeypatch.setattr(
         control_room.control_room_service, "sap_successfactors_talent_kpis", fetch
     )
@@ -85,14 +96,15 @@ async def test_control_room_talent_kpis_cache_reuses_same_scope(monkeypatch):
     first = await control_room.control_room_sap_successfactors_talent_kpis(USER)
     second = await control_room.control_room_sap_successfactors_talent_kpis(USER)
 
-    assert first == second == {"profile": {"wisdom_bit": "WB-TALENTO"}}
+    assert first.model_dump() == second.model_dump()
+    assert first.profile.industry == "technology"
     assert fetch.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_control_room_talent_9box_box_cache_is_scoped_by_box(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
-    fetch = AsyncMock(side_effect=lambda _user, box_id: {"box": box_id})
+    fetch = AsyncMock(side_effect=lambda _user, box_id: {"box": {"box_id": box_id}})
     monkeypatch.setattr(
         control_room.control_room_service, "sap_successfactors_talent_9box_box", fetch
     )
@@ -107,8 +119,9 @@ async def test_control_room_talent_9box_box_cache_is_scoped_by_box(monkeypatch):
         "estrella", USER
     )
 
-    assert first == second == {"box": "core"}
-    assert other == {"box": "estrella"}
+    assert first.model_dump() == second.model_dump()
+    assert first.box.box_id == "core"
+    assert other.box.box_id == "estrella"
     assert fetch.await_count == 2
 
 
@@ -117,7 +130,7 @@ async def test_control_room_dashboard_cache_singleflights_concurrent_cold_reads(
     monkeypatch,
 ):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
-    fetch = AsyncMock(return_value={"items": [{"id": "sf"}]})
+    fetch = AsyncMock(return_value={"items": [{"id": "sf", "kind": "signal"}]})
 
     async def slow_dashboard(user):
         await asyncio.sleep(0.01)
@@ -129,7 +142,8 @@ async def test_control_room_dashboard_cache_singleflights_concurrent_cold_reads(
         *(control_room.control_room_dashboard(USER) for _ in range(8))
     )
 
-    assert results == [{"items": [{"id": "sf"}]}] * 8
+    assert all(result.model_dump() == results[0].model_dump() for result in results)
+    assert all(result.items[0].id == "sf" for result in results)
     assert fetch.await_count == 1
 
 
@@ -138,8 +152,8 @@ async def test_control_room_write_invalidates_cached_dashboard(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
     dashboard = AsyncMock(
         side_effect=[
-            {"items": [{"id": "item-1", "decision_state": "before"}]},
-            {"items": [{"id": "item-1", "decision_state": "after"}]},
+            {"items": [{"id": "item-1", "kind": "signal", "status": "before"}]},
+            {"items": [{"id": "item-1", "kind": "signal", "status": "after"}]},
         ]
     )
     reopen = AsyncMock(
@@ -153,7 +167,7 @@ async def test_control_room_write_invalidates_cached_dashboard(monkeypatch):
         headers = {}
 
     cached = await control_room.control_room_dashboard(USER)
-    assert cached["items"][0]["decision_state"] == "before"
+    assert cached.items[0].status == "before"
 
     await control_room.control_room_reopen_item(
         "item-1",
@@ -163,5 +177,5 @@ async def test_control_room_write_invalidates_cached_dashboard(monkeypatch):
     )
 
     fresh = await control_room.control_room_dashboard(USER)
-    assert fresh["items"][0]["decision_state"] == "after"
+    assert fresh.items[0].status == "after"
     assert dashboard.await_count == 2

@@ -9,8 +9,6 @@ import { MarketDecisionEvidenceView } from "./MarketDecisionEvidencePanel";
 const payload: MarketDecisionValidationPayload = {
   status: "partial",
   source: {
-    dataset: "sap_successfactors_talent_simulation_inputs",
-    source_id: "WB-TALENTO",
     input_status: "ready",
     source_mode: "benchmark_internal",
     employee_count: 1288,
@@ -23,11 +21,9 @@ const payload: MarketDecisionValidationPayload = {
     unit: "mxn_per_usd",
     confidence: 1,
     freshness_status: "ready",
-    distribution: { low: 17.1, mode: 17.5, high: 17.9 },
   },
   simulation: {
-    simulation_id: "mc-e2e",
-    model_version: "sf_market_validation.v1",
+    available: true,
     output_metric: "cost",
     p10: 40,
     p50: 80,
@@ -36,15 +32,13 @@ const payload: MarketDecisionValidationPayload = {
   },
   bayes: {
     status: "insufficient_data",
-    calibration_group: "sap_successfactors:talent_readiness",
     sample_count: 0,
     evidence_policy: "evidence_only",
   },
   orchestration: {
-    orchestration_id: "orch-e2e",
+    available: true,
     problem_type: "risk_forecast",
     action_recommended: false,
-    external_action_id: null,
   },
   policy: {
     recommendation_only: true,

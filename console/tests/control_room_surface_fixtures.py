@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.schemas.control_room_surfaces import SurfaceScope
-from app.services.control_room.surface_snapshot import SurfaceSnapshot
 from app.services.control_room.business_explicit_action_binding import (
     attach_explicit_action_binding,
 )
+from app.services.control_room.surface_snapshot import SurfaceScope, SurfaceSnapshot
 from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 
 

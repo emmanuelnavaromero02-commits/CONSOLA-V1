@@ -11,6 +11,10 @@ from app.services import control_room_service
 from app.services.control_room.business_action_authority import (
     action_item_is_current,
 )
+from console.tests.control_room_execution_helpers import (
+    authoritative_item_row,
+    explicit_action,
+)
 from control_room_surface_fixtures import OPERATOR, action_item, business_item
 
 
@@ -106,9 +110,18 @@ async def test_execute_replay_rejects_stale_item_before_db():
 
 @pytest.mark.asyncio
 async def test_preview_revalidates_disabled_template_before_dml():
-    item = action_item()
+    user = {
+        **OPERATOR,
+        "id": 7,
+        "active_tenant_id": "tenant-A",
+        "active_workspace_id": "workspace-A",
+    }
+    item, _binding = explicit_action(
+        business_item(tenant_id="tenant-A", workspace_id="workspace-A"),
+        template_id="request_owner_review",
+    )
     conn = AsyncMock()
-    conn.fetchrow.return_value = None
+    conn.fetchrow.side_effect = [authoritative_item_row(item), None]
     conn.execute.side_effect = AssertionError("DML reached")
 
     async def scoped(_pool, _user, work):
@@ -130,14 +143,18 @@ async def test_preview_revalidates_disabled_template_before_dml():
         with pytest.raises(HTTPException) as exc:
             await control_room_service.action_preview(
                 str(item["id"]),
-                OPERATOR,
+                user,
                 template_id="request_owner_review",
                 binding_id=_binding_id(item),
             )
 
-    assert exc.value.status_code == 404
-    assert conn.fetchrow.await_count == 1
-    assert "FROM control_room_action_templates" in conn.fetchrow.await_args.args[0]
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "item_business_state_changed"
+    assert conn.fetchrow.await_count == 2
+    first, second = conn.fetchrow.await_args_list
+    assert "FROM control_room_items" in first.args[0]
+    assert "FOR UPDATE" in first.args[0]
+    assert "FROM control_room_action_templates" in second.args[0]
     conn.execute.assert_not_awaited()
 
 

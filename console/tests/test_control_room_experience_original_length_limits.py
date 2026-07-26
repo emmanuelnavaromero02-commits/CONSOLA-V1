@@ -5,7 +5,10 @@ import pytest
 from app.schemas.control_room_surfaces import EXPERIENCE_SCHEMA_VERSION
 from app.services.control_room import business_visible_copy
 from app.services.control_room.business_experience import build_business_experience
-from app.services.control_room.business_surface_identity import BusinessSurfaceIdentity
+from app.services.control_room.business_surface_identity import (
+    BusinessSurfaceIdentity,
+    resolve_bounded_business_surface_identity,
+)
 from app.services.control_room.business_visible_copy import (
     MAX_VISIBLE_COPY_SCAN_LENGTH,
     VisibleCopyCause,
@@ -128,7 +131,10 @@ def test_invalid_module_id_prefers_later_module_id_before_dataset_fallback() -> 
 
     response = build_business_experience(snapshot(items=(item,)))
 
-    assert response.sections[0].module_id == "nested_business_module"
+    identity = resolve_bounded_business_surface_identity(item, max_length=240)
+    assert identity is not None
+    assert identity.module_id == "nested_business_module"
+    assert "nested_business_module" not in response.model_dump_json()
 
 
 @pytest.mark.parametrize("field", _IDENTITY_FIELDS)
@@ -141,14 +147,17 @@ def test_structural_identity_exactly_240_is_preserved_byte_for_byte(
     response = build_business_experience(snapshot(items=(item,)))
 
     section = response.sections[0]
-    assert getattr(section, field) == value
     assert response.schema_version == EXPERIENCE_SCHEMA_VERSION
     expected = BusinessSurfaceIdentity(
         domain=value if field == "domain" else "People",
         cartridge_id=value if field == "cartridge_id" else "sap_hcm",
         module_id=value if field == "module_id" else "people_overview",
     )
-    assert section.id == expected.section_id
+    assert resolve_bounded_business_surface_identity(item, max_length=240) == expected
+    if field == "domain":
+        assert section.domain == value
+    else:
+        assert value not in section.model_dump_json()
 
 
 @pytest.mark.parametrize("field", _IDENTITY_FIELDS)
@@ -165,6 +174,8 @@ def test_invalid_original_identity_is_never_trimmed_or_published(
     if fallback is None:
         assert response.sections == []
         return
-    section = response.sections[0]
-    assert getattr(section, field) == fallback
-    assert getattr(section, field) != candidate
+    identity = resolve_bounded_business_surface_identity(item, max_length=240)
+    assert identity is not None
+    assert getattr(identity, field) == fallback
+    assert candidate not in response.model_dump_json()
+    assert fallback not in response.model_dump_json()

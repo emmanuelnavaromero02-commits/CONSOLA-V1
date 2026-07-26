@@ -1,239 +1,268 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
 
 from app.routers import control_room
-from app.schemas.control_room_legacy_responses import (
-    ControlRoomLegacyActionRunsResponse,
-    ControlRoomLegacyActivityResponse,
-    ControlRoomLegacyAlertsResponse,
-    ControlRoomLegacyAnomaliesResponse,
-    ControlRoomLegacyDashboardResponse,
-    ControlRoomLegacyImpactResponse,
-    ControlRoomLegacyItemResponse,
-    ControlRoomLegacyOutcomesResponse,
-    public_projection_key_is_forbidden,
-    redact_public_control_room_projection,
-)
+from app.schemas import control_room_legacy_responses as responses
 from app.services import control_room_service
+from control_room_public_http_harness import (
+    DATASET_READER,
+    FORBIDDEN_KEYS,
+    OPERATOR,
+    SECRET_SENTINELS,
+    SURFACES,
+    assert_safe,
+    client,
+    internal_client,
+    keys,
+    poison,
+)
 
 
-OPERATOR = {
-    "id": 7,
-    "role": "super_admin",
-    "active_tenant_id": "tenant-a",
-    "active_workspace_id": "workspace-a",
-}
-ANALYST = {
-    "id": 8,
-    "role": "user",
-    "workspace_role": "analyst",
-    "active_tenant_id": "tenant-a",
-    "active_workspace_id": "workspace-a",
-}
+@pytest.mark.parametrize(("path", "module", "service_name", "payload"), SURFACES)
+def test_all_public_surfaces_project_complete_http_json(
+    path, module, service_name, payload
+):
+    control_room._CONTROL_ROOM_READ_CACHE.clear()
+    with patch.object(module, service_name, AsyncMock(return_value=payload)):
+        assert_safe(client(OPERATOR).get(path))
 
 
-def _client(user: dict | None) -> TestClient:
-    app = FastAPI()
-
-    @app.middleware("http")
-    async def inject_user(request: Request, call_next):
-        request.state.user = user
-        return await call_next(request)
-
-    async def current_user():
-        return user
-
-    app.dependency_overrides[control_room.require_authenticated] = current_user
-    app.include_router(control_room.router)
-    return TestClient(app, raise_server_exceptions=True)
-
-
-def _forbidden_paths(value, prefix: str = "$") -> list[str]:
-    paths: list[str] = []
-    if isinstance(value, dict):
-        for key, item in value.items():
-            path = f"{prefix}.{key}"
-            if public_projection_key_is_forbidden(key):
-                paths.append(path)
-            paths.extend(_forbidden_paths(item, path))
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            paths.extend(_forbidden_paths(item, f"{prefix}[{index}]"))
-    return paths
-
-
-def _raw_item() -> dict:
-    return {
-        "id": "item-1",
-        "kind": "anomaly",
-        "title": "Revisar senal",
-        "severity": "high",
-        "status": "open",
-        "omega": {"step": "observe"},
-        "tenant_id": "tenant-a",
-        "workspace_id": "workspace-a",
-        "source_dataset": "gold_private",
-        "sql": "SELECT secret FROM private",
-        "action_templates": [{"template_id": "write-private"}],
-        "metadata": {
-            "explicit_action_bindings": [{"binding_id": "private"}],
-            "connection": {"password": "private"},
-        },
-        "nested": {
-            "payload": {"employee": "private"},
-            "provenance": {"source": "private"},
-            "receipt": {"digest": "private"},
-        },
+def test_business_kpis_keep_real_zeros_and_authorized_facts():
+    payload = {
+        "tenant_id": "private",
+        "workspace_id": "private",
+        "widgets": [
+            {
+                "id": "sf_contractor_risk",
+                "title": "Riesgo de contratistas",
+                "value": 0,
+                "contractor_count": 0,
+                "risk_factor": 0,
+                "rows": [
+                    {"contractor_count": 0, "risk_factor": 0, "fact": "Sin incidencias"}
+                ],
+            }
+        ],
     }
+    control_room._CONTROL_ROOM_READ_CACHE.clear()
+    with patch.object(
+        control_room_service,
+        "sap_successfactors_gold_kpis",
+        AsyncMock(return_value=payload),
+    ):
+        response = client(DATASET_READER).get(
+            "/api/control-room/sap-successfactors/gold-kpis"
+        )
+
+    widget = response.json()["widgets"][0]
+    assert widget["id"] == "sf_contractor_risk"
+    assert widget["value"] == widget["contractor_count"] == widget["risk_factor"] == 0
+    assert widget["rows"][0]["fact"] == "Sin incidencias"
+    assert "tenant_id" not in response.json() and "workspace_id" not in response.json()
 
 
-def test_redactor_is_recursive_non_mutating_and_removes_server_authority():
-    raw = {"items": [_raw_item()]}
-    before = deepcopy(raw)
+def test_talent_keeps_only_format_valid_business_identifiers():
+    payload = {
+        "status": "ready",
+        "box": {"box_id": "core", "box_label": "Core"},
+        "roster": [
+            {"employee_key": "tal_abcdef123456", "display_name": "Colaborador 3456"},
+            {"employee_key": "technical-id-sentinel", "display_name": "Descartado"},
+        ],
+    }
+    with patch.object(
+        control_room_service,
+        "sap_successfactors_talent_9box_box",
+        AsyncMock(return_value=payload),
+    ):
+        response = client(DATASET_READER).get(
+            "/api/control-room/sap-successfactors/talent/9box/core"
+        )
 
-    redacted = redact_public_control_room_projection(raw)
+    body = response.json()
+    assert body["box"]["box_id"] == "core"
+    assert body["roster"][0]["employee_key"] == "tal_abcdef123456"
+    assert "technical-id-sentinel" not in response.text
 
-    assert raw == before
-    assert _forbidden_paths(redacted) == []
-    assert redacted["items"][0]["title"] == "Revisar senal"
+
+def test_talent_metadata_keeps_business_component_slug_only():
+    payload = {
+        "status": "ready",
+        "entities": [
+            {"id": "performance", "status": "available"},
+            {"id": "connection-secret", "status": "ready"},
+        ],
+    }
+    with patch.object(
+        control_room_service,
+        "sap_successfactors_talent_metadata_readiness",
+        AsyncMock(return_value=payload),
+    ):
+        response = client(DATASET_READER).get(
+            "/api/control-room/sap-successfactors/talent/metadata-readiness"
+        )
+
+    entities = response.json()["entities"]
+    assert entities[0]["id"] == "performance"
+    assert entities[1]["id"] is None
+
+
+def test_optional_nested_projection_preserves_explicit_null():
+    projected = responses.ControlRoomTalentKpisResponse.project(
+        {"workforce_trends": None}
+    )
+    assert projected.workforce_trends is None
 
 
 @pytest.mark.parametrize(
-    ("path", "service_name", "payload"),
+    "path",
     (
-        (
-            "/api/control-room/dashboard",
-            "dashboard",
-            {
-                "meta": {},
-                "workspace": {"workspace_id": "workspace-a"},
-                "period": "July 2026",
-                "omega_steps": [],
-                "summary": {},
-                "domains": [],
-                "cartridges": [],
-                "sources": [{"dataset": "gold_private", "status": "ok"}],
-                "alerts": [{**_raw_item(), "item_id": "item-1"}],
-                "items": [_raw_item()],
-            },
-        ),
-        (
-            "/api/control-room/alerts",
-            "list_alerts",
-            {
-                "alerts": [{**_raw_item(), "item_id": "item-1"}],
-                "summary": {},
-                "generated_at": "2026-07-26T10:00:00Z",
-            },
-        ),
-        ("/api/control-room/items/item-1", "get_item", _raw_item()),
+        "/api/control-room/dashboard",
+        "/api/control-room/ops/summary",
+        "/api/control-room/agents/ops",
+        "/api/control-room/alerts",
+        "/api/control-room/decision-intelligence/runs",
     ),
 )
-def test_retained_legacy_http_projections_never_expose_raw_authority(
-    path: str,
-    service_name: str,
-    payload: dict,
-):
-    control_room._CONTROL_ROOM_READ_CACHE.clear()
-    service = AsyncMock(return_value=payload)
-    with patch.object(control_room_service, service_name, service):
-        response = _client(OPERATOR).get(path)
-
-    assert response.status_code == 200
-    assert _forbidden_paths(response.json()) == []
-    assert "private" not in response.text
-    service.assert_awaited_once()
+def test_dataset_reader_cannot_open_operational_surfaces(path):
+    assert client(DATASET_READER).get(path).status_code == 403
 
 
-def test_legacy_projection_routes_are_typed_and_operations_only():
-    expected = {
-        "/api/control-room/dashboard": ControlRoomLegacyDashboardResponse,
-        "/api/control-room/alerts": ControlRoomLegacyAlertsResponse,
-        "/api/control-room/anomalies": ControlRoomLegacyAnomaliesResponse,
-        "/api/control-room/items/{item_id}": ControlRoomLegacyItemResponse,
-        "/api/control-room/anomalies/{anomaly_id}": ControlRoomLegacyItemResponse,
-        "/api/control-room/items/{item_id}/impact": ControlRoomLegacyImpactResponse,
-        "/api/control-room/items/{item_id}/activity": ControlRoomLegacyActivityResponse,
-        "/api/control-room/items/{item_id}/action-runs": ControlRoomLegacyActionRunsResponse,
-        "/api/control-room/items/{item_id}/outcomes": ControlRoomLegacyOutcomesResponse,
-    }
+def test_unknown_payload_fails_closed_without_echoing_content():
+    raw = {"unknown": poison(), "other": [{"description": "password-sentinel"}]}
+    with patch.object(control_room_service, "summary", AsyncMock(return_value=raw)):
+        response = client(DATASET_READER).get("/api/control-room/summary")
+    assert_safe(response)
+    assert response.json()["total_anomalies"] == 0
+
+
+def test_routes_are_typed_and_operational_families_require_operations_read():
     by_path = {
         route.path: route
         for route in control_room.router.routes
         if "GET" in (route.methods or set())
     }
-
-    for path, response_model in expected.items():
+    expected = {
+        "/api/control-room/summary": (
+            responses.ControlRoomBusinessSummaryResponse,
+            "datasets.read",
+        ),
+        "/api/control-room/sap-successfactors/gold-kpis": (
+            responses.ControlRoomGoldKpisResponse,
+            "datasets.read",
+        ),
+        "/api/control-room/ops/summary": (
+            responses.ControlRoomOpsSummaryResponse,
+            "operations.read",
+        ),
+        "/api/control-room/agents/ops": (
+            responses.ControlRoomAgentsOpsResponse,
+            "operations.read",
+        ),
+        "/api/control-room/decision-intelligence/runs": (
+            responses.ControlRoomDecisionIntelligenceRunsResponse,
+            "operations.read",
+        ),
+        "/api/control-room/decision-intelligence/runs/{run_id}": (
+            responses.ControlRoomDecisionIntelligenceRunDetailResponse,
+            "operations.read",
+        ),
+        "/api/control-room/decision-intelligence/history": (
+            responses.ControlRoomDecisionIntelligenceHistoryResponse,
+            "operations.read",
+        ),
+        "/api/control-room/decision-intelligence/calibration": (
+            responses.ControlRoomDecisionIntelligenceCalibrationResponse,
+            "operations.read",
+        ),
+    }
+    for path, (model, permission) in expected.items():
         route = by_path[path]
-        permissions = {
-            dependency.dependency.required_permission
-            for dependency in route.dependencies
-            if hasattr(dependency.dependency, "required_permission")
+        assert route.response_model is model
+        declared = {
+            d.dependency.required_permission
+            for d in route.dependencies
+            if hasattr(d.dependency, "required_permission")
         }
-        assert route.response_model is response_model
-        assert permissions == {"operations.read"}
+        assert declared == {permission}
 
 
-@pytest.mark.parametrize(
-    ("path", "service_name"),
-    (
-        ("/api/control-room/dashboard", "dashboard"),
-        ("/api/control-room/alerts", "list_alerts"),
-        ("/api/control-room/items/item-1", "get_item"),
-    ),
-)
-def test_dataset_reader_cannot_open_legacy_operational_projections(
-    path: str, service_name: str
-):
+def _internal_context(permission: str) -> dict:
+    return {
+        "trusted": True,
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "permissions": [permission],
+    }
+
+
+def test_internal_dataset_reader_cannot_bypass_operational_boundary():
     service = AsyncMock(side_effect=AssertionError("service reached"))
-    with patch.object(control_room_service, service_name, service):
-        response = _client(ANALYST).get(path)
-
+    with (
+        patch.object(
+            control_room,
+            "verify_signed_security_context",
+            return_value=_internal_context("datasets.read"),
+        ),
+        patch.object(control_room_service, "ops_summary", service),
+    ):
+        response = internal_client().post(
+            "/api/control-room/internal/read",
+            json={"security_context": {"signed": "value"}, "view": "ops_summary"},
+        )
     assert response.status_code == 403
     service.assert_not_awaited()
 
 
-def test_talent_business_payload_is_typed_read_only_and_redacted():
+def test_internal_business_data_uses_same_fail_closed_projection():
     control_room._CONTROL_ROOM_READ_CACHE.clear()
-    raw = {
-        "generated_at": "2026-07-26T10:00:00Z",
-        "connection_id": "private",
-        "tenant_id": "tenant-a",
-        "workspace_id": "workspace-a",
-        "dataset": "gold_private",
-        "status": "ready",
-        "summary": {"total": 1},
-        "items": [
-            {
-                "id": "signal-1",
-                "title": "Revisar cohorte",
-                "method": "private_algorithm",
-                "preview_available": True,
-                "metadata": {"payload": "private"},
-            }
-        ],
-        "blockers": [],
-    }
-    service = AsyncMock(return_value=raw)
-    with patch.object(
-        control_room_service,
-        "sap_successfactors_talent_anomalies",
-        service,
+    with (
+        patch.object(
+            control_room,
+            "verify_signed_security_context",
+            return_value=_internal_context("datasets.read"),
+        ),
+        patch.object(
+            control_room_service,
+            "summary",
+            AsyncMock(return_value={"total_anomalies": 0, **poison()}),
+        ),
     ):
-        response = _client(OPERATOR).get(
-            "/api/control-room/sap-successfactors/talent/anomalies"
+        response = internal_client().post(
+            "/api/control-room/internal/read",
+            json={"security_context": {"signed": "value"}, "view": "summary"},
         )
+    data = response.json()["data"]
+    assert data["total_anomalies"] == 0
+    assert not keys(data) & FORBIDDEN_KEYS
+    assert all(
+        secret.casefold() not in str(data).casefold() for secret in SECRET_SENTINELS
+    )
 
-    assert response.status_code == 200
-    assert _forbidden_paths(response.json()) == []
-    assert response.json()["items"] == [{"id": "signal-1", "title": "Revisar cohorte"}]
-    assert "private" not in response.text
+
+def test_internal_operations_reader_gets_only_typed_operational_data():
+    with (
+        patch.object(
+            control_room,
+            "verify_signed_security_context",
+            return_value=_internal_context("operations.read"),
+        ),
+        patch.object(
+            control_room_service,
+            "ops_summary",
+            AsyncMock(return_value={"items": {"total": 0}, **poison()}),
+        ),
+    ):
+        response = internal_client().post(
+            "/api/control-room/internal/read",
+            json={"security_context": {"signed": "value"}, "view": "ops_summary"},
+        )
+    data = response.json()["data"]
+    assert data["items"]["total"] == 0
+    assert not keys(data) & FORBIDDEN_KEYS
 
 
 @pytest.mark.parametrize(
@@ -245,36 +274,6 @@ def test_talent_business_payload_is_typed_read_only_and_redacted():
         "/api/control-room/sap-successfactors/talent/actions/preview",
     ),
 )
-def test_unconsumed_legacy_action_posts_are_gone_without_a_body(path: str):
-    services = (
-        patch.object(control_room_service, "action_preview", AsyncMock()),
-        patch.object(control_room_service, "action_dry_run", AsyncMock()),
-        patch.object(control_room_service, "execute_item", AsyncMock()),
-        patch.object(
-            control_room_service,
-            "sap_successfactors_talent_action_preview",
-            AsyncMock(),
-        ),
-    )
-    with (
-        services[0] as preview,
-        services[1] as dry_run,
-        services[2] as execute,
-        services[3] as talent,
-    ):
-        response = _client(OPERATOR).post(path, json={"payload": "private"})
-
-    assert response.status_code == 410
-    assert response.content == b""
-    for service in (preview, dry_run, execute, talent):
-        service.assert_not_awaited()
-
-
-def test_canonical_action_handle_preview_remains_typed_and_active():
-    route = next(
-        route
-        for route in control_room.router.routes
-        if route.path == "/api/control-room/actions/preview"
-    )
-    assert route.status_code != 410
-    assert route.response_model is not None
+def test_retired_action_posts_remain_authenticated_empty_410(path):
+    response = client(OPERATOR).post(path, json=poison())
+    assert response.status_code == 410 and response.content == b""

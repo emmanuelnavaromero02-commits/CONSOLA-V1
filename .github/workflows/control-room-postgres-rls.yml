@@ -74,7 +74,9 @@ jobs:
             tests/test_control_room_evidence_keyring_runtime.py \
             tests/test_control_room_evidence_signing_wiring.py \
             tests/test_intelligence_engine_contract.py \
+            tests/test_market_decision_validation_e2e.py \
             tests/test_mcp_infra_pdf_ci_contract.py \
+            tests/test_mcp_control_room_read_permissions.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
@@ -115,8 +117,8 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=2316, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=65, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=2380, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=71, label="Live PostgreSQL/RLS")
           PY
 
   no-control-room-needed:

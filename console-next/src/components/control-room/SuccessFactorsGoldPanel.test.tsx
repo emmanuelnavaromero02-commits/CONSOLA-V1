@@ -6,10 +6,7 @@ import type { SfDecisionModelPayload, SfGoldKpisPayload, SfTalentKpisPayload, So
 import { SuccessFactorsGoldPanel } from "./SuccessFactorsGoldPanel";
 
 const source: SourceStatus = {
-  dataset: "sap_successfactors_employee_360",
   cartridge: "sap_successfactors",
-  connector_id: "femsa_sf",
-  module_id: "sap_successfactors",
   domain: "Recursos Humanos",
   module: "Employee Central",
   status: "ok",
@@ -77,14 +74,12 @@ describe("SuccessFactorsGoldPanel", () => {
 
   it("renders real executive indicators without sending users to technical pages", () => {
     const payload: SfGoldKpisPayload = {
-      connection_id: "femsa_sf",
       generated_at: "2026-06-09T01:00:00Z",
       widgets: [
         {
           id: "employee_360",
           title: "Employee 360",
           value: 1288,
-          dataset: "sap_successfactors_employee_360",
           rows: [
             { label: "Monterrey", headcount: 640 },
             { label: "CDMX", headcount: 320 },
@@ -94,11 +89,10 @@ describe("SuccessFactorsGoldPanel", () => {
     };
     const blocked: SourceStatus = {
       ...source,
-      dataset: "sap_successfactors_manager_hierarchy",
+      module: "Jerarquía organizacional",
       count: 0,
       status: "blocked",
       data_readiness: "no_permission",
-      error: "RLS blocked scoped read",
     };
 
     const markup = renderToStaticMarkup(
@@ -111,19 +105,21 @@ describe("SuccessFactorsGoldPanel", () => {
     expect(markup).toContain("Decisiones OMEGA");
     expect(markup).toContain("Distribución de plantilla");
     expect(markup).toContain("Requiere permisos OData");
-    expect(markup).toContain("RLS blocked scoped read");
+    expect(markup).not.toContain("Identificador interno");
+    expect(markup).not.toContain("Origen interno");
     expect(markup).not.toContain("Preview data");
     expect(markup).not.toContain("Schema");
     expect(markup).not.toContain("/api/data/sap_successfactors_employee_360?limit=20");
   });
 
-  it("surfaces backend errors as operational errors", () => {
+  it("surfaces an operational error without exposing its technical detail", () => {
+    const technicalError = "S3_PRIVATE_BUCKET_404";
     const markup = renderToStaticMarkup(
-      <SuccessFactorsGoldPanel payload={null} loading={false} error="S3 404" sources={[]} />,
+      <SuccessFactorsGoldPanel payload={null} loading={false} error={technicalError} sources={[]} />,
     );
 
     expect(markup).toContain("No se pudo actualizar información ejecutiva");
-    expect(markup).toContain("S3 404");
+    expect(markup).not.toContain(technicalError);
   });
 
   it("renders Talent WisdomBit blockers and recommendation-only signals", () => {
@@ -132,7 +128,6 @@ describe("SuccessFactorsGoldPanel", () => {
       profile: {
         industry: "retail",
         company_profile: "femsa",
-        wisdom_bit: "WB-TALENTO",
         decision_mode: "recommendation_only",
         compensation_enabled: false,
         write_back_enabled: false,
@@ -152,7 +147,6 @@ describe("SuccessFactorsGoldPanel", () => {
       signals: [
         {
           id: "talent_cpa_missing_inputs",
-          type: "priorizacion",
           severity: "medium",
           title: "Fit Score bloqueado por falta de C/P/A",
           affected_count: 12,
@@ -165,8 +159,6 @@ describe("SuccessFactorsGoldPanel", () => {
           id: "talent_cpa_inputs_missing",
           status: "blocked",
           title: "C/P/A pendiente",
-          detail: "Fit Score, readiness real y 9-box requieren competencia, desempeno y aspiracion.",
-          items: ["KB-COMPETENCIAS blocked", "KB-DESEMPENO blocked"],
         },
       ],
     };
@@ -189,7 +181,6 @@ describe("SuccessFactorsGoldPanel", () => {
       profile: {
         industry: "retail",
         company_profile: "femsa",
-        wisdom_bit: "WB-TALENTO",
         decision_mode: "recommendation_only",
         compensation_enabled: false,
         write_back_enabled: false,
@@ -245,7 +236,7 @@ describe("SuccessFactorsGoldPanel", () => {
 
   it("hides Workforce Trends when the bundle is absent (honest empty state)", () => {
     const talent: SfTalentKpisPayload = {
-      profile: { industry: "retail", company_profile: "femsa", wisdom_bit: "WB-TALENTO", decision_mode: "recommendation_only", compensation_enabled: false, write_back_enabled: false },
+      profile: { industry: "retail", company_profile: "femsa", decision_mode: "recommendation_only", compensation_enabled: false, write_back_enabled: false },
       readiness: { ready_min: 80, near_min: 60, profiled_employees: 0, calculable_employees: 0, insufficient_data_employees: 0, nine_box_available: 0, status: "partial" },
       widgets: [],
       signals: [],
@@ -260,21 +251,21 @@ describe("SuccessFactorsGoldPanel", () => {
   it("covers all SuccessFactors business fronts and translates the decision model", () => {
     const businessSources: SourceStatus[] = [
       source,
-      { ...source, dataset: "sap_successfactors_org_structure", module: "Foundation Objects", count: 515 },
-      { ...source, dataset: "sap_successfactors_recruitment_funnel", module: "Recruiting", count: 12, data_readiness: "partial" },
-      { ...source, dataset: "sap_successfactors_turnover_by_period", module: "Employee Central", count: 0, data_readiness: "partial" },
-      { ...source, dataset: "sap_successfactors_compensation_distribution", module: "Compensation", count: 44 },
-      { ...source, dataset: "sap_successfactors_employee_time_balance", module: "Time Management", count: 18 },
-      { ...source, dataset: "sap_successfactors_learning_completion", module: "Learning", count: 21 },
-      { ...source, dataset: "sap_successfactors_performance_distribution", module: "Performance", count: 9 },
+      { ...source, module: "Org Structure", count: 515 },
+      { ...source, module: "Recruiting", count: 12, data_readiness: "partial" },
+      { ...source, module: "Turnover and Termination", count: 0, data_readiness: "partial" },
+      { ...source, module: "Compensation", count: 44 },
+      { ...source, module: "Time Management", count: 18 },
+      { ...source, module: "Learning", count: 21 },
+      { ...source, module: "Performance", count: 9 },
     ];
 
     const markup = renderToStaticMarkup(
       <SuccessFactorsGoldPanel
         payload={{
           widgets: [
-            { id: "headcount_by_company", title: "Headcount by company", value: 1288, dataset: "sap_successfactors_headcount_by_company", rows: [] },
-            { id: "manager_hierarchy", title: "Manager hierarchy", value: 555, dataset: "sap_successfactors_manager_hierarchy", rows: [] },
+            { id: "headcount_by_company", title: "Headcount by company", value: 1288, rows: [] },
+            { id: "manager_hierarchy", title: "Manager hierarchy", value: 555, rows: [] },
           ],
         }}
         loading={false}
@@ -302,5 +293,24 @@ describe("SuccessFactorsGoldPanel", () => {
     expect(markup).not.toContain("Catálogo Gold");
     expect(markup).not.toContain("Schema PerPerson");
     expect(markup).not.toContain("Preview data");
+  });
+
+  it("renders a minimal public projection without undefined or technical labels", () => {
+    const markup = renderToStaticMarkup(
+      <SuccessFactorsGoldPanel
+        payload={{ widgets: [{ id: "employee_360", title: "Plantilla", value: 7 }] }}
+        loading={false}
+        error=""
+        sources={[{ count: 7 }]}
+        talent={{}}
+      />,
+    );
+
+    expect(markup).toContain("Plantilla activa");
+    expect(markup).toContain(">7<");
+    expect(markup).not.toContain("undefined");
+    expect(markup).not.toContain("Identificador interno");
+    expect(markup).not.toContain("Origen interno");
+    expect(markup).not.toContain("dataset");
   });
 });

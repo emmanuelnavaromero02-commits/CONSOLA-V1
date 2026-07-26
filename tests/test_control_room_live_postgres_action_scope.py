@@ -8,7 +8,7 @@ import asyncpg
 import pytest
 from fastapi import HTTPException
 
-from app.schemas.control_room_surfaces import SurfaceScope
+from app.services.control_room.surface_snapshot import SurfaceScope
 from app.services import control_room_service
 from app.services.control_room.business_action_catalog import (
     load_enabled_action_template_ids,

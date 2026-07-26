@@ -7,9 +7,6 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from app.routers import control_room
-from app.schemas.control_room_legacy_responses import (
-    public_projection_key_is_forbidden,
-)
 from app.services import control_room_service
 
 
@@ -65,18 +62,16 @@ def _client() -> TestClient:
     return TestClient(app, raise_server_exceptions=True)
 
 
-def _forbidden_paths(value, prefix: str = "$") -> list[str]:
-    paths: list[str] = []
+def _all_keys(value) -> set[str]:
+    keys: set[str] = set()
     if isinstance(value, dict):
         for key, item in value.items():
-            path = f"{prefix}.{key}"
-            if public_projection_key_is_forbidden(key):
-                paths.append(path)
-            paths.extend(_forbidden_paths(item, path))
+            keys.add(key)
+            keys.update(_all_keys(item))
     elif isinstance(value, list):
-        for index, item in enumerate(value):
-            paths.extend(_forbidden_paths(item, f"{prefix}[{index}]"))
-    return paths
+        for item in value:
+            keys.update(_all_keys(item))
+    return keys
 
 
 def test_service_action_run_projection_keeps_authority_audit_server_only():
@@ -142,7 +137,7 @@ def test_action_history_http_models_allow_only_business_safe_fields(
     assert response.status_code == 200
     body = response.json()
     assert body["item_id"] == "item-1"
-    assert _forbidden_paths(body) == []
+    assert not (_all_keys(body) & set(SENSITIVE_RUN_FIELDS))
     assert set(body[collection][0]).issubset(safe)
     assert body[collection][0].items() >= safe.items()
     assert "private" not in response.text.lower()
