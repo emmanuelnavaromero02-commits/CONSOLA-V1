@@ -43,7 +43,8 @@ def _runner(conn: object) -> tuple[AsyncMock, object]:
 
 @pytest.mark.asyncio
 async def test_exact_completed_retry_replays_without_writes() -> None:
-    run_scoped, _conn = _runner(object())
+    run_replay_scoped, _conn = _runner(object())
+    run_scoped = AsyncMock(side_effect=AssertionError("write scope reached"))
     ensure = AsyncMock()
     record = AsyncMock()
     response = Mock(return_value={"idempotent": True})
@@ -58,6 +59,7 @@ async def test_exact_completed_retry_replays_without_writes() -> None:
     ) as replay:
         result = await prepare_execution_entry(
             run_scoped=run_scoped,
+            run_replay_scoped=run_replay_scoped,
             ensure_item_row=ensure,
             record_execute_block=record,
             response_for_reservation=response,
@@ -72,6 +74,7 @@ async def test_exact_completed_retry_replays_without_writes() -> None:
 
     assert result == {"idempotent": True}
     assert replay.await_args.kwargs["workspace_id"] == "workspace-a"
+    run_scoped.assert_not_awaited()
     ensure.assert_not_awaited()
     record.assert_not_awaited()
 
@@ -90,6 +93,7 @@ async def test_unconfirmed_retry_keeps_existing_block_path() -> None:
     ):
         await prepare_execution_entry(
             run_scoped=run_scoped,
+            run_replay_scoped=run_scoped,
             ensure_item_row=ensure,
             record_execute_block=record,
             response_for_reservation=Mock(),
@@ -122,6 +126,7 @@ async def test_nonmatching_retry_never_returns_unrelated_receipt() -> None:
     ):
         await prepare_execution_entry(
             run_scoped=run_scoped,
+            run_replay_scoped=run_scoped,
             ensure_item_row=ensure,
             record_execute_block=record,
             response_for_reservation=Mock(),

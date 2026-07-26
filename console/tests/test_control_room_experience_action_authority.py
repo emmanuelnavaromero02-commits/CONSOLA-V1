@@ -27,6 +27,7 @@ def test_terminal_statuses_never_allow_preview(status: str):
     (
         ("preview", "open", True),
         ("dry_run", "decision_created", True),
+        ("dry_run", "approved", False),
         ("execute", "approved", True),
         ("execute", "open", False),
     ),

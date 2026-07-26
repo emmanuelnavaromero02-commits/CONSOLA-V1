@@ -19,7 +19,7 @@ from console.tests.test_control_room_persistent_cycle_helpers import (
 
 @pytest.mark.asyncio
 async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_and_audit():
-    item = _item()
+    item = _item(status="decision_created")
     action_row = {
         "id": 301,
         "decision_id": 42,
@@ -81,9 +81,13 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
             template_id="create_followup_task",
         )
         item_after_dry_run = control_room_service._with_omega(
-            {**item, "execution_status": "dry_run_validated"}
+            {
+                **item,
+                "status": "approved",
+                "execution_status": "dry_run_validated",
+            }
         )  # noqa: SLF001
-        item["execution_status"] = "dry_run_validated"
+        item.update(status="approved", execution_status="dry_run_validated")
         control_room_service._item_for_mutation.return_value = item_after_dry_run
         executed = await control_room_service.execute_item(
             item["id"],
@@ -138,7 +142,7 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
 
 @pytest.mark.asyncio
 async def test_dry_run_fails_closed_when_action_run_cannot_persist():
-    item = _item()
+    item = _item(status="decision_created")
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
