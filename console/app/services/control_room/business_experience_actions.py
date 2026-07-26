@@ -4,10 +4,10 @@ from collections.abc import Collection, Mapping
 from typing import Any
 
 from app.schemas.control_room_experience_actions import (
+    EXPERIENCE_ACTION_PREVIEW_ENDPOINT,
     ExperienceAction,
     ExperienceActionPrerequisite,
 )
-from app.services.control_room.business_action_binding import preview_action_endpoint
 from app.services.control_room.business_action_authority import (
     action_item_is_current,
     action_item_is_stale,
@@ -55,7 +55,6 @@ def resolve_business_experience_actions(
     user: Mapping[str, Any],
     enabled_template_ids: Collection[str],
 ) -> list[ExperienceAction]:
-    item_id = str(item.get("id") or "")
     if not action_item_is_current(item, operation="preview"):
         return []
     bindings = authorized_explicit_action_bindings(
@@ -87,8 +86,7 @@ def resolve_business_experience_actions(
         enabled = all(value.satisfied for value in prerequisites)
         actions.append(
             ExperienceAction(
-                item_id=str(item_id),
-                template_id=template_id,
+                action_handle=binding.binding_id,
                 label=label,
                 operation="preview",
                 enabled=enabled,
@@ -98,8 +96,7 @@ def resolve_business_experience_actions(
                     None if enabled else _STALE_REASON if stale else _INCOMPLETE_REASON
                 ),
                 method="POST",
-                endpoint=preview_action_endpoint(str(item_id)),
-                binding=binding.public_values(),
+                endpoint=EXPERIENCE_ACTION_PREVIEW_ENDPOINT,
             )
         )
     return actions

@@ -31,24 +31,34 @@ class ExecutionLifecycleBlock:
 def execution_lifecycle_block(
     item: Mapping[str, Any],
 ) -> ExecutionLifecycleBlock | None:
+    status = item.get("status")
+    execution_status = item.get("execution_status")
+    if (
+        not isinstance(status, str)
+        or not status.strip()
+        or not isinstance(execution_status, str)
+        or not execution_status.strip()
+    ):
+        return ExecutionLifecycleBlock(
+            "lifecycle_missing",
+            "explicit item and execution lifecycle is required",
+        )
     if not item.get("decision_id"):
         return ExecutionLifecycleBlock(
             "decision_required",
             "decision is required before execution",
         )
-    if str(item.get("status") or "").strip().lower() in {"dismissed", "resolved"}:
+    if status.strip().lower() in {"dismissed", "resolved"}:
         return ExecutionLifecycleBlock(
             "terminal_item",
             "terminal control room item cannot execute supervised action",
         )
-    if str(item.get("execution_status") or "not_started").strip().lower() == "executed":
+    if execution_status.strip().lower() == "executed":
         return ExecutionLifecycleBlock(
             "already_executed",
             "executed control room item cannot execute another action",
         )
-    if str(item.get("execution_status") or "not_started").strip().lower() != (
-        "dry_run_validated"
-    ):
+    if execution_status.strip().lower() != "dry_run_validated":
         return ExecutionLifecycleBlock(
             "dry_run_required",
             "dry-run validation is required before execution",

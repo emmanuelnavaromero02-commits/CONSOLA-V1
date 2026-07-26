@@ -219,8 +219,16 @@ def reserved_action_response(
         raise RuntimeError("acquired action reservation cannot be replayed")
     action_run = action_run_public(reservation.row)
     result = details(action_run.get("execution_result"))
+    if result.get("executed") is not True:
+        raise HTTPException(
+            409,
+            {
+                "code": "invalid_execution_receipt",
+                "reservation_id": reservation.id,
+            },
+        )
     is_external_write = result.get("external_write") is True
-    executed = bool(result.get("executed", True))
+    executed = True
     projection_status = str(result.get("local_projection_status") or "")
     execution_committed = executed and (
         not is_external_write

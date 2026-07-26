@@ -76,7 +76,6 @@ from app.services.control_room.business_action_catalog import (
 )
 from app.services.control_room.business_action_resolution import (
     require_explicit_action_template,
-    single_explicit_action_binding,
 )
 from app.services.control_room.business_approve_with_optional_decision import (
     approve_with_optional_decision as _approve_with_optional_decision,
@@ -189,7 +188,6 @@ for _helper in (
     require_enabled_action_template,
     require_enabled_action_template_for_user,
     require_explicit_action_template,
-    single_explicit_action_binding,
     workflow_reopen_allowed,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
@@ -1879,150 +1877,14 @@ async def run_auto_item(
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    if item.get("status") in TERMINAL_ITEM_STATUSES:
-        raise HTTPException(409, "terminal control room item cannot run automatic mode")
-    binding = single_explicit_action_binding(item, user)
-    template_id = binding.template_id
-    binding_id = binding.binding_id
-    await require_enabled_action_template_for_user(user, template_id)
-
-    steps: list[dict[str, Any]] = []
-    investigation = await record_item_step(
-        item_id,
-        "investigation",
-        user,
-        note="Modo automatico: investigacion iniciada",
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    steps.append({"step": "investigation", "event": investigation.get("event_type")})
-
-    selected = await select_item_option(
-        item_id,
-        "remediate",
-        user,
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    item = selected["item"]
-    steps.append({"step": "options", "option_id": "remediate"})
-
-    if not item.get("decision_id"):
-        decision = await create_decision_for_item(
-            item_id,
-            user,
-            ip=ip,
-            user_agent=user_agent,
-            fetcher=fetcher,
-        )
-        item = decision["item"]
-    else:
-        decision = {"decision": {"id": item.get("decision_id")}, "item": item}
-    steps.append({"step": "decision", "decision_id": item.get("decision_id")})
-
-    preview = await action_preview(
-        item_id,
-        user,
-        template_id=template_id,
-        binding_id=binding_id,
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    dry_run = await action_dry_run(
-        item_id,
-        user,
-        template_id=template_id,
-        binding_id=binding_id,
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    item = dry_run["item"]
-    steps.append(
+    del item_id, user, ip, user_agent, fetcher
+    raise HTTPException(
+        409,
         {
-            "step": "execution",
-            "template_id": template_id,
-            "status": item.get("execution_status"),
-        }
-    )
-
-    control = await record_item_step(
-        item_id,
-        "control",
-        user,
-        note="Modo automatico: dry-run validado y control abierto",
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    steps.append({"step": "control", "event": control.get("event_type")})
-
-    pool = await auth.pool()
-
-    async def _record_auto_run(
-        conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> None:
-        await lock_authoritative_business_item(
-            conn,
-            user=user,
-            item=item,
-            decision_id=int(item["decision_id"]),
-            allowed_stages={
-                _exec_sql.WorkflowStage.DECISION_CREATED,
-                _exec_sql.WorkflowStage.APPROVED,
-                _exec_sql.WorkflowStage.EXECUTED,
-            },
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="auto_run_completed",
-            metadata={
-                "steps": steps,
-                "decision_id": item.get("decision_id"),
-                "template_id": template_id,
-                "execution_status": item.get("execution_status"),
-                "external_write": False,
-            },
-        )
-
-    await _run_with_db_scope(pool, user, _record_auto_run)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.auto_run",
-        resource_type="control_room_item",
-        resource_id=item_id,
-        ip=ip,
-        user_agent=user_agent,
-        status="success",
-        metadata={
-            "steps": steps,
-            "decision_id": item.get("decision_id"),
-            "template_id": template_id,
-            "preview_execution_id": preview.get("execution", {}).get("id"),
-            "dry_run_execution_id": dry_run.get("execution", {}).get("id"),
-            "external_write": False,
+            "code": "auto_run_disabled",
+            "message": "automatic mode is disabled until orchestration is atomic",
         },
-        critical=True,
     )
-    return {
-        "auto_run": {
-            "completed": True,
-            "stopped_before_writeback": True,
-            "steps": steps,
-            "template_id": template_id,
-        },
-        "decision": decision.get("decision"),
-        "preview": preview.get("result"),
-        "dry_run": dry_run.get("result"),
-        "item": _with_omega(item),
-    }
 
 
 @_bind_to_core

@@ -7,6 +7,13 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.control_room.business_access import workspace_scope
+from app.services.control_room.business_action_replay import (
+    action_reservation_contract,
+    canonical_json,
+)
+from app.services.control_room.business_action_runtime_contract import (
+    runtime_action_digests,
+)
 from app.services.control_room.cache_identity import authorization_cache_identity
 from app.services.control_room.business_workflow_provenance import (
     ELIGIBILITY_POLICY_VERSION,
@@ -19,12 +26,13 @@ DRY_RUN_CONTRACT_KEY = "business_dry_run_contract"
 
 def dry_run_contract(item: Mapping[str, Any], *, template_id: str) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "policy_version": ELIGIBILITY_POLICY_VERSION,
         "item_id": str(item.get("id") or item.get("item_id") or "").strip(),
         "decision_id": item.get("decision_id"),
         "template_id": str(template_id or "").strip(),
         "fingerprint": business_observation_fingerprint(item),
+        **runtime_action_digests(item, template_id=template_id),
     }
 
 
@@ -97,18 +105,15 @@ async def lock_pending_action_reservation(
     if not row or str(row.get("status") or "") != "pending":
         raise HTTPException(409, "action reservation is no longer pending")
     stored = _mapping(row.get("metadata")).get("reservation_contract")
-    expected = {
-        "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "workspace_id": workspace_id,
-        "item_id": str(item.get("id") or item.get("item_id") or "").strip(),
-        "fingerprint": business_observation_fingerprint(item),
-        "decision_id": item.get("decision_id"),
-        "template_id": str(template_id or "").strip(),
-        "operation": "execute",
-        "authorization": execution_authorization_contract(user),
-    }
-    if not isinstance(stored, Mapping) or any(
-        stored.get(key) != value for key, value in expected.items()
+    expected = action_reservation_contract(
+        workspace_id=workspace_id,
+        item=item,
+        template_id=template_id,
+        operation="execute",
+        authorization_contract=execution_authorization_contract(user),
+    )
+    if not isinstance(stored, Mapping) or canonical_json(stored) != canonical_json(
+        expected
     ):
         raise HTTPException(409, "action reservation contract changed")
     return dict(row)

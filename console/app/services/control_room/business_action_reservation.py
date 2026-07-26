@@ -150,7 +150,7 @@ async def acquire_action_reservation(
         raise ReservationConflict("action reservation conflict was not observable")
     metadata = json_mapping(existing.get("metadata"))
     stored = metadata.get("reservation_contract")
-    if isinstance(stored, Mapping) and canonical_json(stored) != canonical_json(
+    if not isinstance(stored, Mapping) or canonical_json(stored) != canonical_json(
         contract
     ):
         raise ReservationConflict("action reservation contract mismatch")

@@ -27,8 +27,14 @@ def action_item_is_current(
     *,
     operation: ActionOperation,
 ) -> bool:
-    status = str(item.get("status") or "open").strip().lower()
-    execution = str(item.get("execution_status") or "not_started").strip().lower()
+    raw_status = item.get("status")
+    raw_execution = item.get("execution_status")
+    if not isinstance(raw_status, str) or not raw_status.strip():
+        return False
+    if not isinstance(raw_execution, str) or not raw_execution.strip():
+        return False
+    status = raw_status.strip().lower()
+    execution = raw_execution.strip().lower()
     allowed_statuses = {
         "preview": _PREVIEW_ACTION_STATUSES,
         "dry_run": _PREVIEW_ACTION_STATUSES,

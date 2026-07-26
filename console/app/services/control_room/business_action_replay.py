@@ -5,6 +5,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.services.control_room.business_action_key import effective_action_key
+from app.services.control_room.business_action_runtime_contract import (
+    runtime_action_digests,
+)
 from app.services.control_room.business_reservation_errors import reservation_fetchrow
 from app.services.control_room.business_workflow_provenance import (
     ELIGIBILITY_POLICY_VERSION,
@@ -21,7 +24,7 @@ def action_reservation_contract(
     authorization_contract: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "policy_version": ELIGIBILITY_POLICY_VERSION,
         "workspace_id": workspace_id,
         "item_id": str(item.get("id") or item.get("item_id") or ""),
@@ -30,6 +33,7 @@ def action_reservation_contract(
         "template_id": template_id,
         "operation": operation,
         "authorization": dict(authorization_contract or {}),
+        **runtime_action_digests(item, template_id=template_id),
     }
 
 

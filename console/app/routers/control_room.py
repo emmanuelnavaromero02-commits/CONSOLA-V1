@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.dependencies import require_authenticated
 from app.schemas.control_room_action_requests import (
+    ControlRoomActionHandleRequest,
     ControlRoomActionRequest,
     ControlRoomExecuteRequest,
 )
@@ -24,6 +25,9 @@ from app.services.control_room.cache_identity import (
 )
 from app.services.control_room.business_cartridge_scope import (
     business_cartridge_allowed,
+)
+from app.services.control_room.business_action_handle import (
+    resolve_business_action_handle,
 )
 from app.services.csrf import require_csrf
 from app.services.intelligence import history as intelligence_history
@@ -748,6 +752,29 @@ async def control_room_select_item_option(
             item_id,
             str(option_id or ""),
             user,
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        ),
+    )
+
+
+@router.post(
+    "/actions/preview",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_action_handle_preview(
+    request: Request,
+    body: ControlRoomActionHandleRequest,
+    user: dict = Depends(require_authenticated),
+):
+    resolved = await resolve_business_action_handle(user, body.action_handle)
+    return await _invalidate_after_write(
+        user,
+        control_room_service.action_preview(
+            resolved.item_id,
+            user,
+            template_id=resolved.template_id,
+            binding_id=resolved.binding_id,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),

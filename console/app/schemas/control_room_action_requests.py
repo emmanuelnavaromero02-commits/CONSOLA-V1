@@ -20,6 +20,10 @@ class ControlRoomActionRequest(_StrictRequest):
     binding_id: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+class ControlRoomActionHandleRequest(_StrictRequest):
+    action_handle: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class ControlRoomExecuteRequest(ControlRoomActionRequest):
     confirm_execute: bool = False
     confirmation: bool | None = None
@@ -47,5 +51,6 @@ class ControlRoomExecuteRequest(ControlRoomActionRequest):
 
 __all__ = (
     "ControlRoomActionRequest",
+    "ControlRoomActionHandleRequest",
     "ControlRoomExecuteRequest",
 )
