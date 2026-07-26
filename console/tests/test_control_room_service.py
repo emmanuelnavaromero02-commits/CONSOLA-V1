@@ -2163,110 +2163,23 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
 
 
 @pytest.mark.asyncio
-async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
-    item = (
-        await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
-            USER,
-            fetcher=finance_fetcher,
-            include_source_state_items=True,
-            persist=False,
-            use_catalog=False,
-        )
-    )["items"][0]
-    item, _binding_id = explicit_action(item, template_id="create_followup_task")
-    selected_item = control_room_service._with_omega(
-        {**item, "selected_option_id": "remediate", "status": "in_review"}
-    )  # noqa: SLF001
-    decision_item = control_room_service._with_omega(
-        {**selected_item, "decision_id": 42, "status": "decision_created"}
-    )  # noqa: SLF001
-    dry_run_item = control_room_service._with_omega(
-        {**decision_item, "execution_status": "dry_run_validated"}
-    )  # noqa: SLF001
-    mock_pool = AsyncMock()
-    _enable_successful_writes(mock_pool)
-    mock_pool.fetchrow.return_value = _authoritative_item_row(
-        dry_run_item,
-        decision_id=42,
-        selected_option_id="remediate",
-        execution_status="dry_run_validated",
-    )
-
+async def test_run_auto_item_is_fail_closed_before_any_side_effect():
+    item_lookup = AsyncMock(side_effect=AssertionError("item lookup reached"))
+    pool = AsyncMock(side_effect=AssertionError("database reached"))
+    audit = AsyncMock(side_effect=AssertionError("audit reached"))
     with (
-        patch.object(
-            control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)
-        ),
-        patch.object(
-            control_room_service,
-            "record_item_step",
-            new=AsyncMock(
-                side_effect=[
-                    {"event_type": "investigation_reviewed"},
-                    {"event_type": "control_checked"},
-                ]
-            ),
-        ) as record_step,
-        patch.object(
-            control_room_service,
-            "select_item_option",
-            new=AsyncMock(return_value={"item": selected_item}),
-        ) as select_option,
-        patch.object(
-            control_room_service,
-            "create_decision_for_item",
-            new=AsyncMock(return_value={"decision": {"id": 42}, "item": decision_item}),
-        ) as create_decision,
-        patch.object(
-            control_room_service,
-            "action_preview",
-            new=AsyncMock(
-                return_value={
-                    "execution": {"id": 7},
-                    "result": {"mode": "preview"},
-                    "item": decision_item,
-                }
-            ),
-        ) as preview,
-        patch.object(
-            control_room_service,
-            "action_dry_run",
-            new=AsyncMock(
-                return_value={
-                    "execution": {"id": 8},
-                    "result": {"mode": "dry_run"},
-                    "item": dry_run_item,
-                }
-            ),
-        ) as dry_run,
-        patch.object(
-            control_room_service,
-            "require_enabled_action_template_for_user",
-            new=AsyncMock(),
-        ),
-        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
-        patch.object(
-            control_room_service.audit_service, "record_event", new=AsyncMock()
-        ) as audit_event,
+        patch.object(control_room_service, "_item_for_mutation", item_lookup),
+        patch.object(control_room_service.auth, "pool", pool),
+        patch.object(control_room_service.audit_service, "record_event", audit),
     ):
-        result = await control_room_service.run_auto_item(
-            item["id"], USER, fetcher=finance_fetcher
-        )
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.run_auto_item("item-auto", USER)
 
-    assert result["auto_run"]["completed"] is True
-    assert result["auto_run"]["stopped_before_writeback"] is True
-    assert result["item"]["execution_status"] == "dry_run_validated"
-    select_option.assert_awaited_once()
-    create_decision.assert_awaited_once()
-    preview.assert_awaited_once()
-    dry_run.assert_awaited_once()
-    assert record_step.await_count == 2
-    assert any(
-        "auto_run_completed" in str(call.args)
-        for call in mock_pool.execute.call_args_list
-    )
-    audit_event.assert_awaited_once()
-    assert audit_event.await_args.kwargs["action"] == "control_room.auto_run"
-    assert audit_event.await_args.kwargs["critical"] is True
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "auto_run_disabled"
+    item_lookup.assert_not_awaited()
+    pool.assert_not_awaited()
+    audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

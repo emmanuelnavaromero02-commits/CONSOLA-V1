@@ -66,8 +66,7 @@ def test_valid_action_has_exact_server_binding():
     assert len(fact.actions) == 1
     action = fact.actions[0]
     assert action.model_dump() == {
-        "item_id": "business-1",
-        "template_id": TEMPLATE_ID,
+        "action_handle": action.action_handle,
         "label": "Solicitar revision de owner",
         "operation": "preview",
         "enabled": True,
@@ -84,29 +83,9 @@ def test_valid_action_has_exact_server_binding():
         ],
         "disabled_reason": None,
         "method": "POST",
-        "endpoint": "/api/control-room/items/business-1/action-preview",
-        "binding": {
-            "version": "control-room-action-binding/v1",
-            "policy_version": "control-room-business-v2",
-            "item_id": "business-1",
-            "template_id": TEMPLATE_ID,
-            "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            "workspace_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-            "observation_fingerprint": action.model_dump()["binding"][
-                "observation_fingerprint"
-            ],
-            "source": {
-                "dataset": "gold_business_observations",
-                "system": "sap_hcm",
-                "cartridge": "sap_hcm",
-            },
-            "provenance": {
-                "producer": "control_room_action_policy",
-                "evidence": "verified_business_observation",
-            },
-            "binding_id": action.binding.binding_id,
-        },
+        "endpoint": "/api/control-room/actions/preview",
     }
+    assert len(action.action_handle) == 64
 
 
 def test_missing_template_and_diagnostic_items_publish_no_actions():
@@ -141,7 +120,7 @@ def test_stale_action_is_safe_disabled_and_limited_to_one():
     )
 
 
-def test_incomplete_source_binding_disables_action_without_internal_detail():
+def test_incomplete_source_binding_cannot_issue_an_action():
     item = business_item()
     item.pop("entity_id")
     item.pop("evidence_refs")
@@ -151,36 +130,16 @@ def test_incomplete_source_binding_disables_action_without_internal_detail():
         locator_field="employee_id",
         observed_at=str(item["detected_at"]),
     )
-    item = attach_explicit_action_binding(
-        item,
-        template_id="request_owner_review",
-    )
-    action = _fact(item).actions[0]
-
-    assert action.enabled is False
-    assert action.disabled_reason == (
-        "Completa los datos requeridos antes de continuar."
-    )
-    serialized = action.model_dump_json()
-    for forbidden in (
-        "source_dataset",
-        "metadata",
-        "evidence_refs",
-        "source_url",
-        "payload_hash",
-        "sql",
-        "error",
-    ):
-        assert forbidden not in serialized
+    with pytest.raises(ValueError, match="entity_id"):
+        attach_explicit_action_binding(item, template_id="request_owner_review")
 
 
 def test_action_schema_rejects_forged_bindings_and_unknown_states():
     valid = _fact(action_item()).actions[0].model_dump()
     invalid_payloads = []
     for key, value in (
-        ("template_id", "fabricated_template"),
-        ("label", "Internal SQL error"),
-        ("requires_approval", False),
+        ("action_handle", "fabricated"),
+        ("label", ""),
         ("operation", "execute"),
         ("method", "GET"),
         ("endpoint", "https://evil.example/action"),
@@ -206,3 +165,11 @@ def test_action_schema_rejects_cross_item_endpoint_substitution():
 
     with pytest.raises(ValidationError):
         ExperienceAction.model_validate(payload)
+
+
+def test_operational_template_never_issues_for_business_experience():
+    with pytest.raises(ValueError, match="source is incomplete"):
+        attach_explicit_action_binding(
+            business_item(cartridge="platform"),
+            template_id="restore_data_source",
+        )

@@ -23,6 +23,20 @@ from app.services.control_room.business_workflow_provenance import persistence_m
 
 ITEM_ID = "shared-live-business-item"
 TEMPLATE_ID = "request_owner_review"
+_PRIVATE_ACTION_KEYS = {
+    "item_id",
+    "template_id",
+    "binding",
+    "binding_id",
+    "tenant_id",
+    "workspace_id",
+    "dataset",
+    "system",
+    "fingerprint",
+    "policy_version",
+    "producer",
+    "provenance",
+}
 
 
 @dataclass(frozen=True)
@@ -34,6 +48,36 @@ class LiveActionScopes:
     user_ids: tuple[int, int]
     items: tuple[dict[str, Any], dict[str, Any]]
     users: tuple[dict[str, Any], dict[str, Any]]
+
+
+def assert_public_action_redacted(action: dict[str, Any]) -> None:
+    assert set(action) == {
+        "action_handle",
+        "label",
+        "operation",
+        "enabled",
+        "requires_approval",
+        "prerequisites",
+        "method",
+        "endpoint",
+    }
+    assert len(action["action_handle"]) == 64
+    assert action["endpoint"] == "/api/control-room/actions/preview"
+
+    def private_keys(value: object) -> set[str]:
+        if isinstance(value, dict):
+            found = _PRIVATE_ACTION_KEYS.intersection(value)
+            for nested in value.values():
+                found.update(private_keys(nested))
+            return found
+        if isinstance(value, list):
+            found: set[str] = set()
+            for nested in value:
+                found.update(private_keys(nested))
+            return found
+        return set()
+
+    assert private_keys(action) == set()
 
 
 def _business_item(
@@ -53,6 +97,7 @@ def _business_item(
         "title": "Headcount variance requires review",
         "severity": "high",
         "status": "open",
+        "entity_kind": "department",
         "entity_id": "department-1",
         "entity_label": "Department 1",
         "anomaly_type": "headcount_variance",
@@ -75,7 +120,7 @@ def _business_item(
             business_observation=item,
         )
     )
-    return attach_explicit_action_binding(item, template_id=TEMPLATE_ID)
+    return item
 
 
 def _persisted_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -132,12 +177,12 @@ async def seed_live_action_scopes(admin_dsn: str, console_dsn: str) -> LiveActio
                     tenant_id, workspace_id, owner_user_id, item_id,
                     cartridge_id, domain, source_dataset, item_kind, title,
                     severity, status, entity_id, entity_label, anomaly_type,
-                    metadata
+                    entity_kind, metadata
                 ) VALUES (
                     $1::uuid, $2::uuid, $3, $4, 'sap_hcm', 'People',
                     'gold_people', 'anomaly', $5, 'high', 'open',
                     'department-1', 'Department 1', 'headcount_variance',
-                    $6::jsonb
+                    'department', $6::jsonb
                 )
                 """,
                 item["tenant_id"],
@@ -158,6 +203,30 @@ async def seed_live_action_scopes(admin_dsn: str, console_dsn: str) -> LiveActio
             }
             for index in range(2)
         )
+        pool = await asyncpg.create_pool(console_dsn, min_size=1, max_size=2)
+        try:
+            bound_items = []
+            for index, user in enumerate(user_payloads):
+                loaded = await load_live_action_item(pool, user)
+                if loaded is None:
+                    raise RuntimeError("seeded live action item was not readable")
+                bound = attach_explicit_action_binding(
+                    loaded,
+                    template_id=TEMPLATE_ID,
+                )
+                await conn.execute(
+                    "UPDATE control_room_items SET metadata=$3::jsonb "
+                    "WHERE tenant_id=$1::uuid AND workspace_id=$2::uuid "
+                    "AND item_id=$4",
+                    tenants[index],
+                    workspaces[index],
+                    json.dumps(_persisted_metadata(bound), sort_keys=True),
+                    ITEM_ID,
+                )
+                bound_items.append(bound)
+            items = tuple(bound_items)
+        finally:
+            await pool.close()
         return LiveActionScopes(
             admin_dsn=admin_dsn,
             console_dsn=console_dsn,
@@ -211,6 +280,7 @@ __all__ = (
     "ITEM_ID",
     "TEMPLATE_ID",
     "LiveActionScopes",
+    "assert_public_action_redacted",
     "cleanup_live_action_scopes",
     "load_live_action_item",
     "seed_live_action_scopes",

@@ -9,15 +9,15 @@ from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
     lock_pending_action_reservation,
 )
-from app.services.control_room.business_workflow_provenance import (
-    ELIGIBILITY_POLICY_VERSION,
-    business_observation_fingerprint,
-)
+from app.services.control_room.business_action_replay import action_reservation_contract
 
 
 def _item() -> dict:
     return {
         "id": "item-1",
+        "kind": "anomaly",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "decision_id": 42,
         "observed_value": 1,
         "metric_type": "count",
@@ -101,17 +101,13 @@ async def test_execute_block_guards_before_any_dml_when_item_became_diagnostic()
 @pytest.mark.asyncio
 async def test_external_final_tx_locks_pending_reservation_and_access_revision():
     item = _item()
-    contract = {
-        "version": 1,
-        "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "workspace_id": "workspace-a",
-        "item_id": "item-1",
-        "fingerprint": business_observation_fingerprint(item),
-        "decision_id": 42,
-        "template_id": "external_template",
-        "operation": "execute",
-        "authorization": execution_authorization_contract(_user(1)),
-    }
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=item,
+        template_id="create_followup_task",
+        operation="execute",
+        authorization_contract=execution_authorization_contract(_user(1)),
+    )
     db = AsyncMock()
     db.fetchrow.return_value = {
         "id": 9,
@@ -125,7 +121,7 @@ async def test_external_final_tx_locks_pending_reservation_and_access_revision()
             db,
             user=_user(2),
             item=item,
-            template_id="external_template",
+            template_id="create_followup_task",
             reservation_id=9,
             effective_key="cr-action:v1:key",
         )

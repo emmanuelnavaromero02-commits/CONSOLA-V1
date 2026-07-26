@@ -238,7 +238,7 @@ def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
         "expected={403}",
         "tenant-ab-aws",
         "OMEGA_SEED_UPDATE_CATALOG",
-        '"0"',
+        '"binding_id": "0" * 64',
     ):
         assert needle in source
 

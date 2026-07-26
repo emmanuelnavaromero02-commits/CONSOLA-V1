@@ -8,6 +8,7 @@ from app.services.control_room.business_policy_metadata import business_policy_m
 from app.services.control_room.business_explicit_action_binding import (
     attach_explicit_action_binding,
 )
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
@@ -36,7 +37,19 @@ USER = {
 
 
 def explicit_action(item: dict, *, template_id: str) -> tuple[dict, str]:
-    bound = attach_explicit_action_binding(item, template_id=template_id)
+    template = ACTION_TEMPLATES[template_id]
+    prepared = dict(item)
+    if template["cartridge_id"] != "platform":
+        metadata = dict(prepared.get("metadata") or {})
+        connection = dict(metadata.get("connection") or {})
+        connection.setdefault("base_url", "https://target.example.test")
+        metadata["connection"] = connection
+        details = dict(prepared.get("details") or {})
+        details.setdefault("writeback_path", "/test/writeback")
+        if template_id == "prepare_successfactors_recruiting_review":
+            details.setdefault("requisition_id", prepared.get("entity_id"))
+        prepared.update(metadata=metadata, details=details)
+    bound = attach_explicit_action_binding(prepared, template_id=template_id)
     return bound, explicit_binding_id(bound, template_id=template_id)
 
 
@@ -83,6 +96,7 @@ def observed_anomaly_fields(item_id: str) -> dict:
         "detected_at": "2026-06-07T00:00:00Z",
         "evidence_refs": [f"gold_business_observations:{item_id}"],
         "source_dataset": "gold_business_observations",
+        "entity_kind": "employee",
         "entity_id": item_id,
     }
 

@@ -10,28 +10,7 @@ from app.services import control_room_service
 from app.services.control_room.business_explicit_action_binding import (
     attach_explicit_action_binding,
 )
-from console.tests.control_room_execution_helpers import runtime_evidenced_item
 from console.tests.test_control_room_talent_preview_guard import USER, _talent_item
-
-
-def _platform_item() -> dict:
-    return {
-        "id": "item-1",
-        "kind": "anomaly",
-        "tenant_id": "tenant-A",
-        "workspace_id": "workspace-A",
-        "cartridge": "platform",
-        "status": "open",
-        "execution_status": "not_started",
-        "source_dataset": "gold_people",
-        "source_system": "test",
-        "entity_id": "employee-1",
-        "metric_type": "count",
-        "observed_value": 1,
-        "population_count": 10,
-        "observation_date": "2026-07-20",
-        "evidence_refs": ["gold_people:item-1"],
-    }
 
 
 @pytest.mark.asyncio
@@ -111,11 +90,22 @@ async def test_talent_preview_rechecks_catalog_after_explicit_binding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_auto_run_disabled_template_stops_before_first_mutation() -> None:
-    item = attach_explicit_action_binding(
-        runtime_evidenced_item(_platform_item()), template_id="create_followup_task"
-    )
-    guard = AsyncMock(side_effect=HTTPException(404, "action template not found"))
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "stale",
+        "source-incomplete",
+        "binding-expired",
+        "target-changed",
+        "template-disabled",
+        "lifecycle-incomplete",
+    ),
+)
+async def test_auto_run_is_fail_closed_before_lookup_or_mutation(scenario: str) -> None:
+    lookup = AsyncMock(side_effect=AssertionError("item lookup reached"))
+    pool = AsyncMock(side_effect=AssertionError("database reached"))
+    guard = AsyncMock(side_effect=AssertionError("catalog reached"))
+    audit = AsyncMock(side_effect=AssertionError("audit reached"))
     mutation_names = (
         "record_item_step",
         "select_item_option",
@@ -129,8 +119,12 @@ async def test_auto_run_disabled_template_stops_before_first_mutation() -> None:
             patch.object(
                 control_room_service,
                 "_item_for_mutation",
-                AsyncMock(return_value=item),
+                lookup,
             )
+        )
+        stack.enter_context(patch.object(control_room_service.auth, "pool", pool))
+        stack.enter_context(
+            patch.object(control_room_service.audit_service, "record_event", audit)
         )
         stack.enter_context(
             patch.object(
@@ -142,9 +136,13 @@ async def test_auto_run_disabled_template_stops_before_first_mutation() -> None:
         for name, value in mutations.items():
             stack.enter_context(patch.object(control_room_service, name, value))
         with pytest.raises(HTTPException) as exc:
-            await control_room_service.run_auto_item(item["id"], USER)
+            await control_room_service.run_auto_item(f"item-{scenario}", USER)
 
-    assert exc.value.status_code == 404
-    guard.assert_awaited_once_with(USER, "create_followup_task")
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "auto_run_disabled"
+    lookup.assert_not_awaited()
+    pool.assert_not_awaited()
+    guard.assert_not_awaited()
+    audit.assert_not_awaited()
     for mutation in mutations.values():
         mutation.assert_not_awaited()

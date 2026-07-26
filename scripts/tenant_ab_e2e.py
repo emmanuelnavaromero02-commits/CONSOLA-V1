@@ -586,6 +586,7 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
                 f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/execute",
                 {
                     "template_id": "create_followup_task",
+                    "binding_id": "0" * 64,
                     "confirm_execute": True,
                     "idempotency_key": f"tenant-ab-forbidden-{own.label}-{other.label}",
                 },

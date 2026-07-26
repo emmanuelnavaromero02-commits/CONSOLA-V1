@@ -13,6 +13,7 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_action_reservation,
 )
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_external_projection import (
     reserved_action_response,
 )
@@ -22,6 +23,8 @@ def _item() -> dict:
     return {
         "id": "item-1",
         "kind": "anomaly",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "workspace_id": "workspace-a",
         "decision_id": 42,
         "source_dataset": "gold_people",
@@ -29,12 +32,22 @@ def _item() -> dict:
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
+        "details": {"writeback_path": "/test/writeback"},
+        "metadata": {"connection": {"base_url": "https://sap.example.test"}},
     }
 
 
 @pytest.mark.asyncio
 async def test_stale_remote_attempt_reservation_is_not_reclaimed():
     stale = datetime.now(UTC) - timedelta(minutes=10)
+    item = _item()
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=item,
+        template_id="prepare_hcm_access_review",
+        operation="execute",
+        authorization_contract=None,
+    )
     db = AsyncMock()
     db.fetchrow.side_effect = [
         None,
@@ -42,7 +55,10 @@ async def test_stale_remote_attempt_reservation_is_not_reclaimed():
             "id": 7,
             "status": "pending",
             "updated_at": stale,
-            "metadata": {"remote_attempt": {"status": "started"}},
+            "metadata": {
+                "reservation_contract": contract,
+                "remote_attempt": {"status": "started"},
+            },
         },
     ]
 
@@ -50,8 +66,8 @@ async def test_stale_remote_attempt_reservation_is_not_reclaimed():
         db,
         tenant_id="tenant-a",
         workspace_id="workspace-a",
-        item=_item(),
-        template_id="external-template",
+        item=item,
+        template_id="prepare_hcm_access_review",
         adapter_name="IdempotentAdapter",
         operation="execute",
     )

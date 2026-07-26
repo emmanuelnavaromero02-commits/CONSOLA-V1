@@ -95,7 +95,22 @@ def _client(user: dict | None) -> TestClient:
 
 
 def _forbidden_action_metadata(value: object) -> set[str]:
-    forbidden = {"item_id", "template_id", "endpoint", "binding", "binding_id"}
+    forbidden = {
+        "item_id",
+        "template_id",
+        "binding",
+        "binding_id",
+        "tenant_id",
+        "workspace_id",
+        "source_dataset",
+        "dataset",
+        "system",
+        "fingerprint",
+        "policy_version",
+        "producer",
+        "provenance",
+        "metadata",
+    }
     if isinstance(value, dict):
         found = forbidden.intersection(value)
         for nested in value.values():
@@ -134,12 +149,13 @@ def test_v2_asgi_enforces_401_403_and_redacts_authorized_viewer():
         response = _client(VIEWER).get(path)
     assert response.status_code == 200
     payload = response.json()
-    assert payload["sections"][0]["facts"][0]["actions"] == []
-    assert _forbidden_action_metadata(payload) == set()
+    fact = payload["sections"][0]["facts"][0]
+    assert fact["actions"] == []
+    assert _forbidden_action_metadata(fact) == set()
     catalog.assert_not_awaited()
 
 
-def test_writer_payload_contains_binding_only_inside_authorized_action():
+def test_writer_payload_exposes_only_opaque_business_action_contract():
     payload = build_business_experience_v2(
         snapshot(items=(action_item(),)),
         user=OPERATOR,
@@ -148,5 +164,17 @@ def test_writer_payload_contains_binding_only_inside_authorized_action():
 
     fact = payload["sections"][0]["facts"][0]
     assert "item_id" not in fact
-    assert fact["actions"][0]["binding"]["item_id"] == "business-1"
-    assert fact["actions"][0]["binding"]["binding_id"]
+    action = fact["actions"][0]
+    assert set(action) == {
+        "action_handle",
+        "label",
+        "operation",
+        "enabled",
+        "requires_approval",
+        "prerequisites",
+        "method",
+        "endpoint",
+    }
+    assert action["endpoint"] == "/api/control-room/actions/preview"
+    assert len(action["action_handle"]) == 64
+    assert _forbidden_action_metadata(action) == set()

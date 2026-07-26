@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,10 +11,11 @@ from pydantic import ValidationError
 from app.schemas.control_room_action_requests import ControlRoomExecuteRequest
 from app.services import control_room_service
 from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
     verified_explicit_action_bindings,
 )
 from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
-from control_room_surface_fixtures import OPERATOR, action_item
+from control_room_surface_fixtures import OPERATOR, action_item, business_item
 
 
 def _binding_id(item: dict) -> str:
@@ -72,6 +74,86 @@ async def test_commands_revalidate_exact_binding_before_database(
                 OPERATOR,
                 template_id="create_followup_task",
                 binding_id=_binding_id(item),
+                **kwargs,
+            )
+
+    assert exc.value.status_code == 404
+    pool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "updates", "kwargs"),
+    (
+        ("action_preview", {}, {}),
+        ("action_dry_run", {"status": "decision_created"}, {}),
+        (
+            "execute_item",
+            {"status": "approved", "execution_status": "dry_run_validated"},
+            {"confirm_execute": True},
+        ),
+    ),
+)
+async def test_expired_binding_rejects_every_command_before_database(
+    method: str, updates: dict, kwargs: dict
+):
+    item = attach_explicit_action_binding(
+        business_item(**updates),
+        template_id="request_owner_review",
+        clock=lambda: datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    pool = AsyncMock(side_effect=AssertionError("database reached"))
+    with (
+        patch.object(
+            control_room_service, "_item_for_mutation", AsyncMock(return_value=item)
+        ),
+        patch.object(control_room_service.auth, "pool", pool),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await getattr(control_room_service, method)(
+                str(item["id"]),
+                OPERATOR,
+                template_id="request_owner_review",
+                binding_id=_binding_id(item),
+                **kwargs,
+            )
+
+    assert exc.value.status_code == 404
+    pool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "updates", "kwargs"),
+    (
+        ("action_preview", {}, {}),
+        ("action_dry_run", {"status": "decision_created"}, {}),
+        (
+            "execute_item",
+            {"status": "approved", "execution_status": "dry_run_validated"},
+            {"confirm_execute": True},
+        ),
+    ),
+)
+async def test_target_substitution_rejects_every_command_before_database(
+    method: str, updates: dict, kwargs: dict
+):
+    item = action_item(**updates)
+    binding_id = _binding_id(item)
+    item["entity_id"] = "substituted-employee"
+    pool = AsyncMock(side_effect=AssertionError("database reached"))
+    with (
+        patch.object(
+            control_room_service, "_item_for_mutation", AsyncMock(return_value=item)
+        ),
+        patch.object(control_room_service.auth, "pool", pool),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await getattr(control_room_service, method)(
+                str(item["id"]),
+                OPERATOR,
+                template_id="request_owner_review",
+                binding_id=binding_id,
                 **kwargs,
             )
 

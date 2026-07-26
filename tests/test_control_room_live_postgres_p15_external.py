@@ -37,14 +37,15 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
         postgres_with_real_init_schema, "p15-external"
     )
     user = _user(tenant_id, workspace_id)
-    template = _template("p15_external", cartridge="replicon")
+    template_id = "prepare_hcm_access_review"
+    template = _template(template_id)
     payload = {"mode": "execute_live", "action_payload": {}}
     await _seed_matching_dry_run(
         postgres_with_real_init_schema,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         item=item,
-        template_id="p15_external",
+        template_id=template_id,
     )
 
     class Adapter(service.BaseAdapter):
@@ -73,7 +74,7 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
                     conn,
                     user=user,
                     item=_mutation_item(item),
-                    template_id="p15_external",
+                    template_id=template_id,
                     adapter_name="Adapter",
                     operation="execute",
                     input_payload=payload,

@@ -4,12 +4,9 @@ from unittest.mock import AsyncMock
 
 from app.services.control_room.business_action_reservation import effective_action_key
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
-)
-from app.services.control_room.business_workflow_provenance import (
-    ELIGIBILITY_POLICY_VERSION,
-    business_observation_fingerprint,
 )
 from console.tests.control_room_execution_helpers import (
     USER,
@@ -42,19 +39,19 @@ def execution_fetchrow_router(
         "status": "completed" if existing_reservation else "pending",
         "idempotency_key": key,
         "metadata": {
-            "reservation_contract": {
-                "version": 1,
-                "policy_version": ELIGIBILITY_POLICY_VERSION,
-                "workspace_id": "workspace-A",
-                "item_id": item["id"],
-                "fingerprint": business_observation_fingerprint(item),
-                "decision_id": item.get("decision_id"),
-                "template_id": template_id,
-                "operation": "execute",
-                "authorization": execution_authorization_contract(USER),
-            }
+            "reservation_contract": action_reservation_contract(
+                workspace_id="workspace-A",
+                item=item,
+                template_id=template_id,
+                operation="execute",
+                authorization_contract=execution_authorization_contract(USER),
+            )
         },
-        "execution_result": {"ok": True, "target": "decision_actions"},
+        "execution_result": {
+            "ok": True,
+            "executed": True,
+            "target": "decision_actions",
+        },
     }
 
     def route(query: object, *_args: object):

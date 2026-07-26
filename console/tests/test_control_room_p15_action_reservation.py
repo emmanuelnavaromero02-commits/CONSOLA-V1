@@ -12,6 +12,7 @@ from app.services.control_room.business_action_reservation import (
     complete_action_reservation,
     effective_action_key,
 )
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_execution_precondition import (
     DRY_RUN_CONTRACT_KEY,
     dry_run_metadata,
@@ -26,6 +27,8 @@ def _item(**overrides):
         "id": "item-1",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "decision_id": 42,
         "source_dataset": "gold_people",
         "observed_value": 1,
@@ -104,8 +107,22 @@ def test_dry_run_metadata_binds_policy_fingerprint_decision_and_template():
 
 @pytest.mark.asyncio
 async def test_atomic_reservation_returns_in_progress_to_loser():
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        operation="execute",
+        authorization_contract=None,
+    )
     db = AsyncMock()
-    db.fetchrow.side_effect = [None, {"id": 7, "status": "pending"}]
+    db.fetchrow.side_effect = [
+        None,
+        {
+            "id": 7,
+            "status": "pending",
+            "metadata": {"reservation_contract": contract},
+        },
+    ]
 
     result = await acquire_action_reservation(
         db,

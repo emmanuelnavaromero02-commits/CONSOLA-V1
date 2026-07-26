@@ -30,6 +30,7 @@ from tests.control_room_live_action_contract import (
     ITEM_ID,
     TEMPLATE_ID,
     LiveActionScopes,
+    assert_public_action_redacted,
     cleanup_live_action_scopes,
     load_live_action_item,
     seed_live_action_scopes,
@@ -77,21 +78,6 @@ def _snapshot(item: dict, scopes: LiveActionScopes, index: int) -> SurfaceSnapsh
     )
 
 
-def _action_metadata(value: object) -> set[str]:
-    keys = {"item_id", "template_id", "endpoint", "binding", "binding_id"}
-    if isinstance(value, dict):
-        found = keys.intersection(value)
-        for nested in value.values():
-            found.update(_action_metadata(nested))
-        return found
-    if isinstance(value, list):
-        found: set[str] = set()
-        for nested in value:
-            found.update(_action_metadata(nested))
-        return found
-    return set()
-
-
 @pytest.mark.asyncio
 async def test_real_postgres_experience_actions_are_scope_and_permission_bound(
     live_action_scopes: LiveActionScopes,
@@ -114,9 +100,7 @@ async def test_real_postgres_experience_actions_are_scope_and_permission_bound(
                 enabled_template_ids=enabled,
             ).model_dump(mode="json", exclude_none=True)
             action = response["sections"][0]["facts"][0]["actions"][0]
-            assert action["item_id"] == ITEM_ID
-            assert action["binding"]["tenant_id"] == scopes.tenant_ids[index]
-            assert action["binding"]["workspace_id"] == scopes.workspace_ids[index]
+            assert_public_action_redacted(action)
 
         viewer = {**scopes.users[0], "role": "viewer"}
         viewer_payload = build_business_experience_v2(
@@ -125,7 +109,6 @@ async def test_real_postgres_experience_actions_are_scope_and_permission_bound(
             enabled_template_ids=(),
         ).model_dump(mode="json", exclude_none=True)
         assert viewer_payload["sections"][0]["facts"][0]["actions"] == []
-        assert _action_metadata(viewer_payload) == set()
 
         cross_scope = {
             **scopes.users[0],

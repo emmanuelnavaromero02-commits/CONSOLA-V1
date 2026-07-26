@@ -46,6 +46,15 @@ def _talent_item() -> dict:
         "metric_type": "count",
         "evaluation_status": "success",
         "data_status": "ready",
+        "status": "open",
+        "execution_status": "not_started",
+        "entity_kind": "employee",
+        "metadata": {
+            "connection": {
+                "base_url": "https://successfactors.example.invalid",
+                "default_writeback_path": "/odata/v2/User",
+            }
+        },
     }
     return bind_runtime_row_evidence(
         item,

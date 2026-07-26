@@ -11,6 +11,7 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_guarded_action_reservation,
 )
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_decision_persistence import (
     create_and_link_decision,
 )
@@ -105,6 +106,7 @@ async def _seed_matching_dry_run(
     item: dict,
     template_id: str,
 ) -> None:
+    template = _template(template_id)
     conn = await asyncpg.connect(dsn)
     try:
         await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
@@ -114,11 +116,18 @@ async def _seed_matching_dry_run(
                 template_id, cartridge_id, label, description, action_kind,
                 risk_level, mode_default, requires_approval, config
             )
-            VALUES ($1, 'platform', $1, 'Live test action', 'test',
-                    'low', 'dry_run', true, '{}'::jsonb)
+            VALUES ($1, $2, $3, $4, $5,
+                    $6, $7, $8, '{}'::jsonb)
             ON CONFLICT (template_id) DO NOTHING
             """,
             template_id,
+            template["cartridge_id"],
+            template["label"],
+            template["description"],
+            template["action_kind"],
+            template["risk_level"],
+            template["mode_default"],
+            template["requires_approval"],
         )
         await conn.execute(
             """
@@ -151,16 +160,8 @@ async def _seed_matching_dry_run(
         await conn.close()
 
 
-def _template(template_id: str, cartridge: str = "platform") -> dict:
-    return {
-        "template_id": template_id,
-        "template_type": template_id,
-        "cartridge_id": cartridge,
-        "label": template_id,
-        "action_kind": "test",
-        "risk_level": "low",
-        "requires_approval": True,
-    }
+def _template(template_id: str) -> dict:
+    return dict(ACTION_TEMPLATES[template_id])
 
 
 @pytest.mark.asyncio

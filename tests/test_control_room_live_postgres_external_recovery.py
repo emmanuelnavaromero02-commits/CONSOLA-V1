@@ -50,7 +50,7 @@ async def test_live_stale_external_reservation_reclaims_same_row_and_key(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-recovery",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -72,7 +72,7 @@ async def test_live_stale_external_reservation_reclaims_same_row_and_key(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-recovery",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -107,7 +107,7 @@ async def test_live_durable_remote_attempt_is_never_reclaimed(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-durable-attempt",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -137,7 +137,7 @@ async def test_live_durable_remote_attempt_is_never_reclaimed(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-durable-attempt",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -158,7 +158,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
         "external-finalizer-projection",
     )
     user = _user(tenant_id, workspace_id)
-    template = _template("external-finalizer", cartridge="replicon")
+    template = _template("prepare_hcm_access_review")
     payload = {"mode": "execute_live", "action_payload": {}}
     await _seed_matching_dry_run(
         postgres_with_real_init_schema,

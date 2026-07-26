@@ -264,37 +264,19 @@ async def test_outcome_and_event_share_one_connection_and_transaction() -> None:
 
 @pytest.mark.asyncio
 async def test_auto_run_revalidates_generation_before_final_event() -> None:
-    original = execution_helpers.explicit_action(
-        execution_helpers.runtime_evidenced_item(_item()),
-        template_id="create_followup_task",
-    )[0]
-    changed = {**original, "observed_value": 4}
-    pool = TransactionPool(locked_row=changed)
-    selected = {**original, "selected_option_id": "remediate", "status": "in_review"}
-    decided = {**selected, "decision_id": 42, "status": "decision_created"}
-    dry_run = {**decided, "execution_status": "dry_run_validated"}
+    item_lookup = AsyncMock(side_effect=AssertionError("item lookup reached"))
+    pool = AsyncMock(side_effect=AssertionError("database reached"))
+    audit = AsyncMock(side_effect=AssertionError("audit reached"))
     with (
-        patch.multiple(
-            control_room_service,
-            _item_for_mutation=AsyncMock(return_value=original),
-            require_enabled_action_template_for_user=AsyncMock(),
-            record_item_step=AsyncMock(return_value={}),
-            select_item_option=AsyncMock(return_value={"item": selected}),
-            create_decision_for_item=AsyncMock(
-                return_value={"decision": {"id": 42}, "item": decided}
-            ),
-            action_preview=AsyncMock(
-                return_value={"execution": {"id": 1}, "result": {}}
-            ),
-            action_dry_run=AsyncMock(
-                return_value={"execution": {"id": 2}, "result": {}, "item": dry_run}
-            ),
-        ),
-        patch.object(control_room_service.auth, "pool", AsyncMock(return_value=pool)),
-        patch.object(control_room_service.audit_service, "record_event", AsyncMock()),
+        patch.object(control_room_service, "_item_for_mutation", item_lookup),
+        patch.object(control_room_service.auth, "pool", pool),
+        patch.object(control_room_service.audit_service, "record_event", audit),
     ):
         with pytest.raises(HTTPException) as error:
-            await control_room_service.run_auto_item(original["id"], USER)
+            await control_room_service.run_auto_item("business-race-1", USER)
 
     assert error.value.status_code == 409
-    assert all("auto_run_completed" not in sql for _, _, sql in pool.calls)
+    assert error.value.detail["code"] == "auto_run_disabled"
+    item_lookup.assert_not_awaited()
+    pool.assert_not_awaited()
+    audit.assert_not_awaited()

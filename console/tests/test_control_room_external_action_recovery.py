@@ -12,6 +12,7 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_action_reservation,
 )
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_action_failure import (
     finalize_aborted_action_reservation,
 )
@@ -29,8 +30,12 @@ def _item() -> dict:
         "id": "item-1",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "decision_id": 42,
         "source_dataset": "gold_people",
+        "details": {"pernr": "1001"},
+        "metadata": {"connection": {"base_url": "https://h.invalid", "endpoint": "/r"}},
         "observed_value": 1,
         "metric_type": "count",
         "population_count": 10,
@@ -52,10 +57,22 @@ def test_rejected_remote_result_does_not_claim_a_committed_side_effect():
 @pytest.mark.asyncio
 async def test_stale_pending_reservation_is_reclaimed_with_same_effective_key():
     stale = datetime.now(UTC) - timedelta(minutes=10)
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="prepare_hcm_access_review",
+        operation="execute",
+        authorization_contract=None,
+    )
     db = AsyncMock()
     db.fetchrow.side_effect = [
         None,
-        {"id": 7, "status": "pending", "updated_at": stale},
+        {
+            "id": 7,
+            "status": "pending",
+            "updated_at": stale,
+            "metadata": {"reservation_contract": contract},
+        },
         {"id": 7, "status": "pending", "updated_at": datetime.now(UTC)},
     ]
 
@@ -64,7 +81,7 @@ async def test_stale_pending_reservation_is_reclaimed_with_same_effective_key():
         tenant_id="tenant-a",
         workspace_id="workspace-a",
         item=_item(),
-        template_id="external-template",
+        template_id="prepare_hcm_access_review",
         adapter_name="IdempotentAdapter",
         operation="execute",
     )
