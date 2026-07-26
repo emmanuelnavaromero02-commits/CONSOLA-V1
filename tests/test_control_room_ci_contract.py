@@ -5,8 +5,11 @@ from scripts.ci_control_room_paths import control_room_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 2249
-POSTGRES_MINIMUM = 54
+FOCAL_MINIMUM = 2262
+POSTGRES_MINIMUM = 56
+TENANT_EXECUTE_ISOLATION = ROOT / (
+    "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
+)
 
 P11_RELEVANT_PATHS = (
     "console/app/main.py",
@@ -143,6 +146,12 @@ def test_control_room_workflow_runs_all_live_postgres_suites():
     )
     for test_path in LIVE_POSTGRES_TESTS:
         assert test_path in live_step
+
+
+def test_cross_tenant_execute_regression_is_routed_to_live_postgres_gate():
+    assert TENANT_EXECUTE_ISOLATION.is_file()
+    assert TENANT_EXECUTE_ISOLATION.match("test_control_room_live_postgres*.py")
+    assert "tests/test_control_room_live_postgres*.py" in _workflow_text()
 
 
 def test_focal_junit_guard_requires_current_minimum_and_zero_bad_results():
