@@ -3,9 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SfTalentDesempenoCohort, SfTalentNineBoxCell, SfTalentRosterPayload } from "@/lib/control-room/types";
 
-import { DesempenoDisponiblePanel, MaskedTalentRoster, NineBoxMatrix } from "./TalentControlRoom";
+import {
+  DesempenoDisponiblePanel,
+  MaskedTalentRoster,
+  NineBoxMatrix,
+  TalentControlRoom,
+} from "./TalentControlRoom";
 
 describe("TalentControlRoom native panels", () => {
+  it("does not publish legacy actions without an authorized V2 action", () => {
+    const markup = renderToStaticMarkup(<TalentControlRoom />);
+
+    expect(markup).not.toContain("Generar preview");
+    expect(markup).not.toContain("Ciclo OMEGA");
+    expect(markup).not.toContain("Simulacion");
+  });
+
   it("renders the 9-box matrix as native React buttons", () => {
     const cells: SfTalentNineBoxCell[] = [
       {

@@ -9,7 +9,6 @@ import type {
   MarketDecisionValidationPayload,
   SfDecisionModelPayload,
   SfGoldKpisPayload,
-  SfTalentActionPreviewPayload,
   SfTalentAnomaliesPayload,
   SfTalentKpisPayload,
   SfTalentMetadataReadinessPayload,
@@ -30,7 +29,6 @@ export const CONTROL_ROOM_PATHS = {
   sfTalentNineBox: "/api/control-room/sap-successfactors/talent/9box",
   sfTalentAnomalies: "/api/control-room/sap-successfactors/talent/anomalies",
   sfTalentMetadataReadiness: "/api/control-room/sap-successfactors/talent/metadata-readiness",
-  sfTalentActionPreview: "/api/control-room/sap-successfactors/talent/actions/preview",
   sfMarketValidation: "/api/control-room/sap-successfactors/market-validation",
   sfMarketValidationRun: "/api/control-room/sap-successfactors/market-validation/run",
   sfDecisionModel: "/api/semantic?cartridge=sap_successfactors",
@@ -110,17 +108,6 @@ export async function getSuccessFactorsTalentAnomalies(): Promise<SfTalentAnomal
 export async function getSuccessFactorsTalentMetadataReadiness(): Promise<SfTalentMetadataReadinessPayload> {
   const response = await api.get<SfTalentMetadataReadinessPayload>(
     CONTROL_ROOM_PATHS.sfTalentMetadataReadiness,
-  );
-  return response.data;
-}
-
-export async function previewSuccessFactorsTalentAction(payload: {
-  action_id: string;
-  box_id?: string | null;
-}): Promise<SfTalentActionPreviewPayload> {
-  const response = await api.post<SfTalentActionPreviewPayload>(
-    CONTROL_ROOM_PATHS.sfTalentActionPreview,
-    payload,
   );
   return response.data;
 }

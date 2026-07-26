@@ -608,31 +608,6 @@ export interface SfTalentOverviewPayload extends SfTalentKpisPayload {
   };
 }
 
-export interface SfTalentActionPreviewPayload {
-  generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
-  status: "preview_only" | string;
-  action_id: string;
-  box_id?: string | null;
-  title?: string;
-  severity?: Severity | string;
-  affected_count: number;
-  recommendation?: string;
-  method?: string;
-  recommendation_only: boolean;
-  write_back_enabled: boolean;
-  compensation_enabled: boolean;
-  requires_approval: boolean;
-  external_mutations: unknown[];
-  steps: Array<{
-    id: string;
-    label: string;
-    status: string;
-  }>;
-}
-
 export interface SfDecisionTerm {
   term?: string;
   definition?: string;

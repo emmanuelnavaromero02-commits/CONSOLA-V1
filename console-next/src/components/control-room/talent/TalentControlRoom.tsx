@@ -8,7 +8,6 @@ import {
   Filter,
   Grid3X3,
   Loader2,
-  Play,
   RefreshCcw,
   ShieldCheck,
   SlidersHorizontal,
@@ -25,10 +24,8 @@ import {
   getSuccessFactorsTalentMetadataReadiness,
   getSuccessFactorsTalentNineBox,
   getSuccessFactorsTalentOverview,
-  previewSuccessFactorsTalentAction,
 } from "@/lib/control-room/client";
 import type {
-  SfTalentActionPreviewPayload,
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
   SfTalentDesempenoCohort,
@@ -455,84 +452,6 @@ export function TalentAnomalyList({
   );
 }
 
-export function TalentCycleTimeline({ preview }: { preview: SfTalentActionPreviewPayload | null }) {
-  const steps = preview?.steps ?? [
-    { id: "signal", label: "Detectar senal", status: "waiting" },
-    { id: "calibration", label: "Revisar roster", status: "waiting" },
-    { id: "decision", label: "Crear decision", status: "waiting" },
-    { id: "control", label: "Dar seguimiento", status: "waiting" },
-  ];
-
-  return (
-    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-emerald-400/20 dark:bg-[#081423]">
-      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">Ciclo OMEGA</p>
-      <div className="mt-4 space-y-3">
-        {steps.map((step, index) => (
-          <div key={step.id} className="grid grid-cols-[auto_1fr] gap-3">
-            <span className="grid h-8 w-8 place-items-center rounded-full border bg-background text-xs font-semibold dark:border-emerald-400/20 dark:bg-[#06111f]">
-              {index + 1}
-            </span>
-            <div className="pb-3">
-              <p className="text-sm font-medium text-foreground dark:text-white">{step.label}</p>
-              <p className="text-xs text-muted-foreground">{step.status}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-export function SimulationPanel({
-  selected,
-  preview,
-  loading,
-  onPreview,
-}: {
-  selected: SfTalentAnomaly | null;
-  preview: SfTalentActionPreviewPayload | null;
-  loading: boolean;
-  onPreview: () => void;
-}) {
-  return (
-    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-violet-400/20 dark:bg-[#081423]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">Simulacion</p>
-          <h3 className="text-base font-semibold text-foreground dark:text-white">
-            {selected?.title || "Selecciona una senal"}
-          </h3>
-        </div>
-        <SlidersHorizontal aria-hidden className="h-4 w-4 text-muted-foreground" />
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">
-        {selected?.recommendation || "El preview no ejecuta cambios en SuccessFactors y no usa compensacion sensible."}
-      </p>
-      <button
-        type="button"
-        disabled={!selected || loading}
-        onClick={onPreview}
-        className="mt-4 inline-flex min-h-[40px] items-center gap-2 rounded-md bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {loading ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Play aria-hidden className="h-4 w-4" />}
-        Generar preview
-      </button>
-      {preview ? (
-        <div className="mt-4 rounded-lg border bg-background p-3 text-sm dark:border-violet-400/15 dark:bg-[#06111f]">
-          <div className="flex items-center justify-between gap-3">
-            <strong className="text-foreground dark:text-white">{preview.status}</strong>
-            <ReadinessBadge status={preview.write_back_enabled ? "blocked" : "ready"} label={preview.write_back_enabled ? "write-back activo" : "sin write-back"} compact />
-          </div>
-          <p className="mt-2 text-muted-foreground">{preview.recommendation}</p>
-          <p className="mt-2 text-xs font-medium text-violet-700 dark:text-violet-300">
-            {formatNumber(preview.affected_count)} afectados · aprobacion requerida
-          </p>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 const PERF_BAND_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const POTENCIAL_PENDIENTE_TOOLTIP =
   "El Potencial requiere Competencias y Aspiración. SuccessFactors aún no expone esas entidades para este tenant, por eso permanece pendiente. No se infiere del desempeño.";
@@ -772,10 +691,8 @@ export function TalentControlRoom() {
   const [selectedBox, setSelectedBox] = useState<string | null>(null);
   const [collar, setCollar] = useState<Collar>("confianza");
   const [selectedAnomaly, setSelectedAnomaly] = useState<SfTalentAnomaly | null>(null);
-  const [preview, setPreview] = useState<SfTalentActionPreviewPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [rosterLoading, setRosterLoading] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -846,22 +763,6 @@ export function TalentControlRoom() {
   const anomalyItems = anomalies?.items ?? overview?.anomalies.items ?? [];
   const cpaExtractionTargets = useMemo(() => metadataNextTargets(metadata), [metadata]);
   const componentReadiness = useMemo(() => talentComponentReadiness(metadata), [metadata]);
-
-  async function handlePreview() {
-    if (!selectedAnomaly) return;
-    setPreviewLoading(true);
-    try {
-      const payload = await previewSuccessFactorsTalentAction({
-        action_id: selectedAnomaly.id,
-        box_id: selectedBox,
-      });
-      setPreview(payload);
-    } catch (err) {
-      setError(apiMessage(err));
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
 
   return (
     <main className="min-h-screen bg-background text-foreground dark:bg-[#050b14]">
@@ -937,22 +838,12 @@ export function TalentControlRoom() {
           <DesempenoDisponiblePanel cohort={nineBox?.desempeno_disponible} />
         ) : null}
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(320px,0.8fr)_minmax(320px,0.8fr)_minmax(320px,0.8fr)]">
+        <div className="grid gap-4 xl:grid-cols-2">
           <TalentAnomalyList
             anomalies={anomalyItems}
             selectedId={selectedAnomaly?.id}
-            onSelect={(item) => {
-              setSelectedAnomaly(item);
-              setPreview(null);
-            }}
+            onSelect={setSelectedAnomaly}
           />
-          <SimulationPanel
-            selected={selectedAnomaly}
-            preview={preview}
-            loading={previewLoading}
-            onPreview={() => void handlePreview()}
-          />
-          <TalentCycleTimeline preview={preview} />
         </div>
 
         <section className="grid gap-4 xl:grid-cols-2">
