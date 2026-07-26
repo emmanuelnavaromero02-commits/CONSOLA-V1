@@ -54,15 +54,10 @@ def assert_public_action_redacted(action: dict[str, Any]) -> None:
     assert set(action) == {
         "action_handle",
         "label",
-        "operation",
         "enabled",
         "requires_approval",
-        "prerequisites",
-        "method",
-        "endpoint",
     }
     assert len(action["action_handle"]) == 64
-    assert action["endpoint"] == "/api/control-room/actions/preview"
 
     def private_keys(value: object) -> set[str]:
         if isinstance(value, dict):

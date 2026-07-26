@@ -8,6 +8,9 @@ from starlette.requests import Request
 
 from app.routers import control_room as routes
 from app.schemas.control_room_action_requests import ControlRoomActionHandleRequest
+from app.schemas.control_room_experience_actions import (
+    ExperienceActionPreviewResponse,
+)
 from app.services import control_room_service
 from app.services.control_room import business_action_handle
 from app.services.control_room.business_action_handle import (
@@ -84,7 +87,14 @@ async def test_public_preview_expands_handle_server_side_only():
         template_id="request_owner_review",
         binding_id="a" * 64,
     )
-    preview = AsyncMock(return_value={"ok": True})
+    preview = AsyncMock(
+        return_value={
+            "execution": {"id": 7},
+            "action_run": {"tenant_id": "tenant-a"},
+            "payload": {"template_id": "request_owner_review", "sql": "secret"},
+            "item": {"id": "business-1", "workspace_id": "workspace-a"},
+        }
+    )
     with (
         patch.object(
             routes, "resolve_business_action_handle", AsyncMock(return_value=resolved)
@@ -97,7 +107,12 @@ async def test_public_preview_expands_handle_server_side_only():
             OPERATOR,
         )
 
-    assert response == {"ok": True}
+    assert response.model_dump() == {
+        "action_handle": "a" * 64,
+        "operation": "preview",
+        "status": "generated",
+        "message": "Preview generado; no se ejecuto ningun cambio externo.",
+    }
     preview.assert_awaited_once_with(
         "business-1",
         OPERATOR,
@@ -122,3 +137,4 @@ def test_public_preview_route_is_post_write_scoped():
 
     assert route.methods == {"POST"}
     assert permissions == {"control_room.write"}
+    assert route.response_model is ExperienceActionPreviewResponse

@@ -115,7 +115,6 @@ def test_v2_openapi_is_versioned_strict_and_read_only():
         "ControlRoomExperienceV2Response",
         "ExperienceFactV2",
         "ExperienceAction",
-        "ExperienceActionPrerequisite",
     ):
         assert schema["components"]["schemas"][model]["additionalProperties"] is False
 

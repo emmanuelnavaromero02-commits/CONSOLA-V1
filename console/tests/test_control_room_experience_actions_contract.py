@@ -68,22 +68,9 @@ def test_valid_action_has_exact_server_binding():
     assert action.model_dump() == {
         "action_handle": action.action_handle,
         "label": "Solicitar revision de owner",
-        "operation": "preview",
         "enabled": True,
         "requires_approval": True,
-        "prerequisites": [
-            {"code": "business_eligible", "satisfied": True},
-            {"code": "evidence", "satisfied": True},
-            {"code": "scope", "satisfied": True},
-            {"code": "template", "satisfied": True},
-            {"code": "permission", "satisfied": True},
-            {"code": "non_terminal", "satisfied": True},
-            {"code": "freshness", "satisfied": True},
-            {"code": "source_binding", "satisfied": True},
-        ],
         "disabled_reason": None,
-        "method": "POST",
-        "endpoint": "/api/control-room/actions/preview",
     }
     assert len(action.action_handle) == 64
 
@@ -112,12 +99,6 @@ def test_stale_action_is_safe_disabled_and_limited_to_one():
     action = fact.actions[0]
     assert action.enabled is False
     assert action.disabled_reason == "Actualiza los datos antes de continuar."
-    assert (
-        next(
-            value for value in action.prerequisites if value.code == "freshness"
-        ).satisfied
-        is False
-    )
 
 
 def test_incomplete_source_binding_cannot_issue_an_action():
@@ -143,6 +124,7 @@ def test_action_schema_rejects_forged_bindings_and_unknown_states():
         ("operation", "execute"),
         ("method", "GET"),
         ("endpoint", "https://evil.example/action"),
+        ("prerequisites", [{"code": "scope", "satisfied": True}]),
     ):
         payload = deepcopy(valid)
         payload[key] = value
@@ -150,16 +132,12 @@ def test_action_schema_rejects_forged_bindings_and_unknown_states():
     extra = deepcopy(valid)
     extra["metadata"] = {"secret": True}
     invalid_payloads.append(extra)
-    unknown_prerequisite = deepcopy(valid)
-    unknown_prerequisite["prerequisites"][0]["code"] = "unknown"
-    invalid_payloads.append(unknown_prerequisite)
-
     for payload in invalid_payloads:
         with pytest.raises(ValidationError):
             ExperienceAction.model_validate(payload)
 
 
-def test_action_schema_rejects_cross_item_endpoint_substitution():
+def test_action_schema_rejects_public_endpoint_metadata():
     payload = _fact(action_item()).actions[0].model_dump()
     payload["endpoint"] = "/api/control-room/items/other/action-preview"
 

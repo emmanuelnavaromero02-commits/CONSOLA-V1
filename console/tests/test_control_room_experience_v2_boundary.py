@@ -100,6 +100,9 @@ def _forbidden_action_metadata(value: object) -> set[str]:
         "template_id",
         "binding",
         "binding_id",
+        "cartridge_id",
+        "module_id",
+        "domain",
         "tenant_id",
         "workspace_id",
         "source_dataset",
@@ -109,6 +112,13 @@ def _forbidden_action_metadata(value: object) -> set[str]:
         "policy_version",
         "producer",
         "provenance",
+        "attestation",
+        "attestation_key_id",
+        "signature",
+        "method",
+        "endpoint",
+        "operation",
+        "prerequisites",
         "metadata",
     }
     if isinstance(value, dict):
@@ -151,7 +161,7 @@ def test_v2_asgi_enforces_401_403_and_redacts_authorized_viewer():
     payload = response.json()
     fact = payload["sections"][0]["facts"][0]
     assert fact["actions"] == []
-    assert _forbidden_action_metadata(fact) == set()
+    assert _forbidden_action_metadata(payload) == set()
     catalog.assert_not_awaited()
 
 
@@ -170,13 +180,8 @@ def test_writer_payload_exposes_only_opaque_business_action_contract():
     assert set(action) == {
         "action_handle",
         "label",
-        "operation",
         "enabled",
         "requires_approval",
-        "prerequisites",
-        "method",
-        "endpoint",
     }
-    assert action["endpoint"] == "/api/control-room/actions/preview"
     assert len(action["action_handle"]) == 64
     assert _forbidden_action_metadata(action) == set()

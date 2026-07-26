@@ -86,11 +86,7 @@ def build_business_experience_v2(
         if facts:
             sections.append(
                 ExperienceSectionV2(
-                    id=identity.section_id,
-                    cartridge_id=identity.cartridge_id,
-                    module_id=identity.module_id,
                     title=min(titles, key=lambda value: (value.casefold(), value)),
-                    domain=identity.domain,
                     facts=facts,
                 )
             )

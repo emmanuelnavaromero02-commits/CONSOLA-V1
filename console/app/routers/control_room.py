@@ -12,6 +12,7 @@ from app.schemas.control_room_action_requests import (
     ControlRoomActionRequest,
     ControlRoomExecuteRequest,
 )
+from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
 from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
 from app.services.control_room.authorization_cache import (
@@ -760,6 +761,7 @@ async def control_room_select_item_option(
 
 @router.post(
     "/actions/preview",
+    response_model=ExperienceActionPreviewResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_action_handle_preview(
@@ -768,7 +770,7 @@ async def control_room_action_handle_preview(
     user: dict = Depends(require_authenticated),
 ):
     resolved = await resolve_business_action_handle(user, body.action_handle)
-    return await _invalidate_after_write(
+    await _invalidate_after_write(
         user,
         control_room_service.action_preview(
             resolved.item_id,
@@ -779,6 +781,7 @@ async def control_room_action_handle_preview(
             user_agent=request.headers.get("user-agent"),
         ),
     )
+    return ExperienceActionPreviewResponse(action_handle=body.action_handle)
 
 
 @router.post(
