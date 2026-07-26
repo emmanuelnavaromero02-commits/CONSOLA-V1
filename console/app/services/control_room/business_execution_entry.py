@@ -56,6 +56,7 @@ async def _completed_replay(
 async def prepare_execution_entry(
     *,
     run_scoped: ScopedRunner,
+    run_replay_scoped: ScopedRunner,
     ensure_item_row: AsyncWriter,
     record_execute_block: AsyncWriter,
     response_for_reservation: ResponseBuilder,
@@ -73,7 +74,7 @@ async def prepare_execution_entry(
         and lifecycle_block.code == "already_executed"
         and confirmed
     ):
-        reservation = await run_scoped(
+        reservation = await run_replay_scoped(
             lambda conn: _completed_replay(
                 conn,
                 user=user,

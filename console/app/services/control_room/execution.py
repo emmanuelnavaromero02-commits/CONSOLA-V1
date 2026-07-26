@@ -3386,8 +3386,16 @@ async def execute_item(
                 503, "execution idempotency reservation failed"
             ) from exc
 
+    async def _with_scoped_replay(work: Callable[[Any], Awaitable[Any]]) -> Any:
+        return await _run_with_db_scope(
+            pool,
+            user,
+            lambda conn, _tenant_id, _workspace_id: work(conn),
+        )
+
     replay_response = await prepare_execution_entry(
         run_scoped=_with_scoped_db,
+        run_replay_scoped=_with_scoped_replay,
         ensure_item_row=_ensure_item_row,
         record_execute_block=_record_execute_block,
         response_for_reservation=_reserved_action_response,
