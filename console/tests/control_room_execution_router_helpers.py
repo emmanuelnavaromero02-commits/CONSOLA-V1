@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 from app.services.control_room.business_action_reservation import effective_action_key
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
 )
@@ -58,6 +59,14 @@ def execution_fetchrow_router(
 
     def route(query: object, *_args: object):
         sql = " ".join(str(query).split()).upper()
+        if "FROM CONTROL_ROOM_ACTION_TEMPLATES" in sql:
+            template = ACTION_TEMPLATES[template_id]
+            return {
+                "template_id": template_id,
+                "cartridge_id": template["cartridge_id"],
+                "label": template["label"],
+                "requires_approval": template["requires_approval"],
+            }
         if "FROM CONTROL_ROOM_ITEMS" in sql and "FOR UPDATE" in sql:
             return authoritative_item_row(
                 item,

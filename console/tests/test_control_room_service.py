@@ -2107,14 +2107,15 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
-    mock_pool.fetchrow = AsyncMock(
-        side_effect=[
+    template_id = "prepare_billing_review"
+    fetchrow_results = iter(
+        [
             _authoritative_item_row(item),
             {
                 "id": 1,
                 "workspace_id": "workspace-A",
                 "item_id": item["id"],
-                "template_id": "request_owner_review",
+                "template_id": template_id,
                 "mode": "preview",
                 "status": "generated",
                 "payload": {},
@@ -2127,7 +2128,7 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
                 "id": 2,
                 "workspace_id": "workspace-A",
                 "item_id": item["id"],
-                "template_id": "request_owner_review",
+                "template_id": template_id,
                 "mode": "dry_run",
                 "status": "validated",
                 "payload": {},
@@ -2137,6 +2138,19 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
             },
         ]
     )
+
+    def _fetchrow(query, *_args):
+        sql = " ".join(str(query).split()).upper()
+        if "FROM CONTROL_ROOM_ACTION_TEMPLATES" in sql:
+            return {
+                "template_id": template_id,
+                "cartridge_id": "replicon",
+                "label": "Preparar revision de facturacion",
+                "requires_approval": True,
+            }
+        return next(fetchrow_results)
+
+    mock_pool.fetchrow = AsyncMock(side_effect=_fetchrow)
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -2168,10 +2182,10 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
         ) as audit_event,
     ):
         preview = await control_room_service.action_preview(
-            item["id"], USER, fetcher=finance_fetcher
+            item["id"], USER, template_id=template_id, fetcher=finance_fetcher
         )
         dry_run = await control_room_service.action_dry_run(
-            item["id"], USER, fetcher=finance_fetcher
+            item["id"], USER, template_id=template_id, fetcher=finance_fetcher
         )
 
     assert preview["execution"]["status"] == "generated"

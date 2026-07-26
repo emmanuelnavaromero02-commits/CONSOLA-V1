@@ -5,6 +5,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 
 from app.services import control_room_service
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_execution_precondition import dry_run_metadata
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
@@ -208,6 +209,15 @@ def guarded_fetchrows(value: dict, rows, *, has_dry_run: bool = True):
 
     def fetchrow(query, *_args):
         sql = " ".join(str(query).split())
+        if "FROM control_room_action_templates" in sql:
+            template_id = str(_args[0])
+            template = ACTION_TEMPLATES[template_id]
+            return {
+                "template_id": template_id,
+                "cartridge_id": template["cartridge_id"],
+                "label": template["label"],
+                "requires_approval": template["requires_approval"],
+            }
         if "FROM control_room_items" in sql and "FOR UPDATE" in sql:
             return persisted_item_row(value)
         if "mode = 'dry_run'" in sql and "status = 'dry_run_completed'" in sql:

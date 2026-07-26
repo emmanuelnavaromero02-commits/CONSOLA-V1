@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_reservation import effective_action_key
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
@@ -220,6 +221,14 @@ def _execution_fetchrow_router(item: dict, *, execution_status: str = "executed"
 
     def route(query: object, *_args: object):
         sql = " ".join(str(query).split()).upper()
+        if "FROM CONTROL_ROOM_ACTION_TEMPLATES" in sql:
+            template = ACTION_TEMPLATES["create_followup_task"]
+            return {
+                "template_id": template["template_id"],
+                "cartridge_id": template["cartridge_id"],
+                "label": template["label"],
+                "requires_approval": template["requires_approval"],
+            }
         if "FROM CONTROL_ROOM_ITEMS" in sql and "FOR UPDATE" in sql:
             return _authoritative_item_row(item)
         if "MODE = 'DRY_RUN'" in sql:

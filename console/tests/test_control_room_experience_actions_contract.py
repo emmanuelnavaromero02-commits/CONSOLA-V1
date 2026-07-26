@@ -93,6 +93,7 @@ def test_missing_template_and_diagnostic_items_publish_no_actions():
 
 def test_permission_and_terminal_state_publish_no_action_metadata():
     assert _fact(business_item(), user=VIEWER).actions == []
+    assert _fact(business_item(status="approved")).actions == []
     assert _fact(business_item(status="resolved")).actions == []
     assert _fact(business_item(execution_status="executed")).actions == []
 

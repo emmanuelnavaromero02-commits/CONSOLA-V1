@@ -165,6 +165,11 @@ def _execution_patches(item: dict, template_id: str):
             return_value={"item": {"id": item["id"]}, "operations": []},
         ),
         patch.object(control_room_service, "_run_with_db_scope", side_effect=_scoped),
+        patch.object(
+            control_room_service,
+            "require_enabled_action_template",
+            AsyncMock(),
+        ),
         patch.object(control_room_service, "_ensure_item_row", AsyncMock()),
     )
 

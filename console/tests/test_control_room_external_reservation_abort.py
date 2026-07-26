@@ -31,6 +31,8 @@ def _item() -> dict:
         "tenant_id": "tenant-a",
         "workspace_id": "workspace-a",
         "execution_status": "dry_run_validated",
+        "source_dataset": "gold_people",
+        "entity_id": "employee-1",
         "metric_name": "headcount",
         "metric_type": "scalar",
         "observed_value": 7,
@@ -123,6 +125,11 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
             control_room_service,
             "_run_with_db_scope",
             new=AsyncMock(side_effect=run_scoped),
+        ),
+        patch.object(
+            control_room_service,
+            "require_enabled_action_template",
+            new=AsyncMock(),
         ),
         patch.object(control_room_service, "_ensure_item_row", new=AsyncMock()),
         patch.object(

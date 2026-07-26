@@ -28,11 +28,21 @@ class ReadOnlyCatalogPool:
     async def execute(self, sql: str, *args):
         self.executed.append((sql, args))
 
-    async def fetch(self, sql: str):
+    async def fetch(self, sql: str, *args):
         self.queries.append(sql)
         return [
-            {"template_id": "request_owner_review"},
-            {"template_id": "fabricated_template"},
+            {
+                "template_id": "request_owner_review",
+                "cartridge_id": "platform",
+                "label": "Solicitar revision de owner",
+                "requires_approval": True,
+            },
+            {
+                "template_id": "fabricated_template",
+                "cartridge_id": "platform",
+                "label": "Fabricated",
+                "requires_approval": True,
+            },
         ]
 
 
@@ -49,6 +59,8 @@ async def test_catalog_is_one_scoped_read_and_filters_unknown_templates():
     assert len(pool.queries) == 1
     assert pool.queries[0] == ENABLED_ACTION_TEMPLATE_IDS_SQL
     assert "WHERE enabled IS TRUE" in pool.queries[0]
+    assert "template_id = ANY($1::text[])" in pool.queries[0]
+    assert "LIMIT $2" in pool.queries[0]
     assert not any(
         keyword in pool.queries[0].upper()
         for keyword in ("INSERT ", "UPDATE ", "DELETE ", "MERGE ")
