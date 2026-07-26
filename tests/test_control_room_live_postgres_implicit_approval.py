@@ -188,8 +188,9 @@ async def test_live_empty_body_approval_is_atomic_and_returns_200(
 
     assert response.status_code == 200, response.text
     assert response.json()["approved"] is True
+    assert "decision_id" not in response.json()
     state = await _state(postgres_with_real_init_schema, user, item["id"])
-    assert state["decision_id"] == response.json()["decision_id"]
+    assert state["decision_id"] is not None
     _assert_single_workflow(state, lessons=2)
 
 

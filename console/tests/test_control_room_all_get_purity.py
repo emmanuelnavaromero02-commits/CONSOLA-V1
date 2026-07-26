@@ -115,7 +115,6 @@ PAYLOAD_SHAPES = {
         "signals": list,
     },
     "/api/control-room/sap-successfactors/talent/overview": {
-        "metadata_readiness": dict,
         "nine_box": dict,
         "anomalies": dict,
     },
@@ -136,8 +135,8 @@ PAYLOAD_SHAPES = {
     },
     "/api/control-room/sap-successfactors/talent/metadata-readiness": {
         "status": str,
-        "entities": list,
-        "live_preflight": dict,
+        "components": list,
+        "source_check": dict,
     },
     "/api/control-room/banxico/readiness": READINESS_SHAPE,
     "/api/control-room/inegi/readiness": READINESS_SHAPE,

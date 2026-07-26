@@ -88,7 +88,7 @@ def test_talent_keeps_only_format_valid_business_identifiers():
     assert "technical-id-sentinel" not in response.text
 
 
-def test_talent_metadata_keeps_business_component_slug_only():
+def test_talent_metadata_operator_gets_business_components_only():
     payload = {
         "status": "ready",
         "entities": [
@@ -101,13 +101,13 @@ def test_talent_metadata_keeps_business_component_slug_only():
         "sap_successfactors_talent_metadata_readiness",
         AsyncMock(return_value=payload),
     ):
-        response = client(DATASET_READER).get(
+        response = client(OPERATOR).get(
             "/api/control-room/sap-successfactors/talent/metadata-readiness"
         )
 
-    entities = response.json()["entities"]
-    assert entities[0]["id"] == "performance"
-    assert entities[1]["id"] is None
+    components = response.json()["components"]
+    assert components[0]["component"] == "Desempeno"
+    assert len(components) == 1
 
 
 def test_optional_nested_projection_preserves_explicit_null():
@@ -125,6 +125,7 @@ def test_optional_nested_projection_preserves_explicit_null():
         "/api/control-room/agents/ops",
         "/api/control-room/alerts",
         "/api/control-room/decision-intelligence/runs",
+        "/api/control-room/sap-successfactors/talent/metadata-readiness",
     ),
 )
 def test_dataset_reader_cannot_open_operational_surfaces(path):
@@ -153,6 +154,10 @@ def test_routes_are_typed_and_operational_families_require_operations_read():
         "/api/control-room/sap-successfactors/gold-kpis": (
             responses.ControlRoomGoldKpisResponse,
             "datasets.read",
+        ),
+        "/api/control-room/sap-successfactors/talent/metadata-readiness": (
+            responses.ControlRoomTalentMetadataReadinessResponse,
+            "operations.read",
         ),
         "/api/control-room/ops/summary": (
             responses.ControlRoomOpsSummaryResponse,

@@ -104,7 +104,6 @@ describe("TalentControlRoom native panels", () => {
           role: "Manager",
           unit: "People",
           region: "Monterrey",
-          readiness_status: "ready",
           box_label: "Estrella",
           performance_band: "high",
           potential_band: "high",

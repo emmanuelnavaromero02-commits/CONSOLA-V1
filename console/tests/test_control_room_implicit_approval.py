@@ -56,7 +56,8 @@ def test_empty_approve_body_remains_compatible() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["decision_id"] == 42
+    assert response.json()["approved"] is True
+    assert "decision_id" not in response.json()
     approve.assert_awaited_once()
     assert approve.await_args.kwargs["decision_id"] is None
 

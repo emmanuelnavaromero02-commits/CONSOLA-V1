@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CopilotActionsConsole } from "./CopilotActionsConsole";
 
+let accessPermissions = ["operations.read"];
+
 vi.mock("next/link", () => ({
   default: ({ href, children, ...props }: { href: string; children: ReactNode }) => (
     <a href={href} {...props}>{children}</a>
@@ -19,6 +21,13 @@ vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     const name = queryKey.join(":");
+    if (name === "me:access") {
+      return {
+        data: { permissions: accessPermissions },
+        isLoading: false,
+        refetch: vi.fn(),
+      };
+    }
     if (name.includes("goals")) {
       return {
         data: [{ id: "goal-1", goal_text: "Diagnosticar margen", status: "running", created_at: "2026-06-04T20:00:00Z" }],
@@ -50,6 +59,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 describe("CopilotActionsConsole", () => {
   it("renders critical copilot action surfaces from query data", () => {
+    accessPermissions = ["operations.read"];
     const markup = renderToStaticMarkup(<CopilotActionsConsole />);
 
     expect(markup).toContain("Acciones");
@@ -63,5 +73,16 @@ describe("CopilotActionsConsole", () => {
     expect(markup).toContain("Riesgo de margen");
     expect(markup).toContain("Revenue drop");
     expect(markup).toContain("Revisar descuentos");
+  });
+
+  it("does not request or expose operational controls to a viewer", () => {
+    accessPermissions = [];
+
+    const markup = renderToStaticMarkup(<CopilotActionsConsole />);
+
+    expect(markup).toContain("Recomendaciones permitidas");
+    expect(markup).not.toContain("Contexto Vivo");
+    expect(markup).not.toContain("Actualizar contexto");
+    expect(markup).not.toContain("Fuentes revisadas");
   });
 });

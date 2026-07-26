@@ -362,7 +362,25 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
         if widget["id"] == "sf_headcount_by_company"
     )
     assert by_company["status"] == "ready"
-    assert by_company["rows"] == [{"label": "FEMSA", "id": "MX01", "headcount": 2}]
+    assert by_company["rows"] == [
+        {"label": "FEMSA", "company_name": "FEMSA", "headcount": 2}
+    ]
+    by_location = next(
+        widget
+        for widget in result["widgets"]
+        if widget["id"] == "sf_headcount_by_location"
+    )
+    assert by_location["rows"] == [
+        {"label": "Monterrey", "location_name": "Monterrey", "headcount": 2}
+    ]
+    by_department = next(
+        widget
+        for widget in result["widgets"]
+        if widget["id"] == "sf_headcount_by_department"
+    )
+    assert by_department["rows"] == [
+        {"label": "People", "department_name": "People", "headcount": 2}
+    ]
     assert {dataset for dataset, _user, _limit in calls} == {
         "sap_successfactors_employee_360",
         "sap_successfactors_headcount_by_company",
