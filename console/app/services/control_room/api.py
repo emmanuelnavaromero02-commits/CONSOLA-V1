@@ -19,6 +19,9 @@ from app.services.control_room.business_source_scope import scoped_runtime_evide
 from app.services.control_room.business_talent_preview import (
     build_talent_action_preview,
 )
+from app.services.control_room.business_action_catalog import (
+    require_enabled_action_template_for_user,
+)
 
 
 _RESERVED_GLOBALS = {
@@ -40,6 +43,10 @@ _core.__dict__.setdefault("scoped_source_row", scoped_source_row)
 _core.__dict__.setdefault("scoped_source_row_with_evidence", scoped_source_row_with_evidence)
 _core.__dict__.setdefault("append_normalized_business_rows", append_normalized_business_rows)
 _core.__dict__.setdefault("_build_talent_action_preview", build_talent_action_preview)
+_core.__dict__.setdefault(
+    "require_enabled_action_template_for_user",
+    require_enabled_action_template_for_user,
+)
 
 
 def _bind_to_core(fn):
@@ -2120,6 +2127,7 @@ async def sap_successfactors_talent_action_preview(
         load_item=_item_for_mutation,
         load_gold_rows=query_dataset_rows,
         resolve_template=require_explicit_action_template,
+        require_template_enabled=require_enabled_action_template_for_user,
         resolve_scope=_workspace_scope,
     )
 

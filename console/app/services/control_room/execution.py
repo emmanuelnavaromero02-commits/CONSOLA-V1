@@ -72,6 +72,7 @@ from app.services.control_room.business_action_binding import (
 )
 from app.services.control_room.business_action_catalog import (
     require_enabled_action_template,
+    require_enabled_action_template_for_user,
 )
 from app.services.control_room.business_action_resolution import (
     require_explicit_action_template,
@@ -186,6 +187,7 @@ for _helper in (
     require_action_item_evidence,
     require_action_item_prerequisites,
     require_enabled_action_template,
+    require_enabled_action_template_for_user,
     require_explicit_action_template,
     single_explicit_action_binding,
     workflow_reopen_allowed,
@@ -1883,6 +1885,7 @@ async def run_auto_item(
     binding = single_explicit_action_binding(item, user)
     template_id = binding.template_id
     binding_id = binding.binding_id
+    await require_enabled_action_template_for_user(user, template_id)
 
     steps: list[dict[str, Any]] = []
     investigation = await record_item_step(

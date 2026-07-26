@@ -75,9 +75,25 @@ async def require_enabled_action_template(conn: Any, template_id: str) -> None:
         raise HTTPException(404, "action template not found")
 
 
+async def require_enabled_action_template_for_user(
+    user: Mapping[str, Any], template_id: str
+) -> None:
+    pool = await auth.pool()
+
+    async def _read(
+        conn: Any,
+        _tenant_id: str | None,
+        _workspace_id: str,
+    ) -> None:
+        await require_enabled_action_template(conn, template_id)
+
+    await run_with_db_scope(pool, dict(user), _read)
+
+
 __all__ = (
     "ENABLED_ACTION_TEMPLATE_IDS_SQL",
     "ENABLED_ACTION_TEMPLATE_SQL",
     "load_enabled_action_template_ids",
     "require_enabled_action_template",
+    "require_enabled_action_template_for_user",
 )
