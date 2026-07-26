@@ -7,6 +7,10 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.dependencies import require_authenticated
+from app.schemas.control_room_action_requests import (
+    ControlRoomActionRequest,
+    ControlRoomExecuteRequest,
+)
 from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
 from app.services.control_room.authorization_cache import (
@@ -757,16 +761,15 @@ async def control_room_select_item_option(
 async def control_room_action_preview(
     item_id: str,
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomActionRequest,
     user: dict = Depends(require_authenticated),
 ):
-    template_id = body.get("template_id") if isinstance(body, dict) else None
     return await _invalidate_after_write(
         user,
         control_room_service.action_preview(
             item_id,
             user,
-            template_id=str(template_id) if template_id else None,
+            template_id=body.template_id,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),
@@ -780,16 +783,15 @@ async def control_room_action_preview(
 async def control_room_action_dry_run(
     item_id: str,
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomActionRequest,
     user: dict = Depends(require_authenticated),
 ):
-    template_id = body.get("template_id") if isinstance(body, dict) else None
     return await _invalidate_after_write(
         user,
         control_room_service.action_dry_run(
             item_id,
             user,
-            template_id=str(template_id) if template_id else None,
+            template_id=body.template_id,
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),
@@ -827,24 +829,19 @@ async def control_room_auto_run_item(
 async def control_room_execute_item(
     item_id: str,
     request: Request,
-    body: dict = Body(default_factory=dict),
+    body: ControlRoomExecuteRequest,
     user: dict = Depends(require_authenticated),
 ):
-    template_id = None
-    confirm_execute = False
-    idempotency_key = None
-    if isinstance(body, dict):
-        template_id = body.get("template_id")
-        confirm_execute = body.get("confirm_execute") or body.get("confirmation")
-        idempotency_key = body.get("idempotency_key")
     return await _invalidate_after_write(
         user,
         control_room_service.execute_item(
             item_id,
             user,
-            template_id=str(template_id) if template_id else None,
-            confirm_execute=confirm_execute,
-            idempotency_key=str(idempotency_key).strip()[:128] if idempotency_key else None,
+            template_id=body.template_id,
+            confirm_execute=body.confirmed,
+            idempotency_key=(
+                body.idempotency_key.strip() if body.idempotency_key else None
+            ),
             ip=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),

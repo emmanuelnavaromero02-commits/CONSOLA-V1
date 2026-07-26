@@ -63,6 +63,13 @@ from app.services.control_room.business_decision_persistence import (
 from app.services.control_room.business_action_approval import (
     approve_business_item as _approve_business_item,
 )
+from app.services.control_room.business_action_authority import (
+    require_action_item_evidence,
+    require_action_item_prerequisites,
+)
+from app.services.control_room.business_action_catalog import (
+    require_enabled_action_template,
+)
 from app.services.control_room.business_approve_with_optional_decision import (
     approve_with_optional_decision as _approve_with_optional_decision,
 )
@@ -168,6 +175,9 @@ for _helper in (
     require_matching_dry_run,
     require_approved_execution,
     prepare_execution_entry,
+    require_action_item_evidence,
+    require_action_item_prerequisites,
+    require_enabled_action_template,
     workflow_reopen_allowed,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
@@ -1339,6 +1349,9 @@ async def action_preview(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_prerequisites(item, operation="preview")
+    if not template_id:
+        raise HTTPException(422, "template_id is required")
     template = _resolve_template(item, template_id)
     payload = _execution_payload(item, "preview", template)
     result = {
@@ -1352,6 +1365,7 @@ async def action_preview(
     async def _write(
         conn: Any, _tenant_id: str | None, _workspace_id: str
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        await require_enabled_action_template(conn, str(template["template_id"]))
         await _ensure_item_row(
             conn,
             user=user,
@@ -1442,6 +1456,9 @@ async def action_dry_run(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_prerequisites(item, operation="dry_run")
+    if not template_id:
+        raise HTTPException(422, "template_id is required")
     template = _resolve_template(item, template_id)
     payload = _execution_payload(item, "dry_run", template)
     warnings = []
@@ -1476,6 +1493,7 @@ async def action_dry_run(
     async def _write(
         conn: Any, _tenant_id: str | None, _workspace_id: str
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        await require_enabled_action_template(conn, str(template["template_id"]))
         await _ensure_item_row(
             conn,
             user=user,
@@ -3349,12 +3367,16 @@ async def execute_item(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_evidence(item)
+    if not template_id:
+        raise HTTPException(422, "template_id is required")
     template = _resolve_template(item, template_id)
     payload = _execution_payload(item, "execute_live", template)
     pool = await auth.pool()
 
     async def _with_scoped_db(work: Callable[[Any], Awaitable[Any]]) -> Any:
         async def _run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
+            await require_enabled_action_template(conn, str(template["template_id"]))
             return await work(conn)
 
         try:

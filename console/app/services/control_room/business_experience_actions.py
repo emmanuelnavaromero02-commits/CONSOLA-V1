@@ -11,6 +11,11 @@ from app.services.control_room.business_action_binding import (
     preview_action_endpoint,
     valid_action_item_id,
 )
+from app.services.control_room.business_action_authority import (
+    action_item_is_current,
+    action_item_is_stale,
+    action_source_binding_complete,
+)
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_templates import (
     template_ids_for_business_item,
@@ -19,33 +24,16 @@ from app.services.control_room.business_cartridge_scope import (
     business_cartridge_allowed,
 )
 from app.services.control_room.business_eligibility import classify_business_item
-from app.services.control_room.business_observation import semantic_states
 from app.services.control_room.business_source_scope import context_scope, scope_matches
 from app.services.control_room.business_surface_identity import BusinessSurfaceIdentity
 from app.services.control_room.business_visible_copy import (
     classify_visible_business_copy,
 )
-from app.services.control_room.business_workflow_state import (
-    TERMINAL_EXECUTION_STATUSES,
-)
 from app.services.permissions import has_permission
 
 
-_TERMINAL_ITEM_STATUSES = frozenset({"dismissed", "resolved"})
 _STALE_REASON = "Actualiza los datos antes de continuar."
 _INCOMPLETE_REASON = "Completa los datos requeridos antes de continuar."
-
-
-def _is_terminal(item: Mapping[str, Any]) -> bool:
-    status = str(item.get("status") or "").strip().lower()
-    execution = str(item.get("execution_status") or "").strip().lower()
-    return status in _TERMINAL_ITEM_STATUSES or execution in TERMINAL_EXECUTION_STATUSES
-
-
-def _source_binding_complete(item: Mapping[str, Any]) -> bool:
-    return bool(str(item.get("source_dataset") or "").strip()) and bool(
-        str(item.get("entity_id") or "").strip()
-    )
 
 
 def _prerequisites(
@@ -85,7 +73,7 @@ def resolve_business_experience_actions(
         and scope_matches(item, tenant_id=tenant_id, workspace_id=workspace_id)
         and business_cartridge_allowed(user, cartridge_id, allow_platform=True)
         and classify_business_item(item).eligible
-        and not _is_terminal(item)
+        and action_item_is_current(item, operation="preview")
     ):
         return []
 
@@ -95,8 +83,8 @@ def resolve_business_experience_actions(
         for template_id in template_ids_for_business_item(item)
         if template_id in available_ids and template_id in ACTION_TEMPLATES
     ]
-    stale = "stale" in semantic_states(item)
-    source_binding = _source_binding_complete(item)
+    stale = action_item_is_stale(item)
+    source_binding = action_source_binding_complete(item)
     if stale or not source_binding:
         template_ids = template_ids[:1]
 
