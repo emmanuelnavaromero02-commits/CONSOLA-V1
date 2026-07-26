@@ -162,6 +162,8 @@ def test_writer_payload_exposes_only_opaque_business_action_contract():
         enabled_template_ids={"request_owner_review"},
     ).model_dump(mode="json", exclude_none=True)
 
+    assert "scope" not in payload
+    assert _forbidden_action_metadata(payload) == set()
     fact = payload["sections"][0]["facts"][0]
     assert "item_id" not in fact
     action = fact["actions"][0]

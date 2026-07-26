@@ -97,7 +97,6 @@ def build_business_experience_v2(
     return ControlRoomExperienceV2Response(
         schema_version=EXPERIENCE_ACTIONS_SCHEMA_VERSION,
         generated_at=snapshot.generated_at,
-        scope=snapshot.scope,
         sections=sections,
     )
 

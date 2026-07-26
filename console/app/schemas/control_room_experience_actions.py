@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.control_room_surfaces import (
     ExperienceDecision,
     ExperienceMetric,
-    SurfaceScope,
 )
 
 EXPERIENCE_ACTIONS_SCHEMA_VERSION = "control-room-experience/v2"
@@ -106,7 +105,6 @@ class ExperienceSectionV2(_StrictModel):
 class ControlRoomExperienceV2Response(_StrictModel):
     schema_version: Literal["control-room-experience/v2"]
     generated_at: datetime
-    scope: SurfaceScope
     sections: list[ExperienceSectionV2] = Field(default_factory=list)
 
 
