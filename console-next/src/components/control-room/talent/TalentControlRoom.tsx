@@ -438,7 +438,7 @@ export function TalentAnomalyList({
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
             <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-              {formatNumber(item.affected_count)} afectados · {item.method}
+              {formatNumber(item.affected_count)} afectados · solo lectura
             </p>
           </button>
         ))}
@@ -923,7 +923,7 @@ export function TalentControlRoom() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">Politica segura</p>
                 <h3 className="text-base font-semibold text-foreground dark:text-white">Recommendation only</h3>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  La experiencia muestra decisiones y previews. No escribe a SuccessFactors, no activa compensacion y no expone nombres completos ni IDs crudos.
+                  La experiencia es exclusivamente de lectura. No ofrece preview ni write-back en SuccessFactors, no activa compensacion y no expone nombres completos ni IDs crudos.
                 </p>
               </div>
             </div>
@@ -940,8 +940,8 @@ export function TalentControlRoom() {
               </div>
               <div className="rounded-lg border bg-background p-3 text-sm dark:border-emerald-400/10 dark:bg-[#06111f]">
                 <BriefcaseBusiness aria-hidden className="mb-2 h-4 w-4 text-emerald-700 dark:text-emerald-300" />
-                <strong className="text-foreground dark:text-white">Sin write-back</strong>
-                <p className="text-xs text-muted-foreground">preview supervisado</p>
+                <strong className="text-foreground dark:text-white">Solo lectura</strong>
+                <p className="text-xs text-muted-foreground">sin preview ni write-back</p>
               </div>
             </div>
           </div>

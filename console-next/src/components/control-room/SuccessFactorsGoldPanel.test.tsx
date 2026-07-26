@@ -147,7 +147,7 @@ describe("SuccessFactorsGoldPanel", () => {
         status: "partial",
       },
       widgets: [
-        { id: "sf_talent_roles_profiled", title: "Roles derivados", value: 3, dataset: "sap_successfactors_talent_role_profile", status: "partial" },
+        { id: "sf_talent_roles_profiled", title: "Roles derivados", value: 3, status: "partial" },
       ],
       signals: [
         {

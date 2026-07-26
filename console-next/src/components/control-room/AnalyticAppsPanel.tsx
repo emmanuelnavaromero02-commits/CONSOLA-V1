@@ -682,11 +682,12 @@ function LoadingNotice({ label }: { label: string }) {
 function WidgetPanel({ widget }: { widget: SfGoldWidget | SfTalentWidget }) {
   const rows = widgetRows(widget);
   const max = Math.max(1, ...rows.map((row) => row.value));
+  const sourceLabel = "dataset" in widget ? widget.dataset : "Indicador de talento";
   return (
     <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase text-cyan-300/80">{widget.dataset}</p>
+          <p className="text-xs font-semibold uppercase text-cyan-300/80">{sourceLabel}</p>
           <h4 className="text-base font-semibold text-white">{widget.title}</h4>
         </div>
         <strong className="text-2xl font-semibold text-white">{widgetValue(widget)}</strong>

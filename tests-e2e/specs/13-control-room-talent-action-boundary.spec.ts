@@ -97,6 +97,9 @@ test("Talent omits legacy actions when no V2 action is authorized", async ({
   await expect(page.getByRole("button", { name: "Generar preview" })).toHaveCount(0);
   await expect(page.getByText("Ciclo OMEGA", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Simulacion", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/exclusivamente de lectura/i)).toBeVisible();
+  await expect(page.getByText("sin preview ni write-back", { exact: true })).toBeVisible();
+  await expect(page.getByText("preview supervisado", { exact: true })).toHaveCount(0);
   expect(requests.some(({ path }) => path.includes("/talent/actions/preview"))).toBe(false);
   expect(requests.some(({ method }) => method !== "GET")).toBe(false);
 });

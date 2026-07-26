@@ -17,6 +17,10 @@ describe("TalentControlRoom native panels", () => {
     expect(markup).not.toContain("Generar preview");
     expect(markup).not.toContain("Ciclo OMEGA");
     expect(markup).not.toContain("Simulacion");
+    expect(markup).toContain("exclusivamente de lectura");
+    expect(markup).toContain("sin preview ni write-back");
+    expect(markup).not.toContain("decisiones y previews");
+    expect(markup).not.toContain("preview supervisado");
   });
 
   it("renders the 9-box matrix as native React buttons", () => {
@@ -83,7 +87,6 @@ describe("TalentControlRoom native panels", () => {
 
   it("renders only masked roster fields", () => {
     const payload: SfTalentRosterPayload = {
-      dataset: "sap_successfactors_talent_9box",
       status: "ready",
       count: 1,
       box: {

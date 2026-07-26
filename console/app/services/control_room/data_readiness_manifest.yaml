@@ -219,9 +219,9 @@ datasets:
   - cartridge: sap_successfactors
     dataset: sap_successfactors_talent_action_candidates
     readiness: partial
-    reason: "Action candidates are Control Room recommendations only; no write-back or compensation-sensitive action is enabled."
+    reason: "Action candidates are read-only Control Room recommendations; preview, write-back, and compensation-sensitive actions are unavailable."
     blockers:
-      - "Approve action thresholds and governance before promoting previews into supervised decisions."
+      - "Approve action thresholds and governance before enabling any future supervised workflow."
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_talent_action_candidates.sql
       - cartridges/sap_successfactors/app/config/wisdom_bits.yaml
@@ -384,9 +384,9 @@ knowledge_bits:
     readiness: partial
     datasets:
       - sap_successfactors_talent_action_candidates
-    reason: "Action candidates are preview-only recommendations and do not write back to SuccessFactors."
+    reason: "Action candidates are read-only recommendations; preview and SuccessFactors write-back are unavailable."
     blockers:
-      - "Approve thresholds and governance before turning previews into supervised decision workflows."
+      - "Approve thresholds and governance before enabling any future supervised decision workflow."
   - cartridge: sap_successfactors
     id: kb_sap_successfactors_talent_signals
     readiness: partial
