@@ -7,6 +7,9 @@ from app.schemas.control_room_public_projection import (
     PublicScalar,
     PublicSlugIdentity,
 )
+from app.schemas.control_room_summary_responses import (
+    ControlRoomBusinessSummaryResponse,
+)
 
 
 class PublicStatusCounts(PublicProjectionModel):
@@ -43,6 +46,9 @@ class PublicSource(PublicProjectionModel):
 
 class PublicMetricRow(PublicProjectionModel):
     label: str | None = None
+    company_name: str | None = None
+    location_name: str | None = None
+    department_name: str | None = None
     value: PublicScalar = None
     count: int | None = None
     headcount: int | None = None
@@ -202,14 +208,6 @@ class ControlRoomLegacyDashboardResponse(PublicProjectionModel):
     sources: list[PublicSource] = Field(default_factory=list)
     alerts: list[PublicAlert] = Field(default_factory=list)
     items: list[PublicBusinessItem] = Field(default_factory=list)
-
-
-class ControlRoomBusinessSummaryResponse(PublicProjectionModel):
-    total_anomalies: int = 0
-    by_severity: PublicStatusCounts = Field(default_factory=PublicStatusCounts)
-    open_decisions: int = 0
-    sources: list[PublicSource] = Field(default_factory=list)
-    alerts: PublicStatusCounts = Field(default_factory=PublicStatusCounts)
 
 
 class ControlRoomGoldWidget(PublicSlugIdentity):

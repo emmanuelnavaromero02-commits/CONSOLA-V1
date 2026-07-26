@@ -11,13 +11,29 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from math import isfinite
 from typing import Any
 
 from fastapi import HTTPException
 
-from app.services import auth, control_room_service, proactive_service
+from app.schemas.control_room_operational_responses import (
+    ControlRoomAgentsOpsResponse,
+    ControlRoomOpsSummaryResponse,
+)
+from app.schemas.control_room_public_projection import PublicProjectionModel
+from app.schemas.control_room_talent_responses import (
+    ControlRoomTalentKpisResponse,
+    ControlRoomTalentMetadataReadinessResponse,
+    ControlRoomTalentOverviewResponse,
+)
+from app.services import auth, control_room_service, permissions, proactive_service
 from app.services._copilot_helpers import has_table_cached
+from app.services.control_room.business_copy_sensitivity import (
+    contains_sensitive_copy,
+)
+from app.services.control_room.diagnostic_redaction import redact_diagnostic_value
 from app.services.db_scope import scoped_db, scoped_db_for_user, workspace_scope_from_user
 
 
@@ -28,6 +44,34 @@ SNAPSHOT_TABLE = "copilot_context_snapshots"
 RECOMMENDATIONS_TABLE = "copilot_recommendations"
 DEFAULT_INTERVAL_SECONDS = 3600
 DEFAULT_WORKSPACE_LIMIT = 200
+_SOURCE_LABELS = {
+    "database.operational_counts": ("platform_operations", "Operación de plataforma"),
+    "control_room.ops_summary": ("control_room_operations", "Operación de Control Room"),
+    "control_room.agents_ops": ("agent_operations", "Operación de agentes"),
+    "control_room.sap_successfactors_talent_kpis": ("talent_indicators", "Indicadores de Talento"),
+    "control_room.sap_successfactors_talent_metadata_readiness": (
+        "talent_source_readiness",
+        "Preparación de fuentes de Talento",
+    ),
+    "control_room.sap_successfactors_talent_overview": ("talent_overview", "Resumen de Talento"),
+    "copilot.proactive_briefing": ("copilot_briefing", "Recomendaciones del Copiloto"),
+}
+_CONTROL_ROOM_PROJECTIONS: dict[str, type[PublicProjectionModel]] = {
+    "ops_summary": ControlRoomOpsSummaryResponse,
+    "control_room.ops_summary": ControlRoomOpsSummaryResponse,
+    "agents_ops": ControlRoomAgentsOpsResponse,
+    "control_room.agents_ops": ControlRoomAgentsOpsResponse,
+    "sap_successfactors_talent_kpis": ControlRoomTalentKpisResponse,
+    "control_room.sap_successfactors_talent_kpis": ControlRoomTalentKpisResponse,
+    "sap_successfactors_talent_metadata_readiness": (
+        ControlRoomTalentMetadataReadinessResponse
+    ),
+    "control_room.sap_successfactors_talent_metadata_readiness": (
+        ControlRoomTalentMetadataReadinessResponse
+    ),
+    "sap_successfactors_talent_overview": ControlRoomTalentOverviewResponse,
+    "control_room.sap_successfactors_talent_overview": ControlRoomTalentOverviewResponse,
+}
 
 
 def _jsonable(value: Any) -> Any:
@@ -54,9 +98,11 @@ def _json_dumps(value: Any) -> str:
 
 
 def _int(value: Any) -> int:
+    if type(value) is float and not isfinite(value):
+        return 0
     try:
         return int(value or 0)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return 0
 
 
@@ -81,6 +127,208 @@ def _normalise_severity(value: Any) -> str:
     if severity in {"medium", "partial", "blocked"}:
         return "warning"
     return "info"
+
+
+def _safe_text(value: Any, *, field: str, max_len: int = 1_000) -> str | None:
+    if isinstance(value, datetime):
+        value = value.isoformat()
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    clean = redact_diagnostic_value(raw, field=field)
+    if (
+        not isinstance(clean, str)
+        or not clean
+        or clean == "[REDACTED]"
+        or contains_sensitive_copy(raw)
+    ):
+        return None
+    return clean[:max_len]
+
+
+def _safe_status(value: Any) -> str:
+    status = str(value or "unavailable").strip().lower()
+    if status in {"ready", "partial", "failed", "unavailable"}:
+        return status
+    if status in {"success", "ok", "healthy"}:
+        return "ready"
+    return "unavailable"
+
+
+def _safe_identifier(value: Any) -> str | None:
+    candidate = str(value or "").strip()
+    if not candidate or len(candidate) > 200:
+        return None
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-_")
+    return candidate if all(character in allowed for character in candidate) else None
+
+
+def _safe_action_href(value: Any) -> str | None:
+    href = _safe_text(value, field="action_href", max_len=400)
+    if not href or not href.startswith("/") or href.startswith("//"):
+        return None
+    return href
+
+
+def project_control_room_diagnostic(name: str, value: Any) -> dict[str, Any] | None:
+    """Project one raw Control Room service result through an explicit model."""
+
+    model = _CONTROL_ROOM_PROJECTIONS.get(str(name or ""))
+    if model is None:
+        return None
+    return model.project(value).model_dump(mode="json", exclude_none=True)
+
+
+def _project_operational_counts(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, Mapping) else {}
+    pipeline = source.get("pipeline")
+    pipeline = pipeline if isinstance(pipeline, Mapping) else {}
+    by_status = pipeline.get("by_status")
+    by_status = by_status if isinstance(by_status, Mapping) else {}
+    safe_counts = {
+        status: _int(by_status.get(status))
+        for status in ("pending", "running", "success", "partial", "blocked", "failed", "error")
+        if status in by_status
+    }
+    datasets = source.get("datasets")
+    datasets = datasets if isinstance(datasets, Mapping) else {}
+    watermarks = source.get("watermarks")
+    watermark_groups = len(watermarks) if isinstance(watermarks, list) else 0
+    return {
+        "pipeline": {"by_status": safe_counts},
+        "datasets": {"total": _int(datasets.get("total"))},
+        "watermarks": {"groups": watermark_groups},
+    }
+
+
+def _project_recommendation(value: Any) -> dict[str, Any] | None:
+    source = value if isinstance(value, Mapping) else {}
+    recommendation_id = _safe_identifier(source.get("fingerprint"))
+    if recommendation_id is None:
+        return None
+    status = str(source.get("status") or "active").strip().lower()
+    if status not in {"active", "dismissed", "resolved", "superseded"}:
+        status = "active"
+    action_kind = str(source.get("action_kind") or "navigate").strip().lower()
+    if action_kind not in {"navigate", "none"}:
+        action_kind = "none"
+    projected: dict[str, Any] = {
+        "id": recommendation_id,
+        "severity": _normalise_severity(source.get("severity")),
+        "status": status,
+        "action_kind": action_kind,
+    }
+    category = _safe_identifier(source.get("category"))
+    if category:
+        projected["category"] = category
+    for key in ("title", "body", "action_label"):
+        text = _safe_text(source.get(key), field=key)
+        if text:
+            projected[key] = text
+    href = _safe_action_href(source.get("action_href"))
+    if href:
+        projected["action_href"] = href
+    for key in ("first_seen_at", "last_seen_at", "resolved_at", "dismissed_at", "created_at"):
+        text = _safe_text(source.get(key), field=key, max_len=80)
+        if text:
+            projected[key] = text
+    score = source.get("priority_score")
+    if type(score) in {int, float}:
+        try:
+            numeric_score = float(score)
+        except (OverflowError, TypeError, ValueError):
+            numeric_score = float("nan")
+        if isfinite(numeric_score):
+            projected["priority_score"] = max(0, min(numeric_score, 100))
+    return projected
+
+
+def _project_source(value: Any) -> dict[str, Any] | None:
+    source = value if isinstance(value, Mapping) else {}
+    name = str(source.get("name") or "")
+    identity = _SOURCE_LABELS.get(name)
+    if identity is None:
+        return None
+    key, label = identity
+    projected: dict[str, Any] = {
+        "key": key,
+        "label": label,
+        "status": _safe_status(source.get("status")),
+    }
+    raw_data = source.get("data")
+    if name == "database.operational_counts":
+        projected["diagnostic"] = _project_operational_counts(raw_data)
+    elif name == "copilot.proactive_briefing":
+        data = raw_data if isinstance(raw_data, Mapping) else {}
+        highlights = data.get("highlights")
+        highlights = highlights if isinstance(highlights, list) else []
+        projected["diagnostic"] = {
+            "highlights": [
+                item
+                for raw in highlights[:6]
+                if (item := _project_recommendation(raw)) is not None
+            ]
+        }
+    else:
+        diagnostic = project_control_room_diagnostic(name, raw_data)
+        if diagnostic is not None:
+            projected["diagnostic"] = diagnostic
+    return projected
+
+
+def project_operator_recommendations(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, Mapping) else {}
+    recommendations = source.get("recommendations")
+    recommendations = recommendations if isinstance(recommendations, list) else []
+    return {
+        "available": bool(source.get("available", True)),
+        "recommendations": [
+            item
+            for raw in recommendations
+            if (item := _project_recommendation(raw)) is not None
+        ],
+    }
+
+
+def project_operator_snapshot(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, Mapping) else {}
+    sources = source.get("sources")
+    sources = sources if isinstance(sources, list) else []
+    projected_sources = [
+        item for raw in sources if (item := _project_source(raw)) is not None
+    ]
+    recommendations = source.get("recommendations")
+    recommendations = recommendations if isinstance(recommendations, list) else []
+    result: dict[str, Any] = {
+        "available": bool(source.get("available", True)),
+        "status": _safe_status(source.get("status")),
+        "summary": {
+            "sources_total": len(projected_sources),
+            "sources_ready": sum(
+                item.get("status") == "ready" for item in projected_sources
+            ),
+            "recommendations_total": len(recommendations),
+        },
+        "sources": projected_sources,
+        "recommendations": [
+            item
+            for raw in recommendations
+            if (item := _project_recommendation(raw)) is not None
+        ],
+    }
+    generated_at = source.get("generated_at") or source.get("created_at")
+    timestamp = _safe_text(generated_at, field="generated_at", max_len=80)
+    if timestamp:
+        result["generated_at"] = timestamp
+        result["materialized_at"] = timestamp
+    if type(source.get("persisted")) is bool:
+        result["persisted"] = source["persisted"]
+    return result
+
+
+def project_dismissed_recommendation(value: Any) -> dict[str, Any]:
+    projected = _project_recommendation(value)
+    return projected or {"status": "dismissed"}
 
 
 def _recommendation(
@@ -232,7 +480,7 @@ def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[s
                 evidence={"summary": summary, "status": metadata.get("status")},
                 action_label="Ver readiness",
                 action_href="/control-room?front=talent",
-                required_permission="monitor.read",
+                required_permission="operations.read",
             ))
 
     operational_source = sources.get("database.operational_counts")
@@ -684,6 +932,7 @@ async def list_recommendations(
         }
     limit = max(1, min(int(limit or 20), 100))
     status_filter = "" if include_dismissed else "AND status <> 'dismissed'"
+    effective_permissions = sorted(permissions.get_effective_permissions(user))
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         rows = await conn.fetch(
             f"""
@@ -695,6 +944,11 @@ async def list_recommendations(
              WHERE workspace_id = $1::uuid
                AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
                {status_filter}
+               AND (
+                    required_permission IS NULL
+                    OR required_permission = ''
+                    OR required_permission = ANY($3::text[])
+               )
              ORDER BY
                CASE severity
                  WHEN 'critical' THEN 0
@@ -703,17 +957,25 @@ async def list_recommendations(
                  ELSE 3
                END,
                last_seen_at DESC
-             LIMIT $3
+             LIMIT $4
             """,
             workspace_id,
             tenant_id,
+            effective_permissions,
             limit,
         )
+    visible_rows = []
+    for row in rows:
+        public_row = _row_public(row)
+        required = str(public_row.get("required_permission") or "").strip()
+        if required and not permissions.has_permission(user, required):
+            continue
+        visible_rows.append(public_row)
     return {
         "available": True,
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,
-        "recommendations": [_row_public(row) for row in rows],
+        "recommendations": visible_rows,
     }
 
 
@@ -725,6 +987,7 @@ async def dismiss_recommendation(user: dict[str, Any], recommendation_id: str) -
     value = str(recommendation_id or "").strip()
     if not value or len(value) > 200:
         raise HTTPException(400, "invalid recommendation id")
+    effective_permissions = sorted(permissions.get_effective_permissions(user))
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         row = await conn.fetchrow(
             """
@@ -734,11 +997,17 @@ async def dismiss_recommendation(user: dict[str, Any], recommendation_id: str) -
              WHERE workspace_id = $1::uuid
                AND ($2::uuid IS NULL OR tenant_id = $2::uuid)
                AND (id::text = $3 OR fingerprint = $3)
+               AND (
+                    required_permission IS NULL
+                    OR required_permission = ''
+                    OR required_permission = ANY($4::text[])
+               )
              RETURNING id::text, fingerprint, status
             """,
             workspace_id,
             tenant_id,
             value,
+            effective_permissions,
         )
     if not row:
         raise HTTPException(404, "recommendation not found")
@@ -746,18 +1015,21 @@ async def dismiss_recommendation(user: dict[str, Any], recommendation_id: str) -
 
 
 async def prompt_context_for_user(user: dict[str, Any], *, limit: int = 8) -> str | None:
-    """Compact snapshot for LLM prompts."""
+    """Compact projected context; diagnostics require operational authority."""
 
     try:
-        snapshot = await latest_snapshot(user)
-        recs = await list_recommendations(user, limit=limit)
+        recs = project_operator_recommendations(
+            await list_recommendations(user, limit=limit)
+        )
+        snapshot = None
+        if permissions.has_permission(user, "operations.read"):
+            snapshot = project_operator_snapshot(await latest_snapshot(user))
     except Exception:
         logger.debug("copilot prompt live context failed", exc_info=True)
         return None
-    payload = {
-        "snapshot": snapshot,
-        "recommendations": recs.get("recommendations", []),
-    }
+    payload = {"recommendations": recs.get("recommendations", [])}
+    if snapshot is not None:
+        payload["snapshot"] = snapshot
     text = _json_dumps(payload)
     max_len = 9000
     if len(text) > max_len:

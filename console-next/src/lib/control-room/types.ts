@@ -254,6 +254,9 @@ export interface MarketDecisionValidationPayload {
 
 export interface SfGoldWidgetRow {
   label?: string | null;
+  company_name?: string | null;
+  location_name?: string | null;
+  department_name?: string | null;
   value?: string | number | boolean | null;
   count?: number | null;
   headcount?: number | null;
@@ -327,13 +330,8 @@ export interface SfTalentKpisPayload {
     recruiting_blockers?: number;
     skill_gap_count?: number;
     skill_coverage_pct?: number | null;
-    operational_status?: string | null;
-    operational_label?: string | null;
     status?: DataReadiness | SourceState | "partial" | null;
-    source_mode?: string | null;
-    readiness_status?: string | null;
     confidence?: number | null;
-    latest_analysis_status?: string | null;
   };
   widgets?: SfTalentWidget[];
   signals?: SfTalentSignal[];
@@ -419,7 +417,6 @@ export interface SfTalentRosterRow {
   role?: string | null;
   unit?: string | null;
   region?: string | null;
-  readiness_status?: string | null;
   box_label?: string | null;
   performance_band?: string | null;
   performance_band_available?: string | null;
@@ -472,10 +469,10 @@ export interface SfTalentAnomaliesPayload {
   blockers?: SfTalentBlocker[];
 }
 
-export interface SfTalentMetadataEntity {
-  id?: string | null;
-  required_for?: string | null;
-  status?: DataReadiness | SourceState | "ready" | "partial" | null;
+export interface SfTalentDiagnosticComponent {
+  component?: string | null;
+  purpose?: string | null;
+  status?: DataReadiness | SourceState | "ready" | "partial" | "available" | null;
   ready_to_extract?: boolean | null;
 }
 
@@ -485,15 +482,22 @@ export interface SfTalentMetadataReadinessPayload {
   summary?: {
     cpa_ready_employees: number;
     cpa_insufficient_employees: number;
-    entities: number;
-    blocked_entities: number;
-    live_required_ready?: number;
-    live_required_total?: number;
-    live_status?: string | null;
+    components: number;
+    blocked_components: number;
+    required_sources_ready: number;
+    required_sources_total: number;
   };
-  entities?: SfTalentMetadataEntity[];
-  blockers?: SfTalentBlocker[];
-  live_preflight?: { status?: string | null } | null;
+  components?: SfTalentDiagnosticComponent[];
+  blockers?: Array<{
+    status?: string | null;
+    title?: string | null;
+    detail?: string | null;
+  }>;
+  source_check?: {
+    status?: string | null;
+    required_ready: number;
+    required_total: number;
+  };
 }
 
 export interface SfTalentOverviewPayload extends SfTalentKpisPayload {
@@ -507,11 +511,6 @@ export interface SfTalentOverviewPayload extends SfTalentKpisPayload {
     status?: DataReadiness | SourceState | "ready" | "partial" | null;
     summary?: SfTalentAnomaliesPayload["summary"];
     items?: SfTalentAnomaly[];
-  };
-  metadata_readiness?: {
-    status?: DataReadiness | SourceState | "ready" | "partial" | null;
-    summary?: SfTalentMetadataReadinessPayload["summary"];
-    entities?: SfTalentMetadataEntity[];
   };
 }
 

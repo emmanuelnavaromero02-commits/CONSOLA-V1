@@ -11,6 +11,10 @@ from app.schemas.control_room_action_requests import (
     ControlRoomActionHandleRequest,
 )
 from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
+from app.schemas.control_room_alert_mutation_responses import (
+    ControlRoomAlertMutationResponse,
+    project_alert_mutation_response,
+)
 from app.schemas.control_room_legacy_responses import (
     ControlRoomAgentsOpsResponse,
     ControlRoomBusinessSummaryResponse,
@@ -40,6 +44,32 @@ from app.schemas.control_room_legacy_responses import (
     ControlRoomTalentWorkforceTrendsResponse,
     ControlRoomThresholdsResponse,
     project_public_control_room_response,
+)
+from app.schemas.control_room_state_mutation_responses import (
+    ControlRoomApprovalMutationResponse,
+    ControlRoomDecisionMutationResponse,
+    ControlRoomDismissMutationResponse,
+    ControlRoomOptionMutationResponse,
+    ControlRoomReopenMutationResponse,
+    ControlRoomThresholdMutationResponse,
+    project_approval_mutation_response,
+    project_decision_mutation_response,
+    project_dismiss_mutation_response,
+    project_option_mutation_response,
+    project_reopen_mutation_response,
+    project_threshold_mutation_response,
+)
+from app.schemas.control_room_workflow_mutation_responses import (
+    ControlRoomApplyLessonMutationResponse,
+    ControlRoomControlMutationResponse,
+    ControlRoomCreateLessonMutationResponse,
+    ControlRoomOutcomeMutationResponse,
+    ControlRoomStepMutationResponse,
+    project_apply_lesson_mutation_response,
+    project_control_mutation_response,
+    project_create_lesson_mutation_response,
+    project_outcome_mutation_response,
+    project_step_mutation_response,
 )
 from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
@@ -80,6 +110,7 @@ _INTERNAL_OPERATIONAL_VIEWS = frozenset(
         "decision_intelligence_runs",
         "ops_summary",
         "sap_successfactors_market_validation",
+        "sap_successfactors_talent_metadata_readiness",
     }
 )
 
@@ -443,7 +474,7 @@ async def control_room_sap_successfactors_talent_anomalies(user: dict = Depends(
 @router.get(
     "/sap-successfactors/talent/metadata-readiness",
     response_model=ControlRoomTalentMetadataReadinessResponse,
-    dependencies=[Depends(require_permission("datasets.read"))],
+    dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_sap_successfactors_talent_metadata_readiness(user: dict = Depends(require_authenticated)):
     payload = await _control_room_cache_get_or_set(
@@ -693,6 +724,7 @@ async def control_room_internal_read(
 
 @router.post(
     "/alerts/{item_id}/ack",
+    response_model=ControlRoomAlertMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_acknowledge_alert(
@@ -701,20 +733,23 @@ async def control_room_acknowledge_alert(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.acknowledge_alert(
-            item_id,
+    return project_alert_mutation_response(
+        await _invalidate_after_write(
             user,
-            body=body if isinstance(body, dict) else {},
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.acknowledge_alert(
+                item_id,
+                user,
+                body=body if isinstance(body, dict) else {},
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/alerts/{item_id}/snooze",
+    response_model=ControlRoomAlertMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_snooze_alert(
@@ -723,20 +758,23 @@ async def control_room_snooze_alert(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.snooze_alert(
-            item_id,
+    return project_alert_mutation_response(
+        await _invalidate_after_write(
             user,
-            body=body if isinstance(body, dict) else {},
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.snooze_alert(
+                item_id,
+                user,
+                body=body if isinstance(body, dict) else {},
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/alerts/{item_id}/assign",
+    response_model=ControlRoomAlertMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_assign_alert(
@@ -745,20 +783,23 @@ async def control_room_assign_alert(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.assign_alert(
-            item_id,
+    return project_alert_mutation_response(
+        await _invalidate_after_write(
             user,
-            body=body if isinstance(body, dict) else {},
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.assign_alert(
+                item_id,
+                user,
+                body=body if isinstance(body, dict) else {},
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/alerts/{item_id}/false-positive",
+    response_model=ControlRoomAlertMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_false_positive_alert(
@@ -767,14 +808,16 @@ async def control_room_false_positive_alert(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.mark_alert_false_positive(
-            item_id,
+    return project_alert_mutation_response(
+        await _invalidate_after_write(
             user,
-            body=body if isinstance(body, dict) else {},
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.mark_alert_false_positive(
+                item_id,
+                user,
+                body=body if isinstance(body, dict) else {},
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
@@ -855,6 +898,7 @@ async def control_room_item_outcomes(item_id: str, user: dict = Depends(require_
 
 @router.post(
     "/items/{item_id}/step",
+    response_model=ControlRoomStepMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_record_item_step(
@@ -866,22 +910,25 @@ async def control_room_record_item_step(
     step_id = body.get("step_id") if isinstance(body, dict) else None
     note = body.get("note") if isinstance(body, dict) else None
     control_id = body.get("control_id") if isinstance(body, dict) else None
-    return await _invalidate_after_write(
-        user,
-        control_room_service.record_item_step(
-            item_id,
-            str(step_id or ""),
+    return project_step_mutation_response(
+        await _invalidate_after_write(
             user,
-            note=str(note or ""),
-            control_id=str(control_id or ""),
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.record_item_step(
+                item_id,
+                str(step_id or ""),
+                user,
+                note=str(note or ""),
+                control_id=str(control_id or ""),
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/lessons",
+    response_model=ControlRoomCreateLessonMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_create_item_lesson(
@@ -890,20 +937,23 @@ async def control_room_create_item_lesson(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.create_item_lesson(
-            item_id,
-            body if isinstance(body, dict) else {},
+    return project_create_lesson_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.create_item_lesson(
+                item_id,
+                body if isinstance(body, dict) else {},
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/outcomes",
+    response_model=ControlRoomOutcomeMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_record_item_outcome(
@@ -912,20 +962,23 @@ async def control_room_record_item_outcome(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.record_item_outcome(
-            item_id,
-            body if isinstance(body, dict) else {},
+    return project_outcome_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.record_item_outcome(
+                item_id,
+                body if isinstance(body, dict) else {},
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/lessons/{lesson_id}/apply",
+    response_model=ControlRoomApplyLessonMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_apply_item_lesson(
@@ -935,21 +988,24 @@ async def control_room_apply_item_lesson(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.apply_item_lesson(
-            item_id,
-            lesson_id,
-            body if isinstance(body, dict) else {},
+    return project_apply_lesson_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.apply_item_lesson(
+                item_id,
+                lesson_id,
+                body if isinstance(body, dict) else {},
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/control/{control_id}",
+    response_model=ControlRoomControlMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_update_item_control(
@@ -959,15 +1015,17 @@ async def control_room_update_item_control(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.update_item_control(
-            item_id,
-            control_id,
-            body if isinstance(body, dict) else {},
+    return project_control_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.update_item_control(
+                item_id,
+                control_id,
+                body if isinstance(body, dict) else {},
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
@@ -986,6 +1044,7 @@ async def control_room_anomaly_detail(anomaly_id: str, user: dict = Depends(requ
 
 @router.post(
     "/anomalies/{anomaly_id}/decision",
+    response_model=ControlRoomDecisionMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_create_decision(
@@ -993,19 +1052,22 @@ async def control_room_create_decision(
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.create_decision_for_anomaly(
-            anomaly_id,
+    return project_decision_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.create_decision_for_anomaly(
+                anomaly_id,
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/decision",
+    response_model=ControlRoomDecisionMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_create_item_decision(
@@ -1013,19 +1075,22 @@ async def control_room_create_item_decision(
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.create_decision_for_item(
-            item_id,
+    return project_decision_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.create_decision_for_item(
+                item_id,
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/option",
+    response_model=ControlRoomOptionMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_select_item_option(
@@ -1035,14 +1100,16 @@ async def control_room_select_item_option(
     user: dict = Depends(require_authenticated),
 ):
     option_id = body.get("option_id") if isinstance(body, dict) else None
-    return await _invalidate_after_write(
-        user,
-        control_room_service.select_item_option(
-            item_id,
-            str(option_id or ""),
+    return project_option_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.select_item_option(
+                item_id,
+                str(option_id or ""),
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
@@ -1130,6 +1197,7 @@ async def control_room_execute_item(
 
 @router.post(
     "/anomalies/{anomaly_id}/approve",
+    response_model=ControlRoomApprovalMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_approve(
@@ -1141,20 +1209,23 @@ async def control_room_approve(
     decision_id = None
     if isinstance(body, dict) and body.get("decision_id") is not None:
         decision_id = int(body["decision_id"])
-    return await _invalidate_after_write(
-        user,
-        control_room_service.approve_anomaly(
-            anomaly_id,
+    return project_approval_mutation_response(
+        await _invalidate_after_write(
             user,
-            decision_id=decision_id,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.approve_anomaly(
+                anomaly_id,
+                user,
+                decision_id=decision_id,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/approve",
+    response_model=ControlRoomApprovalMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_approve_item(
@@ -1166,20 +1237,23 @@ async def control_room_approve_item(
     decision_id = None
     if isinstance(body, dict) and body.get("decision_id") is not None:
         decision_id = int(body["decision_id"])
-    return await _invalidate_after_write(
-        user,
-        control_room_service.approve_item(
-            item_id,
+    return project_approval_mutation_response(
+        await _invalidate_after_write(
             user,
-            decision_id=decision_id,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.approve_item(
+                item_id,
+                user,
+                decision_id=decision_id,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/dismiss",
+    response_model=ControlRoomDismissMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_dismiss_item(
@@ -1189,20 +1263,23 @@ async def control_room_dismiss_item(
     user: dict = Depends(require_authenticated),
 ):
     reason = body.get("reason") if isinstance(body, dict) else None
-    return await _invalidate_after_write(
-        user,
-        control_room_service.dismiss_item(
-            item_id,
+    return project_dismiss_mutation_response(
+        await _invalidate_after_write(
             user,
-            reason=str(reason or ""),
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.dismiss_item(
+                item_id,
+                user,
+                reason=str(reason or ""),
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.post(
     "/items/{item_id}/reopen",
+    response_model=ControlRoomReopenMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_reopen_item(
@@ -1212,14 +1289,16 @@ async def control_room_reopen_item(
     user: dict = Depends(require_authenticated),
 ):
     reason = body.get("reason") if isinstance(body, dict) else None
-    return await _invalidate_after_write(
-        user,
-        control_room_service.reopen_item(
-            item_id,
+    return project_reopen_mutation_response(
+        await _invalidate_after_write(
             user,
-            reason=str(reason or ""),
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.reopen_item(
+                item_id,
+                user,
+                reason=str(reason or ""),
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
@@ -1238,6 +1317,7 @@ async def control_room_thresholds(user: dict = Depends(require_authenticated)):
 
 @router.post(
     "/thresholds",
+    response_model=ControlRoomThresholdMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_upsert_threshold(
@@ -1245,19 +1325,22 @@ async def control_room_upsert_threshold(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.upsert_threshold(
-            body if isinstance(body, dict) else {},
+    return project_threshold_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.upsert_threshold(
+                body if isinstance(body, dict) else {},
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 
 
 @router.patch(
     "/thresholds",
+    response_model=ControlRoomThresholdMutationResponse,
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )
 async def control_room_patch_threshold(
@@ -1265,13 +1348,15 @@ async def control_room_patch_threshold(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    return await _invalidate_after_write(
-        user,
-        control_room_service.upsert_threshold(
-            body if isinstance(body, dict) else {},
+    return project_threshold_mutation_response(
+        await _invalidate_after_write(
             user,
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+            control_room_service.upsert_threshold(
+                body if isinstance(body, dict) else {},
+                user,
+                ip=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            ),
         ),
     )
 

@@ -10,6 +10,9 @@ from app.schemas.control_room_public_projection import (
     PublicScalar,
     PublicSlugIdentity,
 )
+from app.schemas.control_room_talent_diagnostic_responses import (
+    ControlRoomTalentMetadataReadinessResponse,
+)
 
 
 class TalentProfile(PublicProjectionModel):
@@ -33,12 +36,7 @@ class TalentReadiness(PublicProjectionModel):
     recruiting_blockers: int = 0
     skill_gap_count: int = 0
     skill_coverage_pct: float | int | None = None
-    operational_status: str | None = None
-    operational_label: str | None = None
-    readiness_status: str | None = None
     confidence: float | int | None = None
-    source_mode: str | None = None
-    latest_analysis_status: str | None = None
     status: str | None = None
 
 
@@ -189,7 +187,6 @@ class TalentRosterRow(PublicProjectionModel):
     role: str | None = None
     unit: str | None = None
     region: str | None = None
-    readiness_status: str | None = None
     box_label: str | None = None
     performance_band: str | None = None
     performance_band_available: str | None = None
@@ -234,35 +231,6 @@ class ControlRoomTalentAnomaliesResponse(PublicProjectionModel):
     blockers: list[TalentBlocker] = Field(default_factory=list)
 
 
-class TalentMetadataSummary(PublicProjectionModel):
-    cpa_ready_employees: int = 0
-    cpa_insufficient_employees: int = 0
-    entities: int = 0
-    blocked_entities: int = 0
-    live_required_ready: int = 0
-    live_required_total: int = 0
-    live_status: str | None = None
-
-
-class TalentMetadataEntity(PublicSlugIdentity):
-    required_for: str | None = None
-    status: str | None = None
-    ready_to_extract: bool | None = None
-
-
-class TalentLivePreflight(PublicProjectionModel):
-    status: str | None = None
-
-
-class ControlRoomTalentMetadataReadinessResponse(PublicProjectionModel):
-    generated_at: str | None = None
-    status: str = ""
-    summary: TalentMetadataSummary = Field(default_factory=TalentMetadataSummary)
-    entities: list[TalentMetadataEntity] = Field(default_factory=list)
-    blockers: list[TalentBlocker] = Field(default_factory=list)
-    live_preflight: TalentLivePreflight | None = None
-
-
 class TalentOverviewNineBox(PublicProjectionModel):
     status: str | None = None
     totals: TalentNineBoxTotals = Field(default_factory=TalentNineBoxTotals)
@@ -276,18 +244,9 @@ class TalentOverviewAnomalies(PublicProjectionModel):
     items: list[TalentAnomaly] = Field(default_factory=list)
 
 
-class TalentOverviewMetadata(PublicProjectionModel):
-    status: str | None = None
-    summary: TalentMetadataSummary = Field(default_factory=TalentMetadataSummary)
-    entities: list[TalentMetadataEntity] = Field(default_factory=list)
-
-
 class ControlRoomTalentOverviewResponse(ControlRoomTalentKpisResponse):
     nine_box: TalentOverviewNineBox = Field(default_factory=TalentOverviewNineBox)
     anomalies: TalentOverviewAnomalies = Field(default_factory=TalentOverviewAnomalies)
-    metadata_readiness: TalentOverviewMetadata = Field(
-        default_factory=TalentOverviewMetadata
-    )
 
 
 __all__ = tuple(name for name in globals() if name.startswith("ControlRoom"))

@@ -276,18 +276,21 @@ def _sf_gold_public_rows(
 def _sf_gold_top_headcount_rows(
     rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5
 ) -> list[dict[str, Any]]:
-    id_key, name_key = label_keys
+    _, name_key = label_keys
     top: list[dict[str, Any]] = []
     for row in rows:
-        label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
+        raw_name = row.get(name_key)
+        business_name = (
+            str(raw_name).strip() if raw_name is not None and str(raw_name).strip() else None
+        )
         top.append(
             {
-                "label": label,
-                "id": _sf_talent_public_value(row.get(id_key)),
+                "label": business_name,
+                name_key: business_name,
                 "headcount": int(row.get("headcount") or 0),
             }
         )
-    return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[
+    return sorted(top, key=lambda item: (-int(item["headcount"]), str(item["label"] or "")))[
         :limit
     ]
 
@@ -2092,7 +2095,6 @@ async def sap_successfactors_talent_overview(user: dict | None) -> dict[str, Any
     kpis = await sap_successfactors_talent_kpis(user)
     nine_box = await sap_successfactors_talent_9box(user)
     anomalies = await sap_successfactors_talent_anomalies(user)
-    metadata = await sap_successfactors_talent_metadata_readiness(user)
     return {
         **kpis,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -2106,11 +2108,6 @@ async def sap_successfactors_talent_overview(user: dict | None) -> dict[str, Any
             "status": anomalies.get("status"),
             "summary": anomalies.get("summary", {}),
             "items": anomalies.get("items", []),
-        },
-        "metadata_readiness": {
-            "status": metadata.get("status"),
-            "summary": metadata.get("summary", {}),
-            "entities": metadata.get("entities", []),
         },
     }
 

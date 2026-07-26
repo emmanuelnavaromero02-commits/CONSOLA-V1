@@ -21,7 +21,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getSuccessFactorsTalentAnomalies,
   getSuccessFactorsTalentBoxRoster,
-  getSuccessFactorsTalentMetadataReadiness,
   getSuccessFactorsTalentNineBox,
   getSuccessFactorsTalentOverview,
 } from "@/lib/control-room/client";
@@ -29,7 +28,6 @@ import type {
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
   SfTalentDesempenoCohort,
-  SfTalentMetadataReadinessPayload,
   SfTalentNineBoxCell,
   SfTalentNineBoxPayload,
   SfTalentOverviewPayload,
@@ -111,64 +109,25 @@ function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
 }
 
 function readinessSummaryCopy(overview: SfTalentOverviewPayload | null, nineBox: SfTalentNineBoxPayload | null) {
-  const sourceMode = String(overview?.readiness?.source_mode || "");
   const referenceCount = nineBox?.totals.reference ?? 0;
-  if (sourceMode === "cpa_real") {
-    return { label: "Readiness SAP real", detail: "datos C/P/A del tenant" };
-  }
-  if (sourceMode === "benchmark_internal" || referenceCount > 0) {
+  if (referenceCount > 0) {
     return { label: "Readiness con referencia", detail: "referencia interna aprobada" };
   }
   return { label: "Readiness", detail: "en espera de C/P/A o referencia" };
-}
-
-const talentComponents = [
-  { id: "performance", label: "Performance" },
-  { id: "competency", label: "Competencias" },
-  { id: "aspiration", label: "Aspiración" },
-  { id: "roles", label: "Roles" },
-  { id: "learning", label: "Learning" },
-  { id: "recruiting", label: "Recruiting" },
-] as const;
-
-function talentComponentReadiness(metadata: SfTalentMetadataReadinessPayload | null) {
-  const entities = new Map((metadata?.entities ?? []).map((entity) => [entity.id, entity]));
-  return talentComponents.map((component) => {
-    const entity = entities.get(component.id);
-    const status = normalizeReadinessStatus(entity?.status);
-    // Desempeño presente pero C/P/A incompleto: copy explícito (no solo "Disponible")
-    // y la nota se trata como "pendiente" (ámbar), nunca como bloqueo (naranja).
-    const performanceAvailable = component.id === "performance" && status === "available";
-    return {
-      ...component,
-      status,
-      scope: entity?.required_for || "Información pendiente",
-      badgeLabel: performanceAvailable ? "Desempeño disponible" : undefined,
-      note: performanceAvailable
-        ? "Potencial pendiente (faltan Competencias y Aspiración)"
-        : entity?.ready_to_extract
-          ? "Preparado para extracción supervisada"
-          : "Información pendiente de disponibilidad",
-      notePending: performanceAvailable,
-    };
-  });
 }
 
 export function TalentOverviewPanel({
   overview,
   nineBox,
   anomalies,
-  metadata,
 }: {
   overview: SfTalentOverviewPayload | null;
   nineBox: SfTalentNineBoxPayload | null;
   anomalies: SfTalentAnomaliesPayload | null;
-  metadata: SfTalentMetadataReadinessPayload | null;
 }) {
   const profiled = overview?.readiness?.profiled_employees ?? 0;
   const calculable = overview?.readiness?.calculable_employees ?? 0;
   const classified = nineBox?.totals?.ready ?? overview?.nine_box?.totals?.ready ?? 0;
-  const blockedEntities = metadata?.summary?.blocked_entities ?? 0;
   const activeSignals = anomalies?.summary?.total ?? overview?.anomalies?.summary?.total ?? 0;
   const readinessCopy = readinessSummaryCopy(overview, nineBox);
 
@@ -198,9 +157,9 @@ export function TalentOverviewPanel({
       <CommandMetric
         label="Senales activas"
         value={formatNumber(activeSignals)}
-        detail={`${formatNumber(blockedEntities)} entidades bloqueadas`}
+        detail="señales empresariales para revisión"
         icon={AlertTriangle}
-        tone={activeSignals || blockedEntities ? "warning" : "neutral"}
+        tone={activeSignals ? "warning" : "neutral"}
       />
     </section>
   );
@@ -673,7 +632,6 @@ export function TalentControlRoom() {
   const [overview, setOverview] = useState<SfTalentOverviewPayload | null>(null);
   const [nineBox, setNineBox] = useState<SfTalentNineBoxPayload | null>(null);
   const [anomalies, setAnomalies] = useState<SfTalentAnomaliesPayload | null>(null);
-  const [metadata, setMetadata] = useState<SfTalentMetadataReadinessPayload | null>(null);
   const [roster, setRoster] = useState<SfTalentRosterPayload | null>(null);
   const [selectedBox, setSelectedBox] = useState<string | null>(null);
   const [collar, setCollar] = useState<Collar>("confianza");
@@ -686,16 +644,14 @@ export function TalentControlRoom() {
     setLoading(true);
     setError("");
     try {
-      const [overviewPayload, matrixPayload, anomalyPayload, metadataPayload] = await Promise.all([
+      const [overviewPayload, matrixPayload, anomalyPayload] = await Promise.all([
         getSuccessFactorsTalentOverview(),
         getSuccessFactorsTalentNineBox(),
         getSuccessFactorsTalentAnomalies(),
-        getSuccessFactorsTalentMetadataReadiness(),
       ]);
       setOverview(overviewPayload);
       setNineBox(matrixPayload);
       setAnomalies(anomalyPayload);
-      setMetadata(metadataPayload);
       const initialBox = new URLSearchParams(window.location.search).get("box");
       if (!selectedBox) {
         const matrixCells = matrixPayload.cells ?? [];
@@ -749,7 +705,6 @@ export function TalentControlRoom() {
 
   const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box?.cells ?? [], [nineBox, overview]);
   const anomalyItems = anomalies?.items ?? overview?.anomalies?.items ?? [];
-  const componentReadiness = useMemo(() => talentComponentReadiness(metadata), [metadata]);
 
   return (
     <main className="min-h-screen bg-background text-foreground dark:bg-[#050b14]">
@@ -784,26 +739,11 @@ export function TalentControlRoom() {
         ) : null}
         {loading ? (
           <OperationalNotice tone="info" title="Consultando Talent Gold">
-            Actualizando overview, 9-box, metadata readiness y anomalias.
+            Actualizando overview, 9-box y anomalias.
           </OperationalNotice>
         ) : null}
 
-        <TalentOverviewPanel overview={overview} nineBox={nineBox} anomalies={anomalies} metadata={metadata} />
-
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6" aria-label="Blockers por componente Talent">
-          {componentReadiness.map((component) => (
-            <article key={component.id} className="rounded-lg border bg-card p-3 text-sm shadow-sm dark:border-sky-400/15 dark:bg-[#081423]">
-              <div className="flex items-start justify-between gap-2">
-                <strong className="text-foreground dark:text-white">{component.label}</strong>
-                <ReadinessBadge status={component.status} label={component.badgeLabel} compact />
-              </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{component.scope}</p>
-              <p className={`mt-2 line-clamp-2 text-xs ${component.notePending ? "text-amber-700 dark:text-amber-300" : "text-orange-700 dark:text-orange-300"}`}>
-                {component.note}
-              </p>
-            </article>
-          ))}
-        </section>
+        <TalentOverviewPanel overview={overview} nineBox={nineBox} anomalies={anomalies} />
 
         {collar === "sindicalizado" ? (
           <OperationalNotice tone="warning" title="Segmento sindicalizado pendiente">
@@ -833,55 +773,7 @@ export function TalentControlRoom() {
           />
         </div>
 
-        <section className="grid gap-4 xl:grid-cols-2">
-          <div className="rounded-xl border bg-card p-4 shadow-sm dark:border-orange-400/20 dark:bg-[#081423]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300/80">Metadata readiness</p>
-                <h3 className="text-base font-semibold text-foreground dark:text-white">Entidades requeridas C/P/A</h3>
-              </div>
-              <ReadinessBadge status={metadata?.status || "missing"} compact />
-            </div>
-            <div className="mt-4 grid gap-2">
-              {(metadata?.entities ?? []).map((entity, index) => (
-                <article key={`${entity.id || "component"}:${index}`} className="rounded-lg border bg-background p-3 text-sm dark:border-orange-400/10 dark:bg-[#06111f]">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <strong className="text-foreground dark:text-white">
-                        {talentComponents.find((component) => component.id === entity.id)?.label || "Componente Talent"}
-                      </strong>
-                      <p className="text-xs text-muted-foreground">{entity.required_for || "Preparación de talento"}</p>
-                    </div>
-                    <ReadinessBadge status={entity.status || "missing"} compact />
-                  </div>
-                  <p className="mt-2 text-xs text-orange-700 dark:text-orange-300">
-                    {entity.ready_to_extract ? "Preparado para extracción supervisada" : "Pendiente de disponibilidad"}
-                  </p>
-                </article>
-              ))}
-            </div>
-            <div className="mt-4 rounded-lg border bg-background p-3 dark:border-emerald-400/10 dark:bg-[#06111f]">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">
-                    Preparación C/P/A
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Estado público de disponibilidad para Performance, Competencias y Aspiración.
-                  </p>
-                </div>
-                <ReadinessBadge
-                  status={normalizeReadinessStatus(metadata?.live_preflight?.status || metadata?.summary?.live_status || metadata?.status)}
-                  label={metadata?.summary ? `${metadata.summary.live_required_ready ?? 0}/${metadata.summary.live_required_total ?? 0} disponibles` : "En espera"}
-                  compact
-                />
-              </div>
-              <p className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground dark:border-orange-400/20">
-                La extracción solo se habilita cuando la disponibilidad y los permisos del contexto quedan confirmados.
-              </p>
-            </div>
-          </div>
-
+        <section className="grid gap-4">
           <div className="rounded-xl border bg-card p-4 shadow-sm dark:border-emerald-400/20 dark:bg-[#081423]">
             <div className="flex items-start gap-3">
               <span className="grid h-10 w-10 place-items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">

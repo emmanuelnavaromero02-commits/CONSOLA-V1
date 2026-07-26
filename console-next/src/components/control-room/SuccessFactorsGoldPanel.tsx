@@ -10,10 +10,17 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
 }
 
-function rowLabel(row: SfGoldWidgetRow): string {
-  const candidates = [row.label, row.fact, row.status];
+function rowLabel(row: SfGoldWidgetRow): string | null {
+  const candidates = [
+    row.company_name,
+    row.location_name,
+    row.department_name,
+    row.label,
+    row.fact,
+    row.status,
+  ];
   const value = candidates.find((item) => typeof item === "string" && item.trim().length > 0);
-  return String(value || "Registro");
+  return value?.trim() || null;
 }
 
 function businessWidgetTitle(widget: SfGoldWidget): string {
@@ -727,10 +734,11 @@ export function SuccessFactorsGoldPanel({
                   <div className="mt-4 space-y-3">
                     {rows.slice(0, 6).map((row, index) => {
                       const headcount = typeof row.headcount === "number" ? row.headcount : 0;
+                      const label = rowLabel(row);
                       return (
                         <div key={`${widget.id || widget.title || "indicator"}:${index}`} className="space-y-1">
                           <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="min-w-0 truncate text-muted-foreground">{rowLabel(row)}</span>
+                            {label ? <span className="min-w-0 truncate text-muted-foreground">{label}</span> : <span />}
                             {typeof row.headcount === "number" ? <strong className="tabular-nums text-foreground dark:text-white">{formatNumber(headcount)}</strong> : null}
                           </div>
                           {typeof row.headcount === "number" ? <MiniBar value={headcount} max={maxHeadcount} /> : null}

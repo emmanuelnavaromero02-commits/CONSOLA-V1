@@ -5,15 +5,14 @@ import types
 import unicodedata
 from collections.abc import Mapping
 from datetime import date, datetime
+from math import isfinite
 from typing import Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, field_validator
-
-from app.services.control_room.business_copy_sensitivity import (
-    contains_sensitive_copy,
-)
 from app.services.control_room.business_copy_detection import (
     canonicalize_detection_separators,
+)
+from app.services.control_room.business_copy_sensitivity import (
+    contains_sensitive_copy,
 )
 from app.services.control_room.business_copy_unicode import security_detection_forms
 from app.services.control_room.business_surface_identity import (
@@ -24,7 +23,7 @@ from app.services.control_room.business_visible_copy import (
     classify_visible_business_copy,
 )
 from app.services.control_room.diagnostic_redaction import redact_diagnostic_value
-
+from pydantic import BaseModel, ConfigDict, field_validator
 
 PublicScalar = int | float | bool | None
 _OMIT = object()
@@ -147,6 +146,8 @@ def _project_union(annotation: Any, value: object, *, field: str) -> object:
     options = get_args(annotation)
     if value is None and type(None) in options:
         return None
+    if type(value) is float and not isfinite(value):
+        return None if type(None) in options else _OMIT
     for option in options:
         if option is type(None):
             if value is None:
@@ -184,7 +185,13 @@ def _project_value(annotation: Any, value: object, *, field: str) -> object:
     if annotation is int:
         return value if type(value) is int else _OMIT
     if annotation is float:
-        return float(value) if type(value) in {int, float} else _OMIT
+        if type(value) not in {int, float}:
+            return _OMIT
+        try:
+            projected = float(value)
+        except OverflowError:
+            return _OMIT
+        return projected if isfinite(projected) else _OMIT
     return _OMIT
 
 

@@ -302,10 +302,12 @@ async def get_briefing(
     """
     highlights = await proactive_service.briefing_for_user(user["id"], user_context=user)
     try:
-        live = await copilot_context_service.list_recommendations(user, limit=6)
+        live = copilot_context_service.project_operator_recommendations(
+            await copilot_context_service.list_recommendations(user, limit=6)
+        )
         live_highlights = [
             {
-                "id": item.get("fingerprint") or item.get("id"),
+                "id": item.get("id"),
                 "severity": item.get("severity") or "info",
                 "title": item.get("title") or "Recomendación",
                 "body": item.get("body") or "",
@@ -332,15 +334,25 @@ async def get_briefing(
     return {"highlights": highlights}
 
 
-@router.get("/context/snapshot")
+@router.get(
+    "/context/snapshot",
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def get_live_context_snapshot(
     user: dict = Depends(require_authenticated),
 ):
     """Latest persisted workspace-wide console cut for Copilot."""
-    return await copilot_context_service.latest_snapshot(user)
+    raw = await copilot_context_service.latest_snapshot(user)
+    return copilot_context_service.project_operator_snapshot(raw)
 
 
-@router.post("/context/refresh", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/context/refresh",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("operations.read")),
+    ],
+)
 async def refresh_live_context(
     request: Request,
     user: dict = Depends(require_authenticated),
@@ -368,7 +380,7 @@ async def refresh_live_context(
             "recommendations": len(result.get("recommendations") or []),
         },
     )
-    return result
+    return copilot_context_service.project_operator_snapshot(result)
 
 
 @router.get("/recommendations")
@@ -377,11 +389,10 @@ async def list_live_recommendations(
     include_dismissed: bool = False,
     user: dict = Depends(require_authenticated),
 ):
-    return await copilot_context_service.list_recommendations(
-        user,
-        limit=limit,
-        include_dismissed=include_dismissed,
+    raw = await copilot_context_service.list_recommendations(
+        user, limit=limit, include_dismissed=include_dismissed
     )
+    return copilot_context_service.project_operator_recommendations(raw)
 
 
 @router.post(
@@ -406,7 +417,7 @@ async def dismiss_live_recommendation(
         status="success",
         metadata={"fingerprint": result.get("fingerprint")},
     )
-    return result
+    return copilot_context_service.project_dismissed_recommendation(result)
 
 
 @router.post(

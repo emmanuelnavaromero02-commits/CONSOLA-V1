@@ -30,6 +30,7 @@ import {
   matchCopilotWatchdogs,
   refreshCopilotContext,
 } from "@/lib/copilot/client";
+import { getMeAccess } from "@/lib/admin-surfaces";
 import type {
   BriefingV2Highlight,
   CopilotContextSnapshot,
@@ -82,6 +83,14 @@ export function CopilotActionsConsole() {
   const [diagnosis, setDiagnosis] = useState<CopilotGoalDiagnosisResponse | null>(null);
   const [contextAnswer, setContextAnswer] = useState("");
   const [matchedWatchdogs, setMatchedWatchdogs] = useState<CopilotWatchdog[]>([]);
+  const access = useQuery({
+    queryKey: ["me", "access"],
+    queryFn: getMeAccess,
+    staleTime: 60_000,
+  });
+  const canViewOperationalContext = new Set(
+    access.data?.permissions ?? [],
+  ).has("operations.read");
 
   const goalsQuery = useQuery<CopilotGoal[]>({
     queryKey: ["copilot", "actions", "goals"],
@@ -106,6 +115,7 @@ export function CopilotActionsConsole() {
   const liveContextQuery = useQuery<CopilotContextSnapshot>({
     queryKey: ["copilot", "actions", "live-context"],
     queryFn: getCopilotContextSnapshot,
+    enabled: canViewOperationalContext,
     staleTime: 30_000,
   });
   const recommendationsQuery = useQuery<CopilotRecommendation[]>({
@@ -352,7 +362,11 @@ export function CopilotActionsConsole() {
             <LiveContextPanel
               snapshot={liveContextQuery.data}
               recommendations={recommendationsQuery.data ?? []}
-              loading={liveContextQuery.isLoading || recommendationsQuery.isLoading}
+              loading={
+                (canViewOperationalContext && liveContextQuery.isLoading)
+                || recommendationsQuery.isLoading
+              }
+              showOperationalContext={canViewOperationalContext}
               refreshing={refreshContext.isPending}
               dismissingId={dismissRecommendation.variables}
               onRefresh={() => refreshContext.mutate()}
@@ -412,6 +426,7 @@ function LiveContextPanel({
   snapshot,
   recommendations,
   loading,
+  showOperationalContext,
   refreshing,
   dismissingId,
   onRefresh,
@@ -420,6 +435,7 @@ function LiveContextPanel({
   snapshot?: CopilotContextSnapshot;
   recommendations: CopilotRecommendation[];
   loading: boolean;
+  showOperationalContext: boolean;
   refreshing: boolean;
   dismissingId?: string;
   onRefresh: () => void;
@@ -432,36 +448,44 @@ function LiveContextPanel({
     <section className="rounded-md border bg-card p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-xs font-semibold uppercase text-muted-foreground">Contexto Vivo</h2>
+          <h2 className="text-xs font-semibold uppercase text-muted-foreground">
+            {showOperationalContext ? "Contexto Vivo" : "Recomendaciones permitidas"}
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {lastRead ? `Última lectura ${lastRead}` : "Contexto no actualizado"}
+            {showOperationalContext
+              ? (lastRead ? `Última lectura ${lastRead}` : "Contexto no actualizado")
+              : "Señales disponibles para tu nivel de acceso"}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="inline-flex min-h-[36px] items-center gap-2 rounded-md border px-2 text-xs font-medium hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <RefreshCw aria-hidden className={cn("h-4 w-4", refreshing && "animate-spin")} />
-          Actualizar contexto
-        </button>
+        {showOperationalContext ? (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="inline-flex min-h-[36px] items-center gap-2 rounded-md border px-2 text-xs font-medium hover:bg-accent/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <RefreshCw aria-hidden className={cn("h-4 w-4", refreshing && "animate-spin")} />
+            Actualizar contexto
+          </button>
+        ) : null}
       </div>
       {loading ? (
         <div className="h-16 animate-pulse rounded-md bg-muted" />
       ) : (
         <div className="space-y-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-            <div className="rounded-md border bg-background p-2">
-              <div className="text-xs text-muted-foreground">Fuentes revisadas</div>
-              <div className="mt-1 text-lg font-semibold">{readySources}/{sources.length}</div>
-            </div>
+            {showOperationalContext ? (
+              <div className="rounded-md border bg-background p-2">
+                <div className="text-xs text-muted-foreground">Fuentes revisadas</div>
+                <div className="mt-1 text-lg font-semibold">{readySources}/{sources.length}</div>
+              </div>
+            ) : null}
             <div className="rounded-md border bg-background p-2">
               <div className="text-xs text-muted-foreground">Recomendaciones nuevas</div>
               <div className="mt-1 text-lg font-semibold">{recommendations.length}</div>
             </div>
           </div>
-          {sources.length ? (
+          {showOperationalContext && sources.length ? (
             <div className="space-y-1">
               {sources.slice(0, 4).map((source, index) => (
                 <div key={String(source.id || source.key || index)} className="flex items-center justify-between gap-2 rounded-md border bg-background px-2 py-1.5 text-xs">
@@ -470,9 +494,9 @@ function LiveContextPanel({
                 </div>
               ))}
             </div>
-          ) : (
+          ) : showOperationalContext ? (
             <p className="text-sm text-muted-foreground">Sin fuentes revisadas todavía.</p>
-          )}
+          ) : null}
           <div className="space-y-2">
             {recommendations.slice(0, 4).map((item) => (
               <div key={item.id} className="rounded-md border bg-background p-2">

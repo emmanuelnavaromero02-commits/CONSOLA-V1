@@ -6,6 +6,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.dependencies import require_authenticated
+from app.schemas.control_room_talent_responses import (
+    ControlRoomTalentAnomaliesResponse,
+    ControlRoomTalentOverviewResponse,
+)
 from app.services import auth, intelligence_engine
 from app.services.auth import verify_internal_api_key
 from app.services.intelligence import backtesting as intelligence_backtesting
@@ -536,22 +540,19 @@ async def intelligence_wisdom_bits_run_internal(
 
     from app.services import control_room_service
 
-    overview = await control_room_service.sap_successfactors_talent_overview(user)
-    metadata = await control_room_service.sap_successfactors_talent_metadata_readiness(
-        user
-    )
-    anomalies = await control_room_service.sap_successfactors_talent_anomalies(user)
-    signal_items = (
-        anomalies.get("items")
-        or anomalies.get("anomalies")
-        or anomalies.get("signals")
-        or []
-    )
+    overview = ControlRoomTalentOverviewResponse.project(
+        await control_room_service.sap_successfactors_talent_overview(user)
+    ).model_dump(mode="json", exclude_none=True)
+    anomalies = ControlRoomTalentAnomaliesResponse.project(
+        await control_room_service.sap_successfactors_talent_anomalies(user)
+    ).model_dump(mode="json", exclude_none=True)
+    readiness = overview.get("readiness") or {}
+    if not isinstance(readiness, dict):
+        readiness = {}
+    signal_items = anomalies.get("items") or []
     if not isinstance(signal_items, list):
         signal_items = []
-    blockers = list(metadata.get("blockers") or [])
-    if not blockers:
-        blockers = list(overview.get("blockers") or [])
+    blockers = list(overview.get("blockers") or [])
     return {
         "ok": True,
         "wisdom_bit_id": "WB-TALENTO",
@@ -559,20 +560,16 @@ async def intelligence_wisdom_bits_run_internal(
         "decision_mode": "recommendation_only",
         "writeback_enabled": False,
         "compensation_enabled": False,
-        "status": overview.get("status") or metadata.get("status") or "partial",
-        "generated_at": overview.get("generated_at") or metadata.get("generated_at"),
+        "status": readiness.get("status") or "partial",
+        "generated_at": overview.get("generated_at"),
         "profile": overview.get("profile") or {},
-        "coverage": metadata.get("coverage") or metadata.get("components") or {},
+        "coverage": readiness,
         "blockers": blockers,
         "signals": {
             "count": len(signal_items),
             "items": signal_items[:10],
         },
-        "evidence": {
-            "overview_status": overview.get("status"),
-            "metadata_status": metadata.get("status"),
-            "recommendation_only": True,
-        },
+        "evidence": {"recommendation_only": True},
     }
 
 
