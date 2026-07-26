@@ -277,6 +277,7 @@ async def test_auto_run_revalidates_generation_before_final_event() -> None:
         patch.multiple(
             control_room_service,
             _item_for_mutation=AsyncMock(return_value=original),
+            require_enabled_action_template_for_user=AsyncMock(),
             record_item_step=AsyncMock(return_value={}),
             select_item_option=AsyncMock(return_value={"item": selected}),
             create_decision_for_item=AsyncMock(
