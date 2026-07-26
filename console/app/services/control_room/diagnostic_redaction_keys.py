@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 
 from app.services.control_room.business_copy_unicode import canonical_security_text
+from app.services.control_room.diagnostic_escape_detection import (
+    escaped_security_detection,
+)
 
 _SECRET_KEYS = frozenset(
     {
@@ -199,8 +202,7 @@ def _compact_forms(field: str) -> frozenset[str]:
     return frozenset(forms)
 
 
-def sensitive_diagnostic_field(value: object) -> bool:
-    field = canonical_diagnostic_field(value)
+def _canonical_field_is_sensitive(field: str) -> bool:
     if field in _SAFE_FIELDS:
         return False
     compact_forms = _compact_forms(field)
@@ -217,6 +219,17 @@ def sensitive_diagnostic_field(value: object) -> bool:
         or compact_forms & (_SECRET_COMPACT | _PII_COMPACT)
         or any(form.endswith(tuple(_SECRET_COMPACT_SUFFIXES)) for form in compact_forms)
         or semantic_parts & _SECRET_SEGMENTS
+    )
+
+
+def sensitive_diagnostic_field(value: object) -> bool:
+    raw = str(value).strip()
+    escape_detection = escaped_security_detection(raw)
+    if escape_detection.unsafe:
+        return True
+    return any(
+        _canonical_field_is_sensitive(canonical_diagnostic_field(candidate))
+        for candidate in (raw, *escape_detection.forms)
     )
 
 

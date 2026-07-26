@@ -5,6 +5,9 @@ from collections.abc import Mapping, Sequence
 from math import isfinite
 
 from app.services.control_room.business_copy_unicode import security_detection_forms
+from app.services.control_room.diagnostic_escape_detection import (
+    escaped_security_detection,
+)
 from app.services.control_room.diagnostic_redaction_keys import (
     sensitive_diagnostic_field,
 )
@@ -78,9 +81,17 @@ def redact_diagnostic_value(value: object, *, field: str = "") -> object:
     clean = _redact_text(value)
     if clean != value:
         return clean
+    escape_detection = escaped_security_detection(value)
+    if escape_detection.unsafe:
+        return "[REDACTED]"
+    escaped_forms = tuple(
+        candidate
+        for decoded in escape_detection.forms
+        for candidate in security_detection_forms(decoded)
+    )
     if any(
         candidate != value and _redact_text(candidate) != candidate
-        for candidate in security_detection_forms(value)
+        for candidate in (*security_detection_forms(value), *escaped_forms)
     ):
         return "[REDACTED]"
     return value
