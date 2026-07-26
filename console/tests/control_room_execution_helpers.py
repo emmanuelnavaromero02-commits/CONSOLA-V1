@@ -9,6 +9,7 @@ from app.services.control_room.business_explicit_action_binding import (
     attach_explicit_action_binding,
 )
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_persisted_row import persisted_business_item
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
@@ -49,7 +50,14 @@ def explicit_action(item: dict, *, template_id: str) -> tuple[dict, str]:
         if template_id == "prepare_successfactors_recruiting_review":
             details.setdefault("requisition_id", prepared.get("entity_id"))
         prepared.update(metadata=metadata, details=details)
-    bound = attach_explicit_action_binding(prepared, template_id=template_id)
+    persisted = persisted_business_item(
+        authoritative_item_row(prepared),
+        expected_item_id=str(prepared["id"]),
+        item_statuses=control_room_service.ITEM_STATUSES,
+        severity_weights=control_room_service.SEVERITY_WEIGHT,
+    )
+    assert persisted is not None
+    bound = attach_explicit_action_binding(persisted, template_id=template_id)
     return bound, explicit_binding_id(bound, template_id=template_id)
 
 

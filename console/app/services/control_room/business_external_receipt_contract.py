@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.services.control_room.business_action_digest import action_contract_digest
@@ -19,6 +20,23 @@ from app.services.control_room.business_workflow_provenance import (
     WorkflowStage,
     business_observation_fingerprint,
     workflow_has_eligible_provenance,
+)
+
+
+_AUTHORITY_AUDIT_KEY = "authority_audit"
+_AUTHORITY_AUDIT_VERSION = "control-room-authority-audit/v1"
+_AUTHORITY_AUDIT_KEYS = frozenset(
+    {
+        "version",
+        "binding_id",
+        "key_id",
+        "issued_at",
+        "expires_at",
+        "observation_fingerprint",
+        "execution_target_digest",
+        "template_contract_digest",
+        "input_payload_digest",
+    }
 )
 
 
@@ -51,12 +69,75 @@ def _runtime_item(
     return candidate
 
 
+def _timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def authority_audit_matches_contract(
+    metadata: Mapping[str, Any], contract: Mapping[str, Any]
+) -> bool:
+    audit = metadata.get(_AUTHORITY_AUDIT_KEY)
+    if not isinstance(audit, Mapping) or set(audit) != _AUTHORITY_AUDIT_KEYS:
+        return False
+    issued_at = _timestamp(audit.get("issued_at"))
+    expires_at = _timestamp(audit.get("expires_at"))
+    if not (
+        audit.get("version") == _AUTHORITY_AUDIT_VERSION
+        and isinstance(audit.get("binding_id"), str)
+        and bool(str(audit.get("binding_id") or "").strip())
+        and isinstance(audit.get("key_id"), str)
+        and bool(str(audit.get("key_id") or "").strip())
+        and issued_at is not None
+        and expires_at is not None
+        and expires_at - issued_at == timedelta(seconds=900)
+    ):
+        return False
+    pairs = {
+        "observation_fingerprint": "fingerprint",
+        "execution_target_digest": "execution_target_digest",
+        "template_contract_digest": "template_contract_digest",
+        "input_payload_digest": "input_payload_digest",
+    }
+    return all(
+        audit.get(audit_key) == contract.get(contract_key)
+        for audit_key, contract_key in pairs.items()
+    )
+
+
+def reservation_authority_audit_valid(
+    row: Mapping[str, Any], expected_audit: Mapping[str, Any]
+) -> bool:
+    metadata = _mapping(row.get("metadata"))
+    stored_audit = metadata.get(_AUTHORITY_AUDIT_KEY)
+    return bool(
+        isinstance(stored_audit, Mapping)
+        and dict(stored_audit) == dict(expected_audit)
+        and reservation_stored_authority_audit_valid(row)
+    )
+
+
+def reservation_stored_authority_audit_valid(row: Mapping[str, Any]) -> bool:
+    metadata = _mapping(row.get("metadata"))
+    contract = metadata.get("reservation_contract")
+    return isinstance(contract, Mapping) and authority_audit_matches_contract(
+        metadata, contract
+    )
+
+
 def receipt_contract_matches(
     receipt: Mapping[str, Any], item_row: Mapping[str, Any], workspace_id: str
 ) -> bool:
     metadata = _mapping(receipt.get("metadata"))
     contract = metadata.get("reservation_contract")
     if not isinstance(contract, Mapping):
+        return False
+    if not authority_audit_matches_contract(metadata, contract):
         return False
     result = _mapping(receipt.get("execution_result"))
     if result.get("executed") is not True:
@@ -119,4 +200,9 @@ def receipt_contract_matches(
     )
 
 
-__all__ = ("receipt_contract_matches",)
+__all__ = (
+    "authority_audit_matches_contract",
+    "receipt_contract_matches",
+    "reservation_authority_audit_valid",
+    "reservation_stored_authority_audit_valid",
+)

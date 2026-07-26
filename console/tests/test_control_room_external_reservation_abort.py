@@ -1,15 +1,20 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from app.services.adapters import AdapterExecutionError
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
 )
 from app.services.control_room.business_action_failure import (
+    finalize_aborted_action_reservation,
     run_reserved_external_action,
+)
+from app.services.control_room.business_external_outcome import (
+    ambiguous_adapter_error_response,
 )
 
 
@@ -86,7 +91,7 @@ async def test_remote_attempt_preparation_commits_before_execute_scope():
 
 
 @pytest.mark.asyncio
-async def test_external_guard_abort_finalizes_durable_reservation_before_reraise():
+async def test_external_state_change_preserves_safe_pending_reservation():
     item = _item()
     template = {
         "template_id": "external-template",
@@ -106,6 +111,7 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
 
     finalizer = AsyncMock()
     mark_started = AsyncMock(return_value={"id": 91, "status": "pending"})
+    authority = Mock(item=item, template=template, payload={})
     adapter = AsyncMock()
     adapter.supports_idempotency = True
     with (
@@ -161,8 +167,19 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
         ),
         patch.object(
             control_room_service,
-            "acquire_guarded_action_reservation",
-            new=AsyncMock(return_value=reservation),
+            "acquire_authoritative_action_reservation",
+            new=AsyncMock(
+                return_value=Mock(context=authority, reservation=reservation)
+            ),
+        ),
+        patch.object(
+            control_room_service,
+            "revalidate_authoritative_action",
+            new=AsyncMock(return_value=(authority, {"id": 91, "status": "pending"})),
+        ),
+        patch.object(
+            control_room_service,
+            "require_authoritative_binding_current",
         ),
         patch.object(
             control_room_service,
@@ -193,10 +210,83 @@ async def test_external_guard_abort_finalizes_durable_reservation_before_reraise
 
     assert exc.value.status_code == 409
     mark_started.assert_awaited_once()
-    finalizer.assert_awaited_once_with(
-        db,
-        workspace_id="workspace-a",
-        reservation=reservation,
-        error=exc.value,
-    )
+    finalizer.assert_not_awaited()
     adapter.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_ambiguity_write_is_recovered_from_durable_attempt():
+    reservation = ActionReservation(
+        id=92,
+        effective_key="cr-action:v1:ambiguous-write-failed",
+        state=ReservationState.ACQUIRED,
+        row={},
+    )
+    db = AsyncMock()
+    db.fetchrow.return_value = {
+        "id": 92,
+        "status": "pending",
+        "metadata": {"remote_attempt": {"status": "started"}},
+    }
+    initial_marker = AsyncMock(side_effect=RuntimeError("marker write unavailable"))
+    recovery_marker = AsyncMock(
+        return_value={
+            "id": 92,
+            "status": "pending",
+            "metadata": {"remote_attempt": {"status": "ambiguous"}},
+        }
+    )
+    complete = AsyncMock()
+
+    async def run_scoped(operation):
+        return await operation(db)
+
+    async def prepare(_db):
+        return None
+
+    async def execute(current_db):
+        return await ambiguous_adapter_error_response(
+            current_db,
+            error=AdapterExecutionError(
+                "adapter timed out after POST",
+                status_code=503,
+                outcome_ambiguous=True,
+            ),
+            remote_attempt_started=True,
+            workspace_id="workspace-a",
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+            result={"executed": False, "external_write": True},
+        )
+
+    with (
+        patch(
+            "app.services.control_room.business_external_outcome."
+            "mark_remote_attempt_ambiguous",
+            new=initial_marker,
+        ),
+        patch(
+            "app.services.control_room.business_action_failure."
+            "mark_remote_attempt_ambiguous",
+            new=recovery_marker,
+        ),
+        patch(
+            "app.services.control_room.business_action_failure."
+            "complete_action_reservation",
+            new=complete,
+        ),
+        pytest.raises(RuntimeError, match="marker write unavailable"),
+    ):
+        await run_reserved_external_action(
+            run_scoped=run_scoped,
+            prepare=prepare,
+            execute=execute,
+            finalize=finalize_aborted_action_reservation,
+            workspace_id="workspace-a",
+            reservation=reservation,
+        )
+
+    initial_marker.assert_awaited_once()
+    recovery_marker.assert_awaited_once()
+    complete.assert_not_awaited()
+    assert "FOR UPDATE" in db.fetchrow.await_args.args[0]

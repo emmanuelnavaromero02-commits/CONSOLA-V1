@@ -5,6 +5,7 @@ from copy import deepcopy
 from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_external_receipt_contract import (
     receipt_contract_matches,
+    reservation_authority_audit_valid,
 )
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
@@ -106,12 +107,26 @@ def _contract(item: dict, payload: dict | None = None) -> dict:
 
 
 def _receipt(item: dict, contract: dict, payload: dict | None = None) -> dict:
+    authority_audit = {
+        "version": "control-room-authority-audit/v1",
+        "binding_id": "signed-binding-id",
+        "key_id": "active-key-id",
+        "issued_at": "2026-07-26T12:00:00Z",
+        "expires_at": "2026-07-26T12:15:00Z",
+        "observation_fingerprint": contract["fingerprint"],
+        "execution_target_digest": contract["execution_target_digest"],
+        "template_contract_digest": contract["template_contract_digest"],
+        "input_payload_digest": contract["input_payload_digest"],
+    }
     return {
         "item_id": item["id"],
         "decision_id": item["decision_id"],
         "action_type": contract["template_id"],
         "input": payload or {},
-        "metadata": {"reservation_contract": contract},
+        "metadata": {
+            "reservation_contract": contract,
+            "authority_audit": authority_audit,
+        },
         "execution_result": {
             "executed": True,
             "local_projection_status": "pending_reconciliation",
@@ -169,6 +184,33 @@ def test_reconciliation_rejects_changed_template_contract_digest():
         _receipt(item, contract),
         _persisted_row(item),
         str(item["workspace_id"]),
+    )
+
+
+def test_reconciliation_rejects_missing_or_changed_authority_audit():
+    item = _item()
+    contract = _contract(item)
+    receipt = _receipt(item, contract)
+    receipt["metadata"].pop("authority_audit")
+    assert not receipt_contract_matches(
+        receipt, _persisted_row(item), str(item["workspace_id"])
+    )
+
+
+def test_receipt_production_revalidates_stored_authority_audit():
+    item = _item()
+    contract = _contract(item)
+    receipt = _receipt(item, contract)
+    expected = receipt["metadata"]["authority_audit"]
+    assert reservation_authority_audit_valid(receipt, expected)
+    assert not reservation_authority_audit_valid(
+        receipt, {**expected, "key_id": "other-key"}
+    )
+
+    receipt = _receipt(item, contract)
+    receipt["metadata"]["authority_audit"]["binding_id"] = ""
+    assert not receipt_contract_matches(
+        receipt, _persisted_row(item), str(item["workspace_id"])
     )
 
 

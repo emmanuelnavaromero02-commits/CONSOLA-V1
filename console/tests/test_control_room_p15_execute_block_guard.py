@@ -127,4 +127,5 @@ async def test_external_final_tx_locks_pending_reservation_and_access_revision()
         )
 
     assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "item_business_state_changed"
     assert "FOR UPDATE" in db.fetchrow.await_args.args[0]

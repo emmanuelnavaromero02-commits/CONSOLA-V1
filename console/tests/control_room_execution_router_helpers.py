@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
 
 from app.services.control_room.business_action_reservation import effective_action_key
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_replay import action_reservation_contract
+from app.services.control_room.business_action_resolution import (
+    authorized_explicit_action_bindings,
+)
+from app.services.control_room.business_authoritative_execution import _authority_audit
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
 )
@@ -41,11 +46,17 @@ def execution_fetchrow_router(
         provided="idem-1" if template_id == "create_followup_task" else None,
         input_payload=input_payload,
     )
+    binding = next(
+        value
+        for value in authorized_explicit_action_bindings(item, USER)
+        if value.template_id == template_id
+    )
     pending = {
         "id": 55,
         "status": "completed" if existing_reservation else "pending",
         "idempotency_key": key,
         "metadata": {
+            "authority_audit": _authority_audit(binding, input_payload),
             "reservation_contract": action_reservation_contract(
                 workspace_id="workspace-A",
                 item=item,
@@ -53,7 +64,7 @@ def execution_fetchrow_router(
                 operation="execute",
                 authorization_contract=execution_authorization_contract(USER),
                 input_payload=input_payload,
-            )
+            ),
         },
         "execution_result": {
             "ok": True,
@@ -87,7 +98,16 @@ def execution_fetchrow_router(
                 else None
             )
         if sql.startswith("INSERT INTO ACTION_RUNS"):
-            return None if existing_reservation else pending
+            if existing_reservation:
+                return None
+            pending["idempotency_key"] = str(_args[6])
+            submitted_metadata = _args[10]
+            pending["metadata"] = (
+                json.loads(submitted_metadata)
+                if isinstance(submitted_metadata, str)
+                else dict(submitted_metadata)
+            )
+            return pending
         if sql.startswith("SELECT * FROM ACTION_RUNS"):
             return pending if existing_reservation else None
         if "FROM ACTION_RUNS" in sql and "FOR UPDATE" in sql:

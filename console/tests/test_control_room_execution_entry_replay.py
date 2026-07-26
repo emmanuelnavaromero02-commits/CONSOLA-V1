@@ -72,15 +72,22 @@ async def test_exact_completed_retry_replays_without_writes() -> None:
     ensure = AsyncMock()
     record = AsyncMock()
     response = Mock(return_value={"idempotent": True})
-    with patch(
-        "app.services.control_room.business_execution_entry.matching_action_replay",
-        AsyncMock(
-            return_value=(
-                "cr-action:v1:exact",
-                {"id": 9, "status": "completed", "execution_result": {}},
-            )
+    with (
+        patch(
+            "app.services.control_room.business_execution_entry.matching_action_replay",
+            AsyncMock(
+                return_value=(
+                    "cr-action:v1:exact",
+                    {"id": 9, "status": "completed", "execution_result": {}},
+                )
+            ),
+        ) as replay,
+        patch(
+            "app.services.control_room.business_execution_entry."
+            "reservation_stored_authority_audit_valid",
+            return_value=True,
         ),
-    ) as replay:
+    ):
         result = await prepare_execution_entry(
             run_scoped=run_scoped,
             run_replay_scoped=run_replay_scoped,
@@ -102,6 +109,38 @@ async def test_exact_completed_retry_replays_without_writes() -> None:
     run_scoped.assert_not_awaited()
     ensure.assert_not_awaited()
     record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_completed_retry_without_authority_audit_is_not_replayed() -> None:
+    run_scoped, _conn = _runner(object())
+    response = Mock()
+    with (
+        patch(
+            "app.services.control_room.business_execution_entry.matching_action_replay",
+            AsyncMock(
+                return_value=("cr-action:v1:exact", {"id": 9, "status": "completed"})
+            ),
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await prepare_execution_entry(
+            run_scoped=run_scoped,
+            run_replay_scoped=run_scoped,
+            ensure_item_row=AsyncMock(),
+            record_execute_block=AsyncMock(),
+            response_for_reservation=response,
+            user=USER,
+            item=ITEM,
+            template=TEMPLATE,
+            payload={},
+            confirmed=True,
+            ip=None,
+            user_agent=None,
+        )
+
+    assert exc.value.status_code == 409
+    response.assert_not_called()
 
 
 @pytest.mark.asyncio

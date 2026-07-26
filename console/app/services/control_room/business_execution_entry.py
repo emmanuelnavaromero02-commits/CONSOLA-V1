@@ -17,6 +17,9 @@ from app.services.control_room.business_execution_approval import (
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
 )
+from app.services.control_room.business_external_receipt_contract import (
+    reservation_stored_authority_audit_valid,
+)
 
 
 ScopedRunner = Callable[[Callable[[Any], Awaitable[Any]]], Awaitable[Any]]
@@ -45,7 +48,9 @@ async def _completed_replay(
     if replay is None:
         return None
     key, row = replay
-    if str(row.get("status") or "") != "completed":
+    if str(row.get("status") or "") != "completed" or not (
+        reservation_stored_authority_audit_valid(row)
+    ):
         return None
     return ActionReservation(
         id=int(row["id"]),

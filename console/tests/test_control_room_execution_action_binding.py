@@ -26,27 +26,45 @@ def _enter(stack: ExitStack, *patches) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("template_id", (*INTERNAL_TEMPLATES, "external_write"))
-async def test_unapproved_workflow_stops_before_reservation_or_adapter(template_id):
+async def test_unapproved_workflow_stops_before_reservation_or_side_effect(template_id):
     item = _item(status="decision_created")
-    approval = AsyncMock(
+    authority = AsyncMock(
         side_effect=HTTPException(409, {"code": "workflow_approval_required"})
     )
-    reserve = AsyncMock()
     factory = Mock()
-    internal = AsyncMock()
+    external = template_id == "external_write"
     with ExitStack() as stack:
         _enter(
             stack,
             *_execution_patches(item, template_id),
-            patch.object(control_room_service, "require_approved_execution", approval),
             patch.object(
-                control_room_service, "acquire_guarded_action_reservation", reserve
+                control_room_service,
+                "_writeback_capability",
+                return_value={
+                    "supported": True,
+                    "external": external,
+                    "adapter_available": True,
+                },
             ),
             patch.object(
-                control_room_service.WriteBackAdapterFactory, "get_adapter", factory
+                control_room_service,
+                "acquire_authoritative_action_reservation",
+                authority,
             ),
             patch.object(
-                control_room_service, "_execute_internal_followup_task", internal
+                control_room_service.WriteBackAdapterFactory,
+                "get_adapter",
+                factory,
+            ),
+            patch.object(
+                control_room_service,
+                "adapter_guarantees_idempotency",
+                return_value=True,
+            ),
+            patch.object(
+                control_room_service,
+                "_external_writeback_enabled",
+                return_value=True,
             ),
         )
         with pytest.raises(HTTPException) as exc:
@@ -55,10 +73,12 @@ async def test_unapproved_workflow_stops_before_reservation_or_adapter(template_
             )
 
     assert exc.value.status_code == 409
-    approval.assert_awaited_once()
-    reserve.assert_not_awaited()
-    factory.assert_not_called()
-    internal.assert_not_awaited()
+    authority.assert_awaited_once()
+    if external:
+        factory.assert_called_once()
+    else:
+        factory.assert_not_called()
+    factory.return_value.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -103,7 +123,12 @@ async def test_approved_external_workflow_reaches_reserved_adapter_path(monkeypa
         state=ReservationState.ACQUIRED,
         row={"id": 9},
     )
-    reserve = AsyncMock(return_value=reservation)
+    authority = Mock(
+        item=item,
+        template={"template_id": "external_write", "template_type": "external_write"},
+        payload={"item": {"id": item["id"]}, "operations": []},
+    )
+    reserve = AsyncMock(return_value=Mock(context=authority, reservation=reservation))
     run = AsyncMock(return_value={"executed": True})
     adapter = Mock(supports_idempotency=True)
     with ExitStack() as stack:
@@ -133,7 +158,9 @@ async def test_approved_external_workflow_reaches_reserved_adapter_path(monkeypa
                 return_value=True,
             ),
             patch.object(
-                control_room_service, "acquire_guarded_action_reservation", reserve
+                control_room_service,
+                "acquire_authoritative_action_reservation",
+                reserve,
             ),
             patch.object(control_room_service, "run_reserved_external_action", run),
         )
@@ -145,3 +172,47 @@ async def test_approved_external_workflow_reaches_reserved_adapter_path(monkeypa
     reserve.assert_awaited_once()
     run.assert_awaited_once()
     assert callable(run.await_args.kwargs["prepare"])
+
+
+@pytest.mark.asyncio
+async def test_internal_replay_response_uses_locked_authoritative_context():
+    stale = _item()
+    locked = {**stale, "entity_id": "employee-authoritative"}
+    template = {
+        "template_id": "create_investigation_note",
+        "template_type": "internal_investigation_note",
+    }
+    payload = {"item": {"entity_id": locked["entity_id"]}}
+    authority = Mock(item=locked, template=template, payload=payload)
+    reservation = ActionReservation(
+        id=12,
+        effective_key="server-key",
+        state=ReservationState.IN_PROGRESS,
+        row={"id": 12, "status": "pending"},
+    )
+    reserve = AsyncMock(return_value=Mock(context=authority, reservation=reservation))
+    replay = Mock(return_value={"idempotent": True})
+
+    with (
+        patch.object(
+            control_room_service,
+            "acquire_authoritative_action_reservation",
+            reserve,
+        ),
+        patch.object(control_room_service, "_reserved_action_response", replay),
+    ):
+        result = await control_room_service._execute_internal_investigation_note(
+            object(),
+            user=USER,
+            item=stale,
+            template=template,
+            payload={"item": {"entity_id": stale["entity_id"]}},
+            binding_id="binding-1",
+            idempotency_key=None,
+            ip=None,
+            user_agent=None,
+        )
+
+    assert result == {"idempotent": True}
+    assert replay.call_args.kwargs["item"] is locked
+    assert replay.call_args.kwargs["payload"] is payload

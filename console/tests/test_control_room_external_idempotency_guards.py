@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -104,7 +104,7 @@ def test_replay_of_remote_attempt_returns_reconciliation_code():
 
 
 @pytest.mark.asyncio
-async def test_external_execution_requires_durable_attempt_marker():
+async def test_external_execution_requires_signed_authority_before_remote_work():
     reservation = ActionReservation(
         id=7,
         effective_key="cr-action:v1:missing-marker",
@@ -112,17 +112,17 @@ async def test_external_execution_requires_durable_attempt_marker():
         row={},
     )
     audit = AsyncMock()
+    factory = Mock()
     with (
-        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
-        patch.object(
-            control_room_service,
-            "lock_pending_action_reservation",
-            AsyncMock(return_value={"metadata": {}}),
-        ),
         patch.object(
             control_room_service,
             "_record_writeback_audit_event",
             audit,
+        ),
+        patch.object(
+            control_room_service.WriteBackAdapterFactory,
+            "get_adapter",
+            factory,
         ),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -145,7 +145,9 @@ async def test_external_execution_requires_durable_attempt_marker():
             )
 
     assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "invalid_execution_authority_audit"
     audit.assert_not_awaited()
+    factory.assert_not_called()
 
 
 def test_sap_hcm_sends_idempotency_key_as_header():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -24,6 +25,7 @@ def authorized_explicit_action_bindings(
     user: Mapping[str, Any],
     *,
     enabled_template_ids: Collection[str] | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> tuple[VerifiedActionBinding, ...]:
     tenant_id, workspace_id = context_scope(user)
     cartridge_id = str(item.get("cartridge") or item.get("cartridge_id") or "")
@@ -38,7 +40,7 @@ def authorized_explicit_action_bindings(
     enabled = set(enabled_template_ids) if enabled_template_ids is not None else None
     return tuple(
         binding
-        for binding in verified_explicit_action_bindings(item)
+        for binding in verified_explicit_action_bindings(item, clock=clock)
         if enabled is None or binding.template_id in enabled
     )
 
@@ -48,13 +50,15 @@ def require_explicit_action_template(
     user: Mapping[str, Any],
     template_id: str | None,
     binding_id: str | None,
+    *,
+    clock: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
     if not template_id or not binding_id:
         raise HTTPException(422, "template_id and binding_id are required")
     binding = next(
         (
             value
-            for value in authorized_explicit_action_bindings(item, user)
+            for value in authorized_explicit_action_bindings(item, user, clock=clock)
             if value.template_id == template_id and value.binding_id == binding_id
         ),
         None,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -139,6 +140,45 @@ async def test_atomic_reservation_returns_in_progress_to_loser():
     sql = " ".join(db.fetchrow.await_args_list[0].args[0].split())
     assert "ON CONFLICT (workspace_id, idempotency_key) DO NOTHING" in sql
     assert "'pending'" in sql
+
+
+@pytest.mark.asyncio
+async def test_new_reservation_persists_server_authority_audit():
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        operation="execute",
+        authorization_contract=None,
+    )
+    authority = {
+        "version": "control-room-authority-audit/v1",
+        "binding_id": "binding-1",
+        "key_id": "test-key",
+        "issued_at": "2026-07-26T12:00:00Z",
+        "expires_at": "2026-07-26T12:15:00Z",
+        "observation_fingerprint": contract["fingerprint"],
+        "execution_target_digest": contract["execution_target_digest"],
+        "template_contract_digest": contract["template_contract_digest"],
+        "input_payload_digest": contract["input_payload_digest"],
+    }
+    db = AsyncMock()
+    db.fetchrow.return_value = {"id": 19, "status": "pending"}
+
+    await acquire_action_reservation(
+        db,
+        tenant_id="tenant-a",
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        adapter_name="internal_followup_task",
+        operation="execute",
+        authority_audit=authority,
+    )
+
+    metadata = json.loads(db.fetchrow.await_args.args[-1])
+    assert metadata["authority_audit"] == authority
+    assert "reservation_contract" in metadata
 
 
 @pytest.mark.asyncio

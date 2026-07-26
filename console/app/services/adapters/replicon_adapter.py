@@ -21,16 +21,30 @@ def _first(source: dict[str, Any], *keys: str) -> str:
 
 
 def _base_url(credentials: dict[str, Any]) -> str:
-    value = _first(credentials, "base_url", "url", "replicon_base_url", "REPLICON_BASE_URL")
+    value = _first(
+        credentials, "base_url", "url", "replicon_base_url", "REPLICON_BASE_URL"
+    )
     if not value:
-        raise AdapterConfigurationError("Replicon write-back requires base_url/REPLICON_BASE_URL")
+        raise AdapterConfigurationError(
+            "Replicon write-back requires base_url/REPLICON_BASE_URL"
+        )
     return value.rstrip("/")
 
 
 def _writeback_path(action_data: dict[str, Any], credentials: dict[str, Any]) -> str:
-    details = action_data.get("details") if isinstance(action_data.get("details"), dict) else {}
-    payload = action_data.get("action_payload") if isinstance(action_data.get("action_payload"), dict) else {}
-    replicon = payload.get("replicon") if isinstance(payload.get("replicon"), dict) else {}
+    details = (
+        action_data.get("details")
+        if isinstance(action_data.get("details"), dict)
+        else {}
+    )
+    payload = (
+        action_data.get("action_payload")
+        if isinstance(action_data.get("action_payload"), dict)
+        else {}
+    )
+    replicon = (
+        payload.get("replicon") if isinstance(payload.get("replicon"), dict) else {}
+    )
     value = (
         action_data.get("writeback_path")
         or action_data.get("endpoint")
@@ -42,14 +56,22 @@ def _writeback_path(action_data: dict[str, Any], credentials: dict[str, Any]) ->
         or credentials.get("default_writeback_path")
     )
     if not value:
-        raise AdapterConfigurationError("Replicon write-back requires writeback_path/default_writeback_path")
+        raise AdapterConfigurationError(
+            "Replicon write-back requires writeback_path/default_writeback_path"
+        )
     path = str(value)
     return path if path.startswith("/") else f"/{path}"
 
 
 def _payload(action_data: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    payload = action_data.get("action_payload") if isinstance(action_data.get("action_payload"), dict) else {}
-    replicon = payload.get("replicon") if isinstance(payload.get("replicon"), dict) else {}
+    payload = (
+        action_data.get("action_payload")
+        if isinstance(action_data.get("action_payload"), dict)
+        else {}
+    )
+    replicon = (
+        payload.get("replicon") if isinstance(payload.get("replicon"), dict) else {}
+    )
     return {
         "source": "omega_control_room",
         "dry_run": dry_run,
@@ -80,7 +102,13 @@ def _allowed_private_hosts() -> set[str]:
 
 
 def _allowed_private_cidrs() -> list[str]:
-    return [item.strip() for item in os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", "").split(",") if item.strip()]
+    return [
+        item.strip()
+        for item in os.environ.get(
+            "CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", ""
+        ).split(",")
+        if item.strip()
+    ]
 
 
 class RepliconAdapter(BaseAdapter):
@@ -94,7 +122,12 @@ class RepliconAdapter(BaseAdapter):
     ) -> ExecutionResult:
         CartridgeCircuitBreaker.before_call(self.cartridge_id)
         url = f"{_base_url(credentials)}{_writeback_path(action_data, credentials)}"
-        headers = auth_headers({**credentials, "auth_method": credentials.get("auth_method") or "bearer_token"})
+        headers = auth_headers(
+            {
+                **credentials,
+                "auth_method": credentials.get("auth_method") or "bearer_token",
+            }
+        )
         headers["Idempotency-Key"] = str(action_data.get("idempotency_key") or "")
         headers["X-Omega-Dry-Run"] = "true" if dry_run else "false"
         timeout = float(credentials.get("timeout") or 20.0)
@@ -111,11 +144,31 @@ class RepliconAdapter(BaseAdapter):
                 allow_private_cidrs=_allowed_private_cidrs(),
             )
         except egress_guard.EgressGuardError as exc:
-            raise AdapterConfigurationError(str(exc)) from exc
+            if exc.request_dispatched:
+                CartridgeCircuitBreaker.record_failure(self.cartridge_id)
+                raise AdapterExecutionError(
+                    f"replicon response validation error: {exc}",
+                    outcome_ambiguous=True,
+                ) from exc
+            raise AdapterConfigurationError(str(exc), outcome_ambiguous=False) from exc
         except (OSError, TimeoutError, ssl.SSLError) as exc:
             CartridgeCircuitBreaker.record_failure(self.cartridge_id)
-            raise AdapterExecutionError(f"replicon transport error: {exc}", status_code=503) from exc
+            raise AdapterExecutionError(
+                f"replicon transport error: {exc}", status_code=503
+            ) from exc
 
+        if (
+            response.status_code < 200
+            or response.status_code >= 600
+            or 300 <= response.status_code < 400
+        ):
+            CartridgeCircuitBreaker.record_failure(self.cartridge_id)
+            raise AdapterExecutionError(
+                "replicon returned an unconfirmed POST outcome",
+                status_code=response.status_code,
+                response=response.text[:500],
+                outcome_ambiguous=True,
+            )
         if response.status_code in {401, 403}:
             CartridgeCircuitBreaker.record_success(self.cartridge_id)
             raise AdapterExecutionError(
@@ -142,7 +195,9 @@ class RepliconAdapter(BaseAdapter):
         body = _response_body(response)
         remote_id = None
         if isinstance(body, dict):
-            remote_id = body.get("id") or body.get("remote_id") or body.get("request_id")
+            remote_id = (
+                body.get("id") or body.get("remote_id") or body.get("request_id")
+            )
         return ExecutionResult(
             ok=True,
             status="validated" if dry_run else "executed",

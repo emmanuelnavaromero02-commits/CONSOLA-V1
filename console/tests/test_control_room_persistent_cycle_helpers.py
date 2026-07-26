@@ -10,17 +10,12 @@ from app.services.control_room.business_explicit_action_binding import (
     attach_explicit_action_binding,
 )
 from app.services.control_room.business_execution_precondition import dry_run_metadata
+from app.services.control_room.business_persisted_row import persisted_business_item
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
-from app.services.control_room.business_workflow_provenance import (
-    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
-    DECISION_PROVENANCE_KEY,
-    ELIGIBILITY_POLICY_VERSION,
-    ELIGIBILITY_POLICY_VERSION_KEY,
-    WorkflowStage,
-    business_observation_fingerprint,
-    workflow_eligibility_provenance,
+from console.tests.control_room_execution_helpers import (
+    authoritative_item_row,
 )
 
 USER = {
@@ -98,7 +93,15 @@ def item(**overrides):
             business_observation=base,
         )
     )
-    projected = control_room_service._with_omega({**base, **overrides})  # noqa: SLF001
+    source = {**base, **overrides}
+    projected = persisted_business_item(
+        authoritative_item_row(source),
+        expected_item_id=str(source["id"]),
+        item_statuses=control_room_service.ITEM_STATUSES,
+        severity_weights=control_room_service.SEVERITY_WEIGHT,
+    )
+    assert projected is not None
+    projected = control_room_service._with_omega(projected)  # noqa: SLF001
     return attach_explicit_action_binding(
         projected,
         template_id="create_followup_task",
@@ -172,52 +175,7 @@ def action_run_row(
 
 
 def persisted_item_row(value: dict) -> dict:
-    metadata = {
-        key: value[key]
-        for key in (
-            "data_status",
-            "metric_type",
-            "observed_value",
-            "population_count",
-            "detected_at",
-            "evidence_refs",
-            "source_system",
-        )
-    }
-    stage = (
-        WorkflowStage.APPROVED
-        if value.get("status") == "approved"
-        else WorkflowStage.DECISION_CREATED
-    )
-    metadata.update(
-        {
-            CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(
-                value
-            ),
-            ELIGIBILITY_POLICY_VERSION_KEY: ELIGIBILITY_POLICY_VERSION,
-            DECISION_PROVENANCE_KEY: workflow_eligibility_provenance(
-                value,
-                stage=stage,
-                workspace_id=value["workspace_id"],
-                decision_id=value["decision_id"],
-            ),
-        }
-    )
-    return {
-        "tenant_id": value["tenant_id"],
-        "workspace_id": value["workspace_id"],
-        "owner_user_id": value["owner_user_id"],
-        "item_id": value["id"],
-        "cartridge_id": value["cartridge"],
-        "source_dataset": value["source_dataset"],
-        "item_kind": value["kind"],
-        "entity_id": value["entity_id"],
-        "status": value["status"],
-        "decision_id": value["decision_id"],
-        "selected_option_id": value.get("selected_option_id"),
-        "execution_status": value["execution_status"],
-        "metadata": metadata,
-    }
+    return authoritative_item_row(value)
 
 
 def guarded_fetchrows(value: dict, rows, *, has_dry_run: bool = True):

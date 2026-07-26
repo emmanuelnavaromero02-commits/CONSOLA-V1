@@ -14,6 +14,7 @@ from app.services.control_room.business_action_reservation import (
 from app.services.control_room.business_action_attempt import has_remote_attempt
 from app.services.control_room.business_external_receipt_contract import (
     receipt_contract_matches,
+    reservation_stored_authority_audit_valid,
 )
 
 
@@ -140,7 +141,7 @@ def reserved_action_response(
     project_item: Callable[..., dict[str, Any]],
     omega_builder: Callable[..., Any],
 ) -> dict[str, Any]:
-    if reservation.state is ReservationState.IN_PROGRESS:
+    if reservation.state == ReservationState.IN_PROGRESS:
         code = (
             "external_action_pending_reconciliation"
             if has_remote_attempt(reservation.row)
@@ -154,7 +155,7 @@ def reserved_action_response(
                 "idempotency_key": reservation.effective_key,
             },
         )
-    if reservation.state is ReservationState.FAILED:
+    if reservation.state == ReservationState.FAILED:
         raise HTTPException(
             409,
             {
@@ -163,8 +164,16 @@ def reserved_action_response(
                 "idempotency_key": reservation.effective_key,
             },
         )
-    if reservation.state is not ReservationState.COMPLETED:
+    if reservation.state != ReservationState.COMPLETED:
         raise RuntimeError("acquired action reservation cannot be replayed")
+    if not reservation_stored_authority_audit_valid(reservation.row):
+        raise HTTPException(
+            409,
+            {
+                "code": "invalid_execution_authority_audit",
+                "reservation_id": reservation.id,
+            },
+        )
     action_run = action_run_public(reservation.row)
     result = details(action_run.get("execution_result"))
     if result.get("executed") is not True:
