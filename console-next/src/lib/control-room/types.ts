@@ -23,21 +23,14 @@ export type DetailMode = "auto" | "manual" | null;
 export type AlertOperation = "ack" | "snooze" | "assign" | "false-positive";
 
 export interface SourceStatus {
-  dataset: string;
-  cartridge: string;
-  connector_id?: string;
-  module_id?: string;
-  domain: string;
-  module: string;
-  status: SourceState;
+  cartridge?: string | null;
+  domain?: string | null;
+  module?: string | null;
+  status?: SourceState | null;
   count: number;
-  data_readiness?: DataReadiness;
-  operationally_ready?: boolean;
-  readiness_reason?: string;
-  readiness_blockers?: string[];
-  contract_warnings?: string[];
-  error?: string;
-  checked_at?: string;
+  data_readiness?: DataReadiness | null;
+  operationally_ready?: boolean | null;
+  checked_at?: string | null;
 }
 
 export interface Kpi {
@@ -48,61 +41,34 @@ export interface Kpi {
 }
 
 export interface DomainModule {
-  id: string;
-  connector_id?: string;
-  label: string;
-  domain: string;
-  accent: string;
-  description?: string;
+  id?: string | null;
+  label?: string | null;
+  domain?: string | null;
+  accent?: string | null;
+  description?: string | null;
+  status?: string | null;
+  active?: boolean | null;
+  operational?: boolean | null;
   item_count: number;
   critical_count: number;
-  source_status: SourceRollup;
-  data_readiness?: DataReadiness;
-  operationally_ready?: boolean;
-  kpis: Kpi[];
+  cartridge_count?: number;
+  source_status?: SourceRollup | null;
+  data_readiness?: DataReadiness | null;
+  operationally_ready?: boolean | null;
+  modules?: DomainModule[];
 }
 
-export interface Domain {
-  id: string;
-  label: string;
-  accent: string;
-  item_count: number;
-  critical_count: number;
-  cartridge_count: number;
-  modules: DomainModule[];
-}
+export type Domain = DomainModule;
 
-export interface Cartridge {
-  id: string;
-  connector_id?: string;
-  connector_label?: string;
-  label: string;
-  domain: string;
-  accent: string;
-  description?: string;
-  status: string;
-  current_step?: string;
-  active: boolean;
-  operational: boolean;
-  item_count: number;
-  critical_count: number;
-  source_status: SourceRollup;
-  data_readiness?: DataReadiness;
-  operationally_ready?: boolean;
-  datasets: SourceStatus[];
-}
+export type Cartridge = DomainModule;
 
 export interface OmegaOption {
-  id: string;
-  label: string;
-  action?: string;
-  money?: string;
-  time?: string;
-  score: number;
-  risk: string;
-  auto?: boolean;
-  recommendation: string;
-  selected: boolean;
+  id?: string | null;
+  label?: string | null;
+  score?: number | null;
+  risk?: string | null;
+  recommendation?: string | null;
+  selected?: boolean | null;
 }
 
 export interface WritebackCapability {
@@ -125,36 +91,33 @@ export interface ActionTemplate {
 }
 
 export interface ImpactDriver {
-  label: string;
-  value?: string | number | null;
-  currency?: string;
-  unit?: string;
-  points?: number;
+  label?: string | null;
+  value?: string | number | boolean | null;
+  currency?: string | null;
+  unit?: string | null;
+  points?: number | null;
 }
 
 export interface ImpactPayload {
-  status?: string;
+  item_id?: string;
+  status?: string | null;
   estimate?: number | null;
-  currency?: string;
+  currency?: string | null;
   confidence?: number | null;
   priority_score?: number | null;
-  formula?: string;
-  explanation?: string;
+  explanation?: string | null;
   drivers?: ImpactDriver[];
-  [key: string]: unknown;
 }
 
 export interface DetectionThreshold {
-  id?: number;
-  cartridge_id: string;
-  anomaly_type: string;
-  metric: string;
+  anomaly_type?: string | null;
+  metric?: string | null;
   warning_value?: number | null;
   critical_value?: number | null;
-  currency?: string;
-  source?: "workspace" | "default" | string;
-  enabled?: boolean;
-  metadata?: Record<string, unknown>;
+  currency?: string | null;
+  enabled?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface ThresholdPayload {
@@ -163,61 +126,49 @@ export interface ThresholdPayload {
     total: number;
     active: number;
     disabled: number;
+    recent?: DetectionThreshold[];
   };
 }
 
 export interface ControlRoomAgentsOpsRun {
-  id: number;
-  agent_id: string;
-  agent_slug: string;
-  agent_name: string;
-  cartridge_id: string;
-  status: string;
+  agent_name?: string | null;
+  status?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   tool_count: number;
-  tools: string[];
-  error?: string | null;
-}
-
-export interface ControlRoomAgentsOpsConfiguredEngine {
-  engine: string;
-  enabled: boolean;
-  source_type?: string | null;
-  source_id?: string | null;
-  calibration_group?: string | null;
-  mode?: string | null;
 }
 
 export interface ControlRoomAgentsOpsEngine {
-  engine: string;
+  engine?: string | null;
   configured: number;
   evidence_count: number;
   sample_count?: number;
   latest_at?: string | null;
-  status: "ready" | "configured" | "missing" | string;
+  status?: "ready" | "configured" | "missing" | string | null;
   executions?: {
-    engine: string;
     total: number;
-    by_status: Record<string, number>;
+    by_status: {
+      pending: number;
+      previewed: number;
+      approved: number;
+      rejected: number;
+      executing: number;
+      completed: number;
+      failed: number;
+      pending_reconciliation: number;
+      ambiguous: number;
+    };
     latest_at?: string | null;
-  };
+  } | null;
 }
 
 export interface ControlRoomAgentsOpsAgent {
-  id: string;
-  cartridge_id: string;
-  slug: string;
-  name: string;
-  active: boolean;
-  role: string;
-  monitor: boolean;
-  operationally_ready?: boolean;
-  schedule?: Record<string, unknown>;
-  monitor_contract?: Record<string, unknown>;
-  configured_engines?: ControlRoomAgentsOpsConfiguredEngine[];
-  allowed_tools: string[];
-  operational_tools_count?: number;
+  name?: string | null;
+  active?: boolean | null;
+  role?: string | null;
+  monitor?: boolean | null;
+  operationally_ready?: boolean | null;
+  operational_tools_count: number;
   last_run?: ControlRoomAgentsOpsRun | null;
   alerts: {
     total: number;
@@ -227,9 +178,7 @@ export interface ControlRoomAgentsOpsAgent {
 }
 
 export interface ControlRoomAgentsOpsPayload {
-  generated_at?: string;
-  tenant?: string | null;
-  active_workspace?: string;
+  generated_at?: string | null;
   summary: {
     agents_total: number;
     active_agents: number;
@@ -244,18 +193,23 @@ export interface ControlRoomAgentsOpsPayload {
     bayesian_calibration_samples?: number;
     decision_orchestrations?: number;
   };
-  agents: ControlRoomAgentsOpsAgent[];
-  recent_runs: ControlRoomAgentsOpsRun[];
+  agents?: ControlRoomAgentsOpsAgent[];
+  recent_runs?: ControlRoomAgentsOpsRun[];
   engines?: ControlRoomAgentsOpsEngine[];
-  tools_used: Array<{ tool: string; count: number }>;
-  origins: Array<{ origin: string; count: number }>;
+  origins?: Array<{ origin?: string | null; count: number }>;
+  operational_diagnostics?: Array<{
+    diagnostic?: string | null;
+    scope?: string | null;
+    state_count: number;
+    sample_count: number;
+    latest_at?: string | null;
+    included_in_business_counters?: boolean | null;
+  }>;
 }
 
 export interface MarketDecisionValidationPayload {
   status: "ready" | "partial" | "insufficient_data";
   source: {
-    dataset: string;
-    source_id: string;
     input_status: string;
     source_mode: string;
     employee_count: number;
@@ -268,11 +222,9 @@ export interface MarketDecisionValidationPayload {
     unit?: string | null;
     confidence?: number | string | null;
     freshness_status?: string | null;
-    distribution?: { low?: number; mode?: number; high?: number };
   };
   simulation: {
-    simulation_id?: string | null;
-    model_version?: string | null;
+    available: boolean;
     output_metric?: string | null;
     p10?: number | null;
     p50?: number | null;
@@ -282,15 +234,13 @@ export interface MarketDecisionValidationPayload {
   };
   bayes: {
     status: string;
-    calibration_group: string;
     sample_count: number;
     evidence_policy: "evidence_only";
   };
   orchestration: {
-    orchestration_id?: string | null;
+    available: boolean;
     problem_type?: string | null;
     action_recommended: boolean;
-    external_action_id?: string | null;
   };
   policy: {
     recommendation_only: boolean;
@@ -303,90 +253,97 @@ export interface MarketDecisionValidationPayload {
 }
 
 export interface SfGoldWidgetRow {
-  label?: string;
-  id?: string | null;
-  headcount?: number;
-  [key: string]: unknown;
+  label?: string | null;
+  value?: string | number | boolean | null;
+  count?: number | null;
+  headcount?: number | null;
+  contractor_count?: number | null;
+  risk_factor?: number | null;
+  percentage?: number | null;
+  rate?: number | null;
+  status?: string | null;
+  fact?: string | null;
 }
 
 export interface SfGoldWidget {
-  id: string;
-  title: string;
-  value: number | null;
-  dataset: string;
-  href?: string;
-  rows: SfGoldWidgetRow[];
-  status?: DataReadiness | SourceState | "ready";
-  error?: string | null;
+  id?: string | null;
+  title?: string | null;
+  value?: string | number | boolean | null;
+  contractor_count?: number | null;
+  risk_factor?: number | null;
+  rows?: SfGoldWidgetRow[];
+  status?: DataReadiness | SourceState | "ready" | null;
 }
 
 export interface SfGoldKpisPayload {
-  generated_at?: string;
-  connection_id?: string;
-  tenant_id?: string;
-  workspace_id?: string;
-  widgets: SfGoldWidget[];
+  generated_at?: string | null;
+  widgets?: SfGoldWidget[];
 }
 
 export interface SfTalentWidget {
-  id: string;
-  title: string;
-  value: number | null;
-  href?: string;
-  status?: DataReadiness | SourceState | "ready" | "partial";
-  detail?: string;
+  id?: string | null;
+  title?: string | null;
+  value?: string | number | boolean | null;
+  contractor_count?: number | null;
+  risk_factor?: number | null;
+  status?: DataReadiness | SourceState | "ready" | "partial" | null;
   rows?: SfGoldWidgetRow[];
 }
 
 export interface SfTalentSignal {
-  id: string;
-  type: string;
-  severity: Severity | string;
-  title: string;
+  id?: string | null;
+  severity?: Severity | string | null;
+  title?: string | null;
   affected_count?: number;
-  recommendation?: string;
-  status?: string;
+  recommendation?: string | null;
+  status?: string | null;
 }
 
 export interface SfTalentBlocker {
-  id: string;
-  status: DataReadiness | SourceState | "partial";
-  title: string;
-  detail: string;
-  items?: string[];
+  id?: string | null;
+  status?: DataReadiness | SourceState | "partial" | null;
+  title?: string | null;
 }
 
 export interface SfTalentKpisPayload {
-  generated_at?: string;
-  profile: {
-    industry: string;
-    company_profile: string;
-    wisdom_bit: string;
-    decision_mode: string;
-    compensation_enabled: boolean;
-    write_back_enabled: boolean;
+  generated_at?: string | null;
+  profile?: {
+    industry?: string | null;
+    company_profile?: string | null;
+    decision_mode?: string | null;
+    compensation_enabled?: boolean | null;
+    write_back_enabled?: boolean | null;
   };
-  readiness: {
-    ready_min: number;
-    near_min: number;
-    profiled_employees: number;
-    calculable_employees: number;
-    insufficient_data_employees: number;
-    nine_box_available: number;
-    status: DataReadiness | SourceState | "partial";
-    source_mode?: string;
-    readiness_status?: string;
+  readiness?: {
+    ready_min?: number;
+    near_min?: number;
+    profiled_employees?: number;
+    calculable_employees?: number;
+    insufficient_data_employees?: number;
+    nine_box_available?: number;
+    roles_without_requirements?: number;
+    high_severity_signals?: number;
+    learning_blockers?: number;
+    recruiting_blockers?: number;
+    skill_gap_count?: number;
+    skill_coverage_pct?: number | null;
+    operational_status?: string | null;
+    operational_label?: string | null;
+    status?: DataReadiness | SourceState | "partial" | null;
+    source_mode?: string | null;
+    readiness_status?: string | null;
     confidence?: number | null;
+    latest_analysis_status?: string | null;
   };
-  widgets: SfTalentWidget[];
-  signals: SfTalentSignal[];
-  blockers: SfTalentBlocker[];
+  widgets?: SfTalentWidget[];
+  signals?: SfTalentSignal[];
+  blockers?: SfTalentBlocker[];
   /** Fase 3 P0: fuente unica de plantilla/antiguedad/rotacion/historia + series. */
-  workforce_trends?: SfWorkforceTrends;
+  workforce_trends?: SfWorkforceTrends | null;
 }
 
 export interface SfWorkforceTrends {
-  status: "ready" | "partial" | "waiting_for_data" | string;
+  status?: "ready" | "partial" | "waiting_for_data" | string | null;
   kpis: {
     active_headcount: number | null;
     avg_tenure_months: number | null;
@@ -402,29 +359,28 @@ export interface SfWorkforceTrends {
 }
 
 export interface SfTalentNineBoxCell {
-  box_id: string;
-  box_label: string;
-  potential_band: "low" | "medium" | "high" | string;
-  performance_band: "low" | "medium" | "high" | string;
-  movement_action: string;
+  box_id?: string | null;
+  box_label?: string | null;
+  potential_band?: "low" | "medium" | "high" | string | null;
+  performance_band?: "low" | "medium" | "high" | string | null;
+  movement_action?: string | null;
   display_order: number;
   employee_count: number;
   ready_count: number;
   cpa_real_count?: number;
   reference_count?: number;
   blocked_count: number;
-  status: DataReadiness | SourceState | "ready" | "partial";
-  href?: string;
+  status?: DataReadiness | SourceState | "ready" | "partial" | null;
 }
 
 export interface SfTalentDesempenoRow {
-  employee_key: string;
-  display_name: string;
-  role: string;
-  unit: string;
-  performance_band_available: "high" | "medium" | "low" | string;
-  potential_pending: boolean;
-  fit_band: string;
+  employee_key?: string | null;
+  display_name?: string | null;
+  role?: string | null;
+  unit?: string | null;
+  performance_band_available?: "high" | "medium" | "low" | string | null;
+  potential_pending?: boolean | null;
+  fit_band?: string | null;
 }
 
 // Cohorte "Desempeño disponible": desempeño real presente, Potencial pendiente (falta C+A).
@@ -433,11 +389,11 @@ export interface SfTalentDesempenoCohort {
   count: number;
   band_counts: { high: number; medium: number; low: number };
   roster: SfTalentDesempenoRow[];
-  roster_truncated: boolean;
+  roster_truncated?: boolean | null;
 }
 
 export interface SfTalentNineBoxPayload {
-  generated_at?: string;
+  generated_at?: string | null;
   status: DataReadiness | SourceState | "ready" | "partial";
   totals: {
     employees: number;
@@ -446,143 +402,116 @@ export interface SfTalentNineBoxPayload {
     blocked: number;
     cells: number;
   };
-  cells: SfTalentNineBoxCell[];
-  desempeno_disponible?: SfTalentDesempenoCohort;
-  blockers: SfTalentBlocker[];
+  cells?: SfTalentNineBoxCell[];
+  desempeno_disponible?: SfTalentDesempenoCohort | null;
+  blockers?: SfTalentBlocker[];
   privacy?: {
     roster?: string;
     forbidden_fields?: string[];
-  };
+    excluded_fields?: string[];
+    masked?: boolean | null;
+  } | null;
 }
 
 export interface SfTalentRosterRow {
-  employee_key: string;
-  display_name: string;
-  role: string;
-  unit: string;
-  region: string;
-  readiness_status: string;
-  box_id: string;
-  box_label: string;
-  performance_band: string;
-  performance_band_available?: string;
-  potential_pending?: boolean;
-  desempeno_disponible?: boolean;
-  potential_band: string;
-  fit_band: string;
-  movement_age_bucket: string;
-  data_status: string;
+  employee_key?: string | null;
+  display_name?: string | null;
+  role?: string | null;
+  unit?: string | null;
+  region?: string | null;
+  readiness_status?: string | null;
+  box_label?: string | null;
+  performance_band?: string | null;
+  performance_band_available?: string | null;
+  potential_pending?: boolean | null;
+  desempeno_disponible?: boolean | null;
+  potential_band?: string | null;
+  fit_band?: string | null;
+  movement_age_bucket?: string | null;
+  data_status?: string | null;
 }
 
 export interface SfTalentRosterPayload {
-  generated_at?: string;
-  box: {
-    box_id: string;
-    box_label: string;
-    potential_band: string;
-    performance_band: string;
-    movement_action: string;
+  generated_at?: string | null;
+  box?: {
+    box_id?: string | null;
+    box_label?: string | null;
+    potential_band?: string | null;
+    performance_band?: string | null;
+    movement_action?: string | null;
     display_order: number;
   };
   status: DataReadiness | SourceState | "ready" | "partial";
   count: number;
-  roster: SfTalentRosterRow[];
-  blockers: SfTalentBlocker[];
+  roster?: SfTalentRosterRow[];
+  blockers?: SfTalentBlocker[];
   privacy?: {
     masked?: boolean;
     excluded_fields?: string[];
-  };
+  } | null;
 }
 
 export interface SfTalentAnomaly {
-  id: string;
-  type: string;
-  severity: Severity | string;
-  title: string;
-  detail: string;
+  id?: string | null;
+  severity?: Severity | string | null;
+  title?: string | null;
   affected_count: number;
-  recommendation: string;
-  status: string;
+  recommendation?: string | null;
+  status?: string | null;
 }
 
 export interface SfTalentAnomaliesPayload {
-  generated_at?: string;
+  generated_at?: string | null;
   status: DataReadiness | SourceState | "ready" | "partial";
-  summary: {
+  summary?: {
     total: number;
     high: number;
     recommendation_only: number;
   };
-  items: SfTalentAnomaly[];
-  blockers: SfTalentBlocker[];
+  items?: SfTalentAnomaly[];
+  blockers?: SfTalentBlocker[];
 }
 
 export interface SfTalentMetadataEntity {
-  id: string;
-  kb: string;
-  entity: string;
-  odata_entity?: string | null;
-  required_for: string;
-  status: DataReadiness | SourceState | "ready" | "partial";
-  blockers: string[];
-  fields_found?: string[];
-  fields_missing?: string[];
-  ready_to_extract?: boolean;
-  live_status?: string | null;
-  live_selected_entity?: string | null;
-  live_candidates?: Array<Record<string, unknown>>;
-}
-
-export interface SfTalentExtractionTarget {
-  component: string;
-  component_label?: string;
-  component_code?: string;
-  required?: boolean;
-  entity: string;
-  odata_entity?: string;
-  status?: string;
-  ready_to_extract?: boolean;
-  sample_status?: string;
-  fields_present?: string[];
-  fields_found?: string[];
-  fields_missing?: string[];
+  id?: string | null;
+  required_for?: string | null;
+  status?: DataReadiness | SourceState | "ready" | "partial" | null;
+  ready_to_extract?: boolean | null;
 }
 
 export interface SfTalentMetadataReadinessPayload {
-  generated_at?: string;
+  generated_at?: string | null;
   status: DataReadiness | SourceState | "ready" | "partial";
-  summary: {
+  summary?: {
     cpa_ready_employees: number;
     cpa_insufficient_employees: number;
     entities: number;
     blocked_entities: number;
     live_required_ready?: number;
     live_required_total?: number;
-    live_status?: string;
+    live_status?: string | null;
   };
-  entities: SfTalentMetadataEntity[];
-  blockers: SfTalentBlocker[];
-  live_preflight?: Record<string, unknown> & {
-    extraction_targets?: SfTalentExtractionTarget[];
-  };
+  entities?: SfTalentMetadataEntity[];
+  blockers?: SfTalentBlocker[];
+  live_preflight?: { status?: string | null } | null;
 }
 
 export interface SfTalentOverviewPayload extends SfTalentKpisPayload {
-  nine_box: {
-    status?: DataReadiness | SourceState | "ready" | "partial";
+  nine_box?: {
+    status?: DataReadiness | SourceState | "ready" | "partial" | null;
     totals?: SfTalentNineBoxPayload["totals"];
-    cells: SfTalentNineBoxCell[];
-    blockers: SfTalentBlocker[];
+    cells?: SfTalentNineBoxCell[];
+    blockers?: SfTalentBlocker[];
   };
-  anomalies: {
-    status?: DataReadiness | SourceState | "ready" | "partial";
+  anomalies?: {
+    status?: DataReadiness | SourceState | "ready" | "partial" | null;
     summary?: SfTalentAnomaliesPayload["summary"];
-    items: SfTalentAnomaly[];
+    items?: SfTalentAnomaly[];
   };
-  metadata_readiness: {
-    status?: DataReadiness | SourceState | "ready" | "partial";
+  metadata_readiness?: {
+    status?: DataReadiness | SourceState | "ready" | "partial" | null;
     summary?: SfTalentMetadataReadinessPayload["summary"];
-    entities: SfTalentMetadataEntity[];
+    entities?: SfTalentMetadataEntity[];
   };
 }
 
@@ -638,24 +567,18 @@ export interface ThresholdDraft {
 }
 
 export interface Lesson {
-  id?: number;
-  item_id: string;
-  cartridge_id: string;
-  anomaly_type: string;
-  rule: string;
-  source_decision_id?: number | null;
+  anomaly_type?: string | null;
+  rule?: string | null;
   confidence?: number | null;
-  metadata?: Record<string, unknown>;
-  created_at?: string;
+  created_at?: string | null;
 }
 
 export interface LessonPattern {
-  cartridge_id: string;
-  anomaly_type: string;
+  anomaly_type?: string | null;
   count: number;
   avg_confidence?: number | null;
-  latest_rule?: string;
-  last_seen_at?: string;
+  latest_rule?: string | null;
+  last_seen_at?: string | null;
 }
 
 export interface LessonApplication {
@@ -667,22 +590,20 @@ export interface LessonApplication {
 }
 
 export interface ActivityEntry {
-  id: string;
-  kind: "event" | "execution" | "decision_action" | "action_run" | "outcome";
-  type: string;
-  label: string;
-  status?: string;
-  actor?: string;
-  at?: string;
-  metadata?: Record<string, unknown>;
-  result?: Record<string, unknown>;
-  error?: string | null;
+  label?: string | null;
+  status?: string | null;
+  at?: string | null;
 }
 
 export interface ActivityPayload {
   item_id: string;
   activity: ActivityEntry[];
   counts: {
+    events: number;
+    executions: number;
+    decision_actions: number;
+    action_runs: number;
+    outcomes: number;
     total: number;
   };
 }
@@ -907,119 +828,107 @@ export interface AnalysisEvidence {
   recommended_option?: Record<string, unknown> | null;
 }
 
-export interface ControlItem {
-  id: string;
-  kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal" | "agent_alert";
-  domain: string;
-  module: string;
-  module_id?: string;
-  cartridge: string;
-  connector_id?: string;
-  entity_kind: string;
-  entity_id: string;
-  entity_label: string;
-  anomaly_type: string;
-  severity: Severity;
-  severity_weight: number;
-  title: string;
-  description: string;
-  detected_at: string;
-  recommendation: string;
-  root_cause?: string;
-  impact?: string;
-  status: string;
-  decision_id?: number | null;
-  selected_option_id?: string;
-  execution_status?: string;
-  impact_estimate?: number | null;
-  impact_currency?: string;
-  confidence?: number | null;
-  priority_score?: number | null;
-  priority?: {
-    score: number;
-    band: Severity;
-    formula?: string;
-    drivers?: ImpactDriver[];
-  };
-  control_origin?: ControlOrigin | string | null;
-  capabilities?: Record<string, unknown>;
-  monte_carlo?: MonteCarloSummary;
-  bayesian_calibration?: BayesianCalibrationSummary;
-  impact_drivers?: ImpactDriver[];
-  thresholds_applied?: DetectionThreshold[];
-  related_lessons?: Lesson[];
-  lesson_count?: number;
-  lesson_applications?: LessonApplication[];
-  decision_intelligence?: DecisionIntelligence;
-  intelligence?: IntelligencePack;
-  analysis_type?: string | null;
-  engine?: string | null;
-  engine_run_id?: string | null;
-  analysis_evidence?: AnalysisEvidence;
-  omega: Omega;
+export interface PublicDecisionIntelligence {
+  method?: string | null;
+  anomaly_probability?: number | null;
+  uncertainty_level?: string | null;
+  recommended_decision?: string | null;
+  recommended_next_step?: string | null;
+  rationale?: string | null;
+  data_quality_status?: string | null;
 }
 
-export interface ControlAlert {
+export interface PublicOmegaState {
+  status?: string | null;
+  label?: string | null;
+}
+
+export interface PublicOmega {
+  step?: string | null;
+  options?: OmegaOption[];
+  decision?: PublicOmegaState;
+  execution?: PublicOmegaState;
+  control?: PublicOmegaState;
+  decision_intelligence?: PublicDecisionIntelligence;
+}
+
+export interface ControlItem {
   id: string;
-  item_id: string;
-  alert_type: string;
-  source?: string;
-  advisory?: boolean;
-  agent_id?: string | null;
-  agent_run_id?: string | number | null;
-  analysis_type?: string | null;
-  engine?: string | null;
-  engine_run_id?: string | null;
-  analysis_evidence?: AnalysisEvidence;
-  deduped?: boolean;
-  occurrence_count?: number;
-  hypothesis?: string | null;
-  expected_outcome?: string | null;
-  severity: Severity;
-  priority_score: number;
-  domain: string;
-  module: string;
-  module_id?: string;
-  cartridge: string;
-  connector_id?: string;
-  source_dataset: string;
-  title: string;
-  message: string;
-  status: string;
-  owner?: string | null;
-  note?: string | null;
-  snoozed_until?: string | null;
-  threshold_state?: string;
-  lesson_count?: number;
+  kind: string;
+  title?: string | null;
+  description?: string | null;
+  severity?: Severity | string | null;
+  status?: string | null;
+  recommendation?: string | null;
+  root_cause?: string | null;
+  impact?: string | null;
+  detected_at?: string | null;
+  domain?: string | null;
+  module?: string | null;
+  cartridge?: string | null;
+  entity_label?: string | null;
+  contractor_count?: number | null;
+  risk_factor?: number | null;
+  value?: string | number | boolean | null;
+  count?: number | null;
   impact_estimate?: number | null;
-  impact_currency?: string;
-  recommended_action?: string;
-  drivers?: ImpactDriver[];
-  push_ready?: boolean;
-  delivery?: {
-    status: string;
-    channels?: string[];
-    reason?: string;
-  };
-  created_at?: string;
+  impact_currency?: string | null;
+  confidence?: number | null;
+  priority_score?: number | null;
+  decision_intelligence?: PublicDecisionIntelligence;
+  omega?: PublicOmega;
+}
+
+export interface ControlAlert extends ControlItem {
+  item_id?: string | null;
+  alert_type?: string | null;
+  advisory?: boolean | null;
+  occurrence_count?: number;
+  push_ready?: boolean | null;
+  message?: string | null;
+}
+
+export interface PublicStatusCounts {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  open: number;
+  in_review: number;
+  approved: number;
+  dismissed: number;
+  resolved: number;
+  ready: number;
+  partial: number;
+  blocked: number;
+  empty: number;
+  missing: number;
+  unavailable: number;
+  invalid_schema: number;
+  no_permission: number;
 }
 
 export interface Dashboard {
-  meta?: {
-    generated_at?: string;
-    refresh_interval_seconds?: number;
-    live_mode?: "polling" | string;
-    version?: string;
-    app_env?: string;
-    execution_mode?: string;
-    supervised_execution_enabled?: boolean;
-    external_writeback_enabled?: boolean;
-    write_back_enabled?: boolean;
+  meta: {
+    generated_at?: string | null;
+    refresh_interval_seconds?: number | null;
+    live_mode?: "polling" | string | null;
+    source_count: number;
+    item_count: number;
+    version?: string | null;
+    app_env?: string | null;
+    execution_mode?: string | null;
+    supervised_execution_enabled?: boolean | null;
+    external_writeback_enabled?: boolean | null;
+    write_back_enabled?: boolean | null;
   };
-  period: string;
-  omega_steps: Array<{ id: string; label: string }>;
+  period?: string | null;
+  omega_steps: Array<{ id?: string | null; label?: string | null }>;
   summary: {
     total_items: number;
+    total_anomalies: number;
+    control_items: number;
     critical: number;
     attention: number;
     open_decisions: number;
@@ -1027,34 +936,13 @@ export interface Dashboard {
     active_modules?: number;
     active_cartridges: number;
     operational_cartridges: number;
-    source_states: Partial<Record<SourceState, number>>;
-    data_readiness?: Partial<Record<DataReadiness, number>>;
+    by_severity: PublicStatusCounts;
+    source_states: PublicStatusCounts;
+    data_readiness: PublicStatusCounts;
     data_ready_sources?: number;
     data_ready_modules?: number;
     partial_modules?: number;
     stub_modules?: number;
-    cycle_counts?: Record<string, number>;
-    thresholds?: {
-      active: number;
-      total: number;
-      items_with_thresholds?: number;
-    };
-    lessons?: {
-      total: number;
-      recent: Lesson[];
-      by_cartridge?: Record<string, number>;
-      top_patterns?: LessonPattern[];
-    };
-    alerts?: {
-      total: number;
-      critical: number;
-      high: number;
-      medium: number;
-      low: number;
-      push_ready: number;
-      by_type?: Record<string, number>;
-      top?: ControlAlert[];
-    };
   };
   domains: Domain[];
   cartridges: Cartridge[];
@@ -1068,7 +956,6 @@ export interface LessonsPayload {
   summary: {
     total: number;
     recent: Lesson[];
-    by_cartridge?: Record<string, number>;
     top_patterns?: LessonPattern[];
   };
 }

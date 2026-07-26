@@ -133,9 +133,6 @@ def _source(raw: Mapping[str, object]) -> DiagnosticSource | None:
     readiness = _optional_readiness(_text(row, "data_readiness"))
     checked_at = _utc_datetime(row.get("checked_at"))
     return DiagnosticSource(
-        cartridge=cartridge[:120],
-        dataset=dataset[:200],
-        module=_text(row, "module")[:200] or None,
         domain=_text(row, "domain")[:200] or None,
         status=status,
         data_readiness=readiness,
@@ -163,9 +160,6 @@ def _diagnostic_item(raw: Mapping[str, object]) -> DiagnosticItem:
     return DiagnosticItem(
         kind=normalize_item_kind(_text(row, "kind", "item_kind")),
         title=_text(row, "title")[:240] or "Technical diagnostic",
-        cartridge=_text(row, "cartridge", "connector_id")[:120] or None,
-        dataset=_text(row, "source_dataset", "dataset")[:200] or None,
-        module=_text(row, "module")[:200] or None,
         domain=_text(row, "domain")[:200] or None,
         status=normalize_item_status(status) if status else None,
         data_status=_optional_readiness(data_status),
@@ -182,11 +176,9 @@ def _installation(raw: Mapping[str, object]) -> DiagnosticInstallation | None:
     if not cartridge_id:
         return None
     return DiagnosticInstallation(
-        cartridge_id=cartridge_id[:120],
         status=normalize_installation_status(
             _text(row, "installation_status", "status")
         ),
-        current_step=_text(row, "current_step")[:200] or None,
         label=_text(row, "label")[:200] or None,
         category=_text(row, "category")[:120] or None,
         ready_at=_utc_datetime(row.get("ready_at")),
@@ -204,7 +196,7 @@ def build_operational_diagnostics(
 ) -> ControlRoomDiagnosticsResponse:
     validate_snapshot_scope(snapshot)
     sources = [value for raw in snapshot.sources if (value := _source(raw))]
-    sources.sort(key=lambda row: (row.cartridge, row.dataset))
+    sources.sort(key=lambda row: row.model_dump_json(exclude_none=True))
     unsectioned = [
         strip_business_fields(item)
         for item in filter_business_items(snapshot.items)
@@ -228,17 +220,23 @@ def build_operational_diagnostics(
             continue
         seen_items.add(identity)
         items.append(item)
-    items.sort(key=lambda row: (row.cartridge or "", row.dataset or "", row.title))
+    items.sort(
+        key=lambda row: (
+            row.domain or "",
+            row.kind,
+            row.title,
+            row.model_dump_json(exclude_none=True),
+        )
+    )
     installations = [
         value
         for raw in snapshot.installations
         if (value := _installation(raw)) is not None
     ]
-    installations.sort(key=lambda row: row.cartridge_id)
+    installations.sort(key=lambda row: row.model_dump_json(exclude_none=True))
     return ControlRoomDiagnosticsResponse(
         schema_version=DIAGNOSTICS_SCHEMA_VERSION,
         generated_at=snapshot.generated_at,
-        scope=snapshot.scope,
         sources=sources,
         diagnostic_items=items,
         installations=installations,

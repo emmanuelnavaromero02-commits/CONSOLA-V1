@@ -124,6 +124,7 @@ from app.services.control_room.business_execution_precondition import (
 from app.services.control_room.business_authoritative_execution import (
     AuthoritativeExecutionContext,
     acquire_authoritative_action_reservation,
+    lock_authoritative_execution_context,
     require_authoritative_binding_current,
     revalidate_authoritative_action,
 )
@@ -196,6 +197,7 @@ for _helper in (
     reservation_lease_token,
     reservation_authority_audit_valid,
     acquire_authoritative_action_reservation,
+    lock_authoritative_execution_context,
     require_authoritative_binding_current,
     revalidate_authoritative_action,
     require_approved_execution,
@@ -1371,6 +1373,22 @@ async def _run_with_db_scope(
 
 
 @_bind_to_core
+async def _require_authoritative_template_enabled(conn: Any, template_id: str) -> None:
+    try:
+        await require_enabled_action_template(conn, template_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        raise HTTPException(
+            409,
+            {
+                "code": "item_business_state_changed",
+                "message": "control room item changed; reload before mutating",
+            },
+        ) from None
+
+
+@_bind_to_core
 async def action_preview(
     item_id: str,
     user: dict,
@@ -1381,10 +1399,12 @@ async def action_preview(
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    require_action_item_prerequisites(item, operation="preview")
-    template = require_explicit_action_template(item, user, template_id, binding_id)
-    payload = _execution_payload(item, "preview", template)
+    expected_item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_prerequisites(expected_item, operation="preview")
+    expected_template = require_explicit_action_template(
+        expected_item, user, template_id, binding_id
+    )
+    expected_payload = _execution_payload(expected_item, "preview", expected_template)
     result = {
         "ok": True,
         "mode": "preview",
@@ -1395,15 +1415,27 @@ async def action_preview(
 
     async def _write(
         conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        await require_enabled_action_template(conn, str(template["template_id"]))
-        await _ensure_item_row(
+    ) -> tuple[dict[str, Any], dict[str, Any], AuthoritativeExecutionContext]:
+        context = await lock_authoritative_execution_context(
             conn,
             user=user,
-            item=item,
-            status=item.get("status") or "in_review",
-            critical=True,
+            expected_item=expected_item,
+            expected_payload=expected_payload,
+            template_id=str(expected_template["template_id"]),
+            binding_id=str(binding_id),
+            item_builder=lambda row: _authoritative_execution_item(row, item_id),
+            payload_builder=lambda current_item, current_template: _execution_payload(
+                current_item, "preview", current_template
+            ),
         )
+        item = context.item
+        template = context.template
+        payload = context.payload
+        require_action_item_prerequisites(item, operation="preview")
+        await _require_authoritative_template_enabled(
+            conn, str(template["template_id"])
+        )
+        require_authoritative_binding_current(context, user)
         execution = await _record_action_execution(
             conn,
             user=user,
@@ -1427,7 +1459,10 @@ async def action_preview(
             legacy_execution_id=int(execution["id"])
             if execution.get("id") is not None
             else None,
-            metadata={"legacy_table": "control_room_action_executions"},
+            metadata={
+                "legacy_table": "control_room_action_executions",
+                "authority_audit": context.authority_audit,
+            },
             critical=True,
         )
         await _set_execution_status(
@@ -1449,9 +1484,12 @@ async def action_preview(
             },
             critical=True,
         )
-        return execution, action_run
+        return execution, action_run, context
 
-    execution, action_run = await _run_with_db_scope(pool, user, _write)
+    execution, action_run, context = await _run_with_db_scope(pool, user, _write)
+    item = context.item
+    template = context.template
+    payload = context.payload
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1461,7 +1499,11 @@ async def action_preview(
         ip=ip,
         user_agent=user_agent,
         status="success",
-        metadata={"template_id": template["template_id"], "payload": payload},
+        metadata={
+            "template_id": template["template_id"],
+            "payload": payload,
+            "authority_audit": context.authority_audit,
+        },
         critical=True,
     )
     public_item = _project_public_item(
@@ -1487,50 +1529,70 @@ async def action_dry_run(
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    require_action_item_prerequisites(item, operation="dry_run")
-    template = require_explicit_action_template(item, user, template_id, binding_id)
-    payload = _execution_payload(item, "dry_run", template)
-    warnings = []
-    if payload["impact"]["status"] != "ok":
-        warnings.append("impact_unavailable")
-    if not item.get("decision_id"):
-        warnings.append("decision_not_created_yet")
-    validation_checks, validation_warnings, validation_ok = _dry_run_checks(
-        user=user,
-        item=item,
-        template=template,
-        payload=payload,
+    expected_item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_prerequisites(expected_item, operation="dry_run")
+    expected_template = require_explicit_action_template(
+        expected_item, user, template_id, binding_id
     )
-    warnings.extend(value for value in validation_warnings if value not in warnings)
-    action_run_status = "dry_run_completed" if validation_ok else "dry_run_failed"
-    execution_status = "dry_run_validated" if validation_ok else "failed"
-    result = {
-        "ok": validation_ok,
-        "mode": "dry_run",
-        "validated": validation_ok,
-        "external_write": False,
-        "warnings": warnings,
-        "checks": validation_checks,
-        "message": (
-            "Dry-run validado. V1 no escribe en sistemas externos."
-            if validation_ok
-            else "Dry-run fallido: el contrato de ejecucion no paso todas las validaciones requeridas."
-        ),
-    }
+    expected_payload = _execution_payload(expected_item, "dry_run", expected_template)
     pool = await auth.pool()
 
     async def _write(
         conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        await require_enabled_action_template(conn, str(template["template_id"]))
-        await _ensure_item_row(
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, Any],
+        AuthoritativeExecutionContext,
+        dict[str, Any],
+        str,
+    ]:
+        context = await lock_authoritative_execution_context(
             conn,
             user=user,
-            item=item,
-            status=item.get("status") or "in_review",
-            critical=True,
+            expected_item=expected_item,
+            expected_payload=expected_payload,
+            template_id=str(expected_template["template_id"]),
+            binding_id=str(binding_id),
+            item_builder=lambda row: _authoritative_execution_item(row, item_id),
+            payload_builder=lambda current_item, current_template: _execution_payload(
+                current_item, "dry_run", current_template
+            ),
         )
+        item = context.item
+        template = context.template
+        payload = context.payload
+        require_action_item_prerequisites(item, operation="dry_run")
+        await _require_authoritative_template_enabled(
+            conn, str(template["template_id"])
+        )
+        warnings = []
+        if payload["impact"]["status"] != "ok":
+            warnings.append("impact_unavailable")
+        if not item.get("decision_id"):
+            warnings.append("decision_not_created_yet")
+        validation_checks, validation_warnings, validation_ok = _dry_run_checks(
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+        )
+        warnings.extend(value for value in validation_warnings if value not in warnings)
+        action_run_status = "dry_run_completed" if validation_ok else "dry_run_failed"
+        execution_status = "dry_run_validated" if validation_ok else "failed"
+        result = {
+            "ok": validation_ok,
+            "mode": "dry_run",
+            "validated": validation_ok,
+            "external_write": False,
+            "warnings": warnings,
+            "checks": validation_checks,
+            "message": (
+                "Dry-run validado. V1 no escribe en sistemas externos."
+                if validation_ok
+                else "Dry-run fallido: el contrato de ejecucion no paso todas las validaciones requeridas."
+            ),
+        }
+        require_authoritative_binding_current(context, user)
         execution = await _record_action_execution(
             conn,
             user=user,
@@ -1560,6 +1622,7 @@ async def action_dry_run(
             metadata={
                 "legacy_table": "control_room_action_executions",
                 "checks": validation_checks,
+                "authority_audit": context.authority_audit,
                 **dry_run_metadata(item, template_id=str(template["template_id"])),
             },
             critical=True,
@@ -1585,9 +1648,14 @@ async def action_dry_run(
             },
             critical=True,
         )
-        return execution, action_run
+        return execution, action_run, context, result, execution_status
 
-    execution, action_run = await _run_with_db_scope(pool, user, _write)
+    execution, action_run, context, result, execution_status = await _run_with_db_scope(
+        pool, user, _write
+    )
+    item = context.item
+    template = context.template
+    payload = context.payload
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1596,11 +1664,12 @@ async def action_dry_run(
         resource_id=item_id,
         ip=ip,
         user_agent=user_agent,
-        status="success" if validation_ok else "failed",
+        status="success" if result["ok"] else "failed",
         metadata={
             "template_id": template["template_id"],
             "result": result,
             "action_run_id": action_run.get("id"),
+            "authority_audit": context.authority_audit,
         },
         critical=True,
     )

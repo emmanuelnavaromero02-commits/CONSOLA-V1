@@ -336,15 +336,17 @@ _CONTROL_ROOM_ANALYSIS_TOOLS = {
 _CONTROL_ROOM_READ_TOOLS = {
     "calibration__bayesian_state",
     "control_room__summary_read",
-    "control_room__dashboard_read",
-    "control_room__ops_summary_read",
-    "control_room__alerts_read",
-    "control_room__agents_ops_read",
     "control_room__sap_successfactors_gold_kpis_read",
     "control_room__talent_kpis_read",
     "control_room__talent_overview_read",
     "control_room__talent_9box_read",
     "control_room__talent_metadata_readiness_read",
+}
+_CONTROL_ROOM_OPERATIONAL_READ_TOOLS = {
+    "control_room__dashboard_read",
+    "control_room__ops_summary_read",
+    "control_room__alerts_read",
+    "control_room__agents_ops_read",
     "control_room__decision_intelligence_runs_read",
 }
 _MARKET_CONTEXT_READ_TOOLS = {"market_context_read"}
@@ -1235,6 +1237,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
     elif tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS:
         ctx = _require_context_permission(req, "control_room.write", internal_service)
+    elif tool in _CONTROL_ROOM_OPERATIONAL_READ_TOOLS:
+        ctx = _require_context_permission(req, "operations.read", internal_service)
     elif tool in _CONTROL_ROOM_READ_TOOLS:
         ctx = _require_context_permission(req, "datasets.read", internal_service)
     elif tool in _MARKET_CONTEXT_READ_TOOLS:
@@ -1304,11 +1308,16 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             _require_cartridge_scope(ctx, vault_scope)
         args["security_context"] = ctx
 
-    if tool in _CONTROL_ROOM_ALERT_TOOLS | _CONTROL_ROOM_ANALYSIS_TOOLS | _CONTROL_ROOM_READ_TOOLS:
+    if tool in (
+        _CONTROL_ROOM_ALERT_TOOLS
+        | _CONTROL_ROOM_ANALYSIS_TOOLS
+        | _CONTROL_ROOM_READ_TOOLS
+        | _CONTROL_ROOM_OPERATIONAL_READ_TOOLS
+    ):
         if not _has_tenant_workspace_scope(ctx):
             detail = (
                 "control room analysis requires tenant/workspace scope"
-                if tool in _CONTROL_ROOM_READ_TOOLS
+                if tool in _CONTROL_ROOM_READ_TOOLS | _CONTROL_ROOM_OPERATIONAL_READ_TOOLS
                 else "control room alerts require tenant/workspace scope"
             )
             raise HTTPException(403, detail=detail)

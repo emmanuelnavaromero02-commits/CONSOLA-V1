@@ -128,7 +128,7 @@ def _decision(item: Mapping[str, object]) -> ExperienceDecision | None:
     status = str(item.get("status") or "").strip().lower()
     if status not in _DECISION_STATES:
         return None
-    return ExperienceDecision(reference=decision_id, status=status)
+    return ExperienceDecision(status=status)
 
 
 def project_experience_fact(
@@ -215,9 +215,6 @@ def build_business_experience(
         if facts:
             sections.append(
                 ExperienceSection(
-                    id=identity.section_id,
-                    cartridge_id=identity.cartridge_id,
-                    module_id=identity.module_id,
                     title=min(titles, key=lambda value: (value.casefold(), value)),
                     domain=identity.domain,
                     facts=facts,
@@ -226,7 +223,6 @@ def build_business_experience(
     return ControlRoomExperienceResponse(
         schema_version=EXPERIENCE_SCHEMA_VERSION,
         generated_at=snapshot.generated_at,
-        scope=snapshot.scope,
         sections=sections,
     )
 

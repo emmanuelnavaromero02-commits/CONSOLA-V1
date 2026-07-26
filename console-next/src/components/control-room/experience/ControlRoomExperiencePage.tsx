@@ -52,8 +52,11 @@ export function ControlRoomExperienceContent({
         {sections.length === 0 ? (
           <ExperienceLoadState state="empty" />
         ) : (
-          sections.map((section) => (
-            <ExperienceSection key={section.id} section={section} />
+          sections.map((section, index) => (
+            <ExperienceSection
+              key={`${section.domain}:${section.title}:${index}`}
+              section={section}
+            />
           ))
         )}
       </div>

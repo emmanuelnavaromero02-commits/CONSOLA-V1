@@ -12,6 +12,14 @@ from app.schemas.control_room_action_requests import (
 )
 from app.schemas.control_room_experience_actions import ExperienceActionPreviewResponse
 from app.schemas.control_room_legacy_responses import (
+    ControlRoomAgentsOpsResponse,
+    ControlRoomBusinessSummaryResponse,
+    ControlRoomDecisionIntelligenceCalibrationResponse,
+    ControlRoomDecisionIntelligenceHistoryResponse,
+    ControlRoomDecisionIntelligenceRunDetailResponse,
+    ControlRoomDecisionIntelligenceRunsResponse,
+    ControlRoomGoldKpisResponse,
+    ControlRoomLessonsResponse,
     ControlRoomLegacyActionRunsResponse,
     ControlRoomLegacyActivityResponse,
     ControlRoomLegacyAlertsResponse,
@@ -20,13 +28,18 @@ from app.schemas.control_room_legacy_responses import (
     ControlRoomLegacyImpactResponse,
     ControlRoomLegacyItemResponse,
     ControlRoomLegacyOutcomesResponse,
+    ControlRoomMarketValidationResponse,
+    ControlRoomOpsSummaryResponse,
+    ControlRoomReadinessResponse,
     ControlRoomTalentAnomaliesResponse,
     ControlRoomTalentKpisResponse,
     ControlRoomTalentMetadataReadinessResponse,
     ControlRoomTalentNineBoxResponse,
     ControlRoomTalentOverviewResponse,
     ControlRoomTalentRosterResponse,
-    redact_public_control_room_projection,
+    ControlRoomTalentWorkforceTrendsResponse,
+    ControlRoomThresholdsResponse,
+    project_public_control_room_response,
 )
 from app.services.auth import verify_internal_api_key
 from app.services import control_room_service
@@ -55,6 +68,20 @@ from app.routers.control_room_surfaces import router as surfaces_router
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
 router.include_router(surfaces_router)
+
+
+_INTERNAL_OPERATIONAL_VIEWS = frozenset(
+    {
+        "agents_ops",
+        "alerts",
+        "dashboard",
+        "decision_intelligence_calibration",
+        "decision_intelligence_history",
+        "decision_intelligence_runs",
+        "ops_summary",
+        "sap_successfactors_market_validation",
+    }
+)
 
 
 def _require_readiness_cartridge(user: dict, cartridge_id: str) -> None:
@@ -91,8 +118,8 @@ def _control_room_internal_user(
     if not ctx.get("trusted"):
         raise HTTPException(status_code=403, detail="trusted security_context required")
     permissions = {str(item) for item in (ctx.get("permissions") or [])}
-    if "datasets.read" not in permissions:
-        raise HTTPException(status_code=403, detail="permission required: datasets.read")
+    if not permissions & {"datasets.read", "operations.read"}:
+        raise HTTPException(status_code=403, detail="read permission required")
     tenant_id = str(ctx.get("tenant_id") or "").strip()
     workspace_id = str(ctx.get("workspace_id") or "").strip()
     if not tenant_id or not workspace_id:
@@ -122,110 +149,165 @@ def _bounded_int(value: Any, default: int, *, lower: int, upper: int) -> int:
     return max(lower, min(number, upper))
 
 
+def _require_internal_view_permission(view: str, user: dict[str, Any]) -> None:
+    permissions = {str(item) for item in user.get("_effective_permissions") or []}
+    required = "operations.read" if view in _INTERNAL_OPERATIONAL_VIEWS else "datasets.read"
+    if required not in permissions:
+        raise HTTPException(status_code=403, detail=f"permission required: {required}")
+
+
 async def _control_room_internal_view(
     view: str,
     user: dict[str, Any],
     params: dict[str, Any],
 ) -> Any:
     view = str(view or "").strip()
+    _require_internal_view_permission(view, user)
     if view == "summary":
-        return await _control_room_cache_get_or_set(
-            "summary",
-            user,
-            lambda: control_room_service.summary(user),
+        return project_public_control_room_response(
+            ControlRoomBusinessSummaryResponse,
+            await _control_room_cache_get_or_set(
+                "summary", user, lambda: control_room_service.summary(user)
+            ),
         )
     if view == "dashboard":
-        return await _control_room_cache_get_or_set(
-            "dashboard",
-            user,
-            lambda: control_room_service.dashboard(user),
+        return project_public_control_room_response(
+            ControlRoomLegacyDashboardResponse,
+            await _control_room_cache_get_or_set(
+                "dashboard", user, lambda: control_room_service.dashboard(user)
+            ),
         )
     if view == "ops_summary":
-        return await control_room_service.ops_summary(user)
+        return project_public_control_room_response(
+            ControlRoomOpsSummaryResponse,
+            await control_room_service.ops_summary(user),
+        )
     if view == "agents_ops":
         limit = _bounded_int(params.get("limit"), 12, lower=1, upper=50)
-        return await _control_room_cache_get_or_set(
-            f"agents-ops-{limit}",
-            user,
-            lambda: control_room_service.agents_ops(user, limit=limit),
+        return project_public_control_room_response(
+            ControlRoomAgentsOpsResponse,
+            await _control_room_cache_get_or_set(
+                f"agents-ops-{limit}",
+                user,
+                lambda: control_room_service.agents_ops(user, limit=limit),
+            ),
         )
     if view == "alerts":
-        return await control_room_service.list_alerts(user)
+        return project_public_control_room_response(
+            ControlRoomLegacyAlertsResponse,
+            await control_room_service.list_alerts(user),
+        )
     if view == "sap_successfactors_gold_kpis":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-gold-kpis",
-            user,
-            lambda: control_room_service.sap_successfactors_gold_kpis(user),
+        return project_public_control_room_response(
+            ControlRoomGoldKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-gold-kpis",
+                user,
+                lambda: control_room_service.sap_successfactors_gold_kpis(user),
+            ),
         )
     if view == "sap_successfactors_talent_kpis":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-talent-kpis",
-            user,
-            lambda: control_room_service.sap_successfactors_talent_kpis(user),
+        return project_public_control_room_response(
+            ControlRoomTalentKpisResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-talent-kpis",
+                user,
+                lambda: control_room_service.sap_successfactors_talent_kpis(user),
+            ),
         )
     if view == "sap_successfactors_workforce_trends":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-workforce-trends",
-            user,
-            lambda: control_room_service.build_workforce_trends(user),
+        return project_public_control_room_response(
+            ControlRoomTalentWorkforceTrendsResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-workforce-trends",
+                user,
+                lambda: control_room_service.build_workforce_trends(user),
+            ),
         )
     if view == "sap_successfactors_talent_overview":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-talent-overview",
-            user,
-            lambda: control_room_service.sap_successfactors_talent_overview(user),
+        return project_public_control_room_response(
+            ControlRoomTalentOverviewResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-talent-overview",
+                user,
+                lambda: control_room_service.sap_successfactors_talent_overview(user),
+            ),
         )
     if view == "sap_successfactors_talent_9box":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-talent-9box",
-            user,
-            lambda: control_room_service.sap_successfactors_talent_9box(user),
+        return project_public_control_room_response(
+            ControlRoomTalentNineBoxResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-talent-9box",
+                user,
+                lambda: control_room_service.sap_successfactors_talent_9box(user),
+            ),
         )
     if view == "sap_successfactors_talent_metadata_readiness":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-talent-metadata-readiness",
-            user,
-            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+        return project_public_control_room_response(
+            ControlRoomTalentMetadataReadinessResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-talent-metadata-readiness",
+                user,
+                lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+            ),
         )
     if view == "sap_successfactors_market_validation":
-        return await _control_room_cache_get_or_set(
-            "sap-successfactors-market-validation",
-            user,
-            lambda: market_decision_validation.get_validation(user),
+        return project_public_control_room_response(
+            ControlRoomMarketValidationResponse,
+            await _control_room_cache_get_or_set(
+                "sap-successfactors-market-validation",
+                user,
+                lambda: market_decision_validation.get_validation(user),
+            ),
         )
     if view == "banxico_readiness":
         from app.services.banxico_readiness import banxico_readiness
 
         _require_readiness_cartridge(user, "banxico")
-        return await _control_room_cache_get_or_set(
-            "banxico-readiness",
-            user,
-            lambda: banxico_readiness(user),
+        return project_public_control_room_response(
+            ControlRoomReadinessResponse,
+            await _control_room_cache_get_or_set(
+                "banxico-readiness",
+                user,
+                lambda: banxico_readiness(user),
+            ),
         )
     if view == "inegi_readiness":
         from app.services.inegi_readiness import inegi_readiness
 
         _require_readiness_cartridge(user, "inegi")
-        return await _control_room_cache_get_or_set(
-            "inegi-readiness",
-            user,
-            lambda: inegi_readiness(user),
+        return project_public_control_room_response(
+            ControlRoomReadinessResponse,
+            await _control_room_cache_get_or_set(
+                "inegi-readiness",
+                user,
+                lambda: inegi_readiness(user),
+            ),
         )
     if view == "sec_edgar_readiness":
         from app.services.sec_edgar_readiness import sec_edgar_readiness
 
         _require_readiness_cartridge(user, "sec_edgar")
-        return await _control_room_cache_get_or_set(
-            "sec-edgar-readiness",
-            user,
-            lambda: sec_edgar_readiness(user),
+        return project_public_control_room_response(
+            ControlRoomReadinessResponse,
+            await _control_room_cache_get_or_set(
+                "sec-edgar-readiness",
+                user,
+                lambda: sec_edgar_readiness(user),
+            ),
         )
     if view == "decision_intelligence_runs":
         limit = _bounded_int(params.get("limit"), 50, lower=1, upper=250)
-        return await intelligence_history.list_runs(user, limit=limit)
+        return project_public_control_room_response(
+            ControlRoomDecisionIntelligenceRunsResponse,
+            await intelligence_history.list_runs(user, limit=limit),
+        )
     if view == "decision_intelligence_history":
         limit = _bounded_int(params.get("limit"), 100, lower=1, upper=500)
-        return await intelligence_history.list_history(user, limit=limit)
+        return project_public_control_room_response(
+            ControlRoomDecisionIntelligenceHistoryResponse,
+            await intelligence_history.list_history(user, limit=limit),
+        )
     if view == "decision_intelligence_calibration":
         min_outcomes_required = _bounded_int(
             params.get("min_outcomes_required"),
@@ -233,16 +315,28 @@ async def _control_room_internal_view(
             lower=1,
             upper=1000,
         )
-        return await intelligence_history.calibration_report(
-            user,
-            min_outcomes_required=min_outcomes_required,
+        return project_public_control_room_response(
+            ControlRoomDecisionIntelligenceCalibrationResponse,
+            await intelligence_history.calibration_report(
+                user,
+                min_outcomes_required=min_outcomes_required,
+            ),
         )
     raise HTTPException(status_code=400, detail=f"unsupported control room view: {view}")
 
 
-@router.get("/summary", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/summary",
+    response_model=ControlRoomBusinessSummaryResponse,
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_summary(user: dict = Depends(require_authenticated)):
-    return await _control_room_cache_get_or_set("summary", user, lambda: control_room_service.summary(user))
+    return project_public_control_room_response(
+        ControlRoomBusinessSummaryResponse,
+        await _control_room_cache_get_or_set(
+            "summary", user, lambda: control_room_service.summary(user)
+        ),
+    )
 
 
 @router.get(
@@ -254,15 +348,22 @@ async def control_room_dashboard(user: dict = Depends(require_authenticated)):
     payload = await _control_room_cache_get_or_set(
         "dashboard", user, lambda: control_room_service.dashboard(user)
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(ControlRoomLegacyDashboardResponse, payload)
 
 
-@router.get("/sap-successfactors/gold-kpis", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/sap-successfactors/gold-kpis",
+    response_model=ControlRoomGoldKpisResponse,
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require_authenticated)):
-    return await _control_room_cache_get_or_set(
-        "sap-successfactors-gold-kpis",
-        user,
-        lambda: control_room_service.sap_successfactors_gold_kpis(user),
+    return project_public_control_room_response(
+        ControlRoomGoldKpisResponse,
+        await _control_room_cache_get_or_set(
+            "sap-successfactors-gold-kpis",
+            user,
+            lambda: control_room_service.sap_successfactors_gold_kpis(user),
+        ),
     )
 
 
@@ -277,7 +378,7 @@ async def control_room_sap_successfactors_talent_kpis(user: dict = Depends(requi
         user,
         lambda: control_room_service.sap_successfactors_talent_kpis(user),
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(ControlRoomTalentKpisResponse, payload)
 
 
 @router.get(
@@ -291,7 +392,7 @@ async def control_room_sap_successfactors_talent_overview(user: dict = Depends(r
         user,
         lambda: control_room_service.sap_successfactors_talent_overview(user),
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(ControlRoomTalentOverviewResponse, payload)
 
 
 @router.get(
@@ -305,7 +406,7 @@ async def control_room_sap_successfactors_talent_9box(user: dict = Depends(requi
         user,
         lambda: control_room_service.sap_successfactors_talent_9box(user),
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(ControlRoomTalentNineBoxResponse, payload)
 
 
 @router.get(
@@ -322,7 +423,7 @@ async def control_room_sap_successfactors_talent_9box_box(
         user,
         lambda: control_room_service.sap_successfactors_talent_9box_box(user, box_id),
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(ControlRoomTalentRosterResponse, payload)
 
 
 @router.get(
@@ -336,7 +437,7 @@ async def control_room_sap_successfactors_talent_anomalies(user: dict = Depends(
         user,
         lambda: control_room_service.sap_successfactors_talent_anomalies(user),
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(ControlRoomTalentAnomaliesResponse, payload)
 
 
 @router.get(
@@ -350,31 +451,61 @@ async def control_room_sap_successfactors_talent_metadata_readiness(user: dict =
         user,
         lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
     )
-    return redact_public_control_room_projection(payload)
+    return project_public_control_room_response(
+        ControlRoomTalentMetadataReadinessResponse,
+        payload,
+    )
 
 
-@router.get("/banxico/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/banxico/readiness",
+    response_model=ControlRoomReadinessResponse,
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_banxico_readiness(user: dict = Depends(require_authenticated)):
     from app.services.banxico_readiness import banxico_readiness
 
     _require_readiness_cartridge(user, "banxico")
-    return await _control_room_cache_get_or_set("banxico-readiness", user, lambda: banxico_readiness(user))
+    return project_public_control_room_response(
+        ControlRoomReadinessResponse,
+        await _control_room_cache_get_or_set(
+            "banxico-readiness", user, lambda: banxico_readiness(user)
+        ),
+    )
 
 
-@router.get("/inegi/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/inegi/readiness",
+    response_model=ControlRoomReadinessResponse,
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_inegi_readiness(user: dict = Depends(require_authenticated)):
     from app.services.inegi_readiness import inegi_readiness
 
     _require_readiness_cartridge(user, "inegi")
-    return await _control_room_cache_get_or_set("inegi-readiness", user, lambda: inegi_readiness(user))
+    return project_public_control_room_response(
+        ControlRoomReadinessResponse,
+        await _control_room_cache_get_or_set(
+            "inegi-readiness", user, lambda: inegi_readiness(user)
+        ),
+    )
 
 
-@router.get("/sec-edgar/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/sec-edgar/readiness",
+    response_model=ControlRoomReadinessResponse,
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_sec_edgar_readiness(user: dict = Depends(require_authenticated)):
     from app.services.sec_edgar_readiness import sec_edgar_readiness
 
     _require_readiness_cartridge(user, "sec_edgar")
-    return await _control_room_cache_get_or_set("sec-edgar-readiness", user, lambda: sec_edgar_readiness(user))
+    return project_public_control_room_response(
+        ControlRoomReadinessResponse,
+        await _control_room_cache_get_or_set(
+            "sec-edgar-readiness", user, lambda: sec_edgar_readiness(user)
+        ),
+    )
 
 
 @router.post(
@@ -390,20 +521,25 @@ async def control_room_sap_successfactors_talent_action_preview(
 
 @router.get(
     "/sap-successfactors/market-validation",
-    dependencies=[Depends(require_permission("datasets.read"))],
+    response_model=ControlRoomMarketValidationResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_sap_successfactors_market_validation(
     user: dict = Depends(require_authenticated),
 ):
-    return await _control_room_cache_get_or_set(
-        "sap-successfactors-market-validation",
-        user,
-        lambda: market_decision_validation.get_validation(user),
+    return project_public_control_room_response(
+        ControlRoomMarketValidationResponse,
+        await _control_room_cache_get_or_set(
+            "sap-successfactors-market-validation",
+            user,
+            lambda: market_decision_validation.get_validation(user),
+        ),
     )
 
 
 @router.post(
     "/sap-successfactors/market-validation/run",
+    response_model=ControlRoomMarketValidationResponse,
     dependencies=[
         Depends(require_csrf),
         Depends(require_permission("control_room.write")),
@@ -414,59 +550,104 @@ async def control_room_sap_successfactors_market_validation_run(
 ):
     result = await market_decision_validation.run_validation(user)
     _control_room_cache_invalidate(user)
-    return result
+    return project_public_control_room_response(
+        ControlRoomMarketValidationResponse,
+        result,
+    )
 
 
-@router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/ops/summary",
+    response_model=ControlRoomOpsSummaryResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
     """Pollable operational summary over the canonical business projection."""
-    return await control_room_service.ops_summary(user)
+    return project_public_control_room_response(
+        ControlRoomOpsSummaryResponse,
+        await control_room_service.ops_summary(user),
+    )
 
 
-@router.get("/agents/ops", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/agents/ops",
+    response_model=ControlRoomAgentsOpsResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_agents_ops(
     limit: int = Query(default=12, ge=1, le=50),
     user: dict = Depends(require_authenticated),
 ):
-    return await _control_room_cache_get_or_set(
-        f"agents-ops-{limit}",
-        user,
-        lambda: control_room_service.agents_ops(user, limit=limit),
+    return project_public_control_room_response(
+        ControlRoomAgentsOpsResponse,
+        await _control_room_cache_get_or_set(
+            f"agents-ops-{limit}",
+            user,
+            lambda: control_room_service.agents_ops(user, limit=limit),
+        ),
     )
 
 
-@router.get("/decision-intelligence/runs", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/runs",
+    response_model=ControlRoomDecisionIntelligenceRunsResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_decision_intelligence_runs(
     limit: int = Query(default=50, ge=1, le=250),
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_history.list_runs(user, limit=limit)
+    return project_public_control_room_response(
+        ControlRoomDecisionIntelligenceRunsResponse,
+        await intelligence_history.list_runs(user, limit=limit),
+    )
 
 
-@router.get("/decision-intelligence/runs/{run_id}", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/runs/{run_id}",
+    response_model=ControlRoomDecisionIntelligenceRunDetailResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_decision_intelligence_run_detail(
     run_id: str,
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_history.get_run(user, run_id)
+    return project_public_control_room_response(
+        ControlRoomDecisionIntelligenceRunDetailResponse,
+        await intelligence_history.get_run(user, run_id),
+    )
 
 
-@router.get("/decision-intelligence/history", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/history",
+    response_model=ControlRoomDecisionIntelligenceHistoryResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_decision_intelligence_history(
     limit: int = Query(default=100, ge=1, le=500),
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_history.list_history(user, limit=limit)
+    return project_public_control_room_response(
+        ControlRoomDecisionIntelligenceHistoryResponse,
+        await intelligence_history.list_history(user, limit=limit),
+    )
 
 
-@router.get("/decision-intelligence/calibration", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/decision-intelligence/calibration",
+    response_model=ControlRoomDecisionIntelligenceCalibrationResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_decision_intelligence_calibration(
     min_outcomes_required: int = Query(default=10, ge=1, le=1000),
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_history.calibration_report(
-        user,
-        min_outcomes_required=min_outcomes_required,
+    return project_public_control_room_response(
+        ControlRoomDecisionIntelligenceCalibrationResponse,
+        await intelligence_history.calibration_report(
+            user,
+            min_outcomes_required=min_outcomes_required,
+        ),
     )
 
 
@@ -476,8 +657,9 @@ async def control_room_decision_intelligence_calibration(
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_alerts(user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.list_alerts(user)
+    return project_public_control_room_response(
+        ControlRoomLegacyAlertsResponse,
+        await control_room_service.list_alerts(user),
     )
 
 
@@ -603,8 +785,9 @@ async def control_room_false_positive_alert(
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_anomalies(user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.list_anomalies(user)
+    return project_public_control_room_response(
+        ControlRoomLegacyAnomaliesResponse,
+        await control_room_service.list_anomalies(user),
     )
 
 
@@ -614,8 +797,9 @@ async def control_room_anomalies(user: dict = Depends(require_authenticated)):
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_item_detail(item_id: str, user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.get_item(item_id, user)
+    return project_public_control_room_response(
+        ControlRoomLegacyItemResponse,
+        await control_room_service.get_item(item_id, user),
     )
 
 
@@ -625,8 +809,9 @@ async def control_room_item_detail(item_id: str, user: dict = Depends(require_au
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_item_impact(item_id: str, user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.get_item_impact(item_id, user)
+    return project_public_control_room_response(
+        ControlRoomLegacyImpactResponse,
+        await control_room_service.get_item_impact(item_id, user),
     )
 
 
@@ -636,8 +821,9 @@ async def control_room_item_impact(item_id: str, user: dict = Depends(require_au
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_item_activity(item_id: str, user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.get_item_activity(item_id, user)
+    return project_public_control_room_response(
+        ControlRoomLegacyActivityResponse,
+        await control_room_service.get_item_activity(item_id, user),
     )
 
 
@@ -648,8 +834,9 @@ async def control_room_item_activity(item_id: str, user: dict = Depends(require_
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_item_action_runs(item_id: str, user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.list_item_action_runs(item_id, user)
+    return project_public_control_room_response(
+        ControlRoomLegacyActionRunsResponse,
+        await control_room_service.list_item_action_runs(item_id, user),
     )
 
 
@@ -660,8 +847,9 @@ async def control_room_item_action_runs(item_id: str, user: dict = Depends(requi
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_item_outcomes(item_id: str, user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.list_item_outcomes(item_id, user)
+    return project_public_control_room_response(
+        ControlRoomLegacyOutcomesResponse,
+        await control_room_service.list_item_outcomes(item_id, user),
     )
 
 
@@ -790,8 +978,9 @@ async def control_room_update_item_control(
     dependencies=[Depends(require_permission("operations.read"))],
 )
 async def control_room_anomaly_detail(anomaly_id: str, user: dict = Depends(require_authenticated)):
-    return redact_public_control_room_projection(
-        await control_room_service.get_anomaly(anomaly_id, user)
+    return project_public_control_room_response(
+        ControlRoomLegacyItemResponse,
+        await control_room_service.get_anomaly(anomaly_id, user),
     )
 
 
@@ -1035,9 +1224,16 @@ async def control_room_reopen_item(
     )
 
 
-@router.get("/thresholds", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/thresholds",
+    response_model=ControlRoomThresholdsResponse,
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def control_room_thresholds(user: dict = Depends(require_authenticated)):
-    return await control_room_service.list_thresholds(user)
+    return project_public_control_room_response(
+        ControlRoomThresholdsResponse,
+        await control_room_service.list_thresholds(user),
+    )
 
 
 @router.post(
@@ -1080,16 +1276,23 @@ async def control_room_patch_threshold(
     )
 
 
-@router.get("/lessons", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get(
+    "/lessons",
+    response_model=ControlRoomLessonsResponse,
+    dependencies=[Depends(require_permission("datasets.read"))],
+)
 async def control_room_lessons(
     cartridge_id: str | None = Query(default=None),
     anomaly_type: str | None = Query(default=None),
     item_id: str | None = Query(default=None),
     user: dict = Depends(require_authenticated),
 ):
-    return await control_room_service.list_lessons(
-        user,
-        cartridge_id=cartridge_id,
-        anomaly_type=anomaly_type,
-        item_id=item_id,
+    return project_public_control_room_response(
+        ControlRoomLessonsResponse,
+        await control_room_service.list_lessons(
+            user,
+            cartridge_id=cartridge_id,
+            anomaly_type=anomaly_type,
+            item_id=item_id,
+        ),
     )

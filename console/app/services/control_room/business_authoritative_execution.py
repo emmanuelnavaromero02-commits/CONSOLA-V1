@@ -158,7 +158,7 @@ async def lock_authoritative_execution_context(
         conn,
         user=user,
         item=expected_item,
-        decision_id=int(expected_item["decision_id"]),
+        decision_id=int(expected_item.get("decision_id") or 0) or None,
     )
     fixed_clock = _clock_snapshot(clock)
     if locked is None:

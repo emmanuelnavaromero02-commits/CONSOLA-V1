@@ -22,11 +22,6 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class SurfaceScope(_StrictModel):
-    tenant_id: str
-    workspace_id: str
-
-
 class ExperienceMetric(_StrictModel):
     name: str
     kind: Literal[
@@ -43,7 +38,6 @@ class ExperienceMetric(_StrictModel):
 
 
 class ExperienceDecision(_StrictModel):
-    reference: int
     status: Literal["decision_created", "approved", "resolved"]
 
 
@@ -65,9 +59,6 @@ class ExperienceFact(_StrictModel):
 
 
 class ExperienceSection(_StrictModel):
-    id: str
-    cartridge_id: str
-    module_id: str
     title: str
     domain: str
     facts: list[ExperienceFact]
@@ -76,14 +67,10 @@ class ExperienceSection(_StrictModel):
 class ControlRoomExperienceResponse(_StrictModel):
     schema_version: Literal["control-room-experience/v1"]
     generated_at: datetime
-    scope: SurfaceScope
     sections: list[ExperienceSection] = Field(default_factory=list)
 
 
 class DiagnosticSource(_StrictModel):
-    cartridge: str
-    dataset: str
-    module: str | None = None
     domain: str | None = None
     status: DiagnosticSourceStatus
     data_readiness: DiagnosticReadinessStatus | None = None
@@ -99,9 +86,6 @@ class DiagnosticSource(_StrictModel):
 class DiagnosticItem(_StrictModel):
     kind: DiagnosticItemKind
     title: str
-    cartridge: str | None = None
-    dataset: str | None = None
-    module: str | None = None
     domain: str | None = None
     status: DiagnosticItemStatus | None = None
     data_status: DiagnosticReadinessStatus | None = None
@@ -112,9 +96,7 @@ class DiagnosticItem(_StrictModel):
 
 
 class DiagnosticInstallation(_StrictModel):
-    cartridge_id: str
     status: DiagnosticInstallationStatus
-    current_step: str | None = None
     label: str | None = None
     category: str | None = None
     ready_at: datetime | None = None
@@ -124,7 +106,6 @@ class DiagnosticInstallation(_StrictModel):
 class ControlRoomDiagnosticsResponse(_StrictModel):
     schema_version: Literal["control-room-diagnostics/v1"]
     generated_at: datetime
-    scope: SurfaceScope
     sources: list[DiagnosticSource] = Field(default_factory=list)
     diagnostic_items: list[DiagnosticItem] = Field(default_factory=list)
     installations: list[DiagnosticInstallation] = Field(default_factory=list)
@@ -142,5 +123,4 @@ __all__ = (
     "ExperienceFact",
     "ExperienceMetric",
     "ExperienceSection",
-    "SurfaceScope",
 )

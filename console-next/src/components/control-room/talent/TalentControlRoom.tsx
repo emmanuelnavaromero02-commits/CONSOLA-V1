@@ -29,7 +29,6 @@ import type {
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
   SfTalentDesempenoCohort,
-  SfTalentExtractionTarget,
   SfTalentMetadataReadinessPayload,
   SfTalentNineBoxCell,
   SfTalentNineBoxPayload,
@@ -48,7 +47,7 @@ function formatNumber(value: number | null | undefined): string {
   return new Intl.NumberFormat("es-MX").format(value ?? 0);
 }
 
-function bandLabel(value?: string): string {
+function bandLabel(value?: string | null): string {
   if (value === "high") return "Alto";
   if (value === "medium") return "Medio";
   if (value === "low") return "Bajo";
@@ -76,26 +75,6 @@ function cellTone(cell: SfTalentNineBoxCell): string {
     return "border-rose-500/25 bg-rose-500/10 text-rose-800 dark:text-rose-200";
   }
   return "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200";
-}
-
-function extractionTargets(metadata: SfTalentMetadataReadinessPayload | null): SfTalentExtractionTarget[] {
-  const targets = metadata?.live_preflight?.extraction_targets;
-  return Array.isArray(targets) ? targets : [];
-}
-
-function metadataNextTargets(metadata: SfTalentMetadataReadinessPayload | null): SfTalentExtractionTarget[] {
-  const liveTargets = extractionTargets(metadata);
-  if (liveTargets.length) return liveTargets;
-  return (metadata?.entities ?? []).map((entity) => ({
-    component: entity.id,
-    component_label: entity.kb,
-    entity: entity.live_selected_entity || entity.odata_entity || entity.entity,
-    odata_entity: entity.odata_entity || entity.live_selected_entity || undefined,
-    status: entity.live_status || entity.status,
-    ready_to_extract: entity.ready_to_extract,
-    fields_found: entity.fields_found,
-    fields_missing: entity.fields_missing,
-  }));
 }
 
 function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
@@ -132,7 +111,7 @@ function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
 }
 
 function readinessSummaryCopy(overview: SfTalentOverviewPayload | null, nineBox: SfTalentNineBoxPayload | null) {
-  const sourceMode = String(overview?.readiness.source_mode || "");
+  const sourceMode = String(overview?.readiness?.source_mode || "");
   const referenceCount = nineBox?.totals.reference ?? 0;
   if (sourceMode === "cpa_real") {
     return { label: "Readiness SAP real", detail: "datos C/P/A del tenant" };
@@ -156,20 +135,20 @@ function talentComponentReadiness(metadata: SfTalentMetadataReadinessPayload | n
   const entities = new Map((metadata?.entities ?? []).map((entity) => [entity.id, entity]));
   return talentComponents.map((component) => {
     const entity = entities.get(component.id);
-    const status = normalizeReadinessStatus(entity?.live_status || entity?.status);
-    const blockers = entity?.blockers ?? ["metadata/materialización pendiente"];
+    const status = normalizeReadinessStatus(entity?.status);
     // Desempeño presente pero C/P/A incompleto: copy explícito (no solo "Disponible")
     // y la nota se trata como "pendiente" (ámbar), nunca como bloqueo (naranja).
     const performanceAvailable = component.id === "performance" && status === "available";
     return {
       ...component,
       status,
-      entity: entity?.entity || "pendiente",
-      blockers,
+      scope: entity?.required_for || "Información pendiente",
       badgeLabel: performanceAvailable ? "Desempeño disponible" : undefined,
       note: performanceAvailable
         ? "Potencial pendiente (faltan Competencias y Aspiración)"
-        : blockers.slice(0, 2).join(" · ") || "Sin blockers",
+        : entity?.ready_to_extract
+          ? "Preparado para extracción supervisada"
+          : "Información pendiente de disponibilidad",
       notePending: performanceAvailable,
     };
   });
@@ -186,11 +165,11 @@ export function TalentOverviewPanel({
   anomalies: SfTalentAnomaliesPayload | null;
   metadata: SfTalentMetadataReadinessPayload | null;
 }) {
-  const profiled = overview?.readiness.profiled_employees ?? 0;
-  const calculable = overview?.readiness.calculable_employees ?? 0;
-  const classified = nineBox?.totals.ready ?? overview?.nine_box.totals?.ready ?? 0;
-  const blockedEntities = metadata?.summary.blocked_entities ?? 0;
-  const activeSignals = anomalies?.summary.total ?? overview?.anomalies.summary?.total ?? 0;
+  const profiled = overview?.readiness?.profiled_employees ?? 0;
+  const calculable = overview?.readiness?.calculable_employees ?? 0;
+  const classified = nineBox?.totals?.ready ?? overview?.nine_box?.totals?.ready ?? 0;
+  const blockedEntities = metadata?.summary?.blocked_entities ?? 0;
+  const activeSignals = anomalies?.summary?.total ?? overview?.anomalies?.summary?.total ?? 0;
   const readinessCopy = readinessSummaryCopy(overview, nineBox);
 
   return (
@@ -274,7 +253,7 @@ export function NineBoxMatrix({
   onSelect: (boxId: string) => void;
   disabled?: boolean;
 }) {
-  const ordered = [...cells].sort((a, b) => a.display_order - b.display_order);
+  const ordered = [...cells].sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
   return (
     <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-cyan-400/20 dark:bg-[#081423]">
       <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -288,7 +267,7 @@ export function NineBoxMatrix({
         </div>
       </div>
       <div className="grid gap-2 md:grid-cols-3">
-        {ordered.map((cell) => {
+        {ordered.map((cell, index) => {
           const referenceCount = cell.reference_count ?? 0;
           const visibleCount = cell.ready_count || cell.employee_count;
           const statusLabel =
@@ -303,10 +282,12 @@ export function NineBoxMatrix({
             referenceCount > 0 ? "benchmark_internal" : cell.employee_count === 0 ? "empty" : normalizeReadinessStatus(cell.status);
           return (
             <button
-              key={cell.box_id}
+              key={`${cell.box_id || cell.box_label || "box"}:${index}`}
               type="button"
-              disabled={disabled}
-              onClick={() => onSelect(cell.box_id)}
+              disabled={disabled || !cell.box_id}
+              onClick={() => {
+                if (cell.box_id) onSelect(cell.box_id);
+              }}
               className={cn(
                 "min-h-[132px] rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
                 cellTone(cell),
@@ -314,7 +295,7 @@ export function NineBoxMatrix({
               )}
             >
               <div className="flex items-start justify-between gap-2">
-                <strong className="text-sm">{cell.box_label}</strong>
+                <strong className="text-sm">{cell.box_label || "Segmento de talento"}</strong>
                 <ReadinessBadge status={badgeStatus} label={statusLabel} compact />
               </div>
               <p className="mt-2 text-3xl font-semibold tabular-nums">{formatNumber(visibleCount)}</p>
@@ -327,7 +308,7 @@ export function NineBoxMatrix({
                 label="clasificables"
                 tone={cell.ready_count > 0 ? "good" : "warning"}
               />
-              <p className="mt-2 min-h-[34px] text-xs opacity-85">{cell.movement_action}</p>
+              <p className="mt-2 min-h-[34px] text-xs opacity-85">{cell.movement_action || "Revisión supervisada"}</p>
             </button>
           );
         })}
@@ -343,13 +324,14 @@ export function MaskedTalentRoster({
   payload: SfTalentRosterPayload | null;
   loading: boolean;
 }) {
+  const rows = payload?.roster ?? [];
   return (
     <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-slate-500/30 dark:bg-[#081423]">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">Roster enmascarado</p>
           <h3 className="text-base font-semibold text-foreground dark:text-white">
-            {payload?.box.box_label || "Selecciona una caja"}
+            {payload?.box?.box_label || "Selecciona una caja"}
           </h3>
         </div>
         <ReadinessBadge status={payload?.status || "missing"} compact />
@@ -359,7 +341,7 @@ export function MaskedTalentRoster({
           <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
           Cargando roster seguro
         </div>
-      ) : payload?.roster.length ? (
+      ) : rows.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] text-left text-sm">
             <thead className="text-xs uppercase text-muted-foreground">
@@ -373,19 +355,19 @@ export function MaskedTalentRoster({
               </tr>
             </thead>
             <tbody>
-              {payload.roster.slice(0, 8).map((row) => (
-                <tr key={row.employee_key} className="border-b last:border-0 dark:border-slate-500/10">
+              {rows.slice(0, 8).map((row, index) => (
+                <tr key={`${row.employee_key || row.display_name || "person"}:${index}`} className="border-b last:border-0 dark:border-slate-500/10">
                   <td className="py-2 pr-3">
-                    <span className="font-medium text-foreground dark:text-white">{row.display_name}</span>
-                    <span className="block text-xs text-muted-foreground">{row.employee_key}</span>
+                    <span className="font-medium text-foreground dark:text-white">{row.display_name || "Colaborador enmascarado"}</span>
+                    {row.employee_key ? <span className="block text-xs text-muted-foreground">{row.employee_key}</span> : null}
                   </td>
-                  <td className="py-2 pr-3 text-muted-foreground">{row.role}</td>
-                  <td className="py-2 pr-3 text-muted-foreground">{row.unit}</td>
-                  <td className="py-2 pr-3 text-muted-foreground">{row.region}</td>
+                  <td className="py-2 pr-3 text-muted-foreground">{row.role || "N/D"}</td>
+                  <td className="py-2 pr-3 text-muted-foreground">{row.unit || "N/D"}</td>
+                  <td className="py-2 pr-3 text-muted-foreground">{row.region || "N/D"}</td>
                   <td className="py-2 pr-3">
                     <ReadinessBadge status={row.fit_band === "high" ? "ready" : row.fit_band === "medium" ? "partial" : "blocked"} label={bandLabel(row.fit_band)} compact />
                   </td>
-                  <td className="py-2 pr-3 text-muted-foreground">{row.movement_age_bucket}</td>
+                  <td className="py-2 pr-3 text-muted-foreground">{row.movement_age_bucket || "N/D"}</td>
                 </tr>
               ))}
             </tbody>
@@ -420,9 +402,9 @@ export function TalentAnomalyList({
         <Filter aria-hidden className="h-4 w-4 text-muted-foreground" />
       </div>
       <div className="space-y-2">
-        {anomalies.map((item) => (
+        {anomalies.map((item, index) => (
           <button
-            key={item.id}
+            key={`${item.id || item.title || "signal"}:${index}`}
             type="button"
             onClick={() => onSelect(item)}
             className={cn(
@@ -431,12 +413,12 @@ export function TalentAnomalyList({
             )}
           >
             <div className="flex items-start justify-between gap-3">
-              <strong className="text-sm text-foreground dark:text-white">{item.title}</strong>
+              <strong className="text-sm text-foreground dark:text-white">{item.title || "Señal de talento"}</strong>
               <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-amber-400/20">
-                {item.severity}
+                {item.severity || "info"}
               </span>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{item.recommendation || "Revisar la señal antes de decidir."}</p>
             <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
               {formatNumber(item.affected_count)} afectados · solo lectura
             </p>
@@ -457,10 +439,11 @@ const POTENCIAL_PENDIENTE_TOOLTIP =
   "El Potencial requiere Competencias y Aspiración. SuccessFactors aún no expone esas entidades para este tenant, por eso permanece pendiente. No se infiere del desempeño.";
 
 // Banda horizontal de desempeño (teal, ordinal Alto/Medio/Bajo). Nunca verde "Listo".
-function PerformanceBand({ band }: { band: string }) {
-  const filled = PERF_BAND_ORDER[band] ?? 0;
+function PerformanceBand({ band }: { band?: string | null }) {
+  const normalizedBand = band || "unknown";
+  const filled = PERF_BAND_ORDER[normalizedBand] ?? 0;
   return (
-    <span className="inline-flex items-center gap-2" title={`Desempeño ${bandLabel(band)} (dato real)`}>
+    <span className="inline-flex items-center gap-2" title={`Desempeño ${bandLabel(normalizedBand)} (dato real)`}>
       <span className="flex gap-[3px]" aria-hidden>
         {[0, 1, 2].map((index) => (
           <span
@@ -472,7 +455,7 @@ function PerformanceBand({ band }: { band: string }) {
           />
         ))}
       </span>
-      <span className="text-xs font-semibold text-teal-700 dark:text-teal-300">{bandLabel(band)}</span>
+      <span className="text-xs font-semibold text-teal-700 dark:text-teal-300">{bandLabel(normalizedBand)}</span>
     </span>
   );
 }
@@ -486,14 +469,18 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
   const [shortlist, setShortlist] = useState<Set<string>>(() => new Set());
 
   const rows = useMemo(() => cohort?.roster ?? [], [cohort]);
+  const keyedRows = useMemo(
+    () => rows.map((row, index) => ({ row, key: row.employee_key || `${row.display_name || "person"}:${index}` })),
+    [rows],
+  );
   const visibleRows = useMemo(() => {
-    const filtered = rows.filter((row) => bandFilter === "all" || row.performance_band_available === bandFilter);
+    const filtered = keyedRows.filter(({ row }) => bandFilter === "all" || row.performance_band_available === bandFilter);
     const sorted = [...filtered].sort((a, b) => {
-      const delta = (PERF_BAND_ORDER[b.performance_band_available] ?? 0) - (PERF_BAND_ORDER[a.performance_band_available] ?? 0);
+      const delta = (PERF_BAND_ORDER[b.row.performance_band_available || ""] ?? 0) - (PERF_BAND_ORDER[a.row.performance_band_available || ""] ?? 0);
       return sortDesc ? delta : -delta;
     });
     return sorted;
-  }, [rows, bandFilter, sortDesc]);
+  }, [keyedRows, bandFilter, sortDesc]);
 
   const toggleShortlist = useCallback((key: string) => {
     setShortlist((prev) => {
@@ -506,7 +493,7 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
 
   if (!cohort || cohort.count === 0) return null;
   const bands = cohort.band_counts;
-  const shortlistRows = rows.filter((row) => shortlist.has(row.employee_key));
+  const shortlistRows = keyedRows.filter(({ key }) => shortlist.has(key));
 
   const zones: Array<{ id: "high" | "medium" | "low"; count: number }> = [
     { id: "low", count: bands.low },
@@ -581,11 +568,11 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((row) => {
-                const selected = shortlist.has(row.employee_key);
+              {visibleRows.map(({ row, key }) => {
+                const selected = shortlist.has(key);
                 return (
                   <tr
-                    key={row.employee_key}
+                    key={key}
                     className={cn("border-b last:border-0 dark:border-teal-500/10", selected ? "bg-teal-500/5" : "")}
                   >
                     <td className="py-2">
@@ -593,7 +580,7 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
                         type="button"
                         aria-pressed={selected}
                         aria-label={selected ? "Quitar de shortlist" : "Agregar a shortlist"}
-                        onClick={() => toggleShortlist(row.employee_key)}
+                        onClick={() => toggleShortlist(key)}
                         className={cn(
                           "grid h-5 w-5 place-items-center rounded border transition",
                           selected ? "border-teal-500 bg-teal-500 text-white" : "border-slate-300 bg-background dark:border-slate-600",
@@ -603,8 +590,8 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
                       </button>
                     </td>
                     <td className="py-2 pr-3">
-                      <span className="font-medium text-foreground dark:text-white">{row.display_name}</span>
-                      <span className="block text-xs text-muted-foreground">{row.role}</span>
+                      <span className="font-medium text-foreground dark:text-white">{row.display_name || "Colaborador enmascarado"}</span>
+                      <span className="block text-xs text-muted-foreground">{row.role || "Rol no disponible"}</span>
                     </td>
                     <td className="py-2 pr-3"><PerformanceBand band={row.performance_band_available} /></td>
                     <td className="py-2 pr-3">
@@ -634,9 +621,9 @@ export function DesempenoDisponiblePanel({ cohort }: { cohort?: SfTalentDesempen
               Shortlist por desempeño · {formatNumber(shortlistRows.length)} seleccionadas
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {shortlistRows.map((row) => (
-                <span key={row.employee_key} className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-background px-2 py-0.5 text-xs dark:bg-[#06111f]">
-                  {row.display_name} · {bandLabel(row.performance_band_available)}
+              {shortlistRows.map(({ row, key }) => (
+                <span key={key} className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-background px-2 py-0.5 text-xs dark:bg-[#06111f]">
+                  {row.display_name || "Colaborador enmascarado"} · {bandLabel(row.performance_band_available)}
                 </span>
               ))}
             </div>
@@ -711,9 +698,10 @@ export function TalentControlRoom() {
       setMetadata(metadataPayload);
       const initialBox = new URLSearchParams(window.location.search).get("box");
       if (!selectedBox) {
-        setSelectedBox(initialBox || matrixPayload.cells[4]?.box_id || matrixPayload.cells[0]?.box_id || null);
+        const matrixCells = matrixPayload.cells ?? [];
+        setSelectedBox(initialBox || matrixCells[4]?.box_id || matrixCells[0]?.box_id || null);
       }
-      if (!selectedAnomaly) setSelectedAnomaly(anomalyPayload.items[0] || null);
+      if (!selectedAnomaly) setSelectedAnomaly((anomalyPayload.items ?? [])[0] || null);
     } catch (err) {
       setError(apiMessage(err));
     } finally {
@@ -759,9 +747,8 @@ export function TalentControlRoom() {
     };
   }, [collar, selectedBox]);
 
-  const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box.cells ?? [], [nineBox, overview]);
-  const anomalyItems = anomalies?.items ?? overview?.anomalies.items ?? [];
-  const cpaExtractionTargets = useMemo(() => metadataNextTargets(metadata), [metadata]);
+  const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box?.cells ?? [], [nineBox, overview]);
+  const anomalyItems = anomalies?.items ?? overview?.anomalies?.items ?? [];
   const componentReadiness = useMemo(() => talentComponentReadiness(metadata), [metadata]);
 
   return (
@@ -810,7 +797,7 @@ export function TalentControlRoom() {
                 <strong className="text-foreground dark:text-white">{component.label}</strong>
                 <ReadinessBadge status={component.status} label={component.badgeLabel} compact />
               </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{component.entity}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{component.scope}</p>
               <p className={`mt-2 line-clamp-2 text-xs ${component.notePending ? "text-amber-700 dark:text-amber-300" : "text-orange-700 dark:text-orange-300"}`}>
                 {component.note}
               </p>
@@ -820,7 +807,7 @@ export function TalentControlRoom() {
 
         {collar === "sindicalizado" ? (
           <OperationalNotice tone="warning" title="Segmento sindicalizado pendiente">
-            Esta vista no reutiliza la matriz de confianza. Requiere escalafon, certificaciones y reglas de contrato colectivo como datasets propios.
+            Esta vista no reutiliza la matriz de confianza. Requiere escalafon, certificaciones y reglas de contrato colectivo como fuentes propias.
           </OperationalNotice>
         ) : null}
 
@@ -856,18 +843,20 @@ export function TalentControlRoom() {
               <ReadinessBadge status={metadata?.status || "missing"} compact />
             </div>
             <div className="mt-4 grid gap-2">
-              {(metadata?.entities ?? []).map((entity) => (
-                <article key={entity.id} className="rounded-lg border bg-background p-3 text-sm dark:border-orange-400/10 dark:bg-[#06111f]">
+              {(metadata?.entities ?? []).map((entity, index) => (
+                <article key={`${entity.id || "component"}:${index}`} className="rounded-lg border bg-background p-3 text-sm dark:border-orange-400/10 dark:bg-[#06111f]">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <strong className="text-foreground dark:text-white">{entity.kb}</strong>
-                      <p className="text-xs text-muted-foreground">{entity.entity} · {entity.required_for}</p>
+                      <strong className="text-foreground dark:text-white">
+                        {talentComponents.find((component) => component.id === entity.id)?.label || "Componente Talent"}
+                      </strong>
+                      <p className="text-xs text-muted-foreground">{entity.required_for || "Preparación de talento"}</p>
                     </div>
-                    <ReadinessBadge status={entity.status} compact />
+                    <ReadinessBadge status={entity.status || "missing"} compact />
                   </div>
-                  {entity.blockers.length ? (
-                    <p className="mt-2 text-xs text-orange-700 dark:text-orange-300">{entity.blockers.slice(0, 2).join(" · ")}</p>
-                  ) : null}
+                  <p className="mt-2 text-xs text-orange-700 dark:text-orange-300">
+                    {entity.ready_to_extract ? "Preparado para extracción supervisada" : "Pendiente de disponibilidad"}
+                  </p>
                 </article>
               ))}
             </div>
@@ -875,42 +864,21 @@ export function TalentControlRoom() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">
-                    Siguiente extraccion C/P/A
+                    Preparación C/P/A
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Targets vivos, pendientes y bloqueados desde metadata y permisos SuccessFactors.
+                    Estado público de disponibilidad para Performance, Competencias y Aspiración.
                   </p>
                 </div>
                 <ReadinessBadge
-                  status={cpaExtractionTargets.some((target) => target.ready_to_extract) ? "ready" : cpaExtractionTargets.length ? "partial" : "blocked"}
-                  label={cpaExtractionTargets.length ? `${cpaExtractionTargets.length} targets` : "sin targets"}
+                  status={normalizeReadinessStatus(metadata?.live_preflight?.status || metadata?.summary?.live_status || metadata?.status)}
+                  label={metadata?.summary ? `${metadata.summary.live_required_ready ?? 0}/${metadata.summary.live_required_total ?? 0} disponibles` : "En espera"}
                   compact
                 />
               </div>
-              <div className="mt-3 grid gap-2">
-                {cpaExtractionTargets.slice(0, 6).map((target) => (
-                  <div
-                    key={`${target.component}:${target.entity}:${target.odata_entity || target.entity}`}
-                    className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs dark:border-emerald-400/10"
-                  >
-                    <div className="min-w-0">
-                      <span className="block truncate font-semibold text-foreground dark:text-white">
-                        {target.component_label || target.component}
-                      </span>
-                      <span className="block truncate text-muted-foreground">
-                      {target.entity}
-                        {target.odata_entity && target.odata_entity !== target.entity ? ` -> ${target.odata_entity}` : ""}
-                      </span>
-                    </div>
-                    <ReadinessBadge status={normalizeReadinessStatus(target.status || target.sample_status)} compact />
-                  </div>
-                ))}
-                {!cpaExtractionTargets.length ? (
-                  <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground dark:border-orange-400/20">
-                    Cuando metadata confirme Performance, Competencias y Aspiracion, aqui apareceran las entidades que Sync Now debe extraer.
-                  </p>
-                ) : null}
-              </div>
+              <p className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground dark:border-orange-400/20">
+                La extracción solo se habilita cuando la disponibilidad y los permisos del contexto quedan confirmados.
+              </p>
             </div>
           </div>
 
