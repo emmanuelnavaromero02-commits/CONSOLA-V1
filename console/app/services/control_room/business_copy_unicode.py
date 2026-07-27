@@ -47,21 +47,26 @@ _CONFUSABLE_TRANSLATION = str.maketrans(
         "Х": "X",
         "У": "Y",
         "а": "a",
+        "ɑ": "a",
         "в": "b",
         "с": "c",
         "ԁ": "d",
         "е": "e",
         "г": "r",
         "і": "i",
+        "ı": "i",
         "ј": "j",
         "к": "k",
         "ӏ": "l",
         "м": "m",
         "н": "h",
         "о": "o",
+        "ᴏ": "o",
         "р": "p",
         "ѕ": "s",
+        "ꜱ": "s",
         "т": "t",
+        "ᴡ": "w",
         "х": "x",
         "у": "y",
         "ԝ": "w",
@@ -103,9 +108,10 @@ def is_default_ignorable(character: str) -> bool:
 
 
 def security_skeleton(value: str) -> str:
+    translated = value.translate(_CONFUSABLE_TRANSLATION)
     skeleton = "".join(
         character
-        for character in unicodedata.normalize("NFKD", value)
+        for character in unicodedata.normalize("NFKD", translated)
         if not unicodedata.category(character).startswith("M")
         and unicodedata.category(character) != "Cc"
         and not is_default_ignorable(character)

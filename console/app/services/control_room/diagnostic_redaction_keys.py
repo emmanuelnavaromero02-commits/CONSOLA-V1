@@ -7,8 +7,10 @@ from app.services.control_room.diagnostic_escape_detection import (
     escaped_security_detection,
 )
 from app.services.control_room.diagnostic_field_escape_detection import (
-    is_windows_or_unc_path,
     malformed_field_escape_detection,
+)
+from app.services.control_room.diagnostic_path_key_detection import (
+    path_key_detection,
 )
 
 _SECRET_KEYS = frozenset(
@@ -226,10 +228,37 @@ def _canonical_field_is_sensitive(field: str) -> bool:
     )
 
 
+def _canonical_path_terminal_is_sensitive(field: str) -> bool:
+    """Apply strong field names without treating generic path words as secrets."""
+
+    if field in _SAFE_FIELDS:
+        return False
+    compact_forms = _compact_forms(field)
+    strong_compact = (_SECRET_COMPACT | _PII_COMPACT) - {
+        "binary",
+        "key",
+        "string",
+    }
+    return bool(
+        field in _SECRET_KEYS
+        or field in _PII_KEYS
+        or field.endswith(_SECRET_KEY_SUFFIXES)
+        or field.endswith(_PII_KEY_SUFFIXES)
+        or compact_forms & strong_compact
+        or any(form.endswith(tuple(_SECRET_COMPACT_SUFFIXES)) for form in compact_forms)
+    )
+
+
 def sensitive_diagnostic_field(value: object) -> bool:
     raw = str(value).strip()
-    if is_windows_or_unc_path(raw):
-        return False
+    path_detection = path_key_detection(raw)
+    if path_detection.unsafe:
+        return True
+    if path_detection.path_like:
+        return any(
+            _canonical_path_terminal_is_sensitive(canonical_diagnostic_field(terminal))
+            for terminal in path_detection.terminals
+        )
     escape_detection = escaped_security_detection(raw)
     if escape_detection.unsafe:
         return True

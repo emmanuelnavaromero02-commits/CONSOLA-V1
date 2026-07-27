@@ -34,15 +34,6 @@ class AssignmentFieldDetection:
     unsafe: bool = False
 
 
-def is_windows_or_unc_path(value: str) -> bool:
-    if len(value) >= 3 and value[0].isalpha() and value[1:3] == ":\\":
-        return True
-    if not value.startswith("\\\\"):
-        return False
-    share_separator = value.find("\\", 2)
-    return 2 < share_separator < len(value) - 1
-
-
 def _scalar_is_valid(digits: str, width: int) -> bool:
     if len(digits) != width or any(digit not in _HEX_DIGITS for digit in digits):
         return False
@@ -169,6 +160,5 @@ __all__ = (
     "FieldEscapeDetection",
     "AssignmentFieldDetection",
     "assignment_field_detection",
-    "is_windows_or_unc_path",
     "malformed_field_escape_detection",
 )
