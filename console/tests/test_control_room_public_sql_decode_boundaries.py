@@ -67,6 +67,72 @@ SQL_SELECT_WITH_TRAILING_CLAUSES = (
     r"select 'Mr\\\'. Smith' as label from payroll where active = true",
     r"select N'Mr\\\'. Smith' as label from payroll where active = true",
     r"select _utf8'Mr\\\'. Smith' as label from payroll where active = true",
+    "Select department from menu.",
+    "SELECT candidates FROM talent_pool",
+    "SELECT candidates FROM talent pool",
+    "Please SELECT candidates FROM talent_pool",
+    "SELECT candidates FROM the talent WHERE active = true",
+    'SELECT candidates FROM "the talent pool"',
+    "SELECT candidates FROM talent.pool",
+    "SELECT candidates FROM talent AS pool",
+    "SELECT id value FROM ONLY users u",
+    "SELECT name ISNULL flag FROM users u",
+    "SELECT email NOTNULL present FROM users u",
+    "SELECT x ILIKE pattern FROM payroll p",
+)
+SQL_SELECT_WITHOUT_FROM = (
+    r"SELECT E'line\\nvalue'",
+    r"SELECT E'from payroll' AS label",
+    r"SELECT E'it\'s, FROM payroll' AS label",
+    "SELECT $$from payroll$$",
+    "SELECT $report$from payroll$report$ AS label",
+    "SELECT $report$a, AS, FROM payroll$report$ AS label",
+    "SELECT 'People' AS label",
+    "SELECT 'People''s team' AS label",
+    "SELECT 42 AS value",
+    "SELECT NULL AS value",
+    "SELECT 1 + 2 AS total",
+    "SELECT first_name, last_name",
+    "SELECT candidates AS shortlist",
+    "SELECT candidates, shortlist",
+    'SELECT 1 AS "business value"',
+    "SELECT 'People' AS label, 42 AS total",
+    "SELECT E'People' AS label, $area$Operations$area$ AS area",
+    "SELECT (1 + 2) * 3 AS total, TRUE AS active",
+    "SELECT name LIKE pattern",
+    "SELECT name NOT LIKE pattern",
+    "SELECT name ILIKE pattern",
+    "SELECT name SIMILAR TO pattern",
+    "SELECT name COLLATE locale",
+    "SELECT active AND pending",
+    "SELECT active OR pending",
+    "SELECT active IS TRUE",
+    "SELECT active IS NOT FALSE",
+    "SELECT observed AT TIME ZONE utc",
+    "SELECT LOCALTIME ORDER BY LOCALTIME",
+    "SELECT LOCALTIME GROUP BY LOCALTIME",
+    "SELECT LOCALTIME LIMIT ALL",
+    "SELECT LOCALTIME FETCH FIRST ROW ONLY",
+    "SELECT LOCALTIME INTO snapshot",
+    "SELECT candidate WHERE active",
+    "SELECT candidate HAVING active",
+    "SELECT candidate OFFSET amount",
+    "SELECT candidate QUALIFY active",
+    "SELECT name GLOB pattern",
+    "SELECT /* outer /* inner */ -- */ E'x' AS label",
+    "SELECT /* outer /* inner */ -- */ $$x$$ AS label",
+    "SELECT /* outer /* inner */ -- */ 42 AS value",
+    "SELECT /* outer /* inner */ -- */ LOCALTIME ORDER BY LOCALTIME",
+)
+BUSINESS_SELECT_INSTRUCTIONS = (
+    "Select candidates from the talent pool",
+    "select candidates from the talent pool",
+    "SELECT CANDIDATES FROM THE TALENT POOL",
+    "Select candidates from a talent pool",
+    "Select candidates from an internal talent pool",
+    "Please select candidates from the talent pool",
+    "Please, select candidates from the talent pool.",
+    "PLEASE SELECT THE CANDIDATES FROM AN INTERNAL TALENT POOL.",
 )
 SQL_STATEMENT_BOUNDARY_CANARIES = ("Select name from payroll where active = true;.",)
 
@@ -87,7 +153,11 @@ PUBLIC_TECHNICAL_CANARIES = (
     *(
         pytest.param(value, id=f"sql-{index}")
         for index, value in enumerate(
-            (*SQL_SELECT_WITH_TRAILING_CLAUSES, *SQL_STATEMENT_BOUNDARY_CANARIES),
+            (
+                *SQL_SELECT_WITH_TRAILING_CLAUSES,
+                *SQL_SELECT_WITHOUT_FROM,
+                *SQL_STATEMENT_BOUNDARY_CANARIES,
+            ),
             start=1,
         )
     ),
@@ -98,6 +168,12 @@ PUBLIC_TECHNICAL_CANARIES = (
 
 @pytest.mark.parametrize("statement", SQL_SELECT_WITH_TRAILING_CLAUSES)
 def test_select_with_trailing_clause_is_sql_without_semicolon(statement: str) -> None:
+    assert ";" not in statement
+    assert contains_public_sql(statement)
+
+
+@pytest.mark.parametrize("statement", SQL_SELECT_WITHOUT_FROM)
+def test_select_projection_is_sql_without_from_or_semicolon(statement: str) -> None:
     assert ";" not in statement
     assert contains_public_sql(statement)
 
@@ -168,13 +244,11 @@ def test_gold_direct_projection_invalidates_sql_and_decode_overflow(
 
 @pytest.mark.parametrize(
     "business_copy",
-    (
-        "Select department from menu.",
-        "Create policy for annual leave",
-        "Comercio",
-    ),
+    (*BUSINESS_SELECT_INSTRUCTIONS, "Create policy for annual leave", "Comercio"),
 )
 def test_shared_policy_preserves_valid_business_copy(business_copy: str) -> None:
+    if "select" in business_copy.casefold():
+        assert not contains_public_sql(business_copy)
     assert not contains_public_technical_copy(business_copy)
     assert _public_text({"message": business_copy}, "message") == business_copy
     assert public_business_label(business_copy) == business_copy

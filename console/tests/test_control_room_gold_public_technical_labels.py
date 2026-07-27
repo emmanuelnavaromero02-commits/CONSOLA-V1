@@ -157,7 +157,12 @@ def test_gold_http_redacts_technical_widget_titles(technical: str) -> None:
         ("company", "company_name", "Insert into culture", 1),
         ("company", "company_name", "Create index of capabilities", 1),
         ("company", "company_name", "Alter role responsibilities", 1),
-        ("company", "company_name", "Select department from menu.", 1),
+        (
+            "company",
+            "company_name",
+            "Please select the department from the company menu.",
+            1,
+        ),
         ("company", "company_name", "Delete from shortlist.", 1),
         ("company", "company_name", "Use payroll insights", 1),
     ),

@@ -12,6 +12,7 @@ from control_room_public_http_harness import DATASET_READER, client
 from control_room_surface_fixtures import OPERATOR, snapshot, source_status
 from test_control_room_diagnostics_public_boundary import _client as diagnostics_client
 from test_control_room_public_sql_decode_boundaries import (
+    BUSINESS_SELECT_INSTRUCTIONS,
     PUBLIC_TECHNICAL_CANARIES,
 )
 
@@ -82,8 +83,10 @@ def test_authenticated_gold_http_invalidates_sql_and_decode_overflow(
     assert widget["rows"] == []
 
 
-def test_diagnostics_and_gold_http_preserve_valid_business_copy() -> None:
-    business_copy = "Select department from menu."
+@pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
+def test_diagnostics_and_gold_http_preserve_valid_business_copy(
+    business_copy: str,
+) -> None:
     collect = AsyncMock(
         return_value=snapshot(
             sources=(source_status(readiness_reason=business_copy),),
