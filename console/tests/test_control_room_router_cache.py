@@ -71,7 +71,18 @@ async def test_control_room_dashboard_cache_is_scoped_by_workspace(monkeypatch):
 @pytest.mark.asyncio
 async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
     monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
-    fetch = AsyncMock(return_value={"widgets": [{"id": "headcount", "value": 1288}]})
+    fetch = AsyncMock(
+        return_value={
+            "widgets": [
+                {
+                    "id": "sf_active_headcount",
+                    "value": 1288,
+                    "status": "ready",
+                    "rows": [],
+                }
+            ]
+        }
+    )
     monkeypatch.setattr(
         control_room.control_room_service, "sap_successfactors_gold_kpis", fetch
     )
@@ -80,7 +91,7 @@ async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
     second = await control_room.control_room_sap_successfactors_gold_kpis(USER)
 
     assert first.model_dump() == second.model_dump()
-    assert first.widgets[0].id == "headcount"
+    assert first.widgets[0].id == "sf_active_headcount"
     assert first.widgets[0].value == 1288
     assert fetch.await_count == 1
 

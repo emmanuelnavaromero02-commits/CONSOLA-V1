@@ -5,30 +5,24 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services.intelligence.business_labels import business_label
-
-
-_NON_READY_STATUSES = frozenset(
-    {
-        "blocked",
-        "empty",
-        "error",
-        "invalid_schema",
-        "missing",
-        "no_permission",
-        "partial",
-        "unavailable",
-    }
+from app.services.control_room.successfactors_gold_public_rows import (
+    _NON_READY_STATUSES,
+    _sf_gold_headcount_total,
+    _strict_headcount,
+    project_generic_gold_widget,
+    valid_gold_widget_id,
 )
+from app.services.public_text_sensitivity import public_business_label
+
+
 _HEADCOUNT_NAME_KEYS = (
     ("headcount_by_company", "company_name"),
     ("headcount_by_location", "location_name"),
     ("headcount_by_department", "department_name"),
 )
-
-
-def _strict_headcount(value: object) -> int | None:
-    return value if type(value) is int and value >= 0 else None
+_HEADCOUNT_ID_NAME_KEYS = {
+    f"sf_{marker}": name_key for marker, name_key in _HEADCOUNT_NAME_KEYS
+}
 
 
 def _sf_gold_headcount_rows(
@@ -37,9 +31,23 @@ def _sf_gold_headcount_rows(
     _, name_key = label_keys
     public_rows: list[dict[str, Any]] = []
     for row in rows:
-        business_name = business_label(row.get(name_key))
+        unexpected_label_keys = {
+            key
+            for key in ("company_name", "department_name", "fact", "location_name")
+            if key != name_key and key in row
+        }
+        business_name = public_business_label(row.get(name_key))
+        supplied_label = (
+            public_business_label(row.get("label")) if "label" in row else business_name
+        )
         headcount = _strict_headcount(row.get("headcount"))
-        if business_name is None or headcount is None:
+        if (
+            unexpected_label_keys
+            or business_name is None
+            or supplied_label is None
+            or supplied_label.casefold() != business_name.casefold()
+            or headcount is None
+        ):
             continue
         public_rows.append(
             {
@@ -60,17 +68,6 @@ def _sf_gold_top_headcount_rows(
     return _sf_gold_headcount_rows(rows, label_keys)[:limit]
 
 
-def _sf_gold_headcount_total(rows: list[dict[str, Any]] | None) -> int | None:
-    if not rows:
-        return None
-    counts = [
-        headcount
-        for row in rows
-        if (headcount := _strict_headcount(row.get("headcount"))) is not None
-    ]
-    return sum(counts) if counts else None
-
-
 def _sf_gold_summary_total(
     result: Mapping[str, Any], rows: list[dict[str, Any]]
 ) -> int | None:
@@ -86,32 +83,73 @@ def _sf_gold_headcount_widget_status(
     raw_rows: list[dict[str, Any]] | None,
     public_rows: list[dict[str, Any]],
 ) -> str:
-    status = str(source_status or "unavailable")
-    if status not in {"ok", "ready"}:
+    if source_status is None:
+        status = "unavailable"
+    elif isinstance(source_status, str):
+        if not source_status:
+            return "invalid_schema"
+        status = source_status
+    else:
+        return "invalid_schema"
+    if status in _NON_READY_STATUSES:
         return status
+    if status not in {"ok", "ready"}:
+        return "invalid_schema"
     if public_rows:
         return "ready"
     return "invalid_schema" if raw_rows else "empty"
 
 
 def _sf_gold_public_widget(raw_widget: Mapping[str, Any]) -> dict[str, Any]:
+    raw_id = raw_widget.get("id")
+    if not valid_gold_widget_id(raw_id):
+        return {
+            **raw_widget,
+            "id": None,
+            "value": None,
+            "rows": [],
+            "status": "invalid_schema",
+        }
+    is_active_headcount = raw_id == "sf_active_headcount"
     identity = " ".join(
-        str(raw_widget.get(key) or "").casefold() for key in ("id", "title")
+        value.casefold()
+        for key in ("id", "title")
+        if isinstance((value := raw_widget.get(key)), str)
     )
-    name_key = next(
-        (key for marker, key in _HEADCOUNT_NAME_KEYS if marker in identity),
-        None,
+    raw_title = raw_widget.get("title")
+    title_is_valid = raw_title is None or public_business_label(raw_title) is not None
+    name_key = (
+        None
+        if is_active_headcount or not isinstance(raw_id, str)
+        else _HEADCOUNT_ID_NAME_KEYS.get(raw_id)
     )
-    if name_key is None:
-        return dict(raw_widget)
+    if name_key is None and not is_active_headcount:
+        name_key = next(
+            (key for marker, key in _HEADCOUNT_NAME_KEYS if marker in identity),
+            None,
+        )
     raw_rows_value = raw_widget.get("rows")
-    raw_rows = (
-        [dict(row) for row in raw_rows_value if isinstance(row, Mapping)]
-        if isinstance(raw_rows_value, (list, tuple))
-        else []
+    rows_shape_valid = isinstance(raw_rows_value, (list, tuple)) and all(
+        isinstance(row, Mapping) for row in raw_rows_value
     )
+    raw_rows = [dict(row) for row in raw_rows_value] if rows_shape_valid else []
+    if not title_is_valid or not rows_shape_valid:
+        return {
+            **raw_widget,
+            "value": None,
+            "rows": [],
+            "status": "invalid_schema",
+        }
+    if name_key is None:
+        return project_generic_gold_widget(
+            raw_widget,
+            raw_rows,
+            identity,
+            is_active_headcount=is_active_headcount,
+            rows_shape_valid=rows_shape_valid,
+        )
     observed_rows = _sf_gold_headcount_rows(raw_rows, ("unused_id", name_key))
-    source_status = raw_widget.get("status") or ("ready" if raw_rows else "empty")
+    source_status = raw_widget.get("status")
     status = _sf_gold_headcount_widget_status(source_status, raw_rows, observed_rows)
     raw_value = raw_widget.get("value")
     observed_total = _sf_gold_headcount_total(observed_rows)
@@ -124,7 +162,14 @@ def _sf_gold_public_widget(raw_widget: Mapping[str, Any]) -> dict[str, Any]:
     coverage_subset = (
         status == "partial" and raw_widget.get("_coverage_observed") is True
     )
-    publish_observations = status == "ready" or coverage_subset
+    rejected_rows = len(observed_rows) != len(raw_rows)
+    if rejected_rows and not coverage_subset:
+        status = "invalid_schema"
+    if coverage_subset and rejected_rows and raw_value != observed_total:
+        status = "invalid_schema"
+    publish_observations = status == "ready" or (
+        status == "partial" and coverage_subset
+    )
     if publish_observations and not value_is_valid:
         status = "invalid_schema"
         publish_observations = False

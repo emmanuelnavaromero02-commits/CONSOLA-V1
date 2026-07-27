@@ -103,6 +103,8 @@ def test_gold_projection_keeps_only_real_business_names():
             "widgets": [
                 {
                     "id": "sf_headcount",
+                    "value": 3,
+                    "status": "ready",
                     "rows": [
                         {"company_name": "FEMSA Comercio", "headcount": 2},
                         {"location_name": "Monterrey", "headcount": 1},

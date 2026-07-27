@@ -61,6 +61,7 @@ def test_business_kpis_keep_real_zeros_and_authorized_facts():
     assert widget["id"] == "sf_contractor_risk"
     assert widget["value"] == widget["contractor_count"] == widget["risk_factor"] == 0
     assert widget["rows"][0]["fact"] == "Sin incidencias"
+    assert widget["rows"][0]["label"] == "Sin incidencias"
     assert "tenant_id" not in response.json() and "workspace_id" not in response.json()
 
 

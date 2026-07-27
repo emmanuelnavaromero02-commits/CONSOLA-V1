@@ -15,6 +15,9 @@ from app.schemas.control_room_summary_responses import (
 from app.services.control_room.successfactors_gold_observations import (
     _sf_gold_public_widget,
 )
+from app.services.control_room.successfactors_gold_public_rows import (
+    valid_gold_widget_id,
+)
 
 
 class PublicStatusCounts(PublicProjectionModel):
@@ -222,6 +225,15 @@ class ControlRoomGoldWidget(PublicSlugIdentity):
     risk_factor: float | int | None = None
     status: str | None = None
     rows: list[PublicMetricRow] = Field(default_factory=list)
+
+    @classmethod
+    def project(cls, value: object) -> ControlRoomGoldWidget:
+        source = value if isinstance(value, Mapping) else {}
+        projected = super().project({**source, "id": None})
+        raw_id = source.get("id")
+        if not valid_gold_widget_id(raw_id):
+            return projected  # type: ignore[return-value]
+        return cls.model_validate({**projected.model_dump(), "id": raw_id})
 
 
 class ControlRoomGoldKpisResponse(PublicProjectionModel):

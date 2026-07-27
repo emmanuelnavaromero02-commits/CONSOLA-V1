@@ -170,18 +170,19 @@ def test_real_http_projection_returns_null_instead_of_500_for_non_finite() -> No
     raw = {
         "widgets": [
             {
-                "id": "finite-boundary",
+                "id": "sf_contractor_risk",
                 "title": "Métrica estable",
                 "value": float("nan"),
                 "contractor_count": 0,
                 "risk_factor": float("inf"),
-                "status": "stale",
+                "status": "ready",
                 "rows": [
                     {
+                        "label": "Riesgo controlado",
                         "value": float("-inf"),
                         "contractor_count": 0,
                         "risk_factor": float("nan"),
-                        "status": "stale",
+                        "status": "ready",
                     }
                 ],
             }
@@ -204,7 +205,7 @@ def test_real_http_projection_returns_null_instead_of_500_for_non_finite() -> No
     assert widget["rows"][0]["value"] is None
     assert widget["rows"][0]["risk_factor"] is None
     assert widget["contractor_count"] == widget["rows"][0]["contractor_count"] == 0
-    assert widget["status"] == widget["rows"][0]["status"] == "stale"
+    assert widget["status"] == widget["rows"][0]["status"] == "ready"
     assert "NaN" not in response.text and "Infinity" not in response.text
 
 
