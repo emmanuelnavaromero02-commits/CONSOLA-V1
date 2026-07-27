@@ -79,6 +79,9 @@ _ESCAPED_CODEPOINT = re.compile(
     r"\\(?:u(?P<unicode>[0-9a-f]{4})|x(?P<byte>[0-9a-f]{2}))",
     re.IGNORECASE,
 )
+_MAX_PUBLIC_ENCODING_LAYERS = 8
+_MAX_PUBLIC_ENCODING_VARIANTS = 256
+_MAX_PUBLIC_ENCODING_LENGTH = 8192
 
 
 def _decode_escaped_codepoints(value: str) -> str:
@@ -89,29 +92,58 @@ def _decode_escaped_codepoints(value: str) -> str:
     return _ESCAPED_CODEPOINT.sub(replace, value)
 
 
-def public_encoding_variants(value: str) -> tuple[str, ...]:
-    """Decode percent and escaped codepoints for at most four bounded passes."""
-
-    variants: list[str] = []
-    frontier = [value]
-    for _ in range(4):
-        next_frontier: list[str] = []
-        for candidate in frontier:
-            if candidate not in variants:
-                variants.append(candidate)
-            for decoded in (
+def _decoded_encoding_forms(candidate: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
                 unquote(candidate),
                 unquote_plus(candidate),
                 _decode_escaped_codepoints(candidate),
                 unicodedata.normalize("NFKC", candidate),
-            ):
-                if decoded not in variants and decoded not in next_frontier:
+            )
+        )
+    )
+
+
+def public_encoding_scan(value: str) -> tuple[tuple[str, ...], bool]:
+    """Return bounded decoded variants and whether the eight-layer limit overflowed."""
+
+    if len(value) > _MAX_PUBLIC_ENCODING_LENGTH:
+        return (), True
+    variants: list[str] = []
+    seen: set[str] = set()
+    frontier = [value]
+    for _ in range(_MAX_PUBLIC_ENCODING_LAYERS):
+        next_frontier: list[str] = []
+        for candidate in frontier:
+            if candidate not in seen:
+                seen.add(candidate)
+                variants.append(candidate)
+            for decoded in _decoded_encoding_forms(candidate):
+                if decoded not in seen:
+                    if len(decoded) > _MAX_PUBLIC_ENCODING_LENGTH:
+                        return tuple(variants), True
+                    if len(variants) >= _MAX_PUBLIC_ENCODING_VARIANTS:
+                        return tuple(variants), True
+                    seen.add(decoded)
                     variants.append(decoded)
                     next_frontier.append(decoded)
         if not next_frontier:
-            break
+            return tuple(variants), False
         frontier = next_frontier
-    return tuple(variants)
+    overflowed = any(
+        decoded not in seen
+        for candidate in frontier
+        for decoded in _decoded_encoding_forms(candidate)
+    )
+    return tuple(variants), overflowed
+
+
+def public_encoding_variants(value: str) -> tuple[str, ...]:
+    """Decode percent and escaped codepoints for at most eight bounded passes."""
+
+    variants, _overflowed = public_encoding_scan(value)
+    return variants
 
 
 def _contains_embedded_resource(value: str) -> bool:
@@ -131,42 +163,54 @@ def _contains_embedded_resource(value: str) -> bool:
     )
 
 
+def decoded_form_contains_public_path_or_resource(candidate: str) -> bool:
+    """Inspect one form whose bounded decoding closure was already computed."""
+
+    if any(
+        web_url_contains_sensitive_resource(
+            match.group(0),
+            contains_embedded_resource=_contains_embedded_resource,
+        )
+        for match in WEB_URL.finditer(candidate)
+    ):
+        return True
+    if (
+        _NON_WEB_URI.search(candidate)
+        or _TECHNICAL_SCHEME_REFERENCE.search(candidate)
+        or _RESOURCE_IDENTIFIER.search(candidate)
+        or contains_internal_host_literal(candidate)
+        or _WINDOWS_PATH.search(candidate)
+        or _WINDOWS_DRIVE_RELATIVE_PATH.search(candidate)
+        or _WINDOWS_DRIVE_REFERENCE.search(candidate)
+        or _UNC_PATH.search(candidate)
+        or _ENVIRONMENT_PATH.search(candidate)
+        or _LABELED_RELATIVE_PATH.search(candidate)
+        or _INTERNAL_RELATIVE_PATH.search(candidate)
+        or _RELATIVE_TRAVERSAL_PATH.search(candidate)
+    ):
+        return True
+    without_web_urls = WEB_URL.sub("", candidate)
+    return bool(
+        _FORWARD_UNC_PATH.search(without_web_urls)
+        or _POSIX_PATH.search(without_web_urls)
+        or _FILE_REFERENCE.search(without_web_urls)
+        or _TECHNICAL_BASENAME.search(without_web_urls)
+    )
+
+
 def contains_public_path_or_resource(value: str) -> bool:
     """Reject filesystem paths and non-web resource locators, including encodings."""
 
-    for candidate in public_encoding_variants(value):
-        if any(
-            web_url_contains_sensitive_resource(
-                match.group(0),
-                contains_embedded_resource=_contains_embedded_resource,
-            )
-            for match in WEB_URL.finditer(candidate)
-        ):
-            return True
-        if (
-            _NON_WEB_URI.search(candidate)
-            or _TECHNICAL_SCHEME_REFERENCE.search(candidate)
-            or _RESOURCE_IDENTIFIER.search(candidate)
-            or contains_internal_host_literal(candidate)
-            or _WINDOWS_PATH.search(candidate)
-            or _WINDOWS_DRIVE_RELATIVE_PATH.search(candidate)
-            or _WINDOWS_DRIVE_REFERENCE.search(candidate)
-            or _UNC_PATH.search(candidate)
-            or _ENVIRONMENT_PATH.search(candidate)
-            or _LABELED_RELATIVE_PATH.search(candidate)
-            or _INTERNAL_RELATIVE_PATH.search(candidate)
-            or _RELATIVE_TRAVERSAL_PATH.search(candidate)
-        ):
-            return True
-        without_web_urls = WEB_URL.sub("", candidate)
-        if (
-            _FORWARD_UNC_PATH.search(without_web_urls)
-            or _POSIX_PATH.search(without_web_urls)
-            or _FILE_REFERENCE.search(without_web_urls)
-            or _TECHNICAL_BASENAME.search(without_web_urls)
-        ):
-            return True
-    return False
+    variants, overflowed = public_encoding_scan(value)
+    return overflowed or any(
+        decoded_form_contains_public_path_or_resource(candidate)
+        for candidate in variants
+    )
 
 
-__all__ = ("contains_public_path_or_resource", "public_encoding_variants")
+__all__ = (
+    "contains_public_path_or_resource",
+    "decoded_form_contains_public_path_or_resource",
+    "public_encoding_scan",
+    "public_encoding_variants",
+)

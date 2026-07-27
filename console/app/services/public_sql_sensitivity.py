@@ -88,6 +88,12 @@ _SQL = re.compile(
     r"\b(?:describe|use|install)\s+\w+(?=\s*(?:;|$))"
     r")"
 )
+_SQL_SELECT_FROM_PREFIX = re.compile(
+    r"(?is)\b(?P<select>select)\b[\s\S]{1,8192}?\b(?P<from>from)\b"
+)
+_SQL_FROM_SOURCE_PREFIX = re.compile(r"(?is)^\s*(?=[^\s;,.!?])")
+_SQL_DOLLAR_QUOTE = re.compile(r"\$(?:[a-z_][a-z0-9_]*)?\$", re.IGNORECASE)
+_PUBLIC_SELECT_COPY_ALLOWLIST = frozenset({"Select department from menu."})
 _SQL_STATEMENT = re.compile(
     r"(?is)^\s*(?:"
     r"select\b.+;|select\s+(?:all\s+|distinct\s+)?[a-z_][a-z0-9_.$\"]*|"
@@ -198,6 +204,76 @@ _SQL_TERMINATED_STATEMENT = re.compile(
 _SQL_COMMENT = re.compile(r"(?s)/\*.*?\*/|--[^\r\n]*(?:\r\n?|\n|$)")
 
 
+def _quoted_sql_mask(value: str, *, backslash_strings: bool = False) -> str:
+    """Mask quoted content while preserving offsets for bounded keyword scans."""
+
+    masked = list(value)
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char in {"'", '"'}:
+            quote = char
+            escape_backslashes = backslash_strings or (
+                quote == "'"
+                and (
+                    index > 0
+                    and value[index - 1] in {"e", "E"}
+                    and (
+                        index == 1
+                        or not (value[index - 2].isalnum() or value[index - 2] == "_")
+                    )
+                )
+            )
+            masked[index] = " "
+            index += 1
+            while index < len(value):
+                masked[index] = " "
+                if escape_backslashes and value[index] == "\\":
+                    if index + 1 < len(value):
+                        masked[index + 1] = " "
+                        index += 2
+                    else:
+                        index += 1
+                    continue
+                if value[index] == quote:
+                    if index + 1 < len(value) and value[index + 1] == quote:
+                        masked[index + 1] = " "
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            continue
+        if char == "$":
+            delimiter = _SQL_DOLLAR_QUOTE.match(value, index)
+            if delimiter is not None:
+                marker = delimiter.group(0)
+                end = value.find(marker, delimiter.end())
+                if end >= 0:
+                    end += len(marker)
+                    masked[index:end] = " " * (end - index)
+                    index = end
+                    continue
+        index += 1
+    return "".join(masked)
+
+
+def _contains_select_from_sql(value: str) -> bool:
+    """Fail closed on bounded SELECT/FROM shapes outside exact approved copy."""
+
+    if value.strip() in _PUBLIC_SELECT_COPY_ALLOWLIST:
+        return False
+    keyword_views = {
+        _quoted_sql_mask(value),
+        _quoted_sql_mask(value, backslash_strings=True),
+    }
+    return any(
+        _SQL_FROM_SOURCE_PREFIX.match(value[select_from.end() :]) is not None
+        for keyword_view in keyword_views
+        for select_from in _SQL_SELECT_FROM_PREFIX.finditer(keyword_view)
+    )
+
+
 def contains_public_sql(value: str) -> bool:
     """Detect SQL both inside comments and with comments between tokens."""
 
@@ -209,17 +285,20 @@ def contains_public_sql(value: str) -> bool:
     )
     return bool(
         _SQL.search(value)
+        or _contains_select_from_sql(value)
         or _SQL_STATEMENT.search(value)
         or _SQL_EXPRESSION_STATEMENT.search(value)
         or _SQL_ADMIN_STATEMENT.search(value)
         or _SQL_TERMINATED_STATEMENT.search(value)
         or _SQL.search(without_comments)
+        or _contains_select_from_sql(without_comments)
         or _SQL_STATEMENT.search(without_comments)
         or _SQL_EXPRESSION_STATEMENT.search(without_comments)
         or _SQL_ADMIN_STATEMENT.search(without_comments)
         or _SQL_TERMINATED_STATEMENT.search(without_comments)
         or any(
             _SQL.search(body)
+            or _contains_select_from_sql(body)
             or _SQL_STATEMENT.search(body)
             or _SQL_EXPRESSION_STATEMENT.search(body)
             or _SQL_ADMIN_STATEMENT.search(body)

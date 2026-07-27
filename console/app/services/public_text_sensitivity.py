@@ -21,8 +21,8 @@ from app.services.public_identifier_sensitivity import (
     is_public_technical_structure_key,
 )
 from app.services.public_path_sensitivity import (
-    contains_public_path_or_resource,
-    public_encoding_variants,
+    decoded_form_contains_public_path_or_resource,
+    public_encoding_scan,
 )
 from app.services.public_sql_sensitivity import contains_public_sql
 
@@ -72,7 +72,7 @@ _NUMBER_ONLY_LABEL = re.compile(
 
 def _technical_form(value: str) -> bool:
     return bool(
-        contains_public_path_or_resource(value)
+        decoded_form_contains_public_path_or_resource(value)
         or contains_public_sql(value)
         or contains_public_identifier_copy(value)
         or contains_structured_copy(value)
@@ -86,8 +86,17 @@ def contains_public_technical_copy(value: str) -> bool:
     if not isinstance(value, str) or len(value) > MAX_VISIBLE_COPY_SCAN_LENGTH:
         return True
     normalized = unicodedata.normalize("NFKC", value)
+    if len(normalized) > MAX_VISIBLE_COPY_SCAN_LENGTH:
+        return True
     for security_form in security_detection_forms(normalized):
-        for candidate in public_encoding_variants(security_form):
+        if len(security_form) > MAX_VISIBLE_COPY_SCAN_LENGTH:
+            return True
+        candidates, overflowed = public_encoding_scan(security_form)
+        if overflowed:
+            return True
+        for candidate in candidates:
+            if len(candidate) > MAX_VISIBLE_COPY_SCAN_LENGTH:
+                return True
             if contains_sensitive_copy(candidate) or _technical_form(
                 canonicalize_detection_separators(candidate)
             ):
