@@ -50,7 +50,7 @@ SAFE_OPERATIONAL_WARNINGS = (
     "Insert into culture",
     "Create index of capabilities",
     "Alter role responsibilities",
-    "Please select the department from the company menu.",
+    "Please choose the department from the company menu.",
     "Delete from shortlist.",
     "Use payroll insights",
     "Update status set to ready.",

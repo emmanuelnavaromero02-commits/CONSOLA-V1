@@ -160,7 +160,7 @@ def test_gold_http_redacts_technical_widget_titles(technical: str) -> None:
         (
             "company",
             "company_name",
-            "Please select the department from the company menu.",
+            "Please choose the department from the company menu.",
             1,
         ),
         ("company", "company_name", "Delete from shortlist.", 1),

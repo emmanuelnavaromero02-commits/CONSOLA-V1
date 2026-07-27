@@ -7,6 +7,8 @@ from app.services.control_room.successfactors_gold_observations import (
     _sf_gold_public_widget,
 )
 from app.services.public_sql_sensitivity import contains_public_sql
+from app.services.public_sql_select_grammar import contains_public_select_sql
+from app.services.public_sql_word_statements import contains_embedded_word_statement
 from app.services.public_text_sensitivity import (
     contains_public_technical_copy,
     public_business_label,
@@ -18,6 +20,11 @@ HIDDEN_QUERY_SUFFIXES = (
     "Select candidates from the talent pool TABLE employees",
     "Select candidates from the talent pool SUMMARIZE employees",
     "SELECT",
+    "Select candidates from the update extensions",
+    "Select candidates from the update extensions.",
+    "Please select salary total from payroll employees.",
+    "Please select password secret from users accounts.",
+    "Select salary-bonus from the shortlist.",
 )
 ADVERSARIAL_QUERY_FORMS = (
     "Select SELECT salary from the talent pool",
@@ -48,9 +55,14 @@ ADVERSARIAL_QUERY_FORMS = (
     "Select candidates from the talent pool LOCK TABLE employees",
     "Select candidates from the talent pool SET SESSION AUTHORIZATION analyst",
     "Select candidates from the talent pool RELEASE checkpoint_name",
+    "Select candidates from the talent pool RELEASE readiness.",
+    "Select candidates from the talent pool RELEASE SAVEPOINT readiness.",
     "Select candidates from the shortlist DESCRIBE employees",
     "Select candidates from the talent pool SHOW.",
     "Select candidates from the talent pool START.",
+    "Select candidates from the talent pool START TRANSACTION.",
+    "Select candidates from the talent pool END.",
+    "Select candidates from the talent pool END TRANSACTION.",
     "Select candidates from the talent pool DESCRIBE.",
     "Select candidates from the shortlist USE workforce",
     "Select candidates from the shortlist TRUNCATE employees",
@@ -63,6 +75,8 @@ ADVERSARIAL_QUERY_FORMS = (
     "Select candidates from the LOCK employees.",
     "Select candidates from the shortlist MOVE cursor_name",
     "Select candidates from the talent pool for LOCK employees.",
+    "Select candidates from the talent pool UPDATE EXTENSIONS",
+    "Select candidates from the talent pool UPDATE EXTENSIONS.",
     "Select REFRESH MATERIALIZED VIEW workforce from the talent pool",
     "Select EXEC proc from the talent pool",
     "Select salary - bonus total from payroll employees.",
@@ -72,6 +86,11 @@ ADVERSARIAL_QUERY_FORMS = (
     "Select candidates from the talent pool'SELECT salary",
     "Select candidates from the talent pool’SELECT salary",
     "Select candidates from the talent pool–SELECT salary",
+    "Select candidates from the talent pool for project start SELECT salary",
+    "Select candidates from the talent pool for project end UPDATE EXTENSIONS",
+    "Select candidates from the talent pool for release readiness TABLE employees",
+    "Select candidates from the talent pool for project start START.",
+    "Select candidates from the talent pool for release readiness RELEASE next.",
     "SELECT -- note",
 )
 BUSINESS_SELECT_INSTRUCTIONS = (
@@ -86,15 +105,51 @@ BUSINESS_SELECT_INSTRUCTIONS = (
     "Select high-potential candidates from the talent pool.",
     "Select candidates from the company's pool.",
     "Select candidates from the company’s pool.",
-)
-QUOTED_SELECT_CONTROLS = ("'SELECT'", '"SELECT"', "$$SELECT$$", "E'SELECT'")
-AMBIGUOUS_UNWRAPPED_SQL = (
+    "Select candidates from the talent pool for project start.",
+    "Select candidates from the talent pool for project end.",
+    "Select candidates from the talent pool for release readiness.",
+    "Please select candidates from the shortlist.",
+    "select candidates from the shortlist.",
+    "Please Select candidates from available employees.",
     "Select candidates from the shortlist",
     "SELECT candidates FROM THE SHORTLIST.",
     "Select candidates from your shortlist.",
     "select candidates from your shortlist.",
     "Please SELECT candidates from available employees.",
     "Please select candidates from available employees",
+)
+QUOTED_SELECT_CONTROLS = ("'SELECT'", '"SELECT"', "$$SELECT$$", "E'SELECT'")
+OUT_OF_DOMAIN_SELECTS = (
+    "Select salaries from payroll employees",
+    "SELECT credentials FROM users accounts.",
+    "Please SELECT salary total from available employees.",
+    "Select candidates from payroll employees.",
+    "Select candidates from update extensions.",
+    "Select salary-bonus from the shortlist.",
+    "Please select candidates from update extensions.",
+    "Select candidates from available update extensions.",
+    "Select password from the users.",
+    "Select salary total from the users.",
+    "Select salary-bonus total from the users.",
+    "Please select candidates from users accounts.",
+    "Please select all password from users accounts.",
+    "Please select salary-bonus from users accounts.",
+    "Select high'potential candidates from the talent pool.",
+    "Select high’potential candidates from the talent pool.",
+    "Select candidates from the company-s pool.",
+    "Select-candidates from available employees.",
+    "Please select-candidates from available employees.",
+    "Select all-candidates from available employees.",
+    "Select-high-potential candidates from available employees.",
+    "Select high-potential-candidates from available employees.",
+    "Select candidates from-available employees.",
+    "Select candidates from available-employees.",
+    "Select candidates from the-shortlist.",
+    "Select candidates from the talent pool for project-start.",
+    "Select candidates from the talent pool for release-readiness.",
+    "Select candidates from a employees.",
+    "Select candidates from an employees.",
+    "Please select the department from the company menu.",
 )
 
 
@@ -112,6 +167,7 @@ def _gold_widget(label: str) -> dict:
 
 @pytest.mark.parametrize("query", HIDDEN_QUERY_SUFFIXES)
 def test_hidden_query_fails_closed_in_shared_direct_policy(query: str) -> None:
+    assert contains_public_select_sql(query)
     assert contains_public_sql(query)
     assert contains_public_technical_copy(query)
     assert public_business_label(query) is None
@@ -134,6 +190,7 @@ def test_hidden_query_invalidates_direct_gold(query: str) -> None:
 def test_natural_business_instruction_survives_shared_policy_byte_exact(
     business_copy: str,
 ) -> None:
+    assert not contains_public_select_sql(business_copy)
     assert not contains_public_sql(business_copy)
     assert not contains_public_technical_copy(business_copy)
     assert public_business_label(business_copy) == business_copy
@@ -166,8 +223,14 @@ def test_natural_business_instruction_survives_direct_gold_byte_exact(
 def test_adversarial_complete_query_forms_cannot_hide_in_instruction(
     query: str,
 ) -> None:
+    assert contains_public_select_sql(query)
     assert contains_public_sql(query)
     assert contains_public_technical_copy(query)
+
+
+def test_duckdb_update_extensions_is_a_complete_embedded_statement() -> None:
+    words = ("select", "candidates", "from", "the", "update", "extensions")
+    assert contains_embedded_word_statement(words)
 
 
 @pytest.mark.parametrize("quoted", QUOTED_SELECT_CONTROLS)
@@ -175,8 +238,9 @@ def test_quoted_select_word_is_not_a_top_level_statement(quoted: str) -> None:
     assert not contains_public_sql(quoted)
 
 
-@pytest.mark.parametrize("query", AMBIGUOUS_UNWRAPPED_SQL)
-def test_low_confidence_table_alias_sql_requires_exact_natural_framing(
+@pytest.mark.parametrize("query", OUT_OF_DOMAIN_SELECTS)
+def test_out_of_domain_select_grammar_fails_closed(
     query: str,
 ) -> None:
+    assert contains_public_select_sql(query)
     assert contains_public_sql(query)

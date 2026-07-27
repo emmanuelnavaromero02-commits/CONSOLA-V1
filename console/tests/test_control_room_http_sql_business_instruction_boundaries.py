@@ -89,7 +89,7 @@ def test_authenticated_diagnostics_http_preserves_business_instruction_byte_exac
 ) -> None:
     diagnostics = _diagnostics_response(business_copy)
     assert diagnostics.status_code == 200
-    assert business_copy in _published_strings(diagnostics.json())
+    assert _published_strings(diagnostics.json()).count(business_copy) == 1
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
