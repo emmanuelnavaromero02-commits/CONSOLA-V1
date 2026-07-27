@@ -13,17 +13,10 @@ def _default_startup_seeds() -> tuple[StartupSeed, ...]:
     from app.services.seed_packaged_apps import seed_packaged_apps
     from app.services.seed_packaged_datasets import seed_packaged_datasets
     from app.services.seed_packaged_hints import seed_packaged_hints
-    from app.services.successfactors_headcount_seed_refresh import (
-        refresh_successfactors_headcount_definitions,
-    )
 
     return (
         ("seed_missing_dag_sources", seed_missing_dag_sources),
         ("seed_packaged_datasets", seed_packaged_datasets),
-        (
-            "refresh_successfactors_headcount_definitions",
-            refresh_successfactors_headcount_definitions,
-        ),
         ("seed_packaged_hints", seed_packaged_hints),
         ("seed_packaged_apps", seed_packaged_apps),
     )
