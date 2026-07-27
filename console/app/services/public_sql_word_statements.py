@@ -77,14 +77,21 @@ _OBJECT_STATEMENTS = frozenset(
 _TWO_WORD_STATEMENTS = frozenset(
     {
         ("force", "checkpoint"),
+        ("update", "extensions"),
     }
 )
 
 
-def contains_embedded_word_statement(words: tuple[str, ...]) -> bool:
+def contains_embedded_word_statement(
+    words: tuple[str, ...],
+    *,
+    ignored_starter_indexes: frozenset[int] = frozenset(),
+) -> bool:
     """Detect a complete word-only statement at any non-initial position."""
 
     for index in range(1, len(words)):
+        if index in ignored_starter_indexes:
+            continue
         tail = words[index:]
         starter = tail[0]
         if starter == "select":

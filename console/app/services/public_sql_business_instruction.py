@@ -1,4 +1,4 @@
-"""Positional grammar for SELECT-shaped natural-language instructions."""
+"""Positive grammar for candidate-selection business instructions."""
 
 from __future__ import annotations
 
@@ -10,95 +10,71 @@ from app.services.public_sql_word_statements import (
 )
 
 
-_MAX_NATURAL_WORDS = 16
 _NATURAL_WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 _RAW_NATURAL_WORD = re.compile(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*", re.UNICODE)
-_RAW_WORD_COMPONENT = re.compile(r"[-'’]")
+_RAW_WORD_COMPONENT = re.compile(r"([-'’])")
 _WORD_CONNECTORS = frozenset({"-", "'", "’"})
 _TERMINAL_PUNCTUATION = frozenset({".", "!", "?"})
-_SOURCE_DETERMINERS = frozenset(
+
+_TARGET_DETERMINERS = frozenset({"all", "the"})
+_TARGET_MODIFIER = ("high", "-", "potential")
+_SOURCE_DETERMINERS = frozenset({"a", "an", "the", "your"})
+_SOURCE_MODIFIERS = frozenset({"available", "first", "internal"})
+_SOURCE_HEADS = frozenset(
     {
-        "a",
-        "an",
-        "her",
-        "his",
-        "its",
-        "my",
-        "our",
-        "that",
-        "the",
-        "their",
-        "these",
-        "this",
-        "those",
-        "your",
+        ("employees",),
+        ("shortlist",),
+        ("talent", "pool"),
+        ("talent", "pools"),
     }
 )
-_SOURCE_COMPLEMENTS = frozenset({"for", "in"})
-_FOR_LOCK_WORDS = frozenset({"key", "no", "share", "update"})
-_SQL_NATURAL_DISQUALIFIERS = frozenset(
-    "all and any array as asc at between by case collate cross desc distinct "
-    "else end escape except false fetch filter first for full glob group having in "
-    "ilike inner intersect into is isnull join last lateral left like like_regex limit "
-    "match natural not notnull null offset on only or order outer over partition "
-    "qualify regexp returning right rlike rows similar some tablesample then time true "
-    "union unknown using when where window within with zone".split()
-)
+_SOURCE_POSSESSORS = frozenset({"company"})
+_COMPLEMENT_PREPOSITIONS = frozenset({"for", "in"})
+_PROJECT_PHASES = frozenset({"start", "end"})
+_RELEASE_OUTCOMES = frozenset({"readiness"})
+_REVIEW_OUTCOMES = frozenset({"review"})
+_BUSINESS_LOCATIONS = frozenset({"madrid"})
 
 
-def _strip_sentence_framing(
-    tokens: tuple[SelectToken, ...],
-) -> tuple[tuple[SelectToken, ...], bool, bool] | None:
+def _strip_token_framing(tokens: tuple[SelectToken, ...]) -> tuple[SelectToken, ...]:
     framed = list(tokens)
-    has_terminal = bool(
+    if (
         framed
         and framed[-1].kind == "symbol"
         and framed[-1].value in _TERMINAL_PUNCTUATION
-    )
-    if has_terminal:
+    ):
         framed.pop()
-
-    has_please = bool(
-        framed and framed[0].kind == "word" and framed[0].value.casefold() == "please"
-    )
-    if has_please:
+    if framed and framed[0].kind == "word" and framed[0].value.casefold() == "please":
         framed.pop(0)
         if framed and framed[0] == SelectToken("symbol", ","):
             framed.pop(0)
-    return tuple(framed), has_please, has_terminal
+    return tuple(framed)
 
 
-def _raw_natural_words(
-    value: str,
-) -> tuple[tuple[str, ...], bool, bool, str] | None:
+def _raw_natural_atoms(value: str) -> tuple[str, ...] | None:
     candidate = value.strip()
-    has_terminal = candidate.endswith(tuple(_TERMINAL_PUNCTUATION))
-    if has_terminal:
+    if candidate and candidate[-1] in _TERMINAL_PUNCTUATION:
         candidate = candidate[:-1].rstrip()
     raw_words = candidate.split()
-    has_please = bool(raw_words and raw_words[0].casefold() in {"please", "please,"})
-    if has_please:
+    if raw_words and raw_words[0].casefold() in {"please", "please,"}:
         raw_words = raw_words[1:]
     if not raw_words or not all(
         _RAW_NATURAL_WORD.fullmatch(word) for word in raw_words
     ):
         return None
-    select_spelling = raw_words[0]
-    words = tuple(
-        component.casefold()
+    return tuple(
+        component if component in _WORD_CONNECTORS else component.casefold()
         for word in raw_words
         for component in _RAW_WORD_COMPONENT.split(word)
+        if component
     )
-    if len(words) > _MAX_NATURAL_WORDS:
-        return None
-    return words, has_please, has_terminal, select_spelling
 
 
-def _natural_words(tokens: tuple[SelectToken, ...]) -> tuple[str, ...] | None:
-    words: list[str] = []
+def _token_natural_atoms(tokens: tuple[SelectToken, ...]) -> tuple[str, ...] | None:
+    atoms: list[str] = []
     for index, token in enumerate(tokens):
         if token.kind == "word" and _NATURAL_WORD.fullmatch(token.value):
-            words.append(token.value.casefold())
+            atoms.append(token.value.casefold())
             continue
         if (
             token.kind == "symbol"
@@ -108,82 +84,127 @@ def _natural_words(tokens: tuple[SelectToken, ...]) -> tuple[str, ...] | None:
             and tokens[index - 1].kind == "word"
             and tokens[index + 1].kind == "word"
         ):
+            atoms.append(token.value)
             continue
         return None
-    return tuple(words) if len(words) <= _MAX_NATURAL_WORDS else None
+    return tuple(atoms)
 
 
-def _valid_target(words: tuple[str, ...]) -> bool:
-    target = words[1:] if words and words[0] == "all" else words
+def _framed_atoms(
+    value: str,
+    tokens: tuple[SelectToken, ...],
+) -> tuple[str, ...] | None:
+    token_atoms = _token_natural_atoms(_strip_token_framing(tokens))
+    raw_atoms = _raw_natural_atoms(value)
+    return token_atoms if token_atoms is not None and token_atoms == raw_atoms else None
+
+
+def _valid_action(atoms: tuple[str, ...]) -> bool:
     return bool(
-        1 <= len(target) <= 4
-        and all(word not in _SQL_NATURAL_DISQUALIFIERS for word in target)
+        atoms
+        and atoms[0] == "select"
+        and atoms.count("select") == 1
+        and atoms.count("from") == 1
     )
 
 
-def _valid_source_core(
-    words: tuple[str, ...],
-    *,
-    has_please: bool,
-    has_terminal: bool,
-    select_spelling: str,
-) -> bool:
-    if len(words) < 2:
-        return False
-    determined = words[0] in _SOURCE_DETERMINERS
-    if len(words) > (4 if determined else 3):
-        return False
-    for index, word in enumerate(words):
-        if word == "first" and determined and index == 1:
-            continue
-        if word in _SQL_NATURAL_DISQUALIFIERS:
+def _valid_target(atoms: tuple[str, ...]) -> bool:
+    cursor = 0
+    if cursor < len(atoms) and atoms[cursor] in _TARGET_DETERMINERS:
+        cursor += 1
+    if atoms[cursor : cursor + 3] == _TARGET_MODIFIER:
+        cursor += 3
+    return atoms[cursor:] == ("candidates",)
+
+
+def _valid_source(atoms: tuple[str, ...]) -> bool:
+    cursor = 0
+    determiner: str | None = None
+    if cursor < len(atoms) and atoms[cursor] in _SOURCE_DETERMINERS:
+        determiner = atoms[cursor]
+        cursor += 1
+
+    possessive = atoms[cursor:]
+    if (
+        len(possessive) == 4
+        and possessive[0] in _SOURCE_POSSESSORS
+        and possessive[1] in {"'", "’"}
+        and possessive[2:] == ("s", "pool")
+    ):
+        return determiner in {None, "the"}
+
+    modifiers: list[str] = []
+    while cursor < len(atoms) and atoms[cursor] in _SOURCE_MODIFIERS:
+        modifier = atoms[cursor]
+        if modifier in modifiers:
             return False
-    if len(words) >= 3:
-        return True
-    if determined:
-        return bool(
-            words[0] == "the"
-            and not has_please
-            and has_terminal
-            and select_spelling == "Select"
-        )
-    return has_please and has_terminal and select_spelling == "select"
+        modifiers.append(modifier)
+        cursor += 1
+    head = atoms[cursor:]
+    if head not in _SOURCE_HEADS:
+        return False
+    source_modifiers = tuple(modifiers)
+    if head == ("employees",):
+        return determiner is None and source_modifiers == ("available",)
+    if head == ("shortlist",):
+        return determiner in {"the", "your"} and not source_modifiers
+    if head == ("talent", "pools"):
+        return determiner is None and source_modifiers == ("available",)
+    if determiner in {"a", "your"}:
+        return not source_modifiers
+    if determiner == "an":
+        return source_modifiers == ("internal",)
+    return determiner == "the" and source_modifiers in {(), ("first",)}
 
 
-def _valid_source(
+def _valid_complement(
     words: tuple[str, ...],
     *,
-    has_please: bool,
-    has_terminal: bool,
-    select_spelling: str,
-) -> bool:
+    absolute_offset: int,
+) -> frozenset[int] | None:
+    if not words:
+        return frozenset()
+    preposition, *components = words
+    if preposition == "in":
+        return (
+            frozenset()
+            if len(components) == 1 and components[0] in _BUSINESS_LOCATIONS
+            else None
+        )
+    if preposition != "for" or not components:
+        return None
+
+    role, *details = components
+    if role in _REVIEW_OUTCOMES and not details:
+        return frozenset()
+    if role == "project" and len(details) == 1 and details[0] in _PROJECT_PHASES:
+        return frozenset({absolute_offset + 2})
+    if role == "release" and len(details) == 1 and details[0] in _RELEASE_OUTCOMES:
+        return frozenset({absolute_offset + 1})
+    return None
+
+
+def _parse_business_roles(atoms: tuple[str, ...]) -> frozenset[int] | None:
+    if not _valid_action(atoms):
+        return None
+    from_index = atoms.index("from")
+    if not _valid_target(atoms[1:from_index]):
+        return None
+
+    tail = atoms[from_index + 1 :]
     complement_indexes = tuple(
-        index for index, word in enumerate(words) if word in _SOURCE_COMPLEMENTS
+        index for index, word in enumerate(tail) if word in _COMPLEMENT_PREPOSITIONS
     )
     if len(complement_indexes) > 1:
-        return False
-    if not complement_indexes:
-        return _valid_source_core(
-            words,
-            has_please=has_please,
-            has_terminal=has_terminal,
-            select_spelling=select_spelling,
-        )
-
-    complement_index = complement_indexes[0]
-    core = words[:complement_index]
-    complement = words[complement_index + 1 :]
-    if len(core) < 3 or not 1 <= len(complement) <= 3:
-        return False
-    if words[complement_index] == "for" and complement[0] in _FOR_LOCK_WORDS:
-        return False
-    if any(word in _SQL_NATURAL_DISQUALIFIERS for word in complement):
-        return False
-    return _valid_source_core(
-        core,
-        has_please=has_please,
-        has_terminal=has_terminal,
-        select_spelling=select_spelling,
+        return None
+    complement_index = complement_indexes[0] if complement_indexes else len(tail)
+    source = tail[:complement_index]
+    complement = tail[complement_index:]
+    if not _valid_source(source):
+        return None
+    return _valid_complement(
+        complement,
+        absolute_offset=from_index + 1 + complement_index,
     )
 
 
@@ -191,38 +212,32 @@ def is_unambiguous_business_select(
     value: str,
     tokens: tuple[SelectToken, ...],
 ) -> bool:
-    """Return true only for a complete, bounded natural SELECT instruction."""
+    """Return true only after a full candidate-selection grammar and SQL scan."""
 
-    framed = _strip_sentence_framing(tokens)
-    raw = _raw_natural_words(value)
-    if framed is None or raw is None:
+    atoms = _framed_atoms(value, tokens)
+    if atoms is None:
         return False
-    body, has_please, has_terminal = framed
-    select_spelling = body[0].value if body and body[0].kind == "word" else ""
-    words = _natural_words(body)
-    raw_words, raw_please, raw_terminal, raw_select_spelling = raw
-    if (
-        words is None
-        or words != raw_words
-        or has_please != raw_please
-        or has_terminal != raw_terminal
-        or select_spelling != raw_select_spelling
-        or not words
-        or words[0] != "select"
-        or words.count("select") != 1
-        or words.count("from") != 1
-        or contains_embedded_word_statement(words)
+    semantic_statement_starters = _parse_business_roles(atoms)
+    ignored_atom_starters = (
+        semantic_statement_starters
+        if semantic_statement_starters is not None
+        else frozenset()
+    )
+    word_atom_indexes = tuple(
+        index for index, atom in enumerate(atoms) if atom not in _WORD_CONNECTORS
+    )
+    words = tuple(atoms[index] for index in word_atom_indexes)
+    ignored_starters = frozenset(
+        word_index
+        for word_index, atom_index in enumerate(word_atom_indexes)
+        if atom_index in ignored_atom_starters
+    )
+    if contains_embedded_word_statement(
+        words,
+        ignored_starter_indexes=ignored_starters,
     ):
         return False
-    from_index = words.index("from")
-    target = words[1:from_index]
-    source = words[from_index + 1 :]
-    return _valid_target(target) and _valid_source(
-        source,
-        has_please=has_please,
-        has_terminal=has_terminal,
-        select_spelling=select_spelling,
-    )
+    return semantic_statement_starters is not None
 
 
 __all__ = ("is_unambiguous_business_select",)
