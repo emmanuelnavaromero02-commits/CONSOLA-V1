@@ -22,6 +22,7 @@ from control_room_surface_fixtures import (
 
 
 SECRET = "TOPSECRET"
+SECOND_SECRET = "SECONDSECRET"
 
 
 def _client() -> TestClient:
@@ -61,6 +62,24 @@ def test_explicit_escape_forms_are_detection_only_and_redact_secrets(
 
     assert redacted == "[REDACTED]"
     assert SECRET not in str(redacted)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        r'password=foo; {"pa\u0073sword":"TOPSECRET"}',
+        r'{"pa\u0073sword":"TOPSECRET"}; password=foo',
+        r'{"pa\u0073sword":"TOPSECRET","api_\u006bey":"SECONDSECRET"}',
+    ),
+)
+def test_plain_and_escaped_secrets_are_analyzed_before_any_partial_return(
+    value: str,
+) -> None:
+    redacted = redact_diagnostic_value(value)
+
+    assert redacted == "[REDACTED]"
+    assert SECRET not in str(redacted)
+    assert SECOND_SECRET not in str(redacted)
 
 
 def test_escaped_mapping_keys_redact_nested_values() -> None:
@@ -118,7 +137,11 @@ def test_unicode_normalized_escape_keys_redact_without_changing_key(key: str) ->
         r'{"api\uFF3C137key":"TOPSECRET"}',
         r'{"to\uFF3C153en":"TOPSECRET"}',
         r'{"p\uFF3Cqassword":"TOPSECRET"}',
-        r"invalid \u12GG TOPSECRET",
+        r'{"pa\qssword":"TOPSECRET"}',
+        r'{"note":"\u12","value":"TOPSECRET"}',
+        r'{"note":"\u12GG","value":"TOPSECRET"}',
+        r'{"note":"\uD800","value":"TOPSECRET"}',
+        r'{"note":"\U00110000","value":"TOPSECRET"}',
         (r"\u0061" * 129) + "TOPSECRET",
         ("a" * 16_384) + r"\u0061TOPSECRET",
     ),
@@ -137,6 +160,11 @@ def test_nested_invalid_or_excessive_escapes_fail_closed(value: str) -> None:
         r"Retry \x35 times",
         r"Unicode sample: Caf\u00e9",
         "Metric ＼u0074otal",
+        r"C:\Program Files\OMEGA",
+        r"C:\Users\OMEGA",
+        r"Ruta D:\Datos\OMEGA",
+        r'{"path":"C:\\Program Files\\OMEGA"}',
+        r'path=C:\Users\OMEGA; {"metric":"healthy"}',
     ),
 )
 def test_legitimate_escaped_text_is_not_transformed(value: str) -> None:
@@ -145,12 +173,14 @@ def test_legitimate_escaped_text_is_not_transformed(value: str) -> None:
 
 def _poisoned_snapshot():
     return snapshot(
-        diagnostics=(source_state(title='{"pa＼u0073sword":"TOPSECRET"}'),),
+        diagnostics=(
+            source_state(title=r'password=foo; {"pa\u0073sword":"TOPSECRET"}'),
+        ),
         sources=(
             source_status(
-                readiness_reason=r'{"api\uFF3Cx5fkey":"TOPSECRET"}',
+                readiness_reason=(r'{"api_\u006bey":"TOPSECRET"}; password=foo'),
                 readiness_blockers=[
-                    r'{"to\υ006ben":"TOPSECRET"}',
+                    r'{"pa\qssword":"TOPSECRET"}',
                     r"Retry \x35 times",
                 ],
                 contract_warnings=[
@@ -162,6 +192,27 @@ def _poisoned_snapshot():
             ),
         ),
     )
+
+
+def test_nested_lists_mappings_and_named_fields_leave_no_residual_secret() -> None:
+    mixed = r'password=foo; {"pa\u0073sword":"TOPSECRET"}'
+    payload = redact_diagnostic_value(
+        {
+            "title": mixed,
+            "reason": r'{"pa\qssword":"TOPSECRET"}',
+            "blockers": [r'{"api_\u006bey":"SECONDSECRET"}'],
+            "metadata": {"message": mixed},
+        }
+    )
+
+    assert payload == {
+        "title": "[REDACTED]",
+        "reason": "[REDACTED]",
+        "blockers": ["[REDACTED]"],
+        "metadata": {"message": "[REDACTED]"},
+    }
+    assert SECRET not in str(payload)
+    assert SECOND_SECRET not in str(payload)
 
 
 def test_title_reason_blockers_and_lists_are_redacted_directly() -> None:

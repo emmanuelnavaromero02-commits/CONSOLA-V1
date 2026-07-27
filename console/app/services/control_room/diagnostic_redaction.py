@@ -8,6 +8,12 @@ from app.services.control_room.business_copy_unicode import security_detection_f
 from app.services.control_room.diagnostic_escape_detection import (
     escaped_security_detection,
 )
+from app.services.control_room.diagnostic_field_escape_detection import (
+    assignment_field_detection,
+)
+from app.services.control_room.diagnostic_path_context import (
+    structured_path_detection,
+)
 from app.services.control_room.diagnostic_redaction_keys import (
     sensitive_diagnostic_field,
 )
@@ -78,10 +84,32 @@ def redact_diagnostic_value(value: object, *, field: str = "") -> object:
         return None
     if not isinstance(value, str):
         return value
-    clean = _redact_text(value)
-    if clean != value:
-        return clean
-    escape_detection = escaped_security_detection(value)
+    detection_forms = security_detection_forms(value)
+    if len(detection_forms) > 32:
+        return "[REDACTED]"
+    assignment_detections = tuple(
+        assignment_field_detection(candidate) for candidate in detection_forms
+    )
+    if any(detection.unsafe for detection in assignment_detections) or any(
+        sensitive_diagnostic_field(candidate)
+        for detection in assignment_detections
+        for candidate in detection.fields
+    ):
+        return "[REDACTED]"
+    if any(
+        candidate != value and _redact_text(candidate) != candidate
+        for candidate in detection_forms
+    ):
+        return "[REDACTED]"
+    path_detection = structured_path_detection(value)
+    if path_detection.unsafe or any(
+        _redact_text(candidate) != candidate
+        for form in path_detection.forms
+        for candidate in security_detection_forms(form)
+    ):
+        return "[REDACTED]"
+    analysis_value = path_detection.masked_value
+    escape_detection = escaped_security_detection(analysis_value)
     if escape_detection.unsafe:
         return "[REDACTED]"
     escaped_forms = tuple(
@@ -91,10 +119,10 @@ def redact_diagnostic_value(value: object, *, field: str = "") -> object:
     )
     if any(
         candidate != value and _redact_text(candidate) != candidate
-        for candidate in (*security_detection_forms(value), *escaped_forms)
+        for candidate in (*security_detection_forms(analysis_value), *escaped_forms)
     ):
         return "[REDACTED]"
-    return value
+    return _redact_text(value)
 
 
 __all__ = ("redact_diagnostic_value",)

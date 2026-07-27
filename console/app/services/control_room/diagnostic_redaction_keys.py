@@ -6,6 +6,10 @@ from app.services.control_room.business_copy_unicode import canonical_security_t
 from app.services.control_room.diagnostic_escape_detection import (
     escaped_security_detection,
 )
+from app.services.control_room.diagnostic_field_escape_detection import (
+    is_windows_or_unc_path,
+    malformed_field_escape_detection,
+)
 
 _SECRET_KEYS = frozenset(
     {
@@ -224,12 +228,20 @@ def _canonical_field_is_sensitive(field: str) -> bool:
 
 def sensitive_diagnostic_field(value: object) -> bool:
     raw = str(value).strip()
+    if is_windows_or_unc_path(raw):
+        return False
     escape_detection = escaped_security_detection(raw)
     if escape_detection.unsafe:
         return True
+    malformed_forms: tuple[str, ...] = ()
+    if "\\" in raw and not escape_detection.forms:
+        malformed_detection = malformed_field_escape_detection(raw)
+        if malformed_detection.unsafe:
+            return True
+        malformed_forms = malformed_detection.forms
     return any(
         _canonical_field_is_sensitive(canonical_diagnostic_field(candidate))
-        for candidate in (raw, *escape_detection.forms)
+        for candidate in (raw, *malformed_forms, *escape_detection.forms)
     )
 
 
