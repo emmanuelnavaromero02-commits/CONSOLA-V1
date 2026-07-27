@@ -1,9 +1,5 @@
-"""Live console context for Copilot recommendations.
+"""Workspace-scoped live console context for Copilot recommendations."""
 
-The proactive briefing is user-scoped and request-time. This module keeps a
-workspace-scoped operational cut that can refresh on a schedule, dedupe
-recommendations, and feed the Copilot with current console context.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -32,6 +28,7 @@ from app.services import (
     auth,
     control_room_service,
     copilot_context_authority,
+    copilot_context_persistence,
     permissions,
     proactive_service,
 )
@@ -39,7 +36,11 @@ from app.services.control_room.business_copy_sensitivity import (
     contains_sensitive_copy,
 )
 from app.services.control_room.diagnostic_redaction import redact_diagnostic_value
-from app.services.db_scope import scoped_db, scoped_db_for_user, workspace_scope_from_user
+from app.services.db_scope import (
+    scoped_db,
+    scoped_db_for_user,
+    workspace_scope_from_user,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -51,14 +52,23 @@ DEFAULT_INTERVAL_SECONDS = 3600
 DEFAULT_WORKSPACE_LIMIT = 200
 _SOURCE_LABELS = {
     "database.operational_counts": ("platform_operations", "Operación de plataforma"),
-    "control_room.ops_summary": ("control_room_operations", "Operación de Control Room"),
+    "control_room.ops_summary": (
+        "control_room_operations",
+        "Operación de Control Room",
+    ),
     "control_room.agents_ops": ("agent_operations", "Operación de agentes"),
-    "control_room.sap_successfactors_talent_kpis": ("talent_indicators", "Indicadores de Talento"),
+    "control_room.sap_successfactors_talent_kpis": (
+        "talent_indicators",
+        "Indicadores de Talento",
+    ),
     "control_room.sap_successfactors_talent_metadata_readiness": (
         "talent_source_readiness",
         "Preparación de fuentes de Talento",
     ),
-    "control_room.sap_successfactors_talent_overview": ("talent_overview", "Resumen de Talento"),
+    "control_room.sap_successfactors_talent_overview": (
+        "talent_overview",
+        "Resumen de Talento",
+    ),
     "copilot.proactive_briefing": ("copilot_briefing", "Recomendaciones del Copiloto"),
 }
 _CONTROL_ROOM_PROJECTIONS: dict[str, type[PublicProjectionModel]] = {
@@ -192,7 +202,15 @@ def _project_operational_counts(value: Any) -> dict[str, Any]:
     by_status = by_status if isinstance(by_status, Mapping) else {}
     safe_counts = {
         status: _int(by_status.get(status))
-        for status in ("pending", "running", "success", "partial", "blocked", "failed", "error")
+        for status in (
+            "pending",
+            "running",
+            "success",
+            "partial",
+            "blocked",
+            "failed",
+            "error",
+        )
         if status in by_status
     }
     datasets = source.get("datasets")
@@ -233,7 +251,13 @@ def _project_recommendation(value: Any) -> dict[str, Any] | None:
     href = _safe_action_href(source.get("action_href"))
     if href:
         projected["action_href"] = href
-    for key in ("first_seen_at", "last_seen_at", "resolved_at", "dismissed_at", "created_at"):
+    for key in (
+        "first_seen_at",
+        "last_seen_at",
+        "resolved_at",
+        "dismissed_at",
+        "created_at",
+    ):
         text = _safe_text(source.get(key), field=key, max_len=80)
         if text:
             projected[key] = text
@@ -371,7 +395,9 @@ def _source_lookup(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def build_recommendations_from_snapshot(
+    snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
     """Pure recommendation builder used by runtime and tests."""
 
     sources = _source_lookup(snapshot)
@@ -384,20 +410,27 @@ def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[s
         high = _int(open_by_severity.get("high"))
         total_open = sum(_int(v) for v in open_by_severity.values())
         if critical or high:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("control_room", "open_pressure", critical, high),
-                severity="critical" if critical else "warning",
-                category="control_room",
-                title="Revisar señales prioritarias",
-                body=(
-                    f"Hay {critical} críticas y {high} altas abiertas en Control Room. "
-                    "Conviene revisar responsables, evidencia y siguiente acción."
-                ),
-                evidence={"open_items_by_severity": open_by_severity, "open_total": total_open},
-                action_label="Abrir Control Room",
-                action_href="/control-room",
-                required_permission="monitor.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint(
+                        "control_room", "open_pressure", critical, high
+                    ),
+                    severity="critical" if critical else "warning",
+                    category="control_room",
+                    title="Revisar señales prioritarias",
+                    body=(
+                        f"Hay {critical} críticas y {high} altas abiertas en Control Room. "
+                        "Conviene revisar responsables, evidencia y siguiente acción."
+                    ),
+                    evidence={
+                        "open_items_by_severity": open_by_severity,
+                        "open_total": total_open,
+                    },
+                    action_label="Abrir Control Room",
+                    action_href="/control-room",
+                    required_permission="monitor.read",
+                )
+            )
 
     agents_source = sources.get("control_room.agents_ops")
     agents = agents_source.get("data") if isinstance(agents_source, dict) else None
@@ -408,66 +441,84 @@ def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[s
         recent_runs = _int(summary.get("recent_runs"))
         failed_recent = _int(summary.get("failed_recent_runs"))
         if monitor_agents == 0:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("agentops", "missing_monitors"),
-                severity="warning",
-                category="agentops",
-                title="Activar monitores operativos",
-                body="No hay monitores activos para convertir señales en seguimiento operativo.",
-                evidence={"summary": summary},
-                action_label="Ver agentes",
-                action_href="/agents",
-                required_permission="agents.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint("agentops", "missing_monitors"),
+                    severity="warning",
+                    category="agentops",
+                    title="Activar monitores operativos",
+                    body="No hay monitores activos para convertir señales en seguimiento operativo.",
+                    evidence={"summary": summary},
+                    action_label="Ver agentes",
+                    action_href="/agents",
+                    required_permission="agents.read",
+                )
+            )
         elif active_agents and recent_runs == 0:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("agentops", "no_recent_runs", monitor_agents),
-                severity="info",
-                category="agentops",
-                title="Ejecutar revisión de agentes",
-                body="Los monitores están configurados, pero todavía no tienen corridas recientes.",
-                evidence={"summary": summary},
-                action_label="Ver AgentOps",
-                action_href="/viewer?type=jobs",
-                required_permission="monitor.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint(
+                        "agentops", "no_recent_runs", monitor_agents
+                    ),
+                    severity="info",
+                    category="agentops",
+                    title="Ejecutar revisión de agentes",
+                    body="Los monitores están configurados, pero todavía no tienen corridas recientes.",
+                    evidence={"summary": summary},
+                    action_label="Ver AgentOps",
+                    action_href="/viewer?type=jobs",
+                    required_permission="monitor.read",
+                )
+            )
         if failed_recent:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("agentops", "failed_runs", failed_recent),
-                severity="warning",
-                category="agentops",
-                title="Revisar corridas de agentes fallidas",
-                body=f"Hay {failed_recent} corridas recientes de agentes con error.",
-                evidence={"summary": summary},
-                action_label="Abrir Jobs",
-                action_href="/viewer?type=jobs",
-                required_permission="monitor.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint("agentops", "failed_runs", failed_recent),
+                    severity="warning",
+                    category="agentops",
+                    title="Revisar corridas de agentes fallidas",
+                    body=f"Hay {failed_recent} corridas recientes de agentes con error.",
+                    evidence={"summary": summary},
+                    action_label="Abrir Jobs",
+                    action_href="/viewer?type=jobs",
+                    required_permission="monitor.read",
+                )
+            )
 
-    talent = sources.get("control_room.sap_successfactors_talent_kpis", {}).get("data") or {}
+    talent = (
+        sources.get("control_room.sap_successfactors_talent_kpis", {}).get("data") or {}
+    )
     if isinstance(talent, dict):
         readiness = talent.get("readiness") or {}
         blockers = talent.get("blockers") or []
-        status = str(readiness.get("status") or readiness.get("readiness_status") or "").lower()
+        status = str(
+            readiness.get("status") or readiness.get("readiness_status") or ""
+        ).lower()
         if blockers or status in {"partial", "blocked", "insufficient_data"}:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("sap_successfactors", "talent_blockers", status, len(blockers)),
-                severity="warning",
-                category="sap_successfactors",
-                title="Completar datos de Talento",
-                body="Talento ya tiene datos base, pero faltan entradas para clasificar readiness, 9-box o acciones supervisadas.",
-                evidence={
-                    "status": status,
-                    "blocker_count": len(blockers),
-                    "readiness": readiness,
-                },
-                action_label="Ver Talento",
-                action_href="/control-room?front=talent",
-                required_permission="monitor.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint(
+                        "sap_successfactors", "talent_blockers", status, len(blockers)
+                    ),
+                    severity="warning",
+                    category="sap_successfactors",
+                    title="Completar datos de Talento",
+                    body="Talento ya tiene datos base, pero faltan entradas para clasificar readiness, 9-box o acciones supervisadas.",
+                    evidence={
+                        "status": status,
+                        "blocker_count": len(blockers),
+                        "readiness": readiness,
+                    },
+                    action_label="Ver Talento",
+                    action_href="/control-room?front=talent",
+                    required_permission="monitor.read",
+                )
+            )
 
     metadata = (
-        sources.get("control_room.sap_successfactors_talent_metadata_readiness", {}).get("data")
+        sources.get(
+            "control_room.sap_successfactors_talent_metadata_readiness", {}
+        ).get("data")
         or {}
     )
     if isinstance(metadata, dict):
@@ -476,20 +527,30 @@ def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[s
         live_total = _int(summary.get("live_required_total"))
         live_ready = _int(summary.get("live_required_ready"))
         if blocked or (live_total and live_ready < live_total):
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("sap_successfactors", "metadata_readiness", blocked, live_ready, live_total),
-                severity="warning",
-                category="sap_successfactors",
-                title="Validar metadata y permisos SuccessFactors",
-                body="Hay componentes de Talento que dependen de metadata o permisos del tenant.",
-                evidence={"summary": summary, "status": metadata.get("status")},
-                action_label="Ver readiness",
-                action_href="/control-room?front=talent",
-                required_permission="operations.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint(
+                        "sap_successfactors",
+                        "metadata_readiness",
+                        blocked,
+                        live_ready,
+                        live_total,
+                    ),
+                    severity="warning",
+                    category="sap_successfactors",
+                    title="Validar metadata y permisos SuccessFactors",
+                    body="Hay componentes de Talento que dependen de metadata o permisos del tenant.",
+                    evidence={"summary": summary, "status": metadata.get("status")},
+                    action_label="Ver readiness",
+                    action_href="/control-room?front=talent",
+                    required_permission="operations.read",
+                )
+            )
 
     operational_source = sources.get("database.operational_counts")
-    operational = operational_source.get("data") if isinstance(operational_source, dict) else None
+    operational = (
+        operational_source.get("data") if isinstance(operational_source, dict) else None
+    )
     if isinstance(operational, dict):
         pipeline = operational.get("pipeline") or {}
         by_status = pipeline.get("by_status") or {}
@@ -497,35 +558,41 @@ def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[s
         failed = _int(by_status.get("failed")) + _int(by_status.get("error"))
         blocked = _int(by_status.get("blocked"))
         if failed or blocked or partial:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("pipeline", "non_success", failed, blocked, partial),
-                severity="critical" if failed else "warning",
-                category="pipeline",
-                title="Revisar sincronización parcial",
-                body=(
-                    f"Pipeline tiene {failed} fallidas, {blocked} bloqueadas y "
-                    f"{partial} parciales en el workspace."
-                ),
-                evidence={"by_status": by_status, "latest": pipeline.get("latest")},
-                action_label="Abrir Pipeline",
-                action_href="/viewer?type=pipeline",
-                required_permission="pipelines.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint(
+                        "pipeline", "non_success", failed, blocked, partial
+                    ),
+                    severity="critical" if failed else "warning",
+                    category="pipeline",
+                    title="Revisar sincronización parcial",
+                    body=(
+                        f"Pipeline tiene {failed} fallidas, {blocked} bloqueadas y "
+                        f"{partial} parciales en el workspace."
+                    ),
+                    evidence={"by_status": by_status, "latest": pipeline.get("latest")},
+                    action_label="Abrir Pipeline",
+                    action_href="/viewer?type=pipeline",
+                    required_permission="pipelines.read",
+                )
+            )
 
         datasets = operational.get("datasets") or {}
         datasets_total = _int(datasets.get("total"))
         if datasets_total == 0:
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("datasets", "none_registered"),
-                severity="info",
-                category="datasets",
-                title="Registrar datasets operativos",
-                body="No hay datasets registrados para este workspace; Schema y Lineage tendrán poca evidencia.",
-                evidence={"datasets": datasets},
-                action_label="Abrir Datasets",
-                action_href="/viewer?type=datasets",
-                required_permission="datasets.read",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint("datasets", "none_registered"),
+                    severity="info",
+                    category="datasets",
+                    title="Registrar datasets operativos",
+                    body="No hay datasets registrados para este workspace; Schema y Lineage tendrán poca evidencia.",
+                    evidence={"datasets": datasets},
+                    action_label="Abrir Datasets",
+                    action_href="/viewer?type=datasets",
+                    required_permission="datasets.read",
+                )
+            )
 
     briefing = sources.get("copilot.proactive_briefing", {}).get("data") or {}
     highlights = briefing.get("highlights") if isinstance(briefing, dict) else []
@@ -533,30 +600,34 @@ def build_recommendations_from_snapshot(snapshot: dict[str, Any]) -> list[dict[s
         for highlight in highlights[:3]:
             if not isinstance(highlight, dict):
                 continue
-            recommendations.append(_recommendation(
-                fingerprint=_fingerprint("briefing", highlight.get("id")),
-                severity=str(highlight.get("severity") or "info"),
-                category=str(highlight.get("category") or "briefing"),
-                title=str(highlight.get("title") or "Recomendación del Copiloto"),
-                body=str(highlight.get("body") or "Revisar señal operativa."),
-                evidence={"highlight": highlight},
-                action_label=highlight.get("action_label"),
-                action_href=highlight.get("action_href"),
-                required_permission="copilot.use",
-            ))
+            recommendations.append(
+                _recommendation(
+                    fingerprint=_fingerprint("briefing", highlight.get("id")),
+                    severity=str(highlight.get("severity") or "info"),
+                    category=str(highlight.get("category") or "briefing"),
+                    title=str(highlight.get("title") or "Recomendación del Copiloto"),
+                    body=str(highlight.get("body") or "Revisar señal operativa."),
+                    evidence={"highlight": highlight},
+                    action_label=highlight.get("action_label"),
+                    action_href=highlight.get("action_href"),
+                    required_permission="copilot.use",
+                )
+            )
 
     if not recommendations:
-        recommendations.append(_recommendation(
-            fingerprint=_fingerprint("console", "healthy"),
-            severity="success",
-            category="console",
-            title="Sin acciones urgentes",
-            body="No se detectaron bloqueos críticos en el corte operativo actual.",
-            evidence={"snapshot_status": snapshot.get("status")},
-            action_label="Ver consola",
-            action_href="/control-room",
-            required_permission="monitor.read",
-        ))
+        recommendations.append(
+            _recommendation(
+                fingerprint=_fingerprint("console", "healthy"),
+                severity="success",
+                category="console",
+                title="Sin acciones urgentes",
+                body="No se detectaron bloqueos críticos en el corte operativo actual.",
+                evidence={"snapshot_status": snapshot.get("status")},
+                action_label="Ver consola",
+                action_href="/control-room",
+                required_permission="monitor.read",
+            )
+        )
 
     seen: set[str] = set()
     deduped: list[dict[str, Any]] = []
@@ -589,7 +660,9 @@ async def _source(name: str, loader) -> dict[str, Any]:
         }
 
 
-async def _load_operational_counts(conn: Any, workspace_id: str, tenant_id: str | None) -> dict[str, Any]:
+async def _load_operational_counts(
+    conn: Any, workspace_id: str, tenant_id: str | None
+) -> dict[str, Any]:
     counts: dict[str, Any] = {}
     if await conn.fetchval("SELECT to_regclass('public.pipeline_runs')"):
         status_rows = await conn.fetch(
@@ -617,7 +690,10 @@ async def _load_operational_counts(conn: Any, workspace_id: str, tenant_id: str 
             tenant_id,
         )
         counts["pipeline"] = {
-            "by_status": {str(row["status"] or "unknown"): int(row["total"] or 0) for row in status_rows},
+            "by_status": {
+                str(row["status"] or "unknown"): int(row["total"] or 0)
+                for row in status_rows
+            },
             "latest": [_row_public(row) for row in latest_rows],
         }
     if await conn.fetchval("SELECT to_regclass('public.datasets')"):
@@ -682,6 +758,8 @@ async def collect_workspace_context(
     *,
     generated_by: str = "manual",
     persist: bool = True,
+    ip: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     copilot_context_authority.require_refresh(user)
     tenant_id, workspace_id = workspace_scope_from_user(user)
@@ -695,14 +773,19 @@ async def collect_workspace_context(
     loaders = [
         ("database.operational_counts", _operational_counts),
         ("control_room.ops_summary", lambda: control_room_service.ops_summary(user)),
-        ("control_room.agents_ops", lambda: control_room_service.agents_ops(user, limit=8)),
+        (
+            "control_room.agents_ops",
+            lambda: control_room_service.agents_ops(user, limit=8),
+        ),
         (
             "control_room.sap_successfactors_talent_kpis",
             lambda: control_room_service.sap_successfactors_talent_kpis(user),
         ),
         (
             "control_room.sap_successfactors_talent_metadata_readiness",
-            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
+            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(
+                user
+            ),
         ),
         (
             "control_room.sap_successfactors_talent_overview",
@@ -742,21 +825,20 @@ async def collect_workspace_context(
     snapshot["recommendations"] = recommendations
 
     if persist:
-        if not await _tables_ready(pool):
+        snapshot_id = await copilot_context_persistence.persist_refresh(
+            pool,
+            user,
+            snapshot,
+            recommendations,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        if snapshot_id is None:
             snapshot["persisted"] = False
             snapshot["persist_error"] = "copilot live context tables missing"
             return snapshot
-        async with scoped_db(pool, tenant_id, workspace_id) as conn:
-            snapshot_id = await _persist_snapshot(conn, snapshot)
-            await _persist_recommendations(
-                conn,
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                snapshot_id=snapshot_id,
-                recommendations=recommendations,
-            )
-            snapshot["id"] = snapshot_id
-            snapshot["persisted"] = True
+        snapshot["id"] = snapshot_id
+        snapshot["persisted"] = True
     return snapshot
 
 
@@ -764,12 +846,16 @@ async def _proactive_briefing_for_context(user: dict[str, Any]) -> dict[str, Any
     user_id = int(user.get("id") or 0)
     if user_id <= 0:
         return {"highlights": []}
-    highlights = await proactive_service.briefing_for_user(user_id, limit=6, user_context=user)
+    highlights = await proactive_service.briefing_for_user(
+        user_id, limit=6, user_context=user
+    )
     return {"highlights": highlights}
 
 
 def _summary_metrics(sources: list[dict[str, Any]]) -> dict[str, Any]:
-    metrics: dict[str, Any] = {"sources": {item["name"]: item.get("status") for item in sources}}
+    metrics: dict[str, Any] = {
+        "sources": {item["name"]: item.get("status") for item in sources}
+    }
     lookup = {item.get("name"): item.get("data") for item in sources}
     ops = lookup.get("control_room.ops_summary")
     if isinstance(ops, dict):
@@ -786,101 +872,6 @@ def _summary_metrics(sources: list[dict[str, Any]]) -> dict[str, Any]:
 
 async def _tables_ready(pool: Any) -> bool:
     return await copilot_context_authority.tables_ready(pool)
-
-
-async def _persist_snapshot(conn: Any, snapshot: dict[str, Any]) -> str:
-    row = await conn.fetchrow(
-        """
-        INSERT INTO copilot_context_snapshots (
-            tenant_id, workspace_id, status, summary, sources, metrics, errors, generated_by
-        )
-        VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8)
-        RETURNING id::text
-        """,
-        snapshot.get("tenant_id"),
-        snapshot.get("workspace_id"),
-        snapshot.get("status") or "partial",
-        _json_dumps(snapshot.get("summary") or {}),
-        _json_dumps(snapshot.get("sources") or []),
-        _json_dumps(snapshot.get("metrics") or {}),
-        _json_dumps(snapshot.get("errors") or []),
-        snapshot.get("generated_by") or "manual",
-    )
-    return str(row["id"])
-
-
-async def _persist_recommendations(
-    conn: Any,
-    *,
-    tenant_id: str | None,
-    workspace_id: str,
-    snapshot_id: str,
-    recommendations: list[dict[str, Any]],
-) -> None:
-    emitted: list[str] = []
-    for item in recommendations:
-        fp = str(item.get("fingerprint") or "").strip()
-        if not fp:
-            continue
-        emitted.append(fp)
-        await conn.execute(
-            """
-            INSERT INTO copilot_recommendations (
-                tenant_id, workspace_id, snapshot_id, fingerprint, severity, category,
-                title, body, evidence, action_label, action_href, action_kind,
-                required_permission, status, first_seen_at, last_seen_at
-            )
-            VALUES (
-                $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb,
-                $10, $11, $12, $13, 'active', NOW(), NOW()
-            )
-            ON CONFLICT (workspace_id, fingerprint) DO UPDATE SET
-                tenant_id = EXCLUDED.tenant_id,
-                snapshot_id = EXCLUDED.snapshot_id,
-                severity = EXCLUDED.severity,
-                category = EXCLUDED.category,
-                title = EXCLUDED.title,
-                body = EXCLUDED.body,
-                evidence = EXCLUDED.evidence,
-                action_label = EXCLUDED.action_label,
-                action_href = EXCLUDED.action_href,
-                action_kind = EXCLUDED.action_kind,
-                required_permission = EXCLUDED.required_permission,
-                last_seen_at = NOW(),
-                status = CASE
-                    WHEN copilot_recommendations.status = 'dismissed'
-                    THEN 'dismissed'
-                    ELSE 'active'
-                END,
-                resolved_at = NULL
-            """,
-            tenant_id,
-            workspace_id,
-            snapshot_id,
-            fp,
-            _normalise_severity(item.get("severity")),
-            str(item.get("category") or "console"),
-            str(item.get("title") or "Recomendación"),
-            str(item.get("body") or ""),
-            _json_dumps(item.get("evidence") or {}),
-            item.get("action_label"),
-            item.get("action_href"),
-            item.get("action_kind") or "navigate",
-            item.get("required_permission"),
-        )
-    if emitted:
-        await conn.execute(
-            """
-            UPDATE copilot_recommendations
-               SET status = 'superseded',
-                   resolved_at = NOW()
-             WHERE workspace_id = $1::uuid
-               AND status = 'active'
-               AND NOT (fingerprint = ANY($2::text[]))
-            """,
-            workspace_id,
-            emitted,
-        )
 
 
 async def latest_snapshot(user: dict[str, Any]) -> dict[str, Any]:
@@ -947,7 +938,9 @@ async def dismiss_recommendation(
     )
 
 
-async def prompt_context_for_user(user: dict[str, Any], *, limit: int = 8) -> str | None:
+async def prompt_context_for_user(
+    user: dict[str, Any], *, limit: int = 8
+) -> str | None:
     """Compact projected context; diagnostics require operational authority."""
 
     try:
@@ -970,7 +963,9 @@ async def prompt_context_for_user(user: dict[str, Any], *, limit: int = 8) -> st
     return text
 
 
-async def refresh_all_workspaces(*, limit: int = DEFAULT_WORKSPACE_LIMIT) -> dict[str, Any]:
+async def refresh_all_workspaces(
+    *, limit: int = DEFAULT_WORKSPACE_LIMIT
+) -> dict[str, Any]:
     pool = await auth.pool()
     if not await _tables_ready(pool):
         return {"status": "skipped", "reason": "tables_missing", "workspaces": 0}
@@ -988,7 +983,9 @@ async def refresh_all_workspaces(*, limit: int = DEFAULT_WORKSPACE_LIMIT) -> dic
     for row in rows:
         user = _system_user(row["tenant_id"], row["workspace_id"])
         try:
-            await collect_workspace_context(user, generated_by="scheduler", persist=True)
+            await collect_workspace_context(
+                user, generated_by="scheduler", persist=True
+            )
             refreshed += 1
         except Exception:
             failed += 1

@@ -247,7 +247,7 @@ export function CopilotActionsConsole() {
                 briefingQuery.refetch();
                 watchdogsQuery.refetch();
                 lessonsQuery.refetch();
-                liveContextQuery.refetch();
+                if (canViewOperationalContext) liveContextQuery.refetch();
                 recommendationsQuery.refetch();
               }}
               className="inline-flex min-h-[40px] items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

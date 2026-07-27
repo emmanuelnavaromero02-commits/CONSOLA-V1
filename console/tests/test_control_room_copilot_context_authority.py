@@ -267,6 +267,8 @@ def test_shared_mutations_reject_missing_csrf_before_service(modules, monkeypatc
 
 def test_operator_snapshot_is_typed_and_redacted(modules, monkeypatch):
     copilot, _ = modules
+    refresh = AsyncMock(return_value=_raw_snapshot())
+    audit = AsyncMock()
     monkeypatch.setattr(
         copilot.copilot_context_service,
         "latest_snapshot",
@@ -275,9 +277,9 @@ def test_operator_snapshot_is_typed_and_redacted(modules, monkeypatch):
     monkeypatch.setattr(
         copilot.copilot_context_service,
         "collect_workspace_context",
-        AsyncMock(return_value=_raw_snapshot()),
+        refresh,
     )
-    monkeypatch.setattr(copilot.audit_service, "record_event", AsyncMock())
+    monkeypatch.setattr(copilot.audit_service, "record_event", audit)
 
     client = _client(copilot, OPERATOR)
     responses = [
@@ -298,6 +300,13 @@ def test_operator_snapshot_is_typed_and_redacted(modules, monkeypatch):
             "benchmark_internal",
         ):
             assert private not in response.text
+    refresh.assert_awaited_once()
+    assert refresh.await_args.args == (OPERATOR,)
+    assert refresh.await_args.kwargs["generated_by"] == "manual"
+    assert refresh.await_args.kwargs["persist"] is True
+    assert refresh.await_args.kwargs["ip"]
+    assert refresh.await_args.kwargs["user_agent"] == "testclient"
+    audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
