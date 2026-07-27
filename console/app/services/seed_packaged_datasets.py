@@ -139,8 +139,8 @@ async def _set_seed_scope(
     await conn.execute(
         """
         SELECT
-            set_config('app.tenant_id', $1, true),
-            set_config('app.workspace_id', $2, true)
+            pg_catalog.set_config('app.tenant_id', $1, true),
+            pg_catalog.set_config('app.workspace_id', $2, true)
         """,
         str(tenant_id),
         str(workspace_id),
@@ -170,13 +170,43 @@ async def _datasets_workspace_name_conflict_available(conn: asyncpg.Connection) 
             """
             SELECT EXISTS (
                 SELECT 1
-                  FROM pg_constraint
-                 WHERE conrelid = 'public.datasets'::regclass
-                   AND conname = 'datasets_workspace_name_key'
+                  FROM pg_catalog.pg_constraint AS constraint_record
+                  JOIN pg_catalog.pg_index AS index_record
+                    ON index_record.indexrelid = constraint_record.conindid
+                 WHERE constraint_record.conrelid = 'public.datasets'::regclass
+                   AND constraint_record.conname = 'datasets_workspace_name_key'
+                   AND constraint_record.contype = 'u'
+                   AND constraint_record.convalidated
+                   AND NOT constraint_record.condeferrable
+                   AND NOT constraint_record.condeferred
+                   AND index_record.indisunique
+                   AND index_record.indisvalid
+                   AND index_record.indisready
+                   AND index_record.indimmediate
+                   AND (
+                       SELECT array_agg(attribute.attname::text ORDER BY key.ordinality)
+                         FROM pg_catalog.unnest(constraint_record.conkey) WITH ORDINALITY
+                              AS key(attnum, ordinality)
+                         JOIN pg_catalog.pg_attribute AS attribute
+                           ON attribute.attrelid = constraint_record.conrelid
+                          AND attribute.attnum = key.attnum
+                   ) = ARRAY['workspace_id', 'name']::text[]
             )
             """
         )
     )
+
+
+async def _require_workspace_scoped_dataset_schema(
+    conn: asyncpg.Connection,
+) -> None:
+    """Stabilize the table schema and reject every unscoped write shape."""
+
+    await conn.execute("LOCK TABLE public.datasets IN ROW SHARE MODE")
+    if not await _datasets_workspace_name_conflict_available(conn):
+        raise RuntimeError(
+            "datasets_workspace_name_key is required for packaged dataset seeding"
+        )
 
 
 async def _update_dataset_row(
@@ -186,68 +216,37 @@ async def _update_dataset_row(
     tenant_id: object,
     workspace_id: object,
     has_tenant_id: bool,
-    scoped_conflict: bool,
 ) -> bool:
-    """Update an existing dataset row without relying on a specific constraint.
+    """Update only the definition owned by the explicit workspace."""
 
-    Some long-lived AWS beta databases passed through both the legacy
-    ``datasets.name`` primary-key contract and the workspace-scoped contract.
-    During that transition the named constraint may be absent or unusable for
-    ``ON CONFLICT``. A deterministic update-first upsert keeps startup seeding
-    compatible with both shapes.
-    """
     if has_tenant_id:
-        if scoped_conflict:
-            status = await conn.execute(
-                """
-                UPDATE datasets
-                   SET layer = $2,
-                       cartridge = $3,
-                       sources = $4::jsonb,
-                       sql_def = $5,
-                       description = $6,
-                       updated_at = NOW(),
-                       tenant_id = $7,
-                       workspace_id = $8
-                 WHERE name = $1
-                   AND workspace_id = $8::uuid
-                """,
-                dataset["name"],
-                dataset["layer"],
-                dataset["cartridge"],
-                json.dumps(dataset["sources"]),
-                dataset["sql"],
-                dataset["description"],
-                tenant_id,
-                workspace_id,
-            )
-        else:
-            status = await conn.execute(
-                """
-                UPDATE datasets
-                   SET layer = $2,
-                       cartridge = $3,
-                       sources = $4::jsonb,
-                       sql_def = $5,
-                       description = $6,
-                       updated_at = NOW(),
-                       tenant_id = $7,
-                       workspace_id = $8
-                 WHERE name = $1
-                """,
-                dataset["name"],
-                dataset["layer"],
-                dataset["cartridge"],
-                json.dumps(dataset["sources"]),
-                dataset["sql"],
-                dataset["description"],
-                tenant_id,
-                workspace_id,
-            )
-    elif scoped_conflict:
         status = await conn.execute(
             """
-            UPDATE datasets
+            UPDATE public.datasets
+               SET layer = $2,
+                   cartridge = $3,
+                   sources = $4::jsonb,
+                   sql_def = $5,
+                   description = $6,
+                   updated_at = NOW(),
+                   tenant_id = $7,
+                   workspace_id = $8
+             WHERE name = $1
+               AND workspace_id = $8::uuid
+            """,
+            dataset["name"],
+            dataset["layer"],
+            dataset["cartridge"],
+            json.dumps(dataset["sources"]),
+            dataset["sql"],
+            dataset["description"],
+            tenant_id,
+            workspace_id,
+        )
+    else:
+        status = await conn.execute(
+            """
+            UPDATE public.datasets
                SET layer = $2,
                    cartridge = $3,
                    sources = $4::jsonb,
@@ -257,27 +256,6 @@ async def _update_dataset_row(
                    workspace_id = $7
              WHERE name = $1
                AND workspace_id = $7::uuid
-            """,
-            dataset["name"],
-            dataset["layer"],
-            dataset["cartridge"],
-            json.dumps(dataset["sources"]),
-            dataset["sql"],
-            dataset["description"],
-            workspace_id,
-        )
-    else:
-        status = await conn.execute(
-            """
-            UPDATE datasets
-               SET layer = $2,
-                   cartridge = $3,
-                   sources = $4::jsonb,
-                   sql_def = $5,
-                   description = $6,
-                   updated_at = NOW(),
-                   workspace_id = $7
-             WHERE name = $1
             """,
             dataset["name"],
             dataset["layer"],
@@ -300,7 +278,7 @@ async def _insert_dataset_row(
 ) -> None:
     if has_tenant_id:
         await conn.execute(
-            """INSERT INTO datasets
+            """INSERT INTO public.datasets
                    (name, layer, cartridge, sources, sql_def, description,
                     column_mapping, schedule, updated_at, tenant_id, workspace_id)
                 VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
@@ -316,7 +294,7 @@ async def _insert_dataset_row(
         )
     else:
         await conn.execute(
-            """INSERT INTO datasets
+            """INSERT INTO public.datasets
                    (name, layer, cartridge, sources, sql_def, description,
                     column_mapping, schedule, updated_at, workspace_id)
                 VALUES ($1, $2, $3, $4::jsonb, $5, $6, '{}'::jsonb, NULL,
@@ -338,7 +316,6 @@ async def _upsert_dataset_row(
     tenant_id: object,
     workspace_id: object,
     has_tenant_id: bool,
-    scoped_conflict: bool,
 ) -> None:
     if await _update_dataset_row(
         conn,
@@ -346,7 +323,6 @@ async def _upsert_dataset_row(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         has_tenant_id=has_tenant_id,
-        scoped_conflict=scoped_conflict,
     ):
         return
     try:
@@ -365,7 +341,6 @@ async def _upsert_dataset_row(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             has_tenant_id=has_tenant_id,
-            scoped_conflict=scoped_conflict,
         )
         if not updated:
             raise
@@ -377,7 +352,6 @@ async def _seed_packaged_dataset_rows(
     packaged: dict[str, list[pathlib.Path]],
     target_workspaces: list[Any],
     has_tenant_id: bool,
-    scoped_conflict: bool,
 ) -> dict[str, int]:
     manifest = _load_packaged_manifest(packaged)
     ordered_workspaces = sorted(
@@ -399,7 +373,6 @@ async def _seed_packaged_dataset_rows(
                     tenant_id=tenant_id,
                     workspace_id=workspace_id,
                     has_tenant_id=has_tenant_id,
-                    scoped_conflict=scoped_conflict,
                 )
                 seeded_rows += 1
 
@@ -419,32 +392,24 @@ async def seed_packaged_datasets(pool: asyncpg.Pool) -> None:
         raise ValueError("packaged dataset manifest is empty")
 
     async with pool.acquire() as conn:
-        workspaces = await conn.fetch(
-            """
-            SELECT id, tenant_id
-              FROM workspaces
-             ORDER BY created_at ASC, name ASC, id ASC
-            """,
-        )
-        if not workspaces:
-            logger.warning("[seed_packaged_datasets] no workspace found; skipping")
-            return
-        has_tenant_id = await _datasets_has_column(conn, "tenant_id")
-        scoped_conflict = await _datasets_workspace_name_conflict_available(conn)
-        target_workspaces = workspaces if scoped_conflict else workspaces[:1]
-        if not scoped_conflict:
-            logger.warning(
-                "[seed_packaged_datasets] datasets_workspace_name_key missing; "
-                "seeding packaged datasets only in the first workspace"
-            )
-
         async with conn.transaction():
+            await _require_workspace_scoped_dataset_schema(conn)
+            workspaces = await conn.fetch(
+                """
+                SELECT id, tenant_id
+                  FROM public.workspaces
+                 ORDER BY created_at ASC, name ASC, id ASC
+                """,
+            )
+            if not workspaces:
+                logger.warning("[seed_packaged_datasets] no workspace found; skipping")
+                return
+            has_tenant_id = await _datasets_has_column(conn, "tenant_id")
             await _seed_packaged_dataset_rows(
                 conn,
                 packaged=packaged,
-                target_workspaces=list(target_workspaces),
+                target_workspaces=list(workspaces),
                 has_tenant_id=has_tenant_id,
-                scoped_conflict=scoped_conflict,
             )
 
 
@@ -475,21 +440,14 @@ async def seed_packaged_datasets_for_workspace(
         raise ValueError("packaged dataset manifest is empty")
 
     async with pool.acquire() as conn:
-        has_tenant_id = await _datasets_has_column(conn, "tenant_id")
-        scoped_conflict = await _datasets_workspace_name_conflict_available(conn)
-        if not scoped_conflict:
-            logger.warning(
-                "[seed_packaged_datasets] datasets_workspace_name_key missing; "
-                "workspace sync seed will upsert by dataset name"
-            )
-
         async with conn.transaction():
+            await _require_workspace_scoped_dataset_schema(conn)
+            has_tenant_id = await _datasets_has_column(conn, "tenant_id")
             seeded_by_cartridge = await _seed_packaged_dataset_rows(
                 conn,
                 packaged=packaged,
                 target_workspaces=[{"id": workspace_id, "tenant_id": tenant_id}],
                 has_tenant_id=has_tenant_id,
-                scoped_conflict=scoped_conflict,
             )
 
     seeded_rows = sum(seeded_by_cartridge.values())

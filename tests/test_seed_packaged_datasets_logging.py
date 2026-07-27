@@ -109,24 +109,28 @@ def test_seed_packaged_datasets_seeds_every_workspace(seed_module):
     source = inspect.getsource(seed_module)
     seed_source = inspect.getsource(seed_module.seed_packaged_datasets)
     writer_source = inspect.getsource(seed_module._seed_packaged_dataset_rows)
+    update_source = inspect.getsource(seed_module._update_dataset_row)
 
     assert "def _datasets_workspace_name_conflict_available" in source
-    assert (
-        "target_workspaces = workspaces if scoped_conflict else workspaces[:1]"
-        in seed_source
-    )
+    assert "_require_workspace_scoped_dataset_schema(conn)" in seed_source
+    assert "target_workspaces=list(workspaces)" in seed_source
+    assert "LOCK TABLE public.datasets IN ROW SHARE MODE" in source
+    assert "datasets_workspace_name_key is required" in source
     assert "for workspace in ordered_workspaces:" in writer_source
     assert "def _upsert_dataset_row" in source
     assert "asyncpg.UniqueViolationError" in source
     assert "ON CONFLICT" not in writer_source
     assert "_load_packaged_manifest(packaged)" in writer_source
     assert "DELETE FROM datasets" not in writer_source
+    assert update_source.count("WHERE name = $1") == 2
+    assert update_source.count("AND workspace_id") == 2
 
 
 def test_seed_packaged_datasets_for_workspace_is_scoped(seed_module):
     source = inspect.getsource(seed_module.seed_packaged_datasets_for_workspace)
 
     assert "tenant_id and workspace_id are required" in source
+    assert "_require_workspace_scoped_dataset_schema(conn)" in source
     assert '"cartridge_id": cartridge_id' in source
     assert 'target_workspaces=[{"id": workspace_id, "tenant_id": tenant_id}]' in source
     assert '"status": "success"' in source

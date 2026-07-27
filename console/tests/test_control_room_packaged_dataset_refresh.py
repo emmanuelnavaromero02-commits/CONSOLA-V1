@@ -23,12 +23,12 @@ class _Context:
 
 class _Connection:
     async def fetch(self, sql: str):
-        assert "FROM workspaces" in sql
+        assert "FROM public.workspaces" in sql
         return [{"id": "workspace-a", "tenant_id": "tenant-a"}]
 
     async def execute(self, sql: str, *_args):
-        assert "DELETE FROM datasets" in sql
-        return "DELETE 0"
+        assert sql == "LOCK TABLE public.datasets IN ROW SHARE MODE"
+        return "LOCK TABLE"
 
     def transaction(self):
         return _Context(self)

@@ -111,7 +111,6 @@ async def _run_manifest(
                 packaged=packaged,
                 target_workspaces=scopes,
                 has_tenant_id=True,
-                scoped_conflict=True,
             )
     finally:
         await pool.close()
