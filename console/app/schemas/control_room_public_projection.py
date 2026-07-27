@@ -8,9 +8,6 @@ from datetime import date, datetime
 from math import isfinite
 from typing import Any, Literal, Union, get_args, get_origin
 
-from app.services.control_room.business_copy_detection import (
-    canonicalize_detection_separators,
-)
 from app.services.control_room.business_copy_sensitivity import (
     contains_sensitive_copy,
 )
@@ -23,6 +20,7 @@ from app.services.control_room.business_visible_copy import (
     classify_visible_business_copy,
 )
 from app.services.control_room.diagnostic_redaction import redact_diagnostic_value
+from app.services.public_text_sensitivity import contains_public_technical_copy
 from pydantic import BaseModel, ConfigDict, field_validator
 
 PublicScalar = int | float | bool | None
@@ -65,18 +63,6 @@ _VISIBLE_REJECTIONS = frozenset(
         VisibleCopyCause.UNSAFE_UNICODE,
     }
 )
-_TECHNICAL_VALUE = re.compile(
-    r"(?is)(?:"
-    r"\bselect\b.{0,500}\bfrom\b|\binsert\s+into\b|"
-    r"\bupdate\s+[a-z0-9_.\"-]+\s+set\b|\bdelete\s+from\b|"
-    r"\b(?:authority[_ -]?audit|connection[_ -]?string|dataset|payload|"
-    r"provenance|receipt|raw[_ -]?sql)\s*[:=]|"
-    r"\b(?:tenant|workspace|simulation|orchestration|execution|"
-    r"action[_ -]?run|run|connection|dataset|receipt|provenance|query|job|"
-    r"task|agent|installation|source)[_ -]?id\s*[:=]|"
-    r"\b(?:technical[_ -]?)?id\s*[:=]"
-    r")"
-)
 _EXPLICIT_SECRET_MARKER = re.compile(
     r"(?i)(?:^|[^a-z0-9])"
     r"(?:password|credentials?|(?:oauth[_-]?)?access(?:[_-]?token)?|"
@@ -84,29 +70,10 @@ _EXPLICIT_SECRET_MARKER = re.compile(
     r"private(?:[_-]?key)?)"
     r"[_-]+(?:canary|marker|sentinel)(?:$|[^a-z0-9])"
 )
-_LABELED_VALUE = re.compile(
-    r"(?<![A-Za-z0-9])(?P<key>[A-Za-z][A-Za-z0-9_. -]{0,79})\s*[:=]"
-)
-_ACRONYM_BOUNDARY = re.compile(r"([A-Z]+)([A-Z][a-z])")
-_CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
-_KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
 _PUBLIC_SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
 _SENSITIVE_SLUG_PART = re.compile(
     r"(?:^|[_-])(?:credential|password|private[_-]key|secret|token)(?:[_-]|$)"
 )
-
-
-def _contains_technical_value(value: str) -> bool:
-    canonical = canonicalize_detection_separators(value)
-    if _TECHNICAL_VALUE.search(canonical):
-        return True
-    for match in _LABELED_VALUE.finditer(canonical):
-        key = _ACRONYM_BOUNDARY.sub(r"\1_\2", match.group("key"))
-        key = _CAMEL_BOUNDARY.sub(r"\1_\2", key)
-        key = _KEY_SEPARATOR.sub("_", key).strip("_").casefold()
-        if key == "id" or key.endswith(("_id", "_ids")):
-            return True
-    return False
 
 
 def _safe_text(value: object, *, field: str) -> str | object:
@@ -123,10 +90,9 @@ def _safe_text(value: object, *, field: str) -> str | object:
     if (
         diagnostic != normalized
         or contains_sensitive_copy(normalized)
+        or contains_public_technical_copy(normalized)
         or any(
-            _EXPLICIT_SECRET_MARKER.search(candidate)
-            or _contains_technical_value(candidate)
-            for candidate in detection_forms
+            _EXPLICIT_SECRET_MARKER.search(candidate) for candidate in detection_forms
         )
     ):
         return "[REDACTED]"

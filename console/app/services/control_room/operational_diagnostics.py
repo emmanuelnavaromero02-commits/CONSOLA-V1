@@ -33,6 +33,10 @@ from app.services.control_room.surface_snapshot import (
     SurfaceSnapshot,
     validate_snapshot_scope,
 )
+from app.services.public_text_sensitivity import (
+    contains_public_technical_copy,
+    contains_public_technical_data,
+)
 
 
 def _mapping(value: object) -> Mapping[str, object]:
@@ -48,8 +52,28 @@ def _text(row: Mapping[str, object], *keys: str) -> str:
             containers.append(nested)
     for values in containers:
         for key in keys:
-            value = str(values.get(key) or "").strip()
+            raw = values.get(key)
+            if not isinstance(raw, str):
+                continue
+            value = raw.strip()
             if value:
+                return value
+    return ""
+
+
+def _public_text(row: Mapping[str, object], *keys: str) -> str:
+    containers = [row]
+    for name in ("details", "metadata"):
+        nested = row.get(name)
+        if isinstance(nested, Mapping):
+            containers.append(nested)
+    for values in containers:
+        for key in keys:
+            raw = values.get(key)
+            if contains_public_technical_data(raw) or not isinstance(raw, str):
+                continue
+            value = raw.strip()
+            if value and not contains_public_technical_copy(value):
                 return value
     return ""
 
@@ -59,10 +83,14 @@ def _string_list(value: object) -> list[str]:
         return []
     sanitized: list[str] = []
     for item in value:
-        if not isinstance(item, str):
+        if contains_public_technical_data(item) or not isinstance(item, str):
             continue
         redacted = redact_diagnostic_value(item)
-        if isinstance(redacted, str) and redacted.strip():
+        if (
+            isinstance(redacted, str)
+            and redacted.strip()
+            and not contains_public_technical_copy(redacted)
+        ):
             sanitized.append(redacted[:500])
     return sanitized
 
@@ -133,7 +161,7 @@ def _source(raw: Mapping[str, object]) -> DiagnosticSource | None:
     readiness = _optional_readiness(_text(row, "data_readiness"))
     checked_at = _utc_datetime(row.get("checked_at"))
     return DiagnosticSource(
-        domain=_text(row, "domain")[:200] or None,
+        domain=_public_text(row, "domain")[:200] or None,
         status=status,
         data_readiness=readiness,
         count=_count(
@@ -144,7 +172,7 @@ def _source(raw: Mapping[str, object]) -> DiagnosticSource | None:
         ),
         operationally_ready=row.get("operationally_ready") is True,
         checked_at=checked_at,
-        reason=_text(row, "readiness_reason", "reason")[:500] or None,
+        reason=_public_text(row, "readiness_reason", "reason")[:500] or None,
         blockers=_string_list(row.get("readiness_blockers")),
         warnings=_string_list(row.get("contract_warnings")),
         error=_controlled_error(row, "error", message="Source query failed"),
@@ -159,8 +187,8 @@ def _diagnostic_item(raw: Mapping[str, object]) -> DiagnosticItem:
     source_status = _text(row, "source_status")
     return DiagnosticItem(
         kind=normalize_item_kind(_text(row, "kind", "item_kind")),
-        title=_text(row, "title")[:240] or "Technical diagnostic",
-        domain=_text(row, "domain")[:200] or None,
+        title=_public_text(row, "title")[:240] or "Technical diagnostic",
+        domain=_public_text(row, "domain")[:200] or None,
         status=normalize_item_status(status) if status else None,
         data_status=_optional_readiness(data_status),
         readiness_status=_optional_readiness(readiness_status),
@@ -179,8 +207,8 @@ def _installation(raw: Mapping[str, object]) -> DiagnosticInstallation | None:
         status=normalize_installation_status(
             _text(row, "installation_status", "status")
         ),
-        label=_text(row, "label")[:200] or None,
-        category=_text(row, "category")[:120] or None,
+        label=_public_text(row, "label")[:200] or None,
+        category=_public_text(row, "category")[:120] or None,
         ready_at=_utc_datetime(row.get("ready_at")),
         error=_controlled_error(
             row,
@@ -211,9 +239,10 @@ def build_operational_diagnostics(
     seen_items: set[tuple[str, str, str]] = set()
     for raw in technical:
         item = _diagnostic_item(raw)
+        raw_id = raw.get("id") or raw.get("item_id")
         identity = (
             item.kind,
-            str(raw.get("id") or raw.get("item_id") or ""),
+            raw_id.strip() if isinstance(raw_id, str) else "",
             item.title,
         )
         if identity in seen_items:

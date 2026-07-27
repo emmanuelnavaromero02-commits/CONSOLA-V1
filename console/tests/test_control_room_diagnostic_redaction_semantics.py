@@ -175,15 +175,10 @@ def test_blockers_and_warnings_keep_only_sanitized_strings() -> None:
         "nested-opaque",
     ):
         assert secret not in serialized
-    assert payload["blockers"] == [
-        "clientSecret=[REDACTED]",
-        "Retry after 5 seconds",
-    ]
+    assert payload["blockers"] == ["Retry after 5 seconds"]
     assert payload["warnings"] == [
         "SecretBinary: [REDACTED]",
-        "AWS_SECRET_ACCESS_KEY=[REDACTED]",
         "GOOGLE_APPLICATION_CREDENTIALS=[REDACTED]",
-        "AZURE_CLIENT_SECRET=[REDACTED]",
         "credentialsList=[REDACTED]",
         "Schema version changed",
     ]

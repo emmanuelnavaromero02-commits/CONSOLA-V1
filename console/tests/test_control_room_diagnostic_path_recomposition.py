@@ -116,5 +116,5 @@ def test_v5_recomposed_readiness_reason_http_never_leaks(reason: str) -> None:
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert response.json()["sources"][0]["reason"] == "[REDACTED]"
+    assert response.json()["sources"][0].get("reason") is None
     collect.assert_awaited_once_with(OPERATOR)

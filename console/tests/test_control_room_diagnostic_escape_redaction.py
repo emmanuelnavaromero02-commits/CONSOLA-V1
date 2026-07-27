@@ -222,18 +222,10 @@ def test_title_reason_blockers_and_lists_are_redacted_directly() -> None:
     )
 
     assert SECRET not in str(payload)
-    assert payload["diagnostic_items"][0]["title"] == "[REDACTED]"
-    assert payload["sources"][0]["reason"] == "[REDACTED]"
-    assert payload["sources"][0]["blockers"] == [
-        "[REDACTED]",
-        r"Retry \x35 times",
-    ]
-    assert payload["sources"][0]["warnings"] == [
-        "[REDACTED]",
-        "[REDACTED]",
-        "[REDACTED]",
-        "[REDACTED]",
-    ]
+    assert payload["diagnostic_items"][0]["title"] == "Technical diagnostic"
+    assert "reason" not in payload["sources"][0]
+    assert payload["sources"][0]["blockers"] == [r"Retry \x35 times"]
+    assert payload["sources"][0]["warnings"] == []
 
 
 def test_diagnostics_http_never_serializes_escaped_secret() -> None:
@@ -243,5 +235,5 @@ def test_diagnostics_http_never_serializes_escaped_secret() -> None:
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert response.json()["sources"][0]["blockers"][1] == r"Retry \x35 times"
+    assert response.json()["sources"][0]["blockers"] == [r"Retry \x35 times"]
     collect.assert_awaited_once_with(OPERATOR)

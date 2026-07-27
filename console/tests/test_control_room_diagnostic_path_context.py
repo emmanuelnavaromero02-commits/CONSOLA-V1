@@ -131,7 +131,7 @@ def test_exact_non_escape_path_controls_are_byte_identical(value: str) -> None:
         r'{"path":"\\\\server\\U00000041\\OMEGA"}',
     ),
 )
-def test_escape_shaped_path_readiness_reason_http_is_byte_identical(
+def test_escape_shaped_path_readiness_reason_http_is_omitted(
     reason: str,
 ) -> None:
     collect = AsyncMock(
@@ -144,7 +144,7 @@ def test_escape_shaped_path_readiness_reason_http_is_byte_identical(
         response = _client().get("/api/control-room/diagnostics")
 
     assert response.status_code == 200
-    assert response.json()["sources"][0]["reason"] == reason
+    assert response.json()["sources"][0].get("reason") is None
     collect.assert_awaited_once_with(OPERATOR)
 
 
@@ -174,7 +174,7 @@ def test_sensitive_path_escape_readiness_reason_http_never_leaks(
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert response.json()["sources"][0]["reason"] == "[REDACTED]"
+    assert response.json()["sources"][0].get("reason") is None
 
 
 @pytest.mark.parametrize(

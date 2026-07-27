@@ -77,7 +77,7 @@ def test_long_extension_secret_never_crosses_diagnostics_http(field: str) -> Non
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert "[REDACTED]" in response.json()["sources"][0]["reason"]
+    assert response.json()["sources"][0].get("reason") is None
 
 
 def test_long_metadata_on_generic_or_business_path_is_byte_identical() -> None:

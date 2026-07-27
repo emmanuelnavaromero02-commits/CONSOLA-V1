@@ -18,6 +18,18 @@ _RECOGNIZABLE_SECRET = re.compile(
     r"|\bAIza[A-Z0-9_-]{35}\b"
     r"|\bgh[pousr]_[A-Z0-9]{20,255}\b"
     r"|\bgithub_pat_[A-Z0-9_]{20,255}\b"
+    r"|\bsk-(?:proj-)?[A-Z0-9_-]{20,255}\b"
+    r"|\b(?:sk|rk)_(?:live|test)_[A-Z0-9]{16,255}\b"
+    r"|\bglpat-[A-Z0-9_-]{20,255}\b"
+    r"|\bxox[baprs]-[A-Z0-9-]{10,255}\b"
+    r"|\bnpm_[A-Z0-9]{20,255}\b"
+    r"|\bpypi-[A-Z0-9_-]{20,255}\b"
+    r"|https://hooks\.slack(?:-gov)?\.com/services/"
+    r"[A-Z0-9_-]+/[A-Z0-9_-]+/[A-Z0-9_-]+"
+    r"|https://(?:canary\.)?discord(?:app)?\.com/api/webhooks/"
+    r"[0-9]+/[A-Z0-9._-]+"
+    r"|[?&#;](?:sig|signature|x-amz-signature|x-goog-signature)="
+    r"[A-Z0-9%+/_=-]+"
     r"|-----BEGIN[^\n-]*PRIVATE KEY-----"
     r")"
 )
@@ -32,6 +44,7 @@ _UNICODE_EMAIL = re.compile(
 _URI_PASSWORD = re.compile(
     r"(?i)(?<![A-Z0-9+.-])[A-Z][A-Z0-9+.-]*://[^/@\s:]*:[^/@\s]+@"
 )
+_BASIC_AUTH = re.compile(r"(?i)\bBasic\s+([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])")
 
 
 def _decoded_json_segment(segment: str) -> tuple[bool, object]:
@@ -61,12 +74,25 @@ def _contains_jwt(value: str) -> bool:
     return False
 
 
+def _contains_basic_auth(value: str) -> bool:
+    for match in _BASIC_AUTH.finditer(value):
+        token = match.group(1)
+        try:
+            decoded = base64.b64decode(token, validate=True)
+        except ValueError:
+            continue
+        if b":" in decoded:
+            return True
+    return False
+
+
 def contains_sensitive_copy(value: str) -> bool:
     for candidate in security_detection_forms(value):
         if (
             redact_diagnostic_value(candidate) != candidate
             or _RECOGNIZABLE_SECRET.search(candidate)
             or _contains_jwt(candidate)
+            or _contains_basic_auth(candidate)
             or _UNICODE_EMAIL.search(candidate)
             or _URI_PASSWORD.search(candidate)
         ):

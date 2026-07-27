@@ -154,7 +154,7 @@ def test_unicode_assignment_readiness_reason_http_never_leaks(reason: str) -> No
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert response.json()["sources"][0]["reason"] == "[REDACTED]"
+    assert response.json()["sources"][0].get("reason") is None
 
 
 @pytest.mark.parametrize(

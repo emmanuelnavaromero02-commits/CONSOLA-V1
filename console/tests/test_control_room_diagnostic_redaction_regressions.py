@@ -239,7 +239,7 @@ def test_readiness_reason_http_never_leaks_malformed_assignment_secret(
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert response.json()["sources"][0]["reason"] == "[REDACTED]"
+    assert response.json()["sources"][0].get("reason") is None
     collect.assert_awaited_once_with(OPERATOR)
 
 
@@ -251,7 +251,7 @@ def test_readiness_reason_http_never_leaks_malformed_assignment_secret(
         r'{"path":"\\\\server\\share\\OMEGA"}',
     ),
 )
-def test_structured_windows_path_readiness_reason_http_is_byte_identical(
+def test_structured_windows_path_readiness_reason_http_is_omitted(
     reason: str,
 ) -> None:
     collect = AsyncMock(
@@ -264,5 +264,5 @@ def test_structured_windows_path_readiness_reason_http_is_byte_identical(
         response = _client().get("/api/control-room/diagnostics")
 
     assert response.status_code == 200
-    assert response.json()["sources"][0]["reason"] == reason
+    assert response.json()["sources"][0].get("reason") is None
     collect.assert_awaited_once_with(OPERATOR)

@@ -291,5 +291,5 @@ def test_path_shaped_key_secret_never_crosses_diagnostics_http(key: str) -> None
 
     assert response.status_code == 200
     assert SECRET not in response.text
-    assert "[REDACTED]" in response.json()["sources"][0]["reason"]
+    assert response.json()["sources"][0].get("reason") is None
     collect.assert_awaited_once_with(OPERATOR)
