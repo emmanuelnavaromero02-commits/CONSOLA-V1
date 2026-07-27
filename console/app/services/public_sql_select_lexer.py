@@ -121,6 +121,15 @@ def tokenize_select_copy(value: str) -> tuple[SelectToken, ...] | None:
                 return None
             tokens.append(SelectToken("string", value[index:end]))
             index = end
+        elif (
+            char == "'"
+            and index > 0
+            and index + 1 < len(value)
+            and value[index - 1].isalpha()
+            and value[index + 1].isalpha()
+        ):
+            tokens.append(SelectToken("symbol", char))
+            index += 1
         elif char == "'":
             end = _consume_quote(
                 value,
