@@ -74,6 +74,36 @@ def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
     async def empty_dataset(*_args, **_kwargs):
         return []
 
+    async def successfactors_headcount(user, *, limit: int = 5):
+        assert user["active_tenant_id"] == TENANT_ID
+        assert user["active_workspace_id"] == WORKSPACE_ID
+        assert 1 <= limit <= 20
+        await sentinel.execute(
+            "SELECT set_config('app.tenant_id', $1, true), "
+            "set_config('app.workspace_id', $2, true)",
+            TENANT_ID,
+            WORKSPACE_ID,
+        )
+        await sentinel.fetch(
+            'SELECT COUNT(*)::bigint AS active_headcount FROM public."gold_sap_successfactors_employee_360" '
+            "WHERE workspace_id::text = $1 AND tenant_id::text = $2 "
+            "AND is_active IS TRUE",
+            WORKSPACE_ID,
+            TENANT_ID,
+        )
+        empty = {"rows": [], "total": None, "status": "empty", "error": None}
+        return {
+            "sap_successfactors_employee_360": {
+                "rows": [],
+                "total": 0,
+                "status": "ready",
+                "error": None,
+            },
+            "sap_successfactors_headcount_by_company": dict(empty),
+            "sap_successfactors_headcount_by_location": dict(empty),
+            "sap_successfactors_headcount_by_department": dict(empty),
+        }
+
     service = routes.control_room_service
     originals = {
         name: getattr(service, name).__kwdefaults__ for name in DEFAULT_FETCHER_READS
@@ -107,6 +137,16 @@ def installed_read_edges(sentinel: MutationSentinel, probe: ConcurrencyProbe):
         gold = import_module("app.services.intelligence.gold_fetcher")
         stack.enter_context(
             patch.object(gold, "query_gold_dataset_rows", new=dataset_fetcher)
+        )
+        headcount = import_module(
+            "app.services.intelligence.successfactors_gold_headcount"
+        )
+        stack.enter_context(
+            patch.object(
+                headcount,
+                "query_successfactors_headcount_summaries",
+                new=successfactors_headcount,
+            )
         )
         market = import_module("app.services.intelligence.market_decision_validation")
         stack.enter_context(

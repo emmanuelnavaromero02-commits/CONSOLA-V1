@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -25,7 +25,6 @@ _HEADCOUNT_NAME_KEYS = (
     ("headcount_by_location", "location_name"),
     ("headcount_by_department", "department_name"),
 )
-GoldResultLoader = Callable[[str, dict | None, int], Awaitable[dict[str, Any]]]
 
 
 def _strict_headcount(value: object) -> int | None:
@@ -122,12 +121,17 @@ def _sf_gold_public_widget(raw_widget: Mapping[str, Any]) -> dict[str, Any]:
         and observed_total is not None
         and raw_value >= observed_total
     )
-    if status == "ready" and not value_is_valid:
+    coverage_subset = (
+        status == "partial" and raw_widget.get("_coverage_observed") is True
+    )
+    publish_observations = status == "ready" or coverage_subset
+    if publish_observations and not value_is_valid:
         status = "invalid_schema"
+        publish_observations = False
     return {
         **raw_widget,
-        "value": raw_value if status == "ready" else None,
-        "rows": observed_rows[:6] if status == "ready" else [],
+        "value": raw_value if publish_observations else None,
+        "rows": observed_rows[:6] if publish_observations else [],
         "status": status,
     }
 
@@ -140,9 +144,7 @@ def _sf_gold_status_error(results: list[dict[str, Any]]) -> str | None:
 async def _sf_load_foundation_gold_results(
     datasets: dict[str, str],
     user: dict | None,
-    employee_loader: GoldResultLoader,
 ) -> dict[str, dict[str, Any]]:
-    employee = await employee_loader(datasets["employee_360"], user, 5000)
     try:
         from app.services.intelligence.successfactors_gold_headcount import (
             query_successfactors_headcount_summaries,
@@ -162,6 +164,7 @@ async def _sf_load_foundation_gold_results(
         headcounts = {
             datasets[key]: dict(failure)
             for key in (
+                "employee_360",
                 "headcount_by_company",
                 "headcount_by_location",
                 "headcount_by_department",
@@ -176,15 +179,24 @@ async def _sf_load_foundation_gold_results(
                 "error": str(exc),
             }
             for key in (
+                "employee_360",
                 "headcount_by_company",
                 "headcount_by_location",
                 "headcount_by_department",
             )
         }
+    invalid_result = {
+        "rows": [],
+        "total": None,
+        "status": "unavailable",
+        "error": "headcount aggregate unavailable",
+    }
     return {
-        "employee_360": employee,
+        "active_headcount": dict(
+            headcounts.get(datasets["employee_360"], invalid_result)
+        ),
         **{
-            key: headcounts[datasets[key]]
+            key: dict(headcounts.get(datasets[key], invalid_result))
             for key in (
                 "headcount_by_company",
                 "headcount_by_location",
@@ -220,12 +232,7 @@ def _sf_gold_combine_widget_status(results: list[dict[str, Any]]) -> str:
     return "unavailable"
 
 
-def _sf_foundation_active_headcount(company_headcount_total: int | None) -> int | None:
-    return company_headcount_total
-
-
 __all__ = (
-    "_sf_foundation_active_headcount",
     "_sf_gold_combine_widget_status",
     "_sf_gold_headcount_rows",
     "_sf_gold_headcount_total",

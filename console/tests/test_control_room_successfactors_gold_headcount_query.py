@@ -224,6 +224,12 @@ async def test_gold_service_preserves_full_total_not_only_five_visible_rows(
     async def summaries(_user: dict | None, *, limit: int):
         empty = {"rows": [], "total": None, "status": "empty", "error": None}
         return {
+            "sap_successfactors_employee_360": {
+                "rows": [],
+                "total": 501_501,
+                "status": "ready",
+                "error": None,
+            },
             "sap_successfactors_headcount_by_company": {
                 "rows": [
                     {"company_name": f"Compania {value}", "headcount": value}
@@ -267,10 +273,17 @@ async def test_active_headcount_does_not_fallback_to_capped_employee_rows(
             "status": company_status,
             "error": None,
         }
-        return {
+        results = {
             dataset: dict(missing)
             for _key, dataset, _name_key in headcount_query._DIMENSIONS
         }
+        results["sap_successfactors_employee_360"] = {
+            "rows": [],
+            "total": None,
+            "status": "unavailable",
+            "error": "exact aggregate unavailable",
+        }
+        return results
 
     monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", employee_rows)
     monkeypatch.setattr(
@@ -282,4 +295,4 @@ async def test_active_headcount_does_not_fallback_to_capped_employee_rows(
     )
 
     assert active["value"] is None
-    assert active["status"] == "partial"
+    assert active["status"] == "unavailable"

@@ -321,22 +321,18 @@ def _scoped_rows(dataset: str, rows: list[dict], user: dict | None) -> list[dict
 async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
     from app.services.intelligence import gold_fetcher, successfactors_gold_headcount
 
-    calls: list[tuple[str, dict | None, int]] = []
-
-    async def fake_gold_rows(dataset: str, user: dict | None, limit: int) -> list[dict]:
-        calls.append((dataset, user, limit))
-        if dataset == "sap_successfactors_employee_360":
-            return [
-                {"user_id": "100", "full_name": "A", "is_active": True},
-                {"user_id": "101", "full_name": "B", "is_active": "true"},
-                {"user_id": "102", "full_name": "C", "is_active": False},
-            ]
-        return []
+    capped_reader = AsyncMock(return_value=[{"is_active": True}])
 
     async def fake_headcounts(user: dict | None, *, limit: int) -> dict[str, dict]:
         assert user is USER
         assert limit == 5
         return {
+            "sap_successfactors_employee_360": {
+                "rows": [],
+                "total": 2,
+                "status": "ready",
+                "error": None,
+            },
             "sap_successfactors_headcount_by_company": {
                 "rows": [{"company_name": "FEMSA", "headcount": 2}],
                 "total": 2,
@@ -357,7 +353,7 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
             },
         }
 
-    monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", fake_gold_rows)
+    monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", capped_reader)
     monkeypatch.setattr(
         successfactors_gold_headcount,
         "query_successfactors_headcount_summaries",
@@ -400,10 +396,7 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
     assert by_department["rows"] == [
         {"label": "People", "department_name": "People", "headcount": 2}
     ]
-    assert {dataset for dataset, _user, _limit in calls} == {
-        "sap_successfactors_employee_360"
-    }
-    assert all(user is USER for _dataset, user, _limit in calls)
+    capped_reader.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,6 @@ from app.services.control_room.business_action_catalog import (
     require_enabled_action_template_for_user,
 )
 from app.services.control_room.successfactors_gold_observations import (
-    _sf_foundation_active_headcount,
     _sf_gold_combine_widget_status,
     _sf_gold_headcount_rows,
     _sf_gold_headcount_total,
@@ -33,6 +32,12 @@ from app.services.control_room.successfactors_gold_observations import (
     _sf_gold_top_headcount_rows,
     _sf_gold_usable_rows,
     _sf_load_foundation_gold_results,
+)
+from app.services.control_room.successfactors_gold_foundation import (
+    _sf_foundation_gold_datasets,
+    _sf_foundation_gold_results,
+    _sf_foundation_gold_rows,
+    _sf_foundation_gold_widgets,
 )
 
 
@@ -60,7 +65,10 @@ _core.__dict__.setdefault(
     require_enabled_action_template_for_user,
 )
 for _helper in (
-    _sf_foundation_active_headcount,
+    _sf_foundation_gold_datasets,
+    _sf_foundation_gold_results,
+    _sf_foundation_gold_rows,
+    _sf_foundation_gold_widgets,
     _sf_gold_combine_widget_status,
     _sf_gold_headcount_rows,
     _sf_gold_headcount_total,
@@ -268,208 +276,6 @@ async def query_dataset_rows(
     if not isinstance(data, list):
         return []
     return [dict(row) for row in data if isinstance(row, dict)]
-
-
-@_bind_to_core
-def _sf_gold_public_rows(
-    rows: list[dict[str, Any]], limit: int = 5
-) -> list[dict[str, Any]]:
-    return [
-        {str(key): _sf_talent_public_value(value) for key, value in row.items()}
-        for row in rows[:limit]
-    ]
-
-
-@_bind_to_core
-async def _sf_gold_result(
-    dataset: str, user: dict | None, limit: int
-) -> dict[str, Any]:
-    from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
-
-    try:
-        rows = await query_gold_dataset_rows(dataset, user, limit)
-    except HTTPException as exc:
-        status = {
-            403: "no_permission",
-            404: "missing",
-            503: "unavailable",
-        }.get(exc.status_code, "unavailable")
-        return {
-            "rows": [],
-            "status": status,
-            "error": str(exc.detail or f"{dataset} unavailable"),
-        }
-    except Exception as exc:
-        return {
-            "rows": [],
-            "status": "unavailable",
-            "error": str(exc),
-        }
-    clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
-    return {
-        "rows": clean_rows,
-        "status": "empty" if not clean_rows else "ready",
-        "error": None,
-    }
-
-
-@_bind_to_core
-def _sf_foundation_gold_datasets() -> dict[str, str]:
-    return {
-        "employee_360": "sap_successfactors_employee_360",
-        "headcount_by_company": "sap_successfactors_headcount_by_company",
-        "headcount_by_location": "sap_successfactors_headcount_by_location",
-        "headcount_by_department": "sap_successfactors_headcount_by_department",
-    }
-
-
-@_bind_to_core
-async def _sf_foundation_gold_results(
-    datasets: dict[str, str],
-    user: dict | None,
-) -> dict[str, dict[str, Any]]:
-    return await _sf_load_foundation_gold_results(datasets, user, _sf_gold_result)
-
-
-@_bind_to_core
-def _sf_foundation_gold_rows(
-    results: dict[str, dict[str, Any]],
-) -> dict[str, list[dict[str, Any]] | None]:
-    return {
-        key: _sf_gold_usable_rows(result)
-        for key, result in results.items()
-    }
-
-
-@_bind_to_core
-def _sf_foundation_widget(
-    widget_id: str,
-    title: str,
-    value: Any,
-    dataset: str,
-    rows: list[dict[str, Any]],
-    status: str,
-    error: Any,
-) -> dict[str, Any]:
-    return {
-        "id": widget_id,
-        "title": title,
-        "value": value,
-        "dataset": dataset,
-        "href": _sf_talent_dataset_href(dataset),
-        "rows": rows,
-        "status": status,
-        "error": error,
-    }
-
-
-@_bind_to_core
-def _sf_foundation_gold_widgets(
-    datasets: dict[str, str],
-    results: dict[str, dict[str, Any]],
-    rows: dict[str, list[dict[str, Any]] | None],
-) -> list[dict[str, Any]]:
-    employee_rows = rows["employee_360"]
-    company_rows = rows["headcount_by_company"]
-    location_rows = rows["headcount_by_location"]
-    department_rows = rows["headcount_by_department"]
-    company_observations = _sf_gold_headcount_rows(
-        company_rows or [], ("company_id", "company_name")
-    )
-    location_observations = _sf_gold_headcount_rows(
-        location_rows or [], ("location_id", "location_name")
-    )
-    department_observations = _sf_gold_headcount_rows(
-        department_rows or [], ("department_id", "department_name")
-    )
-    company_public_rows = company_observations[:5]
-    location_public_rows = location_observations[:5]
-    department_public_rows = department_observations[:5]
-    headcount_totals = {
-        "headcount_by_company": _sf_gold_summary_total(
-            results["headcount_by_company"], company_observations
-        ),
-        "headcount_by_location": _sf_gold_summary_total(
-            results["headcount_by_location"], location_observations
-        ),
-        "headcount_by_department": _sf_gold_summary_total(
-            results["headcount_by_department"], department_observations
-        ),
-    }
-    headcount_statuses = {
-        "headcount_by_company": _sf_gold_headcount_widget_status(
-            results["headcount_by_company"]["status"],
-            company_rows,
-            company_observations,
-        ),
-        "headcount_by_location": _sf_gold_headcount_widget_status(
-            results["headcount_by_location"]["status"],
-            location_rows,
-            location_observations,
-        ),
-        "headcount_by_department": _sf_gold_headcount_widget_status(
-            results["headcount_by_department"]["status"],
-            department_rows,
-            department_observations,
-        ),
-    }
-    for key, total in headcount_totals.items():
-        if headcount_statuses[key] == "ready" and total is None:
-            headcount_statuses[key] = "invalid_schema"
-    company_result = {
-        **results["headcount_by_company"],
-        "status": headcount_statuses["headcount_by_company"],
-    }
-    return [
-        _sf_foundation_widget(
-            "sf_active_headcount",
-            "Headcount total activo",
-            _sf_foundation_active_headcount(
-                headcount_totals["headcount_by_company"]
-            ),
-            datasets["employee_360"],
-            _sf_gold_public_rows(employee_rows or [], 5),
-            _sf_gold_combine_widget_status(
-                [results["employee_360"], company_result]
-            ),
-            _sf_gold_status_error(
-                [results["employee_360"], company_result]
-            ),
-        ),
-        _sf_foundation_widget(
-            "sf_headcount_by_company",
-            "Headcount por compania",
-            headcount_totals["headcount_by_company"],
-            datasets["headcount_by_company"],
-            company_public_rows
-            if headcount_statuses["headcount_by_company"] == "ready"
-            else [],
-            headcount_statuses["headcount_by_company"],
-            results["headcount_by_company"].get("error"),
-        ),
-        _sf_foundation_widget(
-            "sf_headcount_by_location",
-            "Headcount por ubicacion",
-            headcount_totals["headcount_by_location"],
-            datasets["headcount_by_location"],
-            location_public_rows
-            if headcount_statuses["headcount_by_location"] == "ready"
-            else [],
-            headcount_statuses["headcount_by_location"],
-            results["headcount_by_location"].get("error"),
-        ),
-        _sf_foundation_widget(
-            "sf_headcount_by_department",
-            "Headcount por departamento",
-            headcount_totals["headcount_by_department"],
-            datasets["headcount_by_department"],
-            department_public_rows
-            if headcount_statuses["headcount_by_department"] == "ready"
-            else [],
-            headcount_statuses["headcount_by_department"],
-            results["headcount_by_department"].get("error"),
-        ),
-    ]
 
 
 @_bind_to_core

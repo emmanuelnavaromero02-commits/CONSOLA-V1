@@ -8,6 +8,11 @@ from fastapi import HTTPException
 
 from app.services.intelligence.gold_fetcher import _gold_dsn, _gold_table
 from app.services.intelligence.business_labels import business_label
+from app.services.intelligence.successfactors_active_headcount import (
+    ACTIVE_HEADCOUNT_DATASET,
+    query_exact_active_headcount,
+    unavailable_active_headcount,
+)
 from app.services.intelligence.utils import workspace_scope
 
 
@@ -209,12 +214,16 @@ async def query_successfactors_headcount_summaries(
     if not dsn:
         raise HTTPException(503, "gold database unavailable")
     tenant_id, workspace_id = workspace_scope(user)
-    if not tenant_id:
+    if not tenant_id or not tenant_id.strip() or not workspace_id.strip():
         raise HTTPException(
             403, "gold dataset requires complete tenant/workspace scope"
         )
     safe_limit = max(1, min(limit if type(limit) is int else 5, 20))
-    tables = [_gold_table(dataset) for _key, dataset, _name_key in _DIMENSIONS]
+    active_table = _gold_table(ACTIVE_HEADCOUNT_DATASET)
+    tables = [
+        active_table,
+        *[_gold_table(dataset) for _key, dataset, _name_key in _DIMENSIONS],
+    ]
     conn = await asyncpg.connect(dsn, command_timeout=10)
     results: dict[str, dict[str, Any]] = {}
     try:
@@ -234,6 +243,19 @@ async def query_successfactors_headcount_summaries(
                 tables,
             )
             columns = _column_contract([dict(row) for row in column_rows])
+            try:
+                async with conn.transaction():
+                    results[
+                        ACTIVE_HEADCOUNT_DATASET
+                    ] = await query_exact_active_headcount(
+                        conn,
+                        columns=columns,
+                        table=active_table,
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                    )
+            except Exception as exc:
+                results[ACTIVE_HEADCOUNT_DATASET] = unavailable_active_headcount(exc)
             for _key, dataset, name_key in _DIMENSIONS:
                 if error := _contract_error(columns, dataset, name_key):
                     results[dataset] = _failure(error)
