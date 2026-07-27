@@ -19,6 +19,11 @@ USER = {
     "workspace_id": "workspace-a",
     "active_workspace_id": "workspace-a",
 }
+_BLANK_FILLERS = (
+    "\u115f\u1160\u2800\u3164\ua8f9\uffa0"
+    "\U00010af6\U0001144e\U00011945\U00011c44\U00011c45"
+    "\U00011f48\U00013441\U00013442\U00016fe4"
+)
 
 
 class _Transaction:
@@ -85,13 +90,29 @@ class _FakeConnection:
                 ),
                 {"business_name": "\u2003"},
                 {"business_name": "（ｓｉｎ　ｎｏｍｂｒｅ）"},
+                *(
+                    {"business_name": value}
+                    for value in (
+                        "\u200b",
+                        "\u2060",
+                        "\ufeff",
+                        "\u202aNombre",
+                        "Nombre\u202e",
+                        "\u2066Nombre\u2069",
+                        "Nombre\ufe0f",
+                        "Nombre\U000e0100",
+                        "\u034f",
+                        "\u2028",
+                        "\u2029",
+                        *_BLANK_FILLERS,
+                        *(f"Nombre{filler}" for filler in _BLANK_FILLERS),
+                        "\u200b\u2060\ufeff",
+                    )
+                ),
             ]
         if "headcount_by_department" in sql:
             return [{"business_name": " Personas "}]
-        return [
-            {"business_name": "\u00a0"},
-            {"business_name": " (SIN NOMBRE) "},
-        ]
+        return [{"business_name": value} for value in _BLANK_FILLERS]
 
     def _aggregate_rows(self, sql: str) -> list[dict[str, Any]]:
         if "headcount_by_company" in sql:

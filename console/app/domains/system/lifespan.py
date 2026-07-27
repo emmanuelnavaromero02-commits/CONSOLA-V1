@@ -13,10 +13,17 @@ def _default_startup_seeds() -> tuple[StartupSeed, ...]:
     from app.services.seed_packaged_apps import seed_packaged_apps
     from app.services.seed_packaged_datasets import seed_packaged_datasets
     from app.services.seed_packaged_hints import seed_packaged_hints
+    from app.services.successfactors_headcount_seed_refresh import (
+        refresh_successfactors_headcount_definitions,
+    )
 
     return (
         ("seed_missing_dag_sources", seed_missing_dag_sources),
         ("seed_packaged_datasets", seed_packaged_datasets),
+        (
+            "refresh_successfactors_headcount_definitions",
+            refresh_successfactors_headcount_definitions,
+        ),
         ("seed_packaged_hints", seed_packaged_hints),
         ("seed_packaged_apps", seed_packaged_apps),
     )
@@ -26,12 +33,15 @@ async def run_packaged_startup_seeds(
     app: Any,
     *,
     get_db_pool: Callable[[], Awaitable[Any]],
-    run_startup_seed: Callable[[Any, str, Callable[[], Awaitable[None]]], Awaitable[None]],
+    run_startup_seed: Callable[
+        [Any, str, Callable[[], Awaitable[None]]], Awaitable[None]
+    ],
     seeds: Sequence[StartupSeed] | None = None,
 ) -> None:
     seed_specs = tuple(seeds) if seeds is not None else _default_startup_seeds()
 
     for component, seed_func in seed_specs:
+
         async def _seed(seed_func: SeedCallable = seed_func) -> None:
             pool = await get_db_pool()
             await seed_func(pool)

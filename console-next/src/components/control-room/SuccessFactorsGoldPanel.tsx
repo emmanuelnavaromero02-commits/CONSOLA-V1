@@ -4,16 +4,11 @@ import type { LucideIcon } from "lucide-react";
 import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfGoldWidgetRow, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
+import { businessLabel } from "./successFactorsBusinessLabels";
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline } from "./StatusBadge";
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
-}
-
-function businessLabel(value: string | null | undefined): string | null {
-  const normalized = value?.normalize("NFKC").trim();
-  if (!normalized || normalized.toLocaleLowerCase() === "(sin nombre)") return null;
-  return normalized;
 }
 
 function rowLabel(row: SfGoldWidgetRow): string | null {

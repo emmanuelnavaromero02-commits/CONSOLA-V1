@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -8,6 +7,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from app.services.intelligence.gold_fetcher import _gold_dsn, _gold_table
+from app.services.intelligence.business_labels import business_label
 from app.services.intelligence.utils import workspace_scope
 
 
@@ -30,15 +30,6 @@ _DIMENSIONS = (
 )
 _INTEGER_TYPES = frozenset({"smallint", "integer", "bigint"})
 _TEXT_TYPES = frozenset({"character", "character varying", "text"})
-
-
-def _normalized_label(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = unicodedata.normalize("NFKC", value).strip()
-    if not normalized or normalized.casefold() == "(sin nombre)":
-        return None
-    return normalized
 
 
 def _aggregate_sql(table: str, name_key: str) -> str:
@@ -142,7 +133,7 @@ def _parse_dimension(
     strict_total = _strict_int(total)
     public_rows: list[dict[str, Any]] = []
     for row in rows:
-        name = _normalized_label(row.get("business_name"))
+        name = business_label(row.get("business_name"))
         headcount = _strict_int(row.get("headcount"))
         if name is None or headcount is None:
             raise HTTPException(503, f"invalid headcount top rows: {dataset}")
@@ -196,7 +187,7 @@ async def _query_dimension(
     accepted: set[str] = set()
     async for row in label_cursor:
         raw = row.get("business_name")
-        if isinstance(raw, str) and _normalized_label(raw) is not None:
+        if isinstance(raw, str) and business_label(raw) is not None:
             accepted.add(raw)
     accepted_labels = sorted(accepted)
     if not accepted_labels:

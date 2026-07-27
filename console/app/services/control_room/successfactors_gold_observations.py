@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
+from app.services.intelligence.business_labels import business_label
 
-_MISSING_BUSINESS_LABELS = frozenset({"(sin nombre)"})
+
 _NON_READY_STATUSES = frozenset(
     {
         "blocked",
@@ -32,22 +32,13 @@ def _strict_headcount(value: object) -> int | None:
     return value if type(value) is int and value >= 0 else None
 
 
-def _business_name(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = unicodedata.normalize("NFKC", value).strip()
-    if not normalized or normalized.casefold() in _MISSING_BUSINESS_LABELS:
-        return None
-    return normalized
-
-
 def _sf_gold_headcount_rows(
     rows: list[dict[str, Any]], label_keys: tuple[str, str]
 ) -> list[dict[str, Any]]:
     _, name_key = label_keys
     public_rows: list[dict[str, Any]] = []
     for row in rows:
-        business_name = _business_name(row.get(name_key))
+        business_name = business_label(row.get(name_key))
         headcount = _strict_headcount(row.get("headcount"))
         if business_name is None or headcount is None:
             continue

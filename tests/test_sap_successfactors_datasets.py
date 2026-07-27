@@ -13,6 +13,7 @@ Static checks: every file parses, headers well-formed, migration<->files agree
 cartridge config contracts, prefix avoids collisions, and no gold exposes an
 encrypted column.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,11 +25,19 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATASETS_DIR = REPO_ROOT / "cartridges" / "sap_successfactors" / "datasets"
-BASE_MIGRATION = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
-TALENT_MIGRATION = REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
-ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
+BASE_MIGRATION = (
+    REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.sql"
+)
+TALENT_MIGRATION = (
+    REPO_ROOT / "infra" / "init" / "99p_sap_successfactors_talent_datasets.sql"
+)
+ENTITIES_YAML = (
+    REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
+)
 
-HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
+HEADER_RE = re.compile(
+    r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$"
+)
 EXPECTED_SILVER = 72
 EXPECTED_GOLD = 36
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
@@ -36,8 +45,16 @@ BASE_MIGRATION_DEDUP_KEYS = {
     "sap_successfactors_user_latest.sql": ("userId",),
     "sap_successfactors_perperson_latest.sql": ("personIdExternal",),
     "sap_successfactors_perpersonal_latest.sql": ("personIdExternal", "startDate"),
-    "sap_successfactors_peremail_latest.sql": ("personIdExternal", "emailType", "emailAddress"),
-    "sap_successfactors_empemployment_latest.sql": ("personIdExternal", "userId", "startDate"),
+    "sap_successfactors_peremail_latest.sql": (
+        "personIdExternal",
+        "emailType",
+        "emailAddress",
+    ),
+    "sap_successfactors_empemployment_latest.sql": (
+        "personIdExternal",
+        "userId",
+        "startDate",
+    ),
     "sap_successfactors_empjob_latest.sql": ("userId", "startDate"),
     "sap_successfactors_paymentinformationdetailv3_latest.sql": ("externalCode",),
     "sap_successfactors_position_latest.sql": ("code",),
@@ -50,8 +67,16 @@ BASE_MIGRATION_DEDUP_KEYS = {
     "sap_successfactors_candidate_latest.sql": ("candidateId",),
     "sap_successfactors_jobrequisition_latest.sql": ("jobReqId",),
     "sap_successfactors_empcompensation_latest.sql": ("userId", "startDate"),
-    "sap_successfactors_emppaycompnonrecurring_latest.sql": ("userId", "payComponentCode", "payDate"),
-    "sap_successfactors_emppaycomprecurring_latest.sql": ("userId", "payComponent", "startDate"),
+    "sap_successfactors_emppaycompnonrecurring_latest.sql": (
+        "userId",
+        "payComponentCode",
+        "payDate",
+    ),
+    "sap_successfactors_emppaycomprecurring_latest.sql": (
+        "userId",
+        "payComponent",
+        "startDate",
+    ),
     "sap_successfactors_empemploymenttermination_latest.sql": (
         "userId",
         "endDate",
@@ -72,14 +97,36 @@ DEDUP_LATEST_KEYS = {
     "sap_successfactors_learningassignment_latest.sql": ("assignmentId",),
     "sap_successfactors_learninghistory_latest.sql": ("historyId",),
     "sap_successfactors_foeventreason_latest.sql": ("externalCode",),
-    "sap_successfactors_perphone_latest.sql": ("personIdExternal", "phoneType", "phoneNumber"),
-    "sap_successfactors_peraddressdeflt_latest.sql": ("personIdExternal", "addressType", "startDate"),
-    "sap_successfactors_pernationalid_latest.sql": ("personIdExternal", "country", "cardType"),
+    "sap_successfactors_perphone_latest.sql": (
+        "personIdExternal",
+        "phoneType",
+        "phoneNumber",
+    ),
+    "sap_successfactors_peraddressdeflt_latest.sql": (
+        "personIdExternal",
+        "addressType",
+        "startDate",
+    ),
+    "sap_successfactors_pernationalid_latest.sql": (
+        "personIdExternal",
+        "country",
+        "cardType",
+    ),
     "sap_successfactors_focostcenter_latest.sql": ("externalCode",),
-    "sap_successfactors_employeetime_latest.sql": ("userId", "startDate", "endDate", "timeType"),
+    "sap_successfactors_employeetime_latest.sql": (
+        "userId",
+        "startDate",
+        "endDate",
+        "timeType",
+    ),
     "sap_successfactors_timeaccount_latest.sql": ("userId", "accountType"),
     "sap_successfactors_workschedule_latest.sql": ("externalCode",),
-    "sap_successfactors_empjob_history_latest.sql": ("userId", "startDate", "relationshipType", "relUserId"),
+    "sap_successfactors_empjob_history_latest.sql": (
+        "userId",
+        "startDate",
+        "relationshipType",
+        "relUserId",
+    ),
     "sap_successfactors_fopaygrade_latest.sql": ("externalCode",),
     "sap_successfactors_formperfpotsummarysection_latest.sql": ("formDataId",),
     "sap_successfactors_formobjective_latest.sql": ("objectiveId",),
@@ -134,7 +181,11 @@ def test_successfactors_packaged_dataset_count():
 def test_all_dataset_sql_parse():
     sqlglot = pytest.importorskip("sqlglot")
     for path in _dataset_files():
-        stmts = [s for s in sqlglot.parse(path.read_text(encoding="utf-8"), read="duckdb") if s]
+        stmts = [
+            s
+            for s in sqlglot.parse(path.read_text(encoding="utf-8"), read="duckdb")
+            if s
+        ]
         assert stmts, f"{path.name}: no parseable statement"
 
 
@@ -160,7 +211,9 @@ def _migration_rows() -> dict[str, str]:
     rows: dict[str, str] = {}
     for migration in (BASE_MIGRATION, TALENT_MIGRATION):
         sql = migration.read_text(encoding="utf-8")
-        for name, layer in re.findall(r"\$seed\$([A-Za-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$", sql):
+        for name, layer in re.findall(
+            r"\$seed\$([A-Za-z0-9_]+)\$seed\$,\s*\$seed\$(silver|gold)\$seed\$", sql
+        ):
             assert name not in rows, f"{name} registered more than once"
             rows[name] = layer
     return rows
@@ -169,10 +222,14 @@ def _migration_rows() -> dict[str, str]:
 def test_migration_matches_files():
     mig = _migration_rows()
     files = {p.stem: _parse_header(p)[1] for p in _dataset_files()}
-    assert set(mig) <= set(files), "historical migration contains a dataset not packaged"
+    assert set(mig) <= set(
+        files
+    ), "historical migration contains a dataset not packaged"
     for name, layer in mig.items():
         assert layer == files[name], f"{name}: layer {layer} != file {files[name]}"
-    assert len(set(files) - set(mig)) > 0, "new talent datasets should be packaged beyond historical migrations"
+    assert (
+        len(set(files) - set(mig)) > 0
+    ), "new talent datasets should be packaged beyond historical migrations"
 
 
 def test_migration_sets_workspace_id_on_every_row():
@@ -189,13 +246,17 @@ def test_migration_sets_workspace_id_on_every_row():
 def test_migration_idempotent_and_scoped():
     sql = BASE_MIGRATION.read_text(encoding="utf-8")
     talent_sql = TALENT_MIGRATION.read_text(encoding="utf-8")
-    assert "ON CONFLICT (name) DO NOTHING" in sql
+    assert "ON CONFLICT (name) DO UPDATE" in sql and "WHERE EXCLUDED.name IN" in sql
     assert "ON CONFLICT DO NOTHING" in talent_sql
     assert "ON CONFLICT (name)" not in talent_sql
     assert "'82_sap_successfactors_datasets_seed.sql'" in sql
     assert "'99p_sap_successfactors_talent_datasets.sql'" in talent_sql
     combined = sql + talent_sql
-    for other in ("$seed$replicon$seed$", "$seed$sap_hcm$seed$", "$seed$sap_s4hana$seed$"):
+    for other in (
+        "$seed$replicon$seed$",
+        "$seed$sap_hcm$seed$",
+        "$seed$sap_s4hana$seed$",
+    ):
         assert other not in combined, f"migration seeds another cartridge: {other}"
 
 
@@ -228,13 +289,17 @@ def test_live_successfactors_latest_deduplicates_by_business_key():
         sql = (DATASETS_DIR / filename).read_text(encoding="utf-8")
         assert "ROW_NUMBER() OVER" in sql, f"{filename}: missing window dedupe"
         assert "WHERE _rn = 1" in sql, f"{filename}: missing latest row filter"
-        assert "MAX(load_date)" not in sql, f"{filename}: still dedupes only by load_date"
+        assert (
+            "MAX(load_date)" not in sql
+        ), f"{filename}: still dedupes only by load_date"
         partition = re.search(r"PARTITION BY\s+(.+?)\s+ORDER BY", sql, re.DOTALL)
         assert partition, f"{filename}: missing partition key"
         partition_sql = partition.group(1)
         for key in keys:
             assert key in partition_sql, f"{filename}: missing dedupe key {key}"
-        assert "_extracted_at" in sql and "batch_id" in sql, f"{filename}: missing batch recency tie-breakers"
+        assert (
+            "_extracted_at" in sql and "batch_id" in sql
+        ), f"{filename}: missing batch recency tie-breakers"
 
 
 def test_base_migration_embeds_latest_dedup_sql():
@@ -248,14 +313,24 @@ def test_base_migration_embeds_latest_dedup_sql():
         )
         assert row, f"{dataset_name}: not embedded in base migration"
         embedded_sql = row.group(1)
-        assert "ROW_NUMBER() OVER" in embedded_sql, f"{dataset_name}: migration missing window dedupe"
-        assert "WHERE _rn = 1" in embedded_sql, f"{dataset_name}: migration missing latest row filter"
-        assert "MAX(load_date)" not in embedded_sql, f"{dataset_name}: migration still dedupes only by load_date"
-        partition = re.search(r"PARTITION BY\s+(.+?)\s+ORDER BY", embedded_sql, re.DOTALL)
+        assert (
+            "ROW_NUMBER() OVER" in embedded_sql
+        ), f"{dataset_name}: migration missing window dedupe"
+        assert (
+            "WHERE _rn = 1" in embedded_sql
+        ), f"{dataset_name}: migration missing latest row filter"
+        assert (
+            "MAX(load_date)" not in embedded_sql
+        ), f"{dataset_name}: migration still dedupes only by load_date"
+        partition = re.search(
+            r"PARTITION BY\s+(.+?)\s+ORDER BY", embedded_sql, re.DOTALL
+        )
         assert partition, f"{dataset_name}: migration missing partition key"
         partition_sql = partition.group(1)
         for key in keys:
-            assert key in partition_sql, f"{dataset_name}: migration missing dedupe key {key}"
+            assert (
+                key in partition_sql
+            ), f"{dataset_name}: migration missing dedupe key {key}"
 
 
 def test_declared_sources_are_real_sf_entities():
@@ -267,25 +342,43 @@ def test_declared_sources_are_real_sf_entities():
         for src in sources:
             raw = re.match(r"raw/sap_successfactors/(\w+)$", src)
             if raw:
-                assert raw.group(1) in entities, f"{path.name}: source {src!r} not a SF entity"
+                assert (
+                    raw.group(1) in entities
+                ), f"{path.name}: source {src!r} not a SF entity"
                 continue
             config = re.match(r"config/sap_successfactors/([a-z0-9_]+)$", src)
             if config:
-                assert path.stem.endswith(config.group(1)), f"{path.name}: config source {src!r} mismatches dataset"
+                assert path.stem.endswith(
+                    config.group(1)
+                ), f"{path.name}: config source {src!r} mismatches dataset"
                 continue
-            packaged = re.match(r"(?:silver|gold)/sap_successfactors/([a-z0-9_]+)$", src)
+            packaged = re.match(
+                r"(?:silver|gold)/sap_successfactors/([a-z0-9_]+)$", src
+            )
             assert packaged, f"{path.name}: malformed source {src!r}"
-            assert packaged.group(1) in dataset_names, f"{path.name}: source {src!r} not a packaged dataset"
+            assert (
+                packaged.group(1) in dataset_names
+            ), f"{path.name}: source {src!r} not a packaged dataset"
 
 
 def test_compensation_full_declares_raw_triggers_and_silver_dependencies():
-    _, _, sources, _ = _parse_header(DATASETS_DIR / "sap_successfactors_compensation_full.sql")
+    _, _, sources, _ = _parse_header(
+        DATASETS_DIR / "sap_successfactors_compensation_full.sql"
+    )
     assert "raw/sap_successfactors/EmpCompensation" in sources
     assert "raw/sap_successfactors/EmpPayCompRecurring" in sources
     assert "raw/sap_successfactors/EmpPayCompNonRecurring" in sources
-    assert "silver/sap_successfactors/sap_successfactors_empcompensation_latest" in sources
-    assert "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest" in sources
-    assert "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest" in sources
+    assert (
+        "silver/sap_successfactors/sap_successfactors_empcompensation_latest" in sources
+    )
+    assert (
+        "silver/sap_successfactors/sap_successfactors_emppaycomprecurring_latest"
+        in sources
+    )
+    assert (
+        "silver/sap_successfactors/sap_successfactors_emppaycompnonrecurring_latest"
+        in sources
+    )
 
 
 def test_golds_do_not_expose_encrypted_columns():
