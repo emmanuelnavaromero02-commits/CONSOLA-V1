@@ -109,5 +109,5 @@ async def test_general_seed_refreshes_obsolete_definition_idempotently(
 
     assert first_result[headcount_name].endswith(f"{headcount_sql}\n")
     assert installed == first_result
-    assert writes == [headcount_name, employee.stem, headcount_name, employee.stem]
+    assert writes == [employee.stem, headcount_name, employee.stem, headcount_name]
     assert scopes == [("tenant-a", "workspace-a")] * 2
