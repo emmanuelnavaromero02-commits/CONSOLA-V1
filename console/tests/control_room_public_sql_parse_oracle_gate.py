@@ -18,6 +18,11 @@ from public_sql_parse_oracles import (
     duckdb_parse_only,
     postgresql_parse_only,
 )
+from procedural_language_corpus import (
+    PROCEDURAL_LANGUAGE_BUSINESS_COPY,
+    PROCEDURAL_LANGUAGE_LAYOUT_VARIANTS,
+    PROCEDURAL_LANGUAGE_STATEMENTS,
+)
 
 
 SQL_STATEMENTS = (
@@ -165,6 +170,26 @@ def test_real_parser_union_accepts_generated_ddl_modifier_matrix(
 
 @pytest.mark.parametrize("copy", BUSINESS_COPY_CONTROLS)
 def test_both_real_parsers_reject_ddl_adjacent_business_copy(copy: str) -> None:
+    assert duckdb_parse_only(copy) is ParseResult.REJECTED
+    assert postgresql_parse_only(copy, _postgres_config()) is ParseResult.REJECTED
+    assert not contains_public_sql(copy)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    PROCEDURAL_LANGUAGE_STATEMENTS + PROCEDURAL_LANGUAGE_LAYOUT_VARIANTS,
+)
+def test_postgresql_accepts_procedural_language_and_policy_blocks(
+    statement: str,
+) -> None:
+    assert postgresql_parse_only(statement, _postgres_config()) is ParseResult.ACCEPTED
+    assert contains_public_sql(statement)
+
+
+@pytest.mark.parametrize("copy", PROCEDURAL_LANGUAGE_BUSINESS_COPY)
+def test_both_real_parsers_reject_procedural_language_business_copy(
+    copy: str,
+) -> None:
     assert duckdb_parse_only(copy) is ParseResult.REJECTED
     assert postgresql_parse_only(copy, _postgres_config()) is ParseResult.REJECTED
     assert not contains_public_sql(copy)
