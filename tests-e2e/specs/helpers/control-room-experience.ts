@@ -26,17 +26,17 @@ const zeroFact = {
   stale: false,
   metric: { name: "Rotación", kind: "percentage", value: 0, unit: "%" },
   decision: { status: "decision_created" },
+  actions: [],
 };
 
 function experience(facts: unknown[]) {
   return {
-    schema_version: "control-room-experience/v1",
+    schema_version: "control-room-experience/v2",
     generated_at: "2026-07-25T12:30:00Z",
     sections: facts.length
       ? [
           {
             title: "Performance",
-            domain: "Personas",
             facts,
           },
         ]
@@ -53,6 +53,7 @@ export const performanceExperience = experience([
     observed_at: "2026-07-23T00:00:00Z",
     stale: false,
     metric: { name: "Cobertura", kind: "count", value: 18 },
+    actions: [],
   },
 ]);
 
@@ -71,6 +72,7 @@ export const staleExperience = experience([
     observed_at: "2026-04-01T00:00:00Z",
     stale: true,
     metric: { name: "Cobertura", kind: "percentage", value: 78.5 },
+    actions: [],
   },
 ]);
 export const emptyExperience = experience([]);
@@ -105,7 +107,7 @@ export async function installExperienceMock(
     const requestUrl = new URL(route.request().url());
     const reply = replies[Math.min(replyIndex, replies.length - 1)];
     replyIndex += 1;
-    if (requestUrl.pathname !== "/api/control-room/experience") {
+    if (requestUrl.pathname !== "/api/control-room/experience/v2") {
       await route.fulfill({ status: 410, body: "legacy endpoint disabled" });
       return;
     }
@@ -130,7 +132,7 @@ export function assertReadOnlyRequests(
   expect(pageRequests).toEqual(
     Array.from({ length: expectedReads }, () => ({
       method: "GET",
-      pathname: "/api/control-room/experience",
+      pathname: "/api/control-room/experience/v2",
     })),
   );
   expect(
