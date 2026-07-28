@@ -96,9 +96,15 @@ test("Experience generates one preview without exposing or executing action inte
 
   const enabledFact = page.locator("article").filter({ hasText: "Cobertura crítica" });
   const disabledFact = page.locator("article").filter({ hasText: "Datos incompletos" });
-  const enabledCta = enabledFact.getByRole("button", { name: "Generar preview" });
+  const enabledCta = enabledFact.getByRole("button", {
+    name: "Generar preview: Solicitar revisión de owner — Cobertura crítica",
+  });
   await expect(enabledCta).toBeEnabled();
-  await expect(disabledFact.getByRole("button", { name: "Generar preview" })).toBeDisabled();
+  await expect(
+    disabledFact.getByRole("button", {
+      name: "Generar preview: Preparar seguimiento — Datos incompletos",
+    }),
+  ).toBeDisabled();
   await expect(
     disabledFact.getByText("Completa los datos requeridos antes de continuar."),
   ).toBeVisible();
