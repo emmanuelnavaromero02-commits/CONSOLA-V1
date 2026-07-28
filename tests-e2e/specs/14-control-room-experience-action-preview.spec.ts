@@ -52,6 +52,15 @@ test("Experience generates one preview without exposing or executing action inte
   authedPage: page,
 }) => {
   const requests: Array<{ method: string; path: string; body: unknown }> = [];
+  const observedNetwork: Array<{ method: string; path: string }> = [];
+  page.on("request", (request) => {
+    if (["fetch", "xhr"].includes(request.resourceType())) {
+      observedNetwork.push({
+        method: request.method(),
+        path: new URL(request.url()).pathname,
+      });
+    }
+  });
   await page.route("**/api/control-room/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -105,12 +114,15 @@ test("Experience generates one preview without exposing or executing action inte
   await page.getByRole("button", { name: "Confirmar preview" }).click();
   await expect(page.getByRole("status")).toContainText(successMessage);
   expect(requests.filter(({ method }) => method === "POST")).toHaveLength(1);
-  expect(
-    requests.filter(
-      ({ method, path }) =>
-        method === "GET" && path === "/api/control-room/experience/v2",
-    ).length,
-  ).toBeGreaterThanOrEqual(2);
+  await expect
+    .poll(
+      () =>
+        requests.filter(
+          ({ method, path }) =>
+            method === "GET" && path === "/api/control-room/experience/v2",
+        ).length,
+    )
+    .toBeGreaterThanOrEqual(2);
 
   const html = await page.content();
   expect(html).not.toContain(enabledHandle);
@@ -125,8 +137,14 @@ test("Experience generates one preview without exposing or executing action inte
   expect(persistedClientState).not.toContain(enabledHandle);
   expect(persistedClientState).not.toContain(disabledHandle);
   expect(
-    requests.some(({ path }) =>
-      ["/approve", "/execute", "/auto-run", "/talent/actions/preview"].some(
+    observedNetwork.some(({ path }) =>
+      [
+        "/approve",
+        "/execute",
+        "/auto-run",
+        "/talent/actions/preview",
+        "/api/actions",
+      ].some(
         (forbidden) => path.includes(forbidden),
       ),
     ),

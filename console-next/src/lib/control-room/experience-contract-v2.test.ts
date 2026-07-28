@@ -127,6 +127,30 @@ describe("controlRoomExperienceV2Schema", () => {
       ).toThrow();
     }
   });
+
+  it.each([
+    "item_id",
+    "template_id",
+    "method",
+    "scope",
+    "tenant",
+    "workspace",
+    "dataset",
+    "metadata",
+    "provenance",
+  ])("rejects the private fact field %s", (privateField) => {
+    expect(() =>
+      controlRoomExperienceV2Schema.parse({
+        ...payload,
+        sections: [
+          {
+            ...payload.sections[0],
+            facts: [{ ...fact, [privateField]: "private" }],
+          },
+        ],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("experienceActionPreviewResponseSchema", () => {
