@@ -84,6 +84,7 @@ export function ExperienceFact({
                 <button
                   type="button"
                   disabled={!action.enabled}
+                  aria-label={`Generar preview: ${action.label} — ${fact.title}`}
                   aria-describedby={
                     !action.enabled && action.disabled_reason
                       ? disabledReasonId
