@@ -37,13 +37,20 @@ CLASS_1_SQL_LABELS = (
     "Describe Digital",
 )
 CLASS_2_BUSINESS_LABELS = (
-    "Show me the Q4 report",
     "Call center roster",
     "Set of core values",
     "Grant Portfolio Review",
     "Copy of the signed contract",
+)
+SQL_AMBIGUOUS_LABELS = (
+    *CLASS_1_SQL_LABELS,
+    "Show me the Q4 report",
     "Describe the onboarding process",
     "Use of force policy",
+    "Set goals to improve performance",
+    "Set expectations to align teams",
+    "Set goals to win",
+    "Set priorities to high",
 )
 STRUCTURED_TECHNICAL_LABELS = (
     "status: ready",
@@ -272,9 +279,9 @@ def test_gold_factory_preserves_p2_and_class_2_labels_byte_exact(
 @pytest.mark.parametrize("project", PROJECTORS)
 @pytest.mark.parametrize(
     "label",
-    CLASS_1_SQL_LABELS + STRUCTURED_TECHNICAL_LABELS,
+    SQL_AMBIGUOUS_LABELS + STRUCTURED_TECHNICAL_LABELS,
 )
-def test_gold_factory_rejects_class_1_and_structured_technical_labels(
+def test_gold_factory_rejects_sql_ambiguous_and_structured_technical_labels(
     project,
     label: str,
 ) -> None:

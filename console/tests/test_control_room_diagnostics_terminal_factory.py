@@ -26,6 +26,7 @@ from control_room_diagnostics_private_copy_fixture import (
     CLASS_2_COPY,
     HARD_SERVER_COPY,
     P2_BUSINESS_COPY,
+    SQL_AMBIGUOUS_COPY,
     TECHNICAL_COPY,
     private_server_copy_registry,
 )
@@ -196,7 +197,7 @@ def test_terminal_factory_preserves_business_copy_byte_identically(
     assert payload["sources"][0]["warnings"][0].encode() == literal.encode()
 
 
-@pytest.mark.parametrize("literal", (*TECHNICAL_COPY, *CLASS_1_COPY))
+@pytest.mark.parametrize("literal", (*TECHNICAL_COPY, *SQL_AMBIGUOUS_COPY))
 def test_terminal_factory_blocks_unprovenanced_technical_copy(literal: str) -> None:
     draft = RawDiagnosticsDraft(
         generated_at=snapshot().generated_at,
@@ -271,7 +272,7 @@ def test_authenticated_http_preserves_business_copy_byte_identically(
     assert literal.encode() in response.content
 
 
-@pytest.mark.parametrize("literal", (*TECHNICAL_COPY, *CLASS_1_COPY))
+@pytest.mark.parametrize("literal", (*TECHNICAL_COPY, *SQL_AMBIGUOUS_COPY))
 def test_authenticated_http_blocks_unprovenanced_technical_copy(literal: str) -> None:
     current = snapshot(
         sources=(

@@ -46,6 +46,7 @@ _CONFUSABLE_TRANSLATION = str.maketrans(
         "Т": "T",
         "Х": "X",
         "У": "Y",
+        "Ԝ": "W",
         "а": "a",
         "ɑ": "a",
         "в": "b",

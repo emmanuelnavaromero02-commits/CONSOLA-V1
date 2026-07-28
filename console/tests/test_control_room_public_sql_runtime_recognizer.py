@@ -21,13 +21,17 @@ AMBIGUOUS_SQL = (
     "Describe Digital",
 )
 KEYWORD_INITIAL_BUSINESS_COPY = (
-    "Show me the Q4 report",
     "Call center roster",
     "Set of core values",
     "Grant Portfolio Review",
     "Copy of the signed contract",
+)
+SQL_PREFIX_IN_BUSINESS_COPY = (
+    "Show me the Q4 report",
     "Describe the onboarding process",
     "Use of force policy",
+    "Set goals to improve performance",
+    "Set expectations to align teams",
 )
 DIALECT_CONTROLS = (
     "SHOW",
@@ -90,7 +94,7 @@ QUOTED_SQL_COPY = (
 def test_runtime_catalog_is_pinned_to_test_oracle_grammars() -> None:
     assert DUCKDB_GRAMMAR_VERSION == "1.2.2"
     assert POSTGRESQL_GRAMMAR_VERSION == "15.18"
-    assert SQL_RUNTIME_CATALOG_VERSION
+    assert SQL_RUNTIME_CATALOG_VERSION == "duckdb-1.2.2_postgresql-15.18_v2"
 
 
 def test_parse_only_oracles_are_pinned_and_wired_into_the_focal_gate() -> None:
@@ -131,6 +135,11 @@ def test_keyword_initial_non_statement_is_preserved_without_phrase_allowlist(
     assert not contains_public_sql(copy)
 
 
+@pytest.mark.parametrize("copy", SQL_PREFIX_IN_BUSINESS_COPY)
+def test_complete_statement_prefix_in_business_copy_is_blocked(copy: str) -> None:
+    assert contains_public_sql(copy)
+
+
 @pytest.mark.parametrize("statement", DIALECT_CONTROLS)
 def test_dialect_specific_statement_is_blocked(statement: str) -> None:
     assert contains_public_sql(statement)
@@ -167,13 +176,10 @@ def test_statement_text_inside_a_literal_is_not_a_top_level_statement(
 @pytest.mark.parametrize(
     ("statement", "business_copy"),
     (
-        ("SHOW Solutions", "Show me the Q4 report"),
         ("CALL center()", "Call center roster"),
         ("SET core = values", "Set of core values"),
         ("GRANT portfolio TO reviewer", "Grant Portfolio Review"),
         ("COPY contracts TO STDOUT", "Copy of the signed contract"),
-        ("DESCRIBE onboarding", "Describe the onboarding process"),
-        ("USE force.policy", "Use of force policy"),
     ),
 )
 def test_same_head_is_decided_by_production_not_first_word(

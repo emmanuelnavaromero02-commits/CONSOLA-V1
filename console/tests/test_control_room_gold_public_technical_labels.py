@@ -29,6 +29,12 @@ STATEMENT_SHAPED_LABELS = (
     ("company", "company_name", "Create index of capabilities"),
     ("company", "company_name", "Alter role responsibilities"),
     ("company", "company_name", "Delete from shortlist."),
+    (
+        "company",
+        "company_name",
+        "Please choose the department from the company menu.",
+    ),
+    ("company", "company_name", "Use payroll insights"),
 )
 
 
@@ -161,13 +167,6 @@ def test_gold_http_redacts_technical_widget_titles(technical: str) -> None:
         ("company", "company_name", "3M", 1),
         ("company", "company_name", "7-Eleven", 1),
         ("company", "company_name", "Basic Training", 1),
-        (
-            "company",
-            "company_name",
-            "Please choose the department from the company menu.",
-            1,
-        ),
-        ("company", "company_name", "Use payroll insights", 1),
     ),
 )
 def test_gold_http_preserves_legitimate_business_labels(

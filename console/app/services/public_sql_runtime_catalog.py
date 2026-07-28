@@ -7,19 +7,17 @@ from enum import Enum
 
 DUCKDB_GRAMMAR_VERSION = "1.2.2"
 POSTGRESQL_GRAMMAR_VERSION = "15.18"
-SQL_RUNTIME_CATALOG_VERSION = "duckdb-1.2.2_postgresql-15.18_v1"
+SQL_RUNTIME_CATALOG_VERSION = "duckdb-1.2.2_postgresql-15.18_v2"
 
 
 class HeadPolicy(str, Enum):
-    """How raw copy beginning with a known statement head is handled."""
+    """Catalogue grouping; every head still requires a recognized production."""
 
     STRUCTURAL = "structural"
     FAIL_CLOSED = "fail_closed"
 
 
-# These heads have a bounded production which separates the documented natural-copy
-# shape from a statement prefix. The recognizer still blocks incomplete productions
-# once it has observed their structural delimiter (for example SET name =).
+# These heads overlap common business words and use positional production shapes.
 STRUCTURAL_HEADS = frozenset(
     {
         "call",
@@ -43,8 +41,8 @@ STRUCTURAL_PRODUCTIONS = {
     "use": "qualified_catalog_or_schema",
 }
 
-# For every other grammar head there is no safe raw-copy exception. A candidate
-# beginning with one fails closed; complete embedded productions are scanned too.
+# These heads have grammar-specific evidence in the prefix recognizer. Membership
+# alone never blocks an isolated word; valid no-argument productions are explicit.
 FAIL_CLOSED_HEADS = frozenset(
     {
         "abort",
@@ -84,6 +82,7 @@ FAIL_CLOSED_HEADS = frozenset(
         "move",
         "notify",
         "pivot",
+        "pivot_wider",
         "pragma",
         "prepare",
         "reassign",

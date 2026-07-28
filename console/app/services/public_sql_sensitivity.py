@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 
 from app.services.public_sql_statement_scanner import contains_runtime_sql
@@ -109,7 +111,7 @@ _SQL_STATEMENT = re.compile(
     r"(?:drop|reassign)\s+owned\b.+|revoke\s+\w+\s+from\s+\w+\s*;?|"
     r"(?:create|drop)\s+macro\b.+|exec\s+\w+.*|"
     r"(?:export|import)\s+database\b.+|detach\s+\w+\s*;?|summarize\s+\w+.*|"
-    r"(?:pivot|unpivot)\b.+|(?:set|reset)\s+variable\b.+"
+    r"(?:set|reset)\s+variable\b.+"
     r")\s*$"
 )
 _SQL_EXPRESSION_STATEMENT = re.compile(
@@ -190,21 +192,32 @@ _SQL_ADMIN_STATEMENT = re.compile(
     r"(?:force\s+)?checkpoint(?:\s+[a-z0-9_.\"-]+)?"
     r")\s*;?\s*$"
 )
-_SQL_TERMINATED_STATEMENT = re.compile(
-    r"(?is)^\s*(?:abort|alter|analyze|attach|begin|call|checkpoint|close|cluster|"
-    r"comment|commit|copy|create|deallocate|declare|delete|describe|detach|"
-    r"discard|do|drop|end|execute|explain|export|fetch|force\s+install|from|"
-    r"grant|import|insert|install|listen|load|lock|merge|move|notify|pivot|pragma|"
-    r"prepare|reassign|refresh|reindex|release|reset|revoke|rollback|savepoint|"
-    r"security\s+label|select|set|show|start|summarize|table|truncate|unlisten|"
-    r"unpivot|update|use|vacuum|values|with)\b[\s\S]*;\s*$"
-)
 _SQL_COMMENT = re.compile(r"(?s)/\*.*?\*/|--[^\r\n]*(?:\r\n?|\n|$)")
+_BASE64_TEXT = re.compile(r"[A-Za-z0-9+/_-]{8,}={0,2}")
 
 
-def contains_public_sql(value: str) -> bool:
-    """Detect SQL both inside comments and with comments between tokens."""
+def _decoded_base64_text(value: str) -> str | None:
+    if _BASE64_TEXT.fullmatch(value) is None or len(value) % 4 == 1:
+        return None
+    try:
+        raw = base64.b64decode(
+            value + "=" * (-len(value) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+        decoded = raw.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    if not decoded or any(not character.isprintable() for character in decoded):
+        return None
+    canonical = {
+        base64.b64encode(raw).decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+    }
+    return decoded if value.rstrip("=") in canonical else None
 
+
+def _contains_public_sql_form(value: str) -> bool:
     tokens = tokenize_select_copy(value)
     if tokens is not None and len(tokens) == 1 and tokens[0].kind == "string":
         return False
@@ -222,14 +235,12 @@ def contains_public_sql(value: str) -> bool:
         or _SQL_STATEMENT.search(value)
         or _SQL_EXPRESSION_STATEMENT.search(value)
         or _SQL_ADMIN_STATEMENT.search(value)
-        or _SQL_TERMINATED_STATEMENT.search(value)
         or contains_runtime_sql(without_comments)
         or _SQL.search(without_comments)
         or contains_public_select_sql(without_comments)
         or _SQL_STATEMENT.search(without_comments)
         or _SQL_EXPRESSION_STATEMENT.search(without_comments)
         or _SQL_ADMIN_STATEMENT.search(without_comments)
-        or _SQL_TERMINATED_STATEMENT.search(without_comments)
         or any(
             contains_runtime_sql(body)
             or _SQL.search(body)
@@ -237,9 +248,17 @@ def contains_public_sql(value: str) -> bool:
             or _SQL_STATEMENT.search(body)
             or _SQL_EXPRESSION_STATEMENT.search(body)
             or _SQL_ADMIN_STATEMENT.search(body)
-            or _SQL_TERMINATED_STATEMENT.search(body)
             for body in comment_bodies
         )
+    )
+
+
+def contains_public_sql(value: str) -> bool:
+    """Detect SQL both inside comments and with comments between tokens."""
+
+    decoded = _decoded_base64_text(value)
+    return _contains_public_sql_form(value) or bool(
+        decoded is not None and _contains_public_sql_form(decoded)
     )
 
 

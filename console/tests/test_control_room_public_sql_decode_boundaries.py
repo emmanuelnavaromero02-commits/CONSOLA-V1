@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import unicodedata
 from urllib.parse import quote
 
@@ -135,6 +136,35 @@ BUSINESS_SELECT_INSTRUCTIONS = (
     "PLEASE SELECT THE CANDIDATES FROM AN INTERNAL TALENT POOL.",
 )
 SQL_STATEMENT_BOUNDARY_CANARIES = ("Select name from payroll where active = true;.",)
+FULL_STREAM_SQL_CANARIES = (
+    "Business note. FROM range(10)",
+    "Business note. FROM employees e JOIN payroll p USING (name)",
+    "Business note. TABLE payroll LIMIT 1",
+    "note TABLE employees please",
+    "note SHOW ALL TABLES please",
+    "note SUMMARIZE payroll_internal please",
+    "x PIVOT t ON x",
+    "Business note. DETACH payroll",
+    "Business note. LOAD httpfs",
+    "Business note. CHECKPOINT payroll",
+    "Business note. FORCE CHECKPOINT payroll",
+    "Business note. RESET VARIABLE my_var",
+)
+RAW_SHOW = "Business note. SHOW TRANSACTION ISOLATION LEVEL"
+FULLWIDTH_SHOW = "".join(
+    chr(ord(character) + 0xFEE0) if "!" <= character <= "~" else character
+    for character in RAW_SHOW
+)
+BASE64_SHOW = base64.b64encode(RAW_SHOW.encode()).decode()
+SHOW_SECURITY_EQUIVALENTS = (
+    RAW_SHOW,
+    FULLWIDTH_SHOW,
+    "Business note. ЅНОԜ TRANSACTION ISOLATION LEVEL",
+    quote(RAW_SHOW, safe=""),
+    r"Business note. \u0053HOW TRANSACTION ISOLATION LEVEL",
+    BASE64_SHOW,
+    quote(BASE64_SHOW, safe=""),
+)
 
 
 def _encoded_internal_path(layers: int) -> str:
@@ -157,6 +187,8 @@ PUBLIC_TECHNICAL_CANARIES = (
                 *SQL_SELECT_WITH_TRAILING_CLAUSES,
                 *SQL_SELECT_WITHOUT_FROM,
                 *SQL_STATEMENT_BOUNDARY_CANARIES,
+                *FULL_STREAM_SQL_CANARIES,
+                *SHOW_SECURITY_EQUIVALENTS,
             ),
             start=1,
         )

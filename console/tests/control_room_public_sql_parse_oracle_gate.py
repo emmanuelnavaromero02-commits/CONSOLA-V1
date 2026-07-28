@@ -30,24 +30,44 @@ SQL_STATEMENTS = (
     "COPY payroll TO STDOUT",
     "GRANT SELECT ON payroll TO analyst",
     "WITH p AS (VALUES (1)) SELECT * FROM p",
+    "SHOW TRANSACTION ISOLATION LEVEL",
+    "PIVOT cities USING sum(population)",
+    "PIVOT cities GROUP BY country",
+    "PIVOT_WIDER cities USING sum(population)",
+    "LOCK payroll",
+    "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+    "SET XML OPTION DOCUMENT",
+    "DO LANGUAGE plpgsql $$BEGIN NULL; END$$",
+    "SECURITY LABEL FOR selinux ON ROLE analyst IS 'label'",
+    "SET LOCAL ROLE analyst",
+    "SET SESSION ROLE analyst",
+    "SET SESSION TIME ZONE 'UTC'",
+    "SET LOCAL XML OPTION DOCUMENT",
+    "COPY BINARY payroll TO STDOUT",
 )
 KEYWORD_INITIAL_BUSINESS_COPY = (
-    "Show me the Q4 report",
     "Call center roster",
     "Set of core values",
     "Grant Portfolio Review",
     "Copy of the signed contract",
-    "Describe the onboarding process",
-    "Use of force policy",
 )
 SAME_HEAD_PAIRS = (
-    ("SHOW Solutions", "Show me the Q4 report"),
     ("CALL center()", "Call center roster"),
     ("SET core = values", "Set of core values"),
     ("GRANT portfolio TO reviewer", "Grant Portfolio Review"),
     ("COPY contracts TO STDOUT", "Copy of the signed contract"),
-    ("DESCRIBE onboarding", "Describe the onboarding process"),
-    ("USE force.policy", "Use of force policy"),
+)
+EMBEDDED_SQL_PREFIXES = (
+    ("Show me the Q4 report", "SHOW me"),
+    ("Describe the onboarding process", "DESCRIBE the"),
+    ("Use of force policy", "USE of"),
+    ("Set goals to improve performance", "SET goals TO improve"),
+    ("Set expectations to align teams", "SET expectations TO align"),
+    ("Business note. FROM range(10)", "FROM range(10)"),
+    ("note TABLE employees please", "TABLE employees"),
+    ("note SHOW ALL TABLES please", "SHOW ALL TABLES"),
+    ("note SUMMARIZE payroll_internal please", "SUMMARIZE payroll_internal"),
+    ("x PIVOT t ON x", "PIVOT t ON x"),
 )
 
 
@@ -99,6 +119,19 @@ def test_generated_same_head_pair_tracks_real_parser_union(
     assert (
         postgresql_parse_only(business_copy, _postgres_config()) is ParseResult.REJECTED
     )
+
+
+@pytest.mark.parametrize(("raw", "sql_prefix"), EMBEDDED_SQL_PREFIXES)
+def test_real_parser_accepts_embedded_prefix_and_runtime_blocks_full_raw(
+    raw: str,
+    sql_prefix: str,
+) -> None:
+    results = {
+        duckdb_parse_only(sql_prefix),
+        postgresql_parse_only(sql_prefix, _postgres_config()),
+    }
+    assert results & {ParseResult.ACCEPTED, ParseResult.ACCEPTED_MULTIPLE}
+    assert contains_public_sql(raw)
 
 
 def test_both_real_parsers_consume_and_report_multiple_statements() -> None:

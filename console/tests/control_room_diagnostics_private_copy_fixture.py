@@ -41,13 +41,21 @@ CLASS_1_COPY = (
 )
 
 CLASS_2_COPY = (
-    "Show me the Q4 report",
     "Call center roster",
     "Set of core values",
     "Grant Portfolio Review",
     "Copy of the signed contract",
+)
+
+SQL_AMBIGUOUS_COPY = (
+    *CLASS_1_COPY,
+    "Show me the Q4 report",
     "Describe the onboarding process",
     "Use of force policy",
+    "Set goals to improve performance",
+    "Set expectations to align teams",
+    "Set goals to win",
+    "Set priorities to high",
 )
 
 
@@ -69,10 +77,6 @@ HARD_SERVER_COPY = (
     _encoded_private_path(9),
     _encoded_private_path(10),
     "status: ready",
-    "SELECT * FROM private.employees",
-    "CALL refresh_payroll()",
-    "VALUES (1)",
-    "COPY payroll TO STDOUT",
 )
 
 
@@ -92,6 +96,7 @@ __all__ = (
     "CLASS_2_COPY",
     "HARD_SERVER_COPY",
     "P2_BUSINESS_COPY",
+    "SQL_AMBIGUOUS_COPY",
     "TECHNICAL_COPY",
     "private_server_copy_registry",
 )

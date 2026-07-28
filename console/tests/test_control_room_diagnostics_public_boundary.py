@@ -40,8 +40,6 @@ SAFE_OPERATIONAL_WARNINGS = (
     "SuccessFactorsTraining",
     "SQL Team",
     "Basic Training",
-    "Please choose the department from the company menu.",
-    "Use payroll insights",
     "Portal: https://example.com/#/dashboard/overview",
     "Portal: https://www.example.com/home/help",
     "Portal: https://www.example.com/users/profile",
@@ -63,6 +61,8 @@ STATEMENT_SHAPED_WARNINGS = (
     "Alter role responsibilities",
     "Delete from shortlist.",
     "Update status set to ready.",
+    "Please choose the department from the company menu.",
+    "Use payroll insights",
 )
 
 
