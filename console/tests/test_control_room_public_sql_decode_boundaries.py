@@ -6,7 +6,7 @@ from urllib.parse import quote
 import pytest
 
 from app.services import public_path_sensitivity, public_text_sensitivity
-from app.services.control_room.operational_diagnostics import _public_text
+from app.services.control_room.diagnostics_public_factory import _public_text
 from app.services.control_room.successfactors_gold_observations import (
     _sf_gold_public_widget,
 )
@@ -189,7 +189,7 @@ def test_nfkc_expansion_cannot_move_sql_beyond_the_scan_boundary() -> None:
     assert len(NFKC_SQL_EXPANSION) < 500
     assert len(normalized) > 8192
     assert contains_public_sql(NFKC_SQL_EXPANSION)
-    assert not contains_public_sql(normalized)
+    assert contains_public_sql(normalized)
     assert contains_public_technical_copy(NFKC_SQL_EXPANSION)
 
 
@@ -243,12 +243,17 @@ def test_gold_direct_projection_invalidates_sql_and_decode_overflow(
 
 
 @pytest.mark.parametrize(
-    "business_copy",
-    (*BUSINESS_SELECT_INSTRUCTIONS, "Create policy for annual leave", "Comercio"),
+    "raw_copy",
+    (*BUSINESS_SELECT_INSTRUCTIONS, "Create policy for annual leave"),
 )
-def test_shared_policy_preserves_valid_business_copy(business_copy: str) -> None:
-    if "select" in business_copy.casefold():
-        assert not contains_public_sql(business_copy)
-    assert not contains_public_technical_copy(business_copy)
-    assert _public_text({"message": business_copy}, "message") == business_copy
-    assert public_business_label(business_copy) == business_copy
+def test_untrusted_statement_head_copy_fails_closed(raw_copy: str) -> None:
+    assert contains_public_sql(raw_copy)
+    assert contains_public_technical_copy(raw_copy)
+    assert _public_text({"message": raw_copy}, "message") == ""
+    assert public_business_label(raw_copy) is None
+
+
+def test_shared_policy_preserves_non_statement_business_label() -> None:
+    assert not contains_public_technical_copy("Comercio")
+    assert _public_text({"message": "Comercio"}, "message") == "Comercio"
+    assert public_business_label("Comercio") == "Comercio"

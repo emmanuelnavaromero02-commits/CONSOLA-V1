@@ -84,21 +84,21 @@ def test_authenticated_gold_http_blocks_hidden_query(
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
-def test_authenticated_diagnostics_http_preserves_business_instruction_byte_exact(
+def test_authenticated_diagnostics_http_blocks_select_shaped_raw_copy(
     business_copy: str,
 ) -> None:
     diagnostics = _diagnostics_response(business_copy)
     assert diagnostics.status_code == 200
-    assert _published_strings(diagnostics.json()).count(business_copy) == 1
+    assert business_copy not in _published_strings(diagnostics.json())
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
-def test_authenticated_gold_http_preserves_business_instruction_byte_exact(
+def test_authenticated_gold_http_blocks_select_shaped_raw_copy(
     business_copy: str,
 ) -> None:
     gold = _gold_response(business_copy)
     assert gold.status_code == 200
     widget = gold.json()["widgets"][0]
-    assert widget["status"] == "ready"
-    assert widget["value"] == 1
-    assert widget["rows"][0]["label"] == business_copy
+    assert widget["status"] == "invalid_schema"
+    assert widget["value"] is None
+    assert widget["rows"] == []

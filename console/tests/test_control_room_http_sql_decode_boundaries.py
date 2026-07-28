@@ -84,7 +84,7 @@ def test_authenticated_gold_http_invalidates_sql_and_decode_overflow(
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
-def test_diagnostics_and_gold_http_preserve_valid_business_copy(
+def test_diagnostics_and_gold_http_block_select_shaped_raw_copy(
     business_copy: str,
 ) -> None:
     collect = AsyncMock(
@@ -94,8 +94,7 @@ def test_diagnostics_and_gold_http_preserve_valid_business_copy(
     )
     with patch.object(surface_routes, "collect_surface_snapshot", collect):
         diagnostics = diagnostics_client().get("/api/control-room/diagnostics")
-    assert diagnostics.status_code == 200
-    assert business_copy in diagnostics.text
+    _assert_literal_absent(diagnostics, business_copy)
 
     control_room._CONTROL_ROOM_READ_CACHE.clear()
     payload = {
@@ -119,5 +118,6 @@ def test_diagnostics_and_gold_http_preserve_valid_business_copy(
         )
     assert gold.status_code == 200
     widget = gold.json()["widgets"][0]
-    assert widget["status"] == "ready"
-    assert widget["rows"][0]["label"] == business_copy
+    assert widget["status"] == "invalid_schema"
+    assert widget["value"] is None
+    assert widget["rows"] == []

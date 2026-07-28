@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.dependencies import require_authenticated
 from app.routers import control_room as routes
 from app.routers import control_room_surfaces as surface_routes
-from app.services.control_room.operational_diagnostics import _text
+from app.services.control_room.diagnostics_public_factory import _text
 from app.services.public_text_sensitivity import (
     contains_public_technical_copy,
     contains_public_technical_data,
@@ -31,29 +31,17 @@ SAFE_OPERATIONAL_WARNINGS = (
     "Más información: https://support.example.com/help",
     "Portal: https://support.example.com/help?next=/public/home",
     "Dataset copy completed",
-    "Create policy for annual leave",
     "Gold-Leaf Logistics",
     "Silver-People Consulting",
     "Gold.Private Banking",
     "Gold.Coast Operations",
     "Silver.People Consulting",
-    "Analyze workforce trends",
-    "Refresh materialized view of talent",
-    "Values (people first)",
-    "Copy payroll to dashboard.",
     "Estado listo para revisión.",
-    "Create table for annual planning.",
     "SuccessFactorsTraining",
     "SQL Team",
     "Basic Training",
-    "Comment on table design",
-    "Insert into culture",
-    "Create index of capabilities",
-    "Alter role responsibilities",
     "Please choose the department from the company menu.",
-    "Delete from shortlist.",
     "Use payroll insights",
-    "Update status set to ready.",
     "Portal: https://example.com/#/dashboard/overview",
     "Portal: https://www.example.com/home/help",
     "Portal: https://www.example.com/users/profile",
@@ -61,6 +49,20 @@ SAFE_OPERATIONAL_WARNINGS = (
     "Portal: https://support.example.com/#/users/profile",
     "Portal: https://example.com/help?redirect=/public/home",
     "Download: https://example.com/help?download=https://cdn.example.com/report.pdf",
+)
+STATEMENT_SHAPED_WARNINGS = (
+    "Create policy for annual leave",
+    "Analyze workforce trends",
+    "Refresh materialized view of talent",
+    "Values (people first)",
+    "Copy payroll to dashboard.",
+    "Create table for annual planning.",
+    "Comment on table design",
+    "Insert into culture",
+    "Create index of capabilities",
+    "Alter role responsibilities",
+    "Delete from shortlist.",
+    "Update status set to ready.",
 )
 
 
@@ -242,7 +244,10 @@ def test_authenticated_diagnostics_preserves_safe_operational_copy() -> None:
                     domain="People",
                     readiness_reason="Dataset no materializado",
                     readiness_blockers=["Retry after 5 seconds"],
-                    contract_warnings=list(SAFE_OPERATIONAL_WARNINGS),
+                    contract_warnings=[
+                        *SAFE_OPERATIONAL_WARNINGS,
+                        *STATEMENT_SHAPED_WARNINGS,
+                    ],
                 ),
             ),
             diagnostics=(source_state(title="Revisión operativa", domain="People"),),
@@ -267,6 +272,8 @@ def test_authenticated_diagnostics_preserves_safe_operational_copy() -> None:
         "Human Resources",
     ):
         assert value in published
+    for value in STATEMENT_SHAPED_WARNINGS:
+        assert value not in published
 
 
 @pytest.mark.parametrize(

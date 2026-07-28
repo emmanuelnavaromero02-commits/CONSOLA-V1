@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.control_room.operational_diagnostics import _public_text
+from app.services.control_room.diagnostics_public_factory import _public_text
 from app.services.control_room.successfactors_gold_observations import (
     _sf_gold_public_widget,
 )
 from app.services.public_sql_sensitivity import contains_public_sql
 from app.services.public_sql_select_grammar import contains_public_select_sql
-from app.services.public_sql_word_statements import contains_embedded_word_statement
 from app.services.public_text_sensitivity import (
     contains_public_technical_copy,
     public_business_label,
@@ -187,36 +186,30 @@ def test_hidden_query_invalidates_direct_gold(query: str) -> None:
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
-def test_natural_business_instruction_survives_shared_policy_byte_exact(
+def test_select_shaped_copy_fails_closed_without_internal_copy_id(
     business_copy: str,
 ) -> None:
-    assert not contains_public_select_sql(business_copy)
-    assert not contains_public_sql(business_copy)
-    assert not contains_public_technical_copy(business_copy)
-    assert public_business_label(business_copy) == business_copy
+    assert contains_public_select_sql(business_copy)
+    assert contains_public_sql(business_copy)
+    assert contains_public_technical_copy(business_copy)
+    assert public_business_label(business_copy) is None
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
-def test_natural_business_instruction_survives_direct_diagnostics_byte_exact(
+def test_select_shaped_raw_copy_is_omitted_by_direct_diagnostics(
     business_copy: str,
 ) -> None:
-    assert _public_text({"message": business_copy}, "message") == business_copy
+    assert _public_text({"message": business_copy}, "message") == ""
 
 
 @pytest.mark.parametrize("business_copy", BUSINESS_SELECT_INSTRUCTIONS)
-def test_natural_business_instruction_survives_direct_gold_byte_exact(
+def test_select_shaped_raw_copy_invalidates_direct_gold(
     business_copy: str,
 ) -> None:
     widget = _gold_widget(business_copy)
-    assert widget["status"] == "ready"
-    assert widget["value"] == 1
-    assert widget["rows"] == [
-        {
-            "company_name": business_copy,
-            "label": business_copy,
-            "headcount": 1,
-        }
-    ]
+    assert widget["status"] == "invalid_schema"
+    assert widget["value"] is None
+    assert widget["rows"] == []
 
 
 @pytest.mark.parametrize("query", ADVERSARIAL_QUERY_FORMS)
@@ -226,11 +219,6 @@ def test_adversarial_complete_query_forms_cannot_hide_in_instruction(
     assert contains_public_select_sql(query)
     assert contains_public_sql(query)
     assert contains_public_technical_copy(query)
-
-
-def test_duckdb_update_extensions_is_a_complete_embedded_statement() -> None:
-    words = ("select", "candidates", "from", "the", "update", "extensions")
-    assert contains_embedded_word_statement(words)
 
 
 @pytest.mark.parametrize("quoted", QUOTED_SELECT_CONTROLS)

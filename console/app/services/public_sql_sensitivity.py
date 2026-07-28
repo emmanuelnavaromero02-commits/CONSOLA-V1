@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 
+from app.services.public_sql_statement_scanner import contains_runtime_sql
 from app.services.public_sql_select_grammar import contains_public_select_sql
+from app.services.public_sql_select_lexer import tokenize_select_copy
 
 
 _SQL = re.compile(
@@ -203,6 +205,10 @@ _SQL_COMMENT = re.compile(r"(?s)/\*.*?\*/|--[^\r\n]*(?:\r\n?|\n|$)")
 def contains_public_sql(value: str) -> bool:
     """Detect SQL both inside comments and with comments between tokens."""
 
+    tokens = tokenize_select_copy(value)
+    if tokens is not None and len(tokens) == 1 and tokens[0].kind == "string":
+        return False
+
     comments = tuple(match.group(0) for match in _SQL_COMMENT.finditer(value))
     without_comments = _SQL_COMMENT.sub(" ", value)
     comment_bodies = (
@@ -210,12 +216,14 @@ def contains_public_sql(value: str) -> bool:
         for comment in comments
     )
     return bool(
-        _SQL.search(value)
+        contains_runtime_sql(value)
+        or _SQL.search(value)
         or contains_public_select_sql(value)
         or _SQL_STATEMENT.search(value)
         or _SQL_EXPRESSION_STATEMENT.search(value)
         or _SQL_ADMIN_STATEMENT.search(value)
         or _SQL_TERMINATED_STATEMENT.search(value)
+        or contains_runtime_sql(without_comments)
         or _SQL.search(without_comments)
         or contains_public_select_sql(without_comments)
         or _SQL_STATEMENT.search(without_comments)
@@ -223,7 +231,8 @@ def contains_public_sql(value: str) -> bool:
         or _SQL_ADMIN_STATEMENT.search(without_comments)
         or _SQL_TERMINATED_STATEMENT.search(without_comments)
         or any(
-            _SQL.search(body)
+            contains_runtime_sql(body)
+            or _SQL.search(body)
             or contains_public_select_sql(body)
             or _SQL_STATEMENT.search(body)
             or _SQL_EXPRESSION_STATEMENT.search(body)

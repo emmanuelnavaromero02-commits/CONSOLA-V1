@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import re
 
-from app.services.public_sql_business_instruction import (
-    is_unambiguous_business_select,
-)
 from app.services.public_sql_select_lexer import SelectToken, tokenize_select_copy
 
 
@@ -85,8 +82,6 @@ def contains_public_select_sql(value: str) -> bool:
     tokens = tokenize_select_copy(value)
     if tokens is None:
         return True
-    if is_unambiguous_business_select(value, tokens):
-        return False
     return _select_tokens_are_sql(tokens)
 
 
