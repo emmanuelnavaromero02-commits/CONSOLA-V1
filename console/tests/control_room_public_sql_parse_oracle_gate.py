@@ -7,6 +7,11 @@ import os
 import pytest
 
 from app.services.public_sql_sensitivity import contains_public_sql
+from ddl_modifier_corpus import (
+    BUSINESS_COPY_CONTROLS,
+    DDL_LAYOUT_VARIANTS,
+    DDL_STATEMENTS,
+)
 from public_sql_parse_oracles import (
     ParseResult,
     PostgreSQLOracleConfig,
@@ -143,3 +148,23 @@ def test_both_real_parsers_consume_and_report_multiple_statements() -> None:
         is ParseResult.ACCEPTED_MULTIPLE
     )
     assert contains_public_sql(statements)
+
+
+@pytest.mark.parametrize("statement", DDL_STATEMENTS + DDL_LAYOUT_VARIANTS)
+def test_real_parser_union_accepts_generated_ddl_modifier_matrix(
+    statement: str,
+) -> None:
+    outcomes = {
+        duckdb_parse_only(statement),
+        postgresql_parse_only(statement, _postgres_config()),
+    }
+
+    assert outcomes & {ParseResult.ACCEPTED, ParseResult.ACCEPTED_MULTIPLE}
+    assert contains_public_sql(statement)
+
+
+@pytest.mark.parametrize("copy", BUSINESS_COPY_CONTROLS)
+def test_both_real_parsers_reject_ddl_adjacent_business_copy(copy: str) -> None:
+    assert duckdb_parse_only(copy) is ParseResult.REJECTED
+    assert postgresql_parse_only(copy, _postgres_config()) is ParseResult.REJECTED
+    assert not contains_public_sql(copy)

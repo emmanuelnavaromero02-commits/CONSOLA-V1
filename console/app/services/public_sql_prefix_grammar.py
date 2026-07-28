@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.services.public_sql_ddl_prefix import ddl_prefix
 from app.services.public_sql_prefix_shapes import (
     call_prefix,
     copy_prefix,
@@ -45,49 +46,6 @@ _NAME_HEADS = frozenset(
         "summarize",
         "table",
         "use",
-    }
-)
-_DDL_HEADS = frozenset({"alter", "create", "drop"})
-_DDL_OBJECT_WORDS = frozenset(
-    {
-        "access",
-        "aggregate",
-        "cast",
-        "collation",
-        "conversion",
-        "database",
-        "domain",
-        "event",
-        "extension",
-        "foreign",
-        "function",
-        "group",
-        "index",
-        "language",
-        "large",
-        "macro",
-        "materialized",
-        "operator",
-        "policy",
-        "procedure",
-        "publication",
-        "role",
-        "routine",
-        "rule",
-        "schema",
-        "secret",
-        "sequence",
-        "server",
-        "statistics",
-        "subscription",
-        "table",
-        "tablespace",
-        "text",
-        "transform",
-        "trigger",
-        "type",
-        "user",
-        "view",
     }
 )
 
@@ -181,8 +139,8 @@ def has_complete_statement_prefix(
         return _starts_with_words(tail, "into")
     if head == "delete":
         return _starts_with_words(tail, "from")
-    if head in _DDL_HEADS:
-        return bool(tail and _word(tail[0]) in _DDL_OBJECT_WORDS)
+    if head in {"alter", "create", "drop"}:
+        return ddl_prefix(head, tail)
     if head == "values":
         return bool(tail and tail[0] == SelectToken("symbol", "("))
     if head == "with":

@@ -7,7 +7,7 @@ from enum import Enum
 
 DUCKDB_GRAMMAR_VERSION = "1.2.2"
 POSTGRESQL_GRAMMAR_VERSION = "15.18"
-SQL_RUNTIME_CATALOG_VERSION = "duckdb-1.2.2_postgresql-15.18_v2"
+SQL_RUNTIME_CATALOG_VERSION = "duckdb-1.2.2_postgresql-15.18_v3"
 
 
 class HeadPolicy(str, Enum):

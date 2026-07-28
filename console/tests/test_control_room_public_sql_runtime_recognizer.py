@@ -94,7 +94,7 @@ QUOTED_SQL_COPY = (
 def test_runtime_catalog_is_pinned_to_test_oracle_grammars() -> None:
     assert DUCKDB_GRAMMAR_VERSION == "1.2.2"
     assert POSTGRESQL_GRAMMAR_VERSION == "15.18"
-    assert SQL_RUNTIME_CATALOG_VERSION == "duckdb-1.2.2_postgresql-15.18_v2"
+    assert SQL_RUNTIME_CATALOG_VERSION == "duckdb-1.2.2_postgresql-15.18_v3"
 
 
 def test_parse_only_oracles_are_pinned_and_wired_into_the_focal_gate() -> None:
