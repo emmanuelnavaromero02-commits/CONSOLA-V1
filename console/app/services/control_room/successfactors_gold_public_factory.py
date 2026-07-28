@@ -171,11 +171,11 @@ def _generic_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     if not label_keys or any(value is None for value in labels.values()):
         return None
     names = [value for key, value in labels.items() if key != "label"]
-    if len(names) != 1:
+    label = labels.get("label")
+    if len(names) > 1 or (label is not None and names and label != names[0]):
         return None
-    label = labels.get("label", names[0])
-    if label != names[0]:
-        return None
+    if label is None:
+        label = names[0]
     projected: dict[str, Any] = {**labels, "label": label}
     for field in ROW_FIELDS:
         if field not in row:
