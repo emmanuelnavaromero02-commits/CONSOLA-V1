@@ -84,14 +84,25 @@ def test_unicode_separator_variants_are_diagnostic(value: str) -> None:
     assert result.cause is VisibleCopyCause.DIAGNOSTIC_ONLY
 
 
-@pytest.mark.parametrize(("separator", "value"), _STATE_ASSIGNMENTS)
+@pytest.mark.parametrize(
+    ("separator", "value"),
+    tuple(case for case in _STATE_ASSIGNMENTS if case[1] != "future_technical_value"),
+)
 @pytest.mark.parametrize("field", ("status", "state", "source_state"))
-def test_state_fields_reject_any_nonempty_value(
+def test_state_fields_reject_runtime_diagnostic_values(
     field: str,
     separator: str,
     value: str,
 ) -> None:
     result = _classify(f"{field}{separator}{value}")
+
+    assert result.allowed is False
+    assert result.cause is VisibleCopyCause.DIAGNOSTIC_ONLY
+
+
+@pytest.mark.parametrize("field", ("status", "state"))
+def test_state_fields_reject_machine_shaped_unknown_values(field: str) -> None:
+    result = _classify(f"{field}‐future_technical_value")
 
     assert result.allowed is False
     assert result.cause is VisibleCopyCause.DIAGNOSTIC_ONLY

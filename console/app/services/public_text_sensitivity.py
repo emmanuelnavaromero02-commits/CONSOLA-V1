@@ -15,6 +15,9 @@ from app.services.control_room.business_copy_hazards import (
     contains_unsafe_unicode,
     is_diagnostic_copy,
 )
+from app.services.control_room.business_diagnostic_grammar import (
+    is_diagnostic_state_copy,
+)
 from app.services.intelligence.business_labels import business_label
 from app.services.public_identifier_sensitivity import (
     contains_public_identifier_copy,
@@ -77,6 +80,7 @@ def _technical_form(value: str) -> bool:
         or contains_public_identifier_copy(value)
         or contains_structured_copy(value)
         or contains_unsafe_unicode(value)
+        or is_diagnostic_state_copy(value)
     )
 
 

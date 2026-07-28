@@ -6,8 +6,17 @@ import ast
 import re
 
 
-_TECHNICAL_TERMS = re.compile(
-    r"(?i)(?:^|[^a-z0-9])(?:bindings?|provenance|receipts?)(?:$|[^a-z0-9])"
+_MACHINE_TECHNICAL_TERM = re.compile(
+    r"(?i)(?<![a-z0-9])(?:"
+    r"(?:bindings?|provenance|receipts?)(?:[_.-][a-z0-9]+)+|"
+    r"[a-z0-9]+(?:[_.-][a-z0-9]+)*[_.-](?:bindings?|provenance|receipts?)"
+    r")(?![a-z0-9])"
+)
+_MACHINE_STATE_IDENTIFIER = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"(?i:(?:data|readiness|source)[_.-](?:state|status))|"
+    r"(?:data|readiness|source)(?:State|Status)"
+    r")(?![A-Za-z0-9])"
 )
 _DATASET_REFERENCE = re.compile(
     r"(?i)(?:\bdatasets?\s*[:=]|"
@@ -128,8 +137,8 @@ _CONTAINER_SHAPED_REPR = re.compile(
     r"(?s)^(?:\{[^{}]*\}|\[[^\[\]]*\]|\((?:[^()]|\([^()]*\))*\))$"
 )
 _LABELED_TECHNICAL_VALUE = re.compile(
-    r"(?i)\b(?:authority[_ -]?audit|connection[_ -]?string|dataset|payload|"
-    r"provenance|receipt|raw[_ -]?sql)\s*[:=]|"
+    r"(?i)\b(?:authority[_ -]?audit|bindings?|connection[_ -]?string|dataset|"
+    r"payload|provenance|receipt|raw[_ -]?sql)\s*[:=]|"
     r"\b(?:tenant|workspace|simulation|orchestration|execution|action[_ -]?run|"
     r"run|connection|dataset|receipt|provenance|query|job|task|agent|"
     r"installation|source)[_ -]?id\s*[:=]|"
@@ -160,6 +169,8 @@ _TECHNICAL_STRUCTURE_KEYS = frozenset(
         "receipt",
         "receipts",
         "sql",
+        "state",
+        "status",
     }
 )
 _TECHNICAL_STRUCTURE_SUFFIXES = (
@@ -172,6 +183,9 @@ _TECHNICAL_STRUCTURE_SUFFIXES = (
     "_paths",
 )
 _TECHNICAL_STRUCTURE_PREFIXES = ("directory_", "file_path_", "filepath_", "path_")
+_TECHNICAL_STRUCTURE_TOKENS = frozenset(
+    {"binding", "bindings", "provenance", "receipt", "receipts", "state", "status"}
+)
 
 
 def _normalized_key(value: str) -> str:
@@ -218,7 +232,8 @@ def contains_public_identifier_copy(value: str) -> bool:
 
     stripped = value.strip()
     return bool(
-        _TECHNICAL_TERMS.search(value)
+        _MACHINE_TECHNICAL_TERM.search(value)
+        or _MACHINE_STATE_IDENTIFIER.search(value)
         or _DATASET_REFERENCE.search(value)
         or _PACKAGED_DATASET_ID.search(value)
         or _contains_tier_dataset(value)
@@ -250,8 +265,13 @@ def is_public_technical_structure_key(value: str) -> bool:
     """Detect explicit or path-shaped technical keys in nested public copy."""
 
     key = _normalized_key(value)
+    segments = key.split("_")
     return (
         key in _TECHNICAL_STRUCTURE_KEYS
+        or (
+            len(segments) > 1
+            and any(segment in _TECHNICAL_STRUCTURE_TOKENS for segment in segments)
+        )
         or key.endswith(_TECHNICAL_STRUCTURE_SUFFIXES)
         or key.startswith(_TECHNICAL_STRUCTURE_PREFIXES)
     )
