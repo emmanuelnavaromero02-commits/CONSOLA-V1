@@ -42,9 +42,25 @@ def test_rejected_partial_count_cannot_remain_in_public_value() -> None:
     assert response.status_code == 200
     widget = response.json()["widgets"][0]
     assert (widget["status"], widget["value"], widget["rows"]) == (
-        "invalid_schema",
-        None,
-        [],
+        "partial",
+        90,
+        [
+            {
+                "label": "Comercio",
+                "company_name": "Comercio",
+                "location_name": None,
+                "department_name": None,
+                "value": None,
+                "count": None,
+                "headcount": 90,
+                "contractor_count": None,
+                "risk_factor": None,
+                "percentage": None,
+                "rate": None,
+                "status": None,
+                "fact": None,
+            }
+        ],
     )
     assert "gold_private" not in response.text
 

@@ -1,22 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.control_room_public_projection import (
     PublicProjectionModel,
     PublicScalar,
-    PublicSlugIdentity,
 )
 from app.schemas.control_room_summary_responses import (
     ControlRoomBusinessSummaryResponse,
-)
-from app.services.control_room.successfactors_gold_observations import (
-    _sf_gold_public_widget,
-)
-from app.services.control_room.successfactors_gold_public_rows import (
-    valid_gold_widget_id,
 )
 
 
@@ -218,38 +209,55 @@ class ControlRoomLegacyDashboardResponse(PublicProjectionModel):
     items: list[PublicBusinessItem] = Field(default_factory=list)
 
 
-class ControlRoomGoldWidget(PublicSlugIdentity):
+class _StrictGoldModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class ControlRoomGoldMetricRow(_StrictGoldModel):
+    label: str | None = None
+    company_name: str | None = None
+    location_name: str | None = None
+    department_name: str | None = None
+    value: PublicScalar = None
+    count: int | None = None
+    headcount: int | None = None
+    contractor_count: int | None = None
+    risk_factor: float | int | None = None
+    percentage: float | int | None = None
+    rate: float | int | None = None
+    status: str | None = None
+    fact: str | None = None
+
+
+class ControlRoomGoldWidget(_StrictGoldModel):
+    id: str | None = None
     title: str | None = None
     value: PublicScalar = None
     contractor_count: int | None = None
     risk_factor: float | int | None = None
     status: str | None = None
-    rows: list[PublicMetricRow] = Field(default_factory=list)
+    rows: list[ControlRoomGoldMetricRow] = Field(default_factory=list)
 
     @classmethod
     def project(cls, value: object) -> ControlRoomGoldWidget:
-        source = value if isinstance(value, Mapping) else {}
-        projected = super().project({**source, "id": None})
-        raw_id = source.get("id")
-        if not valid_gold_widget_id(raw_id):
-            return projected  # type: ignore[return-value]
-        return cls.model_validate({**projected.model_dump(), "id": raw_id})
+        from app.services.control_room.successfactors_gold_public_factory import (
+            build_public_gold_widget,
+        )
+
+        return build_public_gold_widget(value)
 
 
-class ControlRoomGoldKpisResponse(PublicProjectionModel):
+class ControlRoomGoldKpisResponse(_StrictGoldModel):
     generated_at: str | None = None
     widgets: list[ControlRoomGoldWidget] = Field(default_factory=list)
 
     @classmethod
     def project(cls, value: object) -> ControlRoomGoldKpisResponse:
-        raw = value if isinstance(value, Mapping) else {}
-        raw_widgets = raw.get("widgets")
-        widgets: list[object] = []
-        if isinstance(raw_widgets, (list, tuple)):
-            for raw_widget in raw_widgets:
-                if isinstance(raw_widget, Mapping):
-                    widgets.append(_sf_gold_public_widget(raw_widget))
-        return super().project({**raw, "widgets": widgets})  # type: ignore[return-value]
+        from app.services.control_room.successfactors_gold_public_factory import (
+            build_public_gold_response,
+        )
+
+        return build_public_gold_response(value)
 
 
 class ControlRoomLegacyAlertsResponse(PublicProjectionModel):

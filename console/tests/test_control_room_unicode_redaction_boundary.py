@@ -166,7 +166,7 @@ def test_non_finite_series_keep_positions_as_null_and_preserve_zero() -> None:
     assert "NaN" not in serialized and "Infinity" not in serialized
 
 
-def test_real_http_projection_returns_null_instead_of_500_for_non_finite() -> None:
+def test_real_http_projection_fails_closed_without_500_for_non_finite() -> None:
     raw = {
         "widgets": [
             {
@@ -201,11 +201,11 @@ def test_real_http_projection_returns_null_instead_of_500_for_non_finite() -> No
 
     assert response.status_code == 200
     widget = response.json()["widgets"][0]
-    assert widget["value"] is None and widget["risk_factor"] is None
-    assert widget["rows"][0]["value"] is None
-    assert widget["rows"][0]["risk_factor"] is None
-    assert widget["contractor_count"] == widget["rows"][0]["contractor_count"] == 0
-    assert widget["status"] == widget["rows"][0]["status"] == "ready"
+    assert widget["status"] == "invalid_schema"
+    assert widget["value"] is None
+    assert widget["risk_factor"] is None
+    assert widget["contractor_count"] is None
+    assert widget["rows"] == []
     assert "NaN" not in response.text and "Infinity" not in response.text
 
 

@@ -17,6 +17,19 @@ DIMENSIONS = (
     ("location", "location_name", "ubicación"),
     ("department", "department_name", "departamento"),
 )
+STATEMENT_SHAPED_LABELS = (
+    ("department", "department_name", "Create policy for annual leave"),
+    ("company", "company_name", "Analyze workforce trends"),
+    ("company", "company_name", "Refresh materialized view of talent"),
+    ("company", "company_name", "Values (people first)"),
+    ("company", "company_name", "Copy payroll to dashboard."),
+    ("company", "company_name", "Create table for annual planning."),
+    ("company", "company_name", "Comment on table design"),
+    ("company", "company_name", "Insert into culture"),
+    ("company", "company_name", "Create index of capabilities"),
+    ("company", "company_name", "Alter role responsibilities"),
+    ("company", "company_name", "Delete from shortlist."),
+)
 
 
 def _get(payload: dict):
@@ -120,9 +133,10 @@ def test_gold_http_redacts_technical_widget_titles(technical: str) -> None:
     assert normalized not in public_copy
     assert technical not in public_copy
     widget = response.json()["widgets"][0]
-    assert widget["status"] == "invalid_schema"
-    assert widget["value"] is None
-    assert widget["rows"] == []
+    assert widget["title"] == "Headcount por compania"
+    assert widget["status"] == "ready"
+    assert widget["value"] == 1
+    assert widget["rows"][0]["company_name"] == "Comercio"
 
 
 @pytest.mark.parametrize(
@@ -136,34 +150,23 @@ def test_gold_http_redacts_technical_widget_titles(technical: str) -> None:
         ("company", "company_name", "Gold Coast Operations", 5),
         ("company", "company_name", "GoldCoastOperations", 6),
         ("company", "company_name", "SuccessFactors México", 7),
-        ("department", "department_name", "Create policy for annual leave", 8),
         ("company", "company_name", "Gold-Leaf Logistics", 9),
         ("company", "company_name", "Silver-People Consulting", 10),
         ("company", "company_name", "Gold.Private Banking", 12),
         ("company", "company_name", "Gold.Coast Operations", 13),
         ("company", "company_name", "Silver.People Consulting", 14),
-        ("company", "company_name", "Analyze workforce trends", 1),
-        ("company", "company_name", "Refresh materialized view of talent", 1),
-        ("company", "company_name", "Values (people first)", 1),
-        ("company", "company_name", "Copy payroll to dashboard.", 1),
         ("company", "company_name", "Estado listo para revisión.", 1),
-        ("company", "company_name", "Create table for annual planning.", 1),
         ("company", "company_name", "SuccessFactorsTraining", 1),
         ("company", "company_name", "SQL Team", 1),
         ("company", "company_name", "3M", 1),
         ("company", "company_name", "7-Eleven", 1),
         ("company", "company_name", "Basic Training", 1),
-        ("company", "company_name", "Comment on table design", 1),
-        ("company", "company_name", "Insert into culture", 1),
-        ("company", "company_name", "Create index of capabilities", 1),
-        ("company", "company_name", "Alter role responsibilities", 1),
         (
             "company",
             "company_name",
             "Please choose the department from the company menu.",
             1,
         ),
-        ("company", "company_name", "Delete from shortlist.", 1),
         ("company", "company_name", "Use payroll insights", 1),
     ),
 )
@@ -189,13 +192,41 @@ def test_gold_http_preserves_legitimate_business_labels(
 
     assert response.status_code == 200
     widget = response.json()["widgets"][0]
-    expected = unicodedata.normalize("NFKC", label).strip()
     assert widget["status"] == "ready"
     assert widget["value"] == headcount
     assert len(widget["rows"]) == 1
     assert {
         key: widget["rows"][0][key] for key in ("label", name_key, "headcount")
-    } == {"label": expected, name_key: expected, "headcount": headcount}
+    } == {"label": label, name_key: label, "headcount": headcount}
+
+
+@pytest.mark.parametrize(("dimension", "name_key", "label"), STATEMENT_SHAPED_LABELS)
+def test_gold_http_fails_closed_for_untrusted_statement_shaped_labels(
+    dimension: str,
+    name_key: str,
+    label: str,
+) -> None:
+    response = _get(
+        {
+            "widgets": [
+                {
+                    "id": f"sf_headcount_by_{dimension}",
+                    "value": 1,
+                    "status": "ready",
+                    "rows": [{name_key: label, "headcount": 1}],
+                }
+            ]
+        }
+    )
+
+    assert response.status_code == 200
+    widget = response.json()["widgets"][0]
+    assert (widget["status"], widget["value"], widget["rows"]) == (
+        "invalid_schema",
+        None,
+        [],
+    )
+    assert label not in response.text
 
 
 def test_gold_http_preserves_exact_100_partial_90_and_hides_invalid_ten() -> None:

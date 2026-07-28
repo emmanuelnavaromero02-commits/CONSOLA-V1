@@ -244,7 +244,7 @@ def test_alphanumeric_business_name_remains_ready(business_name: str) -> None:
 
 
 @pytest.mark.parametrize("title", ("blocked", "invalid_schema", "(unknown)", "1.0"))
-def test_missing_or_diagnostic_title_invalidates_widget(title: str) -> None:
+def test_external_title_is_replaced_by_server_owned_copy(title: str) -> None:
     response = _get(
         {
             "widgets": [
@@ -261,11 +261,9 @@ def test_missing_or_diagnostic_title_invalidates_widget(title: str) -> None:
 
     assert response.status_code == 200
     widget = response.json()["widgets"][0]
-    assert (widget["status"], widget["value"], widget["rows"]) == (
-        "invalid_schema",
-        None,
-        [],
-    )
+    assert widget["title"] == "Headcount por compania"
+    assert (widget["status"], widget["value"]) == ("ready", 1)
+    assert widget["rows"][0]["company_name"] == "Comercio"
 
 
 def test_generic_headcount_synthesizes_and_validates_public_label() -> None:
