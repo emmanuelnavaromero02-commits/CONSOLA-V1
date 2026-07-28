@@ -4,14 +4,17 @@ import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { controlRoomExperienceSchema } from "@/lib/control-room/experience-contract";
+import {
+  controlRoomExperienceSchema,
+  controlRoomExperienceV2Schema,
+} from "@/lib/control-room/experience-contract";
 
 import {
   ControlRoomExperienceContent,
 } from "./ControlRoomExperiencePage";
 import { ExperienceLoadState } from "./ExperienceLoadState";
 
-const experience = controlRoomExperienceSchema.parse(
+const legacyExperience = controlRoomExperienceSchema.parse(
   JSON.parse(
     readFileSync(
       resolve(process.cwd(), "../contracts/fixtures/control-room-experience-v1.json"),
@@ -19,6 +22,14 @@ const experience = controlRoomExperienceSchema.parse(
     ),
   ),
 );
+const experience = controlRoomExperienceV2Schema.parse({
+  schema_version: "control-room-experience/v2",
+  generated_at: legacyExperience.generated_at,
+  sections: legacyExperience.sections.map(({ title, facts }) => ({
+    title,
+    facts: facts.map((fact) => ({ ...fact, actions: [] })),
+  })),
+});
 
 function renderContent(overrides = {}) {
   return renderToStaticMarkup(
@@ -27,6 +38,7 @@ function renderContent(overrides = {}) {
       refreshing={false}
       refreshFailed={false}
       onRefresh={vi.fn()}
+      onPreviewAction={vi.fn()}
       {...overrides}
     />,
   );
@@ -75,6 +87,47 @@ describe("ControlRoomExperienceContent", () => {
     expect(markup).not.toContain("Aprobar");
     expect(markup).not.toContain("Ejecutar");
     expect(markup).not.toContain("Vista previa");
+  });
+
+  it("does not manufacture a CTA when actions are empty", () => {
+    const markup = renderContent();
+
+    expect(markup).not.toContain("Generar preview");
+    expect(markup).not.toContain("Confirmar preview");
+  });
+
+  it("renders a disabled server action and its exact reason without enabling it", () => {
+    const firstFact = experience.sections[0].facts[0];
+    const markup = renderContent({
+      experience: {
+        ...experience,
+        sections: [
+          {
+            ...experience.sections[0],
+            facts: [
+              {
+                ...firstFact,
+                actions: [
+                  {
+                    action_handle: "a".repeat(64),
+                    label: "Solicitar revisión de owner",
+                    enabled: false,
+                    requires_approval: true,
+                    disabled_reason: "Actualiza los datos antes de continuar.",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(markup).toContain("Solicitar revisión de owner");
+    expect(markup).toContain("Actualiza los datos antes de continuar.");
+    expect(markup).toContain("Generar preview");
+    expect(markup).toContain("disabled");
+    expect(markup).not.toContain("a".repeat(64));
   });
 
   it("keeps the last payload after a failed manual update", () => {

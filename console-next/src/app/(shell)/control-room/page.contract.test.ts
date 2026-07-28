@@ -8,8 +8,10 @@ const sourceFiles = [
   "src/components/control-room/experience/ControlRoomExperiencePage.tsx",
   "src/components/control-room/experience/ExperienceSection.tsx",
   "src/components/control-room/experience/ExperienceFact.tsx",
+  "src/components/control-room/experience/ExperiencePreviewFlow.tsx",
   "src/lib/control-room/experience-client.ts",
   "src/lib/control-room/use-control-room-experience.ts",
+  "src/lib/control-room/use-control-room-experience-preview.ts",
 ];
 const source = sourceFiles
   .map((path) => readFileSync(join(process.cwd(), path), "utf8"))
@@ -26,9 +28,12 @@ describe("Control Room Business Experience boundary", () => {
     expect(page.split("\n").length).toBeLessThanOrEqual(180);
   });
 
-  it("uses only the Experience endpoint", () => {
-    const endpointMatches = source.match(/\/api\/control-room\/[a-z-]+/g) ?? [];
-    expect([...new Set(endpointMatches)]).toEqual(["/api/control-room/experience"]);
+  it("uses only the V2 Experience GET and action preview POST endpoints", () => {
+    const endpointMatches = source.match(/"\/api\/control-room\/[^\"]+"/g) ?? [];
+    expect([...new Set(endpointMatches)].sort()).toEqual([
+      '"/api/control-room/actions/preview"',
+      '"/api/control-room/experience/v2"',
+    ]);
   });
 
   it("disconnects every legacy root surface and mutation", () => {
@@ -46,6 +51,17 @@ describe("Control Room Business Experience boundary", () => {
       "/approve",
       "/execute",
       "/auto-run",
+      "execute_live",
+      "supervised-actions",
+      "/api/actions",
+      "/talent/actions/preview",
+      "/items/{item_id}",
+      "localStorage",
+      "sessionStorage",
+      "analytics",
+      "toast.",
+      "console.",
+      "window.location",
       "includeUnready",
       "Sync Now",
       "setInterval(",

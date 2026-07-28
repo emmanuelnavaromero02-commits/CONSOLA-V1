@@ -1,14 +1,14 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ControlRoomExperience } from "./experience-contract";
+import type { ControlRoomExperienceV2 } from "./experience-contract";
 import {
   controlRoomExperienceKey,
   controlRoomExperienceQueryOptions,
 } from "./use-control-room-experience";
 
-const payload: ControlRoomExperience = {
-  schema_version: "control-room-experience/v1",
+const payload: ControlRoomExperienceV2 = {
+  schema_version: "control-room-experience/v2",
   generated_at: "2026-07-25T12:30:00Z",
   sections: [],
 };
@@ -18,7 +18,12 @@ describe("controlRoomExperienceQueryOptions", () => {
     const fetcher = vi.fn(async () => payload);
     const options = controlRoomExperienceQueryOptions("workspace-a", fetcher);
 
-    expect(options.queryKey).toEqual(["control-room", "experience", "workspace-a"]);
+    expect(options.queryKey).toEqual([
+      "control-room",
+      "experience",
+      "v2",
+      "workspace-a",
+    ]);
     expect(controlRoomExperienceKey("workspace-b")).not.toEqual(options.queryKey);
     expect(options.retry).toBe(false);
     expect(options.refetchOnMount).toBe(true);

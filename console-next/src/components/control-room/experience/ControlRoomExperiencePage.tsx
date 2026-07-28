@@ -2,12 +2,17 @@
 
 import { AlertTriangle, RefreshCcw } from "lucide-react";
 
-import type { ControlRoomExperience } from "@/lib/control-room/experience-contract";
+import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import { experienceErrorKind } from "@/lib/control-room/experience-presenter";
 import { useControlRoomExperience } from "@/lib/control-room/use-control-room-experience";
+import {
+  type OpenExperiencePreview,
+  useControlRoomExperiencePreview,
+} from "@/lib/control-room/use-control-room-experience-preview";
 import { cn } from "@/lib/utils";
 
 import { ExperienceLoadState } from "./ExperienceLoadState";
+import { ExperiencePreviewFlow } from "./ExperiencePreviewFlow";
 import { ExperienceSection } from "./ExperienceSection";
 
 export function ControlRoomExperienceContent({
@@ -15,11 +20,13 @@ export function ControlRoomExperienceContent({
   refreshing,
   refreshFailed,
   onRefresh,
+  onPreviewAction,
 }: {
-  experience: ControlRoomExperience;
+  experience: ControlRoomExperienceV2;
   refreshing: boolean;
   refreshFailed: boolean;
   onRefresh: () => void;
+  onPreviewAction: OpenExperiencePreview;
 }) {
   const sections = experience.sections.filter((section) => section.facts.length > 0);
 
@@ -54,8 +61,9 @@ export function ControlRoomExperienceContent({
         ) : (
           sections.map((section, index) => (
             <ExperienceSection
-              key={`${section.domain}:${section.title}:${index}`}
+              key={`${section.title}:${index}`}
               section={section}
+              onPreviewAction={onPreviewAction}
             />
           ))
         )}
@@ -66,6 +74,7 @@ export function ControlRoomExperienceContent({
 
 export function ControlRoomExperiencePage() {
   const query = useControlRoomExperience();
+  const preview = useControlRoomExperiencePreview(query.data, query.workspaceId);
   const retry = () => void query.refetch();
 
   return (
@@ -76,12 +85,14 @@ export function ControlRoomExperiencePage() {
           refreshing={query.isFetching}
           refreshFailed={query.isRefetchError}
           onRefresh={retry}
+          onPreviewAction={preview.openPreview}
         />
       ) : query.isPending ? (
         <ExperienceLoadState state="loading" />
       ) : (
         <ExperienceLoadState state={experienceErrorKind(query.error)} onRetry={retry} />
       )}
+      <ExperiencePreviewFlow {...preview} />
     </main>
   );
 }

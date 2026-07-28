@@ -4,13 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 
 import { readCookie } from "@/lib/api";
 import { getControlRoomExperience } from "@/lib/control-room/experience-client";
-import type { ControlRoomExperience } from "@/lib/control-room/experience-contract";
+import type { ControlRoomExperienceV2 } from "@/lib/control-room/experience-contract";
 import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
-type ExperienceFetcher = () => Promise<ControlRoomExperience>;
+type ExperienceFetcher = () => Promise<ControlRoomExperienceV2>;
 
 export const controlRoomExperienceKey = (workspaceId: string | null) =>
-  ["control-room", "experience", workspaceId ?? "unscoped"] as const;
+  ["control-room", "experience", "v2", workspaceId ?? "unscoped"] as const;
 
 export function controlRoomExperienceQueryOptions(
   workspaceId: string | null,
@@ -30,5 +30,6 @@ export function controlRoomExperienceQueryOptions(
 
 export function useControlRoomExperience() {
   const workspaceId = readCookie(ACTIVE_WORKSPACE_COOKIE);
-  return useQuery(controlRoomExperienceQueryOptions(workspaceId));
+  const query = useQuery(controlRoomExperienceQueryOptions(workspaceId));
+  return { ...query, workspaceId };
 }
