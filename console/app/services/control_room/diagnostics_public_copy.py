@@ -22,8 +22,6 @@ from app.services.public_path_sensitivity import (
     decoded_form_contains_public_path_or_resource,
     public_encoding_scan,
 )
-from app.services.public_sql_select_lexer import tokenize_select_copy
-from app.services.public_sql_sensitivity import contains_public_sql
 
 
 DIAGNOSTICS_ENDPOINT = "diagnostics"
@@ -62,22 +60,8 @@ _PRODUCT_COPY_REGISTRY: Mapping[tuple[object, str, str], str] = MappingProxyType
     }
 )
 
-_AMBIGUOUS_COPY_HEADS = frozenset({"describe", "select", "show", "table", "truncate"})
 
-
-def _is_ambiguous_sql_copy(value: str) -> bool:
-    tokens = tokenize_select_copy(value)
-    return bool(
-        tokens
-        and len(tokens) == 2
-        and tokens[0].kind == "word"
-        and tokens[0].value.casefold() in _AMBIGUOUS_COPY_HEADS
-        and tokens[1].kind == "word"
-        and any(character.isalpha() for character in tokens[1].value)
-    )
-
-
-def _hard_hazard(value: str) -> bool:
+def _non_sql_hazard(value: str) -> bool:
     if len(value) > MAX_VISIBLE_COPY_SCAN_LENGTH or contains_unsafe_unicode(value):
         return True
     normalized = unicodedata.normalize("NFKC", value)
@@ -100,10 +84,6 @@ def _hard_hazard(value: str) -> bool:
                 or contains_structured_copy(candidate)
                 or contains_unsafe_unicode(candidate)
                 or is_diagnostic_state_copy(candidate)
-                or (
-                    contains_public_sql(canonical)
-                    and not _is_ambiguous_sql_copy(canonical)
-                )
             ):
                 return True
     return False
@@ -125,7 +105,7 @@ def _resolve_server_copy(
         literal = registry.get((copy_id, endpoint, field))
     except (AttributeError, TypeError):
         return None
-    if type(literal) is not str or not literal or _hard_hazard(literal):
+    if type(literal) is not str or not literal or _non_sql_hazard(literal):
         return None
     return literal
 
