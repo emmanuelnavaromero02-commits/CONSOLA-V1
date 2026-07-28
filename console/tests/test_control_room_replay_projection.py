@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from fastapi import HTTPException
 
@@ -24,15 +26,20 @@ def _response(execution_result: dict[str, object]) -> dict[str, object]:
             "execution_result": execution_result,
         },
     )
-    return reserved_action_response(
-        reservation,
-        item={"id": "item-1", "execution_status": "dry_run_validated"},
-        payload={},
-        action_run_public=lambda row: dict(row),
-        details=lambda value: dict(value or {}),
-        project_item=lambda item, _omega, **updates: {**item, **updates},
-        omega_builder=lambda item: item,
-    )
+    with patch(
+        "app.services.control_room.business_external_projection."
+        "reservation_stored_authority_audit_valid",
+        return_value=True,
+    ):
+        return reserved_action_response(
+            reservation,
+            item={"id": "item-1", "execution_status": "dry_run_validated"},
+            payload={},
+            action_run_public=lambda row: dict(row),
+            details=lambda value: dict(value or {}),
+            project_item=lambda item, _omega, **updates: {**item, **updates},
+            omega_builder=lambda item: item,
+        )
 
 
 def test_completed_internal_replay_projects_committed_execution() -> None:
@@ -74,3 +81,24 @@ def test_pending_external_projection_remains_blocked() -> None:
 
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "external_action_pending_reconciliation"
+
+
+def test_completed_replay_without_authority_audit_fails_closed() -> None:
+    with pytest.raises(HTTPException) as exc:
+        reserved_action_response(
+            ActionReservation(
+                id=8,
+                effective_key="cr-action:v1:invalid-audit",
+                state=ReservationState.COMPLETED,
+                row={"id": 8, "status": "completed"},
+            ),
+            item={"id": "item-1"},
+            payload={},
+            action_run_public=dict,
+            details=lambda value: dict(value or {}),
+            project_item=lambda item, *_args, **_kwargs: item,
+            omega_builder=lambda item: item,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "invalid_execution_authority_audit"

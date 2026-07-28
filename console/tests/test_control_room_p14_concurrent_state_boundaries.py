@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -8,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services import control_room_service
+from console.tests import control_room_execution_helpers as execution_helpers
 
 
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -15,7 +14,8 @@ WORKSPACE = "22222222-2222-2222-2222-222222222222"
 USER = {
     "id": 7,
     "email": "ops@example.com",
-    "role": "analyst",
+    "role": "admin",
+    "allowed_cartridges": ["sap_hcm"],
     "active_tenant_id": TENANT,
     "active_workspace_id": WORKSPACE,
 }
@@ -29,6 +29,7 @@ def _item() -> dict[str, Any]:
         "owner_user_id": 7,
         "kind": "anomaly",
         "cartridge": "sap_hcm",
+        "source_system": "sap_hcm",
         "source_dataset": "gold_people",
         "anomaly_type": "headcount_variance",
         "status": "open",
@@ -37,7 +38,7 @@ def _item() -> dict[str, Any]:
         "observed_value": 3,
         "population_count": 10,
         "observation_date": "2026-07-21",
-        "evidence_refs": [{"type": "dataset_row", "source_record_id": "row-1"}],
+        "evidence_refs": ["gold_people:row-1"],
         "alert_state": {"state": "open", "ticket": "initial"},
         "lesson_applications": [],
         "omega": {
@@ -263,38 +264,19 @@ async def test_outcome_and_event_share_one_connection_and_transaction() -> None:
 
 @pytest.mark.asyncio
 async def test_auto_run_revalidates_generation_before_final_event() -> None:
-    original = _item()
-    changed = {**original, "observed_value": 4}
-    pool = TransactionPool(locked_row=changed)
-    selected = {**original, "selected_option_id": "remediate", "status": "in_review"}
-    decided = {**selected, "decision_id": 42, "status": "decision_created"}
-    dry_run = {**decided, "execution_status": "dry_run_validated"}
+    item_lookup = AsyncMock(side_effect=AssertionError("item lookup reached"))
+    pool = AsyncMock(side_effect=AssertionError("database reached"))
+    audit = AsyncMock(side_effect=AssertionError("audit reached"))
     with (
-        patch.multiple(
-            control_room_service,
-            _item_for_mutation=AsyncMock(return_value=original),
-            record_item_step=AsyncMock(return_value={}),
-            select_item_option=AsyncMock(return_value={"item": selected}),
-            create_decision_for_item=AsyncMock(
-                return_value={"decision": {"id": 42}, "item": decided}
-            ),
-            action_preview=AsyncMock(
-                return_value={"execution": {"id": 1}, "result": {}}
-            ),
-            action_dry_run=AsyncMock(
-                return_value={"execution": {"id": 2}, "result": {}, "item": dry_run}
-            ),
-        ),
-        patch.object(
-            control_room_service,
-            "_action_templates_for_item",
-            return_value=[{"template_id": "create_followup_task"}],
-        ),
-        patch.object(control_room_service.auth, "pool", AsyncMock(return_value=pool)),
-        patch.object(control_room_service.audit_service, "record_event", AsyncMock()),
+        patch.object(control_room_service, "_item_for_mutation", item_lookup),
+        patch.object(control_room_service.auth, "pool", pool),
+        patch.object(control_room_service.audit_service, "record_event", audit),
     ):
         with pytest.raises(HTTPException) as error:
-            await control_room_service.run_auto_item(original["id"], USER)
+            await control_room_service.run_auto_item("business-race-1", USER)
 
     assert error.value.status_code == 409
-    assert not any("auto_run_completed" in sql for _, _, sql in pool.calls)
+    assert error.value.detail["code"] == "auto_run_disabled"
+    item_lookup.assert_not_awaited()
+    pool.assert_not_awaited()
+    audit.assert_not_awaited()

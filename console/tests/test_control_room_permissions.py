@@ -33,12 +33,8 @@ def test_control_room_mutations_use_specific_write_permission():
     router = read("console/app/routers/control_room.py")
 
     assert '"control_room.write"' in router
-    assert '"control_room.execute"' in router
     assert 'require_permission("workspace.access")' not in router
     for route in (
-        '"/items/{item_id}/action-preview"',
-        '"/items/{item_id}/action-dry-run"',
-        '"/items/{item_id}/execute"',
         '"/items/{item_id}/step"',
         '"/items/{item_id}/outcomes"',
         '"/items/{item_id}/lessons"',
@@ -46,10 +42,14 @@ def test_control_room_mutations_use_specific_write_permission():
         '"/thresholds"',
     ):
         assert route in router
-    execute_route = router.split('"/items/{item_id}/execute"', 1)[1].split("async def control_room_execute_item", 1)[0]
-    assert "Depends(require_csrf)" in execute_route
-    assert 'Depends(require_permission("control_room.write"))' in execute_route
-    assert 'Depends(require_permission("control_room.execute"))' in execute_route
+    for route in (
+        '"/items/{item_id}/action-preview"',
+        '"/items/{item_id}/action-dry-run"',
+        '"/items/{item_id}/execute"',
+    ):
+        route_contract = router.split(route, 1)[1].split(")\nasync def", 1)[0]
+        assert "status_code=410" in route_contract
+        assert "response_class=Response" in route_contract
 
 
 def test_control_room_permission_is_registered_and_workspace_admin_can_operate():
@@ -127,11 +127,11 @@ def _build_real_control_room_router_client(user: dict | None) -> TestClient:
     return TestClient(app, raise_server_exceptions=True)
 
 
-def test_real_control_room_execute_route_rejects_roles_before_service_call():
+def test_real_control_room_execute_route_is_gone_for_legacy_callers():
     for user in (
         {"id": 5, "email": "analyst@example.com", "role": "user", "workspace_role": "analyst"},
         {"id": 6, "email": "viewer@example.com", "role": "viewer"},
-        None,
+        {"id": 4, "email": "admin@example.com", "role": "super_admin"},
     ):
         with patch.object(control_room_service, "execute_item", new=AsyncMock()) as execute_item:
             response = _build_real_control_room_router_client(user).post(
@@ -139,7 +139,8 @@ def test_real_control_room_execute_route_rejects_roles_before_service_call():
                 headers={"authorization": "Bearer test"},
                 json={"template_id": "create_followup_task", "confirm_execute": True},
             )
-        assert response.status_code in {401, 403}
+        assert response.status_code == 410
+        assert response.content == b""
         execute_item.assert_not_awaited()
 
 
@@ -164,7 +165,7 @@ def test_write_permission_returns_403_before_diagnostic_lookup():
     create_decision.assert_not_awaited()
 
 
-def test_real_control_room_execute_route_requires_csrf_for_cookie_session():
+def test_retired_execute_route_never_reaches_service_for_cookie_session():
     user = {
         "id": 4,
         "email": "ws-admin@example.com",
@@ -176,7 +177,8 @@ def test_real_control_room_execute_route_requires_csrf_for_cookie_session():
             "/api/control-room/items/item-1/execute",
             json={"template_id": "create_followup_task", "confirm_execute": True},
         )
-    assert response.status_code == 403
+    assert response.status_code == 410
+    assert response.content == b""
     execute_item.assert_not_awaited()
 
 

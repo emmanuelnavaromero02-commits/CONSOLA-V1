@@ -6,9 +6,14 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
-from app.schemas.control_room_surfaces import SurfaceScope
 from app.services import control_room_service
 from app.services.control_room.business_projection import project_business_item
+
+
+@dataclass(frozen=True)
+class SurfaceScope:
+    tenant_id: str
+    workspace_id: str
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,7 @@ async def collect_surface_snapshot(
 
 
 __all__ = (
+    "SurfaceScope",
     "SurfaceSnapshot",
     "collect_surface_snapshot",
     "validate_snapshot_scope",

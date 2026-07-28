@@ -93,18 +93,20 @@ GET_PATHS = {
     ),
 }
 
-READINESS_SHAPE = {"cartridge_id": str, "series": list, "usable_count": int}
+READINESS_SHAPE = {
+    "status": str,
+    "series_count": int,
+    "series": list,
+    "usable_count": int,
+}
 ITEM_SHAPE = {"id": ITEM_ID, "kind": str, "omega": dict}
 PAYLOAD_SHAPES = {
     "/api/control-room/summary": {"total_anomalies": int, "sources": list},
     "/api/control-room/dashboard": {
-        "workspace": dict,
         "items": list,
         "summary": dict,
     },
     "/api/control-room/sap-successfactors/gold-kpis": {
-        "tenant_id": TENANT_ID,
-        "workspace_id": WORKSPACE_ID,
         "widgets": list,
     },
     "/api/control-room/sap-successfactors/talent-kpis": {
@@ -113,7 +115,6 @@ PAYLOAD_SHAPES = {
         "signals": list,
     },
     "/api/control-room/sap-successfactors/talent/overview": {
-        "metadata_readiness": dict,
         "nine_box": dict,
         "anomalies": dict,
     },
@@ -134,8 +135,8 @@ PAYLOAD_SHAPES = {
     },
     "/api/control-room/sap-successfactors/talent/metadata-readiness": {
         "status": str,
-        "entities": list,
-        "live_preflight": dict,
+        "components": list,
+        "source_check": dict,
     },
     "/api/control-room/banxico/readiness": READINESS_SHAPE,
     "/api/control-room/inegi/readiness": READINESS_SHAPE,
@@ -146,7 +147,6 @@ PAYLOAD_SHAPES = {
         "market_context": dict,
     },
     "/api/control-room/ops/summary": {
-        "tenant": str,
         "items": dict,
         "action_executions": dict,
     },
@@ -204,6 +204,7 @@ async def test_all_29_get_routes_are_asgi_pure_repeatable_and_concurrent():
     assert set(GET_PATHS).issubset(discovered)
     assert discovered - set(GET_PATHS) == {
         "/api/control-room/experience",
+        "/api/control-room/experience/v2",
         "/api/control-room/diagnostics",
     }
 

@@ -79,7 +79,7 @@ async def load_persisted_command_item(
     if owner_id is not None and persisted_owner not in {None, owner_id}:
         raise HTTPException(404, "control room item not found")
     return persisted_business_item(
-        row,
+        dict(row),
         expected_item_id=item_id,
         item_statuses=item_statuses,
         severity_weights=severity_weights,

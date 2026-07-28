@@ -5,13 +5,6 @@ const dateTimeSchema = z
   .datetime({ offset: true })
   .refine((value) => Number.isFinite(Date.parse(value)), "Invalid datetime");
 
-const scopeSchema = z
-  .object({
-    tenant_id: z.string(),
-    workspace_id: z.string(),
-  })
-  .strict();
-
 const metricSchema = z
   .object({
     name: z.string(),
@@ -31,7 +24,6 @@ const metricSchema = z
 
 const decisionSchema = z
   .object({
-    reference: z.number().int(),
     status: z.enum(["decision_created", "approved", "resolved"]),
   })
   .strict();
@@ -51,9 +43,6 @@ const factSchema = z
 
 const sectionSchema = z
   .object({
-    id: z.string(),
-    cartridge_id: z.string(),
-    module_id: z.string(),
     title: z.string(),
     domain: z.string(),
     facts: z.array(factSchema),
@@ -64,7 +53,6 @@ export const controlRoomExperienceSchema = z
   .object({
     schema_version: z.literal("control-room-experience/v1"),
     generated_at: dateTimeSchema,
-    scope: scopeSchema,
     sections: z.array(sectionSchema).default([]),
   })
   .strict();

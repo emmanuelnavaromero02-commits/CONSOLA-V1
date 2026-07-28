@@ -1,4 +1,5 @@
 """Central SSRF/egress guard for outbound HTTP(S) requests."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,10 @@ _DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 
 class EgressGuardError(ValueError):
     """Raised when an outbound URL is not safe to request."""
+
+    def __init__(self, message: str, *, request_dispatched: bool = False) -> None:
+        super().__init__(message)
+        self.request_dispatched = request_dispatched
 
 
 @dataclass
@@ -41,14 +46,23 @@ class PinnedHTTPResponse:
 
 
 def is_production_env() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _host_set(values: set[str] | list[str] | tuple[str, ...] | None) -> set[str]:
-    return {str(item).strip().rstrip(".").lower() for item in (values or []) if str(item).strip()}
+    return {
+        str(item).strip().rstrip(".").lower()
+        for item in (values or [])
+        if str(item).strip()
+    }
 
 
-def _cidr_list(values: list[str] | tuple[str, ...] | None) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+def _cidr_list(
+    values: list[str] | tuple[str, ...] | None,
+) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for item in values or []:
         try:
@@ -88,7 +102,12 @@ def resolve_url_address(
         return f"{label} host is required", ""
     allowed_hosts = _host_set(allow_private_hosts)
     allowed_http_hosts = _host_set(allow_http_hosts)
-    if require_https_in_prod and is_production_env() and parsed.scheme != "https" and host not in allowed_http_hosts:
+    if (
+        require_https_in_prod
+        and is_production_env()
+        and parsed.scheme != "https"
+        and host not in allowed_http_hosts
+    ):
         return f"{label} must use https in production", ""
     if parsed.username or parsed.password:
         return f"{label} must not include credentials", ""
@@ -119,7 +138,11 @@ def resolve_url_address(
             ip = ipaddress.ip_address(address)
         except ValueError:
             return f"{label} resolved to an invalid address", ""
-        if allow_private or host in allowed_hosts or any(ip in cidr for cidr in allowed_cidrs):
+        if (
+            allow_private
+            or host in allowed_hosts
+            or any(ip in cidr for cidr in allowed_cidrs)
+        ):
             first_address = first_address or address
             continue
         if _blocked_ip(ip):
@@ -142,14 +165,20 @@ def validate_url(url: str, **kwargs: Any) -> str:
     return str(url)
 
 
-async def _read_pinned_http_response(reader: asyncio.StreamReader, max_bytes: int) -> PinnedHTTPResponse:
+async def _read_pinned_http_response(
+    reader: asyncio.StreamReader, max_bytes: int
+) -> PinnedHTTPResponse:
     header_bytes = await reader.readuntil(b"\r\n\r\n")
     if len(header_bytes) > 65536:
-        raise EgressGuardError("response headers too large")
+        raise EgressGuardError("response headers too large", request_dispatched=True)
     header_text = header_bytes.decode("iso-8859-1", errors="replace")
     lines = header_text.split("\r\n")
     status_parts = lines[0].split(" ", 2)
-    status_code = int(status_parts[1]) if len(status_parts) > 1 and status_parts[1].isdigit() else 0
+    status_code = (
+        int(status_parts[1])
+        if len(status_parts) > 1 and status_parts[1].isdigit()
+        else 0
+    )
     headers: dict[str, str] = {}
     for line in lines[1:]:
         if not line or ":" not in line:
@@ -159,7 +188,7 @@ async def _read_pinned_http_response(reader: asyncio.StreamReader, max_bytes: in
 
     content_length = headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-        raise EgressGuardError("response exceeds size limit")
+        raise EgressGuardError("response exceeds size limit", request_dispatched=True)
     body = bytearray()
     if headers.get("transfer-encoding", "").lower() == "chunked":
         while True:
@@ -169,7 +198,9 @@ async def _read_pinned_http_response(reader: asyncio.StreamReader, max_bytes: in
                 await reader.readline()
                 break
             if len(body) + chunk_size > max_bytes:
-                raise EgressGuardError("response exceeds size limit")
+                raise EgressGuardError(
+                    "response exceeds size limit", request_dispatched=True
+                )
             body.extend(await reader.readexactly(chunk_size))
             await reader.readexactly(2)
     elif content_length and content_length.isdigit():
@@ -181,8 +212,12 @@ async def _read_pinned_http_response(reader: asyncio.StreamReader, max_bytes: in
                 break
             body.extend(chunk)
             if len(body) > max_bytes:
-                raise EgressGuardError("response exceeds size limit")
-    return PinnedHTTPResponse(status_code=status_code, headers=headers, content=bytes(body))
+                raise EgressGuardError(
+                    "response exceeds size limit", request_dispatched=True
+                )
+    return PinnedHTTPResponse(
+        status_code=status_code, headers=headers, content=bytes(body)
+    )
 
 
 def _read_pinned_http_response_sync(stream: Any, max_bytes: int) -> PinnedHTTPResponse:
@@ -195,14 +230,20 @@ def _read_pinned_http_response_sync(stream: Any, max_bytes: int) -> PinnedHTTPRe
         header_parts.append(line)
         header_size += len(line)
         if header_size > 65536:
-            raise EgressGuardError("response headers too large")
+            raise EgressGuardError(
+                "response headers too large", request_dispatched=True
+            )
         if line in {b"\r\n", b"\n"}:
             break
     header_bytes = b"".join(header_parts)
     header_text = header_bytes.decode("iso-8859-1", errors="replace")
     lines = header_text.split("\r\n")
     status_parts = lines[0].split(" ", 2) if lines else []
-    status_code = int(status_parts[1]) if len(status_parts) > 1 and status_parts[1].isdigit() else 0
+    status_code = (
+        int(status_parts[1])
+        if len(status_parts) > 1 and status_parts[1].isdigit()
+        else 0
+    )
     headers: dict[str, str] = {}
     for line in lines[1:]:
         if not line or ":" not in line:
@@ -212,7 +253,7 @@ def _read_pinned_http_response_sync(stream: Any, max_bytes: int) -> PinnedHTTPRe
 
     content_length = headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-        raise EgressGuardError("response exceeds size limit")
+        raise EgressGuardError("response exceeds size limit", request_dispatched=True)
     body = bytearray()
     if headers.get("transfer-encoding", "").lower() == "chunked":
         while True:
@@ -222,7 +263,9 @@ def _read_pinned_http_response_sync(stream: Any, max_bytes: int) -> PinnedHTTPRe
                 stream.readline(65536)
                 break
             if len(body) + chunk_size > max_bytes:
-                raise EgressGuardError("response exceeds size limit")
+                raise EgressGuardError(
+                    "response exceeds size limit", request_dispatched=True
+                )
             body.extend(stream.read(chunk_size))
             stream.read(2)
     elif content_length and content_length.isdigit():
@@ -234,8 +277,12 @@ def _read_pinned_http_response_sync(stream: Any, max_bytes: int) -> PinnedHTTPRe
                 break
             body.extend(chunk)
             if len(body) > max_bytes:
-                raise EgressGuardError("response exceeds size limit")
-    return PinnedHTTPResponse(status_code=status_code, headers=headers, content=bytes(body))
+                raise EgressGuardError(
+                    "response exceeds size limit", request_dispatched=True
+                )
+    return PinnedHTTPResponse(
+        status_code=status_code, headers=headers, content=bytes(body)
+    )
 
 
 async def pinned_request(
@@ -256,7 +303,9 @@ async def pinned_request(
     require_https_in_prod: bool = True,
 ) -> PinnedHTTPResponse:
     if json_body is not None:
-        body = json.dumps(json_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        body = json.dumps(json_body, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
         content_type = content_type or "application/json"
     reason, address = resolve_url_address(
         url,
@@ -297,10 +346,17 @@ async def pinned_request(
             request_headers["Content-Length"] = str(len(body))
             if content_type:
                 request_headers["Content-Type"] = content_type
-        header_blob = "".join(f"{name}: {value}\r\n" for name, value in request_headers.items())
-        writer.write(f"{method.upper()} {path} HTTP/1.1\r\n{header_blob}\r\n".encode("utf-8") + body)
+        header_blob = "".join(
+            f"{name}: {value}\r\n" for name, value in request_headers.items()
+        )
+        writer.write(
+            f"{method.upper()} {path} HTTP/1.1\r\n{header_blob}\r\n".encode("utf-8")
+            + body
+        )
         await asyncio.wait_for(writer.drain(), timeout=timeout)
-        return await asyncio.wait_for(_read_pinned_http_response(reader, max_bytes), timeout=timeout)
+        return await asyncio.wait_for(
+            _read_pinned_http_response(reader, max_bytes), timeout=timeout
+        )
     finally:
         writer.close()
         try:
@@ -327,7 +383,9 @@ def pinned_request_sync(
     require_https_in_prod: bool = True,
 ) -> PinnedHTTPResponse:
     if json_body is not None:
-        body = json.dumps(json_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        body = json.dumps(json_body, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
         content_type = content_type or "application/json"
     reason, address = resolve_url_address(
         url,
@@ -363,8 +421,13 @@ def pinned_request_sync(
             request_headers["Content-Length"] = str(len(body))
             if content_type:
                 request_headers["Content-Type"] = content_type
-        header_blob = "".join(f"{name}: {value}\r\n" for name, value in request_headers.items())
-        sock.sendall(f"{method.upper()} {path} HTTP/1.1\r\n{header_blob}\r\n".encode("utf-8") + body)
+        header_blob = "".join(
+            f"{name}: {value}\r\n" for name, value in request_headers.items()
+        )
+        sock.sendall(
+            f"{method.upper()} {path} HTTP/1.1\r\n{header_blob}\r\n".encode("utf-8")
+            + body
+        )
         with sock.makefile("rb") as stream:
             return _read_pinned_http_response_sync(stream, max_bytes)
     finally:

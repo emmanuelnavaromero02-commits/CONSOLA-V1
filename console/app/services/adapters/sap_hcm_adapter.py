@@ -89,7 +89,10 @@ class SapHcmAdapter(BaseAdapter):
 
         status_code = response.status_code
         outcome_ambiguous = (
-            status_code < 200 or status_code == 429 or status_code >= 500
+            status_code < 200
+            or 300 <= status_code < 400
+            or status_code == 429
+            or status_code >= 500
         )
         if outcome_ambiguous:
             CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)

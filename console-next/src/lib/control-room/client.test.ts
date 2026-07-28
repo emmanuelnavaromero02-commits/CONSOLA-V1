@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
 import {
+  CONTROL_ROOM_PATHS,
   getControlRoomActivity,
   getControlRoomDashboard,
   getControlRoomImpact,
@@ -17,7 +18,6 @@ import {
   getSuccessFactorsTalentMetadataReadiness,
   getSuccessFactorsTalentNineBox,
   getSuccessFactorsTalentOverview,
-  previewSuccessFactorsTalentAction,
 } from "./client";
 
 vi.mock("@/lib/api", () => ({
@@ -74,24 +74,20 @@ describe("control-room client", () => {
 
   it("uses native SuccessFactors Talent endpoints without embedding HTML", async () => {
     apiMock.get.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
-    apiMock.post.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
 
     await getSuccessFactorsTalentOverview();
     await getSuccessFactorsTalentNineBox();
     await getSuccessFactorsTalentBoxRoster("alto impacto/core");
     await getSuccessFactorsTalentAnomalies();
     await getSuccessFactorsTalentMetadataReadiness();
-    await previewSuccessFactorsTalentAction({ action_id: "talent_calibration_sensitivity", box_id: "core" });
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/sap-successfactors/talent/overview");
     expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/sap-successfactors/talent/9box");
     expect(apiMock.get).toHaveBeenNthCalledWith(3, "/api/control-room/sap-successfactors/talent/9box/alto%20impacto%2Fcore");
     expect(apiMock.get).toHaveBeenNthCalledWith(4, "/api/control-room/sap-successfactors/talent/anomalies");
     expect(apiMock.get).toHaveBeenNthCalledWith(5, "/api/control-room/sap-successfactors/talent/metadata-readiness");
-    expect(apiMock.post).toHaveBeenCalledWith(
-      "/api/control-room/sap-successfactors/talent/actions/preview",
-      { action_id: "talent_calibration_sensitivity", box_id: "core" },
-    );
+    expect(apiMock.post).not.toHaveBeenCalled();
+    expect(JSON.stringify(CONTROL_ROOM_PATHS)).not.toContain("talent/actions/preview");
   });
 
   it("uses scoped market validation read and run endpoints", async () => {

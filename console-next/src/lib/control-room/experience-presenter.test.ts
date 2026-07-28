@@ -26,13 +26,13 @@ describe("experience presenter", () => {
   });
 
   it("exposes only approved decision labels", () => {
-    expect(decisionLabel({ reference: 1, status: "decision_created" })).toBe(
+    expect(decisionLabel({ status: "decision_created" })).toBe(
       "Decisión registrada",
     );
-    expect(decisionLabel({ reference: 2, status: "approved" })).toBe(
+    expect(decisionLabel({ status: "approved" })).toBe(
       "Decisión aprobada",
     );
-    expect(decisionLabel({ reference: 3, status: "resolved" })).toBe(
+    expect(decisionLabel({ status: "resolved" })).toBe(
       "Decisión resuelta",
     );
   });

@@ -10,6 +10,10 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
 )
 from app.services.control_room.business_external_effect import RemoteSideEffectCommitted
+from control_room_external_authority import (
+    external_authority,
+    patch_started_revalidation,
+)
 
 
 USER = {
@@ -165,8 +169,13 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
         state=ReservationState.ACQUIRED,
         row={},
     )
+    item = {**_item(), "decision_id": 42}
+    template = {"template_id": "notify_manager", "cartridge_id": "sap_hcm"}
+    payload = {}
+    authority = external_authority(item, template, payload)
 
     with (
+        patch_started_revalidation(control_room_service, authority),
         patch.object(
             control_room_service.WriteBackAdapterFactory,
             "get_adapter",
@@ -185,14 +194,6 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
             "_complete_execute_reservation",
             AsyncMock(return_value={"id": 42}),
         ),
-        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
-        patch.object(
-            control_room_service,
-            "lock_pending_action_reservation",
-            AsyncMock(
-                return_value={"metadata": {"remote_attempt": {"status": "started"}}}
-            ),
-        ),
         patch.object(control_room_service, "_set_execution_status", AsyncMock()),
         patch.object(control_room_service, "_record_item_event", AsyncMock()),
         patch.object(control_room_service, "_project_public_item") as project_item,
@@ -201,12 +202,13 @@ async def test_external_writeback_does_not_return_success_after_lesson_insert_ze
             await control_room_service._execute_external_writeback(
                 pool,
                 user=USER,
-                item={**_item(), "decision_id": 42},
-                template={"template_id": "notify_manager", "cartridge_id": "sap_hcm"},
-                payload={},
+                item=item,
+                template=template,
+                payload=payload,
                 reservation=reservation,
                 ip=None,
                 user_agent=None,
+                authority=authority,
             )
 
     assert exc.value.cause_type == "RuntimeError"

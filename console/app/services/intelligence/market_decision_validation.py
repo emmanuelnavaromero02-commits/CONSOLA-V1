@@ -202,6 +202,7 @@ def _report(
             "distribution": market.get("bounds") or {},
         },
         "simulation": {
+            "available": bool(simulation),
             "simulation_id": (simulation or {}).get("simulation_id"),
             "model_version": (simulation or {}).get("model_version"),
             "output_metric": (simulation or {}).get("output_metric"),
@@ -220,6 +221,7 @@ def _report(
             "evidence_policy": "evidence_only",
         },
         "orchestration": {
+            "available": bool(orchestration),
             "orchestration_id": (orchestration or {}).get("orchestration_id"),
             "problem_type": (orchestration or {}).get("problem_type"),
             "action_recommended": bool((orchestration or {}).get("action_recommended")),

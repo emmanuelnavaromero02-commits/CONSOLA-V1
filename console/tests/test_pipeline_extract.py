@@ -1186,6 +1186,11 @@ async def test_sync_now_continues_after_active_run_reconciles_terminal(
     async def record(**_kwargs):
         return None
 
+    async def seed_datasets(**kwargs):
+        assert kwargs["cartridge"] == "sap_successfactors"
+        assert kwargs["user"] is user
+        return {"status": "success", "seeded_rows": 59}
+
     monkeypatch.setattr(console_main, "_resolve_scoped_operation_cartridge", resolve)
     monkeypatch.setattr(console_main, "_fetch_active_sync_run", active)
     monkeypatch.setattr(console_main, "_upsert_sync_run", upsert)
@@ -1193,6 +1198,7 @@ async def test_sync_now_continues_after_active_run_reconciles_terminal(
     monkeypatch.setattr(console_main, "_build_sync_run_status", build_status)
     monkeypatch.setattr(console_main, "_trigger_airflow_extract_dag", trigger)
     monkeypatch.setattr(console_main, "_record_dag_pipeline_trigger", record)
+    monkeypatch.setattr(console_main, "_ensure_sync_packaged_datasets", seed_datasets)
 
     result = await console_main.api_cartridge_sync_now(
         "sap_successfactors",

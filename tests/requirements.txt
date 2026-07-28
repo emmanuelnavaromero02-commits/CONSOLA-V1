@@ -25,7 +25,9 @@ asyncpg>=0.29
 minio>=7.2
 pandas>=2.1
 pyarrow>=15.0
-duckdb>=0.10
+# Parse-only SQL oracle used by the Control Room policy tests. Keep this exact:
+# runtime classification is derived from this grammar but never imports DuckDB.
+duckdb==1.2.2
 # fastmcp-slim provides the importable `fastmcp` package. We spell out the
 # client/server extra dependencies below to avoid pip backtracking through the
 # fastmcp metapackage / extras self-dependency.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -13,6 +13,7 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_action_reservation,
 )
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_external_projection import (
     reserved_action_response,
 )
@@ -22,6 +23,8 @@ def _item() -> dict:
     return {
         "id": "item-1",
         "kind": "anomaly",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "workspace_id": "workspace-a",
         "decision_id": 42,
         "source_dataset": "gold_people",
@@ -29,12 +32,22 @@ def _item() -> dict:
         "metric_type": "count",
         "population_count": 10,
         "observation_date": "2026-07-20",
+        "details": {"writeback_path": "/test/writeback"},
+        "metadata": {"connection": {"base_url": "https://sap.example.test"}},
     }
 
 
 @pytest.mark.asyncio
 async def test_stale_remote_attempt_reservation_is_not_reclaimed():
     stale = datetime.now(UTC) - timedelta(minutes=10)
+    item = _item()
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=item,
+        template_id="prepare_hcm_access_review",
+        operation="execute",
+        authorization_contract=None,
+    )
     db = AsyncMock()
     db.fetchrow.side_effect = [
         None,
@@ -42,7 +55,10 @@ async def test_stale_remote_attempt_reservation_is_not_reclaimed():
             "id": 7,
             "status": "pending",
             "updated_at": stale,
-            "metadata": {"remote_attempt": {"status": "started"}},
+            "metadata": {
+                "reservation_contract": contract,
+                "remote_attempt": {"status": "started"},
+            },
         },
     ]
 
@@ -50,8 +66,8 @@ async def test_stale_remote_attempt_reservation_is_not_reclaimed():
         db,
         tenant_id="tenant-a",
         workspace_id="workspace-a",
-        item=_item(),
-        template_id="external-template",
+        item=item,
+        template_id="prepare_hcm_access_review",
         adapter_name="IdempotentAdapter",
         operation="execute",
     )
@@ -88,7 +104,7 @@ def test_replay_of_remote_attempt_returns_reconciliation_code():
 
 
 @pytest.mark.asyncio
-async def test_external_execution_requires_durable_attempt_marker():
+async def test_external_execution_requires_signed_authority_before_remote_work():
     reservation = ActionReservation(
         id=7,
         effective_key="cr-action:v1:missing-marker",
@@ -96,17 +112,17 @@ async def test_external_execution_requires_durable_attempt_marker():
         row={},
     )
     audit = AsyncMock()
+    factory = Mock()
     with (
-        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
-        patch.object(
-            control_room_service,
-            "lock_pending_action_reservation",
-            AsyncMock(return_value={"metadata": {}}),
-        ),
         patch.object(
             control_room_service,
             "_record_writeback_audit_event",
             audit,
+        ),
+        patch.object(
+            control_room_service.WriteBackAdapterFactory,
+            "get_adapter",
+            factory,
         ),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -129,7 +145,9 @@ async def test_external_execution_requires_durable_attempt_marker():
             )
 
     assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "invalid_execution_authority_audit"
     audit.assert_not_awaited()
+    factory.assert_not_called()
 
 
 def test_sap_hcm_sends_idempotency_key_as_header():

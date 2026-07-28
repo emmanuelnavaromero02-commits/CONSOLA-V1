@@ -10,7 +10,6 @@ import {
 const payload: ControlRoomExperience = {
   schema_version: "control-room-experience/v1",
   generated_at: "2026-07-25T12:30:00Z",
-  scope: { tenant_id: "tenant-a", workspace_id: "workspace-a" },
   sections: [],
 };
 
@@ -61,21 +60,16 @@ describe("controlRoomExperienceQueryOptions", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const fetcher = vi.fn(async (workspaceId: string | null) => ({
-      ...payload,
-      scope: { ...payload.scope, workspace_id: workspaceId ?? "unscoped" },
-    }));
+    const fetcherA = vi.fn(async () => payload);
+    const fetcherB = vi.fn(async () => payload);
 
-    await client.fetchQuery(controlRoomExperienceQueryOptions("workspace-a", fetcher));
-    await client.fetchQuery(controlRoomExperienceQueryOptions("workspace-b", fetcher));
+    await client.fetchQuery(controlRoomExperienceQueryOptions("workspace-a", fetcherA));
+    await client.fetchQuery(controlRoomExperienceQueryOptions("workspace-b", fetcherB));
 
-    expect(fetcher.mock.calls).toEqual([["workspace-a"], ["workspace-b"]]);
-    expect(client.getQueryData(controlRoomExperienceKey("workspace-a"))).toMatchObject({
-      scope: { workspace_id: "workspace-a" },
-    });
-    expect(client.getQueryData(controlRoomExperienceKey("workspace-b"))).toMatchObject({
-      scope: { workspace_id: "workspace-b" },
-    });
+    expect(fetcherA).toHaveBeenCalledWith();
+    expect(fetcherB).toHaveBeenCalledWith();
+    expect(client.getQueryData(controlRoomExperienceKey("workspace-a"))).toEqual(payload);
+    expect(client.getQueryData(controlRoomExperienceKey("workspace-b"))).toEqual(payload);
     client.clear();
   });
 

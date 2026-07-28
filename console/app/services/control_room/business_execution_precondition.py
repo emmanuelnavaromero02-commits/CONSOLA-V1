@@ -7,6 +7,16 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.control_room.business_access import workspace_scope
+from app.services.control_room.business_action_replay import (
+    action_reservation_contract,
+    canonical_json,
+)
+from app.services.control_room.business_action_runtime_contract import (
+    runtime_action_digests,
+)
+from app.services.control_room.business_reservation_lease import (
+    reservation_lease_token,
+)
 from app.services.control_room.cache_identity import authorization_cache_identity
 from app.services.control_room.business_workflow_provenance import (
     ELIGIBILITY_POLICY_VERSION,
@@ -19,12 +29,13 @@ DRY_RUN_CONTRACT_KEY = "business_dry_run_contract"
 
 def dry_run_contract(item: Mapping[str, Any], *, template_id: str) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "policy_version": ELIGIBILITY_POLICY_VERSION,
         "item_id": str(item.get("id") or item.get("item_id") or "").strip(),
         "decision_id": item.get("decision_id"),
         "template_id": str(template_id or "").strip(),
         "fingerprint": business_observation_fingerprint(item),
+        **runtime_action_digests(item, template_id=template_id),
     }
 
 
@@ -38,6 +49,16 @@ def _missing_dry_run() -> HTTPException:
         {
             "code": "matching_dry_run_required",
             "message": "a matching successful dry-run is required before execution",
+        },
+    )
+
+
+def _business_state_changed() -> HTTPException:
+    return HTTPException(
+        409,
+        {
+            "code": "item_business_state_changed",
+            "message": "control room item changed; reload before mutating",
         },
     )
 
@@ -79,11 +100,14 @@ async def lock_pending_action_reservation(
     template_id: str,
     reservation_id: int,
     effective_key: str,
+    input_payload: Mapping[str, Any] | None = None,
+    authority_audit: Mapping[str, Any] | None = None,
+    lease_token: str | None = None,
 ) -> dict[str, Any]:
     _tenant_id, workspace_id = workspace_scope(user)
     row = await conn.fetchrow(
         """
-        SELECT id, status, idempotency_key, metadata
+        SELECT id, status, idempotency_key, metadata, updated_at
           FROM action_runs
          WHERE workspace_id = $1::uuid
            AND id = $2
@@ -96,21 +120,30 @@ async def lock_pending_action_reservation(
     )
     if not row or str(row.get("status") or "") != "pending":
         raise HTTPException(409, "action reservation is no longer pending")
-    stored = _mapping(row.get("metadata")).get("reservation_contract")
-    expected = {
-        "policy_version": ELIGIBILITY_POLICY_VERSION,
-        "workspace_id": workspace_id,
-        "item_id": str(item.get("id") or item.get("item_id") or "").strip(),
-        "fingerprint": business_observation_fingerprint(item),
-        "decision_id": item.get("decision_id"),
-        "template_id": str(template_id or "").strip(),
-        "operation": "execute",
-        "authorization": execution_authorization_contract(user),
-    }
-    if not isinstance(stored, Mapping) or any(
-        stored.get(key) != value for key, value in expected.items()
+    if lease_token is not None and (
+        not lease_token or reservation_lease_token(row) != lease_token
     ):
-        raise HTTPException(409, "action reservation contract changed")
+        raise _business_state_changed()
+    metadata = _mapping(row.get("metadata"))
+    stored = metadata.get("reservation_contract")
+    expected = action_reservation_contract(
+        workspace_id=workspace_id,
+        item=item,
+        template_id=template_id,
+        operation="execute",
+        authorization_contract=execution_authorization_contract(user),
+        input_payload=input_payload,
+    )
+    if not isinstance(stored, Mapping) or canonical_json(stored) != canonical_json(
+        expected
+    ):
+        raise _business_state_changed()
+    if authority_audit is not None:
+        stored_authority = metadata.get("authority_audit")
+        if not isinstance(stored_authority, Mapping) or canonical_json(
+            stored_authority
+        ) != canonical_json(authority_audit):
+            raise _business_state_changed()
     return dict(row)
 
 

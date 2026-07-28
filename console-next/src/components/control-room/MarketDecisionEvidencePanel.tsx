@@ -86,8 +86,8 @@ export function MarketDecisionEvidenceView({ payload, loading, running, error, o
   const orchestration = payload?.orchestration;
   const sourceStatus = source?.input_status === "ready" ? "ready" : source?.input_status || "insufficient_data";
   const marketStatus = market?.freshness_status === "ready" && simulation?.market_evidence_count ? "ready" : "insufficient_data";
-  const simulationStatus = simulation?.simulation_id ? "ready" : "insufficient_data";
-  const orchestrationStatus = orchestration?.orchestration_id ? "ready" : "insufficient_data";
+  const simulationStatus = simulation?.available ? "ready" : "insufficient_data";
+  const orchestrationStatus = orchestration?.available ? "ready" : "insufficient_data";
 
   return (
     <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423]" aria-label="Validación de contexto externo">
@@ -128,7 +128,7 @@ export function MarketDecisionEvidenceView({ payload, loading, running, error, o
         <StageRow
           icon={BrainCircuit}
           title="Monte Carlo"
-          detail={simulation?.simulation_id ? `Banda P10–P90: ${number(simulation.p10)}–${number(simulation.p90)}` : "Pendiente de ejecución manual"}
+          detail={simulation?.available ? `Banda P10–P90: ${number(simulation.p10)}–${number(simulation.p90)}` : "Pendiente de ejecución manual"}
           status={simulationStatus}
         />
         <StageRow

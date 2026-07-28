@@ -4,6 +4,12 @@ import re
 from dataclasses import dataclass
 from itertools import islice
 
+from app.schemas.control_room_diagnostic_enums import (
+    DiagnosticInstallationStatus,
+    DiagnosticItemStatus,
+    DiagnosticReadinessStatus,
+    DiagnosticSourceStatus,
+)
 from app.services.control_room.business_copy_detection import (
     MAX_VISIBLE_COPY_SCAN_LENGTH,
     canonicalize_detection_separators,
@@ -25,6 +31,18 @@ _STATE_FIELDS = (
 )
 _PAID_LEAVE_PREFIX = ("sin", "permiso", "retribuido")
 _PAID_LEAVE_METRICS = frozenset({"ausencia", "ausencias"})
+_STATE_VALUE_ENUMS = (
+    DiagnosticInstallationStatus,
+    DiagnosticItemStatus,
+    DiagnosticReadinessStatus,
+    DiagnosticSourceStatus,
+)
+_DIAGNOSTIC_STATE_VALUES = frozenset(
+    member.value.replace("_", " ")
+    for enum_type in _STATE_VALUE_ENUMS
+    for member in enum_type
+) | frozenset({"degraded", "failure", "success"})
+_MACHINE_STATE_VALUE = re.compile(r"(?i)^[a-z0-9]+(?:_[a-z0-9]+)+$")
 
 
 @dataclass(frozen=True)
@@ -82,7 +100,7 @@ def _matches(
     return True
 
 
-def _has_nonempty_assignment(value: str, start: int) -> bool:
+def _assignment_start(value: str, start: int) -> int | None:
     cursor = start
     while cursor < len(value) and value[cursor].isspace():
         cursor += 1
@@ -90,10 +108,25 @@ def _has_nonempty_assignment(value: str, start: int) -> bool:
     if cursor < len(value) and value[cursor] in _SEPARATOR_CHARACTERS:
         cursor += 1
     elif not has_whitespace_separator:
-        return False
+        return None
     while cursor < len(value) and value[cursor].isspace():
         cursor += 1
-    return cursor < len(value)
+    return cursor if cursor < len(value) else None
+
+
+def _is_diagnostic_assignment(value: str, start: int) -> bool:
+    assignment_start = _assignment_start(value, start)
+    if assignment_start is None:
+        return False
+    suffix = value[assignment_start:]
+    suffix_tokens = tuple(_WORD.finditer(suffix))
+    if not suffix_tokens:
+        return True
+    normalized_value = " ".join(token.group() for token in suffix_tokens)
+    return any(
+        normalized_value == diagnostic or normalized_value.startswith(f"{diagnostic} ")
+        for diagnostic in _DIAGNOSTIC_STATE_VALUES
+    ) or bool(_MACHINE_STATE_VALUE.fullmatch(suffix.strip()))
 
 
 def is_diagnostic_state_copy(value: str) -> bool:
@@ -106,7 +139,7 @@ def is_diagnostic_state_copy(value: str) -> bool:
             if not _matches(normalized, tokens, start, field):
                 continue
             field_end = tokens[start + len(field) - 1].end
-            if _has_nonempty_assignment(normalized, field_end):
+            if _is_diagnostic_assignment(normalized, field_end):
                 return True
     return False
 

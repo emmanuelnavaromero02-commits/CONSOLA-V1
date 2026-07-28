@@ -110,7 +110,12 @@ def _validate_owner(
         raise HTTPException(404, "control room item not found")
 
 
-def _validate_mutation_state(row: Mapping[str, Any], item: Mapping[str, Any]) -> None:
+def _validate_mutation_state(
+    row: Mapping[str, Any],
+    item: Mapping[str, Any],
+    *,
+    allow_completed_execution_replay: bool,
+) -> None:
     defaults = {"status": "open", "execution_status": "not_started"}
     for field in ("decision_id", "selected_option_id", "status", "execution_status"):
         if field not in item:
@@ -120,6 +125,13 @@ def _validate_mutation_state(row: Mapping[str, Any], item: Mapping[str, Any]) ->
         if field in defaults:
             persisted = persisted or defaults[field]
             resolved = resolved or defaults[field]
+        if (
+            allow_completed_execution_replay
+            and field == "execution_status"
+            and str(persisted).lower() == "executed"
+            and str(resolved).lower() == "dry_run_validated"
+        ):
+            continue
         if str(persisted or "") != str(resolved or ""):
             raise _changed()
 
@@ -157,6 +169,7 @@ async def lock_authoritative_business_item(
     item: Mapping[str, Any],
     allow_missing: bool = False,
     allow_diagnostic_transition: bool = False,
+    allow_completed_execution_replay: bool = False,
     decision_id: int | None = None,
     allowed_stages: Collection[WorkflowStage | str] | None = None,
 ) -> dict[str, Any] | None:
@@ -183,7 +196,11 @@ async def lock_authoritative_business_item(
         if not allow_diagnostic_transition or not workflow_columns_unlinked(locked):
             raise _changed()
         return locked
-    _validate_mutation_state(locked, item)
+    _validate_mutation_state(
+        locked,
+        item,
+        allow_completed_execution_replay=allow_completed_execution_replay,
+    )
     metadata = _metadata(locked.get("metadata"))
     current_fingerprint = business_observation_fingerprint(item)
     persisted_fingerprint = str(

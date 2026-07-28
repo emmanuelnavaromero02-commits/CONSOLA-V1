@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.schemas.control_room_surfaces import SurfaceScope
-from app.services.control_room.surface_snapshot import SurfaceSnapshot
+from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
+)
+from app.services.control_room.surface_snapshot import SurfaceScope, SurfaceSnapshot
 from control_room_runtime_evidence_fixture import bind_runtime_row_evidence
 
 
@@ -35,6 +37,7 @@ def business_item(item_id: str = "business-1", **updates: object) -> dict[str, o
         "source_dataset": "gold_business_observations",
         "source_system": "sap_hcm",
         "cartridge": "sap_hcm",
+        "entity_kind": "employee",
         "entity_id": "employee-1001",
         "entity_label": "Observed employee",
         "title": "Observed business condition",
@@ -44,6 +47,8 @@ def business_item(item_id: str = "business-1", **updates: object) -> dict[str, o
         "severity": "high",
         "detected_at": "2026-07-20T10:00:00Z",
         "data_status": "ready",
+        "status": "open",
+        "execution_status": "not_started",
         "metric_type": "count",
         "observed_value": 2,
         "population_count": 10,
@@ -55,6 +60,18 @@ def business_item(item_id: str = "business-1", **updates: object) -> dict[str, o
         item,
         locator_field="entity_id",
         observed_at=str(item["detected_at"]),
+    )
+
+
+def action_item(
+    item_id: str = "business-1",
+    *,
+    template_id: str = "request_owner_review",
+    **updates: object,
+) -> dict[str, object]:
+    return attach_explicit_action_binding(
+        business_item(item_id, **updates),
+        template_id=template_id,
     )
 
 
@@ -135,6 +152,7 @@ __all__ = (
     "TENANT_ID",
     "VIEWER",
     "WORKSPACE_ID",
+    "action_item",
     "business_item",
     "installation",
     "snapshot",

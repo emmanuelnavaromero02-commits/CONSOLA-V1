@@ -17,22 +17,10 @@ import { CommandMetric, MiniBar, OperationalNotice } from "./StatusBadge";
 import type { ControlRoomAgentsOpsEngine, ControlRoomAgentsOpsPayload } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
-function labelForOrigin(origin: string): string {
-  const key = origin.replaceAll("_", " ").trim();
+function labelForOrigin(origin?: string | null): string {
+  const key = (origin || "").replaceAll("_", " ").trim();
   if (!key || key === "unknown") return "Sin origen";
   return key.replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function cronLabel(schedule?: Record<string, unknown>): string {
-  const cron = typeof schedule?.cron === "string" ? schedule.cron : "";
-  const every = typeof schedule?.every === "string" ? schedule.every : "";
-  return cron || every || "sin agenda";
-}
-
-function monitorDataset(agent: ControlRoomAgentsOpsPayload["agents"][number]): string {
-  const contract = agent.monitor_contract || {};
-  const dataset = contract.dataset || contract.source_dataset || contract.source;
-  return typeof dataset === "string" && dataset.trim() ? dataset : agent.cartridge_id;
 }
 
 function statusTone(status?: string | null): string {
@@ -42,24 +30,24 @@ function statusTone(status?: string | null): string {
   return "border-slate-300 bg-slate-100 text-slate-600 dark:border-sky-400/20 dark:bg-slate-900/60 dark:text-slate-300";
 }
 
-function engineLabel(engine: string): string {
+function engineLabel(engine?: string | null): string {
   const labels: Record<string, string> = {
     wisdom_bit: "WisdomBit",
     monte_carlo: "Análisis operativo",
     bayesian_calibration: "Historial operativo",
     decision_orchestrator: "Decisión",
   };
-  return labels[engine] || engine.replaceAll("_", " ");
+  return engine ? labels[engine] || engine.replaceAll("_", " ") : "Capacidad operativa";
 }
 
-function engineStatusLabel(status?: string): string {
+function engineStatusLabel(status?: string | null): string {
   if (status === "ready") return "Listo";
   if (status === "configured") return "En espera de datos";
   if (status === "missing") return "No configurado";
   return status ? status.replaceAll("_", " ") : "En espera";
 }
 
-function engineStatusTone(status?: string): string {
+function engineStatusTone(status?: string | null): string {
   if (status === "ready") return "border-emerald-400/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
   if (status === "configured") return "border-amber-400/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
   return "border-slate-300 bg-slate-100 text-slate-600 dark:border-sky-400/20 dark:bg-slate-900/60 dark:text-slate-300";
@@ -86,9 +74,10 @@ export function AgentsOpsPanel({
   onToggle: () => void;
 }) {
   const summary = payload?.summary;
-  const topOrigin = payload?.origins[0];
-  const originMax = Math.max(1, ...(payload?.origins.map((item) => item.count) ?? [1]));
+  const topOrigin = payload?.origins?.[0];
+  const originMax = Math.max(1, ...(payload?.origins?.map((item) => item.count) ?? [1]));
   const agents = payload?.agents ?? [];
+  const diagnostics = payload?.operational_diagnostics ?? [];
   const monitorAgents = agents.filter((agent) => agent.monitor);
   const operationalMonitors = monitorAgents.filter((agent) => agent.operationally_ready);
   const engines = payload?.engines ?? [];
@@ -114,7 +103,7 @@ export function AgentsOpsPanel({
 
       {collapsed ? null : (
         <div className="space-y-4 border-t px-4 py-4 dark:border-sky-400/15">
-          {error ? <OperationalNotice tone="error" title="Agentes no disponibles">{error}</OperationalNotice> : null}
+          {error ? <OperationalNotice tone="error" title="Agentes no disponibles">No se pudo actualizar esta vista.</OperationalNotice> : null}
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <CommandMetric icon={Bot} label="Agentes activos" value={loading ? "..." : summary?.active_agents ?? 0} detail={`${summary?.agents_total ?? 0} registrados`} />
             <CommandMetric icon={ShieldCheck} label="Monitores operativos" value={loading ? "..." : operationalMonitors.length} detail={`${summary?.monitor_agents ?? 0} con contrato`} />
@@ -150,12 +139,12 @@ export function AgentsOpsPanel({
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.6fr)]">
             <div className="space-y-3">
-              {agents.slice(0, 8).map((agent) => (
-                <article key={agent.id} className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
+              {agents.slice(0, 8).map((agent, index) => (
+                <article key={`${agent.name || "agent"}:${index}`} className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold text-foreground dark:text-white">{agent.name}</h3>
+                        <h3 className="truncate text-sm font-semibold text-foreground dark:text-white">{agent.name || "Agente"}</h3>
                         <span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", statusTone(agent.last_run?.status))}>
                           {agent.last_run?.status || "sin run"}
                         </span>
@@ -171,7 +160,7 @@ export function AgentsOpsPanel({
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {agent.cartridge_id} · {agent.role} · {cronLabel(agent.schedule)}
+                        {agent.role || "Rol operativo"}
                       </p>
                     </div>
                     <div className="text-right text-xs text-muted-foreground">
@@ -181,23 +170,9 @@ export function AgentsOpsPanel({
                   </div>
                   <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
                     <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" /> {agent.last_run?.started_at ? new Date(agent.last_run.started_at).toLocaleString("es-MX") : "sin ejecución"}</span>
-                    <span className="truncate">Dataset: {monitorDataset(agent)}</span>
-                    <span className="inline-flex items-center gap-1 truncate"><Wrench className="h-3.5 w-3.5" /> {agent.operational_tools_count ?? agent.allowed_tools.length ?? 0} tools AgentOps</span>
+                    <span className="truncate">{agent.last_run?.finished_at ? `Finalizó ${new Date(agent.last_run.finished_at).toLocaleString("es-MX")}` : "sin cierre registrado"}</span>
+                    <span className="inline-flex items-center gap-1 truncate"><Wrench className="h-3.5 w-3.5" /> {agent.operational_tools_count} capacidades operativas</span>
                   </div>
-                  {(agent.configured_engines ?? []).length ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {(agent.configured_engines ?? []).slice(0, 5).map((engine) => (
-                        <span key={`${agent.id}:${engine.engine}:${engine.mode ?? "direct"}`} className={cn(
-                          "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                          engine.enabled
-                            ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200"
-                            : "border-slate-300 bg-slate-100 text-slate-500 dark:border-sky-400/15 dark:bg-slate-900/50",
-                        )}>
-                          {engineLabel(engine.engine)}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
                 </article>
               ))}
               {!loading && agents.length === 0 ? (
@@ -212,8 +187,8 @@ export function AgentsOpsPanel({
                   <span className="text-xs text-muted-foreground">{engines.length}</span>
                 </div>
                 <div className="space-y-2">
-                  {engines.map((engine) => (
-                    <div key={engine.engine} className="rounded-md border bg-muted/20 p-2 text-xs dark:border-sky-400/10 dark:bg-slate-950/30">
+                  {engines.map((engine, index) => (
+                    <div key={`${engine.engine || "engine"}:${index}`} className="rounded-md border bg-muted/20 p-2 text-xs dark:border-sky-400/10 dark:bg-slate-950/30">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-foreground dark:text-white">{engineLabel(engine.engine)}</span>
                         <span className={cn("rounded-full border px-2 py-0.5 font-medium", engineStatusTone(engine.status))}>{engineStatusLabel(engine.status)}</span>
@@ -233,7 +208,7 @@ export function AgentsOpsPanel({
               <div className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-foreground dark:text-white">Origen de señales</h3>
-                  <span className="text-xs text-muted-foreground">{payload?.origins.length ?? 0}</span>
+                  <span className="text-xs text-muted-foreground">{payload?.origins?.length ?? 0}</span>
                 </div>
                 <MiniBar
                   value={topOrigin?.count ?? 0}
@@ -252,16 +227,16 @@ export function AgentsOpsPanel({
               </div>
 
               <div className="rounded-lg border bg-background p-3 dark:border-sky-400/15 dark:bg-[#06111f]">
-                <h3 className="mb-2 text-sm font-semibold text-foreground dark:text-white">Tools usadas</h3>
+                <h3 className="mb-2 text-sm font-semibold text-foreground dark:text-white">Diagnóstico operativo</h3>
                 <div className="space-y-2">
-                  {(payload?.tools_used ?? []).slice(0, 6).map((item) => (
-                    <div key={item.tool} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate text-muted-foreground">{item.tool}</span>
-                      <span className="font-semibold text-foreground dark:text-white">{item.count}</span>
+                  {diagnostics.slice(0, 6).map((item, index) => (
+                    <div key={`${item.diagnostic || "diagnostic"}:${index}`} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate text-muted-foreground">{item.diagnostic || item.scope || "Estado operativo"}</span>
+                      <span className="font-semibold text-foreground dark:text-white">{item.sample_count || item.state_count}</span>
                     </div>
                   ))}
-                  {!loading && (payload?.tools_used ?? []).length === 0 ? (
-                    <p className="text-xs text-muted-foreground">Sin tool calls recientes.</p>
+                  {!loading && diagnostics.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Sin diagnóstico operativo reciente.</p>
                   ) : null}
                 </div>
               </div>

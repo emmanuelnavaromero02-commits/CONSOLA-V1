@@ -12,7 +12,8 @@
 -- workspace_id (NOT NULL since migration 23) is set to the first workspace on
 -- every row (the lesson from the HCM datasets PR).
 --
--- 24 silver + 8 gold = 32 datasets. Idempotent: ON CONFLICT (name) DO NOTHING.
+-- 24 silver + 8 gold = 32 datasets. Conflicts refresh only the three guarded
+-- headcount definitions; every other historical definition remains untouched.
 
 INSERT INTO datasets (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at, workspace_id)
 VALUES
@@ -772,9 +773,9 @@ SELECT
 FROM latest
 ORDER BY location_id
 $seed$, $seed$Última extracción del objeto de fundación Ubicación (FOLocation).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_headcount_by_company$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOCompany"]$seed$::jsonb, $seed$
+($seed$sap_successfactors_headcount_by_company$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["gold/sap_successfactors/sap_successfactors_employee_360"]$seed$::jsonb, $seed$
 -- sap_successfactors_headcount_by_company  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOCompany"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por compañía legal (snapshot del mes en curso).
 
 WITH emp AS (
@@ -783,38 +784,52 @@ WITH emp AS (
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(company_id, '(sin compania)')          AS company_id,
-    COALESCE(company_name, '(sin nombre)')          AS company_name,
+    company_id,
+    company_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(company_name), '') IS NOT NULL
+  AND LOWER(TRIM(company_name)) <> '(sin nombre)'
+  AND NOT REGEXP_MATCHES(company_name, '^[\pZ]+$')
+  AND NOT REGEXP_MATCHES(
+      company_name,
+      '[\pC\x{034F}\x{115F}-\x{1160}\x{17B4}-\x{17B5}\x{180B}-\x{180F}\x{2800}\x{3164}\x{A8F9}\x{FE00}-\x{FE0F}\x{FFA0}\x{10AF6}\x{1144E}\x{11945}\x{11C44}-\x{11C45}\x{11F48}\x{13441}-\x{13442}\x{16FE4}\x{1BCA0}-\x{1BCA3}\x{1D173}-\x{1D17A}\x{E0100}-\x{E01EF}]'
+  )
 GROUP BY company_id, company_name
-ORDER BY headcount DESC, company_id
+ORDER BY headcount DESC, company_name
 $seed$, $seed$Empleados activos por compañía legal (snapshot del mes en curso).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_headcount_by_department$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FODepartment"]$seed$::jsonb, $seed$
+($seed$sap_successfactors_headcount_by_department$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["gold/sap_successfactors/sap_successfactors_employee_360"]$seed$::jsonb, $seed$
 -- sap_successfactors_headcount_by_department  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FODepartment"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por departamento (snapshot del mes en curso).
 
--- Nombre prefijado con el cartucho por compatibilidad historica:
--- headcount_by_department ya existe para sap_hcm.
+-- Nombre prefijado con el cartucho: datasets.name es PK global y headcount_by_department
+-- ya existe para sap_hcm.
 WITH emp AS (
     SELECT department_id, department_name
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(department_id, '(sin departamento)')   AS department_id,
-    COALESCE(department_name, '(sin nombre)')       AS department_name,
+    department_id,
+    department_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(department_name), '') IS NOT NULL
+  AND LOWER(TRIM(department_name)) <> '(sin nombre)'
+  AND NOT REGEXP_MATCHES(department_name, '^[\pZ]+$')
+  AND NOT REGEXP_MATCHES(
+      department_name,
+      '[\pC\x{034F}\x{115F}-\x{1160}\x{17B4}-\x{17B5}\x{180B}-\x{180F}\x{2800}\x{3164}\x{A8F9}\x{FE00}-\x{FE0F}\x{FFA0}\x{10AF6}\x{1144E}\x{11945}\x{11C44}-\x{11C45}\x{11F48}\x{13441}-\x{13442}\x{16FE4}\x{1BCA0}-\x{1BCA3}\x{1D173}-\x{1D17A}\x{E0100}-\x{E01EF}]'
+  )
 GROUP BY department_id, department_name
-ORDER BY headcount DESC, department_id
+ORDER BY headcount DESC, department_name
 $seed$, $seed$Empleados activos por departamento (snapshot del mes en curso).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_headcount_by_location$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOLocation"]$seed$::jsonb, $seed$
+($seed$sap_successfactors_headcount_by_location$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["gold/sap_successfactors/sap_successfactors_employee_360"]$seed$::jsonb, $seed$
 -- sap_successfactors_headcount_by_location  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOLocation"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por ubicación (snapshot del mes en curso).
 
 WITH emp AS (
@@ -823,13 +838,20 @@ WITH emp AS (
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(location_id, '(sin ubicacion)')        AS location_id,
-    COALESCE(location_name, '(sin nombre)')         AS location_name,
+    location_id,
+    location_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(location_name), '') IS NOT NULL
+  AND LOWER(TRIM(location_name)) <> '(sin nombre)'
+  AND NOT REGEXP_MATCHES(location_name, '^[\pZ]+$')
+  AND NOT REGEXP_MATCHES(
+      location_name,
+      '[\pC\x{034F}\x{115F}-\x{1160}\x{17B4}-\x{17B5}\x{180B}-\x{180F}\x{2800}\x{3164}\x{A8F9}\x{FE00}-\x{FE0F}\x{FFA0}\x{10AF6}\x{1144E}\x{11945}\x{11C44}-\x{11C45}\x{11F48}\x{13441}-\x{13442}\x{16FE4}\x{1BCA0}-\x{1BCA3}\x{1D173}-\x{1D17A}\x{E0100}-\x{E01EF}]'
+  )
 GROUP BY location_id, location_name
-ORDER BY headcount DESC, location_id
+ORDER BY headcount DESC, location_name
 $seed$, $seed$Empleados activos por ubicación (snapshot del mes en curso).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_jobrequisition_latest$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/JobRequisition"]$seed$::jsonb, $seed$
 -- sap_successfactors_jobrequisition_latest  (silver)  cartridge: sap_successfactors
@@ -1263,7 +1285,18 @@ SELECT
 FROM latest
 ORDER BY user_id
 $seed$, $seed$Última extracción del maestro de usuarios (User). userId llega shadowed y nombre/email masked desde bronze.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1))
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (name) DO UPDATE
+SET layer = EXCLUDED.layer,
+    cartridge = EXCLUDED.cartridge,
+    sources = EXCLUDED.sources,
+    sql_def = EXCLUDED.sql_def,
+    description = EXCLUDED.description,
+    updated_at = NOW()
+WHERE EXCLUDED.name IN (
+    'sap_successfactors_headcount_by_company',
+    'sap_successfactors_headcount_by_location',
+    'sap_successfactors_headcount_by_department'
+);
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('82_sap_successfactors_datasets_seed.sql', NOW())

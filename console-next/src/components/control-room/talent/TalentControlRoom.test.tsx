@@ -3,9 +3,26 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SfTalentDesempenoCohort, SfTalentNineBoxCell, SfTalentRosterPayload } from "@/lib/control-room/types";
 
-import { DesempenoDisponiblePanel, MaskedTalentRoster, NineBoxMatrix } from "./TalentControlRoom";
+import {
+  DesempenoDisponiblePanel,
+  MaskedTalentRoster,
+  NineBoxMatrix,
+  TalentControlRoom,
+} from "./TalentControlRoom";
 
 describe("TalentControlRoom native panels", () => {
+  it("does not publish legacy actions without an authorized V2 action", () => {
+    const markup = renderToStaticMarkup(<TalentControlRoom />);
+
+    expect(markup).not.toContain("Generar preview");
+    expect(markup).not.toContain("Ciclo OMEGA");
+    expect(markup).not.toContain("Simulacion");
+    expect(markup).toContain("exclusivamente de lectura");
+    expect(markup).toContain("sin preview ni write-back");
+    expect(markup).not.toContain("decisiones y previews");
+    expect(markup).not.toContain("preview supervisado");
+  });
+
   it("renders the 9-box matrix as native React buttons", () => {
     const cells: SfTalentNineBoxCell[] = [
       {
@@ -70,7 +87,6 @@ describe("TalentControlRoom native panels", () => {
 
   it("renders only masked roster fields", () => {
     const payload: SfTalentRosterPayload = {
-      dataset: "sap_successfactors_talent_9box",
       status: "ready",
       count: 1,
       box: {
@@ -88,8 +104,6 @@ describe("TalentControlRoom native panels", () => {
           role: "Manager",
           unit: "People",
           region: "Monterrey",
-          readiness_status: "ready",
-          box_id: "estrella",
           box_label: "Estrella",
           performance_band: "high",
           potential_band: "high",
@@ -108,6 +122,29 @@ describe("TalentControlRoom native panels", () => {
     expect(markup).not.toContain("Ana Gomez");
     expect(markup).not.toContain("user_id");
     expect(markup).not.toContain("full_name");
+  });
+
+  it("renders minimal public projection fields without undefined values", () => {
+    const cells: SfTalentNineBoxCell[] = [
+      {
+        display_order: 0,
+        employee_count: 0,
+        ready_count: 0,
+        blocked_count: 0,
+      },
+    ];
+    const payload: SfTalentRosterPayload = {
+      status: "empty",
+      count: 1,
+      box: { display_order: 0 },
+      roster: [{}],
+    };
+
+    const markup = `${renderToStaticMarkup(<NineBoxMatrix cells={cells} onSelect={vi.fn()} />)}${renderToStaticMarkup(<MaskedTalentRoster payload={payload} loading={false} />)}`;
+
+    expect(markup).toContain("Segmento de talento");
+    expect(markup).toContain("Colaborador enmascarado");
+    expect(markup).not.toContain("undefined");
   });
 });
 

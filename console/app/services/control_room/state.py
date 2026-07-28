@@ -1341,7 +1341,9 @@ async def upsert_threshold(
     warning_value = _num(body.get("warning_value"))
     critical_value = _num(body.get("critical_value"))
     currency = str(body.get("currency") or "USD").strip().upper()[:8] or "USD"
-    enabled = bool(body.get("enabled", True))
+    enabled = body.get("enabled", True)
+    if type(enabled) is not bool:
+        raise HTTPException(422, "enabled must be a boolean")
     metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
     pool = await auth.pool()
 

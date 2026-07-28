@@ -8,7 +8,12 @@ from typing import Any
 from app.services import egress_guard
 
 from .auth_factory import auth_headers
-from .base import AdapterConfigurationError, AdapterExecutionError, BaseAdapter, ExecutionResult
+from .base import (
+    AdapterConfigurationError,
+    AdapterExecutionError,
+    BaseAdapter,
+    ExecutionResult,
+)
 from .circuit_breaker import CartridgeCircuitBreaker
 
 
@@ -20,7 +25,11 @@ def _base_url(credentials: dict[str, Any]) -> str:
 
 
 def _writeback_path(action_data: dict[str, Any], credentials: dict[str, Any]) -> str:
-    details = action_data.get("details") if isinstance(action_data.get("details"), dict) else {}
+    details = (
+        action_data.get("details")
+        if isinstance(action_data.get("details"), dict)
+        else {}
+    )
     value = (
         action_data.get("writeback_path")
         or action_data.get("endpoint")
@@ -30,7 +39,9 @@ def _writeback_path(action_data: dict[str, Any], credentials: dict[str, Any]) ->
         or credentials.get("default_writeback_path")
     )
     if not value:
-        raise AdapterConfigurationError("connection is missing writeback_path/default_writeback_path")
+        raise AdapterConfigurationError(
+            "connection is missing writeback_path/default_writeback_path"
+        )
     path = str(value)
     return path if path.startswith("/") else f"/{path}"
 
@@ -51,7 +62,13 @@ def _allowed_private_hosts() -> set[str]:
 
 
 def _allowed_private_cidrs() -> list[str]:
-    return [item.strip() for item in os.environ.get("CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", "").split(",") if item.strip()]
+    return [
+        item.strip()
+        for item in os.environ.get(
+            "CONTROL_ROOM_WRITEBACK_ALLOWED_PRIVATE_CIDRS", ""
+        ).split(",")
+        if item.strip()
+    ]
 
 
 class HttpWriteBackAdapter(BaseAdapter):
@@ -83,11 +100,31 @@ class HttpWriteBackAdapter(BaseAdapter):
                 allow_private_cidrs=_allowed_private_cidrs(),
             )
         except egress_guard.EgressGuardError as exc:
-            raise AdapterConfigurationError(str(exc)) from exc
+            if exc.request_dispatched:
+                CartridgeCircuitBreaker.record_failure(self.cartridge_id)
+                raise AdapterExecutionError(
+                    f"{self.cartridge_id} response validation error: {exc}",
+                    outcome_ambiguous=True,
+                ) from exc
+            raise AdapterConfigurationError(str(exc), outcome_ambiguous=False) from exc
         except (OSError, TimeoutError, asyncio.TimeoutError, ssl.SSLError) as exc:
             CartridgeCircuitBreaker.record_failure(self.cartridge_id)
-            raise AdapterExecutionError(f"{self.cartridge_id} transport error: {exc}", status_code=503) from exc
+            raise AdapterExecutionError(
+                f"{self.cartridge_id} transport error: {exc}", status_code=503
+            ) from exc
 
+        if (
+            response.status_code < 200
+            or response.status_code >= 600
+            or 300 <= response.status_code < 400
+        ):
+            CartridgeCircuitBreaker.record_failure(self.cartridge_id)
+            raise AdapterExecutionError(
+                f"{self.cartridge_id} returned an unconfirmed POST outcome",
+                status_code=response.status_code,
+                response=response.text[:500],
+                outcome_ambiguous=True,
+            )
         if response.status_code in {401, 403}:
             CartridgeCircuitBreaker.record_success(self.cartridge_id)
             raise AdapterExecutionError(
@@ -123,5 +160,7 @@ class HttpWriteBackAdapter(BaseAdapter):
             response=body,
         )
 
-    async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]) -> ExecutionResult:
+    async def execute(
+        self, action_data: dict[str, Any], credentials: dict[str, Any]
+    ) -> ExecutionResult:
         return await self._post_json(credentials=credentials, action_data=action_data)

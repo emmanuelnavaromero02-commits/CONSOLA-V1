@@ -12,6 +12,10 @@ from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
 )
+from control_room_external_authority import (
+    external_authority,
+    patch_started_revalidation,
+)
 
 
 USER = {
@@ -86,22 +90,15 @@ async def _run_real_sap_outcome(
     mark_ambiguous = AsyncMock(return_value={"id": 92, "status": "pending"})
     record_execution = AsyncMock(return_value={"id": 102})
     complete_reservation = AsyncMock(return_value={"id": 92, "status": "failed"})
+    item = _item()
+    template = {"template_id": "sap_hcm_it0008", "cartridge_id": "sap_hcm"}
+    payload = {}
+    authority = external_authority(item, template, payload)
     CartridgeCircuitBreaker.reset(SapHcmAdapter.CARTRIDGE_ID)
 
     try:
         with (
-            patch.object(
-                control_room_service,
-                "require_approved_execution",
-                new=AsyncMock(),
-            ),
-            patch.object(
-                control_room_service,
-                "lock_pending_action_reservation",
-                new=AsyncMock(
-                    return_value={"metadata": {"remote_attempt": {"status": "started"}}}
-                ),
-            ),
+            patch_started_revalidation(control_room_service, authority),
             patch.object(
                 control_room_service,
                 "_record_writeback_audit_event",
@@ -159,15 +156,13 @@ async def _run_real_sap_outcome(
             response = await control_room_service._execute_external_writeback(
                 AsyncMock(),
                 user=USER,
-                item=_item(),
-                template={
-                    "template_id": "sap_hcm_it0008",
-                    "cartridge_id": "sap_hcm",
-                },
-                payload={},
+                item=item,
+                template=template,
+                payload=payload,
                 reservation=_reservation(),
                 ip=None,
                 user_agent=None,
+                authority=authority,
             )
     finally:
         CartridgeCircuitBreaker.reset(SapHcmAdapter.CARTRIDGE_ID)
@@ -201,7 +196,9 @@ async def _run_real_sap_outcome(
         (TimeoutError("CSRF timed out"), 201, 0, ["GET"]),
         (503, 201, 0, ["GET"]),
         (200, 400, 0, ["GET", "POST"]),
-        (200, 302, 0, ["GET", "POST"]),
+        (200, 302, 1, ["GET", "POST"]),
+        (200, 303, 1, ["GET", "POST"]),
+        (200, 307, 1, ["GET", "POST"]),
     ],
     ids=[
         "post-timeout",
@@ -215,6 +212,8 @@ async def _run_real_sap_outcome(
         "csrf-503",
         "post-400",
         "post-302",
+        "post-303",
+        "post-307",
     ],
 )
 async def test_real_sap_outcome_marks_only_ambiguous_post_failures(

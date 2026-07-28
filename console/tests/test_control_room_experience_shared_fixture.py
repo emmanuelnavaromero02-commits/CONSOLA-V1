@@ -17,6 +17,6 @@ def test_shared_experience_fixture_matches_pydantic_contract():
     )
 
     assert experience.schema_version == "control-room-experience/v1"
-    assert experience.scope.workspace_id == "workspace-fixture"
+    assert "scope" not in experience.model_dump()
     assert experience.sections[0].facts[0].metric
     assert experience.sections[0].facts[0].metric.value == 0

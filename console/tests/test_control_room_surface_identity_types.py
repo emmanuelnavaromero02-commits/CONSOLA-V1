@@ -60,7 +60,7 @@ def test_item_without_complete_string_identity_produces_no_section(
     assert build_business_experience(snapshot(items=(item,))).sections == []
 
 
-def test_valid_structural_identity_remains_byte_for_byte_unchanged() -> None:
+def test_valid_structural_identity_is_used_without_being_published() -> None:
     item = business_item(
         domain="People Ops",
         cartridge="sap_hcm",
@@ -70,6 +70,6 @@ def test_valid_structural_identity_remains_byte_for_byte_unchanged() -> None:
     section = build_business_experience(snapshot(items=(item,))).sections[0]
 
     assert section.domain == "People Ops"
-    assert section.cartridge_id == "sap_hcm"
-    assert section.module_id == "people_overview"
-    assert section.id == "business-section-5b8f673040abf9742ed5"
+    assert set(section.model_dump()) == {"title", "domain", "facts"}
+    assert "sap_hcm" not in section.model_dump_json()
+    assert "people_overview" not in section.model_dump_json()

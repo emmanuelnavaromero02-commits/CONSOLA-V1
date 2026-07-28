@@ -382,6 +382,7 @@ def _http_json(
     *,
     workspace_id: str | None = None,
     expected: set[int] | None = None,
+    require_empty_body: bool = False,
     method: str = "GET",
     body: dict[str, Any] | None = None,
 ) -> tuple[int, Any]:
@@ -411,6 +412,10 @@ def _http_json(
     allowed = expected or {200}
     if status not in allowed:
         raise RuntimeError(f"{method.upper()} {path} returned {status}: {_short(body)}")
+    if require_empty_body and body:
+        raise RuntimeError(
+            f"{method.upper()} {path} returned a non-empty body: {_short(body)}"
+        )
     try:
         return status, json.loads(body) if body else {}
     except json.JSONDecodeError:
@@ -581,15 +586,6 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
                 f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/lessons",
                 {"rule": "Tenant A/B forbidden lesson probe must not cross workspace."},
             ),
-            (
-                "execute",
-                f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/execute",
-                {
-                    "template_id": "create_followup_task",
-                    "confirm_execute": True,
-                    "idempotency_key": f"tenant-ab-forbidden-{own.label}-{other.label}",
-                },
-            ),
         )
         for probe_name, path, body in mutation_probes:
             status, payload = _http_json(
@@ -608,6 +604,31 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
                     f"status={status} body={_short(json.dumps(payload, sort_keys=True, default=str))}",
                 )
             )
+        legacy_execute_path = (
+            f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/execute"
+        )
+        status, _payload = _http_json(
+            base_url,
+            legacy_execute_path,
+            own,
+            expected={410},
+            require_empty_body=True,
+            method="POST",
+            body={
+                "template_id": "create_followup_task",
+                "binding_id": "0" * 64,
+                "confirm_execute": True,
+                "idempotency_key": f"tenant-ab-retired-{own.label}-{other.label}",
+            },
+        )
+        checks.append(
+            Check(
+                "control-room",
+                f"{own.label} authenticated legacy execute is retired",
+                PASS if status == 410 else FAIL,
+                f"status={status} body=empty",
+            )
+        )
     return checks
 
 

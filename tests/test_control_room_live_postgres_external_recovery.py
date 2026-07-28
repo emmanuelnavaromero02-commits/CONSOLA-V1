@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import asyncpg
 import pytest
@@ -21,7 +21,11 @@ from app.services.control_room.business_action_attempt import (
 from app.services.control_room.business_external_effect import (
     RemoteSideEffectCommitted,
 )
+from app.services.control_room.business_reservation_lease import (
+    reservation_lease_token,
+)
 from app.services.db_scope import SET_SCOPE_SQL
+from tests.control_room_live_authority import authority_audit_for_test
 from tests.test_control_room_live_postgres_p15 import (
     _linked_item,
     _mutation_item,
@@ -50,7 +54,7 @@ async def test_live_stale_external_reservation_reclaims_same_row_and_key(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-recovery",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -72,7 +76,7 @@ async def test_live_stale_external_reservation_reclaims_same_row_and_key(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-recovery",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -107,7 +111,7 @@ async def test_live_durable_remote_attempt_is_never_reclaimed(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-durable-attempt",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -118,6 +122,7 @@ async def test_live_durable_remote_attempt_is_never_reclaimed(
             effective_key=first.effective_key,
             adapter="IdempotentAdapter",
             target="sap_hcm",
+            lease_token=reservation_lease_token(first.row),
         )
         await setup.execute(
             """UPDATE action_runs
@@ -137,7 +142,7 @@ async def test_live_durable_remote_attempt_is_never_reclaimed(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             item=item,
-            template_id="external-durable-attempt",
+            template_id="prepare_hcm_access_review",
             adapter_name="IdempotentAdapter",
             operation="execute",
         )
@@ -158,7 +163,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
         "external-finalizer-projection",
     )
     user = _user(tenant_id, workspace_id)
-    template = _template("external-finalizer", cartridge="replicon")
+    template = _template("prepare_hcm_access_review")
     payload = {"mode": "execute_live", "action_payload": {}}
     await _seed_matching_dry_run(
         postgres_with_real_init_schema,
@@ -177,6 +182,12 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
             workspace_id,
             item["id"],
         )
+        authority_audit = authority_audit_for_test(
+            user=user,
+            item=_mutation_item(item),
+            template_id=template["template_id"],
+            input_payload=payload,
+        )
         reservation = await acquire_guarded_action_reservation(
             setup,
             user=user,
@@ -185,6 +196,8 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
             adapter_name="Adapter",
             operation="execute",
             input_payload=payload,
+            authority_audit=authority_audit,
+            persist_item=service._ensure_item_row,
         )
         await mark_remote_attempt_started(
             setup,
@@ -193,6 +206,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
             effective_key=reservation.effective_key,
             adapter="Adapter",
             target="replicon",
+            lease_token=reservation_lease_token(reservation.row),
         )
     finally:
         await setup.close()
@@ -211,12 +225,33 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
         classmethod(lambda _cls, _template_type: Adapter()),
     )
     execute_conn = await asyncpg.connect(postgres_with_real_init_schema)
+    authority = Mock(
+        item=_mutation_item(item),
+        template=template,
+        payload=payload,
+        authority_audit=authority_audit,
+    )
     try:
         with monkeypatch.context() as local_failure:
             local_failure.setattr(
                 service,
                 "_record_action_execution",
                 AsyncMock(side_effect=ConnectionError("late local failure")),
+            )
+            local_failure.setattr(
+                service,
+                "revalidate_authoritative_action",
+                AsyncMock(
+                    return_value=(
+                        authority,
+                        {"metadata": {"remote_attempt": {"status": "started"}}},
+                    )
+                ),
+            )
+            local_failure.setattr(
+                service,
+                "require_authoritative_binding_current",
+                Mock(),
             )
             captured_error = None
             try:
@@ -231,6 +266,7 @@ async def test_live_remote_receipt_projects_authoritative_item_once(
                         reservation=reservation,
                         ip=None,
                         user_agent=None,
+                        authority=authority,
                     )
             except BaseException as exc:
                 captured_error = exc

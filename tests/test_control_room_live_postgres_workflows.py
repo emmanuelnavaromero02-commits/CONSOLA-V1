@@ -45,6 +45,8 @@ def _item(
         "domain": "People",
         "source_dataset": "gold_people",
         "title": "Measured anomaly",
+        "entity_kind": "employee",
+        "entity_id": item_id,
         "entity_label": "Employee",
         "description": "Measured headcount gap",
         "recommendation": "Review staffing",
@@ -53,6 +55,8 @@ def _item(
         "metric_type": "count",
         "population_count": 10,
         "observation_date": observation_date,
+        "details": {"writeback_path": "/test/writeback"},
+        "metadata": {"connection": {"base_url": "https://sap.example.test"}},
     }
     return {
         **item,

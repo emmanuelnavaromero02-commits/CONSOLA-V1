@@ -11,6 +11,7 @@ Routes:
   POST /api/copilot/conversations/{cid}/messages        — send turn
   POST /api/copilot/conversations/{cid}/approve/{mid}   — approve dest.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,7 +66,9 @@ def _event_to_sse(evt: dict) -> str:
     if typ == "heartbeat":
         return ": keep-alive\n\n"
     if typ == "ready":
-        return _sse("ready", {"ok": True, "conversation_id": evt.get("conversation_id")})
+        return _sse(
+            "ready", {"ok": True, "conversation_id": evt.get("conversation_id")}
+        )
     if typ == "text_delta":
         return _sse("token", {"delta": evt.get("text") or ""})
     if typ == "text":
@@ -74,10 +77,13 @@ def _event_to_sse(evt: dict) -> str:
         result = evt.get("result")
         return _sse("done", result if isinstance(result, dict) else {})
     if typ == "error":
-        return _sse("error", {
-            "status_code": evt.get("status_code") or 500,
-            "detail": evt.get("detail") or "stream error",
-        })
+        return _sse(
+            "error",
+            {
+                "status_code": evt.get("status_code") or 500,
+                "detail": evt.get("detail") or "stream error",
+            },
+        )
     return _sse(typ, {k: v for k, v in evt.items() if k != "type"})
 
 
@@ -93,7 +99,8 @@ async def create_conversation(
     # the authenticated session (already vetted by the auth layer).
     title = (body or {}).get("title")
     result = await copilot_service.create_conversation(
-        user=user, title=title,
+        user=user,
+        title=title,
     )
     ip, ua = _forensic(request)
     await audit_service.record_event(
@@ -123,7 +130,8 @@ async def get_conversation(
     user: dict = Depends(require_authenticated),
 ):
     return await copilot_service.get_conversation_messages(
-        conversation_id=conversation_id, user=user,
+        conversation_id=conversation_id,
+        user=user,
     )
 
 
@@ -145,7 +153,8 @@ async def send_message(
         conversation_id=conversation_id,
         user_message=message,
         user=user,
-        ip=ip, user_agent=ua,
+        ip=ip,
+        user_agent=ua,
     )
     await audit_service.record_event(
         user_id=user["id"],
@@ -268,7 +277,8 @@ async def approve_action(
         conversation_id=conversation_id,
         message_id=message_id,
         user=user,
-        ip=ip, user_agent=ua,
+        ip=ip,
+        user_agent=ua,
     )
     await audit_service.record_event(
         user_id=user["id"],
@@ -300,12 +310,16 @@ async def get_briefing(
     6 (the brief's documented cap). Frontend renders one card per
     highlight on the dashboard.
     """
-    highlights = await proactive_service.briefing_for_user(user["id"], user_context=user)
+    highlights = await proactive_service.briefing_for_user(
+        user["id"], user_context=user
+    )
     try:
-        live = await copilot_context_service.list_recommendations(user, limit=6)
+        live = copilot_context_service.project_operator_recommendations(
+            await copilot_context_service.list_recommendations(user, limit=6)
+        )
         live_highlights = [
             {
-                "id": item.get("fingerprint") or item.get("id"),
+                "id": item.get("id"),
                 "severity": item.get("severity") or "info",
                 "title": item.get("title") or "Recomendación",
                 "body": item.get("body") or "",
@@ -332,43 +346,40 @@ async def get_briefing(
     return {"highlights": highlights}
 
 
-@router.get("/context/snapshot")
+@router.get(
+    "/context/snapshot",
+    dependencies=[Depends(require_permission("operations.read"))],
+)
 async def get_live_context_snapshot(
     user: dict = Depends(require_authenticated),
 ):
     """Latest persisted workspace-wide console cut for Copilot."""
-    return await copilot_context_service.latest_snapshot(user)
+    raw = await copilot_context_service.latest_snapshot(user)
+    return copilot_context_service.project_operator_snapshot(raw)
 
 
-@router.post("/context/refresh", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/context/refresh",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("operations.read")),
+        Depends(require_permission("control_room.write")),
+    ],
+)
 async def refresh_live_context(
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
     """Refresh the live console context now for the active workspace."""
+    ip, ua = _forensic(request)
     result = await copilot_context_service.collect_workspace_context(
         user,
         generated_by="manual",
         persist=True,
-    )
-    ip, ua = _forensic(request)
-    await audit_service.record_event(
-        user_id=user["id"],
-        email=user.get("email"),
-        action="copilot.context.refresh",
-        resource_type="workspace",
-        resource_id=str(result.get("workspace_id") or ""),
         ip=ip,
         user_agent=ua,
-        status="success" if result.get("status") != "failed" else "error",
-        metadata={
-            "status": result.get("status"),
-            "sources_ready": (result.get("summary") or {}).get("sources_ready"),
-            "sources_total": (result.get("summary") or {}).get("sources_total"),
-            "recommendations": len(result.get("recommendations") or []),
-        },
     )
-    return result
+    return copilot_context_service.project_operator_snapshot(result)
 
 
 @router.get("/recommendations")
@@ -377,36 +388,32 @@ async def list_live_recommendations(
     include_dismissed: bool = False,
     user: dict = Depends(require_authenticated),
 ):
-    return await copilot_context_service.list_recommendations(
-        user,
-        limit=limit,
-        include_dismissed=include_dismissed,
+    raw = await copilot_context_service.list_recommendations(
+        user, limit=limit, include_dismissed=include_dismissed
     )
+    return copilot_context_service.project_operator_recommendations(raw)
 
 
 @router.post(
     "/recommendations/{recommendation_id}/dismiss",
-    dependencies=[Depends(require_csrf)],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+    ],
 )
 async def dismiss_live_recommendation(
     recommendation_id: str,
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    result = await copilot_context_service.dismiss_recommendation(user, recommendation_id)
     ip, ua = _forensic(request)
-    await audit_service.record_event(
-        user_id=user["id"],
-        email=user.get("email"),
-        action="copilot.recommendation.dismiss",
-        resource_type="copilot_recommendation",
-        resource_id=str(result.get("id") or recommendation_id),
+    result = await copilot_context_service.dismiss_recommendation(
+        user,
+        recommendation_id,
         ip=ip,
         user_agent=ua,
-        status="success",
-        metadata={"fingerprint": result.get("fingerprint")},
     )
-    return result
+    return copilot_context_service.project_dismissed_recommendation(result)
 
 
 @router.post(

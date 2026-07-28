@@ -10,10 +10,17 @@ WITH emp AS (
     WHERE is_active = TRUE
 )
 SELECT
-    COALESCE(department_id, '(sin departamento)')   AS department_id,
-    COALESCE(department_name, '(sin nombre)')       AS department_name,
+    department_id,
+    department_name,
     COUNT(*)                                        AS headcount,
     CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
 FROM emp
+WHERE NULLIF(TRIM(department_name), '') IS NOT NULL
+  AND LOWER(TRIM(department_name)) <> '(sin nombre)'
+  AND NOT REGEXP_MATCHES(department_name, '^[\pZ]+$')
+  AND NOT REGEXP_MATCHES(
+      department_name,
+      '[\pC\x{034F}\x{115F}-\x{1160}\x{17B4}-\x{17B5}\x{180B}-\x{180F}\x{2800}\x{3164}\x{A8F9}\x{FE00}-\x{FE0F}\x{FFA0}\x{10AF6}\x{1144E}\x{11945}\x{11C44}-\x{11C45}\x{11F48}\x{13441}-\x{13442}\x{16FE4}\x{1BCA0}-\x{1BCA3}\x{1D173}-\x{1D17A}\x{E0100}-\x{E01EF}]'
+  )
 GROUP BY department_id, department_name
-ORDER BY headcount DESC, department_id
+ORDER BY headcount DESC, department_name

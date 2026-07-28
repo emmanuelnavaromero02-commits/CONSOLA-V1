@@ -40,7 +40,10 @@ async def mark_remote_attempt_started(
     effective_key: str,
     adapter: str,
     target: str,
+    lease_token: str,
 ) -> dict[str, Any]:
+    if not lease_token:
+        raise RuntimeError("remote attempt reservation lease is missing")
     row = await conn.fetchrow(
         """
         UPDATE action_runs
@@ -59,6 +62,8 @@ async def mark_remote_attempt_started(
            AND id = $2
            AND idempotency_key = $3
            AND status = 'pending'
+           AND metadata ->> 'reservation_lease_token' = $6
+           AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'remote_attempt')
          RETURNING *
         """,
         workspace_id,
@@ -66,6 +71,7 @@ async def mark_remote_attempt_started(
         effective_key,
         adapter,
         target,
+        lease_token,
     )
     if not row:
         raise RuntimeError("remote attempt reservation was not pending")

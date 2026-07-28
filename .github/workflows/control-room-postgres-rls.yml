@@ -28,6 +28,20 @@ jobs:
     if: needs.changes.outputs.control_room == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    services:
+      public-sql-postgres-oracle:
+        image: postgres:15.18
+        env:
+          POSTGRES_DB: sql_oracle
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sql_oracle"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +60,13 @@ jobs:
         continue-on-error: true
         env:
           PYTHONPATH: .:console
+          PUBLIC_SQL_POSTGRES_DB: sql_oracle
+          PUBLIC_SQL_POSTGRES_HOST: 127.0.0.1
+          PUBLIC_SQL_POSTGRES_PORT: "55432"
+          PUBLIC_SQL_POSTGRES_USER: postgres
         run: |
           pytest -ra --junitxml=/tmp/control-room-focal.xml \
+            console/tests/control_room_public_sql_parse_oracle_gate.py \
             console/tests/test_audit_service_transactional.py \
             console/tests/test_control_room*.py \
             console/tests/test_scoped_surface_hardening.py \
@@ -74,7 +93,9 @@ jobs:
             tests/test_control_room_evidence_keyring_runtime.py \
             tests/test_control_room_evidence_signing_wiring.py \
             tests/test_intelligence_engine_contract.py \
+            tests/test_market_decision_validation_e2e.py \
             tests/test_mcp_infra_pdf_ci_contract.py \
+            tests/test_mcp_control_room_read_permissions.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests
@@ -115,8 +136,8 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=2145, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=48, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=8959, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=87, label="Live PostgreSQL/RLS")
           PY
 
   no-control-room-needed:

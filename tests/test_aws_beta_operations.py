@@ -226,6 +226,7 @@ def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
         "tenant_id={other.tenant_id}",
         "workspace_id={other.workspace_id}",
         "x-workspace-id",
+        '"Authorization": f"Bearer {_jwt(scope)}"',
         "/api/intelligence/signals",
         "/api/control-room/dashboard",
         "/api/control-room/items/{urllib.parse.quote(other.item_id)}/decision",
@@ -238,9 +239,16 @@ def test_tenant_ab_harness_includes_positive_and_forbidden_probes() -> None:
         "expected={403}",
         "tenant-ab-aws",
         "OMEGA_SEED_UPDATE_CATALOG",
-        '"0"',
+        '"binding_id": "0" * 64',
     ):
         assert needle in source
+    legacy_execute = source.split("legacy_execute_path =", 1)[1].split(
+        "checks.append(", 1
+    )[0]
+    assert "expected={410}" in legacy_execute
+    assert "require_empty_body=True" in legacy_execute
+    assert "expected={403, 404}" not in legacy_execute
+    assert "authenticated legacy execute is retired" in source
 
 
 def test_schema_viewer_has_gold_dataset_fallback() -> None:

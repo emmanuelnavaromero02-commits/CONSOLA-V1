@@ -5,6 +5,14 @@ from unittest.mock import AsyncMock
 
 from app.services import control_room_service
 from app.services.control_room.business_policy_metadata import business_policy_metadata
+from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
+)
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_persisted_row import persisted_business_item
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.control_room.business_workflow_provenance import (
     DECISION_PROVENANCE_KEY,
     WorkflowStage,
@@ -19,6 +27,7 @@ USER = {
     "email": "ops@example.com",
     "active_workspace_id": "workspace-A",
     "tenant_id": "tenant-A",
+    "role": "admin",
     "allowed_cartridges": ["sap_hcm", "sap_s4hana", "sap_successfactors", "replicon"],
     "_effective_permissions": [
         "control_room.read",
@@ -26,6 +35,53 @@ USER = {
         "control_room.execute",
     ],
 }
+
+
+def explicit_action(item: dict, *, template_id: str) -> tuple[dict, str]:
+    template = ACTION_TEMPLATES[template_id]
+    prepared = dict(item)
+    if template["cartridge_id"] != "platform":
+        metadata = dict(prepared.get("metadata") or {})
+        connection = dict(metadata.get("connection") or {})
+        connection.setdefault("base_url", "https://target.example.test")
+        metadata["connection"] = connection
+        details = dict(prepared.get("details") or {})
+        details.setdefault("writeback_path", "/test/writeback")
+        if template_id == "prepare_successfactors_recruiting_review":
+            details.setdefault("requisition_id", prepared.get("entity_id"))
+        prepared.update(metadata=metadata, details=details)
+    persisted = persisted_business_item(
+        authoritative_item_row(prepared),
+        expected_item_id=str(prepared["id"]),
+        item_statuses=control_room_service.ITEM_STATUSES,
+        severity_weights=control_room_service.SEVERITY_WEIGHT,
+    )
+    assert persisted is not None
+    bound = attach_explicit_action_binding(persisted, template_id=template_id)
+    return bound, explicit_binding_id(bound, template_id=template_id)
+
+
+def explicit_binding_id(item: dict, *, template_id: str) -> str:
+    values = item["metadata"]["explicit_action_bindings"]
+    binding = next(value for value in values if value["template_id"] == template_id)
+    return str(binding["binding_id"])
+
+
+def runtime_evidenced_item(item: dict) -> dict:
+    return {
+        **item,
+        **runtime_row_evidence_fields(
+            source_dataset=str(item["source_dataset"]),
+            source_system=str(item["source_system"]),
+            cartridge=str(item["cartridge"]),
+            tenant_id=str(item["tenant_id"]),
+            workspace_id=str(item["workspace_id"]),
+            source_row={"item_id": item["id"], "value": item["observed_value"]},
+            locator_field="item_id",
+            observed_at=str(item["observation_date"]),
+            business_observation=item,
+        ),
+    }
 
 
 def successful_command_tag(query: object, *_args: object) -> str:
@@ -48,6 +104,7 @@ def observed_anomaly_fields(item_id: str) -> dict:
         "detected_at": "2026-06-07T00:00:00Z",
         "evidence_refs": [f"gold_business_observations:{item_id}"],
         "source_dataset": "gold_business_observations",
+        "entity_kind": "employee",
         "entity_id": item_id,
     }
 

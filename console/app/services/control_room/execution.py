@@ -63,6 +63,20 @@ from app.services.control_room.business_decision_persistence import (
 from app.services.control_room.business_action_approval import (
     approve_business_item as _approve_business_item,
 )
+from app.services.control_room.business_action_authority import (
+    require_action_item_evidence,
+    require_action_item_prerequisites,
+)
+from app.services.control_room.business_action_binding import (
+    normalize_action_idempotency_key,
+)
+from app.services.control_room.business_action_catalog import (
+    require_enabled_action_template,
+    require_enabled_action_template_for_user,
+)
+from app.services.control_room.business_action_resolution import (
+    require_explicit_action_template,
+)
 from app.services.control_room.business_approve_with_optional_decision import (
     approve_with_optional_decision as _approve_with_optional_decision,
 )
@@ -94,16 +108,25 @@ from app.services.control_room.business_action_attempt import (
 )
 from app.services.control_room.business_external_outcome import (
     ambiguous_adapter_error_response,
+    ambiguous_unknown_error_response,
 )
 from app.services.control_room.business_action_failure import (
     finalize_aborted_action_reservation,
     run_reserved_external_action,
 )
 from app.services.control_room.business_reservation_errors import ReservationUnavailable
+from app.services.control_room.business_reservation_lease import reservation_lease_token
 from app.services.control_room.business_execution_precondition import (
     dry_run_metadata,
     lock_pending_action_reservation,
     require_matching_dry_run,
+)
+from app.services.control_room.business_authoritative_execution import (
+    AuthoritativeExecutionContext,
+    acquire_authoritative_action_reservation,
+    lock_authoritative_execution_context,
+    require_authoritative_binding_current,
+    revalidate_authoritative_action,
 )
 from app.services.control_room.business_execution_approval import (
     execution_lifecycle_block,
@@ -112,6 +135,9 @@ from app.services.control_room.business_execution_approval import (
 from app.services.control_room.business_execution_entry import prepare_execution_entry
 from app.services.control_room.business_external_projection import (
     reserved_action_response as _build_reserved_action_response,
+)
+from app.services.control_room.business_external_receipt_contract import (
+    reservation_authority_audit_valid,
 )
 from app.services.control_room.business_mutation_guard import (
     lock_authoritative_business_item,
@@ -156,6 +182,7 @@ for _helper in (
     mark_remote_attempt_started,
     remote_attempt_status,
     ambiguous_adapter_error_response,
+    ambiguous_unknown_error_response,
     finalize_aborted_action_reservation,
     run_reserved_external_action,
     lock_authoritative_business_item,
@@ -165,13 +192,28 @@ for _helper in (
     merged_control_state,
     merged_learned_rules,
     merged_lesson_state,
+    normalize_action_idempotency_key,
     require_matching_dry_run,
+    reservation_lease_token,
+    reservation_authority_audit_valid,
+    acquire_authoritative_action_reservation,
+    lock_authoritative_execution_context,
+    require_authoritative_binding_current,
+    revalidate_authoritative_action,
     require_approved_execution,
     prepare_execution_entry,
+    require_action_item_evidence,
+    require_action_item_prerequisites,
+    require_enabled_action_template,
+    require_enabled_action_template_for_user,
+    require_explicit_action_template,
     workflow_reopen_allowed,
 ):
     _core.__dict__.setdefault(_helper.__name__, _helper)
 _core.__dict__.setdefault("ActionReservation", ActionReservation)
+_core.__dict__.setdefault(
+    "AuthoritativeExecutionContext", AuthoritativeExecutionContext
+)
 _core.__dict__.setdefault("ReservationState", ReservationState)
 _core.__dict__.setdefault("ReservationUnavailable", ReservationUnavailable)
 _core.__dict__.update(_exec_sql=_exec_sql, WorkflowStage=_exec_sql.WorkflowStage)
@@ -962,7 +1004,7 @@ def _resolve_template(item: dict[str, Any], template_id: str | None) -> dict[str
     for template in templates:
         if template["template_id"] == template_id:
             return template
-    raise HTTPException(400, "action template is not valid for this item")
+    raise HTTPException(404, "action template is not valid for this item")
 
 
 @_bind_to_core
@@ -1011,6 +1053,8 @@ def _action_run_public(
         "metadata",
     ):
         data[key] = _details(data.get(key))
+    data["metadata"].pop("authority_audit", None)
+    data["metadata"].pop("reservation_lease_token", None)
     return data
 
 
@@ -1329,18 +1373,38 @@ async def _run_with_db_scope(
 
 
 @_bind_to_core
+async def _require_authoritative_template_enabled(conn: Any, template_id: str) -> None:
+    try:
+        await require_enabled_action_template(conn, template_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        raise HTTPException(
+            409,
+            {
+                "code": "item_business_state_changed",
+                "message": "control room item changed; reload before mutating",
+            },
+        ) from None
+
+
+@_bind_to_core
 async def action_preview(
     item_id: str,
     user: dict,
     *,
     template_id: str | None = None,
+    binding_id: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    template = _resolve_template(item, template_id)
-    payload = _execution_payload(item, "preview", template)
+    expected_item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_prerequisites(expected_item, operation="preview")
+    expected_template = require_explicit_action_template(
+        expected_item, user, template_id, binding_id
+    )
+    expected_payload = _execution_payload(expected_item, "preview", expected_template)
     result = {
         "ok": True,
         "mode": "preview",
@@ -1351,14 +1415,27 @@ async def action_preview(
 
     async def _write(
         conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        await _ensure_item_row(
+    ) -> tuple[dict[str, Any], dict[str, Any], AuthoritativeExecutionContext]:
+        context = await lock_authoritative_execution_context(
             conn,
             user=user,
-            item=item,
-            status=item.get("status") or "in_review",
-            critical=True,
+            expected_item=expected_item,
+            expected_payload=expected_payload,
+            template_id=str(expected_template["template_id"]),
+            binding_id=str(binding_id),
+            item_builder=lambda row: _authoritative_execution_item(row, item_id),
+            payload_builder=lambda current_item, current_template: _execution_payload(
+                current_item, "preview", current_template
+            ),
         )
+        item = context.item
+        template = context.template
+        payload = context.payload
+        require_action_item_prerequisites(item, operation="preview")
+        await _require_authoritative_template_enabled(
+            conn, str(template["template_id"])
+        )
+        require_authoritative_binding_current(context, user)
         execution = await _record_action_execution(
             conn,
             user=user,
@@ -1382,7 +1459,10 @@ async def action_preview(
             legacy_execution_id=int(execution["id"])
             if execution.get("id") is not None
             else None,
-            metadata={"legacy_table": "control_room_action_executions"},
+            metadata={
+                "legacy_table": "control_room_action_executions",
+                "authority_audit": context.authority_audit,
+            },
             critical=True,
         )
         await _set_execution_status(
@@ -1404,9 +1484,12 @@ async def action_preview(
             },
             critical=True,
         )
-        return execution, action_run
+        return execution, action_run, context
 
-    execution, action_run = await _run_with_db_scope(pool, user, _write)
+    execution, action_run, context = await _run_with_db_scope(pool, user, _write)
+    item = context.item
+    template = context.template
+    payload = context.payload
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1416,7 +1499,11 @@ async def action_preview(
         ip=ip,
         user_agent=user_agent,
         status="success",
-        metadata={"template_id": template["template_id"], "payload": payload},
+        metadata={
+            "template_id": template["template_id"],
+            "payload": payload,
+            "authority_audit": context.authority_audit,
+        },
         critical=True,
     )
     public_item = _project_public_item(
@@ -1437,52 +1524,75 @@ async def action_dry_run(
     user: dict,
     *,
     template_id: str | None = None,
+    binding_id: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    template = _resolve_template(item, template_id)
-    payload = _execution_payload(item, "dry_run", template)
-    warnings = []
-    if payload["impact"]["status"] != "ok":
-        warnings.append("impact_unavailable")
-    if not item.get("decision_id"):
-        warnings.append("decision_not_created_yet")
-    validation_checks, validation_warnings, validation_ok = _dry_run_checks(
-        user=user,
-        item=item,
-        template=template,
-        payload=payload,
+    expected_item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    require_action_item_prerequisites(expected_item, operation="dry_run")
+    expected_template = require_explicit_action_template(
+        expected_item, user, template_id, binding_id
     )
-    warnings.extend(value for value in validation_warnings if value not in warnings)
-    action_run_status = "dry_run_completed" if validation_ok else "dry_run_failed"
-    execution_status = "dry_run_validated" if validation_ok else "failed"
-    result = {
-        "ok": validation_ok,
-        "mode": "dry_run",
-        "validated": validation_ok,
-        "external_write": False,
-        "warnings": warnings,
-        "checks": validation_checks,
-        "message": (
-            "Dry-run validado. V1 no escribe en sistemas externos."
-            if validation_ok
-            else "Dry-run fallido: el contrato de ejecucion no paso todas las validaciones requeridas."
-        ),
-    }
+    expected_payload = _execution_payload(expected_item, "dry_run", expected_template)
     pool = await auth.pool()
 
     async def _write(
         conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        await _ensure_item_row(
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, Any],
+        AuthoritativeExecutionContext,
+        dict[str, Any],
+        str,
+    ]:
+        context = await lock_authoritative_execution_context(
             conn,
             user=user,
-            item=item,
-            status=item.get("status") or "in_review",
-            critical=True,
+            expected_item=expected_item,
+            expected_payload=expected_payload,
+            template_id=str(expected_template["template_id"]),
+            binding_id=str(binding_id),
+            item_builder=lambda row: _authoritative_execution_item(row, item_id),
+            payload_builder=lambda current_item, current_template: _execution_payload(
+                current_item, "dry_run", current_template
+            ),
         )
+        item = context.item
+        template = context.template
+        payload = context.payload
+        require_action_item_prerequisites(item, operation="dry_run")
+        await _require_authoritative_template_enabled(
+            conn, str(template["template_id"])
+        )
+        warnings = []
+        if payload["impact"]["status"] != "ok":
+            warnings.append("impact_unavailable")
+        if not item.get("decision_id"):
+            warnings.append("decision_not_created_yet")
+        validation_checks, validation_warnings, validation_ok = _dry_run_checks(
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+        )
+        warnings.extend(value for value in validation_warnings if value not in warnings)
+        action_run_status = "dry_run_completed" if validation_ok else "dry_run_failed"
+        execution_status = "dry_run_validated" if validation_ok else "failed"
+        result = {
+            "ok": validation_ok,
+            "mode": "dry_run",
+            "validated": validation_ok,
+            "external_write": False,
+            "warnings": warnings,
+            "checks": validation_checks,
+            "message": (
+                "Dry-run validado. V1 no escribe en sistemas externos."
+                if validation_ok
+                else "Dry-run fallido: el contrato de ejecucion no paso todas las validaciones requeridas."
+            ),
+        }
+        require_authoritative_binding_current(context, user)
         execution = await _record_action_execution(
             conn,
             user=user,
@@ -1512,6 +1622,7 @@ async def action_dry_run(
             metadata={
                 "legacy_table": "control_room_action_executions",
                 "checks": validation_checks,
+                "authority_audit": context.authority_audit,
                 **dry_run_metadata(item, template_id=str(template["template_id"])),
             },
             critical=True,
@@ -1537,9 +1648,14 @@ async def action_dry_run(
             },
             critical=True,
         )
-        return execution, action_run
+        return execution, action_run, context, result, execution_status
 
-    execution, action_run = await _run_with_db_scope(pool, user, _write)
+    execution, action_run, context, result, execution_status = await _run_with_db_scope(
+        pool, user, _write
+    )
+    item = context.item
+    template = context.template
+    payload = context.payload
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -1548,11 +1664,12 @@ async def action_dry_run(
         resource_id=item_id,
         ip=ip,
         user_agent=user_agent,
-        status="success" if validation_ok else "failed",
+        status="success" if result["ok"] else "failed",
         metadata={
             "template_id": template["template_id"],
             "result": result,
             "action_run_id": action_run.get("id"),
+            "authority_audit": context.authority_audit,
         },
         critical=True,
     )
@@ -1851,153 +1968,14 @@ async def run_auto_item(
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
-    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    if item.get("status") in TERMINAL_ITEM_STATUSES:
-        raise HTTPException(409, "terminal control room item cannot run automatic mode")
-
-    steps: list[dict[str, Any]] = []
-    investigation = await record_item_step(
-        item_id,
-        "investigation",
-        user,
-        note="Modo automatico: investigacion iniciada",
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    steps.append({"step": "investigation", "event": investigation.get("event_type")})
-
-    selected = await select_item_option(
-        item_id,
-        "remediate",
-        user,
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    item = selected["item"]
-    steps.append({"step": "options", "option_id": "remediate"})
-
-    if not item.get("decision_id"):
-        decision = await create_decision_for_item(
-            item_id,
-            user,
-            ip=ip,
-            user_agent=user_agent,
-            fetcher=fetcher,
-        )
-        item = decision["item"]
-    else:
-        decision = {"decision": {"id": item.get("decision_id")}, "item": item}
-    steps.append({"step": "decision", "decision_id": item.get("decision_id")})
-
-    available_template_ids = {
-        str(template.get("template_id"))
-        for template in _action_templates_for_item(item)
-    }
-    template_id = (
-        "create_followup_task"
-        if "create_followup_task" in available_template_ids
-        else _primary_template_for_item(item)["template_id"]
-    )
-    preview = await action_preview(
-        item_id,
-        user,
-        template_id=template_id,
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    dry_run = await action_dry_run(
-        item_id,
-        user,
-        template_id=template_id,
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    item = dry_run["item"]
-    steps.append(
+    del item_id, user, ip, user_agent, fetcher
+    raise HTTPException(
+        409,
         {
-            "step": "execution",
-            "template_id": template_id,
-            "status": item.get("execution_status"),
-        }
-    )
-
-    control = await record_item_step(
-        item_id,
-        "control",
-        user,
-        note="Modo automatico: dry-run validado y control abierto",
-        ip=ip,
-        user_agent=user_agent,
-        fetcher=fetcher,
-    )
-    steps.append({"step": "control", "event": control.get("event_type")})
-
-    pool = await auth.pool()
-
-    async def _record_auto_run(
-        conn: Any, _tenant_id: str | None, _workspace_id: str
-    ) -> None:
-        await lock_authoritative_business_item(
-            conn,
-            user=user,
-            item=item,
-            decision_id=int(item["decision_id"]),
-            allowed_stages={
-                _exec_sql.WorkflowStage.DECISION_CREATED,
-                _exec_sql.WorkflowStage.APPROVED,
-                _exec_sql.WorkflowStage.EXECUTED,
-            },
-        )
-        await _record_item_event(
-            conn,
-            user=user,
-            item=item,
-            event_type="auto_run_completed",
-            metadata={
-                "steps": steps,
-                "decision_id": item.get("decision_id"),
-                "template_id": template_id,
-                "execution_status": item.get("execution_status"),
-                "external_write": False,
-            },
-        )
-
-    await _run_with_db_scope(pool, user, _record_auto_run)
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="control_room.auto_run",
-        resource_type="control_room_item",
-        resource_id=item_id,
-        ip=ip,
-        user_agent=user_agent,
-        status="success",
-        metadata={
-            "steps": steps,
-            "decision_id": item.get("decision_id"),
-            "template_id": template_id,
-            "preview_execution_id": preview.get("execution", {}).get("id"),
-            "dry_run_execution_id": dry_run.get("execution", {}).get("id"),
-            "external_write": False,
+            "code": "auto_run_disabled",
+            "message": "automatic mode is disabled until orchestration is atomic",
         },
-        critical=True,
     )
-    return {
-        "auto_run": {
-            "completed": True,
-            "stopped_before_writeback": True,
-            "steps": steps,
-            "template_id": template_id,
-        },
-        "decision": decision.get("decision"),
-        "preview": preview.get("result"),
-        "dry_run": dry_run.get("result"),
-        "item": _with_omega(item),
-    }
 
 
 @_bind_to_core
@@ -2166,6 +2144,18 @@ async def _record_execute_block(
 
 
 @_bind_to_core
+def _authoritative_execution_item(
+    row: dict[str, Any], item_id: str
+) -> dict[str, Any] | None:
+    return persisted_business_item(
+        row,
+        expected_item_id=item_id,
+        item_statuses=ITEM_STATUSES,
+        severity_weights=SEVERITY_WEIGHT,
+    )
+
+
+@_bind_to_core
 def _reserved_action_response(
     reservation: ActionReservation,
     *,
@@ -2196,7 +2186,19 @@ async def _complete_execute_reservation(
     legacy_execution_id: int | None = None,
     error_code: str | None = None,
     error_message: str | None = None,
+    authority_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if status == "completed":
+        if authority_audit is None or not reservation_authority_audit_valid(
+            reservation.row, authority_audit
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "invalid_execution_authority_audit",
+                    "message": "execution authority audit does not match reservation",
+                },
+            )
     row = await complete_action_reservation(
         db,
         workspace_id=_workspace_id(user),
@@ -2230,6 +2232,7 @@ async def _execute_internal_followup_task(
     item: dict[str, Any],
     template: dict[str, Any],
     payload: dict[str, Any],
+    binding_id: str,
     idempotency_key: str | None,
     ip: str | None,
     user_agent: str | None,
@@ -2248,6 +2251,7 @@ async def _execute_internal_followup_task(
                     item=item,
                     template=template,
                     payload=payload,
+                    binding_id=binding_id,
                     idempotency_key=idempotency_key,
                     ip=ip,
                     user_agent=user_agent,
@@ -2258,6 +2262,7 @@ async def _execute_internal_followup_task(
         item=item,
         template=template,
         payload=payload,
+        binding_id=binding_id,
         idempotency_key=idempotency_key,
         ip=ip,
         user_agent=user_agent,
@@ -2272,22 +2277,32 @@ async def _execute_internal_followup_task_tx(
     item: dict[str, Any],
     template: dict[str, Any],
     payload: dict[str, Any],
+    binding_id: str,
     idempotency_key: str | None,
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(user)
-    reservation = await acquire_guarded_action_reservation(
+    acquired = await acquire_authoritative_action_reservation(
         db,
         user=user,
-        item=item,
+        expected_item=item,
+        expected_payload=payload,
         template_id=str(template["template_id"]),
+        binding_id=binding_id,
         adapter_name=_adapter_name_for_template(template),
         operation="execute",
         provided_key=idempotency_key,
-        input_payload=payload,
+        item_builder=lambda row: _authoritative_execution_item(row, item["id"]),
+        payload_builder=lambda current_item, current_template: _execution_payload(
+            current_item, "execute_live", current_template
+        ),
     )
-    if reservation.state is not ReservationState.ACQUIRED:
+    item = acquired.context.item
+    template = acquired.context.template
+    payload = acquired.context.payload
+    reservation = acquired.reservation
+    if reservation.state != ReservationState.ACQUIRED:
         return _reserved_action_response(
             reservation,
             item=item,
@@ -2300,6 +2315,7 @@ async def _execute_internal_followup_task_tx(
         decision_id,
         workspace_id,
     )
+    require_authoritative_binding_current(acquired.context, user)
     if not visible:
         await _record_execute_block(
             db,
@@ -2382,6 +2398,7 @@ async def _execute_internal_followup_task_tx(
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
+        authority_audit=acquired.context.authority_audit,
     )
     update_result = await db.execute(
         f"""
@@ -2466,21 +2483,31 @@ async def _execute_internal_investigation_note(
     item: dict[str, Any],
     template: dict[str, Any],
     payload: dict[str, Any],
+    binding_id: str,
     idempotency_key: str | None,
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
-    reservation = await acquire_guarded_action_reservation(
+    acquired = await acquire_authoritative_action_reservation(
         pool,
         user=user,
-        item=item,
+        expected_item=item,
+        expected_payload=payload,
         template_id=str(template["template_id"]),
+        binding_id=binding_id,
         adapter_name=_adapter_name_for_template(template),
         operation="execute",
         provided_key=idempotency_key,
-        input_payload=payload,
+        item_builder=lambda row: _authoritative_execution_item(row, item["id"]),
+        payload_builder=lambda current_item, current_template: _execution_payload(
+            current_item, "execute_live", current_template
+        ),
     )
-    if reservation.state is not ReservationState.ACQUIRED:
+    item = acquired.context.item
+    template = acquired.context.template
+    payload = acquired.context.payload
+    reservation = acquired.reservation
+    if reservation.state != ReservationState.ACQUIRED:
         return _reserved_action_response(reservation, item=item, payload=payload)
     idempotency_key = reservation.effective_key
     note_payload = (
@@ -2512,6 +2539,7 @@ async def _execute_internal_investigation_note(
         "side_effect": side_effect,
         "message": "Nota de investigacion creada en Control Room; no se escribio en ERP.",
     }
+    require_authoritative_binding_current(acquired.context, user)
     execution = await _record_action_execution(
         pool,
         user=user,
@@ -2534,6 +2562,7 @@ async def _execute_internal_investigation_note(
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
+        authority_audit=acquired.context.authority_audit,
     )
     await _record_item_event(
         pool,
@@ -2588,22 +2617,32 @@ async def _execute_internal_decision_monitoring(
     item: dict[str, Any],
     template: dict[str, Any],
     payload: dict[str, Any],
+    binding_id: str,
     idempotency_key: str | None,
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(user)
-    reservation = await acquire_guarded_action_reservation(
+    acquired = await acquire_authoritative_action_reservation(
         pool,
         user=user,
-        item=item,
+        expected_item=item,
+        expected_payload=payload,
         template_id=str(template["template_id"]),
+        binding_id=binding_id,
         adapter_name=_adapter_name_for_template(template),
         operation="execute",
         provided_key=idempotency_key,
-        input_payload=payload,
+        item_builder=lambda row: _authoritative_execution_item(row, item["id"]),
+        payload_builder=lambda current_item, current_template: _execution_payload(
+            current_item, "execute_live", current_template
+        ),
     )
-    if reservation.state is not ReservationState.ACQUIRED:
+    item = acquired.context.item
+    template = acquired.context.template
+    payload = acquired.context.payload
+    reservation = acquired.reservation
+    if reservation.state != ReservationState.ACQUIRED:
         return _reserved_action_response(reservation, item=item, payload=payload)
     idempotency_key = reservation.effective_key
     monitoring_state = {
@@ -2633,6 +2672,7 @@ async def _execute_internal_decision_monitoring(
         "side_effect": side_effect,
         "message": "Decision marcada para monitoreo interno; no se escribio en ERP.",
     }
+    require_authoritative_binding_current(acquired.context, user)
     execution = await _record_action_execution(
         pool,
         user=user,
@@ -2655,6 +2695,7 @@ async def _execute_internal_decision_monitoring(
         legacy_execution_id=int(execution["id"])
         if execution.get("id") is not None
         else None,
+        authority_audit=acquired.context.authority_audit,
     )
     update_result = await pool.execute(
         f"""
@@ -2868,24 +2909,32 @@ async def _execute_external_writeback(
     reservation: ActionReservation,
     ip: str | None,
     user_agent: str | None,
+    authority: AuthoritativeExecutionContext | None = None,
 ) -> dict[str, Any]:
     from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
     from app.services.control_room import business_external_effect as external_effect
 
-    await require_approved_execution(
+    if authority is None:
+        raise HTTPException(
+            409,
+            {
+                "code": "invalid_execution_authority_audit",
+                "message": "signed execution authority is required",
+            },
+        )
+    authority, locked_reservation = await revalidate_authoritative_action(
         pool,
         user=user,
-        item=item,
-        template_id=str(template["template_id"]),
+        expected=authority,
+        reservation=reservation,
+        item_builder=lambda row: _authoritative_execution_item(row, item["id"]),
+        payload_builder=lambda current_item, current_template: _execution_payload(
+            current_item, "execute_live", current_template
+        ),
     )
-    locked_reservation = await lock_pending_action_reservation(
-        pool,
-        user=user,
-        item=item,
-        template_id=str(template["template_id"]),
-        reservation_id=reservation.id,
-        effective_key=reservation.effective_key,
-    )
+    item = authority.item
+    template = authority.template
+    payload = authority.payload
     if remote_attempt_status(locked_reservation) != "started":
         raise HTTPException(409, "remote attempt was not durably prepared")
     idempotency_key = reservation.effective_key
@@ -2961,6 +3010,8 @@ async def _execute_external_writeback(
                 "external write-back adapter does not guarantee idempotency"
             )
         adapter_name = adapter.__class__.__name__
+        if authority is not None:
+            require_authoritative_binding_current(authority, user)
         remote_attempt_started = True
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
@@ -3136,6 +3187,8 @@ async def _execute_external_writeback(
         return {"_http_error_status": 502, "_http_error_detail": result}
     except external_effect.RemoteSideEffectCommitted:
         raise
+    except HTTPException:
+        raise
     except Exception as exc:
         result = {
             "ok": False,
@@ -3145,6 +3198,16 @@ async def _execute_external_writeback(
             "adapter": cartridge_id,
             "message": "External write-back failed before remote execution completed.",
         }
+        reconciliation = await ambiguous_unknown_error_response(
+            pool,
+            remote_attempt_started=remote_attempt_started,
+            workspace_id=_workspace_id(user),
+            reservation_id=reservation.id,
+            effective_key=reservation.effective_key,
+            result=result,
+        )
+        if reconciliation is not None:
+            return reconciliation
         execution = await _record_action_execution(
             pool,
             user=user,
@@ -3262,6 +3325,9 @@ async def _execute_external_writeback(
             legacy_execution_id=int(execution["id"])
             if execution.get("id") is not None
             else None,
+            authority_audit=(
+                authority.authority_audit if authority is not None else None
+            ),
         )
         await _set_execution_status(
             pool, user=user, item=item, execution_status=execution_status, critical=True
@@ -3342,6 +3408,7 @@ async def execute_item(
     user: dict,
     *,
     template_id: str | None = None,
+    binding_id: str | None = None,
     confirm_execute: Any = False,
     idempotency_key: str | None = None,
     ip: str | None = None,
@@ -3349,12 +3416,18 @@ async def execute_item(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    template = _resolve_template(item, template_id)
+    require_action_item_evidence(item)
+    template = require_explicit_action_template(item, user, template_id, binding_id)
+    try:
+        idempotency_key = normalize_action_idempotency_key(idempotency_key)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
     payload = _execution_payload(item, "execute_live", template)
     pool = await auth.pool()
 
     async def _with_scoped_db(work: Callable[[Any], Awaitable[Any]]) -> Any:
         async def _run(conn: Any, _tenant_id: str | None, _workspace_id: str) -> Any:
+            await require_enabled_action_template(conn, str(template["template_id"]))
             return await work(conn)
 
         try:
@@ -3364,8 +3437,16 @@ async def execute_item(
                 503, "execution idempotency reservation failed"
             ) from exc
 
+    async def _with_scoped_replay(work: Callable[[Any], Awaitable[Any]]) -> Any:
+        return await _run_with_db_scope(
+            pool,
+            user,
+            lambda conn, _tenant_id, _workspace_id: work(conn),
+        )
+
     replay_response = await prepare_execution_entry(
         run_scoped=_with_scoped_db,
+        run_replay_scoped=_with_scoped_replay,
         ensure_item_row=_ensure_item_row,
         record_execute_block=_record_execute_block,
         response_for_reservation=_reserved_action_response,
@@ -3379,14 +3460,6 @@ async def execute_item(
     )
     if replay_response is not None:
         return replay_response
-    await _with_scoped_db(
-        lambda db: require_approved_execution(
-            db,
-            user=user,
-            item=item,
-            template_id=str(template["template_id"]),
-        )
-    )
     capability = _writeback_capability(template)
     if capability.get("external") and not capability.get("adapter_available"):
         await _with_scoped_db(
@@ -3469,9 +3542,8 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                binding_id=str(binding_id or ""),
+                idempotency_key=idempotency_key,
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3485,9 +3557,8 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                binding_id=str(binding_id or ""),
+                idempotency_key=idempotency_key,
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3501,9 +3572,8 @@ async def execute_item(
                 item=item,
                 template=template,
                 payload=payload,
-                idempotency_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
-                ),
+                binding_id=str(binding_id or ""),
+                idempotency_key=idempotency_key,
                 ip=ip,
                 user_agent=user_agent,
             )
@@ -3519,36 +3589,64 @@ async def execute_item(
             raise HTTPException(
                 501, "external write-back adapter must support idempotency"
             )
-        reservation = await _with_scoped_db(
-            lambda db: acquire_guarded_action_reservation(
+        acquired = await _with_scoped_db(
+            lambda db: acquire_authoritative_action_reservation(
                 db,
                 user=user,
-                item=item,
+                expected_item=item,
+                expected_payload=payload,
                 template_id=str(template["template_id"]),
+                binding_id=str(binding_id or ""),
                 adapter_name=adapter.__class__.__name__,
                 operation="execute",
-                provided_key=(
-                    str(idempotency_key).strip() if idempotency_key else None
+                provided_key=idempotency_key,
+                item_builder=lambda row: _authoritative_execution_item(row, item["id"]),
+                payload_builder=lambda current_item, current_template: (
+                    _execution_payload(current_item, "execute_live", current_template)
                 ),
-                input_payload=payload,
             )
         )
-        if reservation.state is not ReservationState.ACQUIRED:
+        authority = acquired.context
+        item = authority.item
+        template = authority.template
+        payload = authority.payload
+        reservation = acquired.reservation
+        if reservation.state != ReservationState.ACQUIRED:
             return _reserved_action_response(reservation, item=item, payload=payload)
-        response = await run_reserved_external_action(
-            run_scoped=_with_scoped_db,
-            prepare=lambda db: mark_remote_attempt_started(
+        authority_holder = [authority]
+
+        async def _prepare_authoritative_remote_action(db: Any) -> dict[str, Any]:
+            current, locked_reservation = await revalidate_authoritative_action(
+                db,
+                user=user,
+                expected=authority_holder[0],
+                reservation=reservation,
+                item_builder=lambda row: _authoritative_execution_item(
+                    row, authority_holder[0].item["id"]
+                ),
+                payload_builder=lambda current_item, current_template: (
+                    _execution_payload(current_item, "execute_live", current_template)
+                ),
+            )
+            require_authoritative_binding_current(current, user)
+            authority_holder[0] = current
+            return await mark_remote_attempt_started(
                 db,
                 workspace_id=_workspace_id(user),
                 reservation_id=reservation.id,
                 effective_key=reservation.effective_key,
                 adapter=adapter.__class__.__name__,
                 target=str(
-                    template.get("cartridge_id")
-                    or item.get("cartridge")
+                    current.template.get("cartridge_id")
+                    or current.item.get("cartridge")
                     or "external_system"
                 ),
-            ),
+                lease_token=reservation_lease_token(locked_reservation),
+            )
+
+        response = await run_reserved_external_action(
+            run_scoped=_with_scoped_replay,
+            prepare=_prepare_authoritative_remote_action,
             execute=lambda db: _execute_external_writeback(
                 db,
                 user=user,
@@ -3558,6 +3656,7 @@ async def execute_item(
                 reservation=reservation,
                 ip=ip,
                 user_agent=user_agent,
+                authority=authority_holder[0],
             ),
             finalize=finalize_aborted_action_reservation,
             workspace_id=_workspace_id(user),

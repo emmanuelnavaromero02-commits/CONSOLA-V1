@@ -669,14 +669,16 @@ async def briefing_v2_endpoint(
         _user_id(user), limit=limit, user_context=user,
     )
     try:
-        live = await copilot_context_service.list_recommendations(user, limit=limit)
+        live = copilot_context_service.project_operator_recommendations(
+            await copilot_context_service.list_recommendations(user, limit=limit)
+        )
         live_items = []
         severity_score = {"critical": 95, "warning": 75, "info": 45, "success": 15}
         for item in live.get("recommendations", []):
             if not isinstance(item, dict) or item.get("status") == "dismissed":
                 continue
             live_items.append({
-                "id": item.get("fingerprint") or item.get("id"),
+                "id": item.get("id"),
                 "severity": item.get("severity") or "info",
                 "title": item.get("title") or "Recomendación",
                 "body": item.get("body") or "",
@@ -722,48 +724,44 @@ async def _control_room_live_context_for_prompt(
     if not _looks_like_control_room_page(page_context):
         return None
     if not permissions.has_permission(user, "datasets.read"):
-        return _json_prompt_snapshot(
-            {
-                "available": False,
-                "reason": "permission_required:datasets.read",
-            }
-        )
+        return None
+    has_operations_read = permissions.has_permission(user, "operations.read")
 
     snapshot: dict[str, Any] = {"available": True}
 
     async def _safe(name: str, loader) -> None:
         try:
-            snapshot[name] = await loader()
-        except HTTPException as exc:
-            snapshot[name] = {
-                "available": False,
-                "status_code": exc.status_code,
-                "error": str(exc.detail)[:400],
-            }
-        except Exception as exc:
+            raw = await loader()
+            projected = copilot_context_service.project_control_room_diagnostic(
+                name, raw
+            )
+            snapshot[name] = projected or {"available": False}
+        except HTTPException:
+            snapshot[name] = {"available": False}
+        except Exception:
             logger.debug("control room live context %s failed", name, exc_info=True)
-            snapshot[name] = {
-                "available": False,
-                "error": str(exc)[:400] or exc.__class__.__name__,
-            }
+            snapshot[name] = {"available": False}
 
-    await _safe("ops_summary", lambda: control_room_service.ops_summary(user))
     await _safe(
         "sap_successfactors_talent_kpis",
         lambda: control_room_service.sap_successfactors_talent_kpis(user),
     )
     await _safe(
-        "sap_successfactors_talent_metadata_readiness",
-        lambda: control_room_service.sap_successfactors_talent_metadata_readiness(user),
-    )
-    await _safe(
         "sap_successfactors_talent_overview",
         lambda: control_room_service.sap_successfactors_talent_overview(user),
     )
-    await _safe(
-        "agents_ops",
-        lambda: control_room_service.agents_ops(user, limit=8),
-    )
+    if has_operations_read:
+        await _safe("ops_summary", lambda: control_room_service.ops_summary(user))
+        await _safe(
+            "sap_successfactors_talent_metadata_readiness",
+            lambda: control_room_service.sap_successfactors_talent_metadata_readiness(
+                user
+            ),
+        )
+        await _safe(
+            "agents_ops",
+            lambda: control_room_service.agents_ops(user, limit=8),
+        )
 
     return _json_prompt_snapshot(snapshot)
 

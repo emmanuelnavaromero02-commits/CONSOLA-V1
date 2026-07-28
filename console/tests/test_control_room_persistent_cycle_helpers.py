@@ -5,24 +5,24 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 
 from app.services import control_room_service
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_explicit_action_binding import (
+    attach_explicit_action_binding,
+)
 from app.services.control_room.business_execution_precondition import dry_run_metadata
+from app.services.control_room.business_persisted_row import persisted_business_item
 from app.services.control_room.business_runtime_evidence import (
     runtime_row_evidence_fields,
 )
-from app.services.control_room.business_workflow_provenance import (
-    CURRENT_ELIGIBILITY_FINGERPRINT_KEY,
-    DECISION_PROVENANCE_KEY,
-    ELIGIBILITY_POLICY_VERSION,
-    ELIGIBILITY_POLICY_VERSION_KEY,
-    WorkflowStage,
-    business_observation_fingerprint,
-    workflow_eligibility_provenance,
+from console.tests.control_room_execution_helpers import (
+    authoritative_item_row,
 )
 
 USER = {
     "id": 7,
     "email": "ops@example.com",
     "tenant_id": "tenant-A",
+    "role": "admin",
     "active_workspace_id": "workspace-A",
     "allowed_cartridges": ["replicon"],
     "_effective_permissions": [
@@ -93,7 +93,28 @@ def item(**overrides):
             business_observation=base,
         )
     )
-    return control_room_service._with_omega({**base, **overrides})  # noqa: SLF001
+    source = {**base, **overrides}
+    projected = persisted_business_item(
+        authoritative_item_row(source),
+        expected_item_id=str(source["id"]),
+        item_statuses=control_room_service.ITEM_STATUSES,
+        severity_weights=control_room_service.SEVERITY_WEIGHT,
+    )
+    assert projected is not None
+    projected = control_room_service._with_omega(projected)  # noqa: SLF001
+    return attach_explicit_action_binding(
+        projected,
+        template_id="create_followup_task",
+    )
+
+
+def binding_id(value: dict, template_id: str = "create_followup_task") -> str:
+    bindings = value["metadata"]["explicit_action_bindings"]
+    return str(
+        next(binding for binding in bindings if binding["template_id"] == template_id)[
+            "binding_id"
+        ]
+    )
 
 
 def legacy_execution(
@@ -154,52 +175,7 @@ def action_run_row(
 
 
 def persisted_item_row(value: dict) -> dict:
-    metadata = {
-        key: value[key]
-        for key in (
-            "data_status",
-            "metric_type",
-            "observed_value",
-            "population_count",
-            "detected_at",
-            "evidence_refs",
-            "source_system",
-        )
-    }
-    stage = (
-        WorkflowStage.APPROVED
-        if value.get("status") == "approved"
-        else WorkflowStage.DECISION_CREATED
-    )
-    metadata.update(
-        {
-            CURRENT_ELIGIBILITY_FINGERPRINT_KEY: business_observation_fingerprint(
-                value
-            ),
-            ELIGIBILITY_POLICY_VERSION_KEY: ELIGIBILITY_POLICY_VERSION,
-            DECISION_PROVENANCE_KEY: workflow_eligibility_provenance(
-                value,
-                stage=stage,
-                workspace_id=value["workspace_id"],
-                decision_id=value["decision_id"],
-            ),
-        }
-    )
-    return {
-        "tenant_id": value["tenant_id"],
-        "workspace_id": value["workspace_id"],
-        "owner_user_id": value["owner_user_id"],
-        "item_id": value["id"],
-        "cartridge_id": value["cartridge"],
-        "source_dataset": value["source_dataset"],
-        "item_kind": value["kind"],
-        "entity_id": value["entity_id"],
-        "status": value["status"],
-        "decision_id": value["decision_id"],
-        "selected_option_id": value.get("selected_option_id"),
-        "execution_status": value["execution_status"],
-        "metadata": metadata,
-    }
+    return authoritative_item_row(value)
 
 
 def guarded_fetchrows(value: dict, rows, *, has_dry_run: bool = True):
@@ -208,10 +184,21 @@ def guarded_fetchrows(value: dict, rows, *, has_dry_run: bool = True):
 
     def fetchrow(query, *_args):
         sql = " ".join(str(query).split())
+        if "FROM control_room_action_templates" in sql:
+            template_id = str(_args[0])
+            template = ACTION_TEMPLATES[template_id]
+            return {
+                "template_id": template_id,
+                "cartridge_id": template["cartridge_id"],
+                "label": template["label"],
+                "requires_approval": template["requires_approval"],
+            }
         if "FROM control_room_items" in sql and "FOR UPDATE" in sql:
             return persisted_item_row(value)
         if "mode = 'dry_run'" in sql and "status = 'dry_run_completed'" in sql:
             return action_run_row(value) if has_dry_run else None
+        if "SELECT id" in sql and "FROM action_runs" in sql and "LIMIT 1" in sql:
+            return None
         if "INSERT INTO action_runs" in sql and "'pending'" in sql:
             reservation.update(
                 {

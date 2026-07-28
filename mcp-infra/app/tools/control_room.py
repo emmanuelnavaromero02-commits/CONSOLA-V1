@@ -272,8 +272,9 @@ async def _read_control_room_view(
     security_context: dict[str, Any] | None,
     *,
     params: dict[str, Any] | None = None,
+    permission: str = "datasets.read",
 ) -> dict[str, Any]:
-    scope = _trusted_read_scope(security_context)
+    scope = _trusted_read_scope(security_context, permission=permission)
     result = await _call_console(
         "/api/control-room/internal/read",
         {
@@ -317,7 +318,9 @@ async def control_room__summary_read(
 async def control_room__dashboard_read(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return await _read_control_room_view("dashboard", security_context)
+    return await _read_control_room_view(
+        "dashboard", security_context, permission="operations.read"
+    )
 
 
 @tool(
@@ -331,7 +334,9 @@ async def control_room__dashboard_read(
 async def control_room__ops_summary_read(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return await _read_control_room_view("ops_summary", security_context)
+    return await _read_control_room_view(
+        "ops_summary", security_context, permission="operations.read"
+    )
 
 
 @tool(
@@ -345,7 +350,9 @@ async def control_room__ops_summary_read(
 async def control_room__alerts_read(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return await _read_control_room_view("alerts", security_context)
+    return await _read_control_room_view(
+        "alerts", security_context, permission="operations.read"
+    )
 
 
 @tool(
@@ -368,6 +375,7 @@ async def control_room__agents_ops_read(
         "agents_ops",
         security_context,
         params={"limit": max(1, min(int(limit or 12), 50))},
+        permission="operations.read",
     )
 
 
@@ -476,6 +484,7 @@ async def control_room__decision_intelligence_runs_read(
         "decision_intelligence_runs",
         security_context,
         params={"limit": max(1, min(int(limit or 50), 250))},
+        permission="operations.read",
     )
 
 

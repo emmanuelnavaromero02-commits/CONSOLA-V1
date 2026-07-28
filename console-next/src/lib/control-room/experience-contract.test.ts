@@ -30,10 +30,17 @@ describe("controlRoomExperienceSchema", () => {
     expect(() =>
       controlRoomExperienceSchema.parse({ ...fixture, source_url: "https://internal" }),
     ).toThrow();
+    expect(() =>
+      controlRoomExperienceSchema.parse({
+        ...fixture,
+        scope: { tenant_id: "private", workspace_id: "private" },
+      }),
+    ).toThrow();
 
     const nested = structuredClone(fixture) as {
-      sections: Array<{ facts: Array<Record<string, unknown>> }>;
+      sections: Array<Record<string, unknown> & { facts: Array<Record<string, unknown>> }>;
     };
+    nested.sections[0].module_id = "technical-module";
     nested.sections[0].facts[0].payload_hash = "technical";
     expect(() => controlRoomExperienceSchema.parse(nested)).toThrow();
   });
@@ -54,12 +61,8 @@ describe("controlRoomExperienceSchema", () => {
     const parsed = controlRoomExperienceSchema.parse({
       schema_version: "control-room-experience/v1",
       generated_at: "2026-07-25T12:30:00Z",
-      scope: { tenant_id: "tenant", workspace_id: "workspace" },
       sections: [
         {
-          id: "opaque",
-          cartridge_id: "cartridge",
-          module_id: "module",
           title: "Performance",
           domain: "Personas",
           facts: [

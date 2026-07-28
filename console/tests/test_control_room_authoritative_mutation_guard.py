@@ -193,6 +193,21 @@ async def test_execution_status_changed_after_lookup_rejects() -> None:
 
 
 @pytest.mark.asyncio
+async def test_completed_execution_advance_can_reach_exact_replay_guard() -> None:
+    item = {**_item(3), "execution_status": "dry_run_validated"}
+    row = {**_persisted(item), "execution_status": "executed"}
+
+    locked = await lock_authoritative_business_item(
+        GuardConnection(row),
+        user=_user(),
+        item=item,
+        allow_completed_execution_replay=True,
+    )
+
+    assert locked["execution_status"] == "executed"
+
+
+@pytest.mark.asyncio
 async def test_unlinked_diagnostic_transition_ignores_projected_option_default() -> (
     None
 ):

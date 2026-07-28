@@ -9,9 +9,11 @@ from fastapi import HTTPException
 from app.services import control_room_service
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
+    ReservationConflict,
     ReservationState,
     acquire_action_reservation,
 )
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_action_failure import (
     finalize_aborted_action_reservation,
 )
@@ -22,6 +24,10 @@ from app.services.control_room.business_external_effect import (
 from app.services.control_room.business_external_projection import (
     project_committed_external_effect,
 )
+from control_room_external_authority import (
+    external_authority,
+    patch_started_revalidation,
+)
 
 
 def _item() -> dict:
@@ -29,8 +35,12 @@ def _item() -> dict:
         "id": "item-1",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "decision_id": 42,
         "source_dataset": "gold_people",
+        "details": {"pernr": "1001"},
+        "metadata": {"connection": {"base_url": "https://h.invalid", "endpoint": "/r"}},
         "observed_value": 1,
         "metric_type": "count",
         "population_count": 10,
@@ -52,10 +62,22 @@ def test_rejected_remote_result_does_not_claim_a_committed_side_effect():
 @pytest.mark.asyncio
 async def test_stale_pending_reservation_is_reclaimed_with_same_effective_key():
     stale = datetime.now(UTC) - timedelta(minutes=10)
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="prepare_hcm_access_review",
+        operation="execute",
+        authorization_contract=None,
+    )
     db = AsyncMock()
     db.fetchrow.side_effect = [
         None,
-        {"id": 7, "status": "pending", "updated_at": stale},
+        {
+            "id": 7,
+            "status": "pending",
+            "updated_at": stale,
+            "metadata": {"reservation_contract": contract},
+        },
         {"id": 7, "status": "pending", "updated_at": datetime.now(UTC)},
     ]
 
@@ -64,7 +86,7 @@ async def test_stale_pending_reservation_is_reclaimed_with_same_effective_key():
         tenant_id="tenant-a",
         workspace_id="workspace-a",
         item=_item(),
-        template_id="external-template",
+        template_id="prepare_hcm_access_review",
         adapter_name="IdempotentAdapter",
         operation="execute",
     )
@@ -93,16 +115,13 @@ async def test_remote_success_late_local_failure_carries_durable_receipt():
         state=ReservationState.ACQUIRED,
         row={},
     )
+    item = {**_item(), "tenant_id": "tenant-a"}
+    template = {"template_id": "external-template", "cartridge_id": "sap_hcm"}
+    payload = {}
+    authority = external_authority(item, template, payload)
 
     with (
-        patch.object(control_room_service, "require_approved_execution", AsyncMock()),
-        patch.object(
-            control_room_service,
-            "lock_pending_action_reservation",
-            AsyncMock(
-                return_value={"metadata": {"remote_attempt": {"status": "started"}}}
-            ),
-        ),
+        patch_started_revalidation(control_room_service, authority),
         patch.object(
             control_room_service, "_record_writeback_audit_event", AsyncMock()
         ),
@@ -125,15 +144,13 @@ async def test_remote_success_late_local_failure_carries_durable_receipt():
                     "active_tenant_id": "tenant-a",
                     "active_workspace_id": "workspace-a",
                 },
-                item={**_item(), "tenant_id": "tenant-a"},
-                template={
-                    "template_id": "external-template",
-                    "cartridge_id": "sap_hcm",
-                },
-                payload={},
+                item=item,
+                template=template,
+                payload=payload,
                 reservation=reservation,
                 ip=None,
                 user_agent=None,
+                authority=authority,
             )
 
     assert exc.value.execution_result["executed"] is True
@@ -143,7 +160,7 @@ async def test_remote_success_late_local_failure_carries_durable_receipt():
 
 
 @pytest.mark.asyncio
-async def test_remote_success_receipt_finalizes_original_reservation_completed():
+async def test_remote_success_receipt_rejects_missing_authority_audit():
     db = AsyncMock()
     db.fetchrow.return_value = {"id": 42, "status": "completed"}
     reservation = ActionReservation(
@@ -158,10 +175,7 @@ async def test_remote_success_receipt_finalizes_original_reservation_completed()
         cause=ConnectionError("local projection unavailable"),
     )
 
-    with patch(
-        "app.services.control_room.business_action_failure.project_committed_external_effect",
-        AsyncMock(return_value=None),
-    ):
+    with pytest.raises(ReservationConflict, match="authority audit is invalid"):
         await finalize_aborted_action_reservation(
             db,
             workspace_id="workspace-a",
@@ -169,10 +183,7 @@ async def test_remote_success_receipt_finalizes_original_reservation_completed()
             error=error,
         )
 
-    args = db.fetchrow.await_args.args
-    assert args[4] == "completed"
-    assert "ERP-42" in args[5]
-    assert args[8] == "local_projection_failed_after_remote_success"
+    db.fetchrow.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -198,9 +209,16 @@ async def test_remote_success_finalizer_marks_completed_after_exact_projection()
         cause=ConnectionError("late local failure"),
     )
 
-    with patch(
-        "app.services.control_room.business_action_failure.project_committed_external_effect",
-        projection,
+    with (
+        patch(
+            "app.services.control_room.business_action_failure.project_committed_external_effect",
+            projection,
+        ),
+        patch(
+            "app.services.control_room.business_action_failure."
+            "reservation_stored_authority_audit_valid",
+            return_value=True,
+        ),
     ):
         result = await finalize_aborted_action_reservation(
             db,
@@ -218,7 +236,7 @@ async def test_remote_success_finalizer_marks_completed_after_exact_projection()
     assert result["execution_result"]["local_projection_status"] == "completed"
 
 
-def test_pending_remote_receipt_replay_is_truthful_409():
+def test_pending_remote_receipt_without_audit_fails_closed():
     item = {**_item(), "execution_status": "dry_run_validated"}
     reservation = ActionReservation(
         id=42,
@@ -241,7 +259,7 @@ def test_pending_remote_receipt_replay_is_truthful_409():
         )
 
     assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "external_action_pending_reconciliation"
+    assert exc.value.detail["code"] == "invalid_execution_authority_audit"
     assert item["execution_status"] == "dry_run_validated"
 
 

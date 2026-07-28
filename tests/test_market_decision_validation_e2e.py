@@ -154,6 +154,8 @@ async def test_validation_runs_governed_flow_without_actions_or_fake_observation
         "no_pii": True,
     }
     assert result["status"] == "partial"
+    assert result["simulation"]["available"] is True
+    assert result["orchestration"]["available"] is True
     assert result["simulation"]["market_evidence_count"] == 1
     assert result["bayes"]["status"] == "insufficient_data"
     assert result["policy"]["creates_calibration_observation"] is False
@@ -205,6 +207,8 @@ async def test_read_report_degrades_missing_gold_to_insufficient_data(
 
     assert result["status"] == "insufficient_data"
     assert result["source"]["input_status"] == "missing"
+    assert result["simulation"]["available"] is False
+    assert result["orchestration"]["available"] is False
 
 
 def test_recommendation_only_constraint_disables_action_proposals():
@@ -257,6 +261,8 @@ def test_validation_report_is_ready_only_with_real_cpa_and_bayes_state():
 
     assert report["status"] == "ready"
     assert report["source"]["source_mode"] == "cpa_real"
+    assert report["simulation"]["available"] is True
+    assert report["orchestration"]["available"] is True
 
 
 @pytest.mark.asyncio
@@ -289,7 +295,7 @@ def test_control_room_validation_routes_keep_read_and_write_guards():
         '"/sap-successfactors/market-validation/run",', 1
     )[1].split("async def control_room_sap_successfactors_market_validation_run", 1)[0]
 
-    assert 'Depends(require_permission("datasets.read"))' in read_route
+    assert 'Depends(require_permission("operations.read"))' in read_route
     assert "Depends(require_csrf)" not in read_route
     assert "Depends(require_csrf)" in run_route
     assert 'Depends(require_permission("control_room.write"))' in run_route

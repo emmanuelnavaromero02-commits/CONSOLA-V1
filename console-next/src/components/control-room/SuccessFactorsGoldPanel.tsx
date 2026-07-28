@@ -1,43 +1,64 @@
 import { Activity, AlertTriangle, ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, CreditCard, GraduationCap, Network, ShieldCheck, TrendingDown, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
+import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfGoldWidgetRow, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
-import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline, readinessLabels } from "./StatusBadge";
+import { businessLabel } from "./successFactorsBusinessLabels";
+import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline } from "./StatusBadge";
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
 }
 
-function rowLabel(row: Record<string, unknown>): string {
+function rowLabel(row: SfGoldWidgetRow): string | null {
   const candidates = [
-    row.label,
     row.company_name,
     row.location_name,
     row.department_name,
-    row.division_name,
-    row.business_unit_name,
-    row.user_id,
-    row.id,
+    row.label,
+    row.fact,
   ];
-  const value = candidates.find((item) => typeof item === "string" && item.trim().length > 0);
-  return String(value || "Registro");
+  return candidates.map(businessLabel).find((item) => item !== null) ?? null;
 }
 
-function businessWidgetTitle(widget: { id: string; title: string; dataset: string }): string {
-  const value = `${widget.id} ${widget.title} ${widget.dataset}`.toLowerCase();
+function isHeadcountBreakdown(widget: SfGoldWidget): boolean {
+  return widgetSearchText(widget).includes("headcount_by_");
+}
+
+function observedHeadcount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function headcountRowLabel(widget: SfGoldWidget, row: SfGoldWidgetRow): string | null {
+  const identity = widgetSearchText(widget);
+  if (identity.includes("headcount_by_company")) return businessLabel(row.company_name);
+  if (identity.includes("headcount_by_location")) return businessLabel(row.location_name);
+  if (identity.includes("headcount_by_department")) return businessLabel(row.department_name);
+  return null;
+}
+
+function validWidgetRows(widget: SfGoldWidget): SfGoldWidgetRow[] {
+  const rows = widget.rows ?? [];
+  if (!isHeadcountBreakdown(widget)) return rows;
+  return rows.filter(
+    (row) => headcountRowLabel(widget, row) !== null && observedHeadcount(row.headcount) !== null,
+  );
+}
+
+function businessWidgetTitle(widget: SfGoldWidget): string {
+  const value = `${widget.id || ""} ${widget.title || ""}`.toLowerCase();
   if (value.includes("employee_360")) return "Vista de personal";
   if (value.includes("org_structure")) return "Estructura organizacional";
   if (value.includes("manager_hierarchy")) return "Jerarquía de supervisión";
   if (value.includes("headcount_by_location")) return "Plantilla por ubicación";
   if (value.includes("headcount_by_department")) return "Plantilla por departamento";
   if (value.includes("headcount_by_company")) return "Plantilla por compañía";
-  return widget.title.replace(/_/g, " ");
+  return (widget.title || "Indicador ejecutivo").replace(/_/g, " ");
 }
 
-function businessWidgetDetail(widget: { id: string; dataset: string }): string {
-  const value = `${widget.id} ${widget.dataset}`.toLowerCase();
+function businessWidgetDetail(widget: SfGoldWidget): string {
+  const value = `${widget.id || ""} ${widget.title || ""}`.toLowerCase();
   if (value.includes("employee_360")) return "Personas activas consideradas para decisiones de RR. HH.";
   if (value.includes("org_structure")) return "Relaciones organizacionales y cobertura por estructura.";
   if (value.includes("manager_hierarchy")) return "Supervisión y líneas de reporte disponibles.";
@@ -45,31 +66,17 @@ function businessWidgetDetail(widget: { id: string; dataset: string }): string {
   return "Indicador ejecutivo alimentado por datos reales.";
 }
 
+function widgetSearchText(widget: SfGoldWidget): string {
+  return `${widget.id || ""} ${widget.title || ""}`.toLowerCase();
+}
+
 function businessSourceLabel(source: SourceStatus): string {
-  const dataset = source.dataset.toLowerCase();
-  const businessModule = `${source.module || ""} ${source.module_id || ""}`.toLowerCase();
-  if (dataset.includes("employee_360")) return "Vista de personal";
-  if (dataset.includes("org_structure")) return "Estructura organizacional";
-  if (dataset.includes("manager_hierarchy")) return "Jerarquía de supervisión";
-  if (dataset.includes("headcount_by_location")) return "Plantilla por ubicación";
-  if (dataset.includes("headcount_by_department")) return "Plantilla por departamento";
-  if (dataset.includes("headcount_by_company")) return "Plantilla por compañía";
-  if (dataset.includes("compensation") || dataset.includes("paycomp") || dataset.includes("payment")) return "Compensación y pagos";
-  if (dataset.includes("turnover") || dataset.includes("termination")) return "Rotación y bajas";
-  if (dataset.includes("recruitment") || dataset.includes("candidate") || dataset.includes("jobrequisition")) return "Reclutamiento";
-  if (dataset.includes("learning") || dataset.includes("training")) return "Aprendizaje";
-  if (dataset.includes("performance") || dataset.includes("goal")) return "Desempeño";
-  if (dataset.includes("employeetime") || dataset.includes("timeaccount") || dataset.includes("workschedule")) return "Tiempo y asistencia";
-  if (dataset.includes("person")) return "Datos de personas";
-  if (dataset.includes("job")) return "Datos laborales";
-  if (dataset.includes("department")) return "Departamentos";
-  if (dataset.includes("location")) return "Ubicaciones";
-  if (dataset.includes("company")) return "Compañías";
+  const businessModule = `${source.module || ""} ${source.domain || ""} ${source.cartridge || ""}`.toLowerCase();
   if (businessModule.includes("employee central")) return "Personal";
   if (businessModule.includes("recruitment") || businessModule.includes("recruiting")) return "Reclutamiento";
   if (businessModule.includes("performance")) return "Desempeño";
   if (businessModule.includes("estructura") || businessModule.includes("org")) return "Estructura organizacional";
-  return source.module || "Información operativa";
+  return source.module || source.domain || "Información operativa";
 }
 
 function modelEntities(payload?: SfDecisionModelPayload | null): SfDecisionEntity[] {
@@ -105,7 +112,7 @@ type SuccessFactorsFront = {
   metric: string;
   detail: string;
   decision: string;
-  status: SourceStatus["status"] | NonNullable<SourceStatus["data_readiness"]>;
+  status: NonNullable<SourceStatus["status"]> | NonNullable<SourceStatus["data_readiness"]>;
   signals: number;
   ready: number;
   total: number;
@@ -114,18 +121,20 @@ type SuccessFactorsFront = {
 };
 
 function sourceMatches(source: SourceStatus, terms: string[]): boolean {
-  const value = `${source.dataset} ${source.module} ${source.module_id || ""}`.toLowerCase();
+  const value = `${source.module || ""} ${source.domain || ""} ${source.cartridge || ""}`.toLowerCase();
   return terms.some((term) => value.includes(term));
 }
 
 function widgetValue(widgets: SfGoldKpisPayload["widgets"], terms: string[]): number | null {
-  const widget = widgets.find((item) => sourceMatches({ dataset: `${item.id} ${item.dataset}`, module: item.title, cartridge: "", domain: "", status: "ok", count: typeof item.value === "number" ? item.value : 0 }, terms));
-  return typeof widget?.value === "number" ? widget.value : null;
+  const widget = (widgets ?? []).find((item) => {
+    const value = `${item.id || ""} ${item.title || ""}`.toLowerCase();
+    return terms.some((term) => value.includes(term));
+  });
+  return widget ? observedWidgetValue(widget) : null;
 }
 
 function sourceReadiness(source: SourceStatus): SuccessFactorsFront["status"] {
-  if (source.error) return "unavailable";
-  if (source.status !== "ok") return source.status;
+  if (source.status && source.status !== "ok") return source.status;
   return source.data_readiness || "ready";
 }
 
@@ -145,21 +154,38 @@ function unavailableBusinessDetail(status: SuccessFactorsFront["status"]): strin
   if (status === "partial") return "Datos parciales";
   if (status === "no_permission" || status === "blocked") return "Requiere permisos OData";
   if (status === "unavailable") return "Dependencia no configurada";
-  if (status === "invalid_schema") return "Dataset no materializado";
+  if (status === "invalid_schema") return "Información no disponible";
   if (status === "missing" || status === "stub") return "Fuera de alcance actual";
   if (status === "empty") return "Sin datos configurados";
-  return "Dataset no materializado";
+  return "Información no disponible";
 }
 
 function widgetStatus(widget: SfGoldWidget | undefined): SuccessFactorsFront["status"] {
   if (!widget) return "missing";
-  if (widget.status) return widget.status;
-  if (typeof widget.value !== "number") return "missing";
-  return widget.value > 0 ? "ready" : "empty";
+  if (!isHeadcountBreakdown(widget)) {
+    if (widget.status) return widget.status;
+    if (typeof widget.value !== "number" || !Number.isFinite(widget.value)) return "missing";
+    return widget.value > 0 ? "ready" : "empty";
+  }
+  if (widget.status && !["ready", "ok"].includes(widget.status)) return widget.status;
+  if (observedWidgetValue(widget) !== null && validWidgetRows(widget).length) return widget.status || "ready";
+  return widget.status === "ready" || widget.status === "ok" ? "invalid_schema" : "missing";
+}
+
+function observedWidgetValue(widget: SfGoldWidget): number | null {
+  if (typeof widget.value !== "number" || !Number.isFinite(widget.value)) return null;
+  if (!isHeadcountBreakdown(widget)) return widget.value;
+  if (widget.status && !["ready", "ok"].includes(widget.status)) return null;
+  const rows = validWidgetRows(widget);
+  const visibleTotal = rows.reduce((total, row) => total + (observedHeadcount(row.headcount) ?? 0), 0);
+  if (observedHeadcount(widget.value) === null || !rows.length || widget.value < visibleTotal) return null;
+  return widget.value;
 }
 
 function widgetValueText(widget: SfGoldWidget | undefined): string {
-  return typeof widget?.value === "number" ? formatNumber(widget.value) : "N/D";
+  if (!widget) return "N/D";
+  const value = observedWidgetValue(widget);
+  return value === null ? "N/D" : formatNumber(value);
 }
 
 function widgetTone(status: SuccessFactorsFront["status"]): "good" | "warning" | "danger" | "neutral" {
@@ -352,10 +378,15 @@ function buildDecisionCapabilities(
     },
   ];
 
+  const publicWidgets = widgets ?? [];
   return definitions.map((definition) => {
     const modelMatches = modelText.filter((text) => definition.terms.some((term) => text.includes(term))).length;
     const sourceMatchesCount = sources.filter((source) => sourceMatches(source, definition.terms)).length;
-    const widgetMatchesCount = widgets.filter((widget) => sourceMatches({ dataset: `${widget.id} ${widget.dataset}`, module: widget.title, cartridge: "", domain: "", status: "ok", count: typeof widget.value === "number" ? widget.value : 0 }, definition.terms)).length;
+    const widgetMatchesCount = publicWidgets.filter(
+      (widget) =>
+        definition.terms.some((term) => widgetSearchText(widget).includes(term)) &&
+        ["ready", "ok"].includes(widgetStatus(widget)),
+    ).length;
     const evidence = modelMatches + sourceMatchesCount + widgetMatchesCount;
     const matchingSources = sources.filter((source) => sourceMatches(source, definition.terms));
     const status = businessFrontStatus(matchingSources, widgetMatchesCount > 0 ? widgetMatchesCount : null);
@@ -369,9 +400,9 @@ function businessIssue(source: SourceStatus): string {
   }
   if (source.data_readiness === "partial") return "Datos parciales: dato no disponible por alcance actual.";
   if (source.data_readiness === "stub") return "Fuera de alcance actual.";
-  if (source.data_readiness === "missing" || source.status === "missing") return "Dataset no materializado para este contexto.";
+  if (source.data_readiness === "missing" || source.status === "missing") return "Información no disponible para este contexto.";
   if (source.data_readiness === "empty") return "Sin datos configurados para este alcance.";
-  if (source.error || source.status === "unavailable") return "Dependencia no configurada o no disponible.";
+  if (source.status === "unavailable") return "Dependencia no configurada o no disponible.";
   if (source.count === 0) return "No aplica para el alcance actual.";
   return `${formatNumber(source.count)} registros considerados.`;
 }
@@ -402,16 +433,16 @@ export function SuccessFactorsGoldPanel({
   const widgets = payload?.widgets ?? [];
   const readySources = sources.filter((source) => sourceReadiness(source) === "ready").length;
   const blockedSources = sources.filter((source) => source.status === "blocked" || source.data_readiness === "blocked" || source.data_readiness === "no_permission").length;
-  const employeeWidget = widgets.find((widget) => widget.id.includes("employee_360") || widget.dataset.includes("employee_360"));
-  const orgWidget = widgets.find((widget) => widget.id.includes("org_structure") || widget.dataset.includes("org_structure"));
-  const headcountWidgets = widgets.filter((widget) => widget.id.includes("headcount") || widget.dataset.includes("headcount"));
+  const employeeWidget = widgets.find((widget) => widgetSearchText(widget).includes("employee_360"));
+  const orgWidget = widgets.find((widget) => widgetSearchText(widget).includes("org_structure"));
+  const headcountWidgets = widgets.filter(isHeadcountBreakdown);
   const totalSignals = sources.filter((source) => sourceReadiness(source) !== "ready").length;
   const businessFronts = buildBusinessFronts(widgets, sources);
   const decisionCapabilities = buildDecisionCapabilities(decisionModel ?? null, widgets, sources);
   const readyCapabilities = decisionCapabilities.filter((item) => item.status === "ready" || item.status === "ok").length;
   const employeeStatus = widgetStatus(employeeWidget);
   const orgStatus = widgetStatus(orgWidget);
-  const readyHeadcountWidgets = headcountWidgets.filter((widget) => ["ready", "ok", "empty"].includes(widgetStatus(widget)));
+  const readyHeadcountWidgets = headcountWidgets.filter((widget) => ["ready", "ok"].includes(widgetStatus(widget)));
 
   const talentWidgets = talent?.widgets ?? [];
   const talentSignals = talent?.signals ?? [];
@@ -421,9 +452,9 @@ export function SuccessFactorsGoldPanel({
     const value = talentWidgetById(id)?.value;
     return typeof value === "number" ? value : null;
   };
-  const talentReadinessTotal = talent?.readiness.profiled_employees ?? talentNumber("sf_talent_profiled_employees") ?? 0;
-  const talentReadinessCalculable = talent?.readiness.calculable_employees ?? talentNumber("sf_talent_readiness_calculable") ?? 0;
-  const talentNineBoxAvailable = talent?.readiness.nine_box_available ?? talentNumber("sf_talent_9box_available") ?? 0;
+  const talentReadinessTotal = talent?.readiness?.profiled_employees ?? talentNumber("sf_talent_profiled_employees") ?? 0;
+  const talentReadinessCalculable = talent?.readiness?.calculable_employees ?? talentNumber("sf_talent_readiness_calculable") ?? 0;
+  const talentNineBoxAvailable = talent?.readiness?.nine_box_available ?? talentNumber("sf_talent_9box_available") ?? 0;
   // Fase 3 P0: Workforce Trends — fuente unica (bundle del backend); no se agrega en frontend.
   const workforceTrends = talent?.workforce_trends;
   const wtKpis = workforceTrends?.kpis;
@@ -454,7 +485,7 @@ export function SuccessFactorsGoldPanel({
         {loading ? <OperationalNotice tone="info" title="Actualizando indicadores">Consultando información real de SuccessFactors.</OperationalNotice> : null}
         {error ? (
           <OperationalNotice tone="error" title="No se pudo actualizar información ejecutiva">
-            La vista conserva el estado honesto y no inventa valores. Revisa el diagnóstico técnico al final de este panel.
+            La vista conserva el estado honesto y no inventa valores.
           </OperationalNotice>
         ) : null}
         {!loading && !error && widgets.length === 0 ? (
@@ -465,21 +496,21 @@ export function SuccessFactorsGoldPanel({
           <CommandMetric
             label="Plantilla activa"
             value={widgetValueText(employeeWidget)}
-            detail={employeeWidget && typeof employeeWidget.value === "number" ? "personas consideradas" : unavailableBusinessDetail(employeeStatus)}
+            detail={employeeWidget && observedWidgetValue(employeeWidget) !== null ? "personas consideradas" : unavailableBusinessDetail(employeeStatus)}
             icon={Users}
             tone={widgetTone(employeeStatus)}
           />
           <CommandMetric
             label="Estructura organizacional"
             value={widgetValueText(orgWidget)}
-            detail={orgWidget && typeof orgWidget.value === "number" ? "relaciones disponibles" : unavailableBusinessDetail(orgStatus)}
+            detail={orgWidget && observedWidgetValue(orgWidget) !== null ? "relaciones disponibles" : unavailableBusinessDetail(orgStatus)}
             icon={Network}
             tone={widgetTone(orgStatus)}
           />
           <CommandMetric
             label="Distribuciones"
-            value={readyHeadcountWidgets.length}
-            detail={headcountWidgets.length ? "compañía, ubicación y departamento" : "Dataset no materializado"}
+            value={readyHeadcountWidgets.length || "N/D"}
+            detail={readyHeadcountWidgets.length ? "compañía, ubicación y departamento" : "Información no disponible"}
             icon={Building2}
             tone={readyHeadcountWidgets.length ? "good" : "warning"}
           />
@@ -502,14 +533,16 @@ export function SuccessFactorsGoldPanel({
           <div className="rounded-xl border bg-background p-4 shadow-sm dark:border-violet-400/15 dark:bg-[#06111f]">
             <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">WB-TALENTO · {talent.profile.industry}/{talent.profile.company_profile}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">
+                  WB-TALENTO · {talent.profile?.industry || "Talento"}/{talent.profile?.company_profile || "Organización"}
+                </p>
                 <h3 className="text-lg font-semibold text-foreground dark:text-white">Talento, readiness y 9-box</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Recomendaciones sin write-back, compensación apagada y C/P/A bloqueado hasta validar metadata SAP.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <ReadinessBadge status={talent.readiness.status} compact />
+                <ReadinessBadge status={talent.readiness?.status || "missing"} compact />
                 <a
                   href="/control-room/talent"
                   className="inline-flex min-h-[32px] items-center gap-1.5 rounded-md border bg-card px-3 py-1.5 text-xs font-semibold text-foreground transition hover:bg-muted dark:border-violet-400/20 dark:bg-[#081423] dark:text-white dark:hover:bg-white/5"
@@ -524,7 +557,7 @@ export function SuccessFactorsGoldPanel({
               <CommandMetric
                 label="Readiness calculable"
                 value={`${formatNumber(talentReadinessCalculable)}/${formatNumber(talentReadinessTotal)}`}
-                detail={`${formatNumber(talent.readiness.insufficient_data_employees)} en insufficient_data`}
+                detail={`${formatNumber(talent.readiness?.insufficient_data_employees ?? 0)} con información insuficiente`}
                 icon={ShieldCheck}
                 tone={talentReadinessCalculable ? "good" : "warning"}
               />
@@ -556,7 +589,7 @@ export function SuccessFactorsGoldPanel({
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Workforce Trends</p>
                   <span className="text-xs text-muted-foreground">
-                    {wtSeries && wtSeries.months.length
+                    {wtSeries?.months?.length
                       ? "serie mensual por cohorte · una sola fuente"
                       : "En espera de datos"}
                   </span>
@@ -593,9 +626,9 @@ export function SuccessFactorsGoldPanel({
                 </div>
                 {wtSeries ? (
                   <div className="mt-4 grid gap-4 md:grid-cols-3">
-                    <Sparkline label="Headcount" values={wtSeries.headcount.slice(-12)} format={(value) => formatNumber(Math.round(value))} tone="good" />
-                    <Sparkline label="Antigüedad" values={wtSeries.avg_tenure_months.slice(-12)} format={(value) => `${(value / 12).toFixed(1)} a`} tone="neutral" />
-                    <Sparkline label="Rotación" values={wtSeries.attrition_rate.slice(-12)} format={(value) => `${(value * 100).toFixed(1)}%`} tone="warning" />
+                    <Sparkline label="Headcount" values={(wtSeries.headcount ?? []).slice(-12)} format={(value) => formatNumber(Math.round(value))} tone="good" />
+                    <Sparkline label="Antigüedad" values={(wtSeries.avg_tenure_months ?? []).slice(-12)} format={(value) => `${(value / 12).toFixed(1)} a`} tone="neutral" />
+                    <Sparkline label="Rotación" values={(wtSeries.attrition_rate ?? []).slice(-12)} format={(value) => `${(value * 100).toFixed(1)}%`} tone="warning" />
                   </div>
                 ) : null}
               </div>
@@ -605,14 +638,12 @@ export function SuccessFactorsGoldPanel({
               <div className="rounded-lg border bg-card p-3 dark:border-violet-400/15 dark:bg-[#081423]">
                 <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">Bloqueos reales</p>
                 <div className="mt-3 space-y-3">
-                  {talentBlockers.slice(0, 3).map((blocker) => (
-                    <div key={blocker.id} className="rounded-md border bg-background/70 p-3 text-sm dark:border-violet-400/10 dark:bg-[#06111f]">
+                  {talentBlockers.slice(0, 3).map((blocker, index) => (
+                    <div key={`${blocker.id || blocker.title || "blocker"}:${index}`} className="rounded-md border bg-background/70 p-3 text-sm dark:border-violet-400/10 dark:bg-[#06111f]">
                       <div className="flex items-start justify-between gap-2">
-                        <strong className="text-foreground dark:text-white">{blocker.title}</strong>
-                        <ReadinessBadge status={blocker.status} compact />
+                        <strong className="text-foreground dark:text-white">{blocker.title || "Información pendiente"}</strong>
+                        <ReadinessBadge status={blocker.status || "missing"} compact />
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{blocker.detail}</p>
-                      {blocker.items?.length ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{blocker.items.slice(0, 3).join(" · ")}</p> : null}
                     </div>
                   ))}
                   {!talentBlockers.length ? <p className="text-sm text-muted-foreground">Sin bloqueos reportados para Talento.</p> : null}
@@ -622,12 +653,12 @@ export function SuccessFactorsGoldPanel({
               <div className="rounded-lg border bg-card p-3 dark:border-violet-400/15 dark:bg-[#081423]">
                 <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300/80">Señales WisdomBit</p>
                 <div className="mt-3 space-y-3">
-                  {talentSignals.slice(0, 3).map((signal) => (
-                    <div key={signal.id} className="rounded-md border bg-background/70 p-3 text-sm dark:border-violet-400/10 dark:bg-[#06111f]">
+                  {talentSignals.slice(0, 3).map((signal, index) => (
+                    <div key={`${signal.id || signal.title || "signal"}:${index}`} className="rounded-md border bg-background/70 p-3 text-sm dark:border-violet-400/10 dark:bg-[#06111f]">
                       <div className="flex items-start justify-between gap-2">
-                        <strong className="text-foreground dark:text-white">{signal.title}</strong>
+                        <strong className="text-foreground dark:text-white">{signal.title || "Señal de talento"}</strong>
                         <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground dark:border-violet-400/15">
-                          {signal.severity}
+                          {signal.severity || "info"}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{signal.recommendation || "Revisar cobertura antes de decidir."}</p>
@@ -696,10 +727,6 @@ export function SuccessFactorsGoldPanel({
               <OperationalNotice tone="warning" title="Decisiones parcialmente disponibles">
                 No se pudo actualizar la traducción ejecutiva completa. La pantalla no marca nada como listo sin respaldo.
               </OperationalNotice>
-              <details className="mt-2 rounded-md border bg-card p-3 text-xs text-muted-foreground dark:border-amber-400/20 dark:bg-[#081423]">
-                <summary className="cursor-pointer font-medium text-foreground dark:text-white">Diagnóstico técnico</summary>
-                <p className="mt-2 text-amber-700 dark:text-amber-300">{decisionModelError}</p>
-              </details>
             </div>
           ) : null}
 
@@ -732,43 +759,37 @@ export function SuccessFactorsGoldPanel({
 
         {widgets.length ? (
           <div className="grid gap-3 xl:grid-cols-2">
-            {widgets.map((widget) => {
-              const maxHeadcount = Math.max(1, ...widget.rows.map((row) => typeof row.headcount === "number" ? row.headcount : 0));
+            {widgets.map((widget, widgetIndex) => {
               const status = widgetStatus(widget);
+              const rows = ["ready", "ok"].includes(status) ? validWidgetRows(widget) : isHeadcountBreakdown(widget) ? [] : validWidgetRows(widget);
+              const maxHeadcount = Math.max(1, ...rows.map((row) => observedHeadcount(row.headcount) ?? 0));
+              const observedValue = observedWidgetValue(widget);
               return (
-                <article key={widget.id} className="rounded-xl border bg-background p-4 shadow-sm dark:border-emerald-400/15 dark:bg-[#06111f]">
+                <article key={`${widget.id || widget.title || "indicator"}:${widgetIndex}`} className="rounded-xl border bg-background p-4 shadow-sm dark:border-emerald-400/15 dark:bg-[#06111f]">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">{businessWidgetTitle(widget)}</p>
                       <strong className="mt-1 block text-2xl font-semibold text-foreground dark:text-white">{widgetValueText(widget)}</strong>
-                      <p className="text-xs text-muted-foreground">{typeof widget.value === "number" ? businessWidgetDetail(widget) : unavailableBusinessDetail(status)}</p>
+                      <p className="text-xs text-muted-foreground">{observedValue !== null ? businessWidgetDetail(widget) : unavailableBusinessDetail(status)}</p>
                     </div>
                     <ReadinessBadge status={status} compact />
                   </div>
                   <div className="mt-4 space-y-3">
-                    {widget.rows.slice(0, 6).map((row, index) => {
-                      const headcount = typeof row.headcount === "number" ? row.headcount : 0;
+                    {rows.slice(0, 6).map((row, index) => {
+                      const headcount = observedHeadcount(row.headcount);
+                      const label = isHeadcountBreakdown(widget) ? headcountRowLabel(widget, row) : rowLabel(row);
                       return (
-                        <div key={`${widget.id}:${index}`} className="space-y-1">
+                        <div key={`${widget.id || widget.title || "indicator"}:${index}`} className="space-y-1">
                           <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="min-w-0 truncate text-muted-foreground">{rowLabel(row)}</span>
-                            {typeof row.headcount === "number" ? <strong className="tabular-nums text-foreground dark:text-white">{formatNumber(headcount)}</strong> : null}
+                            {label ? <span className="min-w-0 truncate text-muted-foreground">{label}</span> : <span />}
+                            {headcount !== null ? <strong className="tabular-nums text-foreground dark:text-white">{formatNumber(headcount)}</strong> : null}
                           </div>
-                          {typeof row.headcount === "number" ? <MiniBar value={headcount} max={maxHeadcount} /> : null}
+                          {headcount !== null ? <MiniBar value={headcount} max={maxHeadcount} /> : null}
                         </div>
                       );
                     })}
-                    {!widget.rows.length ? <p className="text-sm text-muted-foreground">Sin desglose disponible para este indicador.</p> : null}
+                    {!rows.length ? <p className="text-sm text-muted-foreground">Sin desglose disponible para este indicador.</p> : null}
                   </div>
-                  <details className="mt-4 rounded-md border bg-card p-3 text-xs text-muted-foreground dark:border-emerald-400/15 dark:bg-[#081423]">
-                    <summary className="cursor-pointer font-medium text-foreground dark:text-white">Diagnóstico técnico</summary>
-                    <div className="mt-2 space-y-1">
-                      <p>Identificador interno: {widget.dataset}</p>
-                      <p>Indicador: {widget.id}</p>
-                      <p>Estado: {readinessLabels[status] || status}</p>
-                      {widget.error ? <p className="text-destructive">{widget.error}</p> : null}
-                    </div>
-                  </details>
                 </article>
               );
             })}
@@ -782,35 +803,20 @@ export function SuccessFactorsGoldPanel({
               <span className="text-xs text-muted-foreground">{readySources}/{sources.length} listos</span>
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {sources.slice(0, 9).map((source) => (
+              {sources.slice(0, 9).map((source, index) => (
                 <article
-                  key={`${source.module_id || source.module}:${source.dataset}`}
-                  className={cn("rounded-md border bg-card p-3 text-sm shadow-sm dark:border-sky-400/15 dark:bg-[#081423]", source.error ? "border-destructive/40" : "")}
+                  key={`${source.module || source.domain || source.cartridge || "source"}:${index}`}
+                  className="rounded-md border bg-card p-3 text-sm shadow-sm dark:border-sky-400/15 dark:bg-[#081423]"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0 truncate font-medium text-foreground dark:text-white">{businessSourceLabel(source)}</span>
-                    <ReadinessBadge status={source.data_readiness || source.status} compact />
+                    <ReadinessBadge status={source.data_readiness || source.status || "missing"} compact />
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{businessIssue(source)}</p>
-                  <details className="mt-2 text-xs text-muted-foreground">
-                    <summary className="cursor-pointer">Diagnóstico técnico</summary>
-                    <div className="mt-1 space-y-1">
-                      <p>Origen interno: {source.dataset}</p>
-                      <p>Estado: {readinessLabels[source.data_readiness || source.status] || source.status}</p>
-                      {source.error ? <p className="text-destructive">{source.error}</p> : null}
-                    </div>
-                  </details>
                 </article>
               ))}
             </div>
           </div>
-        ) : null}
-
-        {error ? (
-          <details className="rounded-xl border bg-background p-3 text-sm text-muted-foreground dark:border-destructive/30 dark:bg-[#06111f]">
-            <summary className="cursor-pointer font-semibold text-foreground dark:text-white">Diagnóstico técnico de actualización</summary>
-            <p className="mt-2 text-destructive">{error}</p>
-          </details>
         ) : null}
 
         <div className="grid gap-3 rounded-xl border bg-background p-4 dark:border-emerald-400/15 dark:bg-[#06111f] md:grid-cols-[1fr_auto]">

@@ -4,21 +4,13 @@ import asyncio
 
 import asyncpg
 import pytest
+from fastapi import HTTPException
 
 from app.services import control_room_service as service
-from app.services.control_room.business_action_reservation import (
-    ReservationState,
-    acquire_guarded_action_reservation,
-)
-from app.services.control_room.business_action_attempt import (
-    mark_remote_attempt_started,
-)
-from app.services.db_scope import SET_SCOPE_SQL
+from tests.control_room_live_action_binding_seed import persist_live_action_binding
 from tests.test_control_room_live_postgres_p15 import (
     _linked_item,
-    _mutation_item,
     _seed_matching_dry_run,
-    _template,
     _user,
 )
 from tests.test_operational_rls_console_refinement import (
@@ -36,16 +28,40 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
     tenant_id, workspace_id, item = await _linked_item(
         postgres_with_real_init_schema, "p15-external"
     )
-    user = _user(tenant_id, workspace_id)
-    template = _template("p15_external", cartridge="replicon")
-    payload = {"mode": "execute_live", "action_payload": {}}
+    user = {
+        **_user(tenant_id, workspace_id),
+        "role": "super_admin",
+        "allowed_cartridges": ["*"],
+    }
+    template_id = "prepare_hcm_access_review"
+    setup = await asyncpg.connect(postgres_with_real_init_schema)
+    try:
+        await setup.execute(
+            "UPDATE control_room_items SET metadata=COALESCE(metadata, '{}'::jsonb) "
+            "|| jsonb_build_object('connection', $3::jsonb) "
+            "WHERE workspace_id=$1::uuid AND item_id=$2",
+            workspace_id,
+            item["id"],
+            '{"base_url":"https://sap.example.test",'
+            '"writeback_path":"/test/writeback"}',
+        )
+    finally:
+        await setup.close()
+    item, binding_id = await persist_live_action_binding(
+        postgres_with_real_init_schema,
+        omega_console_live_dsn,
+        user=user,
+        item_id=item["id"],
+        template_id=template_id,
+    )
     await _seed_matching_dry_run(
         postgres_with_real_init_schema,
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         item=item,
-        template_id="p15_external",
+        template_id=template_id,
     )
+    item["execution_status"] = "dry_run_validated"
 
     class Adapter(service.BaseAdapter):
         supports_idempotency = True
@@ -62,58 +78,45 @@ async def test_live_external_remote_call_is_once_and_uses_reserved_key(
         classmethod(lambda _cls, _template_type: Adapter()),
     )
     barrier = asyncio.Barrier(2)
+    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=6)
+
+    async def load_same_snapshot(*_args, **_kwargs):
+        await barrier.wait()
+        return item
+
+    async def pool_factory():
+        return pool
+
+    monkeypatch.setattr(service.auth, "pool", pool_factory)
+    monkeypatch.setattr(service, "_item_for_mutation", load_same_snapshot)
+    monkeypatch.setattr(service, "_external_writeback_enabled", lambda: True)
 
     async def execute():
-        await barrier.wait()
-        conn = await asyncpg.connect(omega_console_live_dsn)
-        try:
-            async with conn.transaction():
-                await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
-                reservation = await acquire_guarded_action_reservation(
-                    conn,
-                    user=user,
-                    item=_mutation_item(item),
-                    template_id="p15_external",
-                    adapter_name="Adapter",
-                    operation="execute",
-                    input_payload=payload,
-                )
-        finally:
-            await conn.close()
-        if reservation.state is not ReservationState.ACQUIRED:
-            return reservation
-        conn = await asyncpg.connect(omega_console_live_dsn)
-        try:
-            async with conn.transaction():
-                await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
-                await mark_remote_attempt_started(
-                    conn,
-                    workspace_id=str(workspace_id),
-                    reservation_id=reservation.id,
-                    effective_key=reservation.effective_key,
-                    adapter="Adapter",
-                    target="replicon",
-                )
-        finally:
-            await conn.close()
-        conn = await asyncpg.connect(omega_console_live_dsn)
-        try:
-            async with conn.transaction():
-                await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
-                return await service._execute_external_writeback(
-                    conn,
-                    user=user,
-                    item=_mutation_item(item),
-                    template=template,
-                    payload=payload,
-                    reservation=reservation,
-                    ip=None,
-                    user_agent=None,
-                )
-        finally:
-            await conn.close()
+        return await service.execute_item(
+            item["id"],
+            user,
+            template_id=template_id,
+            binding_id=binding_id,
+            confirm_execute=True,
+            idempotency_key=None,
+        )
 
-    await asyncio.gather(execute(), execute())
+    try:
+        outcomes = await asyncio.gather(execute(), execute(), return_exceptions=True)
+
+        async def load_retry_snapshot(*_args, **_kwargs):
+            return item
+
+        monkeypatch.setattr(service, "_item_for_mutation", load_retry_snapshot)
+        retry = await execute()
+    finally:
+        await pool.close()
+    results = [value for value in outcomes if isinstance(value, dict)]
+    conflicts = [value for value in outcomes if isinstance(value, HTTPException)]
+    assert len(results) == 1 and results[0]["executed"] is True
+    assert len(conflicts) == 1
+    assert conflicts[0].detail["code"] == "action_in_progress"
+    assert retry["idempotent"] is True
     check = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         row = await check.fetchrow(

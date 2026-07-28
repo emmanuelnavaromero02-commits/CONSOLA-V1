@@ -43,13 +43,7 @@ def _user(**changes) -> dict:
 
 def _dashboard_loader(monkeypatch) -> AsyncMock:
     async def response(user):
-        return {
-            "user_id": user["id"],
-            "tenant_id": user["active_tenant_id"],
-            "workspace_id": user["active_workspace_id"],
-            "workspace_role": user["workspace_role"],
-            "cartridges": list(user["allowed_cartridges"]),
-        }
+        return {"period": user["workspace_role"]}
 
     loader = AsyncMock(side_effect=response)
     monkeypatch.setattr(control_room.control_room_service, "dashboard", loader)
@@ -65,8 +59,8 @@ async def test_downgraded_user_cannot_receive_workspace_admin_cache(monkeypatch)
     admin_result = await control_room.control_room_dashboard(admin)
     analyst_result = await control_room.control_room_dashboard(analyst)
 
-    assert admin_result["workspace_role"] == "workspace_admin"
-    assert analyst_result["workspace_role"] == "analyst"
+    assert admin_result.period == "workspace_admin"
+    assert analyst_result.period == "analyst"
     assert loader.await_count == 2
 
 
@@ -92,19 +86,19 @@ async def test_effective_permission_change_uses_a_distinct_cache_key(monkeypatch
 @pytest.mark.parametrize(
     ("changes", "expected_field"),
     [
-        ({"id": 18}, "user_id"),
+        ({"id": 18}, "id"),
         (
             {"tenant_id": "tenant-b", "active_tenant_id": "tenant-b"},
-            "tenant_id",
+            "active_tenant_id",
         ),
         (
             {
                 "workspace_id": "workspace-b",
                 "active_workspace_id": "workspace-b",
             },
-            "workspace_id",
+            "active_workspace_id",
         ),
-        ({"allowed_cartridges": ["replicon"]}, "cartridges"),
+        ({"allowed_cartridges": ["replicon"]}, "allowed_cartridges"),
     ],
 )
 async def test_authorization_scopes_never_share_cache(
@@ -117,7 +111,10 @@ async def test_authorization_scopes_never_share_cache(
     first = await control_room.control_room_dashboard(_user())
     second = await control_room.control_room_dashboard(_user(**changes))
 
-    assert first[expected_field] != second[expected_field]
+    assert first == second
+    first_user = loader.await_args_list[0].args[0]
+    second_user = loader.await_args_list[1].args[0]
+    assert first_user[expected_field] != second_user[expected_field]
     assert loader.await_count == 2
 
 
@@ -143,7 +140,7 @@ async def test_inflight_downgrade_never_caches_admin_payload_for_analyst(
         role_at_authorization = user["workspace_role"]
         started.set()
         await release.wait()
-        return {"workspace_role": role_at_authorization}
+        return {"period": role_at_authorization}
 
     loader = AsyncMock(side_effect=response)
     monkeypatch.setattr(control_room.control_room_service, "dashboard", loader)
@@ -154,10 +151,8 @@ async def test_inflight_downgrade_never_caches_admin_payload_for_analyst(
     user["workspace_role"] = "analyst"
     release.set()
 
-    assert await admin_request == {"workspace_role": "workspace_admin"}
-    assert await control_room.control_room_dashboard(user) == {
-        "workspace_role": "analyst"
-    }
+    assert (await admin_request).period == "workspace_admin"
+    assert (await control_room.control_room_dashboard(user)).period == "analyst"
     assert loader.await_count == 2
 
 
@@ -228,12 +223,20 @@ async def test_active_ttl_reuses_then_expires_authorized_payload(monkeypatch):
         "monotonic",
         lambda: clock["now"],
     )
-    loader = AsyncMock(side_effect=[{"version": 1}, {"version": 2}])
+    loader = AsyncMock(
+        side_effect=[
+            {"meta": {"version": "1"}},
+            {"meta": {"version": "2"}},
+        ]
+    )
     monkeypatch.setattr(control_room.control_room_service, "dashboard", loader)
 
-    assert await control_room.control_room_dashboard(_user()) == {"version": 1}
+    first = await control_room.control_room_dashboard(_user())
+    assert first.meta.version == "1"
     clock["now"] = 159.0
-    assert await control_room.control_room_dashboard(_user()) == {"version": 1}
+    reused = await control_room.control_room_dashboard(_user())
+    assert reused.model_dump() == first.model_dump()
     clock["now"] = 161.0
-    assert await control_room.control_room_dashboard(_user()) == {"version": 2}
+    expired = await control_room.control_room_dashboard(_user())
+    assert expired.meta.version == "2"
     assert loader.await_count == 2

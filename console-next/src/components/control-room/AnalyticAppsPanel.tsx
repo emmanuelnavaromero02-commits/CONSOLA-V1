@@ -40,7 +40,7 @@ type NativeAnalyticModule = {
   description: string;
   kind: NativeModuleKind;
   app?: AnalyticsApp;
-  datasets: string[];
+  cartridge?: string;
   status?: string | null;
 };
 
@@ -66,11 +66,7 @@ function appLabel(app: AnalyticsApp): string {
 }
 
 function appCartridge(app: AnalyticsApp): string {
-  return String(app.cartridge_id || app.cartridge || app.connector_id || "").trim();
-}
-
-function appDatasets(app: AnalyticsApp): string[] {
-  return Array.from(new Set([...(app.datasets_used || []), ...(app.unavailable_datasets || [])])).filter(Boolean);
+  return String(app.cartridge || "").trim();
 }
 
 function isSuccessFactorsApp(app: AnalyticsApp): boolean {
@@ -79,7 +75,7 @@ function isSuccessFactorsApp(app: AnalyticsApp): boolean {
 }
 
 function isTalentApp(app: AnalyticsApp): boolean {
-  const token = `${app.name} ${app.title || ""} ${app.description || ""} ${(app.datasets_used || []).join(" ")}`.toLowerCase();
+  const token = `${app.name} ${app.title || ""} ${app.description || ""}`.toLowerCase();
   return /(talent|readiness|skill|9box|nine|succession|performance|compensation)/.test(token);
 }
 
@@ -91,7 +87,7 @@ function moduleStatus(module: NativeAnalyticModule, sources: SourceStatus[]): Co
   if (related.some((source) => source.data_readiness === "ready" || source.status === "ok")) return "ready";
   if (related.some((source) => source.data_readiness === "partial" || source.status === "empty")) return "partial";
   if (related.length) return related[0]?.data_readiness || related[0]?.status || "missing";
-  return module.datasets.length ? "missing" : "partial";
+  return "partial";
 }
 
 function buildNativeModules(
@@ -105,7 +101,7 @@ function buildNativeModules(
     description: app.description || "Analítica operacional integrada en OMEGA.",
     kind: isSuccessFactorsApp(app) ? (isTalentApp(app) ? "talent" : "successfactors") : "generic",
     app,
-    datasets: appDatasets(app),
+    cartridge: appCartridge(app),
     status: app.data_status,
   }));
 
@@ -116,7 +112,7 @@ function buildNativeModules(
       title: "SuccessFactors Ejecutivo",
       description: "Indicadores Gold, cobertura de fuentes y frentes operativos de SuccessFactors.",
       kind: "successfactors",
-      datasets: [],
+      cartridge: "sap_successfactors",
       status: "partial",
     });
   }
@@ -126,7 +122,7 @@ function buildNativeModules(
       title: "Talento y Readiness",
       description: "Readiness C/P/A, senales de talento, bloqueos y recomendaciones supervisadas.",
       kind: "talent",
-      datasets: [],
+      cartridge: "sap_successfactors",
       status: "partial",
     });
   }
@@ -134,9 +130,8 @@ function buildNativeModules(
     modules.push({
       id: "omega_agentops",
       title: "AgentOps y Simulacion",
-      description: "Monitores, herramientas, ejecuciones recientes y cobertura de agentes operativos.",
+      description: "Monitores, capacidades, ejecuciones recientes y cobertura de agentes operativos.",
       kind: "agentops",
-      datasets: [],
       status: agentsOps.summary?.active_agents ? "ready" : "partial",
     });
   }
@@ -144,19 +139,26 @@ function buildNativeModules(
 }
 
 function relatedSources(module: NativeAnalyticModule, sources: SourceStatus[]): SourceStatus[] {
-  if (module.kind === "successfactors" || module.kind === "talent") {
-    const sfSources = sources.filter((source) => source.cartridge === "sap_successfactors");
-    if (!module.datasets.length) return sfSources;
-  }
-  if (!module.datasets.length) return [];
-  return sources.filter((source) => (
-    module.datasets.some((dataset) => (
-      source.dataset === dataset ||
-      source.dataset.endsWith(`/${dataset}`) ||
-      dataset.endsWith(source.dataset) ||
-      source.dataset.includes(dataset)
-    ))
-  ));
+  if (module.kind === "agentops") return [];
+  const moduleText = [module.id, module.title, module.cartridge]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return sources.filter((source) => {
+    const sourceText = [source.cartridge, source.module, source.domain]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (module.kind === "successfactors" || module.kind === "talent") {
+      return source.cartridge === "sap_successfactors" || sourceText.includes("successfactors");
+    }
+    return sourceText.length > 0 && (
+      moduleText.includes(sourceText) ||
+      [source.cartridge, source.module, source.domain].some((value) => (
+        typeof value === "string" && value.length > 2 && moduleText.includes(value.toLowerCase())
+      ))
+    );
+  });
 }
 
 function formatNumber(value: number | null | undefined): string {
@@ -168,14 +170,14 @@ function statusCount(sources: SourceStatus[], status: string): number {
   return sources.filter((source) => source.data_readiness === status || source.status === status).length;
 }
 
-function agentOpsEngineLabel(engine: string): string {
+function agentOpsEngineLabel(engine?: string | null): string {
   const labels: Record<string, string> = {
     wisdom_bit: "WisdomBit",
     monte_carlo: "Análisis operativo",
     bayesian_calibration: "Historial operativo",
     decision_orchestrator: "Decisión",
   };
-  return labels[engine] || engine.replaceAll("_", " ");
+  return engine ? labels[engine] || engine.replaceAll("_", " ") : "Capacidad operativa";
 }
 
 function agentOpsEngineStatusLabel(status?: string | null): string {
@@ -194,7 +196,7 @@ function agentOpsEngineTone(status?: string | null): string {
 function widgetRows(widget: SfGoldWidget | SfTalentWidget): Array<{ label: string; value: number }> {
   return (widget.rows || [])
     .map((row) => ({
-      label: String(row.label || row.id || row.name || row.department || row.unit || row.region || "Sin etiqueta"),
+      label: String(row.label || row.fact || row.status || "Sin etiqueta"),
       value: Number(row.headcount ?? row.value ?? row.count ?? 0),
     }))
     .filter((row) => Number.isFinite(row.value) && row.value > 0)
@@ -312,7 +314,9 @@ export function AnalyticAppsPanel({
                         <span className="block min-w-0 truncate font-semibold">{module.title}</span>
                       </span>
                       <span className="mt-1 block truncate text-xs opacity-75">
-                        {module.datasets.length ? `${module.datasets.length} datasets vinculados` : "datos de Control Room"}
+                        {relatedSources(module, sources).length
+                          ? `${relatedSources(module, sources).length} fuentes visibles`
+                          : "datos de Control Room"}
                       </span>
                       <span className="mt-2 flex flex-wrap items-center gap-2">
                         <ReadinessBadge status={status} compact />
@@ -390,24 +394,9 @@ function NativeModuleShell({
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-[220px]">
           <MiniStat label="Fuentes" value={formatNumber(relatedSources(module, sources).length)} />
-          <MiniStat label="Datasets" value={formatNumber(module.datasets.length)} />
+          <MiniStat label="Estado" value={prettyLabel(status)} />
         </div>
       </header>
-      {module.datasets.length ? (
-        <div className="flex flex-wrap gap-2 border-b px-4 py-3 dark:border-sky-400/15">
-          {module.datasets.slice(0, 10).map((dataset) => (
-            <span key={dataset} className="inline-flex min-h-[28px] max-w-full items-center gap-1 rounded-md border bg-card px-2 text-xs text-muted-foreground dark:border-sky-400/15 dark:bg-[#07111e]">
-              <Database aria-hidden className="h-3.5 w-3.5 shrink-0 text-cyan-600 dark:text-cyan-300" />
-              <span className="truncate">{dataset}</span>
-            </span>
-          ))}
-          {module.datasets.length > 10 ? (
-            <span className="inline-flex min-h-[28px] items-center rounded-md border bg-card px-2 text-xs text-muted-foreground dark:border-sky-400/15 dark:bg-[#07111e]">
-              +{module.datasets.length - 10} mas
-            </span>
-          ) : null}
-        </div>
-      ) : null}
       <div className="bg-[#07111e] p-4">{children}</div>
     </article>
   );
@@ -443,7 +432,7 @@ function SuccessFactorsNativeModule({
   return (
     <div className="space-y-4">
       {loading ? <LoadingNotice label="Actualizando indicadores SuccessFactors..." /> : null}
-      {error ? <OperationalNotice tone="warning" title="Indicadores ejecutivos no disponibles">{error}</OperationalNotice> : null}
+      {error ? <OperationalNotice tone="warning" title="Indicadores ejecutivos no disponibles">No se pudo actualizar esta vista.</OperationalNotice> : null}
       <div className="grid gap-3 md:grid-cols-4">
         <MetricCard icon={Users} label="Widgets Gold" value={formatNumber(widgets.length)} />
         <MetricCard icon={Database} label="Fuentes listas" value={formatNumber(statusCount(related, "ready") + statusCount(related, "ok"))} />
@@ -452,7 +441,7 @@ function SuccessFactorsNativeModule({
       </div>
       {topWidgets.length ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          {topWidgets.map((widget) => <WidgetPanel key={widget.id} widget={widget} />)}
+          {topWidgets.map((widget, index) => <WidgetPanel key={`${widget.id || widget.title || "widget"}:${index}`} widget={widget} />)}
         </div>
       ) : (
         <OperationalNotice tone="info" title="Modulo listo">
@@ -484,7 +473,7 @@ function TalentNativeModule({
   return (
     <div className="space-y-4">
       {loading ? <LoadingNotice label="Actualizando Talento..." /> : null}
-      {error ? <OperationalNotice tone="warning" title="Talento no disponible">{error}</OperationalNotice> : null}
+      {error ? <OperationalNotice tone="warning" title="Talento no disponible">No se pudo actualizar esta vista.</OperationalNotice> : null}
       <div className="grid gap-3 md:grid-cols-4">
         <MetricCard icon={ShieldCheck} label="Ready C/P/A" value={formatNumber(payload?.readiness?.ready_min)} />
         <MetricCard icon={Users} label="Perfilados" value={formatNumber(payload?.readiness?.profiled_employees)} />
@@ -493,7 +482,7 @@ function TalentNativeModule({
       </div>
       {widgets.length ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          {widgets.slice(0, 6).map((widget) => <WidgetPanel key={widget.id} widget={widget} />)}
+          {widgets.slice(0, 6).map((widget, index) => <WidgetPanel key={`${widget.id || widget.title || "widget"}:${index}`} widget={widget} />)}
         </div>
       ) : null}
       <div className="grid gap-4 xl:grid-cols-2">
@@ -503,9 +492,9 @@ function TalentNativeModule({
             <h4 className="text-sm font-semibold text-white">Senales y recomendacion</h4>
           </div>
           <div className="space-y-2">
-            {signals.slice(0, 5).map((signal) => (
-              <div key={signal.id} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
-                <p className="text-sm font-semibold text-slate-100">{signal.title}</p>
+            {signals.slice(0, 5).map((signal, index) => (
+              <div key={`${signal.id || signal.title || "signal"}:${index}`} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
+                <p className="text-sm font-semibold text-slate-100">{signal.title || "Señal de talento"}</p>
                 <p className="mt-1 text-xs text-slate-400">{signal.recommendation || "Pendiente de recomendacion supervisada."}</p>
               </div>
             ))}
@@ -518,10 +507,10 @@ function TalentNativeModule({
             <h4 className="text-sm font-semibold text-white">Bloqueos de datos</h4>
           </div>
           <div className="space-y-2">
-            {blockers.slice(0, 5).map((blocker) => (
-              <div key={blocker.id} className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3">
-                <p className="text-sm font-semibold text-amber-100">{blocker.title}</p>
-                <p className="mt-1 text-xs text-amber-100/75">{blocker.detail}</p>
+            {blockers.slice(0, 5).map((blocker, index) => (
+              <div key={`${blocker.id || blocker.title || "blocker"}:${index}`} className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3">
+                <p className="text-sm font-semibold text-amber-100">{blocker.title || "Cobertura pendiente"}</p>
+                <ReadinessBadge status={blocker.status || "blocked"} compact />
               </div>
             ))}
             {!blockers.length ? <p className="text-sm text-slate-400">Sin bloqueos reportados.</p> : null}
@@ -536,7 +525,6 @@ function TalentNativeModule({
 function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPayload | null }) {
   const agents = payload?.agents || [];
   const runs = payload?.recent_runs || [];
-  const tools = payload?.tools_used || [];
   const engines = payload?.engines || [];
   return (
     <div className="space-y-4">
@@ -556,20 +544,11 @@ function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPaylo
         <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
           <h4 className="text-sm font-semibold text-white">Agentes conectados</h4>
           <div className="mt-3 space-y-2">
-            {agents.slice(0, 8).map((agent) => (
-              <div key={agent.id} className="grid gap-2 rounded-md border border-sky-400/10 bg-slate-950/30 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            {agents.slice(0, 8).map((agent, index) => (
+              <div key={`${agent.name || "agent"}:${index}`} className="grid gap-2 rounded-md border border-sky-400/10 bg-slate-950/30 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-100">{agent.name}</p>
-                  <p className="mt-1 text-xs text-slate-400">{agent.operational_tools_count ?? agent.allowed_tools.length ?? 0} tools operativas</p>
-                  {(agent.configured_engines ?? []).length ? (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {(agent.configured_engines ?? []).slice(0, 4).map((engine) => (
-                        <span key={`${agent.id}:${engine.engine}:${engine.mode ?? "direct"}`} className="rounded-md border border-cyan-400/20 bg-cyan-500/10 px-1.5 py-0.5 text-[11px] text-cyan-100">
-                          {agentOpsEngineLabel(engine.engine)}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
+                  <p className="truncate text-sm font-semibold text-slate-100">{agent.name || "Agente"}</p>
+                  <p className="mt-1 text-xs text-slate-400">{agent.operational_tools_count} capacidades operativas</p>
                 </div>
                 <ReadinessBadge status={agent.operationally_ready ? "ready" : "partial"} compact />
               </div>
@@ -581,8 +560,8 @@ function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPaylo
           <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
             <h4 className="text-sm font-semibold text-white">Capacidades de análisis</h4>
             <div className="mt-3 space-y-2">
-              {engines.map((engine) => (
-                <div key={engine.engine} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
+              {engines.map((engine, index) => (
+                <div key={`${engine.engine || "engine"}:${index}`} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-slate-100">{agentOpsEngineLabel(engine.engine)}</p>
                     <span className={cn("rounded-md border px-2 py-0.5 text-xs font-semibold", agentOpsEngineTone(engine.status))}>
@@ -598,24 +577,15 @@ function AgentOpsNativeModule({ payload }: { payload?: ControlRoomAgentsOpsPaylo
             </div>
           </section>
           <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
-            <h4 className="text-sm font-semibold text-white">Ejecuciones y herramientas</h4>
+            <h4 className="text-sm font-semibold text-white">Ejecuciones recientes</h4>
             <div className="mt-3 space-y-3">
-              {runs.slice(0, 5).map((run) => (
-                <div key={run.id} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
-                  <p className="text-sm font-semibold text-slate-100">{run.agent_name}</p>
-                  <p className="mt-1 text-xs text-slate-400">{run.status} · {run.tool_count} tools · {run.started_at ? updated(run.started_at) : "sin fecha"}</p>
+              {runs.slice(0, 5).map((run, index) => (
+                <div key={`${run.agent_name || "run"}:${run.started_at || run.finished_at || index}`} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
+                  <p className="text-sm font-semibold text-slate-100">{run.agent_name || "Agente"}</p>
+                  <p className="mt-1 text-xs text-slate-400">{run.status || "sin estado"} · {run.tool_count} capacidades · {run.started_at ? updated(run.started_at) : "sin fecha"}</p>
                 </div>
               ))}
               {!runs.length ? <p className="text-sm text-slate-400">Sin ejecuciones recientes persistidas.</p> : null}
-              {tools.length ? (
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {tools.slice(0, 8).map((item) => (
-                    <span key={item.tool} className="rounded-md border border-sky-400/15 bg-slate-950/30 px-2 py-1 text-xs text-slate-300">
-                      {item.tool} · {item.count}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
             </div>
           </section>
         </div>
@@ -638,7 +608,7 @@ function GenericNativeModule({ module, sources }: { module: NativeAnalyticModule
         <SourceReadinessGrid sources={related} />
       ) : (
         <OperationalNotice tone="info" title="Modulo interno preparado">
-          Este modulo ya esta disponible en Control Room. Cuando sus datasets se materialicen, las fuentes se mostraran aqui automaticamente.
+          Este modulo ya esta disponible en Control Room. Las fuentes visibles aparecerán cuando haya información operativa disponible.
         </OperationalNotice>
       )}
     </div>
@@ -682,12 +652,13 @@ function LoadingNotice({ label }: { label: string }) {
 function WidgetPanel({ widget }: { widget: SfGoldWidget | SfTalentWidget }) {
   const rows = widgetRows(widget);
   const max = Math.max(1, ...rows.map((row) => row.value));
+  const sourceLabel = "Indicador ejecutivo";
   return (
     <section className="rounded-lg border border-sky-400/15 bg-[#06111f] p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase text-cyan-300/80">{widget.dataset}</p>
-          <h4 className="text-base font-semibold text-white">{widget.title}</h4>
+          <p className="text-xs font-semibold uppercase text-cyan-300/80">{sourceLabel}</p>
+          <h4 className="text-base font-semibold text-white">{widget.title || "Indicador"}</h4>
         </div>
         <strong className="text-2xl font-semibold text-white">{widgetValue(widget)}</strong>
       </div>
@@ -722,20 +693,19 @@ function SourceReadinessGrid({ sources }: { sources: SourceStatus[] }) {
         <span className="text-xs text-slate-400">{sources.length} fuentes</span>
       </div>
       <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-        {sources.slice(0, 12).map((source) => (
-          <div key={`${source.cartridge}:${source.dataset}:${source.module_id || source.module}`} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
+        {sources.slice(0, 12).map((source, index) => (
+          <div key={`${source.cartridge || source.module || source.domain || "source"}:${index}`} className="rounded-md border border-sky-400/10 bg-slate-950/30 p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-100">{prettyLabel(source.dataset.split("/").pop() || source.dataset)}</p>
-                <p className="mt-1 truncate text-xs text-slate-400">{source.module || source.domain}</p>
+                <p className="truncate text-sm font-semibold text-slate-100">{source.module || source.domain || "Fuente operativa"}</p>
+                <p className="mt-1 truncate text-xs text-slate-400">{source.domain || source.cartridge || "Cobertura de Control Room"}</p>
               </div>
-              <ReadinessBadge status={source.data_readiness || source.status} compact />
+              <ReadinessBadge status={source.data_readiness || source.status || "missing"} compact />
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
               <span>{formatNumber(source.count)} rows</span>
               <span className="truncate text-right">{source.checked_at ? updated(source.checked_at) : "sin revision"}</span>
             </div>
-            {source.readiness_reason ? <p className="mt-2 line-clamp-2 text-xs text-amber-100/80">{source.readiness_reason}</p> : null}
           </div>
         ))}
       </div>

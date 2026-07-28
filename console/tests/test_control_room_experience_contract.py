@@ -28,6 +28,13 @@ from control_room_surface_fixtures import (
 
 
 FORBIDDEN_KEYS = {
+    "scope",
+    "tenant_id",
+    "workspace_id",
+    "id",
+    "cartridge_id",
+    "module_id",
+    "reference",
     "dataset",
     "source_dataset",
     "metadata",
@@ -196,7 +203,8 @@ def test_experience_exposes_only_decisions_with_eligible_provenance():
     )
     backed = build_business_experience(snapshot(items=tuple(projected)))
     assert backed.sections[0].facts[0].decision
-    assert backed.sections[0].facts[0].decision.reference == 42
+    assert backed.sections[0].facts[0].decision.status == "decision_created"
+    assert "reference" not in backed.sections[0].facts[0].decision.model_dump()
 
 
 def test_experience_drops_every_technical_field_recursively():
@@ -261,11 +269,17 @@ def test_response_models_are_strict_and_openapi_bound():
     strict_models = {
         "ControlRoomExperienceResponse",
         "ControlRoomDiagnosticsResponse",
+        "ExperienceSection",
         "ExperienceFact",
+        "DiagnosticSource",
         "DiagnosticItem",
-        "SurfaceScope",
     }
     for model in strict_models:
         assert schema["components"]["schemas"][model]["additionalProperties"] is False
 
+    public_models = (
+        schema["components"]["schemas"]["ControlRoomExperienceResponse"],
+        schema["components"]["schemas"]["ControlRoomDiagnosticsResponse"],
+    )
+    assert all("scope" not in model["properties"] for model in public_models)
     assert TENANT_ID != WORKSPACE_ID

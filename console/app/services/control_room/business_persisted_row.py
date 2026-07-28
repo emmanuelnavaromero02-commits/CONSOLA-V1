@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Set
 from typing import Any
+from uuid import UUID
 
 from app.services.control_room.business_artifact_overlay import (
     artifact_overlay_allowed,
@@ -26,7 +27,9 @@ from app.services.control_room.business_workflow_provenance import (
 def _public(row: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(row)
     for key, value in tuple(data.items()):
-        if hasattr(value, "isoformat"):
+        if isinstance(value, UUID):
+            data[key] = str(value)
+        elif hasattr(value, "isoformat"):
             data[key] = value.isoformat()
     return data
 

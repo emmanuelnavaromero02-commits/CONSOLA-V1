@@ -78,7 +78,8 @@ def test_oversized_module_id_uses_valid_dataset_fallback_without_strip(
 
     response = build_business_experience(snapshot(items=(item,)))
 
-    assert response.sections[0].module_id == "gold_business_observations"
+    assert response.sections[0].title == "People"
+    assert "gold_business_observations" not in response.model_dump_json()
 
 
 @pytest.mark.parametrize(

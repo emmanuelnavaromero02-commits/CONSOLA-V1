@@ -18,6 +18,10 @@ from app.services.control_room.business_external_outcome import (
     AMBIGUOUS_OUTCOME_ERROR_CODE,
     PENDING_RECONCILIATION_CODE,
 )
+from control_room_external_authority import (
+    external_authority,
+    patch_started_revalidation,
+)
 
 
 USER = {
@@ -63,12 +67,18 @@ class OutcomeRun:
 
 
 async def _run_adapter_error(
-    error: AdapterExecutionError,
+    error: Exception,
     *,
     before_started: bool = False,
+    conversion_error: bool = False,
 ) -> OutcomeRun:
     adapter = Mock(supports_idempotency=True)
-    adapter.execute.side_effect = error
+    if conversion_error:
+        adapter.execute.return_value = {"ok": True}
+        result_converter = Mock(side_effect=error)
+    else:
+        adapter.execute.side_effect = error
+        result_converter = control_room_service._adapter_result_to_dict
     mark_ambiguous = AsyncMock(return_value={"id": 91, "status": "pending"})
     record_execution = AsyncMock(return_value={"id": 101})
     complete_reservation = AsyncMock(return_value={"id": 91, "status": "failed"})
@@ -76,20 +86,13 @@ async def _run_adapter_error(
     credentials = Mock(return_value={})
     if before_started:
         credentials.side_effect = error
+    item = _item()
+    template = {"template_id": "sap_hcm_it0008", "cartridge_id": "sap_hcm"}
+    payload = {}
+    authority = external_authority(item, template, payload)
 
     with (
-        patch.object(
-            control_room_service,
-            "require_approved_execution",
-            new=AsyncMock(),
-        ),
-        patch.object(
-            control_room_service,
-            "lock_pending_action_reservation",
-            new=AsyncMock(
-                return_value={"metadata": {"remote_attempt": {"status": "started"}}}
-            ),
-        ),
+        patch_started_revalidation(control_room_service, authority),
         patch.object(
             control_room_service,
             "_record_writeback_audit_event",
@@ -109,6 +112,11 @@ async def _run_adapter_error(
             control_room_service,
             "adapter_guarantees_idempotency",
             return_value=True,
+        ),
+        patch.object(
+            control_room_service,
+            "_adapter_result_to_dict",
+            new=result_converter,
         ),
         patch(
             "app.services.control_room.business_external_outcome."
@@ -139,15 +147,13 @@ async def _run_adapter_error(
         response = await control_room_service._execute_external_writeback(
             AsyncMock(),
             user=USER,
-            item=_item(),
-            template={
-                "template_id": "sap_hcm_it0008",
-                "cartridge_id": "sap_hcm",
-            },
-            payload={},
+            item=item,
+            template=template,
+            payload=payload,
             reservation=_reservation(),
             ip=None,
             user_agent=None,
+            authority=authority,
         )
 
     return OutcomeRun(
@@ -235,7 +241,7 @@ async def test_adapter_configuration_error_is_failed_without_reconciliation():
 @pytest.mark.asyncio
 async def test_error_before_remote_attempt_started_is_failed():
     run = await _run_adapter_error(
-        AdapterExecutionError("credentials unavailable", status_code=503),
+        RuntimeError("credentials unavailable"),
         before_started=True,
     )
 
@@ -243,3 +249,21 @@ async def test_error_before_remote_attempt_started_is_failed():
     run.mark_ambiguous.assert_not_awaited()
     run.adapter.execute.assert_not_called()
     assert run.complete_reservation.await_args.kwargs["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_generic_error_during_adapter_requires_reconciliation():
+    run = await _run_adapter_error(RuntimeError("connection reset after send"))
+
+    _assert_pending_reconciliation(run)
+    assert run.adapter.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_result_conversion_error_after_success_requires_reconciliation():
+    run = await _run_adapter_error(
+        RuntimeError("invalid adapter result"), conversion_error=True
+    )
+
+    _assert_pending_reconciliation(run)
+    assert run.adapter.execute.call_count == 1

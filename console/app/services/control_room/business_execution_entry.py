@@ -17,6 +17,9 @@ from app.services.control_room.business_execution_approval import (
 from app.services.control_room.business_execution_precondition import (
     execution_authorization_contract,
 )
+from app.services.control_room.business_external_receipt_contract import (
+    reservation_stored_authority_audit_valid,
+)
 
 
 ScopedRunner = Callable[[Callable[[Any], Awaitable[Any]]], Awaitable[Any]]
@@ -30,6 +33,7 @@ async def _completed_replay(
     user: Mapping[str, Any],
     item: Mapping[str, Any],
     template_id: str,
+    input_payload: Mapping[str, Any],
 ) -> ActionReservation | None:
     _tenant_id, workspace_id = workspace_scope(user)
     replay = await matching_action_replay(
@@ -39,11 +43,14 @@ async def _completed_replay(
         template_id=template_id,
         operation="execute",
         authorization_contract=execution_authorization_contract(user),
+        input_payload=input_payload,
     )
     if replay is None:
         return None
     key, row = replay
-    if str(row.get("status") or "") != "completed":
+    if str(row.get("status") or "") != "completed" or not (
+        reservation_stored_authority_audit_valid(row)
+    ):
         return None
     return ActionReservation(
         id=int(row["id"]),
@@ -56,6 +63,7 @@ async def _completed_replay(
 async def prepare_execution_entry(
     *,
     run_scoped: ScopedRunner,
+    run_replay_scoped: ScopedRunner,
     ensure_item_row: AsyncWriter,
     record_execute_block: AsyncWriter,
     response_for_reservation: ResponseBuilder,
@@ -73,12 +81,13 @@ async def prepare_execution_entry(
         and lifecycle_block.code == "already_executed"
         and confirmed
     ):
-        reservation = await run_scoped(
+        reservation = await run_replay_scoped(
             lambda conn: _completed_replay(
                 conn,
                 user=user,
                 item=item,
                 template_id=str(template["template_id"]),
+                input_payload=payload,
             )
         )
         if reservation is not None:
@@ -87,6 +96,8 @@ async def prepare_execution_entry(
                 item=item,
                 payload=payload,
             )
+    if lifecycle_block is None:
+        return None
     await run_scoped(
         lambda conn: ensure_item_row(
             conn,
@@ -96,8 +107,6 @@ async def prepare_execution_entry(
             critical=True,
         )
     )
-    if lifecycle_block is None:
-        return None
     await run_scoped(
         lambda conn: record_execute_block(
             conn,

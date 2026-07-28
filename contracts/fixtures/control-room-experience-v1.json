@@ -1,15 +1,8 @@
 {
   "schema_version": "control-room-experience/v1",
   "generated_at": "2026-07-25T12:30:00Z",
-  "scope": {
-    "tenant_id": "tenant-fixture",
-    "workspace_id": "workspace-fixture"
-  },
   "sections": [
     {
-      "id": "opaque-performance-key",
-      "cartridge_id": "fixture-cartridge",
-      "module_id": "fixture-module",
       "title": "Performance",
       "domain": "Personas",
       "facts": [
@@ -27,7 +20,6 @@
             "unit": "%"
           },
           "decision": {
-            "reference": 42,
             "status": "decision_created"
           }
         },

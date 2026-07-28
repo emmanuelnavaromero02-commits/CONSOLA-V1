@@ -16,6 +16,7 @@ from control_room_get_harness import ConcurrencyProbe, MutationSentinel, build_a
 
 SURFACE_PATHS = (
     "/api/control-room/experience",
+    "/api/control-room/experience/v2",
     "/api/control-room/diagnostics",
 )
 
@@ -91,7 +92,9 @@ async def test_surface_collection_uses_pure_projector_not_business_builders():
                 for path in SURFACE_PATHS
             ]
 
-    assert [response.status_code for response in responses] == [200, 200]
+    assert [response.status_code for response in responses] == [200] * len(
+        SURFACE_PATHS
+    )
     omega_builder.assert_not_called()
     dashboard_builder.assert_not_called()
 

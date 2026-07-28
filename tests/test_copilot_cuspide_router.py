@@ -551,7 +551,7 @@ def test_ask_with_context_enriches_control_room_live_context(advanced_router_mod
     assert r.json()["answer"] == "Control Room conectado"
     assert "live_control_room_snapshot" in seen["system"]
     assert "sap_successfactors_talent_metadata_readiness" in seen["system"]
-    assert "benchmark_internal" in seen["system"]
+    assert "benchmark_internal" not in seen["system"]
     assert "live_control_room_snapshot" not in r.json()["context_used"]
 
 

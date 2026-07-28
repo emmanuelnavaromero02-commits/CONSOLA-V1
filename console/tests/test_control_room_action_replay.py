@@ -21,6 +21,8 @@ def _item() -> dict:
         "id": "item-1",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "decision_id": 42,
         "source_dataset": "gold_people",
         "observed_value": 1,

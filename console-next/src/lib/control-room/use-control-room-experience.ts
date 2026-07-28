@@ -7,9 +7,7 @@ import { getControlRoomExperience } from "@/lib/control-room/experience-client";
 import type { ControlRoomExperience } from "@/lib/control-room/experience-contract";
 import { ACTIVE_WORKSPACE_COOKIE } from "@/lib/workspace-context";
 
-type ExperienceFetcher = (
-  expectedWorkspaceId: string | null,
-) => Promise<ControlRoomExperience>;
+type ExperienceFetcher = () => Promise<ControlRoomExperience>;
 
 export const controlRoomExperienceKey = (workspaceId: string | null) =>
   ["control-room", "experience", workspaceId ?? "unscoped"] as const;
@@ -20,7 +18,7 @@ export function controlRoomExperienceQueryOptions(
 ) {
   return {
     queryKey: controlRoomExperienceKey(workspaceId),
-    queryFn: () => fetcher(workspaceId),
+    queryFn: () => fetcher(),
     retry: false,
     refetchOnMount: true,
     refetchOnReconnect: false,

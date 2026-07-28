@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from app.services.control_room.business_action_reservation import (
     complete_action_reservation,
     effective_action_key,
 )
+from app.services.control_room.business_action_replay import action_reservation_contract
 from app.services.control_room.business_execution_precondition import (
     DRY_RUN_CONTRACT_KEY,
     dry_run_metadata,
@@ -26,6 +28,8 @@ def _item(**overrides):
         "id": "item-1",
         "kind": "anomaly",
         "workspace_id": "workspace-a",
+        "entity_kind": "employee",
+        "entity_id": "employee-1",
         "decision_id": 42,
         "source_dataset": "gold_people",
         "observed_value": 1,
@@ -104,8 +108,22 @@ def test_dry_run_metadata_binds_policy_fingerprint_decision_and_template():
 
 @pytest.mark.asyncio
 async def test_atomic_reservation_returns_in_progress_to_loser():
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        operation="execute",
+        authorization_contract=None,
+    )
     db = AsyncMock()
-    db.fetchrow.side_effect = [None, {"id": 7, "status": "pending"}]
+    db.fetchrow.side_effect = [
+        None,
+        {
+            "id": 7,
+            "status": "pending",
+            "metadata": {"reservation_contract": contract},
+        },
+    ]
 
     result = await acquire_action_reservation(
         db,
@@ -122,6 +140,45 @@ async def test_atomic_reservation_returns_in_progress_to_loser():
     sql = " ".join(db.fetchrow.await_args_list[0].args[0].split())
     assert "ON CONFLICT (workspace_id, idempotency_key) DO NOTHING" in sql
     assert "'pending'" in sql
+
+
+@pytest.mark.asyncio
+async def test_new_reservation_persists_server_authority_audit():
+    contract = action_reservation_contract(
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        operation="execute",
+        authorization_contract=None,
+    )
+    authority = {
+        "version": "control-room-authority-audit/v1",
+        "binding_id": "binding-1",
+        "key_id": "test-key",
+        "issued_at": "2026-07-26T12:00:00Z",
+        "expires_at": "2026-07-26T12:15:00Z",
+        "observation_fingerprint": contract["fingerprint"],
+        "execution_target_digest": contract["execution_target_digest"],
+        "template_contract_digest": contract["template_contract_digest"],
+        "input_payload_digest": contract["input_payload_digest"],
+    }
+    db = AsyncMock()
+    db.fetchrow.return_value = {"id": 19, "status": "pending"}
+
+    await acquire_action_reservation(
+        db,
+        tenant_id="tenant-a",
+        workspace_id="workspace-a",
+        item=_item(),
+        template_id="create_followup_task",
+        adapter_name="internal_followup_task",
+        operation="execute",
+        authority_audit=authority,
+    )
+
+    metadata = json.loads(db.fetchrow.await_args.args[-1])
+    assert metadata["authority_audit"] == authority
+    assert "reservation_contract" in metadata
 
 
 @pytest.mark.asyncio
@@ -190,6 +247,11 @@ async def test_guard_and_reservation_share_connection_and_order():
         assert kwargs["template_id"] == "create_followup_task"
         order.append("approved")
 
+    async def no_legacy(conn, **kwargs):
+        assert conn is db
+        assert kwargs["template_id"] == "create_followup_task"
+        order.append("legacy")
+
     with (
         patch(
             "app.services.control_room.business_action_reservation.require_approved_execution",
@@ -198,6 +260,10 @@ async def test_guard_and_reservation_share_connection_and_order():
         patch(
             "app.services.control_room.business_action_reservation.acquire_action_reservation",
             side_effect=acquire,
+        ),
+        patch(
+            "app.services.control_room.business_action_reservation.require_no_legacy_action_reservation",
+            side_effect=no_legacy,
         ),
     ):
         result = await acquire_guarded_action_reservation(
@@ -216,7 +282,7 @@ async def test_guard_and_reservation_share_connection_and_order():
         )
 
     assert result is reservation
-    assert order == ["approved", "reserve"]
+    assert order == ["approved", "legacy", "reserve"]
 
 
 @pytest.mark.asyncio

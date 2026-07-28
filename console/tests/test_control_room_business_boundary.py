@@ -225,8 +225,12 @@ async def test_commands_stop_at_business_guard(name, args, kwargs):
             await getattr(control_room_service, name)(*args, **kwargs)
 
     assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "item_not_business_eligible"
-    guard.assert_awaited_once()
+    if name == "run_auto_item":
+        assert exc.value.detail["code"] == "auto_run_disabled"
+        guard.assert_not_awaited()
+    else:
+        assert exc.value.detail["code"] == "item_not_business_eligible"
+        guard.assert_awaited_once()
     pool.assert_not_awaited()
     audit.assert_not_awaited()
     template.assert_not_called()

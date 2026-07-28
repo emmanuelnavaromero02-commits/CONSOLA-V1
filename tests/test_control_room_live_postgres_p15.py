@@ -11,6 +11,7 @@ from app.services.control_room.business_action_reservation import (
     ReservationState,
     acquire_guarded_action_reservation,
 )
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_decision_persistence import (
     create_and_link_decision,
 )
@@ -20,6 +21,7 @@ from app.services.control_room.business_repository import (
     approve_control_room_decision,
 )
 from app.services.db_scope import SET_SCOPE_SQL
+from tests.control_room_live_action_binding_seed import persist_live_action_binding
 from tests.test_control_room_live_postgres_workflows import (
     AsyncNoop,
     _item,
@@ -33,9 +35,9 @@ from tests.test_operational_rls_console_refinement import (
 
 # fmt: off
 INTERNAL_CASES = (
-    ("create_followup_task", service._execute_internal_followup_task_tx, "action_executed"),
-    ("create_investigation_note", service._execute_internal_investigation_note, "investigation_note_created"),
-    ("mark_decision_for_monitoring", service._execute_internal_decision_monitoring, "decision_monitoring_marked"),
+    ("create_followup_task", "action_executed"),
+    ("create_investigation_note", "investigation_note_created"),
+    ("mark_decision_for_monitoring", "decision_monitoring_marked"),
 )
 # fmt: on
 
@@ -105,6 +107,7 @@ async def _seed_matching_dry_run(
     item: dict,
     template_id: str,
 ) -> None:
+    template = _template(template_id)
     conn = await asyncpg.connect(dsn)
     try:
         await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
@@ -114,11 +117,18 @@ async def _seed_matching_dry_run(
                 template_id, cartridge_id, label, description, action_kind,
                 risk_level, mode_default, requires_approval, config
             )
-            VALUES ($1, 'platform', $1, 'Live test action', 'test',
-                    'low', 'dry_run', true, '{}'::jsonb)
+            VALUES ($1, $2, $3, $4, $5,
+                    $6, $7, $8, '{}'::jsonb)
             ON CONFLICT (template_id) DO NOTHING
             """,
             template_id,
+            template["cartridge_id"],
+            template["label"],
+            template["description"],
+            template["action_kind"],
+            template["risk_level"],
+            template["mode_default"],
+            template["requires_approval"],
         )
         await conn.execute(
             """
@@ -151,33 +161,34 @@ async def _seed_matching_dry_run(
         await conn.close()
 
 
-def _template(template_id: str, cartridge: str = "platform") -> dict:
-    return {
-        "template_id": template_id,
-        "template_type": template_id,
-        "cartridge_id": cartridge,
-        "label": template_id,
-        "action_kind": "test",
-        "risk_level": "low",
-        "requires_approval": True,
-    }
+def _template(template_id: str) -> dict:
+    return dict(ACTION_TEMPLATES[template_id])
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("template_id,runner,event_type", INTERNAL_CASES)
+@pytest.mark.parametrize("template_id,event_type", INTERNAL_CASES)
 async def test_live_internal_effect_is_once_under_concurrency(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
     template_id: str,
-    runner,
     event_type: str,
 ):
     tenant_id, workspace_id, item = await _linked_item(
         postgres_with_real_init_schema, f"p15-{template_id}"
     )
-    user = _user(tenant_id, workspace_id)
-    template = _template(template_id)
-    payload = {"mode": "execute_live", "action_payload": {}}
+    user = {
+        **_user(tenant_id, workspace_id),
+        "role": "super_admin",
+        "allowed_cartridges": ["*"],
+    }
+    item, binding_id = await persist_live_action_binding(
+        postgres_with_real_init_schema,
+        omega_console_live_dsn,
+        user=user,
+        item_id=item["id"],
+        template_id=template_id,
+    )
     await _seed_matching_dry_run(
         postgres_with_real_init_schema,
         tenant_id=tenant_id,
@@ -185,28 +196,34 @@ async def test_live_internal_effect_is_once_under_concurrency(
         item=item,
         template_id=template_id,
     )
+    item["execution_status"] = "dry_run_validated"
     barrier = asyncio.Barrier(2)
+    pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=6)
+
+    async def load_same_snapshot(*_args, **_kwargs):
+        await barrier.wait()
+        return item
+
+    async def pool_factory():
+        return pool
+
+    monkeypatch.setattr(service.auth, "pool", pool_factory)
+    monkeypatch.setattr(service, "_item_for_mutation", load_same_snapshot)
 
     async def execute():
-        conn = await asyncpg.connect(omega_console_live_dsn)
-        try:
-            async with conn.transaction():
-                await conn.execute(SET_SCOPE_SQL, tenant_id, workspace_id)
-                await barrier.wait()
-                return await runner(
-                    conn,
-                    user=user,
-                    item=_mutation_item(item),
-                    template=template,
-                    payload=payload,
-                    idempotency_key=None,
-                    ip=None,
-                    user_agent=None,
-                )
-        finally:
-            await conn.close()
+        return await service.execute_item(
+            item["id"],
+            user,
+            template_id=template_id,
+            binding_id=binding_id,
+            confirm_execute=True,
+            idempotency_key=None,
+        )
 
-    results = await asyncio.gather(execute(), execute())
+    try:
+        results = await asyncio.gather(execute(), execute())
+    finally:
+        await pool.close()
     check = await asyncpg.connect(postgres_with_real_init_schema)
     try:
         assert sorted(result["idempotent"] for result in results) == [False, True]

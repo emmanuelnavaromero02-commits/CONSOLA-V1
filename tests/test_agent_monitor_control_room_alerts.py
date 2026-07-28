@@ -138,7 +138,7 @@ async def test_control_room_dashboard_read_uses_scoped_internal_route(monkeypatc
         **_ctx(),
         "agent_id": "",
         "agent_run_id": "",
-        "permissions": ["datasets.read"],
+        "permissions": ["operations.read"],
     }
 
     async def fake_call_console(path, payload, timeout=0):
@@ -272,8 +272,10 @@ def test_mcp_main_enforces_control_room_alert_scope():
     assert '"control_room__talent_metadata_readiness_read"' in source
     assert "_CONTROL_ROOM_ANALYSIS_TOOLS" in source
     assert "_CONTROL_ROOM_READ_TOOLS" in source
+    assert "_CONTROL_ROOM_OPERATIONAL_READ_TOOLS" in source
     assert '_require_context_permission(req, "control_room.write", internal_service)' in source
     assert '_require_context_permission(req, "datasets.read", internal_service)' in source
+    assert '_require_context_permission(req, "operations.read", internal_service)' in source
     assert "control room alerts require tenant/workspace scope" in source
     assert "control room analysis requires tenant/workspace scope" in source
     assert "backend-owned arg is not allowed" in source

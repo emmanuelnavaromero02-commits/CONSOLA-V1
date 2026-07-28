@@ -16,7 +16,6 @@ export interface ExperienceObservation {
   pageErrors: string[];
 }
 
-const scope = { tenant_id: "tenant-e2e", workspace_id: "workspace-e2e" };
 const shellReads = new Set(["/api/me/access", "/auth/me"]);
 
 const zeroFact = {
@@ -26,39 +25,22 @@ const zeroFact = {
   observed_at: "2026-07-24T00:00:00Z",
   stale: false,
   metric: { name: "Rotación", kind: "percentage", value: 0, unit: "%" },
-  decision: { reference: 42, status: "decision_created" },
+  decision: { status: "decision_created" },
 };
 
 function experience(facts: unknown[]) {
   return {
     schema_version: "control-room-experience/v1",
     generated_at: "2026-07-25T12:30:00Z",
-    scope,
     sections: facts.length
       ? [
           {
-            id: "opaque-section",
-            cartridge_id: "technical-cartridge",
-            module_id: "technical-module",
             title: "Performance",
             domain: "Personas",
             facts,
           },
         ]
       : [],
-  };
-}
-
-function replyForRequest(body: unknown, workspaceId: string | undefined): unknown {
-  if (!workspaceId || !body || typeof body !== "object" || !("scope" in body)) {
-    return body;
-  }
-  const record = body as Record<string, unknown>;
-  const responseScope = record.scope;
-  if (!responseScope || typeof responseScope !== "object") return body;
-  return {
-    ...record,
-    scope: { ...(responseScope as Record<string, unknown>), workspace_id: workspaceId },
   };
 }
 
@@ -130,9 +112,7 @@ export async function installExperienceMock(
     await route.fulfill({
       status: reply.status,
       contentType: "application/json",
-      body: JSON.stringify(
-        replyForRequest(reply.body, route.request().headers()["x-workspace-id"]),
-      ),
+      body: JSON.stringify(reply.body),
     });
   });
 
