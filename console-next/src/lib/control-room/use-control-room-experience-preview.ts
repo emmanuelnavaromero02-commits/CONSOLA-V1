@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { isApiError } from "@/lib/api";
@@ -76,10 +82,11 @@ export function useControlRoomExperiencePreview(
   const [state, setState] = useState<PreviewState>({ kind: "idle" });
   const stateRef = useRef(state);
   const submittingRef = useRef(false);
+  const attemptRef = useRef(0);
   const experienceRef = useRef(experience);
   const workspaceRef = useRef(workspaceId);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     experienceRef.current = experience;
     workspaceRef.current = workspaceId;
   }, [experience, workspaceId]);
@@ -152,31 +159,58 @@ export function useControlRoomExperiencePreview(
     }
 
     submittingRef.current = true;
+    const attempt = ++attemptRef.current;
     transition({ kind: "submitting", selection });
     try {
       const result = await previewControlRoomExperienceAction(selection.actionHandle);
-      submittingRef.current = false;
+      if (
+        attemptRef.current !== attempt ||
+        workspaceRef.current !== selection.workspaceId
+      ) {
+        return;
+      }
       transition({ kind: "success", message: result.message });
       refreshActiveExperience(selection.workspaceId);
     } catch (error) {
-      submittingRef.current = false;
+      if (
+        attemptRef.current !== attempt ||
+        workspaceRef.current !== selection.workspaceId
+      ) {
+        return;
+      }
       if (isApiError(error) && (error.status === 404 || error.status === 409)) {
         failStale(selection.workspaceId);
         return;
       }
       transition({ kind: "safe-error", message: SAFE_ERROR_COPY });
+    } finally {
+      submittingRef.current = false;
     }
   }, [failStale, refreshActiveExperience, transition]);
 
   useEffect(() => {
     const current = stateRef.current;
-    if (
-      current.kind === "confirming" &&
-      !selectionIsCurrent(experience, workspaceId, current.selection)
-    ) {
-      failStale(workspaceId);
+    if (current.kind === "confirming") {
+      if (!selectionIsCurrent(experience, workspaceId, current.selection)) {
+        failStale(workspaceId);
+      }
+      return;
     }
-  }, [experience, failStale, workspaceId]);
+    if (
+      current.kind === "submitting" &&
+      workspaceId !== current.selection.workspaceId
+    ) {
+      attemptRef.current += 1;
+      transition({ kind: "safe-error", message: STALE_COPY });
+      refreshActiveExperience(workspaceId);
+    }
+  }, [
+    experience,
+    failStale,
+    refreshActiveExperience,
+    transition,
+    workspaceId,
+  ]);
 
   const activeSelection =
     state.kind === "confirming" || state.kind === "submitting"

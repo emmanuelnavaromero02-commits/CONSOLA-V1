@@ -72,7 +72,12 @@ function ExperiencePreviewDialog({
         if (phaseRef.current !== "submitting") cancelPreview();
         return;
       }
-      if (event.key !== "Tab" || phaseRef.current === "submitting") return;
+      if (event.key !== "Tab") return;
+      if (phaseRef.current === "submitting") {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
       const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
         'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
       ) ?? [])];
