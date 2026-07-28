@@ -102,7 +102,11 @@ _CREATE_MODIFIER_OBJECTS = {
 }
 _DROP_MODIFIER_OBJECTS = {
     ("persistent",): frozenset({"secret"}),
+    ("procedural",): frozenset({"language"}),
     ("temporary",): frozenset({"secret"}),
+}
+_ALTER_MODIFIER_OBJECTS = {
+    ("procedural",): frozenset({"language"}),
 }
 
 
@@ -131,6 +135,8 @@ def ddl_prefix(head: str, tail: tuple[SelectToken, ...]) -> bool:
     productions = (
         _CREATE_MODIFIER_OBJECTS
         if head == "create"
+        else _ALTER_MODIFIER_OBJECTS
+        if head == "alter"
         else _DROP_MODIFIER_OBJECTS
         if head == "drop"
         else {}
