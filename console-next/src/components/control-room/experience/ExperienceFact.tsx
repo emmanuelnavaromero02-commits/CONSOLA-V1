@@ -1,6 +1,8 @@
+import { useId } from "react";
 import { CalendarDays, CheckCircle2, Clock3 } from "lucide-react";
 
-import type { ExperienceFact as ExperienceFactModel } from "@/lib/control-room/experience-contract";
+import type { ExperienceFactV2 } from "@/lib/control-room/experience-contract";
+import type { OpenExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
 import {
   decisionLabel,
   formatMetric,
@@ -22,7 +24,14 @@ const severityLabel = {
   low: "Baja",
 } as const;
 
-export function ExperienceFact({ fact }: { fact: ExperienceFactModel }) {
+export function ExperienceFact({
+  fact,
+  onPreviewAction,
+}: {
+  fact: ExperienceFactV2;
+  onPreviewAction: OpenExperiencePreview;
+}) {
+  const reasonId = useId();
   return (
     <article className="flex min-h-56 min-w-0 flex-col rounded-md border bg-card p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -60,6 +69,47 @@ export function ExperienceFact({ fact }: { fact: ExperienceFactModel }) {
           <p className="mt-1 break-words text-3xl font-semibold text-card-foreground">
             {formatMetric(fact.metric)}
           </p>
+        </div>
+      ) : null}
+
+      {fact.actions.length > 0 ? (
+        <div className="mt-5 space-y-3 border-t pt-4">
+          {fact.actions.map((action, index) => {
+            const disabledReasonId = `${reasonId}-${index}`;
+            return (
+              <div key={index} className="space-y-2">
+                <p className="break-words text-sm font-medium text-card-foreground">
+                  {action.label}
+                </p>
+                <button
+                  type="button"
+                  disabled={!action.enabled}
+                  aria-describedby={
+                    !action.enabled && action.disabled_reason
+                      ? disabledReasonId
+                      : undefined
+                  }
+                  onClick={
+                    action.enabled
+                      ? (event) =>
+                          onPreviewAction(fact, action, event.currentTarget)
+                      : undefined
+                  }
+                  className="inline-flex min-h-[44px] w-full items-center justify-center rounded-md border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Generar preview
+                </button>
+                {!action.enabled && action.disabled_reason ? (
+                  <p
+                    id={disabledReasonId}
+                    className="break-words text-xs text-muted-foreground"
+                  >
+                    {action.disabled_reason}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
 

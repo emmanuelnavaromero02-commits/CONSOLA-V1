@@ -1,8 +1,15 @@
-import type { ExperienceSection as ExperienceSectionModel } from "@/lib/control-room/experience-contract";
+import type { ExperienceSectionV2 } from "@/lib/control-room/experience-contract";
+import type { OpenExperiencePreview } from "@/lib/control-room/use-control-room-experience-preview";
 
 import { ExperienceFact } from "./ExperienceFact";
 
-export function ExperienceSection({ section }: { section: ExperienceSectionModel }) {
+export function ExperienceSection({
+  section,
+  onPreviewAction,
+}: {
+  section: ExperienceSectionV2;
+  onPreviewAction: OpenExperiencePreview;
+}) {
   if (section.facts.length === 0) return null;
 
   return (
@@ -12,7 +19,11 @@ export function ExperienceSection({ section }: { section: ExperienceSectionModel
       </h2>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {section.facts.map((fact, index) => (
-          <ExperienceFact key={index} fact={fact} />
+          <ExperienceFact
+            key={index}
+            fact={fact}
+            onPreviewAction={onPreviewAction}
+          />
         ))}
       </div>
     </section>
