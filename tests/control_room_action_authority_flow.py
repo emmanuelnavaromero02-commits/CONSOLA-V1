@@ -28,6 +28,7 @@ from tests.control_room_action_authority_live import (
     AuthoritySeed,
     snapshot,
 )
+from tests.control_room_action_authority_dry_run import insert_authority_dry_run
 
 
 async def issue_live_binding(
@@ -80,6 +81,7 @@ async def promote_live_intent(
     scope: AuthorityScope | None = None,
 ):
     current = scope or seed.first
+    await insert_authority_dry_run(seed, current)
     action = await issue_live_binding(seed, pool, current)
     with (
         patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
