@@ -23,12 +23,22 @@ from app.services.control_room.business_action_authority_repository import (
     consume_action_binding_token,
     fetch_authoritative_row_for_update,
     resolve_action_binding_token,
+    revoke_action_binding_token,
 )
 from app.services.control_room.business_action_catalog import (
     load_enabled_action_template_ids,
     require_enabled_action_template,
 )
 from app.services.control_room.business_action_ledger import append_intent_event
+from app.services.control_room.business_action_dry_run_authority import (
+    link_authority_dry_run,
+    require_authority_dry_run,
+)
+from app.services.control_room.business_action_intent_store import (
+    find_binding_intent,
+    insert_intent,
+    intent_matches_contract,
+)
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_revalidation import (
     actor_has_current_permission,
@@ -36,7 +46,7 @@ from app.services.control_room.business_action_revalidation import (
 from app.services.control_room.business_action_tokens import (
     IssuedStageHandle,
     issue_stage_token,
-    server_operation_digest,
+    server_binding_operation_digest,
 )
 from app.services.control_room.surface_snapshot import collect_surface_snapshot
 from app.services.db_scope import run_with_db_scope
@@ -63,49 +73,6 @@ def _token_matches(token: Mapping[str, Any], contract: AuthorityItemContract) ->
         "decision_digest": contract.decision_digest,
     }
     return all(str(token.get(key) or "") == value for key, value in expected.items())
-
-
-async def _insert_intent(
-    conn: Any,
-    *,
-    contract: AuthorityItemContract,
-    intent_id: str,
-    correlation_id: str,
-) -> dict[str, Any]:
-    row = await conn.fetchrow(
-        """
-        INSERT INTO control_room_action_intents (
-            id, tenant_id, workspace_id, item_id, maker_user_id, template_id,
-            binding_digest, evidence_digest, observation_fingerprint,
-            contract_digest, target_digest, dry_run_digest, decision_digest,
-            state, state_version, result_code, correlation_id, expires_at
-        ) VALUES (
-            $1::uuid, $2::uuid, $3::uuid, $4, $5, 'create_followup_task',
-            $6, $7, $8, $9, $10, $11, $12,
-            'pending_approval', 1, 'created', $13::uuid,
-            NOW() + INTERVAL '24 hours'
-        )
-        RETURNING *, tenant_id::text AS tenant_id,
-                     workspace_id::text AS workspace_id, id::text AS id,
-                     correlation_id::text AS correlation_id
-        """,
-        intent_id,
-        contract.tenant_id,
-        contract.workspace_id,
-        contract.item_id,
-        contract.maker_user_id,
-        contract.binding_digest,
-        contract.evidence_digest,
-        contract.observation_fingerprint,
-        contract.contract_digest,
-        contract.target_digest,
-        contract.dry_run_digest(),
-        contract.decision_digest,
-        correlation_id,
-    )
-    if not row:
-        raise RuntimeError("control room action intent insert failed")
-    return dict(row)
 
 
 async def promote_action_handle(
@@ -167,20 +134,65 @@ async def promote_action_handle(
         )
         if contract is None or not _token_matches(token, contract):
             raise HTTPException(404, "action authority not found")
+        existing = await find_binding_intent(conn, contract=contract)
+        if existing is not None:
+            if (
+                not intent_matches_contract(existing, contract)
+                or str(existing.get("state") or "") != "pending_approval"
+            ):
+                raise HTTPException(409, "action intent already exists")
+            await require_authority_dry_run(
+                conn,
+                user=user,
+                contract=contract,
+                action_run_id=int(existing["dry_run_action_run_id"]),
+                expected_evidence_digest=str(existing["dry_run_evidence_digest"]),
+                expected_intent_id=str(existing["id"]),
+            )
+            await revoke_action_binding_token(
+                conn, token_id=str(token["id"]), user=user
+            )
+            workflow = await issue_stage_token(
+                conn,
+                user=user,
+                intent_id=str(existing["id"]),
+                stage="workflow",
+                intent_expires_at=existing["expires_at"],
+            )
+            return PromotedIntent(
+                str(existing["id"]),
+                str(existing["state"]),
+                int(existing["state_version"]),
+                existing["expires_at"],
+                workflow.handle,
+            )
+        dry_run = await require_authority_dry_run(
+            conn,
+            user=user,
+            contract=contract,
+        )
         intent_id = str(uuid4())
         correlation_id = str(uuid4())
-        operation_digest = server_operation_digest(
+        operation_digest = server_binding_operation_digest(
             workspace_id=workspace_id,
-            intent_id=intent_id,
-            operation="promote",
+            maker_user_id=maker_user_id,
+            binding_digest=contract.binding_digest,
             contract_digest=contract.contract_digest,
-            actor_user_id=maker_user_id,
         )
-        intent = await _insert_intent(
+        intent = await insert_intent(
             conn,
             contract=contract,
+            dry_run=dry_run,
             intent_id=intent_id,
             correlation_id=correlation_id,
+        )
+        if intent is None:
+            raise HTTPException(409, "action intent already exists")
+        await link_authority_dry_run(
+            conn,
+            dry_run=dry_run,
+            contract=contract,
+            intent_id=intent_id,
         )
         await append_intent_event(
             conn,

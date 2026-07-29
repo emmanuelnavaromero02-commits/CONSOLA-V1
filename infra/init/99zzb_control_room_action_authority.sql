@@ -4,6 +4,14 @@
 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_tenant_id_id_idx
     ON workspaces(tenant_id, id);
 
+UPDATE action_runs AS run
+   SET tenant_id = workspace.tenant_id
+  FROM workspaces AS workspace
+ WHERE run.workspace_id = workspace.id AND run.tenant_id IS NULL;
+ALTER TABLE action_runs ALTER COLUMN tenant_id SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS action_runs_tenant_workspace_id_idx
+    ON action_runs(tenant_id, workspace_id, id);
+
 INSERT INTO roles (name, description)
 VALUES (
     'control_room_approver',
@@ -26,6 +34,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
     contract_digest          CHAR(64) NOT NULL,
     target_digest            CHAR(64) NOT NULL,
     dry_run_digest           CHAR(64) NOT NULL,
+    dry_run_action_run_id    BIGINT NOT NULL,
+    dry_run_evidence_digest  CHAR(64) NOT NULL,
     decision_digest          CHAR(64) NOT NULL,
     state                    TEXT NOT NULL DEFAULT 'pending_approval',
     state_version            INTEGER NOT NULL DEFAULT 1,
@@ -40,6 +50,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
       REFERENCES workspaces(tenant_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, item_id)
       REFERENCES control_room_items(workspace_id, item_id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant_id, workspace_id, dry_run_action_run_id)
+      REFERENCES action_runs(tenant_id, workspace_id, id) ON DELETE RESTRICT,
     CONSTRAINT control_room_action_intents_template_chk
       CHECK (template_id = 'create_followup_task'),
     CONSTRAINT control_room_action_intents_state_chk
@@ -70,6 +82,7 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
       AND contract_digest ~ '^[0-9a-f]{64}$'
       AND target_digest ~ '^[0-9a-f]{64}$'
       AND dry_run_digest ~ '^[0-9a-f]{64}$'
+      AND dry_run_evidence_digest ~ '^[0-9a-f]{64}$'
       AND decision_digest ~ '^[0-9a-f]{64}$'
     )
 );
@@ -144,6 +157,14 @@ CREATE INDEX IF NOT EXISTS control_room_action_tokens_lookup_idx
     ON control_room_action_tokens(workspace_id, stage, status, expires_at);
 CREATE INDEX IF NOT EXISTS control_room_action_tokens_intent_idx
     ON control_room_action_tokens(workspace_id, intent_id, stage);
+CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_active_binding_uidx
+    ON control_room_action_tokens (
+        tenant_id, workspace_id, subject_user_id, item_id, template_id
+    ) WHERE stage = 'action_binding' AND status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_active_stage_uidx
+    ON control_room_action_tokens (
+        tenant_id, workspace_id, intent_id, stage, subject_user_id
+    ) WHERE stage <> 'action_binding' AND status = 'active';
 
 CREATE TABLE IF NOT EXISTS control_room_action_intent_events (
     id                BIGSERIAL PRIMARY KEY,
@@ -158,6 +179,14 @@ CREATE TABLE IF NOT EXISTS control_room_action_intent_events (
     result_code       TEXT NOT NULL,
     correlation_id    UUID NOT NULL,
     operation_digest  CHAR(64) NOT NULL,
+    authorization_permission   TEXT NOT NULL,
+    actor_global_role          TEXT NOT NULL,
+    actor_workspace_role       TEXT,
+    authorization_grant_source TEXT NOT NULL,
+    access_revision_digest     CHAR(64) NOT NULL,
+    rbac_policy_digest         CHAR(64) NOT NULL,
+    authorization_snapshot     JSONB NOT NULL,
+    authorization_digest       CHAR(64) NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (workspace_id, intent_id, intent_version),
     UNIQUE (workspace_id, operation_digest),
@@ -177,7 +206,24 @@ CREATE TABLE IF NOT EXISTS control_room_action_intent_events (
         'execution_reserved', 'completed', 'failed'
       )),
     CONSTRAINT control_room_action_intent_events_digest_chk
-      CHECK (operation_digest ~ '^[0-9a-f]{64}$')
+      CHECK (
+        operation_digest ~ '^[0-9a-f]{64}$'
+        AND access_revision_digest ~ '^[0-9a-f]{64}$'
+        AND rbac_policy_digest ~ '^[0-9a-f]{64}$'
+        AND authorization_digest ~ '^[0-9a-f]{64}$'
+      ),
+    CONSTRAINT control_room_action_intent_events_permission_chk
+      CHECK (authorization_permission IN (
+        'control_room.write', 'control_room.approve', 'control_room.execute'
+      )),
+    CONSTRAINT control_room_action_intent_events_grant_source_chk
+      CHECK (authorization_grant_source IN ('global_role', 'workspace_role')),
+    CONSTRAINT control_room_action_intent_events_snapshot_chk CHECK (
+      jsonb_typeof(authorization_snapshot) = 'object'
+      AND NOT authorization_snapshot ?| ARRAY[
+        'handle', 'secret', 'sql', 'path', 'payload', 'metadata'
+      ]
+    )
 );
 
 CREATE INDEX IF NOT EXISTS control_room_action_intent_events_intent_idx
@@ -186,6 +232,9 @@ CREATE INDEX IF NOT EXISTS control_room_action_intent_events_intent_idx
 ALTER TABLE action_runs ADD COLUMN IF NOT EXISTS action_intent_id UUID;
 CREATE INDEX IF NOT EXISTS action_runs_action_intent_idx
     ON action_runs(workspace_id, action_intent_id)
+    WHERE action_intent_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS action_runs_action_intent_unique_idx
+    ON action_runs(tenant_id, workspace_id, action_intent_id)
     WHERE action_intent_id IS NOT NULL;
 ALTER TABLE action_runs
     DROP CONSTRAINT IF EXISTS action_runs_action_intent_fk;
