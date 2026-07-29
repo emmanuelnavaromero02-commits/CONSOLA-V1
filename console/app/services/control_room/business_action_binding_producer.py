@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection, Mapping
 from typing import Any
+
+from fastapi import HTTPException
 
 from app.schemas.control_room_experience_actions import ExperienceAction
 from app.services import auth
@@ -29,6 +32,21 @@ from app.services.control_room.surface_snapshot import SurfaceSnapshot
 from app.services.db_scope import run_with_db_scope
 
 
+_LOGGER = logging.getLogger(__name__)
+_OPERATIONAL_FAILURE = "control_room_action_binding_operational_failure"
+
+
+def _record_operational_failure() -> None:
+    _LOGGER.error(
+        _OPERATIONAL_FAILURE,
+        extra={
+            "event": _OPERATIONAL_FAILURE,
+            "component": "control_room_action_authority",
+            "outcome": "actions_omitted",
+        },
+    )
+
+
 async def issue_action_bindings(
     user: Mapping[str, Any],
     snapshot: SurfaceSnapshot,
@@ -38,7 +56,7 @@ async def issue_action_bindings(
     try:
         require_write(user)
         tenant_id, workspace_id = authority_scope(user)
-    except Exception:
+    except HTTPException:
         return {}
     if EXECUTABLE_TEMPLATE_ID not in enabled_template_ids:
         return {}
@@ -50,7 +68,6 @@ async def issue_action_bindings(
     if not live_by_id:
         return {}
     template = ACTION_TEMPLATES[EXECUTABLE_TEMPLATE_ID]
-    pool = await auth.pool()
 
     async def _issue(
         conn: Any, scoped_tenant_id: str | None, scoped_workspace_id: str
@@ -88,8 +105,14 @@ async def issue_action_bindings(
         return issued
 
     try:
+        pool = await auth.pool()
         return await run_with_db_scope(pool, dict(user), _issue)
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            _record_operational_failure()
+        return {}
     except Exception:
+        _record_operational_failure()
         return {}
 
 
