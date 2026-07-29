@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+import asyncpg
 from fastapi import HTTPException
 
 from app.services import auth
@@ -271,7 +272,10 @@ async def promote_action_handle(
             workflow.handle,
         )
 
-    return await run_with_db_scope(pool, dict(user), _promote)
+    try:
+        return await run_with_db_scope(pool, dict(user), _promote)
+    except asyncpg.ExclusionViolationError:
+        raise HTTPException(409, "action intent already exists") from None
 
 
 __all__ = ("PromotedIntent", "promote_action_handle")
