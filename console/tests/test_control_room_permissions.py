@@ -53,14 +53,22 @@ def test_control_room_mutations_use_specific_write_permission():
 
 
 def test_control_room_permission_is_registered_and_workspace_admin_can_operate():
-    permissions = read("console/app/services/permissions.py")
+    assert "control_room.write" in permissions.PERMISSION_KEYS
+    assert "control_room.execute" in permissions.PERMISSION_KEYS
+    workspace_admin = permissions.ROLE_PERMISSIONS["workspace_admin"]
+    assert "control_room.write" in workspace_admin
+    assert "control_room.execute" in workspace_admin
 
-    assert '"control_room.write"' in permissions
-    assert '"control_room.execute"' in permissions
-    role_permissions = permissions.split("ROLE_PERMISSIONS = {", 1)[1]
-    workspace_admin_section = role_permissions.split('"workspace_admin": {', 1)[1].split('},', 1)[0]
-    assert '"control_room.write"' in workspace_admin_section
-    assert '"control_room.execute"' in workspace_admin_section
+
+def test_control_room_approve_is_only_in_dedicated_checker_role():
+    assert "control_room.approve" in permissions.PERMISSION_KEYS
+    for role in (
+        "owner", "super_admin", "admin", "workspace_admin", "tenant_admin"
+    ):
+        assert "control_room.approve" not in permissions.ROLE_PERMISSIONS[role]
+    checker = permissions.ROLE_PERMISSIONS["control_room_approver"]
+    assert {"control_room.approve", "control_room.execute"} <= checker
+    assert "control_room.write" not in checker
 
 
 def _build_execute_permission_client(user: dict | None) -> TestClient:
