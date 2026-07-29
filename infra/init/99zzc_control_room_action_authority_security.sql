@@ -117,7 +117,7 @@ GRANT SELECT, INSERT ON control_room_action_tokens TO omega_console;
 GRANT UPDATE (
     status, operation_digest, result_state, result_version,
     consumed_at, consumed_by, token_digest, issued_at, expires_at,
-    item_id, template_id, binding_digest, evidence_digest,
+    binding_handle_nonce, item_id, template_id, binding_digest, evidence_digest,
     observation_fingerprint, contract_digest, target_digest,
     decision_digest, intent_id, binding_dry_run_action_run_id,
     binding_dry_run_evidence_digest

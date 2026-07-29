@@ -259,7 +259,7 @@ async def consume_stage_token(
         UPDATE control_room_action_tokens
            SET status = 'consumed', operation_digest = $1,
                result_state = $2, result_version = $3,
-               consumed_at = NOW(), consumed_by = $4
+               consumed_at = GREATEST(NOW(), issued_at), consumed_by = $4
          WHERE tenant_id = $5::uuid AND workspace_id = $6::uuid
            AND id = $7::uuid AND intent_id = $8::uuid AND stage = $9
            AND subject_user_id = $4 AND status = 'active'

@@ -102,7 +102,7 @@ async def test_repeated_and_concurrent_experience_gets_keep_one_active_binding(
                 pool, sequential, count=8, concurrent=False
             )
         ]
-        assert len(set(handles)) == 8
+        assert len(set(handles)) == 1
         assert await _token_counts(seed, sequential, stage="action_binding") == {
             "total": 1,
             "active": 1,
@@ -113,7 +113,7 @@ async def test_repeated_and_concurrent_experience_gets_keep_one_active_binding(
             _action_handle(payload)
             for payload in await experience_gets(pool, racing, count=2, concurrent=True)
         ]
-        assert len(set(raced)) == 2
+        assert len(set(raced)) == 1
         assert await _token_counts(seed, racing, stage="action_binding") == {
             "total": 1,
             "active": 1,
@@ -137,7 +137,7 @@ async def test_repeated_and_concurrent_experience_gets_keep_one_active_binding(
                 ),
                 return_exceptions=True,
             )
-        assert sum(not isinstance(value, Exception) for value in results) == 1
+        assert sum(not isinstance(value, Exception) for value in results) == 2
         assert all(not isinstance(value, asyncpg.PostgresError) for value in results)
     finally:
         await pool.close()
@@ -160,7 +160,7 @@ async def test_experience_reissues_one_binding_for_live_pending_intent(
             for fact in section["facts"]
         )
         assert await _token_counts(seed, scope, stage="action_binding") == {
-            "total": 2,
+            "total": 1,
             "active": 1,
         }
     finally:
@@ -212,7 +212,7 @@ async def test_workflow_approval_and_execution_tokens_rotate_in_place(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("concurrent", (False, True))
-async def test_two_distinct_binding_handles_promote_without_sql_error(
+async def test_shared_binding_handle_promotes_once_without_sql_error(
     authority_seed: AuthoritySeed, concurrent: bool
 ):
     seed = authority_seed
@@ -222,7 +222,7 @@ async def test_two_distinct_binding_handles_promote_without_sql_error(
     try:
         first = await issue_live_binding(seed, pool, scope)
         second = await issue_live_binding(seed, pool, scope)
-        assert first.action_handle != second.action_handle
+        assert first.action_handle == second.action_handle
         with (
             patch.object(auth, "pool", new=AsyncMock(return_value=pool)),
             patch.object(

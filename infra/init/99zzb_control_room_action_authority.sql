@@ -1,11 +1,8 @@
 -- P1.2c3 PR-A: durable authority for one internal Control Room action.
 -- Public approval/execution routes are intentionally outside this migration.
-
 CREATE EXTENSION IF NOT EXISTS btree_gist;
-
 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_tenant_id_id_idx
     ON workspaces(tenant_id, id);
-
 UPDATE action_runs AS run
    SET tenant_id = workspace.tenant_id
   FROM workspaces AS workspace
@@ -78,6 +75,7 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
       )),
     CONSTRAINT control_room_action_intents_version_chk
       CHECK (state_version >= 1),
+    CONSTRAINT control_room_action_intents_updated_at_chk CHECK (updated_at >= created_at),
     CONSTRAINT control_room_action_intents_checker_chk
       CHECK (checker_user_id IS NULL OR checker_user_id <> maker_user_id),
     CONSTRAINT control_room_action_intents_executor_chk
@@ -118,6 +116,7 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     stage                    TEXT NOT NULL,
     subject_user_id          BIGINT NOT NULL,
     token_digest             BYTEA NOT NULL UNIQUE,
+    binding_handle_nonce     BYTEA,
     item_id                  TEXT,
     template_id              TEXT,
     binding_digest           CHAR(64),
@@ -153,6 +152,7 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     CONSTRAINT control_room_action_tokens_shape_chk CHECK (
       (
         stage = 'action_binding'
+        AND octet_length(binding_handle_nonce) = 32
         AND item_id IS NOT NULL AND template_id = 'create_followup_task'
         AND binding_digest IS NOT NULL AND evidence_digest IS NOT NULL
         AND observation_fingerprint IS NOT NULL AND contract_digest IS NOT NULL
@@ -167,7 +167,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
             AND binding_dry_run_evidence_digest IS NOT NULL)
         )
       ) OR (
-        stage <> 'action_binding' AND intent_id IS NOT NULL
+        stage <> 'action_binding' AND binding_handle_nonce IS NULL
+        AND intent_id IS NOT NULL
         AND item_id IS NULL AND template_id IS NULL
         AND binding_digest IS NULL AND evidence_digest IS NULL
         AND observation_fingerprint IS NULL AND contract_digest IS NULL
@@ -187,6 +188,18 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
       (operation_digest IS NULL OR operation_digest ~ '^[0-9a-f]{64}$')
       AND (binding_dry_run_evidence_digest IS NULL
         OR binding_dry_run_evidence_digest ~ '^[0-9a-f]{64}$')
+    ),
+    CONSTRAINT control_room_action_tokens_consumed_time_chk CHECK (
+      consumed_at IS NULL OR consumed_at >= issued_at
+    ),
+    CONSTRAINT control_room_action_tokens_status_shape_chk CHECK (
+      (status = 'active' AND operation_digest IS NULL AND result_state IS NULL AND
+        result_version IS NULL AND consumed_at IS NULL AND consumed_by IS NULL)
+      OR (status = 'consumed' AND operation_digest IS NOT NULL
+        AND result_state IS NOT NULL AND result_version >= 1
+        AND consumed_at IS NOT NULL AND consumed_by IS NOT NULL)
+      OR (status = 'revoked' AND operation_digest IS NULL AND result_state IS NULL AND
+        result_version IS NULL AND consumed_at IS NOT NULL AND consumed_by IS NOT NULL)
     )
 );
 
@@ -194,10 +207,11 @@ CREATE INDEX IF NOT EXISTS control_room_action_tokens_lookup_idx
     ON control_room_action_tokens(workspace_id, stage, status, expires_at);
 CREATE INDEX IF NOT EXISTS control_room_action_tokens_intent_idx
     ON control_room_action_tokens(workspace_id, intent_id, stage);
-CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_active_binding_uidx
+DROP INDEX IF EXISTS control_room_action_tokens_active_binding_uidx;
+CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_binding_slot_uidx
     ON control_room_action_tokens (
         tenant_id, workspace_id, subject_user_id, item_id, template_id
-    ) WHERE stage = 'action_binding' AND status = 'active';
+    ) WHERE stage = 'action_binding';
 CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_active_stage_uidx
     ON control_room_action_tokens (
         tenant_id, workspace_id, intent_id, stage, subject_user_id

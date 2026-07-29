@@ -9,6 +9,9 @@ from app.services.control_room.business_action_authority_audit import (
     authority_audit as _authority_audit,
 )
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_action_preview_capability import (
+    lock_contextual_preview_authority,
+)
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationConflict,
@@ -139,6 +142,12 @@ async def lock_authoritative_execution_context(
     payload_builder: Any,
     clock: Clock | None = None,
 ) -> AuthoritativeExecutionContext:
+    await lock_contextual_preview_authority(
+        conn,
+        item=expected_item,
+        user=user,
+        binding_id=binding_id,
+    )
     locked = await lock_authoritative_business_item(
         conn,
         user=user,

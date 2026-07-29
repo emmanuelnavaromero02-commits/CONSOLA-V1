@@ -168,10 +168,10 @@ async def test_resume_concurrent_gets_keep_one_active_binding(
         scope, _previous = await _prepare_resume(seed, pool, "resume-get")
         payloads = await experience_gets(pool, scope, count=2, concurrent=True)
         handles = [_action_handle(payload) for payload in payloads]
-        assert len(set(handles)) == 2
+        assert len(set(handles)) == 1
         counts = await _binding_counts(seed, scope)
         assert counts["active"] == 1
-        assert counts["total"] <= 2
+        assert counts["total"] == 1
     finally:
         await pool.close()
 
