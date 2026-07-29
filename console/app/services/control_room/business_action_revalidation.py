@@ -11,10 +11,15 @@ from app.services.control_room.business_action_authoritative_item import (
 from app.services.control_room.business_action_authority_repository import (
     fetch_authoritative_row_for_update,
 )
+from app.services.control_room.business_action_authorization_snapshot import (
+    capture_authorization_snapshot,
+)
 from app.services.control_room.business_action_catalog import (
     require_enabled_action_template,
 )
-from app.services.permissions import has_permission
+from app.services.control_room.business_action_dry_run_authority import (
+    require_authority_dry_run,
+)
 
 
 async def actor_has_current_permission(
@@ -25,39 +30,17 @@ async def actor_has_current_permission(
     user_id: int,
     permission: str,
 ) -> bool:
-    rows = await conn.fetch(
-        """
-        SELECT users.role, users.is_active, users.tenant_id::text AS tenant_id,
-               roles.name AS workspace_role
-          FROM users
-          LEFT JOIN user_workspace_roles AS membership
-            ON membership.user_id = users.id
-           AND membership.workspace_id = $2::uuid
-          LEFT JOIN roles ON roles.id = membership.role_id
-         WHERE users.id = $3
-           AND (users.tenant_id = $1::uuid OR users.role IN ('owner','super_admin','admin'))
-        """,
-        tenant_id,
-        workspace_id,
-        int(user_id),
+    # The DB-backed snapshot rechecks users.is_active and user_workspace_roles.
+    return (
+        await capture_authorization_snapshot(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            permission=permission,
+        )
+        is not None
     )
-    for row in rows:
-        if row.get("is_active") is not True:
-            continue
-        role = str(row.get("role") or "")
-        scoped_role = row.get("workspace_role")
-        if scoped_role is None and role not in {"owner", "super_admin", "admin"}:
-            continue
-        user = {
-            "id": user_id,
-            "role": role,
-            "workspace_role": scoped_role or "workspace_admin",
-            "active_tenant_id": tenant_id,
-            "active_workspace_id": workspace_id,
-        }
-        if has_permission(user, permission):
-            return True
-    return False
 
 
 def _matches_intent(intent: Mapping[str, Any], contract: AuthorityItemContract) -> bool:
@@ -107,9 +90,23 @@ async def revalidate_intent(
         if row is not None
         else None
     )
-    return (
-        contract if contract is not None and _matches_intent(intent, contract) else None
-    )
+    if contract is None or not _matches_intent(intent, contract):
+        return None
+    try:
+        await require_authority_dry_run(
+            conn,
+            user={
+                "active_tenant_id": tenant_id,
+                "active_workspace_id": workspace_id,
+            },
+            contract=contract,
+            action_run_id=int(intent.get("dry_run_action_run_id") or 0),
+            expected_evidence_digest=str(intent.get("dry_run_evidence_digest") or ""),
+            expected_intent_id=str(intent.get("id") or ""),
+        )
+    except Exception:
+        return None
+    return contract
 
 
 __all__ = ("actor_has_current_permission", "revalidate_intent")
