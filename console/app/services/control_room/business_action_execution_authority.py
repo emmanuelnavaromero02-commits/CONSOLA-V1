@@ -21,6 +21,7 @@ from app.services.control_room.business_action_tokens import (
     claim_stage_token,
     consume_stage_token,
     issue_stage_token,
+    peek_stage_token_intent,
 )
 from app.services.control_room.business_action_transition_core import (
     intent_authority_is_current,
@@ -130,6 +131,18 @@ async def reserve_execution(
     ) -> TransitionResult:
         if scoped_tenant != tenant_id or scoped_workspace != workspace_id:
             raise HTTPException(404, "action authority not found")
+        intent_id = await peek_stage_token_intent(
+            conn,
+            user=user,
+            handle=execution_handle,
+            stage="execution",
+        )
+        intent = await lock_intent(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            intent_id=intent_id,
+        )
         token = await claim_stage_token(
             conn,
             user=user,
@@ -144,12 +157,6 @@ async def reserve_execution(
                 int(token.result_version or 0),
                 True,
             )
-        intent = await lock_intent(
-            conn,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-            intent_id=token.intent_id,
-        )
         require_distinct_actors(int(intent["maker_user_id"]), executor_user_id)
         if int(intent.get("checker_user_id") or 0) != executor_user_id:
             raise HTTPException(404, "action authority not found")

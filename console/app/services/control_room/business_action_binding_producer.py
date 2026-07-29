@@ -80,7 +80,10 @@ async def issue_action_bindings(
             contract = match_authoritative_item(live, row, user, template)
             if contract is None:
                 continue
-            handle, _expires_at = await insert_action_binding_token(conn, contract)
+            token = await insert_action_binding_token(conn, contract)
+            if token is None:
+                continue
+            handle, _expires_at = token
             issued[item_id] = (public_action(handle),)
         return issued
 

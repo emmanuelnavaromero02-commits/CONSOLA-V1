@@ -96,7 +96,10 @@ GRANT UPDATE (
 GRANT SELECT, INSERT ON control_room_action_tokens TO omega_console;
 GRANT UPDATE (
     status, operation_digest, result_state, result_version,
-    consumed_at, consumed_by
+    consumed_at, consumed_by, token_digest, issued_at, expires_at,
+    item_id, template_id, binding_digest, evidence_digest,
+    observation_fingerprint, contract_digest, target_digest,
+    decision_digest
 ) ON control_room_action_tokens TO omega_console;
 GRANT SELECT, INSERT ON control_room_action_intent_events TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE control_room_action_intent_events_id_seq

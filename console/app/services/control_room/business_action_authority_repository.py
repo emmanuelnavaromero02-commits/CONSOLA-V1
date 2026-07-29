@@ -88,11 +88,37 @@ async def insert_action_binding_token(
     contract: AuthorityItemContract,
     *,
     now: datetime | None = None,
-) -> tuple[str, datetime]:
+) -> tuple[str, datetime] | None:
     issued_at = (now or datetime.now(UTC)).astimezone(UTC)
     expires_at = issued_at + timedelta(seconds=ACTION_BINDING_TTL_SECONDS)
     handle = new_handle()
     await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        ":".join(
+            (
+                "control-room-binding",
+                contract.tenant_id,
+                contract.workspace_id,
+                str(contract.maker_user_id),
+                contract.binding_digest,
+            )
+        ),
+    )
+    existing_intent = await conn.fetchval(
+        """
+        SELECT 1 FROM control_room_action_intents
+         WHERE tenant_id=$1::uuid AND workspace_id=$2::uuid
+           AND maker_user_id=$3 AND binding_digest=$4
+         LIMIT 1
+        """,
+        contract.tenant_id,
+        contract.workspace_id,
+        contract.maker_user_id,
+        contract.binding_digest,
+    )
+    if existing_intent:
+        return None
+    row = await conn.fetchrow(
         """
         INSERT INTO control_room_action_tokens (
             tenant_id, workspace_id, stage, subject_user_id, token_digest,
@@ -103,6 +129,20 @@ async def insert_action_binding_token(
             $1::uuid, $2::uuid, 'action_binding', $3, $4,
             $5, 'create_followup_task', $6, $7, $8, $9, $10, $11, $12, $13
         )
+        ON CONFLICT (
+            tenant_id, workspace_id, subject_user_id, item_id, template_id
+        ) WHERE stage = 'action_binding' AND status = 'active'
+        DO UPDATE SET
+            token_digest = EXCLUDED.token_digest,
+            binding_digest = EXCLUDED.binding_digest,
+            evidence_digest = EXCLUDED.evidence_digest,
+            observation_fingerprint = EXCLUDED.observation_fingerprint,
+            contract_digest = EXCLUDED.contract_digest,
+            target_digest = EXCLUDED.target_digest,
+            decision_digest = EXCLUDED.decision_digest,
+            issued_at = EXCLUDED.issued_at,
+            expires_at = EXCLUDED.expires_at
+        RETURNING id
         """,
         contract.tenant_id,
         contract.workspace_id,
@@ -118,6 +158,8 @@ async def insert_action_binding_token(
         issued_at,
         expires_at,
     )
+    if not row:
+        raise RuntimeError("control room action binding token insert failed")
     return handle, expires_at
 
 
@@ -185,6 +227,28 @@ async def consume_action_binding_token(
         raise HTTPException(404, "action authority not found")
 
 
+async def revoke_action_binding_token(
+    conn: Any, *, token_id: str, user: Mapping[str, Any]
+) -> None:
+    tenant_id, workspace_id = authority_scope(user)
+    row = await conn.fetchrow(
+        """
+        UPDATE control_room_action_tokens
+           SET status = 'revoked', consumed_at = NOW(), consumed_by = $1
+         WHERE id = $2::uuid AND tenant_id = $3::uuid AND workspace_id = $4::uuid
+           AND stage = 'action_binding' AND subject_user_id = $1
+           AND status = 'active'
+         RETURNING id
+        """,
+        actor_id(user),
+        token_id,
+        tenant_id,
+        workspace_id,
+    )
+    if not row:
+        raise HTTPException(404, "action authority not found")
+
+
 __all__ = (
     "AUTHORITATIVE_ITEMS_SQL",
     "INTENT_TABLE",
@@ -193,4 +257,5 @@ __all__ = (
     "fetch_authoritative_row_for_update",
     "insert_action_binding_token",
     "resolve_action_binding_token",
+    "revoke_action_binding_token",
 )

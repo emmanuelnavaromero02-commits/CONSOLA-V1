@@ -75,6 +75,24 @@ def server_operation_digest(
     )
 
 
+def server_binding_operation_digest(
+    *,
+    workspace_id: str,
+    maker_user_id: int,
+    binding_digest: str,
+    contract_digest: str,
+) -> str:
+    return action_contract_digest(
+        {
+            "workspace_id": str(workspace_id),
+            "maker_user_id": int(maker_user_id),
+            "binding_digest": str(binding_digest),
+            "operation": "promote",
+            "contract_digest": str(contract_digest),
+        }
+    )
+
+
 async def issue_stage_token(
     conn: Any,
     *,
@@ -96,12 +114,25 @@ async def issue_stage_token(
     if expires_at <= issued_at:
         raise HTTPException(404, "action authority not found")
     handle = new_handle()
-    await conn.execute(
+    row = await conn.fetchrow(
         """
         INSERT INTO control_room_action_tokens (
             tenant_id, workspace_id, intent_id, stage, subject_user_id,
             token_digest, issued_at, expires_at
         ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8)
+        ON CONFLICT (
+            tenant_id, workspace_id, intent_id, stage, subject_user_id
+        ) WHERE stage <> 'action_binding' AND status = 'active'
+        DO UPDATE SET
+            token_digest = EXCLUDED.token_digest,
+            issued_at = EXCLUDED.issued_at,
+            expires_at = EXCLUDED.expires_at,
+            operation_digest = NULL,
+            result_state = NULL,
+            result_version = NULL,
+            consumed_at = NULL,
+            consumed_by = NULL
+        RETURNING id
         """,
         tenant_id,
         workspace_id,
@@ -112,6 +143,8 @@ async def issue_stage_token(
         issued_at,
         expires_at,
     )
+    if not row:
+        raise RuntimeError("control room action stage token insert failed")
     return IssuedStageHandle(intent_id, stage, expires_at, handle)
 
 
@@ -179,6 +212,33 @@ async def claim_stage_token(
     )
 
 
+async def peek_stage_token_intent(
+    conn: Any,
+    *,
+    user: Mapping[str, Any],
+    handle: str,
+    stage: TokenStage,
+) -> str:
+    tenant_id, workspace_id = authority_scope(user)
+    row = await conn.fetchrow(
+        """
+        SELECT intent_id::text AS intent_id
+          FROM control_room_action_tokens
+         WHERE tenant_id=$1::uuid AND workspace_id=$2::uuid
+           AND token_digest=$3 AND stage=$4 AND subject_user_id=$5
+           AND status IN ('active', 'consumed') AND expires_at > NOW()
+        """,
+        tenant_id,
+        workspace_id,
+        handle_digest(handle),
+        stage,
+        actor_id(user),
+    )
+    if not row or not row.get("intent_id"):
+        raise HTTPException(404, "action authority not found")
+    return str(row["intent_id"])
+
+
 async def consume_stage_token(
     conn: Any,
     *,
@@ -223,5 +283,7 @@ __all__ = (
     "handle_digest",
     "issue_stage_token",
     "new_handle",
+    "peek_stage_token_intent",
+    "server_binding_operation_digest",
     "server_operation_digest",
 )
