@@ -11,22 +11,36 @@ from app.services.control_room.business_action_dry_run_authority import (
 
 
 async def find_binding_intent(
-    conn: Any, *, contract: AuthorityItemContract
+    conn: Any,
+    *,
+    tenant_id: str,
+    workspace_id: str,
+    maker_user_id: int,
+    item_id: str,
 ) -> dict[str, Any] | None:
     row = await conn.fetchrow(
         """
         SELECT *, id::text AS id, tenant_id::text AS tenant_id,
                workspace_id::text AS workspace_id,
                correlation_id::text AS correlation_id
-          FROM control_room_action_intents
-         WHERE tenant_id=$1::uuid AND workspace_id=$2::uuid
-           AND maker_user_id=$3 AND binding_digest=$4
+          FROM control_room_action_intents AS intent
+         WHERE intent.tenant_id=$1::uuid AND intent.workspace_id=$2::uuid
+           AND intent.maker_user_id=$3 AND intent.item_id=$4
+           AND intent.template_id='create_followup_task'
+           AND (
+             intent.state IN (
+               'approved', 'execution_reserved', 'completed', 'failed'
+             )
+             OR (intent.state='pending_approval' AND intent.expires_at > NOW())
+           )
+         ORDER BY intent.created_at DESC, intent.id DESC
+         LIMIT 1
          FOR UPDATE
         """,
-        contract.tenant_id,
-        contract.workspace_id,
-        contract.maker_user_id,
-        contract.binding_digest,
+        tenant_id,
+        workspace_id,
+        maker_user_id,
+        item_id,
     )
     return dict(row) if row else None
 
@@ -75,7 +89,7 @@ async def insert_intent(
             'pending_approval', 1, 'created', $15::uuid,
             NOW() + INTERVAL '24 hours'
         )
-        ON CONFLICT (workspace_id, binding_digest) DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING *, tenant_id::text AS tenant_id,
                      workspace_id::text AS workspace_id, id::text AS id,
                      correlation_id::text AS correlation_id

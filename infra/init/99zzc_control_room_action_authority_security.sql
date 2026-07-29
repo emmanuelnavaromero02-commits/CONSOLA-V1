@@ -41,6 +41,26 @@ CREATE TRIGGER action_runs_intent_link_immutable
 BEFORE UPDATE OF action_intent_id ON action_runs
 FOR EACH ROW EXECUTE FUNCTION protect_action_run_intent_link();
 
+CREATE OR REPLACE FUNCTION protect_terminal_control_room_intent()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.state IN ('rejected', 'stale', 'completed', 'failed')
+       AND NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION 'terminal control room action intent is immutable'
+          USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS control_room_action_intents_terminal_immutable
+    ON control_room_action_intents;
+CREATE TRIGGER control_room_action_intents_terminal_immutable
+BEFORE UPDATE ON control_room_action_intents
+FOR EACH ROW EXECUTE FUNCTION protect_terminal_control_room_intent();
+
 DO $$
 DECLARE
     tbl TEXT;
@@ -99,7 +119,8 @@ GRANT UPDATE (
     consumed_at, consumed_by, token_digest, issued_at, expires_at,
     item_id, template_id, binding_digest, evidence_digest,
     observation_fingerprint, contract_digest, target_digest,
-    decision_digest
+    decision_digest, intent_id, binding_dry_run_action_run_id,
+    binding_dry_run_evidence_digest
 ) ON control_room_action_tokens TO omega_console;
 GRANT SELECT, INSERT ON control_room_action_intent_events TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE control_room_action_intent_events_id_seq

@@ -1,6 +1,8 @@
 -- P1.2c3 PR-A: durable authority for one internal Control Room action.
 -- Public approval/execution routes are intentionally outside this migration.
 
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_tenant_id_id_idx
     ON workspaces(tenant_id, id);
 
@@ -44,8 +46,18 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at               TIMESTAMPTZ NOT NULL,
+    authority_window         TSTZRANGE GENERATED ALWAYS AS (
+      tstzrange(
+        created_at,
+        CASE WHEN state IN ('pending_approval', 'rejected', 'stale')
+          THEN CASE WHEN state = 'pending_approval' THEN expires_at ELSE updated_at END
+          ELSE 'infinity'::timestamptz
+        END,
+        '[)'
+      )
+    ) STORED,
     UNIQUE (tenant_id, workspace_id, id),
-    UNIQUE (workspace_id, binding_digest),
+    UNIQUE (tenant_id, workspace_id, dry_run_action_run_id),
     FOREIGN KEY (tenant_id, workspace_id)
       REFERENCES workspaces(tenant_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, item_id)
@@ -84,6 +96,14 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
       AND dry_run_digest ~ '^[0-9a-f]{64}$'
       AND dry_run_evidence_digest ~ '^[0-9a-f]{64}$'
       AND decision_digest ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT control_room_action_intents_live_excl EXCLUDE USING gist (
+      tenant_id WITH =,
+      workspace_id WITH =,
+      maker_user_id WITH =,
+      item_id WITH =,
+      template_id WITH =,
+      authority_window WITH &&
     )
 );
 
@@ -106,6 +126,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     contract_digest          CHAR(64),
     target_digest            CHAR(64),
     decision_digest          CHAR(64),
+    binding_dry_run_action_run_id   BIGINT,
+    binding_dry_run_evidence_digest CHAR(64),
     status                   TEXT NOT NULL DEFAULT 'active',
     operation_digest         CHAR(64),
     result_state             TEXT,
@@ -120,6 +142,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     FOREIGN KEY (tenant_id, workspace_id, intent_id)
       REFERENCES control_room_action_intents(tenant_id, workspace_id, id)
       ON DELETE RESTRICT,
+    FOREIGN KEY (tenant_id, workspace_id, binding_dry_run_action_run_id)
+      REFERENCES action_runs(tenant_id, workspace_id, id) ON DELETE RESTRICT,
     CONSTRAINT control_room_action_tokens_digest_chk
       CHECK (octet_length(token_digest) = 32),
     CONSTRAINT control_room_action_tokens_stage_chk
@@ -128,17 +152,28 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
       CHECK (status IN ('active', 'consumed', 'revoked')),
     CONSTRAINT control_room_action_tokens_shape_chk CHECK (
       (
-        stage = 'action_binding' AND intent_id IS NULL
+        stage = 'action_binding'
         AND item_id IS NOT NULL AND template_id = 'create_followup_task'
         AND binding_digest IS NOT NULL AND evidence_digest IS NOT NULL
         AND observation_fingerprint IS NOT NULL AND contract_digest IS NOT NULL
         AND target_digest IS NOT NULL AND decision_digest IS NOT NULL
+        AND NOT (
+          intent_id IS NOT NULL AND binding_dry_run_action_run_id IS NOT NULL
+        )
+        AND (
+          (binding_dry_run_action_run_id IS NULL
+            AND binding_dry_run_evidence_digest IS NULL)
+          OR (binding_dry_run_action_run_id IS NOT NULL
+            AND binding_dry_run_evidence_digest IS NOT NULL)
+        )
       ) OR (
         stage <> 'action_binding' AND intent_id IS NOT NULL
         AND item_id IS NULL AND template_id IS NULL
         AND binding_digest IS NULL AND evidence_digest IS NULL
         AND observation_fingerprint IS NULL AND contract_digest IS NULL
         AND target_digest IS NULL AND decision_digest IS NULL
+        AND binding_dry_run_action_run_id IS NULL
+        AND binding_dry_run_evidence_digest IS NULL
       )
     ),
     CONSTRAINT control_room_action_tokens_expiry_chk CHECK (
@@ -149,7 +184,9 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
       )
     ),
     CONSTRAINT control_room_action_tokens_operation_chk CHECK (
-      operation_digest IS NULL OR operation_digest ~ '^[0-9a-f]{64}$'
+      (operation_digest IS NULL OR operation_digest ~ '^[0-9a-f]{64}$')
+      AND (binding_dry_run_evidence_digest IS NULL
+        OR binding_dry_run_evidence_digest ~ '^[0-9a-f]{64}$')
     )
 );
 

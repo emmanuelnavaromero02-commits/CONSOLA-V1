@@ -13,6 +13,9 @@ from app.services.control_room.business_action_authoritative_item import (
     AuthorityItemContract,
     match_authoritative_item,
 )
+from app.services.control_room.business_action_attempt_policy import (
+    binding_attempt_lock_key,
+)
 from app.services.control_room.business_action_authority_policy import (
     EXECUTABLE_TEMPLATE_ID,
     actor_id,
@@ -100,13 +103,41 @@ async def promote_action_handle(
             permission="control_room.write",
         ):
             raise HTTPException(403, "action authority is unavailable")
+        peek = await resolve_action_binding_token(
+            conn,
+            user=user,
+            action_handle=action_handle,
+        )
+        item_id = str(peek.get("item_id") or "")
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            binding_attempt_lock_key(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                maker_user_id=maker_user_id,
+                item_id=item_id,
+            ),
+        )
         token = await resolve_action_binding_token(
             conn,
             user=user,
             action_handle=action_handle,
             for_update=True,
         )
-        item_id = str(token.get("item_id") or "")
+        if str(token.get("id") or "") != str(peek.get("id") or ""):
+            raise HTTPException(404, "action authority not found")
+        existing = await find_binding_intent(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            maker_user_id=maker_user_id,
+            item_id=item_id,
+        )
+        reuse_intent_id = str(token.get("intent_id") or "")
+        if reuse_intent_id and (
+            existing is None or str(existing.get("id") or "") != reuse_intent_id
+        ):
+            raise HTTPException(404, "action authority not found")
         live = next(
             (
                 item
@@ -134,13 +165,17 @@ async def promote_action_handle(
         )
         if contract is None or not _token_matches(token, contract):
             raise HTTPException(404, "action authority not found")
-        existing = await find_binding_intent(conn, contract=contract)
         if existing is not None:
             if (
                 not intent_matches_contract(existing, contract)
                 or str(existing.get("state") or "") != "pending_approval"
             ):
                 raise HTTPException(409, "action intent already exists")
+            token_dry_run_id = token.get("binding_dry_run_action_run_id")
+            if token_dry_run_id is not None and int(
+                existing["dry_run_action_run_id"]
+            ) != int(token_dry_run_id):
+                raise HTTPException(404, "action authority not found")
             await require_authority_dry_run(
                 conn,
                 user=user,
@@ -166,15 +201,23 @@ async def promote_action_handle(
                 existing["expires_at"],
                 workflow.handle,
             )
+        token_dry_run_id = token.get("binding_dry_run_action_run_id")
+        token_dry_run_evidence = str(token.get("binding_dry_run_evidence_digest") or "")
         dry_run = await require_authority_dry_run(
             conn,
             user=user,
             contract=contract,
+            action_run_id=(
+                int(token_dry_run_id) if token_dry_run_id is not None else None
+            ),
+            expected_evidence_digest=token_dry_run_evidence or None,
         )
         intent_id = str(uuid4())
         correlation_id = str(uuid4())
         operation_digest = server_binding_operation_digest(
             workspace_id=workspace_id,
+            dry_run_action_run_id=dry_run.action_run_id,
+            dry_run_evidence_digest=dry_run.evidence_digest,
             maker_user_id=maker_user_id,
             binding_digest=contract.binding_digest,
             contract_digest=contract.contract_digest,

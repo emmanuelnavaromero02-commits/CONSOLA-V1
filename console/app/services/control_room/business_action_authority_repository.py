@@ -9,6 +9,10 @@ from fastapi import HTTPException
 from app.services.control_room.business_action_authoritative_item import (
     AuthorityItemContract,
 )
+from app.services.control_room.business_action_attempt_policy import (
+    binding_attempt_lock_key,
+    binding_issue_allowed,
+)
 from app.services.control_room.business_action_authority_policy import (
     ACTION_BINDING_TTL_SECONDS,
     actor_id,
@@ -94,58 +98,50 @@ async def insert_action_binding_token(
     handle = new_handle()
     await conn.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        ":".join(
-            (
-                "control-room-binding",
-                contract.tenant_id,
-                contract.workspace_id,
-                str(contract.maker_user_id),
-                contract.binding_digest,
-            )
+        binding_attempt_lock_key(
+            tenant_id=contract.tenant_id,
+            workspace_id=contract.workspace_id,
+            maker_user_id=contract.maker_user_id,
+            item_id=contract.item_id,
         ),
     )
-    existing_intent = await conn.fetchval(
-        """
-        SELECT 1 FROM control_room_action_intents
-         WHERE tenant_id=$1::uuid AND workspace_id=$2::uuid
-           AND maker_user_id=$3 AND binding_digest=$4
-         LIMIT 1
-        """,
-        contract.tenant_id,
-        contract.workspace_id,
-        contract.maker_user_id,
-        contract.binding_digest,
-    )
-    if existing_intent:
+    issue = await binding_issue_allowed(conn, contract)
+    if issue is None:
         return None
     row = await conn.fetchrow(
         """
         INSERT INTO control_room_action_tokens (
-            tenant_id, workspace_id, stage, subject_user_id, token_digest,
+            tenant_id, workspace_id, intent_id, stage, subject_user_id, token_digest,
             item_id, template_id, binding_digest, evidence_digest,
             observation_fingerprint, contract_digest, target_digest,
-            decision_digest, issued_at, expires_at
+            decision_digest, binding_dry_run_action_run_id,
+            binding_dry_run_evidence_digest, issued_at, expires_at
         ) VALUES (
-            $1::uuid, $2::uuid, 'action_binding', $3, $4,
-            $5, 'create_followup_task', $6, $7, $8, $9, $10, $11, $12, $13
+            $1::uuid, $2::uuid, $3::uuid, 'action_binding', $4, $5,
+            $6, 'create_followup_task', $7, $8, $9, $10, $11, $12,
+            $13, $14, $15, $16
         )
         ON CONFLICT (
             tenant_id, workspace_id, subject_user_id, item_id, template_id
         ) WHERE stage = 'action_binding' AND status = 'active'
         DO UPDATE SET
             token_digest = EXCLUDED.token_digest,
+            intent_id = EXCLUDED.intent_id,
             binding_digest = EXCLUDED.binding_digest,
             evidence_digest = EXCLUDED.evidence_digest,
             observation_fingerprint = EXCLUDED.observation_fingerprint,
             contract_digest = EXCLUDED.contract_digest,
             target_digest = EXCLUDED.target_digest,
             decision_digest = EXCLUDED.decision_digest,
+            binding_dry_run_action_run_id = EXCLUDED.binding_dry_run_action_run_id,
+            binding_dry_run_evidence_digest = EXCLUDED.binding_dry_run_evidence_digest,
             issued_at = EXCLUDED.issued_at,
             expires_at = EXCLUDED.expires_at
         RETURNING id
         """,
         contract.tenant_id,
         contract.workspace_id,
+        issue.reuse_intent_id,
         contract.maker_user_id,
         handle_digest(handle),
         contract.item_id,
@@ -155,6 +151,8 @@ async def insert_action_binding_token(
         contract.contract_digest,
         contract.target_digest,
         contract.decision_digest,
+        issue.dry_run_action_run_id,
+        issue.dry_run_evidence_digest,
         issued_at,
         expires_at,
     )
@@ -174,10 +172,11 @@ async def resolve_action_binding_token(
     lock = " FOR UPDATE" if for_update else ""
     row = await conn.fetchrow(
         """
-        SELECT id::text, tenant_id::text, workspace_id::text,
+        SELECT id::text, tenant_id::text, workspace_id::text, intent_id::text,
                subject_user_id, item_id, template_id, binding_digest,
                evidence_digest, observation_fingerprint, contract_digest,
-               target_digest, decision_digest, issued_at, expires_at, status
+               target_digest, decision_digest, binding_dry_run_action_run_id,
+               binding_dry_run_evidence_digest, issued_at, expires_at, status
           FROM control_room_action_tokens
          WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid
            AND stage = 'action_binding' AND subject_user_id = $3

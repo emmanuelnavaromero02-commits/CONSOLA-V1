@@ -78,6 +78,8 @@ def server_operation_digest(
 def server_binding_operation_digest(
     *,
     workspace_id: str,
+    dry_run_action_run_id: int,
+    dry_run_evidence_digest: str,
     maker_user_id: int,
     binding_digest: str,
     contract_digest: str,
@@ -85,6 +87,8 @@ def server_binding_operation_digest(
     return action_contract_digest(
         {
             "workspace_id": str(workspace_id),
+            "dry_run_action_run_id": int(dry_run_action_run_id),
+            "dry_run_evidence_digest": str(dry_run_evidence_digest),
             "maker_user_id": int(maker_user_id),
             "binding_digest": str(binding_digest),
             "operation": "promote",
