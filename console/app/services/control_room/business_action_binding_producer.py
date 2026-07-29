@@ -25,8 +25,8 @@ from app.services.control_room.business_action_catalog import (
 )
 from app.services.control_room.business_action_public_projection import public_action
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
-from app.services.control_room.business_action_revalidation import (
-    actor_has_current_permission,
+from app.services.control_room.business_action_authorization_snapshot import (
+    capture_authorization_snapshot,
 )
 from app.services.control_room.surface_snapshot import SurfaceSnapshot
 from app.services.db_scope import run_with_db_scope
@@ -74,13 +74,14 @@ async def issue_action_bindings(
     ) -> dict[str, tuple[ExperienceAction, ...]]:
         if scoped_tenant_id != tenant_id or scoped_workspace_id != workspace_id:
             return {}
-        if not await actor_has_current_permission(
+        authorization = await capture_authorization_snapshot(
             conn,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            user_id=int(user["id"]),
+            actor_user_id=int(user["id"]),
             permission="control_room.write",
-        ):
+        )
+        if authorization is None:
             return {}
         await require_enabled_action_template(conn, EXECUTABLE_TEMPLATE_ID)
         rows = await fetch_authoritative_rows(
@@ -94,7 +95,7 @@ async def issue_action_bindings(
             row = rows.get(item_id)
             if row is None:
                 continue
-            contract = match_authoritative_item(live, row, user, template)
+            contract = match_authoritative_item(live, row, authorization, template)
             if contract is None:
                 continue
             token = await insert_action_binding_token(conn, contract)

@@ -18,7 +18,6 @@ from app.services.control_room.business_action_authority_policy import (
 from app.services.control_room.business_action_authority_evidence import (
     evidence_digest,
     metadata,
-    owner_allowed,
     persisted_item,
 )
 from app.services.control_room.business_action_authorization_snapshot import (
@@ -59,6 +58,8 @@ class AuthorityItemContract:
     target_digest: str
     decision_digest: str
     contract_digest: str
+    access_revision_digest: str
+    rbac_policy_digest: str
 
     def dry_run_digest(self) -> str:
         return action_contract_digest(
@@ -143,12 +144,15 @@ def current_authority_claims(
 def match_authoritative_item(
     live: Mapping[str, Any],
     persisted_row: Mapping[str, Any],
-    user: Mapping[str, Any],
+    authorization: AuthorizationSnapshot,
     template: Mapping[str, Any],
 ) -> AuthorityItemContract | None:
     try:
-        tenant_id, workspace_id = authority_scope(user)
-        maker_user_id = actor_id(user)
+        tenant_id = authorization.tenant_id
+        workspace_id = authorization.workspace_id
+        maker_user_id = authorization.actor_user_id
+        if authorization.permission != "control_room.write":
+            return None
         item_id = str(live.get("id") or live.get("item_id") or "").strip()
         if not item_id or str(persisted_row.get("item_id") or "") != item_id:
             return None
@@ -163,7 +167,14 @@ def match_authoritative_item(
             )
         ):
             return None
-        if not owner_allowed(persisted_row, live, user):
+        persisted_owner = persisted_row.get("owner_user_id")
+        live_owner = live.get("owner_user_id")
+        if (
+            live_owner is not None and str(persisted_owner or "") != str(live_owner)
+        ) or (
+            not authorization.workspace_wide
+            and str(persisted_owner or "") != str(maker_user_id)
+        ):
             return None
         if not (
             template.get("template_id") == EXECUTABLE_TEMPLATE_ID
@@ -232,6 +243,8 @@ def match_authoritative_item(
             target_digest,
             decision_digest,
             action_contract_digest({**binding, "binding_digest": binding_digest}),
+            authorization.access_revision_digest,
+            authorization.rbac_policy_digest,
         )
     except (TypeError, ValueError):
         return None
@@ -253,17 +266,10 @@ def contract_from_persisted_row(
         or authorization.workspace_id != workspace_id
     ):
         return None
-    user = {
-        "id": authorization.actor_user_id,
-        "role": authorization.global_role,
-        "workspace_role": authorization.workspace_role,
-        "active_tenant_id": tenant_id,
-        "active_workspace_id": workspace_id,
-    }
     return match_authoritative_item(
         item,
         row,
-        user,
+        authorization,
         ACTION_TEMPLATES[EXECUTABLE_TEMPLATE_ID],
     )
 

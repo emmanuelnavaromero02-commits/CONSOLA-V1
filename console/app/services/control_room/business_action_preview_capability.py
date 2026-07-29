@@ -22,6 +22,15 @@ from app.services.control_room.business_action_authority_repository import (
 from app.services.control_room.business_action_authorization_snapshot import (
     capture_authorization_snapshot,
 )
+from app.services.control_room.business_action_authorization_binding import (
+    token_authorization_matches,
+)
+from app.services.control_room.business_action_authoritative_item import (
+    contract_from_persisted_row,
+)
+from app.services.control_room.business_action_authority_repository import (
+    fetch_authoritative_row_for_update,
+)
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_explicit_action_binding import (
     VerifiedActionBinding,
@@ -83,6 +92,17 @@ async def lock_contextual_preview_authority(
         permission="control_room.write",
     )
     expected = capability.values
+    row = await fetch_authoritative_row_for_update(
+        conn,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        item_id=item_id,
+    )
+    contract = (
+        contract_from_persisted_row(row, authorization=authorization)
+        if row is not None and authorization is not None
+        else None
+    )
     compared = (
         "id",
         "tenant_id",
@@ -96,12 +116,31 @@ async def lock_contextual_preview_authority(
         "contract_digest",
         "target_digest",
         "decision_digest",
+        "access_revision_digest",
+        "rbac_policy_digest",
         "issued_at",
         "expires_at",
         "status",
     )
-    if authorization is None or any(
-        str(token.get(key) or "") != str(expected.get(key) or "") for key in compared
+    if (
+        authorization is None
+        or contract is None
+        or not token_authorization_matches(token, authorization)
+        or any(
+            str(token.get(key) or "") != str(expected.get(key) or "")
+            for key in compared
+        )
+        or any(
+            str(token.get(key) or "") != str(value)
+            for key, value in {
+                "binding_digest": contract.binding_digest,
+                "evidence_digest": contract.evidence_digest,
+                "observation_fingerprint": contract.observation_fingerprint,
+                "contract_digest": contract.contract_digest,
+                "target_digest": contract.target_digest,
+                "decision_digest": contract.decision_digest,
+            }.items()
+        )
     ):
         raise _changed()
 

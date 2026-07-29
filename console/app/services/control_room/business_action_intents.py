@@ -44,8 +44,11 @@ from app.services.control_room.business_action_intent_store import (
     intent_matches_contract,
 )
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
-from app.services.control_room.business_action_revalidation import (
-    actor_has_current_permission,
+from app.services.control_room.business_action_authorization_binding import (
+    token_authorization_matches,
+)
+from app.services.control_room.business_action_authorization_snapshot import (
+    capture_authorization_snapshot,
 )
 from app.services.control_room.business_action_tokens import (
     IssuedStageHandle,
@@ -96,13 +99,14 @@ async def promote_action_handle(
     ) -> PromotedIntent:
         if scoped_tenant != tenant_id or scoped_workspace != workspace_id:
             raise HTTPException(404, "action authority not found")
-        if not await actor_has_current_permission(
+        authorization = await capture_authorization_snapshot(
             conn,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
-            user_id=maker_user_id,
+            actor_user_id=maker_user_id,
             permission="control_room.write",
-        ):
+        )
+        if authorization is None:
             raise HTTPException(403, "action authority is unavailable")
         peek = await resolve_action_binding_token(
             conn,
@@ -126,6 +130,8 @@ async def promote_action_handle(
             for_update=True,
         )
         if str(token.get("id") or "") != str(peek.get("id") or ""):
+            raise HTTPException(404, "action authority not found")
+        if not token_authorization_matches(token, authorization):
             raise HTTPException(404, "action authority not found")
         existing = await find_binding_intent(
             conn,
@@ -158,7 +164,7 @@ async def promote_action_handle(
             match_authoritative_item(
                 live,
                 row,
-                user,
+                authorization,
                 ACTION_TEMPLATES[EXECUTABLE_TEMPLATE_ID],
             )
             if live is not None and row is not None

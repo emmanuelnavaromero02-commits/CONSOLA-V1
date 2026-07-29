@@ -10,14 +10,12 @@ UPDATE action_runs AS run
 ALTER TABLE action_runs ALTER COLUMN tenant_id SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS action_runs_tenant_workspace_id_idx
     ON action_runs(tenant_id, workspace_id, id);
-
 INSERT INTO roles (name, description)
 VALUES (
     'control_room_approver',
     'Maker-separated approver for internal Control Room actions'
 )
 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
-
 CREATE TABLE IF NOT EXISTS control_room_action_intents (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                UUID NOT NULL,
@@ -104,10 +102,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_intents (
       authority_window WITH &&
     )
 );
-
 CREATE INDEX IF NOT EXISTS control_room_action_intents_state_idx
     ON control_room_action_intents(workspace_id, state, expires_at);
-
 CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                UUID NOT NULL,
@@ -125,6 +121,8 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     contract_digest          CHAR(64),
     target_digest            CHAR(64),
     decision_digest          CHAR(64),
+    access_revision_digest   CHAR(64),
+    rbac_policy_digest       CHAR(64),
     binding_dry_run_action_run_id   BIGINT,
     binding_dry_run_evidence_digest CHAR(64),
     status                   TEXT NOT NULL DEFAULT 'active',
@@ -149,14 +147,17 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
       CHECK (stage IN ('action_binding', 'workflow', 'approval', 'execution')),
     CONSTRAINT control_room_action_tokens_status_chk
       CHECK (status IN ('active', 'consumed', 'revoked')),
-    CONSTRAINT control_room_action_tokens_shape_chk CHECK (
+    CONSTRAINT control_room_action_tokens_shape_chk CHECK ((
       (
         stage = 'action_binding'
-        AND octet_length(binding_handle_nonce) = 32
-        AND item_id IS NOT NULL AND template_id = 'create_followup_task'
+        AND binding_handle_nonce IS NOT NULL
+        AND (octet_length(binding_handle_nonce) = 32) IS TRUE
+        AND item_id IS NOT NULL AND template_id IS NOT NULL
+        AND (template_id = 'create_followup_task') IS TRUE
         AND binding_digest IS NOT NULL AND evidence_digest IS NOT NULL
         AND observation_fingerprint IS NOT NULL AND contract_digest IS NOT NULL
         AND target_digest IS NOT NULL AND decision_digest IS NOT NULL
+        AND access_revision_digest IS NOT NULL AND rbac_policy_digest IS NOT NULL
         AND NOT (
           intent_id IS NOT NULL AND binding_dry_run_action_run_id IS NOT NULL
         )
@@ -173,10 +174,11 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
         AND binding_digest IS NULL AND evidence_digest IS NULL
         AND observation_fingerprint IS NULL AND contract_digest IS NULL
         AND target_digest IS NULL AND decision_digest IS NULL
+        AND access_revision_digest IS NULL AND rbac_policy_digest IS NULL
         AND binding_dry_run_action_run_id IS NULL
         AND binding_dry_run_evidence_digest IS NULL
       )
-    ),
+    ) IS TRUE),
     CONSTRAINT control_room_action_tokens_expiry_chk CHECK (
       expires_at > issued_at AND (
         (stage = 'action_binding' AND expires_at <= issued_at + INTERVAL '15 minutes')
@@ -186,6 +188,9 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
     ),
     CONSTRAINT control_room_action_tokens_operation_chk CHECK (
       (operation_digest IS NULL OR operation_digest ~ '^[0-9a-f]{64}$')
+      AND (access_revision_digest IS NULL
+        OR access_revision_digest ~ '^[0-9a-f]{64}$')
+      AND (rbac_policy_digest IS NULL OR rbac_policy_digest ~ '^[0-9a-f]{64}$')
       AND (binding_dry_run_evidence_digest IS NULL
         OR binding_dry_run_evidence_digest ~ '^[0-9a-f]{64}$')
     ),
@@ -196,13 +201,13 @@ CREATE TABLE IF NOT EXISTS control_room_action_tokens (
       (status = 'active' AND operation_digest IS NULL AND result_state IS NULL AND
         result_version IS NULL AND consumed_at IS NULL AND consumed_by IS NULL)
       OR (status = 'consumed' AND operation_digest IS NOT NULL
-        AND result_state IS NOT NULL AND result_version >= 1
+        AND result_state IS NOT NULL AND result_version IS NOT NULL
+        AND result_version >= 1
         AND consumed_at IS NOT NULL AND consumed_by IS NOT NULL)
       OR (status = 'revoked' AND operation_digest IS NULL AND result_state IS NULL AND
         result_version IS NULL AND consumed_at IS NOT NULL AND consumed_by IS NOT NULL)
     )
 );
-
 CREATE INDEX IF NOT EXISTS control_room_action_tokens_lookup_idx
     ON control_room_action_tokens(workspace_id, stage, status, expires_at);
 CREATE INDEX IF NOT EXISTS control_room_action_tokens_intent_idx
@@ -211,12 +216,11 @@ DROP INDEX IF EXISTS control_room_action_tokens_active_binding_uidx;
 CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_binding_slot_uidx
     ON control_room_action_tokens (
         tenant_id, workspace_id, subject_user_id, item_id, template_id
-    ) WHERE stage = 'action_binding';
+    ) NULLS NOT DISTINCT WHERE stage = 'action_binding';
 CREATE UNIQUE INDEX IF NOT EXISTS control_room_action_tokens_active_stage_uidx
     ON control_room_action_tokens (
         tenant_id, workspace_id, intent_id, stage, subject_user_id
     ) WHERE stage <> 'action_binding' AND status = 'active';
-
 CREATE TABLE IF NOT EXISTS control_room_action_intent_events (
     id                BIGSERIAL PRIMARY KEY,
     tenant_id         UUID NOT NULL,
@@ -276,14 +280,11 @@ CREATE TABLE IF NOT EXISTS control_room_action_intent_events (
       ]
     )
 );
-
 CREATE INDEX IF NOT EXISTS control_room_action_intent_events_intent_idx
     ON control_room_action_intent_events(workspace_id, intent_id, created_at);
-
 ALTER TABLE action_runs ADD COLUMN IF NOT EXISTS action_intent_id UUID;
 CREATE INDEX IF NOT EXISTS action_runs_action_intent_idx
-    ON action_runs(workspace_id, action_intent_id)
-    WHERE action_intent_id IS NOT NULL;
+    ON action_runs(workspace_id, action_intent_id) WHERE action_intent_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS action_runs_action_intent_unique_idx
     ON action_runs(tenant_id, workspace_id, action_intent_id)
     WHERE action_intent_id IS NOT NULL;
@@ -294,7 +295,6 @@ ALTER TABLE action_runs
     FOREIGN KEY (tenant_id, workspace_id, action_intent_id)
     REFERENCES control_room_action_intents(tenant_id, workspace_id, id)
     ON DELETE RESTRICT;
-
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('99zzb_control_room_action_authority.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

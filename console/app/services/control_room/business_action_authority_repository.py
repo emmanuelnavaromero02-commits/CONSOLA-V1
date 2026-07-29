@@ -148,7 +148,8 @@ async def resolve_action_binding_token(
                subject_user_id, item_id, template_id, binding_digest,
                evidence_digest, observation_fingerprint, contract_digest,
                target_digest, decision_digest, binding_dry_run_action_run_id,
-               binding_dry_run_evidence_digest, issued_at, expires_at, status
+               binding_dry_run_evidence_digest, access_revision_digest,
+               rbac_policy_digest, issued_at, expires_at, status
           FROM control_room_action_tokens
          WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid
            AND stage = 'action_binding' AND subject_user_id = $3

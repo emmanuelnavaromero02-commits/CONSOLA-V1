@@ -22,6 +22,9 @@ from app.services.control_room.business_action_binding_producer import (
 )
 from app.services.control_room.business_action_intents import promote_action_handle
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_action_authorization_snapshot import (
+    capture_authorization_snapshot,
+)
 from app.services.db_scope import run_with_db_scope
 from tests.control_room_action_authority_live import (
     AuthorityScope,
@@ -46,10 +49,18 @@ async def issue_live_binding(
             item_ids=(current.item_id,),
         )
         row = rows.get(current.item_id)
+        authorization = await capture_authorization_snapshot(
+            conn,
+            tenant_id=current.tenant_id,
+            workspace_id=current.workspace_id,
+            actor_user_id=int(current.maker["id"]),
+            permission="control_room.write",
+        )
+        assert authorization is not None
         return match_authoritative_item(
             current.item,
             row or {},
-            current.maker,
+            authorization,
             ACTION_TEMPLATES["create_followup_task"],
         )
 

@@ -119,7 +119,8 @@ GRANT UPDATE (
     consumed_at, consumed_by, token_digest, issued_at, expires_at,
     binding_handle_nonce, item_id, template_id, binding_digest, evidence_digest,
     observation_fingerprint, contract_digest, target_digest,
-    decision_digest, intent_id, binding_dry_run_action_run_id,
+    decision_digest, access_revision_digest, rbac_policy_digest, intent_id,
+    binding_dry_run_action_run_id,
     binding_dry_run_evidence_digest
 ) ON control_room_action_tokens TO omega_console;
 GRANT SELECT, INSERT ON control_room_action_intent_events TO omega_console;

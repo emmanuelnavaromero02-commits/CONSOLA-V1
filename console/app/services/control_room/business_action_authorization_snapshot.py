@@ -17,6 +17,7 @@ class AuthorizationSnapshot:
     permission: str
     global_role: str
     workspace_role: str | None
+    workspace_wide: bool
     grant_source: str
     access_revision_digest: str
     rbac_policy_digest: str
@@ -33,7 +34,8 @@ async def capture_authorization_snapshot(
 ) -> AuthorizationSnapshot | None:
     user = await conn.fetchrow(
         """
-        SELECT id, role, is_active, tenant_id::text AS tenant_id, created_at
+        SELECT id, role, is_active, tenant_id::text AS tenant_id, created_at,
+               xmin::text AS row_revision
           FROM users
          WHERE id = $1
            AND (tenant_id = $2::uuid OR role IN ('owner','super_admin','admin'))
@@ -46,7 +48,9 @@ async def capture_authorization_snapshot(
         return None
     memberships = await conn.fetch(
         """
-        SELECT membership.role_id, membership.created_at, roles.name
+        SELECT membership.role_id, membership.created_at, roles.name,
+               membership.xmin::text AS membership_revision,
+               roles.xmin::text AS role_revision
           FROM user_workspace_roles AS membership
           JOIN roles ON roles.id = membership.role_id
          WHERE membership.user_id = $1
@@ -77,6 +81,11 @@ async def capture_authorization_snapshot(
         workspace_roles[0] if workspace_roles else None
     )
     grant_source = "workspace_role" if granting_workspace_role else "global_role"
+    workspace_wide = bool(
+        global_role in WORKSPACE_WIDE_SCOPED_ROLES
+        or global_role in {"owner", "super_admin", "admin"}
+        or granting_workspace_role in WORKSPACE_WIDE_SCOPED_ROLES
+    )
     access_revision = {
         "actor_user_id": int(actor_user_id),
         "tenant_id": tenant_id,
@@ -84,11 +93,15 @@ async def capture_authorization_snapshot(
         "global_role": global_role,
         "user_tenant_id": str(user.get("tenant_id") or ""),
         "user_created_at": user.get("created_at"),
+        "user_is_active": user.get("is_active") is True,
+        "user_row_revision": str(user.get("row_revision") or ""),
         "memberships": [
             {
                 "role_id": int(row["role_id"]),
                 "role": str(row["name"]),
                 "created_at": row.get("created_at"),
+                "membership_revision": str(row.get("membership_revision") or ""),
+                "role_revision": str(row.get("role_revision") or ""),
             }
             for row in memberships
         ],
@@ -113,6 +126,7 @@ async def capture_authorization_snapshot(
         "workspace_roles": workspace_roles,
         "granting_workspace_role": granting_workspace_role,
         "grant_source": grant_source,
+        "workspace_wide": workspace_wide,
         "access_revision_digest": access_digest,
         "rbac_policy_digest": policy_digest,
     }
@@ -124,6 +138,7 @@ async def capture_authorization_snapshot(
         permission=permission,
         global_role=global_role,
         workspace_role=recorded_workspace_role,
+        workspace_wide=workspace_wide,
         grant_source=grant_source,
         access_revision_digest=access_digest,
         rbac_policy_digest=policy_digest,

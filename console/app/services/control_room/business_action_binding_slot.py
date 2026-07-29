@@ -48,6 +48,8 @@ def _slot_is_current(
         "contract_digest": contract.contract_digest,
         "target_digest": contract.target_digest,
         "decision_digest": contract.decision_digest,
+        "access_revision_digest": contract.access_revision_digest,
+        "rbac_policy_digest": contract.rbac_policy_digest,
     }
     return bool(
         row.get("status") == "active"
@@ -79,6 +81,7 @@ async def issue_binding_slot(
                binding_handle_nonce,
                binding_digest, evidence_digest, observation_fingerprint,
                contract_digest, target_digest, decision_digest,
+               access_revision_digest, rbac_policy_digest,
                binding_dry_run_action_run_id, binding_dry_run_evidence_digest,
                issued_at, expires_at
           FROM control_room_action_tokens
@@ -111,6 +114,8 @@ async def issue_binding_slot(
         contract.contract_digest,
         contract.target_digest,
         contract.decision_digest,
+        contract.access_revision_digest,
+        contract.rbac_policy_digest,
         issue.dry_run_action_run_id,
         issue.dry_run_evidence_digest,
         issued_at,
@@ -124,10 +129,11 @@ async def issue_binding_slot(
                    binding_digest=$5, evidence_digest=$6,
                    observation_fingerprint=$7, contract_digest=$8,
                    target_digest=$9, decision_digest=$10,
-                   binding_dry_run_action_run_id=$11,
-                   binding_dry_run_evidence_digest=$12, status='active',
+                   access_revision_digest=$11, rbac_policy_digest=$12,
+                   binding_dry_run_action_run_id=$13,
+                   binding_dry_run_evidence_digest=$14, status='active',
                    operation_digest=NULL, result_state=NULL, result_version=NULL,
-                   issued_at=$13, expires_at=$14, consumed_at=NULL, consumed_by=NULL
+                   issued_at=$15, expires_at=$16, consumed_at=NULL, consumed_by=NULL
              WHERE id=$1::uuid RETURNING id
             """,
             row["id"],
@@ -141,11 +147,12 @@ async def issue_binding_slot(
                 token_digest, binding_handle_nonce, item_id, template_id,
                 binding_digest, evidence_digest, observation_fingerprint,
                 contract_digest, target_digest, decision_digest,
+                access_revision_digest, rbac_policy_digest,
                 binding_dry_run_action_run_id, binding_dry_run_evidence_digest,
                 issued_at, expires_at
             ) VALUES (
                 $1::uuid,$2::uuid,$3::uuid,'action_binding',$4,$5,$6,$7,
-                'create_followup_task',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+                'create_followup_task',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
             ) RETURNING id
             """,
             contract.tenant_id,
@@ -161,6 +168,8 @@ async def issue_binding_slot(
             contract.contract_digest,
             contract.target_digest,
             contract.decision_digest,
+            contract.access_revision_digest,
+            contract.rbac_policy_digest,
             issue.dry_run_action_run_id,
             issue.dry_run_evidence_digest,
             issued_at,
