@@ -6,7 +6,7 @@ from scripts.ci_control_room_paths import control_room_changed
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 FOCAL_MINIMUM = 8981
-POSTGRES_MINIMUM = 118
+POSTGRES_MINIMUM = 140
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
