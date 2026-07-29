@@ -74,7 +74,8 @@ def test_red_05_intent_binds_maker_and_workspace():
     sql = MIGRATION.read_text(encoding="utf-8")
     for field in ("tenant_id", "workspace_id", "maker_user_id", "item_id"):
         assert field in sql
-    assert "UNIQUE (workspace_id, binding_digest)" in sql
+    assert "EXCLUDE USING gist" in sql
+    assert "authority_window WITH &&" in sql
 
 
 def test_red_06_admin_cannot_self_approve():

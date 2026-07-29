@@ -144,7 +144,7 @@ async def test_repeated_and_concurrent_experience_gets_keep_one_active_binding(
 
 
 @pytest.mark.asyncio
-async def test_experience_stops_issuing_bindings_after_intent_exists(
+async def test_experience_reissues_one_binding_for_live_pending_intent(
     authority_seed: AuthoritySeed,
 ):
     seed = authority_seed
@@ -154,14 +154,14 @@ async def test_experience_stops_issuing_bindings_after_intent_exists(
         await promote_live_intent(seed, pool, scope)
         payloads = await experience_gets(pool, scope, count=3, concurrent=True)
         assert all(
-            not fact["actions"]
+            len(fact["actions"]) == 1
             for payload in payloads
             for section in payload["sections"]
             for fact in section["facts"]
         )
         assert await _token_counts(seed, scope, stage="action_binding") == {
-            "total": 1,
-            "active": 0,
+            "total": 2,
+            "active": 1,
         }
     finally:
         await pool.close()
