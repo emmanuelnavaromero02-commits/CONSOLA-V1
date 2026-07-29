@@ -21,6 +21,9 @@ from app.services.control_room.business_action_preview_capability import (
     install_preview_authority,
 )
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_action_revalidation import (
+    actor_has_current_permission,
+)
 from app.services.control_room.business_explicit_action_binding import (
     verified_explicit_action_bindings,
 )
@@ -56,6 +59,14 @@ async def resolve_business_action_handle(
 
     async def _resolve(conn: Any, scoped_tenant: str | None, scoped_workspace: str):
         if scoped_tenant != tenant_id or scoped_workspace != workspace_id:
+            raise HTTPException(404, "action binding not found")
+        if not await actor_has_current_permission(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=int(user.get("id") or 0),
+            permission="control_room.write",
+        ):
             raise HTTPException(404, "action binding not found")
         token = await resolve_action_binding_token(
             conn,

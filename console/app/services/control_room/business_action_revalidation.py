@@ -77,6 +77,15 @@ async def revalidate_intent(
         return None
     try:
         await require_enabled_action_template(conn, "create_followup_task")
+        authorization = await capture_authorization_snapshot(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_user_id=maker_user_id,
+            permission="control_room.write",
+        )
+        if authorization is None:
+            return None
         row = await fetch_authoritative_row_for_update(
             conn,
             tenant_id=tenant_id,
@@ -86,7 +95,7 @@ async def revalidate_intent(
     except Exception:
         return None
     contract = (
-        contract_from_persisted_row(row, maker_user_id=maker_user_id)
+        contract_from_persisted_row(row, authorization=authorization)
         if row is not None
         else None
     )

@@ -7,7 +7,6 @@ from fastapi import HTTPException
 
 from app.services.control_room.business_action_ledger import append_intent_event
 from app.services.control_room.business_action_revalidation import (
-    actor_has_current_permission,
     revalidate_intent,
 )
 from app.services.control_room.business_action_tokens import server_operation_digest
@@ -51,14 +50,7 @@ async def lock_intent(
 
 
 async def intent_authority_is_current(conn: Any, intent: Mapping[str, Any]) -> bool:
-    maker_current = await actor_has_current_permission(
-        conn,
-        tenant_id=str(intent["tenant_id"]),
-        workspace_id=str(intent["workspace_id"]),
-        user_id=int(intent["maker_user_id"]),
-        permission="control_room.write",
-    )
-    return maker_current and await revalidate_intent(conn, intent) is not None
+    return await revalidate_intent(conn, intent) is not None
 
 
 def transition_operation_digest(

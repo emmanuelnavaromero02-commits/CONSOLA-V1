@@ -21,6 +21,9 @@ from app.services.control_room.business_action_authority_evidence import (
     owner_allowed,
     persisted_item,
 )
+from app.services.control_room.business_action_authorization_snapshot import (
+    AuthorizationSnapshot,
+)
 from app.services.control_room.business_action_digest import action_contract_digest
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_eligibility import classify_business_item
@@ -235,17 +238,25 @@ def match_authoritative_item(
 
 
 def contract_from_persisted_row(
-    row: Mapping[str, Any], *, maker_user_id: int
+    row: Mapping[str, Any], *, authorization: AuthorizationSnapshot
 ) -> AuthorityItemContract | None:
     item_id = str(row.get("item_id") or "")
     item = persisted_item(row, item_id)
     tenant_id = str(row.get("tenant_id") or "")
     workspace_id = str(row.get("workspace_id") or "")
-    if item is None or not tenant_id or not workspace_id:
+    if (
+        item is None
+        or not tenant_id
+        or not workspace_id
+        or authorization.permission != "control_room.write"
+        or authorization.tenant_id != tenant_id
+        or authorization.workspace_id != workspace_id
+    ):
         return None
     user = {
-        "id": maker_user_id,
-        "role": "tenant_admin",
+        "id": authorization.actor_user_id,
+        "role": authorization.global_role,
+        "workspace_role": authorization.workspace_role,
         "active_tenant_id": tenant_id,
         "active_workspace_id": workspace_id,
     }
