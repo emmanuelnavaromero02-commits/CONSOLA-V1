@@ -5,6 +5,7 @@ from collections.abc import Collection, Mapping
 from app.schemas.control_room_experience_actions import (
     EXPERIENCE_ACTIONS_SCHEMA_VERSION,
     ControlRoomExperienceV2Response,
+    ExperienceAction,
     ExperienceFactV2,
     ExperienceSectionV2,
 )
@@ -37,6 +38,7 @@ def build_business_experience_v2(
     *,
     user: Mapping[str, object],
     enabled_template_ids: Collection[str],
+    actions_by_item: Mapping[str, Collection[ExperienceAction]] | None = None,
 ) -> ControlRoomExperienceV2Response:
     validate_snapshot_scope(snapshot)
     grouped: dict[
@@ -53,11 +55,16 @@ def build_business_experience_v2(
         fact = project_experience_fact(item, identity)
         if fact is None:
             continue
-        actions = resolve_business_experience_actions(
-            item,
-            identity,
-            user=user,
-            enabled_template_ids=enabled_template_ids,
+        item_id = str(item.get("id") or item.get("item_id") or "")
+        actions = (
+            list(actions_by_item.get(item_id, ()))
+            if actions_by_item is not None
+            else resolve_business_experience_actions(
+                item,
+                identity,
+                user=user,
+                enabled_template_ids=enabled_template_ids,
+            )
         )
         fact_v2 = ExperienceFactV2.model_validate(
             {

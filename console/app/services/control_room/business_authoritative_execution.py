@@ -5,7 +5,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services.control_room.business_action_digest import action_contract_digest
+from app.services.control_room.business_action_authority_audit import (
+    authority_audit as _authority_audit,
+)
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
@@ -88,23 +90,6 @@ def _required_binding(
     if binding is None:
         raise _changed()
     return binding
-
-
-def _authority_audit(
-    binding: VerifiedActionBinding, payload: Mapping[str, Any]
-) -> dict[str, Any]:
-    values = binding.values
-    return {
-        "version": "control-room-authority-audit/v1",
-        "binding_id": binding.binding_id,
-        "key_id": str(values.get("attestation_key_id") or ""),
-        "issued_at": str(values.get("issued_at") or ""),
-        "expires_at": str(values.get("expires_at") or ""),
-        "observation_fingerprint": str(values.get("observation_fingerprint") or ""),
-        "execution_target_digest": binding.execution_target_digest,
-        "template_contract_digest": binding.template_contract_digest,
-        "input_payload_digest": action_contract_digest(dict(payload)),
-    }
 
 
 def _build_context(

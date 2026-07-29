@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from collections.abc import Collection, Mapping
+from typing import Any
+
+from app.schemas.control_room_experience_actions import ExperienceAction
+from app.services import auth
+from app.services.control_room.business_action_authoritative_item import (
+    match_authoritative_item,
+)
+from app.services.control_room.business_action_authority_policy import (
+    EXECUTABLE_TEMPLATE_ID,
+    authority_scope,
+    require_write,
+)
+from app.services.control_room.business_action_authority_repository import (
+    fetch_authoritative_rows,
+    insert_action_binding_token,
+)
+from app.services.control_room.business_action_catalog import (
+    require_enabled_action_template,
+)
+from app.services.control_room.business_action_public_projection import public_action
+from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_action_revalidation import (
+    actor_has_current_permission,
+)
+from app.services.control_room.surface_snapshot import SurfaceSnapshot
+from app.services.db_scope import run_with_db_scope
+
+
+async def issue_action_bindings(
+    user: Mapping[str, Any],
+    snapshot: SurfaceSnapshot,
+    *,
+    enabled_template_ids: Collection[str],
+) -> dict[str, tuple[ExperienceAction, ...]]:
+    try:
+        require_write(user)
+        tenant_id, workspace_id = authority_scope(user)
+    except Exception:
+        return {}
+    if EXECUTABLE_TEMPLATE_ID not in enabled_template_ids:
+        return {}
+    live_by_id = {
+        str(item.get("id") or item.get("item_id")): item
+        for item in snapshot.items
+        if str(item.get("id") or item.get("item_id") or "").strip()
+    }
+    if not live_by_id:
+        return {}
+    template = ACTION_TEMPLATES[EXECUTABLE_TEMPLATE_ID]
+    pool = await auth.pool()
+
+    async def _issue(
+        conn: Any, scoped_tenant_id: str | None, scoped_workspace_id: str
+    ) -> dict[str, tuple[ExperienceAction, ...]]:
+        if scoped_tenant_id != tenant_id or scoped_workspace_id != workspace_id:
+            return {}
+        if not await actor_has_current_permission(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=int(user["id"]),
+            permission="control_room.write",
+        ):
+            return {}
+        await require_enabled_action_template(conn, EXECUTABLE_TEMPLATE_ID)
+        rows = await fetch_authoritative_rows(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            item_ids=tuple(live_by_id),
+        )
+        issued: dict[str, tuple[ExperienceAction, ...]] = {}
+        for item_id, live in live_by_id.items():
+            row = rows.get(item_id)
+            if row is None:
+                continue
+            contract = match_authoritative_item(live, row, user, template)
+            if contract is None:
+                continue
+            handle, _expires_at = await insert_action_binding_token(conn, contract)
+            issued[item_id] = (public_action(handle),)
+        return issued
+
+    try:
+        return await run_with_db_scope(pool, dict(user), _issue)
+    except Exception:
+        return {}
+
+
+__all__ = ("issue_action_bindings",)
