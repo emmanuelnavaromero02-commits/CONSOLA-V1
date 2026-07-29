@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -21,6 +22,20 @@ _TRANSITIONS = {
     "completed": ("execution_reserved", "completed", "completed"),
     "failed": ("execution_reserved", "failed", "failed"),
 }
+_LOGGER = logging.getLogger(__name__)
+_OPERATIONAL_FAILURE = "control_room_action_authority_revalidation_operational_failure"
+_SAFE_OPERATIONAL_DETAIL = "action authority is temporarily unavailable"
+
+
+def _record_revalidation_operational_failure() -> None:
+    _LOGGER.error(
+        _OPERATIONAL_FAILURE,
+        extra={
+            "event": _OPERATIONAL_FAILURE,
+            "component": "control_room_action_authority",
+            "outcome": "transaction_rolled_back",
+        },
+    )
 
 
 async def lock_intent(
@@ -50,7 +65,11 @@ async def lock_intent(
 
 
 async def intent_authority_is_current(conn: Any, intent: Mapping[str, Any]) -> bool:
-    return await revalidate_intent(conn, intent) is not None
+    try:
+        return await revalidate_intent(conn, intent) is not None
+    except Exception:
+        _record_revalidation_operational_failure()
+        raise HTTPException(503, _SAFE_OPERATIONAL_DETAIL) from None
 
 
 def transition_operation_digest(

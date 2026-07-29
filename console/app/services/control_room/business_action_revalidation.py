@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.services.control_room.business_action_authoritative_item import (
     AuthorityItemContract,
     contract_from_persisted_row,
@@ -77,23 +79,25 @@ async def revalidate_intent(
         return None
     try:
         await require_enabled_action_template(conn, "create_followup_task")
-        authorization = await capture_authorization_snapshot(
-            conn,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-            actor_user_id=maker_user_id,
-            permission="control_room.write",
-        )
-        if authorization is None:
-            return None
-        row = await fetch_authoritative_row_for_update(
-            conn,
-            tenant_id=tenant_id,
-            workspace_id=workspace_id,
-            item_id=item_id,
-        )
-    except Exception:
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
         return None
+    authorization = await capture_authorization_snapshot(
+        conn,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        actor_user_id=maker_user_id,
+        permission="control_room.write",
+    )
+    if authorization is None:
+        return None
+    row = await fetch_authoritative_row_for_update(
+        conn,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        item_id=item_id,
+    )
     contract = (
         contract_from_persisted_row(row, authorization=authorization)
         if row is not None
@@ -113,8 +117,10 @@ async def revalidate_intent(
             expected_evidence_digest=str(intent.get("dry_run_evidence_digest") or ""),
             expected_intent_id=str(intent.get("id") or ""),
         )
-    except Exception:
-        return None
+    except HTTPException as exc:
+        if exc.status_code in {404, 409}:
+            return None
+        raise
     return contract
 
 
