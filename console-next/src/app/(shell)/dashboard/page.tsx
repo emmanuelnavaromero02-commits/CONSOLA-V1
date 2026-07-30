@@ -24,6 +24,24 @@ function coerceNumber(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Un claim de éxito ("Todos en línea", "Sin movimientos") solo puede
+ * afirmarse con un payload válido que lo demuestre. Ausencia de payload
+ * (cargando/error) o ausencia del campo concreto nunca se convierten en
+ * éxito: se muestran como cargando, "No disponible" o "Sin datos".
+ */
+function claimHint(
+  raw: unknown,
+  hasData: boolean,
+  isError: boolean,
+  positive: string,
+  negative: (count: number) => string,
+): string {
+  if (!hasData) return isError ? "No disponible" : "";
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return "Sin datos";
+  return raw > 0 ? negative(raw) : positive;
+}
+
 export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useKpis();
 
@@ -39,7 +57,6 @@ export default function DashboardPage() {
   // guaranteed to be JavaScript numbers (not "5"-as-string).
   const cartridgesTotal        = coerceNumber(data?.cartridges.total);
   const cartridgesConnected    = coerceNumber(data?.cartridges.connected);
-  const cartridgesDisconnected = coerceNumber(data?.cartridges.disconnected);
   const extractionsToday       = coerceNumber(data?.extractions.today);
   const extractionsWeek        = coerceNumber(data?.extractions.week);
   const usersActiveToday       = coerceNumber(data?.users.active_today);
@@ -123,33 +140,39 @@ export default function DashboardPage() {
               ? `${cartridgesConnected} / ${cartridgesTotal}`
               : "—"
           }
-          numericValue={data ? cartridgesConnected : 0}
-          hint={
-            data && cartridgesDisconnected > 0
-              ? `${cartridgesDisconnected} sin conexión`
-              : "Todos en línea"
+          numericValue={data ? cartridgesConnected : undefined}
+          hint={claimHint(
+            data?.cartridges?.disconnected,
+            Boolean(data),
+            isError,
+            "Todos en línea",
+            (count) => `${count} sin conexión`,
+          )}
+          trend={
+            data && typeof data.cartridges?.disconnected === "number" && data.cartridges.disconnected === 0
+              ? "up"
+              : "flat"
           }
-          trend={data && cartridgesDisconnected === 0 ? "up" : "flat"}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Extracciones hoy"
           value={data ? extractionsToday : "—"}
-          numericValue={data ? extractionsToday : 0}
+          numericValue={data ? extractionsToday : undefined}
           hint={data ? `${extractionsWeek} esta semana` : ""}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Usuarios activos"
           value={data ? usersActiveToday : "—"}
-          numericValue={data ? usersActiveToday : 0}
+          numericValue={data ? usersActiveToday : undefined}
           hint={data ? `${usersTotal} en total` : ""}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Acciones copiloto"
           value={data ? copilotToolsToday : "—"}
-          numericValue={data ? copilotToolsToday : 0}
+          numericValue={data ? copilotToolsToday : undefined}
           hint={
             data
               ? `${copilotConvsToday} conversaciones`
@@ -170,20 +193,24 @@ export default function DashboardPage() {
         <KpiCard
           label="Eventos hoy"
           value={data ? auditEventsToday : "—"}
-          numericValue={data ? auditEventsToday : 0}
+          numericValue={data ? auditEventsToday : undefined}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Acciones destructivas"
           value={data ? auditDestructiveToday : "—"}
-          numericValue={data ? auditDestructiveToday : 0}
-          hint={
-            data && auditDestructiveToday > 0
-              ? "Revisar audit log"
-              : "Sin movimientos"
-          }
+          numericValue={data ? auditDestructiveToday : undefined}
+          hint={claimHint(
+            data?.audit?.destructive_actions_today,
+            Boolean(data),
+            isError,
+            "Sin movimientos",
+            () => "Revisar audit log",
+          )}
           trend={
-            data && auditDestructiveToday > 0 ? "down" : "flat"
+            data && typeof data.audit?.destructive_actions_today === "number" && data.audit.destructive_actions_today > 0
+              ? "down"
+              : "flat"
           }
           loading={isLoading && !data}
         />
