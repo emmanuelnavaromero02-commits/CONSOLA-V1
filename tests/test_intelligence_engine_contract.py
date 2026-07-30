@@ -160,7 +160,7 @@ def test_gold_refresh_intelligence_migration_extends_run_mode_safely():
     assert "99y_gold_refresh_intelligence.sql" in migration
 
 
-def test_dataset_refresh_chain_notifies_console_after_pipeline_save_only_for_gold_ready():
+def test_dataset_refresh_chain_marks_success_only_after_intelligence_is_ready():
     source = read("airflow/dags/dataset_refresh_chain.py")
     assert "CONSOLE_INTERNAL_URL" in source
     assert "CONSOLE_URL" in source
@@ -168,10 +168,16 @@ def test_dataset_refresh_chain_notifies_console_after_pipeline_save_only_for_gol
     assert "/internal/intelligence/gold-refresh" in source
     assert "pipeline_run_id = f\"dataset_refresh_chain:{ctx['run_id']}\"" in source
     assert "_successful_materialized_datasets(results)" in source
+    assert "timeout=45" in source
+    assert (
+        'raise RuntimeError("Gold intelligence trigger unavailable") from exc' in source
+    )
     assert 'status == "success" or (status == "partial" and allow_partial)' in source
-    pipeline_save_pos = source.index('"tool": "pipeline_run_save"')
+    assert 'status="running"' in source
     trigger_pos = source.rindex("_trigger_gold_refresh_intelligence(")
-    assert pipeline_save_pos < trigger_pos
+    final_save_pos = source.rindex("_save_chain_state(")
+    assert trigger_pos < final_save_pos
+    assert '"status": "intelligence_failed"' in source
 
 
 def test_scope_owner_hotfix_migration_covers_vault_and_intelligence_owner():

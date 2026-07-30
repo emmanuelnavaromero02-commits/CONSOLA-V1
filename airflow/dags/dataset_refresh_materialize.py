@@ -11,6 +11,7 @@ from dataset_refresh_idempotency import (
     finish_materialization,
     reserve_materialization,
 )
+from dataset_refresh_outcome import require_successful_materialization_response
 from runtime_security_context import build_materialize_context
 
 
@@ -93,9 +94,9 @@ def materialize_in_order(
             )
             if response.status_code in {401, 403}:
                 raise PermissionError("refinement rejected runtime authority")
-            payload = response.json() if response.status_code < 400 else {}
-            if response.status_code >= 400 or payload.get("error"):
-                raise RuntimeError("refinement materialization failed")
+            payload = require_successful_materialization_response(
+                response, expected_name=name
+            )
             safe = _safe_result(name, payload)
             finish_materialization(
                 postgres_dsn,

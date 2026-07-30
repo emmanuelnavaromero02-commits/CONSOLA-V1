@@ -257,3 +257,40 @@ def test_successful_replay_reuses_durable_result_without_second_post(monkeypatch
             "row_count": 7,
         }
     ]
+
+
+def test_refinement_timeout_fails_slot_and_never_completes_pipeline(monkeypatch):
+    finished = []
+    monkeypatch.setattr(
+        dataset_refresh_materialize,
+        "reserve_materialization",
+        lambda *_args, **_kwargs: {
+            "reserved": True,
+            "completed": False,
+            "slot_id": "slot-timeout",
+        },
+    )
+    monkeypatch.setattr(
+        dataset_refresh_materialize,
+        "finish_materialization",
+        lambda *_args, **kwargs: finished.append(kwargs),
+    )
+    monkeypatch.setattr(
+        dataset_refresh_materialize,
+        "build_materialize_context",
+        lambda **_kwargs: {"trusted": True},
+    )
+
+    def timeout(*_args, **_kwargs):
+        raise dataset_refresh_materialize.requests.Timeout("private endpoint")
+
+    monkeypatch.setattr(dataset_refresh_materialize.requests, "post", timeout)
+    with pytest.raises(RuntimeError, match="failed materializations"):
+        dataset_refresh_materialize.materialize_in_order(
+            _materialize_context(allow_partial=False),
+            postgres_dsn="postgresql://unused",
+            refinement_url="http://refinement",
+            headers=lambda *_args: {},
+        )
+    assert finished[-1]["success"] is False
+    assert finished[-1]["slot_id"] == "slot-timeout"
