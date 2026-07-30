@@ -201,7 +201,7 @@ export default function OperationalIntelligencePage() {
             <p className="text-xs font-semibold uppercase text-primary">OMEGA</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Inteligencia Operativa</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Escenarios, confianza, planes y validaciones conectadas a datos reales de la consola.
+              Escenarios simulados, confianza, planes y validaciones históricas de la consola.
             </p>
           </div>
           <button
@@ -351,7 +351,7 @@ function ScenariosPanel({ rows, loading, error }: { rows: ScenarioSummary[]; loa
             key={String(row.id || row.simulation_id || row.source_id || index)}
             title={pickText(row, ["label", "title", "source_id"], "Escenario")}
             subtitle={`${statusCopy(String(row.status || ""))} · ${shortDate(row.created_at)}`}
-            meta="evidencia agregada"
+            meta="Simulación de escenarios"
           />
         ))}
       </div>
@@ -438,7 +438,7 @@ function PlansPanel({
               key={String(row.id || row.orchestration_id || index)}
               title={pickText(row, ["title", "source_id"], "Plan")}
               subtitle={`${statusCopy(String(row.status || ""))} · ${shortDate(row.created_at)}`}
-              meta="fuente operativa"
+              meta="Preparación supervisada"
             />
           ))}
           {rows.length === 0 ? (
@@ -521,7 +521,7 @@ function ValidationPanel({
               key={String(row.id || row.backtest_id || index)}
               title={pickText(row, ["metric", "title"], "Validación")}
               subtitle={`${statusCopy(String(row.status || ""))} · ${shortDate(row.created_at)}`}
-              meta={`${row.result_count ?? 0} resultados`}
+              meta={row.result_count == null ? "Resultados: N/D" : `${row.result_count} resultados`}
             />
           ))}
           {rows.length === 0 ? (
