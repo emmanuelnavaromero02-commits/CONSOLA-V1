@@ -184,12 +184,14 @@ export default function OperationalIntelligencePage() {
   });
 
   const loading = scenarios.isLoading || confidence.isLoading || history.isLoading || plans.isLoading || validations.isLoading || runs.isLoading;
+  // Sin datos (cargando o con error) el conteo es desconocido: se
+  // muestra "—" en lugar de fabricar un 0.
   const summary = useMemo(() => ({
-    scenarios: scenarios.data?.items.length ?? 0,
-    plans: plans.data?.items.length ?? 0,
-    history: history.data?.items.length ?? 0,
-    runs: runs.data?.items.length ?? 0,
-  }), [history.data?.items.length, plans.data?.items.length, runs.data?.items.length, scenarios.data?.items.length]);
+    scenarios: scenarios.data ? scenarios.data.items.length : "—",
+    plans: plans.data ? plans.data.items.length : "—",
+    history: history.data ? history.data.items.length : "—",
+    runs: runs.data ? runs.data.items.length : "—",
+  }), [history.data, plans.data, runs.data, scenarios.data]);
 
   return (
     <main className="min-h-screen bg-background p-4 md:p-6" data-testid="operational-intelligence-page">
@@ -283,7 +285,7 @@ export default function OperationalIntelligencePage() {
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: number }) {
+function SummaryTile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-md border bg-card p-3">
       <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
@@ -316,12 +318,12 @@ function PanelShell({
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
       {loading ? (
-        <div className="flex min-h-[180px] items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div role="status" aria-busy="true" className="flex min-h-[180px] items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
           Cargando
         </div>
       ) : error ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           No se pudo cargar la información.
         </div>
       ) : isEmpty ? (

@@ -55,7 +55,7 @@ export default function DashboardPage() {
         <div className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight">Panel</h1>
           <p className="text-sm text-muted-foreground">
-            Estado en tiempo real de cartuchos, extracciones y copiloto.
+            Estado de cartuchos, extracciones y copiloto (actualizado cada 30 s).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

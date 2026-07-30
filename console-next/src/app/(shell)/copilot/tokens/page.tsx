@@ -38,6 +38,9 @@ export default function CopilotTokensPage() {
     },
   });
 
+  // Honestidad: sin payload no hay métricas — nunca fabricar "$0.00"/"0"
+  // cuando el backend falló o todavía no respondió.
+  const hasData = Boolean(summary.data);
   const totalTokens = Number(summary.data?.input_tokens ?? 0)
     + Number(summary.data?.output_tokens ?? 0)
     + Number(summary.data?.cache_creation_tokens ?? 0)
@@ -63,7 +66,7 @@ export default function CopilotTokensPage() {
       </header>
 
       {summary.isError ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>No se pudo cargar el uso de tokens.</span>
             <button
@@ -80,11 +83,11 @@ export default function CopilotTokensPage() {
       <WorkspaceTokenKeys />
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5" aria-label="Resumen de tokens">
-        <MetricCard icon={MessageSquareText} label="Llamadas" value={formatInteger(summary.data?.calls ?? 0)} loading={summary.isLoading} />
-        <MetricCard icon={Sigma} label="Tokens totales" value={formatInteger(totalTokens)} loading={summary.isLoading} />
-        <MetricCard icon={Activity} label="Entrada" value={formatInteger(summary.data?.input_tokens ?? 0)} loading={summary.isLoading} />
-        <MetricCard icon={DatabaseZap} label="Caché" value={formatInteger(Number(summary.data?.cache_creation_tokens ?? 0) + Number(summary.data?.cache_read_tokens ?? 0))} loading={summary.isLoading} />
-        <MetricCard icon={Coins} label="Costo" value={formatCurrency(summary.data?.cost_usd ?? 0)} loading={summary.isLoading} />
+        <MetricCard icon={MessageSquareText} label="Llamadas" value={hasData ? formatInteger(summary.data?.calls ?? 0) : "—"} loading={summary.isLoading} />
+        <MetricCard icon={Sigma} label="Tokens totales" value={hasData ? formatInteger(totalTokens) : "—"} loading={summary.isLoading} />
+        <MetricCard icon={Activity} label="Entrada" value={hasData ? formatInteger(summary.data?.input_tokens ?? 0) : "—"} loading={summary.isLoading} />
+        <MetricCard icon={DatabaseZap} label="Caché" value={hasData ? formatInteger(Number(summary.data?.cache_creation_tokens ?? 0) + Number(summary.data?.cache_read_tokens ?? 0)) : "—"} loading={summary.isLoading} />
+        <MetricCard icon={Coins} label="Costo" value={hasData ? formatCurrency(summary.data?.cost_usd ?? 0) : "—"} loading={summary.isLoading} />
       </section>
 
       <section className="rounded-lg border bg-card shadow-sm">
@@ -94,16 +97,16 @@ export default function CopilotTokensPage() {
             <p className="text-xs text-muted-foreground">Distribución de uso registrada por proveedor/modelo.</p>
           </div>
           <span className="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">
-            {summary.isLoading ? "... modelos" : `${summary.data?.models?.length ?? 0} modelos`}
+            {summary.isLoading ? "... modelos" : hasData ? `${summary.data?.models?.length ?? 0} modelos` : "— modelos"}
           </span>
         </header>
 
         {summary.isLoading ? (
           <SkeletonRows rows={5} />
-        ) : summary.isError && !summary.data ? (
+        ) : !summary.data ? (
           <EmptyState label="No hay datos disponibles." />
         ) : (
-          <ModelsTable rows={summary.data?.models ?? []} />
+          <ModelsTable rows={summary.data.models ?? []} />
         )}
       </section>
     </main>
@@ -173,7 +176,7 @@ function MetricCard({
 
 function SkeletonRows({ rows }: { rows: number }) {
   return (
-    <div className="divide-y">
+    <div role="status" aria-busy="true" aria-label="Cargando uso de tokens" className="divide-y">
       {Array.from({ length: rows }).map((_, index) => (
         <div key={index} className="grid grid-cols-6 gap-4 px-4 py-4">
           <div className="h-4 rounded bg-muted" />
