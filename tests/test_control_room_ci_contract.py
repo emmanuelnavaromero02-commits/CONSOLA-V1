@@ -6,8 +6,8 @@ from scripts.ci_control_room_paths import control_room_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 8987
-POSTGRES_MINIMUM = 171
+FOCAL_MINIMUM = 9166
+POSTGRES_MINIMUM = 176
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -131,7 +131,11 @@ OPERATIONAL_TRUTH_TESTS = (
     "tests/test_operational_truth_data_kb_config.py",
     "tests/test_operational_truth_data_kb_runtime.py",
     "tests/test_operational_truth_data_historical_repair.py",
+    "tests/test_replicon_wip_v3_currency.py",
     "tests/test_sap_successfactors_talent_migration.py",
+    "tests/test_intelligence_provenance_resolver.py",
+    "tests/test_calibration_recompute_complete_batch.py",
+    "tests/test_monte_carlo_engine.py",
     "tests/test_monte_carlo_api_contract.py",
     "tests/test_monte_carlo_operational_truth.py",
     "tests/test_monte_carlo_persistence_contract.py",

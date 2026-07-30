@@ -102,7 +102,11 @@ jobs:
             tests/test_operational_truth_data_kb_config.py \
             tests/test_operational_truth_data_kb_runtime.py \
             tests/test_operational_truth_data_historical_repair.py \
+            tests/test_replicon_wip_v3_currency.py \
             tests/test_sap_successfactors_talent_migration.py \
+            tests/test_intelligence_provenance_resolver.py \
+            tests/test_calibration_recompute_complete_batch.py \
+            tests/test_monte_carlo_engine.py \
             tests/test_monte_carlo_api_contract.py \
             tests/test_monte_carlo_operational_truth.py \
             tests/test_monte_carlo_persistence_contract.py \
@@ -148,8 +152,8 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=8987, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=171, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=9166, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=176, label="Live PostgreSQL/RLS")
           PY
 
   no-control-room-needed:
