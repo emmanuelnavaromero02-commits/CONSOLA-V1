@@ -26,11 +26,14 @@ def decision_options(
     for template in templates:
         if not isinstance(template, dict):
             continue
-        option_id = str(
-            template.get("id") or template.get("action_kind") or "option"
-        ).strip()
-        if not option_id:
+        identity = (
+            template.get("id"),
+            template.get("label"),
+            template.get("action_kind"),
+        )
+        if not all(isinstance(value, str) and value.strip() for value in identity):
             continue
+        option_id, label, action_kind = (value.strip() for value in identity)
         impact_multiplier = num(template.get("impact_multiplier"))
         cost = num(template.get("cost"))
         risk = num(template.get("risk"))
@@ -42,10 +45,8 @@ def decision_options(
         options.append(
             {
                 "option_id": option_id,
-                "label": str(
-                    template.get("label") or option_id.replace("_", " ").title()
-                ),
-                "action_kind": str(template.get("action_kind") or option_id),
+                "label": label,
+                "action_kind": action_kind,
                 "impact_expected": expected_impact,
                 "confidence": confidence,
                 "cost": cost,

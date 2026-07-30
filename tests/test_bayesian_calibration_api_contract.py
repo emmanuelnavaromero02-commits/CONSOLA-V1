@@ -46,6 +46,8 @@ class _FakeConnection:
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
+        if "SELECT source_type, source_id" in sql and "monte_carlo_simulations" in sql:
+            return {"source_type": "wisdom_bit", "source_id": "WB-TALENTO"}
         if "SELECT *" in sql and "FROM calibration_states" in sql:
             return None
         if "INSERT INTO calibration_observations" in sql:
@@ -139,9 +141,17 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
 
 
 def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
-    service = (
-        REPO / "console/app/services/intelligence/calibration_service.py"
-    ).read_text(encoding="utf-8")
+    service = "\n".join(
+        (REPO / "console/app/services/intelligence" / name).read_text(encoding="utf-8")
+        for name in (
+            "calibration_service.py",
+            "calibration_observation_service.py",
+            "calibration_state_repository.py",
+            "calibration_source_validation.py",
+            "calibration_recompute_service.py",
+            "calibration_validation_service.py",
+        )
+    )
 
     assert "from app.services.db_scope import scoped_db_for_user" in service
     assert "async with scoped_db_for_user(pool, user)" in service
@@ -230,7 +240,7 @@ async def test_observe_sets_scope_validates_source_and_persists(monkeypatch):
     assert fake.conn.calls[0][0] == "execute"
     assert "set_config('app.tenant_id'" in fake.conn.calls[0][1]
     assert any(
-        call[0] == "fetchval" and "monte_carlo_simulations" in call[1]
+        call[0] == "fetchrow" and "monte_carlo_simulations" in call[1]
         for call in fake.conn.calls
     )
     assert any(
