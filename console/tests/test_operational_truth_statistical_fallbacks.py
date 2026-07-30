@@ -236,6 +236,14 @@ def test_scoring_drops_templates_with_missing_numeric_inputs(missing):
     assert decision_options({"deviation_value": 10, "confidence": 0.8}, metric) == []
 
 
+@pytest.mark.parametrize("missing", ["id", "label", "action_kind"])
+def test_scoring_drops_templates_without_explicit_identity_or_action(missing):
+    metric = _metric()
+    metric["action_templates"][0].pop(missing)
+
+    assert decision_options({"deviation_value": 10, "confidence": 0.8}, metric) == []
+
+
 def test_scoring_preserves_real_zero_confidence_and_unit_value():
     metric = _metric()
     metric["impact"]["unit_value"] = 0

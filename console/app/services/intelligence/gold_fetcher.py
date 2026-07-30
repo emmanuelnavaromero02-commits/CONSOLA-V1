@@ -10,6 +10,9 @@ from typing import Any
 import asyncpg
 from fastapi import HTTPException
 
+from app.services.intelligence.gold_projection_guard import (
+    project_operational_truth_rows as _project_operational_truth_rows,
+)
 from app.services.intelligence.utils import workspace_scope
 
 
@@ -112,12 +115,7 @@ async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
 async def query_gold_dataset_rows(
     dataset: str, user: dict | None, limit: int = 5000
 ) -> list[dict[str, Any]]:
-    """Read workspace-scoped Gold rows directly for intelligence runs.
-
-    Refinement can still serve datasets for legacy flows, but the intelligence
-    readiness gate verifies Gold tables directly. This fetcher keeps the run path
-    aligned with that gate and refuses unscoped Gold reads for authenticated users.
-    """
+    """Read workspace-scoped Gold rows directly for intelligence runs."""
     dsn = _gold_dsn()
     if not dsn:
         raise HTTPException(503, "gold database unavailable")
@@ -131,12 +129,12 @@ async def query_gold_dataset_rows(
     cache_key = (str(dataset), str(tenant_id or ""), str(workspace_id), safe_limit)
     cached = _gold_cache_get(cache_key)
     if cached is not None:
-        return cached
+        return _project_operational_truth_rows(dataset, cached)
     lock = _GOLD_ROW_CACHE_LOCKS.setdefault(cache_key, asyncio.Lock())
     async with lock:
         cached = _gold_cache_get(cache_key)
         if cached is not None:
-            return cached
+            return _project_operational_truth_rows(dataset, cached)
         conn = await asyncpg.connect(dsn, command_timeout=10)
         try:
             async with conn.transaction():
@@ -163,7 +161,10 @@ async def query_gold_dataset_rows(
                     tenant_id,
                     safe_limit,
                 )
-            return _gold_cache_set(cache_key, [dict(row) for row in rows])
+            projected = _project_operational_truth_rows(
+                dataset, [dict(row) for row in rows]
+            )
+            return _gold_cache_set(cache_key, projected)
         finally:
             await conn.close()
 
@@ -171,12 +172,7 @@ async def query_gold_dataset_rows(
 async def query_intelligence_dataset_rows(
     dataset: str, user: dict | None, limit: int = 5000
 ) -> list[dict[str, Any]]:
-    """Prefer scoped Gold data, then fall back to the existing Refinement path.
-
-    A present but empty/scoped Gold table returns an empty list instead of falling
-    back, because fallback could mask a tenant/workspace data gap with unrelated
-    rows from another source.
-    """
+    """Prefer scoped Gold data; never replace a present empty scoped table."""
     try:
         return await query_gold_dataset_rows(dataset, user, limit)
     except HTTPException as exc:
@@ -187,4 +183,5 @@ async def query_intelligence_dataset_rows(
 
     from app.services import control_room_service
 
-    return await control_room_service.query_dataset_rows(dataset, user, limit)
+    rows = await control_room_service.query_dataset_rows(dataset, user, limit)
+    return _project_operational_truth_rows(dataset, rows)

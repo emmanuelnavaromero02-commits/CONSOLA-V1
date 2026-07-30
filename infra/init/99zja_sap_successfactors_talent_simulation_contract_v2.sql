@@ -1,12 +1,13 @@
+-- WB-TALENTO operational contract v2 (part 2).
+UPDATE datasets
+   SET sources = '["gold/sap_successfactors/sap_successfactors_talent_operational_features"]'::jsonb,
+       sql_def = $sql$
 -- sap_successfactors_talent_simulation_inputs  (gold)  cartridge: sap_successfactors
 -- sources: ["gold/sap_successfactors/sap_successfactors_talent_operational_features"]
 -- description: Variables agregadas internas para analisis WB-TALENTO. No expone PII ni nombres tecnicos al usuario final.
 
 WITH features AS (
-    SELECT *
-    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_operational_features/**/*.parquet',
-                      hive_partitioning = true,
-                      union_by_name = true)
+    SELECT * FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_operational_features/**/*.parquet', hive_partitioning = true, union_by_name = true)
 ),
 scored AS (
     SELECT
@@ -25,11 +26,7 @@ scored AS (
         LEAST(1.0, GREATEST(0.0, 1.0 - COALESCE(confidence, 0.0))) AS incertidumbre,
         CASE
             WHEN employee_count = 0 THEN 0
-            WHEN source_mode = 'benchmark_internal'
-              AND NOT (
-                  benchmark_approval_valid = TRUE
-                  AND benchmark_provenance_status = 'approved_durable'
-              ) THEN 0
+            WHEN source_mode = 'benchmark_internal' AND NOT (benchmark_approval_valid = TRUE AND benchmark_provenance_status = 'approved_durable') THEN 0
             WHEN readiness_status IN ('ready', 'benchmark_internal') THEN 3
             ELSE 0
         END AS scenario_count_calc
@@ -89,8 +86,7 @@ SELECT
       || '"expected_delta":{"type":"triangular","low":' || CAST(ROUND(-1.0 * riesgo_base, 2) AS VARCHAR)
       || ',"mode":' || CAST(ROUND(-0.35 * riesgo_base, 2) AS VARCHAR)
       || ',"high":' || CAST(ROUND(0.10 * riesgo_base, 2) AS VARCHAR) || '},'
-      || '"delay_days":{"type":"triangular","low":0,"mode":'
-      || CAST(CASE WHEN high_severity_signal_count > 0 THEN 7 ELSE 3 END AS VARCHAR)
+      || '"delay_days":{"type":"triangular","low":0,"mode":' || CAST(CASE WHEN high_severity_signal_count > 0 THEN 7 ELSE 3 END AS VARCHAR)
       || ',"high":' || CAST(CASE WHEN high_severity_signal_count > 0 THEN 21 ELSE 10 END AS VARCHAR) || '},'
       || '"cost_per_day":{"type":"fixed","value":1},'
       || '"probability_of_delay":{"type":"triangular","low":0.10,"mode":'
@@ -111,10 +107,7 @@ SELECT
       '{"source_dataset":"sap_successfactors_talent_readiness","row_count":' || CAST(calculable_count + readiness_pending_count AS VARCHAR) || '},' ||
       '{"source_dataset":"sap_successfactors_talent_9box","row_count":' || CAST(nine_box_classified_count + nine_box_blocked_count AS VARCHAR) || '}' ||
     ']' AS evidence_json,
-    '[' ||
-      '{"type":"gold_dataset","id":"sap_successfactors_talent_operational_features"},' ||
-      '{"type":"wisdom_bit","id":"WB-TALENTO"}' ||
-    ']' AS evidence_refs_json,
+    '[{"type":"gold_dataset","id":"sap_successfactors_talent_operational_features"},{"type":"wisdom_bit","id":"WB-TALENTO"}]' AS evidence_refs_json,
     '{'
       || '"basis":"Agregado WB-TALENTO sin PII",'
       || '"decision_mode":"recommendation_only",'
@@ -137,3 +130,15 @@ SELECT
     'talent_simulation_inputs.v2' AS analysis_contract_version,
     CURRENT_TIMESTAMP AS generated_at
 FROM scored
+$sql$,
+       description = 'Variables agregadas internas para analisis supervisado WB-TALENTO.',
+       updated_at = NOW()
+ WHERE name = 'sap_successfactors_talent_simulation_inputs'
+   AND cartridge = 'sap_successfactors';
+
+INSERT INTO schema_migrations (filename, applied_at)
+VALUES
+    ('99zj_sap_successfactors_talent_operational_contract_v2.sql', NOW()),
+    ('99zja0_sap_successfactors_talent_feature_contract_v2.sql', NOW()),
+    ('99zja_sap_successfactors_talent_simulation_contract_v2.sql', NOW())
+ON CONFLICT (filename) DO NOTHING;

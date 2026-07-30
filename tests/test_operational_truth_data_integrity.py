@@ -15,6 +15,18 @@ READINESS = (
     ROOT
     / "cartridges/sap_successfactors/datasets/sap_successfactors_talent_readiness.sql"
 )
+NINE_BOX = (
+    ROOT / "cartridges/sap_successfactors/datasets/sap_successfactors_talent_9box.sql"
+)
+HISTORICAL_REPAIR = (
+    ROOT / "infra/init/99zo_sap_successfactors_talent_operational_truth_repair.sql"
+)
+BENCHMARK_INIT_PATHS = (
+    ROOT / "infra/init/99zj_sap_successfactors_talent_operational_contract_v2.sql",
+    ROOT / "infra/init/99zm_sap_successfactors_talent_operational_activation.sql",
+    ROOT / "infra/init/99zn_sap_successfactors_talent_runtime_repair.sql",
+    ROOT / "infra/init_gold/36_sap_successfactors_talent_benchmark_repair.sql",
+)
 REPLICON_KBS = ROOT / "cartridges/replicon/app/config/knowledge_bits.yaml"
 WIP_IDS = {"kb_wip_mensual", "kb_wip_resumen"}
 
@@ -51,11 +63,11 @@ def test_talent_readiness_requires_real_actor_and_date_for_approval() -> None:
 
     assert "WHEN approved = TRUE" in benchmark_cte
     assert "TRY_CAST(approved_at AS TIMESTAMP) IS NOT NULL" in benchmark_cte
-    assert re.search(
-        r"NULLIF\(TRIM\(CAST\(approved_by AS VARCHAR\)\), ''\) IS NOT NULL",
-        benchmark_cte,
-    )
-    assert "NOT LIKE 'system%'" in benchmark_cte
+    assert "TRY_CAST(approved_by AS BIGINT) > 0" in benchmark_cte
+    assert "NOT LIKE 'system%'" not in benchmark_cte
+    assert "approval_actor_source = 'server'" in benchmark_cte
+    assert "approval_evidence_ref" in benchmark_cte
+    assert "approval_authorization_ref" in benchmark_cte
     assert "END AS approval_valid" in benchmark_cte
     assert "WHERE enabled = TRUE" in benchmark_cte
     assert "ORDER BY approval_valid DESC" in benchmark_cte
@@ -64,6 +76,68 @@ def test_talent_readiness_requires_real_actor_and_date_for_approval() -> None:
     assert "PERCENT_RANK() OVER" in sql
     assert "PARTITION BY COALESCE(CAST(tenant_id AS VARCHAR), '')" in sql
     assert "ELSE 'insufficient_data'" in sql
+
+
+def test_talent_benchmark_needs_durable_server_side_approval() -> None:
+    benchmark = BENCHMARK.read_text(encoding="utf-8").lower()
+    readiness = READINESS.read_text(encoding="utf-8").lower()
+
+    assert "null as approval_evidence_ref" in benchmark
+    assert "null as approval_authorization_ref" in benchmark
+    assert "null as approval_actor_source" in benchmark
+    assert "false as approval_recorded_by_server" in benchmark
+    assert "false as approval_authorization_verified" in benchmark
+    assert "approval_recorded_by_server = true" in readiness
+    assert "approval_authorization_verified = true" in readiness
+    assert "benchmark_approval_valid" in readiness
+    assert "benchmark_provenance_status" in readiness
+    assert (
+        "when source_mode = 'benchmark_internal' and benchmark_approval_valid then null"
+        in readiness
+    )
+
+
+def test_every_packaged_or_init_benchmark_path_is_unreviewed() -> None:
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in (BENCHMARK, *BENCHMARK_INIT_PATHS)
+    ).lower()
+
+    assert "true as approved" not in combined
+    assert "talent_benchmark_internal.v1.approved" not in combined
+    assert "system:tenant_admin_request" not in combined
+    assert "false as approved" in combined
+    assert "approval_recorded_by_server" in combined
+    assert "approval_authorization_verified" in combined
+    assert "benchmark_internal_unreviewed" in combined
+    gold_repair = BENCHMARK_INIT_PATHS[-1].read_text(encoding="utf-8").lower()
+    assert "trim(cast(approved_by as text)) ~ ''^[1-9][0-9]*$''" in gold_repair
+
+
+def test_talent_runtime_has_no_decorative_observation_substitutes() -> None:
+    sql = (
+        READINESS.read_text(encoding="utf-8") + NINE_BOX.read_text(encoding="utf-8")
+    ).lower()
+
+    for value in ("35.0", "45.0", "70.0", "30.0"):
+        assert value not in sql
+    assert "when source_mode = 'insufficient_data' then 4" not in sql
+    assert "benchmark_raw_score" in sql
+    assert "when benchmark_approval_valid" in sql
+    assert "benchmark_performance_proxy" in sql
+    assert "null::double as benchmark_performance_proxy" in sql
+    assert "null::double as benchmark_potential_proxy" in sql
+
+
+def test_historical_talent_projection_is_fail_closed_until_recomputed() -> None:
+    sql = HISTORICAL_REPAIR.read_text(encoding="utf-8").lower()
+
+    assert "benchmark_approval_valid" in sql
+    assert "benchmark_provenance_status" in sql
+    assert "insufficient_data" in sql
+    assert "stale_unapproved_benchmark" in sql
+    assert "pggold" in sql
+    assert "public" in sql
+    assert "schema_migrations" in sql
 
 
 def test_replicon_wip_has_no_fabricated_currency_or_rate_fallbacks() -> None:

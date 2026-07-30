@@ -3,23 +3,29 @@
 -- Repair already-deployed WB-TALENTO workspaces after the operational feature
 -- pack rollout. The tenant-admin decision for this release is explicit: when
 -- C/P/A real is not exposed by the tenant, use an approved, versioned internal
--- benchmark as recommendation_only fallback instead of leaving Talent dark.
+-- benchmark only after a durable, server-recorded approval.
 
 UPDATE datasets
    SET sources = '["config/sap_successfactors/talent_benchmark_internal"]'::jsonb,
        sql_def = $sql$
 -- sap_successfactors_talent_benchmark_internal  (gold)  cartridge: sap_successfactors
 -- sources: ["config/sap_successfactors/talent_benchmark_internal"]
--- description: Contrato interno versionado para clasificacion Talent. Fallback operativo aprobado y auditable cuando C/P/A real no esta expuesto por el tenant.
+-- description: Referencia interna no revisada; nunca se activa sin aprobación durable registrada por servidor.
 
 SELECT
     'WB-TALENTO' AS source_id,
-    'talent_benchmark_internal.v1.approved' AS benchmark_version,
+    'talent_benchmark_internal.v1.unreviewed' AS benchmark_version,
     TRUE AS enabled,
-    TRUE AS approved,
+    FALSE AS approved,
     NULL AS approved_by,
     NULL AS approved_at,
-    'wb_talento_operational_activation' AS approval_source,
+    'system_default' AS approval_source,
+    NULL AS approval_actor_source,
+    FALSE AS approval_recorded_by_server,
+    NULL AS approval_evidence_ref,
+    NULL AS approval_authorization_ref,
+    FALSE AS approval_authorization_verified,
+    'unreviewed' AS approval_status,
     0.80 AS minimum_profile_coverage,
     80.0 AS readiness_high_threshold,
     60.0 AS readiness_medium_threshold,
@@ -30,11 +36,11 @@ SELECT
     0.60 AS competency_weight,
     0.25 AS role_coverage_weight,
     0.15 AS tenure_weight,
-    '[]' AS blockers,
+    '["benchmark_internal_unreviewed"]' AS blockers,
     'talent_benchmark_internal.v1' AS contract_version,
     CURRENT_TIMESTAMP AS materialized_at
 $sql$,
-       description = 'Benchmark interno versionado aprobado para WB-TALENTO.',
+       description = 'Benchmark interno no revisado para WB-TALENTO.',
        updated_at = NOW()
  WHERE name = 'sap_successfactors_talent_benchmark_internal'
    AND cartridge = 'sap_successfactors';

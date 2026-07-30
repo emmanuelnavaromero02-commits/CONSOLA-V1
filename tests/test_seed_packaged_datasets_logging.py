@@ -94,9 +94,9 @@ async def test_workspace_missing_cartridge_fails_closed(seed_module, monkeypatch
 
 
 def test_seed_packaged_datasets_sets_rls_scope_before_writes(seed_module):
+    row_module = importlib.import_module("app.services.seed_packaged_dataset_rows")
     seed_source = inspect.getsource(seed_module.seed_packaged_datasets)
-    writer_source = inspect.getsource(seed_module._seed_packaged_dataset_rows)
-    module_source = inspect.getsource(seed_module)
+    module_source = inspect.getsource(seed_module) + inspect.getsource(row_module)
 
     assert "SELECT id, tenant_id" in seed_source
     assert "conn.transaction()" in seed_source
@@ -106,17 +106,18 @@ def test_seed_packaged_datasets_sets_rls_scope_before_writes(seed_module):
 
 
 def test_seed_packaged_datasets_seeds_every_workspace(seed_module):
-    source = inspect.getsource(seed_module)
+    row_module = importlib.import_module("app.services.seed_packaged_dataset_rows")
+    source = inspect.getsource(seed_module) + inspect.getsource(row_module)
     seed_source = inspect.getsource(seed_module.seed_packaged_datasets)
     writer_source = inspect.getsource(seed_module._seed_packaged_dataset_rows)
-    update_source = inspect.getsource(seed_module._update_dataset_row)
+    update_source = inspect.getsource(row_module.update_dataset_row)
 
-    assert "def _datasets_workspace_name_conflict_available" in source
+    assert "def datasets_workspace_name_conflict_available" in source
     assert "_require_workspace_scoped_dataset_schema(conn)" in seed_source
     assert "target_workspaces=list(workspaces)" in seed_source
     assert "LOCK TABLE public.datasets IN ROW SHARE MODE" in source
     assert "datasets_workspace_name_key is required" in source
-    assert "for workspace in ordered_workspaces:" in writer_source
+    assert "for workspace in workspaces:" in writer_source
     assert "def _upsert_dataset_row" in source
     assert "asyncpg.UniqueViolationError" in source
     assert "ON CONFLICT" not in writer_source
@@ -124,6 +125,14 @@ def test_seed_packaged_datasets_seeds_every_workspace(seed_module):
     assert "DELETE FROM datasets" not in writer_source
     assert update_source.count("WHERE name = $1") == 2
     assert update_source.count("AND workspace_id") == 2
+
+
+def test_seed_insert_uses_valid_empty_json_for_both_schema_shapes(seed_module):
+    row_module = importlib.import_module("app.services.seed_packaged_dataset_rows")
+    source = inspect.getsource(row_module.insert_dataset_row)
+
+    assert source.count("'{}'::jsonb") == 2
+    assert "'{{}}'::jsonb" not in source
 
 
 def test_seed_packaged_datasets_for_workspace_is_scoped(seed_module):
