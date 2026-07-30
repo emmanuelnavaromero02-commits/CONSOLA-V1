@@ -114,6 +114,22 @@ describe("DashboardPage: ausencia/error no afirma éxito", () => {
     expect(markup).toContain("Sin movimientos");
   });
 
+  it("error de refetch con datos cacheados domina cualquier claim de actualidad", () => {
+    kpisState.current = {
+      data: fullPayload(),
+      isLoading: false,
+      isError: true,
+      refetch: async () => undefined,
+    };
+
+    const markup = renderToStaticMarkup(<DashboardPage />);
+
+    expect(markup).toContain("Último dato disponible; actualización fallida");
+    expect(markup).not.toContain("Todos en línea");
+    expect(markup).not.toContain("Sin movimientos");
+    expect(markup).toContain("No se pudieron cargar los indicadores.");
+  });
+
   it("con desconectados y acciones destructivas reales no afirma éxito", () => {
     kpisState.current = {
       data: fullPayload({
@@ -130,6 +146,69 @@ describe("DashboardPage: ausencia/error no afirma éxito", () => {
     expect(markup).toContain("2 sin conexión");
     expect(markup).toContain("Revisar audit log");
     expect(markup).not.toContain("Todos en línea");
+    expect(markup).not.toContain("Sin movimientos");
+  });
+});
+
+describe("DashboardPage: robustez ante payload parcial o inválido", () => {
+  function payloadWithout(section: string): KpiPayload {
+    const partial = { ...fullPayload() } as Record<string, unknown>;
+    delete partial[section];
+    return partial as unknown as KpiPayload;
+  }
+
+  it.each(["cartridges", "users", "data_freshness", "extractions", "copilot", "audit"])(
+    "no lanza ni afirma éxito cuando falta la sección %s",
+    (section) => {
+      kpisState.current = {
+        data: payloadWithout(section),
+        isLoading: false,
+        isError: false,
+        refetch: async () => undefined,
+      };
+
+      const markup = renderToStaticMarkup(<DashboardPage />);
+
+      expect(markup).toContain("Panel");
+      if (section === "cartridges") expect(markup).not.toContain("Todos en línea");
+      if (section === "audit") expect(markup).not.toContain("Sin movimientos");
+    },
+  );
+
+  it("escalares ausentes o no finitos no se convierten en cero", () => {
+    kpisState.current = {
+      data: fullPayload({
+        extractions: { today: Number.NaN, week: undefined } as unknown as KpiPayload["extractions"],
+        users: { active_today: undefined, total: 9 } as unknown as KpiPayload["users"],
+      }),
+      isLoading: false,
+      isError: false,
+      refetch: async () => undefined,
+    };
+
+    const markup = renderToStaticMarkup(<DashboardPage />);
+
+    expect(markup).not.toContain("NaN");
+    expect(markup).not.toContain("undefined esta semana");
+    const extractionsCard = markup.split('data-label="Extracciones hoy"')[1]?.split("</div>")[0] ?? "";
+    expect(extractionsCard).not.toContain('data-numeric-value="0"');
+    expect(extractionsCard).not.toContain(">0<");
+  });
+
+  it("payload con secciones presentes pero escalares ausentes omite numericValue", () => {
+    kpisState.current = {
+      data: fullPayload({
+        audit: {} as unknown as KpiPayload["audit"],
+      }),
+      isLoading: false,
+      isError: false,
+      refetch: async () => undefined,
+    };
+
+    const markup = renderToStaticMarkup(<DashboardPage />);
+    const auditCard = markup.split('data-label="Eventos hoy"')[1]?.split("</div>")[0] ?? "";
+
+    expect(auditCard).not.toContain("data-numeric-value");
     expect(markup).not.toContain("Sin movimientos");
   });
 });
