@@ -837,22 +837,9 @@ def _monitor_with_engine_results(
 
 
 def _monitor_should_alert(contract: dict[str, Any], payload: dict[str, Any]) -> bool:
-    threshold = contract.get("threshold") if isinstance(contract.get("threshold"), dict) else {}
-    status = str(payload.get("status") or "").strip().lower()
-    blocked = bool(_monitor_blockers(payload))
-    signal_count = _monitor_signal_count(payload)
+    from app.services.monitor_alert_policy import monitor_should_alert
 
-    status_not_in = threshold.get("status_not_in")
-    if isinstance(status_not_in, list) and status and status not in {str(item).lower() for item in status_not_in}:
-        return True
-    if threshold.get("blockers_present") and blocked:
-        return True
-    try:
-        if signal_count >= int(threshold.get("min_signal_count") or 0) and signal_count > 0:
-            return True
-    except Exception:
-        pass
-    return bool(blocked or signal_count or (status and status != "ready"))
+    return monitor_should_alert(contract, payload)
 
 
 def _monitor_alert_args(
