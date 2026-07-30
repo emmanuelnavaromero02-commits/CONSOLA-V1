@@ -356,6 +356,17 @@ def _security_context(body: dict) -> dict:
     sec = body.get("security_context") or {}
     if not isinstance(sec, dict):
         return {}
+    if sec.get("trusted") and sec.get("source") == "airflow":
+        try:
+            from app.runtime_security_context import validate_runtime_context
+
+            validate_runtime_context(
+                sec,
+                body=body,
+                internal_service=str(body.get("_verified_internal_service") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(403, "Invalid signed security_context") from exc
     if not _security_context_signature_valid(sec):
         if sec.get("trusted"):
             raise HTTPException(403, "Invalid signed security_context")
