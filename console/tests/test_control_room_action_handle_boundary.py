@@ -25,7 +25,7 @@ def _handle(item: dict) -> str:
 
 
 @pytest.mark.asyncio
-async def test_handle_resolves_only_from_current_scoped_signed_binding():
+async def test_legacy_signed_handle_is_not_public_authority():
     item = action_item()
     with (
         patch.object(
@@ -39,13 +39,11 @@ async def test_handle_resolves_only_from_current_scoped_signed_binding():
             AsyncMock(return_value=frozenset({"request_owner_review"})),
         ),
     ):
-        result = await resolve_business_action_handle(OPERATOR, _handle(item))
+        with pytest.raises(HTTPException) as rejected:
+            await resolve_business_action_handle(OPERATOR, _handle(item))
 
-    assert result == ResolvedActionHandle(
-        item_id="business-1",
-        template_id="request_owner_review",
-        binding_id=_handle(item),
-    )
+    assert rejected.value.status_code == 404
+    assert rejected.value.detail == "action binding not found"
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from app.services.control_room.business_action_catalog import (
     ENABLED_ACTION_TEMPLATE_IDS_SQL,
     load_enabled_action_template_ids,
 )
+from app.services.control_room.business_action_public_projection import public_action
 from control_room_surface_fixtures import (
     OPERATOR,
     VIEWER,
@@ -69,23 +70,57 @@ async def test_catalog_is_one_scoped_read_and_filters_unknown_templates():
 
 
 @pytest.mark.asyncio
-async def test_v2_route_loads_catalog_once_for_many_items():
+async def test_v2_route_does_not_publish_fixture_only_bindings():
     items = tuple(action_item(f"business-{index}") for index in range(20))
     collect = AsyncMock(return_value=snapshot(items=items))
     catalog = AsyncMock(return_value=frozenset({"request_owner_review"}))
+    producer = AsyncMock(return_value={})
     with (
         patch.object(surfaces, "collect_surface_snapshot", collect),
         patch.object(surfaces, "load_enabled_action_template_ids", catalog),
+        patch.object(surfaces, "issue_action_bindings", producer),
     ):
         response = await surfaces.control_room_experience_v2(OPERATOR)
 
     assert sum(len(section.facts) for section in response.sections) == 20
     catalog.assert_awaited_once_with(OPERATOR)
-    assert all(
-        len(fact.actions) == 1
-        for section in response.sections
-        for fact in section.facts
+    producer.assert_awaited_once_with(
+        OPERATOR,
+        collect.return_value,
+        enabled_template_ids=frozenset({"request_owner_review"}),
     )
+    assert all(
+        fact.actions == [] for section in response.sections for fact in section.facts
+    )
+
+
+@pytest.mark.asyncio
+async def test_v2_route_projects_only_server_owned_authority_actions():
+    item = business_item()
+    current_snapshot = snapshot(items=(item,))
+    producer = AsyncMock(return_value={str(item["id"]): (public_action("a" * 64),)})
+    with (
+        patch.object(
+            surfaces,
+            "collect_surface_snapshot",
+            AsyncMock(return_value=current_snapshot),
+        ),
+        patch.object(
+            surfaces,
+            "load_enabled_action_template_ids",
+            AsyncMock(return_value=frozenset({"create_followup_task"})),
+        ),
+        patch.object(surfaces, "issue_action_bindings", producer),
+    ):
+        response = await surfaces.control_room_experience_v2(OPERATOR)
+
+    action = response.sections[0].facts[0].actions[0]
+    assert action.model_dump(exclude_none=True) == {
+        "action_handle": "a" * 64,
+        "label": "Crear seguimiento operativo",
+        "enabled": True,
+        "requires_approval": True,
+    }
 
 
 @pytest.mark.asyncio

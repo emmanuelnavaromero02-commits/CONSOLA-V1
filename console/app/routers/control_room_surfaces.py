@@ -13,6 +13,9 @@ from app.schemas.control_room_experience_actions import (
 from app.services.control_room.business_action_catalog import (
     load_enabled_action_template_ids,
 )
+from app.services.control_room.business_action_binding_producer import (
+    issue_action_bindings,
+)
 from app.services.control_room.business_experience import build_business_experience
 from app.services.control_room.business_experience_v2 import (
     build_business_experience_v2,
@@ -55,10 +58,16 @@ async def control_room_experience_v2(
         if has_permission(user, "control_room.write")
         else frozenset()
     )
+    actions_by_item = await issue_action_bindings(
+        user,
+        snapshot,
+        enabled_template_ids=enabled_template_ids,
+    )
     return build_business_experience_v2(
         snapshot,
         user=user,
         enabled_template_ids=enabled_template_ids,
+        actions_by_item=actions_by_item,
     )
 
 

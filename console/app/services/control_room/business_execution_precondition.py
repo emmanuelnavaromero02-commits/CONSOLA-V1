@@ -153,17 +153,26 @@ async def require_matching_dry_run(
     user: Mapping[str, Any],
     item: Mapping[str, Any],
     template_id: str,
+    actor_user_id: int | None = None,
+    action_run_id: int | None = None,
+    adapter_name: str | None = None,
+    for_update: bool = False,
 ) -> dict[str, Any]:
-    _tenant_id, workspace_id = workspace_scope(user)
+    tenant_id, workspace_id = workspace_scope(user)
     contract = dry_run_contract(item, template_id=template_id)
     if not all(
         contract.get(key)
         for key in ("item_id", "decision_id", "template_id", "fingerprint")
     ):
         raise _missing_dry_run()
+    lock = " FOR UPDATE" if for_update else " FOR SHARE"
     row = await conn.fetchrow(
         """
-        SELECT id, metadata, dry_run_result
+        SELECT id, tenant_id::text AS tenant_id,
+               workspace_id::text AS workspace_id, item_id, decision_id,
+               action_type, adapter_name, mode, status, actor_id,
+               input, metadata, dry_run_result, completed_at, updated_at,
+               action_intent_id::text AS action_intent_id
           FROM action_runs
          WHERE workspace_id = $1::uuid
            AND item_id = $2
@@ -172,18 +181,27 @@ async def require_matching_dry_run(
            AND mode = 'dry_run'
            AND status = 'dry_run_completed'
            AND metadata -> $5 = $6::jsonb
-           AND dry_run_result ->> 'ok' = 'true'
-           AND dry_run_result ->> 'validated' = 'true'
+           AND dry_run_result -> 'ok' = 'true'::jsonb
+           AND dry_run_result -> 'validated' = 'true'::jsonb
+           AND completed_at IS NOT NULL
+           AND ($7::uuid IS NULL OR tenant_id = $7::uuid)
+           AND ($8::bigint IS NULL OR actor_id = $8)
+           AND ($9::bigint IS NULL OR id = $9)
+           AND ($10::text IS NULL OR adapter_name = $10)
          ORDER BY completed_at DESC NULLS LAST, updated_at DESC
          LIMIT 1
-         FOR SHARE
-        """,
+        """
+        + lock,
         workspace_id,
         contract["item_id"],
         int(contract["decision_id"]),
         contract["template_id"],
         DRY_RUN_CONTRACT_KEY,
         json.dumps(contract, sort_keys=True, separators=(",", ":")),
+        tenant_id,
+        actor_user_id,
+        action_run_id,
+        adapter_name,
     )
     if not row:
         raise _missing_dry_run()

@@ -7,6 +7,9 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.control_room.business_action_registry import ACTION_TEMPLATES
+from app.services.control_room.business_action_preview_capability import (
+    contextual_authority_bindings,
+)
 from app.services.control_room.business_cartridge_scope import (
     business_cartridge_allowed,
 )
@@ -38,11 +41,18 @@ def authorized_explicit_action_bindings(
     ):
         return ()
     enabled = set(enabled_template_ids) if enabled_template_ids is not None else None
-    return tuple(
+    legacy = tuple(
         binding
         for binding in verified_explicit_action_bindings(item, clock=clock)
         if enabled is None or binding.template_id in enabled
     )
+    authority = contextual_authority_bindings(
+        item,
+        user,
+        enabled_template_ids=enabled_template_ids,
+        clock=clock,
+    )
+    return tuple(sorted((*legacy, *authority), key=lambda value: value.binding_id))
 
 
 def require_explicit_action_template(
