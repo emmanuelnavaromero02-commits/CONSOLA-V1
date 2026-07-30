@@ -6,8 +6,8 @@ import {
   Ban,
   CheckCircle2,
   ClipboardCheck,
+  Info,
   Loader2,
-  Play,
   RefreshCw,
   ShieldCheck,
   XCircle,
@@ -18,7 +18,6 @@ import { toast } from "sonner";
 import {
   approveSupervisedAction,
   cancelSupervisedAction,
-  executeSupervisedAction,
   getSupervisedAction,
   listSupervisedActions,
   rejectSupervisedAction,
@@ -29,8 +28,20 @@ import { cn } from "@/lib/utils";
 
 const EMPTY_ACTIONS: SupervisedAction[] = [];
 
+// Estados terminales según el contrato (status/state ya entregados por la
+// API): sobre una acción ejecutada o cancelada no procede ninguna mutación.
+const TERMINAL_STATES = new Set(["executed", "completed", "cancelled", "canceled"]);
+
 function actionId(action: SupervisedAction): string {
   return String(action.id || action.action_id || "");
+}
+
+function actionState(action: SupervisedAction): string {
+  return String(action.status || action.state || "");
+}
+
+function isTerminal(action: SupervisedAction): boolean {
+  return TERMINAL_STATES.has(actionState(action));
 }
 
 function actionTitle(action: SupervisedAction): string {
@@ -109,6 +120,7 @@ export default function SupervisedActionsPage() {
   const rows = actions.data?.actions ?? EMPTY_ACTIONS;
   const activeAction = selected.data || rows.find((row) => actionId(row) === selectedId) || rows[0];
   const currentId = activeAction ? actionId(activeAction) : "";
+  const terminal = activeAction ? isTerminal(activeAction) : false;
 
   const refresh = async () => {
     await Promise.all([
@@ -117,12 +129,14 @@ export default function SupervisedActionsPage() {
     ]);
   };
 
-  const validate = useSupervisedActionMutation(currentId, "Acción validada.", (id) => validateSupervisedAction(id));
-  const approve = useSupervisedActionMutation(currentId, "Acción aprobada.", (id) => approveSupervisedAction(id));
-  const reject = useSupervisedActionMutation(currentId, "Acción rechazada.", (id) => rejectSupervisedAction(id));
-  const execute = useSupervisedActionMutation(currentId, "Ejecución solicitada.", (id) => executeSupervisedAction(id));
-  const cancel = useSupervisedActionMutation(currentId, "Acción cancelada.", (id) => cancelSupervisedAction(id));
-  const busy = validate.isPending || approve.isPending || reject.isPending || execute.isPending || cancel.isPending;
+  // Un idempotency_key nuevo por intento de mutación (contrato:
+  // ActionMutationRequest.idempotency_key) para que reintentos de red no
+  // dupliquen efectos en el backend.
+  const validate = useSupervisedActionMutation(currentId, "Acción validada.", (id) => validateSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
+  const approve = useSupervisedActionMutation(currentId, "Acción aprobada.", (id) => approveSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
+  const reject = useSupervisedActionMutation(currentId, "Acción rechazada.", (id) => rejectSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
+  const cancel = useSupervisedActionMutation(currentId, "Acción cancelada.", (id) => cancelSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
+  const busy = validate.isPending || approve.isPending || reject.isPending || cancel.isPending;
 
   const summary = useMemo(() => {
     const pending = rows.filter((row) => ["prepared", "proposed", "pending", "requires_approval", "awaiting_approval"].includes(String(row.status || row.state || ""))).length;
@@ -139,7 +153,7 @@ export default function SupervisedActionsPage() {
             <p className="text-xs font-semibold uppercase text-primary">OMEGA</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Acciones Supervisadas</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Validación, aprobación y ejecución controlada de acciones preparadas por la consola.
+              Validación, aprobación y seguimiento de acciones preparadas por la consola.
             </p>
           </div>
           <button
@@ -165,12 +179,12 @@ export default function SupervisedActionsPage() {
               <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">{rows.length}</span>
             </div>
             {actions.isLoading ? (
-              <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
+              <div role="status" className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
                 <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
                 Cargando
               </div>
             ) : actions.error ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 No se pudieron cargar las acciones.
               </div>
             ) : rows.length === 0 ? (
@@ -218,16 +232,20 @@ export default function SupervisedActionsPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <ActionButton label="Validar" icon={ClipboardCheck} disabled={busy || !currentId} onClick={() => validate.mutate()} />
-                    <ActionButton label="Aprobar" icon={CheckCircle2} disabled={busy || !currentId} onClick={() => approve.mutate()} />
-                    <ActionButton label="Rechazar" icon={XCircle} disabled={busy || !currentId} onClick={() => reject.mutate()} />
-                    <ActionButton label="Ejecutar" icon={Play} disabled={busy || !currentId} onClick={() => execute.mutate()} primary />
-                    <ActionButton label="Cancelar" icon={Ban} disabled={busy || !currentId} onClick={() => cancel.mutate()} />
+                    <ActionButton label="Validar" icon={ClipboardCheck} disabled={busy || !currentId || terminal} onClick={() => validate.mutate()} />
+                    <ActionButton label="Aprobar" icon={CheckCircle2} disabled={busy || !currentId || terminal} onClick={() => approve.mutate()} />
+                    <ActionButton label="Rechazar" icon={XCircle} disabled={busy || !currentId || terminal} onClick={() => reject.mutate()} />
+                    <ActionButton label="Cancelar" icon={Ban} disabled={busy || !currentId || terminal} onClick={() => cancel.mutate()} />
                   </div>
                 </div>
 
+                <p role="note" className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
+                  <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  La ejecución no está disponible desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).
+                </p>
+
                 {selected.isLoading ? (
-                  <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <div role="status" className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
                     Cargando detalle
                   </div>
@@ -241,7 +259,7 @@ export default function SupervisedActionsPage() {
                 </div>
 
                 {activeAction.last_error ? (
-                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                     {activeAction.last_error}
                   </div>
                 ) : null}

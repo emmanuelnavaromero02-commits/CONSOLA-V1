@@ -13,7 +13,7 @@ import {
   listTenants,
   listVaultConnections,
   listVaultSecrets,
-  triggerOperationWorkflow,
+  planOperationWorkflow,
   upsertVaultConnection,
   upsertVaultSecret,
 } from "./client";
@@ -158,27 +158,26 @@ describe("operations companies client", () => {
 });
 
 describe("operations workflow client", () => {
-  it("plans then executes a planning workflow and tolerates already-planned 409", async () => {
-    const conflict = Object.assign(new Error("already planned"), { status: 409 });
+  it("plans a workflow calling only the plan endpoint, never execute", async () => {
     const workflow: OperationWorkflow = {
       id: "wf 1",
-      status: "planning",
+      status: "created",
     };
-    apiMock.post
-      .mockRejectedValueOnce(conflict)
-      .mockResolvedValueOnce({
-        data: { ok: true, workflow_id: "wf 1", action: "execute" },
-        status: 200,
-        headers: new Headers(),
-        requestId: "r",
-      });
+    apiMock.post.mockResolvedValueOnce({
+      data: { ok: true, workflow_id: "wf 1", action: "plan" },
+      status: 200,
+      headers: new Headers(),
+      requestId: "r",
+    });
 
-    await expect(triggerOperationWorkflow(workflow)).resolves.toMatchObject({
+    await expect(planOperationWorkflow(workflow)).resolves.toMatchObject({
       ok: true,
       workflow_id: "wf 1",
     });
-    expect(apiMock.post).toHaveBeenNthCalledWith(1, "/api/copilot/workflow/wf%201/plan", {});
-    expect(apiMock.post).toHaveBeenNthCalledWith(2, "/api/copilot/workflow/wf%201/execute", {});
+    expect(apiMock.post).toHaveBeenCalledTimes(1);
+    expect(apiMock.post).toHaveBeenCalledWith("/api/copilot/workflow/wf%201/plan", {});
+    const urls = apiMock.post.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes("/execute"))).toBe(false);
   });
 
   it("cancels workflows through the encoded endpoint", async () => {
