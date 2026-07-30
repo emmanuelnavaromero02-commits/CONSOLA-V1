@@ -75,10 +75,26 @@ describe("AgentsOpsPanel public projection", () => {
     expect(markup).toContain("2 capacidades operativas");
     expect(markup).toContain("Cobertura reciente");
     expect(markup).toContain("Análisis operativo");
+    // generated_at del contrato visible como marca de actualización semántica.
+    expect(markup).toContain("Actualizado:");
+    expect(markup).toContain('dateTime="2026-07-26T10:00:00Z"');
     expect(markup).not.toContain("undefined");
     expect(markup).not.toContain("Identificador interno");
     expect(markup).not.toContain("tools_used");
     expect(markup).not.toContain("cartridge_id");
+  });
+
+  it("shows a dash instead of fabricated zeros when the payload is unavailable", () => {
+    const markup = renderToStaticMarkup(
+      <AgentsOpsPanel payload={null} loading={false} error="falló" collapsed={false} onToggle={() => undefined} />,
+    );
+
+    expect(markup).toContain("—");
+    expect(markup).not.toContain("0 registrados");
+    expect(markup).not.toContain("0 con contrato");
+    expect(markup).not.toContain("0 con error");
+    expect(markup).not.toContain("0 históricas");
+    expect(markup).not.toContain("Actualizado:");
   });
 
   it("accepts a minimal public payload with optional collections omitted", () => {

@@ -79,14 +79,24 @@ function isTalentApp(app: AnalyticsApp): boolean {
   return /(talent|readiness|skill|9box|nine|succession|performance|compensation)/.test(token);
 }
 
+function sourceReadiness(source: SourceStatus): ControlRoomStatus {
+  if (source.status && source.status !== "ok") return source.status;
+  if (source.data_readiness) return source.data_readiness;
+  return source.status === "ok" ? "ready" : "missing";
+}
+
+// Peor-estado-primero (mismo criterio que businessFrontStatus en SuccessFactorsGoldPanel):
+// una fuente lista no oculta fuentes bloqueadas, faltantes o parciales del mismo módulo.
 function moduleStatus(module: NativeAnalyticModule, sources: SourceStatus[]): ControlRoomStatus {
   if (module.status === "ready") return "ready";
   if (module.status === "unready") return "partial";
   if (module.status === "dataset_metadata_missing") return "missing";
   const related = relatedSources(module, sources);
-  if (related.some((source) => source.data_readiness === "ready" || source.status === "ok")) return "ready";
-  if (related.some((source) => source.data_readiness === "partial" || source.status === "empty")) return "partial";
-  if (related.length) return related[0]?.data_readiness || related[0]?.status || "missing";
+  if (!related.length) return "partial";
+  const statuses = related.map(sourceReadiness);
+  for (const status of ["no_permission", "blocked", "unavailable", "invalid_schema", "missing", "stub", "partial", "empty", "ready"] as const) {
+    if (statuses.includes(status)) return status;
+  }
   return "partial";
 }
 
@@ -247,8 +257,11 @@ export function AnalyticAppsPanel({
   const modules = useMemo(() => buildNativeModules(apps, cartridge, agentsOps), [agentsOps, apps, cartridge]);
   const activeModule = modules.find((module) => module.id === selectedApp) || modules[0] || null;
   const readyCount = modules.filter((module) => moduleStatus(module, sources) === "ready").length;
+  const appsReadiness = payload?.apps_readiness;
+  const hiddenUnreadyCount = appsReadiness?.hidden_unready_count ?? 0;
+  const unavailableDatasets = appsReadiness?.unavailable_datasets ?? [];
   const emptyMessage =
-    payload?.apps_readiness?.message ||
+    appsReadiness?.message ||
     payload?.apps_scope?.message ||
     "No hay modulos analiticos publicados para este workspace.";
 
@@ -274,6 +287,17 @@ export function AnalyticAppsPanel({
 
       <div className="space-y-4 p-4">
         {error ? <OperationalNotice tone="error" title="No se pudo actualizar el catalogo analitico">{error}</OperationalNotice> : null}
+        {hiddenUnreadyCount > 0 || unavailableDatasets.length ? (
+          <OperationalNotice tone="warning" title="Módulos ocultos por falta de datos">
+            {hiddenUnreadyCount > 0
+              ? `${hiddenUnreadyCount} ${hiddenUnreadyCount === 1 ? "módulo se ocultó" : "módulos se ocultaron"} porque sus datos no están listos.`
+              : null}
+            {unavailableDatasets.length ? (
+              <span className="mt-1 block">Conjuntos de datos no disponibles: {unavailableDatasets.join(", ")}.</span>
+            ) : null}
+            {appsReadiness?.message ? <span className="mt-1 block">{appsReadiness.message}</span> : null}
+          </OperationalNotice>
+        ) : null}
         {loading && !modules.length ? (
           <div className="grid gap-3 md:grid-cols-3">
             {Array.from({ length: 3 }).map((_, index) => (
@@ -658,7 +682,10 @@ function WidgetPanel({ widget }: { widget: SfGoldWidget | SfTalentWidget }) {
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase text-cyan-300/80">{sourceLabel}</p>
-          <h4 className="text-base font-semibold text-white">{widget.title || "Indicador"}</h4>
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-base font-semibold text-white">{widget.title || "Indicador"}</h4>
+            {widget.status ? <ReadinessBadge status={widget.status} compact /> : null}
+          </div>
         </div>
         <strong className="text-2xl font-semibold text-white">{widgetValue(widget)}</strong>
       </div>

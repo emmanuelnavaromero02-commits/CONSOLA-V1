@@ -104,7 +104,7 @@ export function MarketDecisionEvidenceView({ payload, loading, running, error, o
           className="inline-flex min-h-[40px] items-center gap-2 rounded-md bg-sky-600 px-3 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {running ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Play aria-hidden className="h-4 w-4" />}
-          {running ? "Validando" : "Ejecutar validación"}
+          {running ? "Validando" : "Recalcular validación"}
         </button>
       </div>
 
@@ -112,6 +112,18 @@ export function MarketDecisionEvidenceView({ payload, loading, running, error, o
         <p className="mt-3 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</p>
       ) : null}
 
+      {payload === null && !error ? (
+        <div role="status" aria-live="polite" className="mt-4 rounded-md border p-4 dark:border-sky-400/20">
+          <p className="text-sm text-muted-foreground">Cargando validación…</p>
+          <div aria-hidden className="mt-3 space-y-2">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <span key={index} className="block h-10 animate-pulse rounded-md bg-muted/60 dark:bg-slate-800/60" />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {payload ? (
       <div className="mt-4 divide-y rounded-md border dark:divide-sky-400/10 dark:border-sky-400/20">
         <StageRow
           icon={Activity}
@@ -127,14 +139,14 @@ export function MarketDecisionEvidenceView({ payload, loading, running, error, o
         />
         <StageRow
           icon={BrainCircuit}
-          title="Monte Carlo"
+          title="Análisis de escenarios"
           detail={simulation?.available ? `Banda P10–P90: ${number(simulation.p10)}–${number(simulation.p90)}` : "Pendiente de ejecución manual"}
           status={simulationStatus}
         />
         <StageRow
           icon={ShieldCheck}
-          title="Bayes"
-          detail={`${number(bayes?.sample_count, 0)} muestras · evidencia externa sin recalibración automática`}
+          title="Ajuste por historial"
+          detail={`${number(bayes?.sample_count, 0)} muestras · evidencia externa sin ajuste automático`}
           status={bayes?.status || "insufficient_data"}
         />
         <StageRow
@@ -144,10 +156,16 @@ export function MarketDecisionEvidenceView({ payload, loading, running, error, o
           status={orchestrationStatus}
         />
       </div>
+      ) : null}
 
       {payload?.status === "partial" ? (
         <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
-          Resultado parcial: SuccessFactors usa referencia interna o Bayes aún no tiene resultados observados.
+          Resultado parcial: SuccessFactors usa referencia interna o el ajuste por historial aún no tiene resultados observados.
+        </p>
+      ) : null}
+      {payload?.status === "insufficient_data" ? (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+          Datos insuficientes: la validación no cuenta con evidencia mínima y no se muestra un resultado simulado.
         </p>
       ) : null}
     </section>

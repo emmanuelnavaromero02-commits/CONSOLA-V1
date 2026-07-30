@@ -66,12 +66,51 @@ describe("MarketDecisionEvidenceView", () => {
     expect(markup).toContain("1,288 empleados");
     expect(markup).toContain("USD/MXN al 2026-07-10");
     expect(markup).toContain("Banda P10–P90: 40–180");
-    expect(markup).toContain("evidencia externa sin recalibración automática");
+    expect(markup).toContain("evidencia externa sin ajuste automático");
     expect(markup).toContain("Sin causalidad declarada, acción automática ni write-back");
     expect(markup).toContain("Referencia interna");
   });
 
-  it("does not invent values before the first validation", () => {
+  it("uses business labels instead of internal engine names", () => {
+    const markup = renderToStaticMarkup(
+      <MarketDecisionEvidenceView
+        payload={payload}
+        loading={false}
+        running={false}
+        error=""
+        onRun={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Análisis de escenarios");
+    expect(markup).toContain("Ajuste por historial");
+    expect(markup).toContain("Recalcular validación");
+    expect(markup).not.toContain("Monte Carlo");
+    expect(markup).not.toContain("Bayes");
+    expect(markup).not.toContain("Ejecutar validación");
+  });
+
+  it("shows an accessible loading state instead of fake insufficient stages while payload is null", () => {
+    const markup = renderToStaticMarkup(
+      <MarketDecisionEvidenceView
+        payload={null}
+        loading={true}
+        running={false}
+        error=""
+        onRun={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("Cargando validación");
+    // La carga no debe confundirse con insuficiencia real de datos.
+    expect(markup).not.toContain("Sin evidencia histórica");
+    expect(markup).not.toContain("Sin contexto usado todavía");
+    expect(markup).not.toContain("Pendiente de ejecución manual");
+    expect(markup).not.toContain("1,288");
+  });
+
+  it("keeps the loading state when the request finished without payload and without error", () => {
     const markup = renderToStaticMarkup(
       <MarketDecisionEvidenceView
         payload={null}
@@ -82,8 +121,29 @@ describe("MarketDecisionEvidenceView", () => {
       />,
     );
 
-    expect(markup).toContain("Sin contexto usado todavía");
-    expect(markup).toContain("Pendiente de ejecución manual");
-    expect(markup).not.toContain("1,288");
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("Cargando validación");
+    expect(markup).not.toContain("Sin evidencia histórica");
+  });
+
+  it("shows the insufficient_data banner from the contract status", () => {
+    const insufficient: MarketDecisionValidationPayload = {
+      ...payload,
+      status: "insufficient_data",
+      simulation: { available: false, market_evidence_count: 0 },
+      orchestration: { available: false, action_recommended: false },
+    };
+    const markup = renderToStaticMarkup(
+      <MarketDecisionEvidenceView
+        payload={insufficient}
+        loading={false}
+        running={false}
+        error=""
+        onRun={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Datos insuficientes: la validación no cuenta con evidencia mínima");
+    expect(markup).not.toContain("Resultado parcial");
   });
 });

@@ -6,6 +6,7 @@ const PRODUCT_SURFACES = [
   new URL("../app/(shell)/operational-intelligence/page.tsx", import.meta.url),
   new URL("../app/(shell)/supervised-actions/page.tsx", import.meta.url),
   new URL("../components/workspace/CopilotActionsConsole.tsx", import.meta.url),
+  new URL("../components/control-room/MarketDecisionEvidencePanel.tsx", import.meta.url),
 ];
 
 const INTERNAL_TERMS = [
