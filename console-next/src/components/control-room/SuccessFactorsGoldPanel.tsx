@@ -1,25 +1,14 @@
 import { Activity, AlertTriangle, ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, CreditCard, GraduationCap, Network, ShieldCheck, TrendingDown, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfGoldWidgetRow, SfTalentKpisPayload, SfWorkforceTrends, SourceStatus } from "@/lib/control-room/types";
+import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SfGoldWidgetRow, SfTalentKpisPayload, SourceStatus } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 import { businessLabel } from "./successFactorsBusinessLabels";
-import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline, type ControlRoomStatus } from "./StatusBadge";
+import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, Sparkline } from "./StatusBadge";
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("es-MX").format(value);
-}
-
-function talentCountText(value: number | null): string {
-  return value === null ? "N/D" : formatNumber(value);
-}
-
-// Estado del bloque Workforce Trends tal como lo entrega el contrato (SfWorkforceTrends.status).
-function workforceTrendsBadge(status: SfWorkforceTrends["status"] | undefined): { status: ControlRoomStatus; label?: string } | null {
-  if (!status) return null;
-  if (status === "waiting_for_data") return { status: "empty", label: "En espera de datos" };
-  return { status: status as ControlRoomStatus };
 }
 
 function rowLabel(row: SfGoldWidgetRow): string | null {
@@ -146,9 +135,7 @@ function widgetValue(widgets: SfGoldKpisPayload["widgets"], terms: string[]): nu
 
 function sourceReadiness(source: SourceStatus): SuccessFactorsFront["status"] {
   if (source.status && source.status !== "ok") return source.status;
-  if (source.data_readiness) return source.data_readiness;
-  // Sin status ni data_readiness no hay evidencia de materialización: no se asume "ready".
-  return source.status === "ok" ? "ready" : "missing";
+  return source.data_readiness || "ready";
 }
 
 function businessFrontStatus(sources: SourceStatus[], fallbackValue: number | null): SuccessFactorsFront["status"] {
@@ -244,7 +231,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["recruitment", "recruiting", "jobrequisition", "candidate", "application"],
       metric: widgetValue(widgets, ["recruitment", "jobrequisition"]),
       unit: "señales disponibles",
-      decision: "Validar si la organización requiere vacantes, requisiciones y embudo de candidatos.",
+      decision: "Validar si FEMSA requiere vacantes, requisiciones y embudo de candidatos.",
     },
     {
       id: "desempeno",
@@ -262,7 +249,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["learning", "training", "course", "skill", "competency"],
       metric: widgetValue(widgets, ["learning", "training", "course", "skill"]),
       unit: "registros disponibles",
-      decision: "Activar formación y habilidades cuando el alcance de la organización lo confirme.",
+      decision: "Activar formación y habilidades cuando el alcance de FEMSA lo confirme.",
     },
     {
       id: "compensacion",
@@ -280,7 +267,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       terms: ["employeetime", "timeaccount", "workschedule", "time off", "absence", "leave", "vacation", "schedule"],
       metric: widgetValue(widgets, ["employeetime", "timeaccount", "workschedule"]),
       unit: "registros disponibles",
-      decision: "Supervisar ausencias, saldos y horarios cuando el alcance de la organización lo habilite.",
+      decision: "Supervisar ausencias, saldos y horarios cuando el alcance de FEMSA lo habilite.",
     },
   ];
 
@@ -289,8 +276,8 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
     const ready = matchingSources.filter((source) => sourceReadiness(source) === "ready").length;
     const signals = matchingSources.filter((source) => sourceReadiness(source) !== "ready").length;
     const status = businessFrontStatus(matchingSources, definition.metric);
-    // Sin métrica de negocio observada no se presenta la suma de registros de fuentes como métrica.
-    const value = definition.metric ?? null;
+    const countFallback = matchingSources.reduce((total, source) => total + Math.max(0, source.count || 0), 0);
+    const value = definition.metric ?? (countFallback > 0 ? countFallback : null);
     const tone = widgetTone(status);
 
     return {
@@ -465,12 +452,9 @@ export function SuccessFactorsGoldPanel({
     const value = talentWidgetById(id)?.value;
     return typeof value === "number" ? value : null;
   };
-  const talentReadinessTotal = talent?.readiness?.profiled_employees ?? talentNumber("sf_talent_profiled_employees");
-  const talentReadinessCalculable = talent?.readiness?.calculable_employees ?? talentNumber("sf_talent_readiness_calculable");
-  const talentNineBoxAvailable = talent?.readiness?.nine_box_available ?? talentNumber("sf_talent_9box_available");
-  const talentRolesProfiled = talentNumber("sf_talent_roles_profiled");
-  const talentInsufficient = talent?.readiness?.insufficient_data_employees ?? null;
-  const wtBadge = workforceTrendsBadge(talent?.workforce_trends?.status);
+  const talentReadinessTotal = talent?.readiness?.profiled_employees ?? talentNumber("sf_talent_profiled_employees") ?? 0;
+  const talentReadinessCalculable = talent?.readiness?.calculable_employees ?? talentNumber("sf_talent_readiness_calculable") ?? 0;
+  const talentNineBoxAvailable = talent?.readiness?.nine_box_available ?? talentNumber("sf_talent_9box_available") ?? 0;
   // Fase 3 P0: Workforce Trends — fuente unica (bundle del backend); no se agrega en frontend.
   const workforceTrends = talent?.workforce_trends;
   const wtKpis = workforceTrends?.kpis;
@@ -481,7 +465,7 @@ export function SuccessFactorsGoldPanel({
       <div className="border-b bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-transparent p-4 dark:border-emerald-400/20 dark:from-emerald-400/10 dark:via-cyan-400/10">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/90">SuccessFactors</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/90">FEMSA · SuccessFactors</p>
             <h2 className="mt-1 text-xl font-semibold text-foreground dark:text-white">Centro ejecutivo de personal</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Vista de plantilla, estructura y riesgos organizacionales alimentada por información real del contexto activo.
@@ -572,24 +556,24 @@ export function SuccessFactorsGoldPanel({
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <CommandMetric
                 label="Readiness calculable"
-                value={`${talentCountText(talentReadinessCalculable)}/${talentCountText(talentReadinessTotal)}`}
-                detail={talentInsufficient === null ? "cobertura de insuficiencia no informada" : `${formatNumber(talentInsufficient)} con información insuficiente`}
+                value={`${formatNumber(talentReadinessCalculable)}/${formatNumber(talentReadinessTotal)}`}
+                detail={`${formatNumber(talent.readiness?.insufficient_data_employees ?? 0)} con información insuficiente`}
                 icon={ShieldCheck}
                 tone={talentReadinessCalculable ? "good" : "warning"}
               />
               <CommandMetric
                 label="9-box disponible"
-                value={talentCountText(talentNineBoxAvailable)}
-                detail={talentNineBoxAvailable ? "personas clasificables" : talentNineBoxAvailable === null ? "sin dato del backend" : "bloqueado por C/P/A"}
+                value={formatNumber(talentNineBoxAvailable)}
+                detail={talentNineBoxAvailable ? "personas clasificables" : "bloqueado por C/P/A"}
                 icon={Network}
                 tone={talentNineBoxAvailable ? "good" : "warning"}
               />
               <CommandMetric
                 label="Roles derivados"
-                value={talentCountText(talentRolesProfiled)}
+                value={formatNumber(talentNumber("sf_talent_roles_profiled") ?? 0)}
                 detail="desde job_code y FOJobCode"
                 icon={BriefcaseBusiness}
-                tone={talentRolesProfiled ? "good" : "warning"}
+                tone={(talentNumber("sf_talent_roles_profiled") ?? 0) ? "good" : "warning"}
               />
               <CommandMetric
                 label="Señales Talento"
@@ -602,11 +586,8 @@ export function SuccessFactorsGoldPanel({
 
             {workforceTrends ? (
               <div className="mt-4 rounded-lg border bg-card p-4 dark:border-cyan-400/15 dark:bg-[#06131f]">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Workforce Trends</p>
-                    {wtBadge ? <ReadinessBadge status={wtBadge.status} label={wtBadge.label} compact /> : null}
-                  </div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Workforce Trends</p>
                   <span className="text-xs text-muted-foreground">
                     {wtSeries?.months?.length
                       ? "serie mensual por cohorte · una sola fuente"
@@ -682,7 +663,7 @@ export function SuccessFactorsGoldPanel({
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{signal.recommendation || "Revisar cobertura antes de decidir."}</p>
                       <p className="mt-2 text-xs font-medium text-violet-700 dark:text-violet-300">
-                        {typeof signal.affected_count === "number" ? formatNumber(signal.affected_count) : "N/D"} afectados · {signal.status || "recommendation_only"}
+                        {formatNumber(signal.affected_count ?? 0)} afectados · {signal.status || "recommendation_only"}
                       </p>
                     </div>
                   ))}
@@ -699,7 +680,7 @@ export function SuccessFactorsGoldPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300/80">Mapa ejecutivo SuccessFactors</p>
               <h3 className="text-lg font-semibold text-foreground dark:text-white">Frentes que importan al negocio</h3>
             </div>
-            <p className="text-sm text-muted-foreground">Cada frente se alimenta de datos reales del cartucho activo.</p>
+            <p className="text-sm text-muted-foreground">Cada frente se alimenta de datos reales del cartucho FEMSA.</p>
           </div>
           <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
             {businessFronts.map((front) => (

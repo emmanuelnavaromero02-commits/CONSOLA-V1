@@ -60,16 +60,6 @@ function engineDetail(engine: ControlRoomAgentsOpsEngine | undefined, ready: str
   return missing;
 }
 
-// Sin payload (carga o error) no se fabrican ceros: se muestra "—".
-function metricValue(loading: boolean, value: number | null | undefined): string | number {
-  if (loading) return "...";
-  return typeof value === "number" ? value : "—";
-}
-
-function metricDetail(available: boolean, text: string): string {
-  return available ? text : "—";
-}
-
 export function AgentsOpsPanel({
   payload,
   loading,
@@ -114,22 +104,17 @@ export function AgentsOpsPanel({
       {collapsed ? null : (
         <div className="space-y-4 border-t px-4 py-4 dark:border-sky-400/15">
           {error ? <OperationalNotice tone="error" title="Agentes no disponibles">No se pudo actualizar esta vista.</OperationalNotice> : null}
-          {payload?.generated_at ? (
-            <p className="text-xs text-muted-foreground">
-              Actualizado: <time dateTime={payload.generated_at}>{new Date(payload.generated_at).toLocaleString("es-MX")}</time>
-            </p>
-          ) : null}
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <CommandMetric icon={Bot} label="Agentes activos" value={metricValue(loading, summary?.active_agents)} detail={metricDetail(Boolean(summary), `${summary?.agents_total ?? 0} registrados`)} />
-            <CommandMetric icon={ShieldCheck} label="Monitores operativos" value={loading ? "..." : summary ? operationalMonitors.length : "—"} detail={metricDetail(Boolean(summary), `${summary?.monitor_agents ?? 0} con contrato`)} />
-            <CommandMetric icon={Cpu} label="Runs recientes" value={metricValue(loading, summary?.recent_runs)} detail={metricDetail(Boolean(summary), `${summary?.failed_recent_runs ?? 0} con error`)} />
-            <CommandMetric icon={AlertTriangle} label="Alertas agente" value={metricValue(loading, summary?.open_agent_alerts)} detail={metricDetail(Boolean(summary), `${summary?.agent_alerts_total ?? 0} históricas`)} />
+            <CommandMetric icon={Bot} label="Agentes activos" value={loading ? "..." : summary?.active_agents ?? 0} detail={`${summary?.agents_total ?? 0} registrados`} />
+            <CommandMetric icon={ShieldCheck} label="Monitores operativos" value={loading ? "..." : operationalMonitors.length} detail={`${summary?.monitor_agents ?? 0} con contrato`} />
+            <CommandMetric icon={Cpu} label="Runs recientes" value={loading ? "..." : summary?.recent_runs ?? 0} detail={`${summary?.failed_recent_runs ?? 0} con error`} />
+            <CommandMetric icon={AlertTriangle} label="Alertas agente" value={loading ? "..." : summary?.open_agent_alerts ?? 0} detail={`${summary?.agent_alerts_total ?? 0} históricas`} />
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <CommandMetric icon={BrainCircuit} label="Capacidades configuradas" value={metricValue(loading, summary?.configured_engines)} detail={metricDetail(Boolean(summary), `${engines.filter((engine) => engine.status === "ready").length} con evidencia`)} />
-            <CommandMetric icon={Gauge} label="Análisis operativo" value={metricValue(loading, summary?.monte_carlo_simulations)} detail={engineDetail(monteCarloEngine, "resultados persistidos", "en espera de datos", "sin análisis configurado")} />
-            <CommandMetric icon={BrainCircuit} label="Historial operativo" value={metricValue(loading, summary?.bayesian_calibration_samples)} detail={engineDetail(bayesEngine, `${summary?.bayesian_calibration_states ?? 0} estados con historial`, "requiere historial adicional", "sin historial configurado")} />
-            <CommandMetric icon={Cpu} label="Decisión" value={metricValue(loading, summary?.decision_orchestrations)} detail={metricDetail(Boolean(summary), "orquestaciones guardadas")} />
+            <CommandMetric icon={BrainCircuit} label="Capacidades configuradas" value={loading ? "..." : summary?.configured_engines ?? 0} detail={`${engines.filter((engine) => engine.status === "ready").length} con evidencia`} />
+            <CommandMetric icon={Gauge} label="Análisis operativo" value={loading ? "..." : summary?.monte_carlo_simulations ?? 0} detail={engineDetail(monteCarloEngine, "resultados persistidos", "en espera de datos", "sin análisis configurado")} />
+            <CommandMetric icon={BrainCircuit} label="Historial operativo" value={loading ? "..." : summary?.bayesian_calibration_samples ?? 0} detail={engineDetail(bayesEngine, `${summary?.bayesian_calibration_states ?? 0} estados con historial`, "requiere historial adicional", "sin historial configurado")} />
+            <CommandMetric icon={Cpu} label="Decisión" value={loading ? "..." : summary?.decision_orchestrations ?? 0} detail="orquestaciones guardadas" />
           </div>
           {!loading && monteCarloEngine?.status === "configured" ? (
             <OperationalNotice tone="warning" title="Análisis configurado sin evidencia">
