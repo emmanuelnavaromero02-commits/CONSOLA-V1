@@ -118,12 +118,46 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
   }
 }
 
+// Marcadores técnicos que nunca deben mostrarse al usuario final
+// (tracebacks, SQL, rutas de servidor, punteros, digests).
+const UNSAFE_DETAIL_MARKERS: RegExp[] = [
+  /traceback/i,
+  /exception/i,
+  /stacktrace/i,
+  /sqlstate/i,
+  /select /i,
+  /insert /i,
+  /update /i,
+  /delete from/i,
+  /psycopg/i,
+  /sqlalchemy/i,
+  /\.py["':]/i,
+  /(?:\/home\/|\/usr\/|\/var\/|\/app\/)/i,
+  /0x[0-9a-f]{6,}/i,
+  /[0-9a-f]{32,}/i,
+];
+
+// Heurística FAIL-CLOSED: un `detail` del backend solo se muestra si
+// parece copy pensado para el usuario (una sola línea, corto y sin
+// marcadores técnicos). Limitación conocida: el backend no distingue
+// mensajes de usuario de mensajes técnicos; el contrato ideal sería un
+// campo explícito `user_message` marcado por el backend. Mientras no
+// exista, ante la duda mostramos el mensaje genérico + Ref.
+function isSafeUserDetail(detail: string): boolean {
+  const trimmed = detail.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > 240) return false;
+  if (/[\r\n]/.test(trimmed)) return false;
+  return !UNSAFE_DETAIL_MARKERS.some((marker) => marker.test(trimmed));
+}
+
 function errorMessage(status: number, payload: unknown, requestId?: string): string {
-  if (payload && typeof payload === "object" && "detail" in payload) {
+  // Solo 4xx puede exponer `detail` de JSON, y solo si pasa el filtro.
+  // Cuerpos string crudos (p. ej. HTML de un proxy) nunca se muestran.
+  if (status < 500 && payload && typeof payload === "object" && "detail" in payload) {
     const detail = (payload as { detail?: unknown }).detail;
-    if (typeof detail === "string" && detail.trim()) return detail;
+    if (typeof detail === "string" && isSafeUserDetail(detail)) return detail.trim();
   }
-  if (typeof payload === "string" && payload.trim()) return payload;
   if (status === 401) return "Sesión expirada o no autenticada.";
   if (status === 403) return "No tienes permisos para esta acción.";
   if (status === 404) return "Recurso no encontrado.";
@@ -132,7 +166,9 @@ function errorMessage(status: number, payload: unknown, requestId?: string): str
       ? `El backend no pudo completar la solicitud. Ref: ${requestId}`
       : "El backend no pudo completar la solicitud.";
   }
-  return `HTTP ${status}`;
+  return requestId
+    ? `No se pudo completar la solicitud (HTTP ${status}). Ref: ${requestId}`
+    : `No se pudo completar la solicitud (HTTP ${status}).`;
 }
 
 async function request<T>(

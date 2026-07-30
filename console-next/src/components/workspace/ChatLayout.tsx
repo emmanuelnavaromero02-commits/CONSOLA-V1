@@ -97,9 +97,9 @@ const COMMAND_CATALOG: CommandMeta[] = [
     description: "Reporte de cumplimiento del último período.",
     prompt: "Reporte de cumplimiento GDPR y SOX del último período." },
   { id: "forecast",          group: "Reportes", kind: "send-prompt",
-    label: "Forecast Q+1",
-    description: "Forecast operativo del próximo trimestre.",
-    prompt: "Forecast operativo del próximo trimestre." },
+    label: "Estimación Q+1",
+    description: "Resumen prospectivo generado por el copiloto a partir de tus datos.",
+    prompt: "Genera un resumen prospectivo del próximo trimestre a partir de mis datos operativos." },
 ];
 
 /**
