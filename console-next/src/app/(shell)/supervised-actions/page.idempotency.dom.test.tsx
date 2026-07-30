@@ -146,6 +146,35 @@ describe("SupervisedActionsPage: idempotencia por intención lógica", () => {
     expect(validateKey).not.toBe(rejectKey);
   });
 
+  it("timeout ambiguo → desmontar → montar → retry: re-sincroniza estado y no hereda clave sin identidad durable", async () => {
+    clientBoundary.validateSupervisedAction.mockRejectedValueOnce(new Error("timeout"));
+    await renderPage();
+    const listCallsBeforeError = clientBoundary.listSupervisedActions.mock.calls.length;
+
+    await act(async () => findButton("Validar")?.click());
+    const firstKey = sentKeys(clientBoundary.validateSupervisedAction)[0];
+    expect(firstKey).toBeTruthy();
+
+    // Tras un desenlace ambiguo la página debe re-sincronizar el estado
+    // del servidor (refetch) para resolver la ambigüedad de forma visible.
+    expect(clientBoundary.listSupervisedActions.mock.calls.length).toBeGreaterThan(listCallsBeforeError);
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await renderPage();
+    await act(async () => findButton("Validar")?.click());
+
+    const keys = sentKeys(clientBoundary.validateSupervisedAction);
+    expect(keys).toHaveLength(2);
+    // Sin identidad/versión de intención server-authoritative en el contrato,
+    // la UI no promete idempotencia entre montajes: el nuevo intento es una
+    // intención nueva sobre el estado re-sincronizado, con clave nueva y sin
+    // haber tocado ningún storage.
+    expect(keys[1]).not.toBe(firstKey);
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
   it("un remount no reutiliza la clave de una intención ya completada", async () => {
     await renderPage();
     await act(async () => findButton("Validar")?.click());
