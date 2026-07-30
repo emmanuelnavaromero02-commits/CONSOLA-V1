@@ -66,8 +66,12 @@ ENGINE_REGISTRY: dict[str, EngineContract] = {
     "bayesian_calibration": EngineContract(
         engine_name="bayesian_calibration",
         status="allowlisted",
-        input_contract={"required": ["calibration_group or calibration_observation source"]},
-        output_contract={"evidence": ["posterior_mean", "sample_count", "confidence_score"]},
+        input_contract={
+            "required": ["calibration_group or calibration_observation source"]
+        },
+        output_contract={
+            "evidence": ["posterior_mean", "sample_count", "confidence_score"]
+        },
         timeout_ms=5_000,
         retries=0,
         deterministic=True,
@@ -117,7 +121,9 @@ def _short_hash(value: Any) -> str:
     return _hash(value)[:24]
 
 
-def _deterministic_seed(*, orchestration_id: str, engine_name: str, payload: dict[str, Any]) -> int:
+def _deterministic_seed(
+    *, orchestration_id: str, engine_name: str, payload: dict[str, Any]
+) -> int:
     digest = _hash(
         {
             "orchestration_id": orchestration_id,
@@ -193,7 +199,9 @@ def _validate_no_scope_fields(value: Any, *, path: str = "payload") -> None:
         for key, item in value.items():
             text_key = str(key)
             if text_key in FORBIDDEN_SCOPE_KEYS:
-                raise OrchestratorExecutionError(422, f"{path}.{text_key} is not accepted")
+                raise OrchestratorExecutionError(
+                    422, f"{path}.{text_key} is not accepted"
+                )
             _validate_no_scope_fields(item, path=f"{path}.{text_key}")
         return
     if isinstance(value, list):
@@ -238,7 +246,9 @@ def _candidate_engines(run: dict[str, Any]) -> list[str]:
     return [name for name in names if name in CANDIDATE_ENGINES]
 
 
-async def _load_run(conn: Any, *, workspace_id: str, orchestration_id: str) -> dict[str, Any]:
+async def _load_run(
+    conn: Any, *, workspace_id: str, orchestration_id: str
+) -> dict[str, Any]:
     row = await conn.fetchrow(
         """
         SELECT *
@@ -357,10 +367,12 @@ async def _insert_execution(
 def _manual_fixture_disabled(source_type: str) -> bool:
     if source_type != "manual_fixture":
         return False
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    if app_env in {"development", "dev", "test", "testing"}:
-        return False
-    return True
+    app_env = os.environ.get("APP_ENV")
+    return app_env is None or app_env.strip().lower() not in {
+        "test",
+        "local",
+        "development",
+    }
 
 
 def _monte_carlo_payload(
@@ -372,7 +384,9 @@ def _monte_carlo_payload(
     if raw is None:
         return None, "missing_monte_carlo_inputs"
     if not isinstance(raw, dict):
-        raise OrchestratorExecutionError(422, "engine_inputs.monte_carlo must be an object")
+        raise OrchestratorExecutionError(
+            422, "engine_inputs.monte_carlo must be an object"
+        )
     payload = dict(raw)
     source_type = str(payload.get("source_type") or "").strip()
     if not source_type:
@@ -728,7 +742,8 @@ def _aggregate(run: dict[str, Any], executions: list[dict[str, Any]]) -> dict[st
         {
             "engine": item.get("engine_name"),
             "status": "skipped",
-            "reason": item.get("error_code") or item.get("result_summary", {}).get("reason"),
+            "reason": item.get("error_code")
+            or item.get("result_summary", {}).get("reason"),
         }
         for item in executions
         if item.get("execution_status") == "skipped"
@@ -737,7 +752,8 @@ def _aggregate(run: dict[str, Any], executions: list[dict[str, Any]]) -> dict[st
         {
             "engine": item.get("engine_name"),
             "status": "failed",
-            "reason": item.get("error_code") or item.get("result_summary", {}).get("reason"),
+            "reason": item.get("error_code")
+            or item.get("result_summary", {}).get("reason"),
         }
         for item in executions
         if item.get("execution_status") == "failed"
@@ -834,7 +850,9 @@ async def execute_engines(
     created_by = _actor_id(user)
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
-        run = await _load_run(conn, workspace_id=workspace_id, orchestration_id=orchestration_id)
+        run = await _load_run(
+            conn, workspace_id=workspace_id, orchestration_id=orchestration_id
+        )
         executions: list[dict[str, Any]] = []
         for engine_name in _candidate_engines(run):
             executions.append(
@@ -848,7 +866,9 @@ async def execute_engines(
                 )
             )
         if run.get("problem_type") != "insufficient_data":
-            for engine_name in _executable_engines_for_problem(str(run.get("problem_type"))):
+            for engine_name in _executable_engines_for_problem(
+                str(run.get("problem_type"))
+            ):
                 existing = await _existing_execution(
                     conn,
                     workspace_id=workspace_id,
@@ -860,7 +880,13 @@ async def execute_engines(
                     continue
                 started_at = datetime.now(timezone.utc)
                 try:
-                    status, summary, evidence_refs, error_code, error_message = await _execute_engine(
+                    (
+                        status,
+                        summary,
+                        evidence_refs,
+                        error_code,
+                        error_message,
+                    ) = await _execute_engine(
                         user,
                         conn=conn,
                         workspace_id=workspace_id,
@@ -906,7 +932,9 @@ async def execute_engines(
 async def list_executions(user: dict, orchestration_id: str) -> dict[str, Any]:
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, _tenant_id, workspace_id):
-        run = await _load_run(conn, workspace_id=workspace_id, orchestration_id=orchestration_id)
+        run = await _load_run(
+            conn, workspace_id=workspace_id, orchestration_id=orchestration_id
+        )
         rows = await conn.fetch(
             """
             SELECT *

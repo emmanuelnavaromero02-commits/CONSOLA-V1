@@ -11,13 +11,9 @@ from app.services.intelligence import market_context, monte_carlo
 from app.services.intelligence.utils import json_dumps, public_json
 
 
-SOURCE_TYPES = {
-    "signal",
-    "decision_option",
-    "manual_fixture",
-    "backtest_case",
-    "wisdom_bit",
-}
+SOURCE_TYPES = set(
+    "signal decision_option manual_fixture backtest_case wisdom_bit".split()
+)
 FORBIDDEN_SCOPE_KEYS = {"tenant_id", "workspace_id", "security_context"}
 
 
@@ -33,14 +29,11 @@ def _actor_id(user: dict | None) -> int | None:
 
 
 def _synthetic_allowed() -> bool:
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    if app_env in {"development", "dev", "test", "testing"}:
-        return True
-    return os.environ.get("MONTE_CARLO_ALLOW_SYNTHETIC", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    app_env = os.environ.get("APP_ENV")
+    return app_env is not None and app_env.strip().lower() in {
+        "test",
+        "local",
+        "development",
     }
 
 
@@ -95,11 +88,9 @@ async def _source_exists(
     if source_type == "signal":
         value = await conn.fetchval(
             """
-            SELECT 1
-              FROM intelligence_signals
-             WHERE workspace_id = $1
-               AND signal_id = $2
-             LIMIT 1
+            SELECT 1 FROM intelligence_signals
+            WHERE workspace_id = $1 AND signal_id = $2
+            LIMIT 1
             """,
             workspace_id,
             source_id,
@@ -108,11 +99,9 @@ async def _source_exists(
     if source_type == "decision_option":
         value = await conn.fetchval(
             """
-            SELECT 1
-              FROM decision_options
-             WHERE workspace_id = $1
-               AND (id::text = $2 OR option_id = $2)
-             LIMIT 1
+            SELECT 1 FROM decision_options
+            WHERE workspace_id = $1 AND (id::text = $2 OR option_id = $2)
+            LIMIT 1
             """,
             workspace_id,
             source_id,
@@ -124,11 +113,9 @@ async def _source_exists(
             return False
         value = await conn.fetchval(
             """
-            SELECT 1
-              FROM backtest_runs
-             WHERE workspace_id = $1
-               AND (id::text = $2 OR run_ref = $2)
-             LIMIT 1
+            SELECT 1 FROM backtest_runs
+            WHERE workspace_id = $1 AND (id::text = $2 OR run_ref = $2)
+            LIMIT 1
             """,
             workspace_id,
             source_id,
@@ -142,12 +129,16 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if any(key in clean for key in FORBIDDEN_SCOPE_KEYS):
         raise HTTPException(422, "tenant/workspace/security_context are not accepted")
     input_variables = clean.get("input_variables") or {}
-    if isinstance(input_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(input_variables):
+    if isinstance(input_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(
+        input_variables
+    ):
         raise HTTPException(422, "scope variables are not accepted")
     for option in clean.get("options") or []:
         if isinstance(option, dict):
             option_variables = option.get("input_variables") or {}
-            if isinstance(option_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(option_variables):
+            if isinstance(option_variables, dict) and FORBIDDEN_SCOPE_KEYS & set(
+                option_variables
+            ):
                 raise HTTPException(422, "scope variables are not accepted")
     source_type = str(clean.get("source_type") or "").strip()
     if source_type not in SOURCE_TYPES:
@@ -156,10 +147,20 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not source_id:
         raise HTTPException(422, "source_id is required")
     if source_type == "manual_fixture" and not _synthetic_allowed():
-        raise HTTPException(403, "manual_fixture is disabled outside development/test")
+        raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
+    assumptions = clean.get("assumptions") or {}
+    if not isinstance(assumptions, dict):
+        raise HTTPException(422, "assumptions must be an object")
+    assumptions = dict(assumptions)
+    assumptions.update(input_classification="scenario_assumption", observed=False)
+    if source_type == "manual_fixture":
+        assumptions["calibration_status"] = "not_calibrated"
+    clean["assumptions"] = assumptions
     clean["source_type"] = source_type
     clean["source_id"] = source_id
-    clean["use_external_market_context"] = bool(clean.get("use_external_market_context"))
+    clean["use_external_market_context"] = bool(
+        clean.get("use_external_market_context")
+    )
     clean["evidence_refs"] = _validate_evidence_refs(clean.get("evidence_refs"))
     return clean
 

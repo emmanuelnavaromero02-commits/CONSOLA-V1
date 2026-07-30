@@ -125,7 +125,10 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
     assert "CalibrationObservationRequest(_StrictModel)" in router
     assert "CalibrationRecomputeRequest(_StrictModel)" in router
     assert "CalibrationStateRequest(_StrictModel)" in router
-    assert '_internal_mcp_user(body, internal_service, permission="datasets.read")' in router
+    assert (
+        '_internal_mcp_user(body, internal_service, permission="datasets.read")'
+        in router
+    )
     assert "parent_calibration_group" in router
     assert "await intelligence_history.calibration_report" in router
     assert "await calibration_service.observe" in router
@@ -184,21 +187,28 @@ def test_calibration_accepts_market_context_evidence_refs():
     ]
 
 
-def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.delenv("CALIBRATION_ALLOW_SYNTHETIC", raising=False)
-
+@pytest.mark.parametrize(
+    "app_env", [None, "", "production", "prod", "staging", "unknown", "dev", "testing"]
+)
+def test_manual_fixture_rejects_nonlocal_env_even_with_synthetic_flag(
+    monkeypatch, app_env
+):
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.setenv("CALIBRATION_ALLOW_SYNTHETIC", "true")
     with pytest.raises(HTTPException) as exc:
         calibration_service._validate_payload(
-            {
-                **_payload(),
-                "source_type": "manual_fixture",
-                "source_id": "fixture",
-            }
+            {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
         )
     assert exc.value.status_code == 403
 
-    monkeypatch.setenv("CALIBRATION_ALLOW_SYNTHETIC", "true")
+
+@pytest.mark.parametrize("app_env", ["test", "local", "development"])
+def test_manual_fixture_requires_exact_explicit_local_env(monkeypatch, app_env):
+    monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.delenv("CALIBRATION_ALLOW_SYNTHETIC", raising=False)
     clean = calibration_service._validate_payload(
         {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
     )
@@ -255,7 +265,10 @@ def test_calibration_migration_is_scoped_and_does_not_relax_rls():
     assert "current_setting('app.workspace_id', true)" in sql
     assert "USING (true)" not in sql
     assert "WITH CHECK (true)" not in sql
-    assert "GRANT SELECT, INSERT, UPDATE ON calibration_observations TO omega_console" in sql
+    assert (
+        "GRANT SELECT, INSERT, UPDATE ON calibration_observations TO omega_console"
+        in sql
+    )
     assert "GRANT SELECT, INSERT, UPDATE ON calibration_states TO omega_console" in sql
 
 

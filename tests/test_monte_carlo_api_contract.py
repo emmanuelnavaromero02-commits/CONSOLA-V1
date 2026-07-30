@@ -249,7 +249,9 @@ async def test_market_context_variable_rejects_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_market_context_variable_requires_provider_in_workspace_scope(monkeypatch):
+async def test_market_context_variable_requires_provider_in_workspace_scope(
+    monkeypatch,
+):
     monkeypatch.setenv("APP_ENV", "production")
 
     async def unexpected_query(*args, **kwargs):
@@ -283,25 +285,69 @@ def test_mcp_monte_carlo_tool_exposes_external_market_opt_in():
     assert '"use_external_market_context": bool(use_external_market_context)' in source
 
 
-def test_manual_fixture_is_disabled_in_production_without_explicit_flag(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.delenv("MONTE_CARLO_ALLOW_SYNTHETIC", raising=False)
-
+@pytest.mark.parametrize(
+    "app_env", [None, "", "production", "prod", "staging", "unknown", "dev", "testing"]
+)
+def test_manual_fixture_rejects_nonlocal_env_even_with_synthetic_flag(
+    monkeypatch, app_env
+):
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.setenv("MONTE_CARLO_ALLOW_SYNTHETIC", "true")
     with pytest.raises(HTTPException) as exc:
         monte_carlo_service._validate_payload(
-            {
-                **_payload(),
-                "source_type": "manual_fixture",
-                "source_id": "fixture",
-            }
+            {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
         )
     assert exc.value.status_code == 403
 
-    monkeypatch.setenv("MONTE_CARLO_ALLOW_SYNTHETIC", "true")
+
+@pytest.mark.parametrize("app_env", ["test", "local", "development"])
+def test_manual_fixture_requires_local_env_and_is_marked_as_assumption(
+    monkeypatch, app_env
+):
+    monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.delenv("MONTE_CARLO_ALLOW_SYNTHETIC", raising=False)
     clean = monte_carlo_service._validate_payload(
-        {**_payload(), "source_type": "manual_fixture", "source_id": "fixture"}
+        {
+            **_payload(),
+            "source_type": "manual_fixture",
+            "source_id": "fixture",
+            "assumptions": {
+                "scenario": "manual",
+                "input_classification": "observed",
+                "observed": True,
+                "calibration_status": "calibrated",
+            },
+        }
     )
     assert clean["source_type"] == "manual_fixture"
+    assert clean["assumptions"] == {
+        "scenario": "manual",
+        "input_classification": "scenario_assumption",
+        "observed": False,
+        "calibration_status": "not_calibrated",
+    }
+
+
+def test_observed_signal_keeps_source_evidence_but_marks_inputs_as_assumptions():
+    clean = monte_carlo_service._validate_payload(
+        {
+            **_payload(),
+            "evidence_refs": [{"type": "signal", "id": "signal-a"}],
+            "assumptions": {"scenario": "capacity_plan"},
+        }
+    )
+
+    assert clean["source_type"] == "signal"
+    assert clean["evidence_refs"] == [{"type": "signal", "id": "signal-a"}]
+    assert clean["assumptions"] == {
+        "scenario": "capacity_plan",
+        "input_classification": "scenario_assumption",
+        "observed": False,
+    }
+    assert "calibration_status" not in clean["assumptions"]
 
 
 def test_wisdom_bit_source_is_allowlisted_without_synthetic_flag(monkeypatch):
@@ -340,7 +386,9 @@ async def test_run_simulation_sets_db_scope_validates_source_and_persists(monkey
 
 
 @pytest.mark.asyncio
-async def test_run_simulation_accepts_wisdom_bit_source_without_signal_lookup(monkeypatch):
+async def test_run_simulation_accepts_wisdom_bit_source_without_signal_lookup(
+    monkeypatch,
+):
     fake = _FakePool()
     monkeypatch.setattr(monte_carlo_service.auth, "pool", AsyncMock(return_value=fake))
 
@@ -361,9 +409,9 @@ async def test_run_simulation_accepts_wisdom_bit_source_without_signal_lookup(mo
 
 
 def test_monte_carlo_migration_is_scoped_and_does_not_relax_rls():
-    sql = (
-        REPO / "infra/init/99q_monte_carlo_simulations.sql"
-    ).read_text(encoding="utf-8")
+    sql = (REPO / "infra/init/99q_monte_carlo_simulations.sql").read_text(
+        encoding="utf-8"
+    )
 
     assert "CREATE TABLE IF NOT EXISTS monte_carlo_simulations" in sql
     for column in (
@@ -385,13 +433,16 @@ def test_monte_carlo_migration_is_scoped_and_does_not_relax_rls():
     assert "'wisdom_bit'" in sql
     assert "USING (true)" not in sql
     assert "WITH CHECK (true)" not in sql
-    assert "GRANT SELECT, INSERT, UPDATE ON monte_carlo_simulations TO omega_console" in sql
+    assert (
+        "GRANT SELECT, INSERT, UPDATE ON monte_carlo_simulations TO omega_console"
+        in sql
+    )
 
 
 def test_monte_carlo_wisdom_bit_source_migration_preserves_rls():
-    sql = (
-        REPO / "infra/init/99z_monte_carlo_wisdom_bit_source.sql"
-    ).read_text(encoding="utf-8")
+    sql = (REPO / "infra/init/99z_monte_carlo_wisdom_bit_source.sql").read_text(
+        encoding="utf-8"
+    )
 
     assert "monte_carlo_simulations_source_type_check" in sql
     assert "'wisdom_bit'" in sql

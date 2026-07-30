@@ -220,10 +220,8 @@ def _truthy(value: Any, *, default: bool = False) -> bool:
 
 
 def _manual_fixture_allowed() -> bool:
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    if app_env in {"development", "dev", "test", "testing"}:
-        return True
-    return _truthy(os.environ.get("DECISION_ORCHESTRATOR_ALLOW_MANUAL_FIXTURE"))
+    app_env = os.environ.get("APP_ENV")
+    return app_env is not None and app_env.strip().lower() in {"test", "local", "development"}
 
 
 def action_creation_enabled() -> bool:

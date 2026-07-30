@@ -40,14 +40,11 @@ def _actor_id(user: dict | None) -> int | None:
 
 
 def _synthetic_allowed() -> bool:
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    if app_env in {"development", "dev", "test", "testing"}:
-        return True
-    return os.environ.get("CALIBRATION_ALLOW_SYNTHETIC", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    app_env = os.environ.get("APP_ENV")
+    return app_env is not None and app_env.strip().lower() in {
+        "test",
+        "local",
+        "development",
     }
 
 
@@ -69,7 +66,9 @@ def _forbidden_path(value: Any, *, prefix: str = "") -> str | None:
     return None
 
 
-def _short_text(value: Any, *, field: str, max_length: int, required: bool = True) -> str:
+def _short_text(
+    value: Any, *, field: str, max_length: int, required: bool = True
+) -> str:
     text = str(value or "").strip()
     if not text and required:
         raise HTTPException(422, f"{field} is required")
@@ -116,11 +115,13 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     forbidden = _forbidden_path(clean)
     if forbidden:
         raise HTTPException(422, f"scope fields are not accepted: {forbidden}")
-    source_type = _short_text(clean.get("source_type"), field="source_type", max_length=80)
+    source_type = _short_text(
+        clean.get("source_type"), field="source_type", max_length=80
+    )
     if source_type not in SOURCE_TYPES:
         raise HTTPException(422, "unsupported source_type")
     if source_type == "manual_fixture" and not _synthetic_allowed():
-        raise HTTPException(403, "manual_fixture is disabled outside development/test")
+        raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
     source_id = _short_text(clean.get("source_id"), field="source_id", max_length=256)
     model_version = _short_text(
         clean.get("model_version") or DEFAULT_MODEL_VERSION,
@@ -142,7 +143,9 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "predicted_value": clean.get("predicted_value"),
         "predicted_interval": clean.get("predicted_interval") or {},
         "actual_value": clean.get("actual_value"),
-        "calibration_group": _calibration_group(source_type, clean.get("calibration_group")),
+        "calibration_group": _calibration_group(
+            source_type, clean.get("calibration_group")
+        ),
         "model_version": model_version,
     }
     try:
@@ -172,7 +175,9 @@ def _json_obj(value: Any, default: Any) -> Any:
     return value
 
 
-def _row_state(row: Any | None, *, group: str, model_version: str) -> dict[str, Any] | None:
+def _row_state(
+    row: Any | None, *, group: str, model_version: str
+) -> dict[str, Any] | None:
     if not row:
         return None
     data = dict(row)
@@ -236,7 +241,11 @@ async def _derived_prior_for_group(
     model_version: str,
     explicit_parent_group: str | None = None,
 ) -> dict[str, Any]:
-    candidates = [explicit_parent_group] if explicit_parent_group else _parent_group_candidates(group)
+    candidates = (
+        [explicit_parent_group]
+        if explicit_parent_group
+        else _parent_group_candidates(group)
+    )
     for parent_group in [item for item in candidates if item]:
         parent_state = await _fetch_state(
             conn,
@@ -261,7 +270,9 @@ def _state_id(*, workspace_id: str, group: str, model_version: str) -> str:
     return "cal-state-" + digest[:32]
 
 
-def _observation_id(*, workspace_id: str, payload: dict[str, Any], result_hash: str) -> str:
+def _observation_id(
+    *, workspace_id: str, payload: dict[str, Any], result_hash: str
+) -> str:
     digest = calibration.reproducibility_hash(
         {"workspace_id": workspace_id, "payload": payload, "result_hash": result_hash}
     )
@@ -529,18 +540,23 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     forbidden = _forbidden_path(clean)
     if forbidden:
         raise HTTPException(422, f"scope fields are not accepted: {forbidden}")
-    group = _short_text(clean.get("calibration_group"), field="calibration_group", max_length=80)
+    group = _short_text(
+        clean.get("calibration_group"), field="calibration_group", max_length=80
+    )
     model_version = _short_text(
         clean.get("model_version") or DEFAULT_MODEL_VERSION,
         field="model_version",
         max_length=120,
     )
-    parent_group = _short_text(
-        clean.get("parent_calibration_group"),
-        field="parent_calibration_group",
-        max_length=80,
-        required=False,
-    ) or None
+    parent_group = (
+        _short_text(
+            clean.get("parent_calibration_group"),
+            field="parent_calibration_group",
+            max_length=80,
+            required=False,
+        )
+        or None
+    )
     source_type = str(clean.get("source_type") or "").strip() or None
     source_id = str(clean.get("source_id") or "").strip() or None
     if source_type and source_type not in SOURCE_TYPES:
@@ -586,7 +602,9 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         )
         evidence_refs: list[dict[str, str]] = []
         for row in row_dicts:
-            evidence_refs.extend(normalize_evidence_refs(_json_obj(row.get("evidence_refs"), [])))
+            evidence_refs.extend(
+                normalize_evidence_refs(_json_obj(row.get("evidence_refs"), []))
+            )
         state["metrics"] = attach_external_evidence_metadata(
             state.get("metrics") or {},
             evidence_refs,
@@ -609,7 +627,10 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             or calibration.reproducibility_hash(state),
             last_observed_at=None,
         )
-    return {"state": public_json(dict(state_row)), "observations_recomputed": len(observations)}
+    return {
+        "state": public_json(dict(state_row)),
+        "observations_recomputed": len(observations),
+    }
 
 
 async def get_state_map_for_live_calibration(
@@ -618,7 +639,9 @@ async def get_state_map_for_live_calibration(
     *,
     model_version: str | None = None,
 ) -> dict[str, dict[str, Any]]:
-    clean_groups = sorted({str(group).strip() for group in groups if str(group or "").strip()})
+    clean_groups = sorted(
+        {str(group).strip() for group in groups if str(group or "").strip()}
+    )
     if not clean_groups:
         return {}
     version = str(model_version or DEFAULT_MODEL_VERSION)
