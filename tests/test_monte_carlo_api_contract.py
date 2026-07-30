@@ -54,6 +54,12 @@ def test_monte_carlo_service_uses_scoped_db_and_blocks_scope_payloads():
 
     with pytest.raises(HTTPException):
         monte_carlo_service._validate_payload({**_payload(), "workspace_id": "ws-b"})
+    with pytest.raises(HTTPException) as spoofed:
+        monte_carlo_service._validate_payload(
+            {**_payload(), "model_version": "monte_carlo.validated.v999"}
+        )
+    assert spoofed.value.status_code == 422
+    assert "server-owned" in str(spoofed.value.detail)
     with pytest.raises(HTTPException):
         monte_carlo_service._validate_payload(
             {

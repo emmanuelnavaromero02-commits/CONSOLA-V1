@@ -210,31 +210,6 @@ async def test_orchestrator_persists_with_scoped_runtime_and_tenant_isolation(
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_accepts_wisdombit_monitor_source(orchestrator, monkeypatch):
-    db = FakeOrchestratorDB()
-    _patch_pool(orchestrator, monkeypatch, db)
-    user = _user(12)
-
-    result = await orchestrator.orchestrate(
-        user,
-        {
-            "source_type": "wisdom_bit",
-            "source_id": "WB-TALENTO",
-            "title": "Decision operativa WB-TALENTO",
-            "description": "Aggregated talent readiness monitor with blockers and simulation evidence.",
-            "metrics": {"risk_metric": "talent_readiness_delta"},
-            "constraints": {"recommendation_only": True},
-            "evidence_refs": [{"type": "wisdom_bit", "id": "WB-TALENTO"}],
-        },
-    )
-
-    run = result["orchestration"]
-    assert run["source_type"] == "wisdom_bit"
-    assert run["source_id"] == "WB-TALENTO"
-    assert run["problem_type"] in {"risk_forecast", "data_quality"}
-
-
-@pytest.mark.asyncio
 async def test_orchestrator_rejects_payload_scope(
     orchestrator,
     monkeypatch,

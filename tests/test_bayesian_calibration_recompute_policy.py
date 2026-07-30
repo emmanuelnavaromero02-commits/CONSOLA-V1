@@ -21,6 +21,7 @@ def _set_app_env(monkeypatch, value: str | None) -> None:
 def _row(*, row_id: int, source_type: str, source_id: str) -> dict:
     return {
         "id": row_id,
+        "observed_at": f"2026-01-{row_id:02d}T00:00:00Z",
         "source_type": source_type,
         "source_id": source_id,
         "actual_status": "hit",
@@ -65,12 +66,18 @@ class _Connection:
         if "FROM calibration_observations" not in sql:
             return []
         rows = list(self.observation_rows)
-        if "source_type <> 'manual_fixture'" in sql:
-            rows = [row for row in rows if row["source_type"] != "manual_fixture"]
         return rows
+
+    async def fetchval(self, sql: str, *params):
+        self.calls.append(("fetchval", sql, params))
+        if "COUNT(*) FROM calibration_observations" in sql:
+            return len(self.observation_rows)
+        raise AssertionError(f"unexpected fetchval: {sql[:80]}")
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
+        if "SELECT 1 AS trusted FROM control_room_items" in sql:
+            return {"trusted": 1}
         if "FROM monte_carlo_simulations" in sql:
             return {
                 "source_type": (
@@ -126,9 +133,12 @@ async def test_recompute_excludes_historical_manual_fixtures_by_default(
     )
 
     selection = next(
-        call for call in pool.conn.calls if "FROM calibration_observations" in call[1]
+        call
+        for call in pool.conn.calls
+        if "FROM calibration_observations" in call[1]
+        and "ORDER BY observed_at ASC" in call[1]
     )
-    assert "source_type <> 'manual_fixture'" in selection[1]
+    assert "ORDER BY observed_at ASC, id ASC" in selection[1]
     assert result["observations_recomputed"] == 1
     assert len(pool.conn.observation_rows) == 3
     assert not any(

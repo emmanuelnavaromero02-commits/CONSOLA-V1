@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import calibration
+from app.services.intelligence.calibration_lock import lock_calibration_group
 from app.services.intelligence.calibration_state_repository import (
     _observation_id,
     _row_state,
@@ -16,6 +17,7 @@ from app.services.intelligence.calibration_state_repository import (
 )
 from app.services.intelligence.calibration_validation_service import (
     _actor_id,
+    _synthetic_allowed,
     _validate_payload,
 )
 from app.services.intelligence.evidence_refs import attach_external_evidence_metadata
@@ -26,11 +28,18 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     clean = _validate_payload(payload)
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        await lock_calibration_group(
+            conn,
+            workspace_id=workspace_id,
+            group=clean["calibration_group"],
+            model_version=clean["model_version"],
+        )
         if not await _source_exists(
             conn,
             workspace_id=workspace_id,
             source_type=clean["source_type"],
             source_id=clean["source_id"],
+            allow_manual=_synthetic_allowed(),
         ):
             raise HTTPException(404, "calibration source not found")
         existing = await conn.fetchrow(
@@ -70,6 +79,15 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         metrics = attach_external_evidence_metadata(
             result["state"]["metrics"],
             clean["evidence_refs"],
+        )
+        processed_total = int(metrics.get("sample_count") or 0)
+        metrics.update(
+            eligible_total=processed_total,
+            processed_total=processed_total,
+            skipped_total=0,
+            skipped_by_reason={},
+            complete=True,
+            provenance_complete=True,
         )
         observation_row = await conn.fetchrow(
             """

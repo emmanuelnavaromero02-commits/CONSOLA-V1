@@ -173,6 +173,32 @@ async def test_signal_with_missing_source_provenance_fails_closed():
     )
 
 
+class _FixtureLabeledBacktest:
+    async def fetchval(self, _sql: str, *_params):
+        return "backtest_results"
+
+    async def fetchrow(self, sql: str, *_params):
+        assert "FROM backtest_results" in sql
+        return {
+            "label_source": "fixture",
+            "run_mode": "historical_replay",
+            "status": "ok",
+            "completed_at": "2026-01-01T00:00:00Z",
+            "source_system": "replicon",
+            "source_dataset": "outcomes",
+        }
+
+
+@pytest.mark.asyncio
+async def test_fixture_labeled_backtest_cannot_feed_monte_carlo():
+    assert not await monte_carlo_service._source_exists(
+        _FixtureLabeledBacktest(),
+        workspace_id="ws-a",
+        source_type="backtest_case",
+        source_id="case-fixture",
+    )
+
+
 def test_wisdom_bit_source_is_allowlisted_without_synthetic_flag(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     clean = monte_carlo_service._validate_payload(

@@ -32,11 +32,15 @@ def test_beta_binomial_prior_hit_miss_partial_and_unknown_updates():
     assert miss["state"]["posterior"]["alpha"] == 2.0
     assert miss["state"]["posterior"]["beta"] == 2.0
 
-    partial = calibration.apply_observation(miss["state"], _payload(actual_status="partial"))
+    partial = calibration.apply_observation(
+        miss["state"], _payload(actual_status="partial")
+    )
     assert partial["state"]["posterior"]["alpha"] == 2.5
     assert partial["state"]["posterior"]["beta"] == 2.5
 
-    unknown = calibration.apply_observation(partial["state"], _payload(actual_status="unknown"))
+    unknown = calibration.apply_observation(
+        partial["state"], _payload(actual_status="unknown")
+    )
     assert unknown["state"]["posterior"]["alpha"] == 2.5
     assert unknown["state"]["posterior"]["beta"] == 2.5
     assert unknown["metrics"]["unknown_count"] == 1
@@ -112,7 +116,12 @@ def test_live_calibration_requires_enough_samples():
     state = {
         "calibration_group": "source_type:hubspot:forecast_weighted:v1",
         "posterior": {"alpha": 8.0, "beta": 2.0, "mean": 0.8},
-        "metrics": {"sample_count": 4, "confidence_score": 1.0},
+        "metrics": {
+            "sample_count": 4,
+            "confidence_score": 1.0,
+            "complete": True,
+            "provenance_complete": True,
+        },
     }
 
     result = calibration.apply_calibration_to_probability(0.4, state, min_samples=10)
@@ -123,16 +132,38 @@ def test_live_calibration_requires_enough_samples():
     assert result["posterior_mean"] == pytest.approx(0.8)
 
 
+def test_legacy_state_without_complete_provenance_cannot_calibrate():
+    state = {
+        "calibration_group": "global",
+        "posterior": {"alpha": 99.0, "beta": 1.0, "mean": 0.99},
+        "metrics": {"sample_count": 100, "confidence_score": 1.0},
+    }
+    result = calibration.apply_calibration_to_probability(0.4, state)
+    assert result["calibrated_probability"] == 0.4
+    assert result["calibration_applied"] is False
+    assert result["calibration_reason"] == "incomplete_calibration_provenance"
+
+
 def test_live_calibration_moves_probability_up_down_and_respects_max_adjustment():
     high_state = {
         "calibration_group": "source_type:hubspot:forecast_weighted:v1",
         "posterior": {"alpha": 30.0, "beta": 2.0, "mean": 0.9375},
-        "metrics": {"sample_count": 50, "confidence_score": 1.0},
+        "metrics": {
+            "sample_count": 50,
+            "confidence_score": 1.0,
+            "complete": True,
+            "provenance_complete": True,
+        },
     }
     low_state = {
         "calibration_group": "source_type:hubspot:forecast_weighted:v1",
         "posterior": {"alpha": 2.0, "beta": 30.0, "mean": 0.0625},
-        "metrics": {"sample_count": 50, "confidence_score": 1.0},
+        "metrics": {
+            "sample_count": 50,
+            "confidence_score": 1.0,
+            "complete": True,
+            "provenance_complete": True,
+        },
     }
 
     raised = calibration.apply_calibration_to_probability(
@@ -156,11 +187,21 @@ def test_live_calibration_confidence_score_affects_weight():
     high_confidence = {
         "calibration_group": "source_type:hubspot:forecast_weighted:v1",
         "posterior": {"alpha": 18.0, "beta": 2.0, "mean": 0.9},
-        "metrics": {"sample_count": 10, "confidence_score": 1.0},
+        "metrics": {
+            "sample_count": 10,
+            "confidence_score": 1.0,
+            "complete": True,
+            "provenance_complete": True,
+        },
     }
     low_confidence = {
         **high_confidence,
-        "metrics": {"sample_count": 10, "confidence_score": 0.4},
+        "metrics": {
+            "sample_count": 10,
+            "confidence_score": 0.4,
+            "complete": True,
+            "provenance_complete": True,
+        },
     }
 
     strong = calibration.apply_calibration_to_probability(

@@ -7,8 +7,10 @@ from fastapi import HTTPException
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import calibration
-from app.services.intelligence.calibration_source_validation import (
-    calibration_source_exists,
+from app.services.intelligence.calibration_lock import lock_calibration_group
+from app.services.intelligence.calibration_recompute_batch import (
+    BatchFailure,
+    load_complete_batch,
 )
 from app.services.intelligence.calibration_state_repository import (
     _derived_prior_for_group,
@@ -78,39 +80,34 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(422, "limit must be between 1 and 10000")
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
-        params: list[Any] = [workspace_id, group, model_version]
-        where = ["workspace_id = $1", "calibration_group = $2", "model_version = $3"]
-        if not allow_manual:
-            where.append("source_type <> 'manual_fixture'")
-        if source_type:
-            params.append(source_type)
-            where.append(f"source_type = ${len(params)}")
-        if source_id:
-            params.append(source_id)
-            where.append(f"source_id = ${len(params)}")
-        params.append(limit)
-        rows = await conn.fetch(
-            f"""
-            SELECT *
-              FROM calibration_observations
-             WHERE {' AND '.join(where)}
-             ORDER BY observed_at ASC, id ASC
-             LIMIT ${len(params)}
-            """,
-            *params,
+        await lock_calibration_group(
+            conn,
+            workspace_id=workspace_id,
+            group=group,
+            model_version=model_version,
         )
-        row_dicts = [dict(row) for row in rows]
-        if not allow_manual:
-            trusted_rows: list[dict[str, Any]] = []
-            for row in row_dicts:
-                if await calibration_source_exists(
-                    conn,
-                    workspace_id=workspace_id,
-                    source_type=str(row.get("source_type") or ""),
-                    source_id=str(row.get("source_id") or ""),
-                ):
-                    trusted_rows.append(row)
-            row_dicts = trusted_rows
+        try:
+            row_dicts, batch_metrics = await load_complete_batch(
+                conn,
+                workspace_id=workspace_id,
+                group=group,
+                model_version=model_version,
+                source_type=source_type,
+                source_id=source_id,
+                operational_limit=limit,
+                allow_manual=allow_manual,
+            )
+        except BatchFailure as exc:
+            raise HTTPException(
+                409,
+                {
+                    "status": "unavailable",
+                    "reason": exc.reason,
+                    "eligible_total": exc.eligible_total,
+                    "operational_limit": exc.operational_limit,
+                    "complete": False,
+                },
+            ) from exc
         observations = [_observation_from_row(row) for row in row_dicts]
         prior = await _derived_prior_for_group(
             conn,
@@ -134,6 +131,7 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             state.get("metrics") or {},
             evidence_refs,
         )
+        state["metrics"].update(batch_metrics)
         state_row = await _upsert_state(
             conn,
             tenant_id=tenant_id,

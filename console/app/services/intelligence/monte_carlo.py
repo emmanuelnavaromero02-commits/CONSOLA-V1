@@ -7,6 +7,9 @@ import random
 from statistics import mean, median
 from typing import Any
 
+from app.services.intelligence import monte_carlo_contract
+from app.services.intelligence import monte_carlo_options
+
 
 MODEL_VERSION = "monte_carlo.v1"
 DEFAULT_ITERATIONS = 1000
@@ -57,7 +60,9 @@ def _clean_iterations(value: Any) -> int:
     except (TypeError, ValueError) as exc:
         raise MonteCarloValidationError("iterations must be an integer") from exc
     if parsed < 1 or parsed > MAX_ITERATIONS:
-        raise MonteCarloValidationError(f"iterations must be between 1 and {MAX_ITERATIONS}")
+        raise MonteCarloValidationError(
+            f"iterations must be between 1 and {MAX_ITERATIONS}"
+        )
     return parsed
 
 
@@ -69,7 +74,10 @@ def _validate_distribution(name: str, spec: Any) -> dict[str, Any]:
         raise MonteCarloValidationError(f"{name} has unsupported distribution type")
 
     if dist_type == "fixed":
-        return {"type": dist_type, "value": _finite_number(spec.get("value"), f"{name}.value")}
+        return {
+            "type": dist_type,
+            "value": _finite_number(spec.get("value"), f"{name}.value"),
+        }
     if dist_type == "normal":
         stddev = _finite_number(spec.get("stddev", spec.get("sd")), f"{name}.stddev")
         if stddev < 0:
@@ -84,7 +92,9 @@ def _validate_distribution(name: str, spec: Any) -> dict[str, Any]:
         mode = _finite_number(spec.get("mode"), f"{name}.mode")
         high = _finite_number(spec.get("high"), f"{name}.high")
         if not low <= mode <= high:
-            raise MonteCarloValidationError(f"{name} triangular requires low <= mode <= high")
+            raise MonteCarloValidationError(
+                f"{name} triangular requires low <= mode <= high"
+            )
         return {"type": dist_type, "low": low, "mode": mode, "high": high}
     if dist_type == "uniform":
         low = _finite_number(spec.get("low"), f"{name}.low")
@@ -100,7 +110,9 @@ def _validate_distribution(name: str, spec: Any) -> dict[str, Any]:
     for idx, item in enumerate(raw_values):
         if isinstance(item, dict):
             val = _finite_number(item.get("value"), f"{name}.values[{idx}].value")
-            weight = _finite_number(item.get("weight", 1), f"{name}.values[{idx}].weight")
+            weight = _finite_number(
+                item.get("weight", 1), f"{name}.values[{idx}].weight"
+            )
         else:
             val = _finite_number(item, f"{name}.values[{idx}]")
             weight = 1.0
@@ -114,12 +126,20 @@ def validate_variables(input_variables: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(input_variables, dict) or not input_variables:
         raise MonteCarloValidationError("input_variables must be a non-empty object")
     if len(input_variables) > 50:
-        raise MonteCarloValidationError("input_variables cannot contain more than 50 variables")
+        raise MonteCarloValidationError(
+            "input_variables cannot contain more than 50 variables"
+        )
     cleaned: dict[str, dict[str, Any]] = {}
     for raw_name, spec in input_variables.items():
         name = str(raw_name or "").strip()
         if not name or len(name) > 80 or not name.replace("_", "").isalnum():
-            raise MonteCarloValidationError("input variable names must be simple identifiers")
+            raise MonteCarloValidationError(
+                "input variable names must be simple identifiers"
+            )
+        if name in cleaned:
+            raise MonteCarloValidationError(
+                "input variable names must be unique after normalization"
+            )
         cleaned[name] = _validate_distribution(name, spec)
     return cleaned
 
@@ -131,7 +151,9 @@ def _sample_distribution(rng: random.Random, spec: dict[str, Any]) -> float:
     if dist_type == "normal":
         return float(rng.gauss(float(spec["mean"]), float(spec["stddev"])))
     if dist_type == "triangular":
-        return float(rng.triangular(float(spec["low"]), float(spec["high"]), float(spec["mode"])))
+        return float(
+            rng.triangular(float(spec["low"]), float(spec["high"]), float(spec["mode"]))
+        )
     if dist_type == "uniform":
         return float(rng.uniform(float(spec["low"]), float(spec["high"])))
 
@@ -147,22 +169,25 @@ def _sample_distribution(rng: random.Random, spec: dict[str, Any]) -> float:
 
 
 def _metric_value(samples: dict[str, float], output_metric: str) -> float:
-    baseline = samples.get("baseline_value", 0.0)
-    expected_delta = samples.get("expected_delta", 0.0)
-    delay_days = samples.get("delay_days", 0.0)
-    approval_lag_days = samples.get("approval_lag_days", 0.0)
-    cost_per_day = samples.get("cost_per_day", 0.0)
-    probability_of_delay = samples.get("probability_of_delay", 1.0)
-    adoption_rate = samples.get("adoption_rate", 0.0)
-    recovery_rate = samples.get("recovery_rate", 0.0)
-    manual_effort_hours = samples.get("manual_effort_hours", 0.0)
-    hourly_cost = samples.get("hourly_cost", 0.0)
-    fixed_cost = samples.get("fixed_cost", 0.0)
+    def value(name: str) -> float:
+        return samples.get(name, monte_carlo_contract.default_value(name))
+    baseline = value("baseline_value")
+    expected_delta = value("expected_delta")
+    revenue_growth = value("revenue_growth")
+    delay_days = value("delay_days")
+    approval_lag_days = value("approval_lag_days")
+    cost_per_day = value("cost_per_day")
+    probability_of_delay = value("probability_of_delay")
+    adoption_rate = value("adoption_rate")
+    recovery_rate = value("recovery_rate")
+    manual_effort_hours = value("manual_effort_hours")
+    hourly_cost = value("hourly_cost")
+    fixed_cost = value("fixed_cost")
 
     delay_total = delay_days + approval_lag_days
     delay_cost = delay_total * cost_per_day * probability_of_delay
     effort_cost = manual_effort_hours * hourly_cost
-    benefit = adoption_rate * recovery_rate * baseline
+    benefit = (revenue_growth * baseline) + (adoption_rate * recovery_rate * baseline)
     cost = delay_cost + effort_cost + fixed_cost
     delta = expected_delta + benefit - cost
 
@@ -187,7 +212,9 @@ def _quantile(sorted_values: list[float], probability: float) -> float:
     upper = math.ceil(pos)
     if lower == upper:
         return sorted_values[int(pos)]
-    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * (pos - lower)
+    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * (
+        pos - lower
+    )
 
 
 def _rank(values: list[float]) -> list[float]:
@@ -210,7 +237,9 @@ def _pearson(left: list[float], right: list[float]) -> float:
         return 0.0
     left_mean = mean(left)
     right_mean = mean(right)
-    numerator = sum((a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True))
+    numerator = sum(
+        (a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True)
+    )
     left_den = math.sqrt(sum((a - left_mean) ** 2 for a in left))
     right_den = math.sqrt(sum((b - right_mean) ** 2 for b in right))
     if left_den == 0 or right_den == 0:
@@ -218,7 +247,9 @@ def _pearson(left: list[float], right: list[float]) -> float:
     return numerator / (left_den * right_den)
 
 
-def _sensitivity(samples_by_variable: dict[str, list[float]], outputs: list[float]) -> list[dict[str, Any]]:
+def _sensitivity(
+    samples_by_variable: dict[str, list[float]], outputs: list[float]
+) -> list[dict[str, Any]]:
     output_ranks = _rank(outputs)
     drivers = []
     for name, values in samples_by_variable.items():
@@ -235,25 +266,37 @@ def _sensitivity(samples_by_variable: dict[str, list[float]], outputs: list[floa
 
 
 def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
-    variables = validate_variables(payload.get("input_variables"))
-    iterations = _clean_iterations(payload.get("iterations"))
     output_metric = str(payload.get("output_metric") or "net_value").strip()
     if output_metric not in SUPPORTED_OUTPUT_METRICS:
         raise MonteCarloValidationError("unsupported output_metric")
+    variables = validate_variables(payload.get("input_variables"))
+    try:
+        variables = monte_carlo_contract.validate_for_output(variables, output_metric)
+    except ValueError as exc:
+        raise MonteCarloValidationError(str(exc)) from exc
+    iterations = _clean_iterations(payload.get("iterations"))
     seed = int(payload.get("seed", 0))
     threshold_raw = payload.get("breach_threshold")
-    threshold = _finite_number(threshold_raw, "breach_threshold") if threshold_raw is not None else None
+    threshold = (
+        _finite_number(threshold_raw, "breach_threshold")
+        if threshold_raw is not None
+        else None
+    )
     breach_direction = str(payload.get("breach_direction") or "").strip().lower()
     if not breach_direction:
-        breach_direction = "above" if output_metric in {"cost", "delay_days"} else "below"
+        breach_direction = (
+            "above" if output_metric in {"cost", "delay_days"} else "below"
+        )
     if breach_direction not in {"below", "above"}:
         raise MonteCarloValidationError("breach_direction must be below or above")
 
-    rng = random.Random(seed)
+    rng_by_variable = {name: random.Random(f"{seed}:{name}") for name in variables}
     outputs: list[float] = []
     samples_by_variable: dict[str, list[float]] = {name: [] for name in variables}
     for _ in range(iterations):
-        sample = {name: _sample_distribution(rng, spec) for name, spec in variables.items()}
+        sample = {
+            name: _sample_distribution(rng_by_variable[name], spec) for name, spec in variables.items()
+        }
         for name, value in sample.items():
             samples_by_variable[name].append(value)
         outputs.append(_metric_value(sample, output_metric))
@@ -262,9 +305,13 @@ def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
     probability_breach = None
     if threshold is not None:
         if breach_direction == "above":
-            probability_breach = sum(1 for value in outputs if value >= threshold) / iterations
+            probability_breach = (
+                sum(1 for value in outputs if value >= threshold) / iterations
+            )
         else:
-            probability_breach = sum(1 for value in outputs if value <= threshold) / iterations
+            probability_breach = (
+                sum(1 for value in outputs if value <= threshold) / iterations
+            )
 
     summary = {
         "iterations": iterations,
@@ -276,15 +323,23 @@ def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
         "p90": round(_quantile(sorted_outputs, 0.90), 6),
         "min": round(sorted_outputs[0], 6),
         "max": round(sorted_outputs[-1], 6),
-        "probability_loss": round(sum(1 for value in outputs if value < 0) / iterations, 6),
+        "probability_loss": round(
+            sum(1 for value in outputs if value < 0) / iterations, 6
+        ),
         "probability_breach_threshold": None
         if probability_breach is None
         else round(probability_breach, 6),
         "breach_threshold": threshold,
         "breach_direction": breach_direction,
         "expected_value": round(mean(outputs), 6),
-        "worst_case_band": [round(_quantile(sorted_outputs, 0.01), 6), round(_quantile(sorted_outputs, 0.10), 6)],
-        "confidence_band": [round(_quantile(sorted_outputs, 0.10), 6), round(_quantile(sorted_outputs, 0.90), 6)],
+        "worst_case_band": [
+            round(_quantile(sorted_outputs, 0.01), 6),
+            round(_quantile(sorted_outputs, 0.10), 6),
+        ],
+        "confidence_band": [
+            round(_quantile(sorted_outputs, 0.10), 6),
+            round(_quantile(sorted_outputs, 0.90), 6),
+        ],
     }
     return {
         "distribution_summary": summary,
@@ -293,78 +348,22 @@ def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _option_seed(base_seed: int, option_id: str, index: int) -> int:
-    raw = f"{base_seed}:{index}:{option_id}".encode("utf-8")
-    return int(hashlib.sha256(raw).hexdigest()[:16], 16)
-
-
-def _risk_adjusted_score(summary: dict[str, Any]) -> float:
-    expected = float(summary["expected_value"])
-    spread = float(summary["p90"]) - float(summary["p10"])
-    breach = float(summary.get("probability_breach_threshold") or 0)
-    return expected - (spread * 0.25) - (breach * abs(expected if expected else 1.0))
-
-
-def compare_options(payload: dict[str, Any]) -> dict[str, Any] | None:
-    options = payload.get("options")
-    if not options:
-        return None
-    if not isinstance(options, list) or len(options) > 10:
-        raise MonteCarloValidationError("options must contain 1 to 10 entries")
-
-    base_seed = int(payload.get("seed", 0))
-    option_results: list[dict[str, Any]] = []
-    for index, option in enumerate(options):
-        if not isinstance(option, dict):
-            raise MonteCarloValidationError("each option must be an object")
-        option_id = str(option.get("option_id") or "").strip()
-        if not option_id or len(option_id) > 120:
-            raise MonteCarloValidationError("option_id is required")
-        option_payload = {
-            **payload,
-            "seed": _option_seed(base_seed, option_id, index),
-            "input_variables": option.get("input_variables") or payload.get("input_variables"),
-            "assumptions": option.get("assumptions") or payload.get("assumptions") or {},
-            "options": None,
-        }
-        result = run_single_simulation(option_payload)
-        summary = result["distribution_summary"]
-        score = _risk_adjusted_score(summary)
-        option_results.append(
-            {
-                "option_id": option_id,
-                "label": option.get("label") or option_id,
-                "seed": option_payload["seed"],
-                "distribution_summary": summary,
-                "sensitivity": result["sensitivity"][:10],
-                "risk_adjusted_score": round(score, 6),
-            }
-        )
-
-    ranked = sorted(option_results, key=lambda item: item["risk_adjusted_score"], reverse=True)
-    return {
-        "ranking": [
-            {
-                "rank": index + 1,
-                "option_id": item["option_id"],
-                "risk_adjusted_score": item["risk_adjusted_score"],
-                "expected_value": item["distribution_summary"]["expected_value"],
-                "probability_breach_threshold": item["distribution_summary"]["probability_breach_threshold"],
-            }
-            for index, item in enumerate(ranked)
-        ],
-        "options": ranked,
+def run_monte_carlo(payload: dict[str, Any]) -> dict[str, Any]:
+    model_version = MODEL_VERSION
+    server_payload = {
+        key: value for key, value in payload.items() if key != "model_version"
     }
-
-
-def run_monte_carlo(
-    payload: dict[str, Any], *, model_version: str | None = None
-) -> dict[str, Any]:
-    model_version = str(model_version or payload.get("model_version") or MODEL_VERSION)
-    single = run_single_simulation(payload)
-    option_comparison = compare_options(payload)
-    if option_comparison:
-        single["distribution_summary"] = option_comparison["options"][0]["distribution_summary"]
+    single = run_single_simulation(server_payload)
+    option_comparison = monte_carlo_options.compare_options(
+        server_payload,
+        run_single=run_single_simulation,
+        validation_error=MonteCarloValidationError,
+        canonical_json=canonical_json,
+    )
+    if option_comparison and option_comparison["status"] == "ranked":
+        single["distribution_summary"] = option_comparison["options"][0][
+            "distribution_summary"
+        ]
         single["sensitivity"] = option_comparison["options"][0]["sensitivity"]
 
     response = {
@@ -377,7 +376,7 @@ def run_monte_carlo(
     response["reproducibility_hash"] = reproducibility_hash(
         {
             "model_version": model_version,
-            "payload": payload,
+            "payload": server_payload,
             "result": {
                 "distribution_summary": response["distribution_summary"],
                 "sensitivity": response["sensitivity"],

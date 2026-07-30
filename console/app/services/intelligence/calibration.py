@@ -392,7 +392,6 @@ def apply_calibration_to_probability(
             disclaimer=RAW_HEURISTIC_DISCLAIMER,
             max_adjustment=max_adjustment,
         )
-
     metrics = _state_metrics(calibration_state)
     posterior = _state_posterior(calibration_state)
     sample_count = int(metrics.get("sample_count") or 0)
@@ -400,7 +399,8 @@ def apply_calibration_to_probability(
     posterior_mean = posterior.get("mean")
     posterior_alpha = posterior.get("alpha")
     posterior_beta = posterior.get("beta")
-    if sample_count < min_samples or posterior_mean is None:
+    provenance_complete = metrics.get("complete") is True and metrics.get("provenance_complete") is True
+    if not provenance_complete or sample_count < min_samples or posterior_mean is None:
         return _calibration_metadata(
             raw=raw,
             calibrated=raw,
@@ -410,7 +410,7 @@ def apply_calibration_to_probability(
             metrics=metrics,
             confidence_score=confidence_score,
             calibration_applied=False,
-            reason="insufficient_calibration_data",
+            reason="insufficient_calibration_data" if provenance_complete else "incomplete_calibration_provenance",
             disclaimer=RAW_HEURISTIC_DISCLAIMER,
             max_adjustment=max_adjustment,
         )

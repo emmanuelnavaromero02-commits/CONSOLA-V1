@@ -46,6 +46,8 @@ class _FakeConnection:
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
+        if "SELECT 1 AS trusted FROM control_room_items" in sql:
+            return {"trusted": 1}
         if "SELECT source_type, source_id" in sql and "monte_carlo_simulations" in sql:
             return {"source_type": "wisdom_bit", "source_id": "WB-TALENTO"}
         if "SELECT *" in sql and "FROM calibration_states" in sql:
@@ -148,11 +150,11 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
             "calibration_observation_service.py",
             "calibration_state_repository.py",
             "calibration_source_validation.py",
+            *"source_provenance.py calibration_recompute_batch.py".split(),
             "calibration_recompute_service.py",
             "calibration_validation_service.py",
         )
     )
-
     assert "from app.services.db_scope import scoped_db_for_user" in service
     assert "async with scoped_db_for_user(pool, user)" in service
     assert "get_state_map_for_live_calibration" in service
@@ -160,7 +162,7 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
     assert "tenant_id" in service
     assert "workspace_id" in service
     assert "security_context" in service
-    assert "FROM monte_carlo_simulations" in service
+    assert '"monte_carlo_simulations"' in service
     assert "FROM backtest_results" in service
 
     with pytest.raises(HTTPException):

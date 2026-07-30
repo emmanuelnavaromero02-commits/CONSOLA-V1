@@ -28,6 +28,11 @@ def _row_state(
         return None
     data = dict(row)
     metrics = _json_obj(data.get("metrics"), {})
+    if (
+        metrics.get("complete") is not True
+        or metrics.get("provenance_complete") is not True
+    ):
+        return None
     return {
         "calibration_group": group,
         "model_version": model_version,
@@ -131,12 +136,14 @@ async def _source_exists(
     workspace_id: str,
     source_type: str,
     source_id: str,
+    allow_manual: bool = False,
 ) -> bool:
     return await calibration_source_exists(
         conn,
         workspace_id=workspace_id,
         source_type=source_type,
         source_id=source_id,
+        allow_manual=allow_manual,
     )
 
 

@@ -182,7 +182,6 @@ class MonteCarloRunRequest(_StrictModel):
     horizon_days: int = Field(default=30, ge=1, le=365)
     iterations: int = Field(default=1000, ge=1, le=10_000)
     seed: int = Field(default=0, ge=0)
-    model_version: str | None = Field(default=None, max_length=80)
     input_variables: dict[str, dict] = Field(default_factory=dict)
     assumptions: dict = Field(default_factory=dict)
     use_external_market_context: bool = False

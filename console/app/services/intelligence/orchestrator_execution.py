@@ -12,13 +12,12 @@ from fastapi import HTTPException
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.intelligence import calibration, monte_carlo_service
-from app.services.intelligence.utils import (
-    json_default,
-    json_dumps,
-    public_json,
+from app.services.intelligence import (
+    calibration,
+    monte_carlo_service,
+    orchestrator_execution_truth as truth,
 )
-
+from app.services.intelligence.utils import json_default, json_dumps, public_json
 
 FORBIDDEN_SCOPE_KEYS = {"tenant_id", "workspace_id", "security_context"}
 TERMINAL_STATUSES = {"succeeded", "skipped", "failed", "candidate_only"}
@@ -577,6 +576,8 @@ async def _run_bayesian_lookup(
     state = _row_dict(row)
     posterior = _json_obj(state.get("posterior"))
     metrics = _json_obj(state.get("metrics"))
+    if incomplete := truth.incomplete_calibration_result(metrics):
+        return incomplete
     sample_count = int(state.get("sample_count") or metrics.get("sample_count") or 0)
     confidence_score = state.get("confidence_score")
     if confidence_score is None:
@@ -806,7 +807,6 @@ def _aggregate(run: dict[str, Any], executions: list[dict[str, Any]]) -> dict[st
 
 async def _update_engine_plan(
     conn: Any,
-    *,
     workspace_id: str,
     run: dict[str, Any],
     aggregate: dict[str, Any],
@@ -853,6 +853,10 @@ async def execute_engines(
         run = await _load_run(
             conn, workspace_id=workspace_id, orchestration_id=orchestration_id
         )
+        if not await truth.execution_source_trusted(
+            conn, workspace_id, run, not _manual_fixture_disabled("manual_fixture")
+        ):
+            raise OrchestratorExecutionError(409, "source_provenance_untrusted")
         executions: list[dict[str, Any]] = []
         for engine_name in _candidate_engines(run):
             executions.append(
@@ -920,12 +924,7 @@ async def execute_engines(
                     )
                 )
         aggregate = _aggregate(run, executions)
-        await _update_engine_plan(
-            conn,
-            workspace_id=workspace_id,
-            run=run,
-            aggregate=aggregate,
-        )
+        await _update_engine_plan(conn, workspace_id, run, aggregate)
     return {"aggregate": aggregate, "executions": executions}
 
 

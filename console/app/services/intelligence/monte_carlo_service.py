@@ -73,6 +73,8 @@ def _simulation_id(
 
 def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     clean = dict(payload or {})
+    if "model_version" in clean:
+        raise HTTPException(422, "model_version is server-owned")
     if any(key in clean for key in FORBIDDEN_SCOPE_KEYS):
         raise HTTPException(422, "tenant/workspace/security_context are not accepted")
     input_variables = clean.get("input_variables") or {}

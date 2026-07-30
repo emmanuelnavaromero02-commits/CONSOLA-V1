@@ -37,6 +37,8 @@ class _FakeConnection:
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
+        if "SELECT 1 AS trusted FROM control_room_items" in sql:
+            return {"trusted": 1}
         if "FROM intelligence_signals" in sql:
             return {
                 "signal_subtype": "observed",
