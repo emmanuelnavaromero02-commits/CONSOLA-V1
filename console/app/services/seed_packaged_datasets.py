@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _REGISTRY = pathlib.Path("/registry/cartridges")
 _EXPECTED_CATALOG_FILES = 229
 _EXPECTED_CATALOG_DIGEST = (
-    "e7e043afc59c4b49c339bc08545707dc84450c206f6693ebc0a8e12c488cf2b0"
+    "b29cdc1a4671bc5c6132bad270e55db293fccaa1c6f468d15eddb555b43edccb"
 )
 _HEADER_RE = re.compile(
     r"^--\s*(?P<name>[A-Za-z_][\w]*)\s+\((?P<layer>[^)]+)\)\s+cartridge:\s*(?P<cartridge>[\w-]+)",

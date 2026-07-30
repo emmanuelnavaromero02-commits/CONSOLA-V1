@@ -9,28 +9,34 @@ WITH cpa AS (
                       union_by_name = true)
 ),
 benchmark AS (
-    SELECT *
+    SELECT
+        *,
+        CASE
+            WHEN approved = TRUE
+              AND NULLIF(TRIM(CAST(approved_by AS VARCHAR)), '') IS NOT NULL
+              AND LOWER(TRIM(CAST(approved_by AS VARCHAR))) NOT LIKE 'system%'
+              AND TRY_CAST(approved_at AS TIMESTAMP) IS NOT NULL THEN TRUE
+            ELSE FALSE
+        END AS approval_valid
     FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_talent_benchmark_internal/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name = true)
     WHERE enabled = TRUE
-      AND approved = TRUE
-    ORDER BY materialized_at DESC NULLS LAST
+    ORDER BY approval_valid DESC, materialized_at DESC NULLS LAST
     LIMIT 1
 ),
 benchmark_raw AS (
     SELECT
         cpa.*,
         COALESCE(benchmark.enabled, FALSE) AS benchmark_enabled,
-        COALESCE(benchmark.approved, FALSE) AS benchmark_approved,
+        COALESCE(benchmark.approval_valid, FALSE) AS benchmark_approval_valid,
         benchmark.benchmark_version,
         benchmark.contract_version AS benchmark_contract_version,
         COALESCE(benchmark.readiness_high_threshold, 80.0) AS readiness_high_threshold,
         COALESCE(benchmark.readiness_medium_threshold, 60.0) AS readiness_medium_threshold,
         CASE
             WHEN cpa.fit_score IS NOT NULL THEN NULL
-            WHEN COALESCE(benchmark.enabled, FALSE) IS FALSE
-              OR COALESCE(benchmark.approved, FALSE) IS FALSE THEN NULL
+            WHEN COALESCE(benchmark.enabled, FALSE) IS FALSE THEN NULL
             ELSE ROUND(LEAST(100.0, GREATEST(0.0,
                 (
                     CASE
@@ -94,7 +100,7 @@ classified AS (
         CASE
             WHEN fit_score IS NOT NULL THEN NULL
             WHEN benchmark_enabled
-              AND benchmark_approved
+              AND benchmark_approval_valid
               AND benchmark_raw_score IS NOT NULL
               AND workspace_employee_count >= 50
               AND benchmark_input_coverage >= 0.80
@@ -104,7 +110,7 @@ classified AS (
         CASE
             WHEN fit_score IS NOT NULL THEN 'cpa_real'
             WHEN benchmark_enabled
-              AND benchmark_approved
+              AND benchmark_approval_valid
               AND benchmark_raw_score IS NOT NULL
               AND workspace_employee_count >= 50
               AND benchmark_input_coverage >= 0.80 THEN 'benchmark_internal'
@@ -113,7 +119,7 @@ classified AS (
         CASE
             WHEN fit_score IS NOT NULL THEN fit_score
             WHEN benchmark_enabled
-              AND benchmark_approved
+              AND benchmark_approval_valid
               AND benchmark_raw_score IS NOT NULL
               AND workspace_employee_count >= 50
               AND benchmark_input_coverage >= 0.80
@@ -174,9 +180,9 @@ SELECT
         WHEN source_mode = 'insufficient_data' THEN '[' || RTRIM(
             CONCAT(
                 CASE WHEN fit_score IS NULL THEN '"talent_cpa_inputs_missing",' ELSE '' END,
-                CASE WHEN NOT benchmark_enabled OR NOT benchmark_approved THEN '"benchmark_internal_not_configured",' ELSE '' END,
-                CASE WHEN benchmark_enabled AND benchmark_approved AND workspace_employee_count < 50 THEN '"benchmark_min_population_not_met",' ELSE '' END,
-                CASE WHEN benchmark_enabled AND benchmark_approved AND benchmark_input_coverage < 0.80 THEN '"benchmark_min_coverage_not_met",' ELSE '' END
+                CASE WHEN NOT benchmark_enabled OR NOT benchmark_approval_valid THEN '"benchmark_internal_not_reviewed",' ELSE '' END,
+                CASE WHEN benchmark_enabled AND benchmark_approval_valid AND workspace_employee_count < 50 THEN '"benchmark_min_population_not_met",' ELSE '' END,
+                CASE WHEN benchmark_enabled AND benchmark_approval_valid AND benchmark_input_coverage < 0.80 THEN '"benchmark_min_coverage_not_met",' ELSE '' END
             ),
             ','
         ) || ']'
