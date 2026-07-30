@@ -13,7 +13,6 @@ const clientBoundary = vi.hoisted(() => ({
   listSupervisedActions: vi.fn(),
   getSupervisedAction: vi.fn(),
   validateSupervisedAction: vi.fn(),
-  approveSupervisedAction: vi.fn(),
   rejectSupervisedAction: vi.fn(),
   cancelSupervisedAction: vi.fn(),
 }));
@@ -27,7 +26,7 @@ vi.mock("@/lib/supervised-actions/client", () => clientBoundary);
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MUTATION_LABELS = ["Validar", "Aprobar", "Rechazar", "Cancelar"];
+const MUTATION_LABELS = ["Validar", "Rechazar", "Cancelar"];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -69,7 +68,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   clientBoundary.getSupervisedAction.mockResolvedValue(makeAction());
   clientBoundary.validateSupervisedAction.mockResolvedValue(makeAction({ status: "validated" }));
-  clientBoundary.approveSupervisedAction.mockResolvedValue(makeAction({ status: "approved" }));
   clientBoundary.rejectSupervisedAction.mockResolvedValue(makeAction({ status: "cancelled" }));
   clientBoundary.cancelSupervisedAction.mockResolvedValue(makeAction({ status: "cancelled" }));
   container = document.createElement("div");
@@ -89,7 +87,7 @@ describe("SupervisedActionsPage en modo preview-only", () => {
 
     expect(findButton("Ejecutar")).toBeUndefined();
     expect(container.textContent).toContain(
-      "La ejecución no está disponible desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).",
+      "La ejecución y la aprobación no están disponibles desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).",
     );
     // Las mutaciones de preparación siguen disponibles sobre una acción activa.
     expect(findButton("Validar")?.disabled).toBe(false);
@@ -111,7 +109,7 @@ describe("SupervisedActionsPage en modo preview-only", () => {
     },
   );
 
-  it("envía un idempotency_key único por intento de mutación", async () => {
+  it("envía un idempotency_key UUID distinto por intención lógica", async () => {
     clientBoundary.listSupervisedActions.mockResolvedValue({ actions: [makeAction()] });
     await renderPage();
 

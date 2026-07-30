@@ -1,10 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Ban,
-  CheckCircle2,
   ClipboardCheck,
   Info,
   Loader2,
@@ -13,18 +12,15 @@ import {
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { toast } from "sonner";
 
 import {
-  approveSupervisedAction,
-  cancelSupervisedAction,
   getSupervisedAction,
   listSupervisedActions,
-  rejectSupervisedAction,
-  validateSupervisedAction,
 } from "@/lib/supervised-actions/client";
 import type { SupervisedAction } from "@/lib/supervised-actions/types";
 import { cn } from "@/lib/utils";
+
+import { useSupervisedActionMutations } from "./use-action-mutations";
 
 const EMPTY_ACTIONS: SupervisedAction[] = [];
 
@@ -85,24 +81,6 @@ function shortDate(value?: string | null): string {
   return parsed.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
 }
 
-function useSupervisedActionMutation(
-  currentId: string,
-  label: string,
-  fn: (id: string) => Promise<SupervisedAction>,
-) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => fn(currentId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["supervised-actions"] });
-      toast.success(label);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "No se pudo completar la acción.");
-    },
-  });
-}
-
 export default function SupervisedActionsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const actions = useQuery({
@@ -129,14 +107,11 @@ export default function SupervisedActionsPage() {
     ]);
   };
 
-  // Un idempotency_key nuevo por intento de mutación (contrato:
-  // ActionMutationRequest.idempotency_key) para que reintentos de red no
-  // dupliquen efectos en el backend.
-  const validate = useSupervisedActionMutation(currentId, "Acción validada.", (id) => validateSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
-  const approve = useSupervisedActionMutation(currentId, "Acción aprobada.", (id) => approveSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
-  const reject = useSupervisedActionMutation(currentId, "Acción rechazada.", (id) => rejectSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
-  const cancel = useSupervisedActionMutation(currentId, "Acción cancelada.", (id) => cancelSupervisedAction(id, { idempotency_key: crypto.randomUUID() }));
-  const busy = validate.isPending || approve.isPending || reject.isPending || cancel.isPending;
+  // Idempotencia por intención lógica: la clave se conserva entre
+  // reintentos y solo rota tras éxito definitivo (ver use-action-mutations).
+  // La aprobación legacy no tiene camino interactivo: PR-A sigue sin
+  // capacidad server-authoritative que la habilite.
+  const { validate, reject, cancel, busy } = useSupervisedActionMutations(currentId);
 
   const summary = useMemo(() => {
     const pending = rows.filter((row) => ["prepared", "proposed", "pending", "requires_approval", "awaiting_approval"].includes(String(row.status || row.state || ""))).length;
@@ -232,16 +207,15 @@ export default function SupervisedActionsPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <ActionButton label="Validar" icon={ClipboardCheck} disabled={busy || !currentId || terminal} onClick={() => validate.mutate()} />
-                    <ActionButton label="Aprobar" icon={CheckCircle2} disabled={busy || !currentId || terminal} onClick={() => approve.mutate()} />
-                    <ActionButton label="Rechazar" icon={XCircle} disabled={busy || !currentId || terminal} onClick={() => reject.mutate()} />
-                    <ActionButton label="Cancelar" icon={Ban} disabled={busy || !currentId || terminal} onClick={() => cancel.mutate()} />
+                    <ActionButton label="Validar" icon={ClipboardCheck} disabled={busy || !currentId || terminal} onClick={validate.run} />
+                    <ActionButton label="Rechazar" icon={XCircle} disabled={busy || !currentId || terminal} onClick={reject.run} />
+                    <ActionButton label="Cancelar" icon={Ban} disabled={busy || !currentId || terminal} onClick={cancel.run} />
                   </div>
                 </div>
 
                 <p role="note" className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
                   <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  La ejecución no está disponible desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).
+                  La ejecución y la aprobación no están disponibles desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).
                 </p>
 
                 {selected.isLoading ? (
