@@ -1,4 +1,4 @@
-import { api, isApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import type {
   AppUser,
   AuditEvent,
@@ -220,19 +220,13 @@ export async function getOperationWorkflow(id: string): Promise<OperationWorkflo
   };
 }
 
-export async function triggerOperationWorkflow(workflow: OperationWorkflow): Promise<OperationWorkflowActionResponse> {
-  const id = encodeURIComponent(workflow.id);
-  if (workflow.status === "planning") {
-    try {
-      await api.post(`/api/copilot/workflow/${id}/plan`, {});
-    } catch (error) {
-      if (!(isApiError(error) && error.status === 409)) {
-        throw error;
-      }
-    }
-  }
+/**
+ * Preview-only: la consola solo planifica workflows (POST /plan). La
+ * ejecución (POST /execute) no se dispara desde esta superficie.
+ */
+export async function planOperationWorkflow(workflow: OperationWorkflow): Promise<OperationWorkflowActionResponse> {
   const { data } = await api.post<OperationWorkflowActionResponse>(
-    `/api/copilot/workflow/${id}/execute`,
+    `/api/copilot/workflow/${encodeURIComponent(workflow.id)}/plan`,
     {},
   );
   return data;

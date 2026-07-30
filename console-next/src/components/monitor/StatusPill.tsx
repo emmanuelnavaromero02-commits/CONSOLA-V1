@@ -4,10 +4,35 @@ const OK = new Set(["done", "success", "fresh", "operational", "completed"]);
 const WARN = new Set(["queued", "running", "partial", "empty", "stale", "degraded", "never", "unknown"]);
 const BAD = new Set(["failed", "error", "very_stale", "offline"]);
 
+// Spanish labels for the raw backend status keys (pattern:
+// FreshnessTable STATUS_LABEL). Unknown keys fall back to the raw
+// value so nothing is hidden.
+const LABEL: Record<string, string> = {
+  done:        "Completado",
+  success:     "Exitoso",
+  completed:   "Completado",
+  fresh:       "Fresca",
+  operational: "Operativo",
+  queued:      "En cola",
+  running:     "En ejecución",
+  partial:     "Parcial",
+  empty:       "Sin filas",
+  stale:       "Antigua",
+  degraded:    "Degradado",
+  never:       "Nunca",
+  unknown:     "Sin dato de frescura",
+  failed:      "Fallido",
+  error:       "Error",
+  very_stale:  "Muy antigua",
+  offline:     "Fuera de línea",
+};
+
 export function StatusPill({ status }: { status?: string | null }) {
   const value = (status || "unknown").toLowerCase();
+  const label = LABEL[value] ?? (status || "unknown");
   return (
     <span
+      title={value}
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
         OK.has(value) && "border-success/30 bg-success/10 text-success",
@@ -16,7 +41,7 @@ export function StatusPill({ status }: { status?: string | null }) {
         !OK.has(value) && !WARN.has(value) && !BAD.has(value) && "border-border bg-muted text-muted-foreground",
       )}
     >
-      {status || "unknown"}
+      {label}
     </span>
   );
 }

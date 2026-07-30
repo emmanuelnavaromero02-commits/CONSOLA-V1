@@ -146,6 +146,79 @@ describe("api", () => {
     }
   });
 
+  it("passes through a safe single-line 4xx detail", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ detail: "El período ya está cerrado." }),
+      { status: 409, headers: { "content-type": "application/json", "x-request-id": "req-safe" } },
+    )));
+
+    await expect(api.post("/api/periods/close", {})).rejects.toMatchObject({
+      message: "El período ya está cerrado.",
+      status: 409,
+      requestId: "req-safe",
+    });
+  });
+
+  it.each([
+    ["multiline detail", "línea uno\nlínea dos"],
+    ["traceback", "Traceback (most recent call last): ValueError"],
+    ["SQL fragment", "error near SELECT id FROM users"],
+    ["server path", 'File "/app/services/payroll.py", line 42'],
+    ["hex pointer", "segfault at 0xdeadbeef01"],
+    ["digest", `dup key ${"a1b2c3d4".repeat(4)}`],
+    ["too long", "x".repeat(241)],
+  ])("replaces unsafe 4xx detail (%s) with generic message + Ref", async (_label, detail) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ detail }),
+      { status: 422, headers: { "content-type": "application/json", "x-request-id": "req-unsafe" } },
+    )));
+
+    await expect(api.post("/api/things", {})).rejects.toMatchObject({
+      message: "No se pudo completar la solicitud (HTTP 422). Ref: req-unsafe",
+      status: 422,
+      requestId: "req-unsafe",
+    });
+  });
+
+  it("never surfaces raw non-JSON string bodies such as proxy HTML", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "<html><body><h1>502 Bad Gateway</h1><pre>upstream connect error</pre></body></html>",
+      { status: 400, headers: { "content-type": "text/html", "x-request-id": "req-html" } },
+    )));
+
+    await expect(api.get("/api/things")).rejects.toMatchObject({
+      message: "No se pudo completar la solicitud (HTTP 400). Ref: req-html",
+      status: 400,
+      requestId: "req-html",
+    });
+  });
+
+  it("keeps 5xx generic even when the backend sends a detail string", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ detail: "psycopg2.OperationalError: connection refused" }),
+      { status: 500, headers: { "content-type": "application/json", "x-request-id": "req-500" } },
+    )));
+
+    await expect(api.get("/api/things")).rejects.toMatchObject({
+      message: "El backend no pudo completar la solicitud. Ref: req-500",
+      status: 500,
+      requestId: "req-500",
+    });
+  });
+
+  it("keeps 5xx generic for raw HTML bodies from proxies", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "<html><body>Bad Gateway</body></html>",
+      { status: 502, headers: { "content-type": "text/html", "x-request-id": "req-502" } },
+    )));
+
+    await expect(api.get("/api/things")).rejects.toMatchObject({
+      message: "El backend no pudo completar la solicitud. Ref: req-502",
+      status: 502,
+      requestId: "req-502",
+    });
+  });
+
   it("adds request id context to plain backend failures", async () => {
     vi.stubGlobal("crypto", { randomUUID: () => "client-req" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", {

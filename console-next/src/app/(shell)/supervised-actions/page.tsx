@@ -1,36 +1,43 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Ban,
-  CheckCircle2,
   ClipboardCheck,
+  Info,
   Loader2,
-  Play,
   RefreshCw,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { toast } from "sonner";
 
 import {
-  approveSupervisedAction,
-  cancelSupervisedAction,
-  executeSupervisedAction,
   getSupervisedAction,
   listSupervisedActions,
-  rejectSupervisedAction,
-  validateSupervisedAction,
 } from "@/lib/supervised-actions/client";
 import type { SupervisedAction } from "@/lib/supervised-actions/types";
 import { cn } from "@/lib/utils";
 
+import { useSupervisedActionMutations } from "./use-action-mutations";
+
 const EMPTY_ACTIONS: SupervisedAction[] = [];
+
+// Estados terminales según el contrato (status/state ya entregados por la
+// API): sobre una acción ejecutada o cancelada no procede ninguna mutación.
+const TERMINAL_STATES = new Set(["executed", "completed", "cancelled", "canceled"]);
 
 function actionId(action: SupervisedAction): string {
   return String(action.id || action.action_id || "");
+}
+
+function actionState(action: SupervisedAction): string {
+  return String(action.status || action.state || "");
+}
+
+function isTerminal(action: SupervisedAction): boolean {
+  return TERMINAL_STATES.has(actionState(action));
 }
 
 function actionTitle(action: SupervisedAction): string {
@@ -74,24 +81,6 @@ function shortDate(value?: string | null): string {
   return parsed.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
 }
 
-function useSupervisedActionMutation(
-  currentId: string,
-  label: string,
-  fn: (id: string) => Promise<SupervisedAction>,
-) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => fn(currentId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["supervised-actions"] });
-      toast.success(label);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "No se pudo completar la acción.");
-    },
-  });
-}
-
 export default function SupervisedActionsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const actions = useQuery({
@@ -109,6 +98,7 @@ export default function SupervisedActionsPage() {
   const rows = actions.data?.actions ?? EMPTY_ACTIONS;
   const activeAction = selected.data || rows.find((row) => actionId(row) === selectedId) || rows[0];
   const currentId = activeAction ? actionId(activeAction) : "";
+  const terminal = activeAction ? isTerminal(activeAction) : false;
 
   const refresh = async () => {
     await Promise.all([
@@ -117,12 +107,11 @@ export default function SupervisedActionsPage() {
     ]);
   };
 
-  const validate = useSupervisedActionMutation(currentId, "Acción validada.", (id) => validateSupervisedAction(id));
-  const approve = useSupervisedActionMutation(currentId, "Acción aprobada.", (id) => approveSupervisedAction(id));
-  const reject = useSupervisedActionMutation(currentId, "Acción rechazada.", (id) => rejectSupervisedAction(id));
-  const execute = useSupervisedActionMutation(currentId, "Ejecución solicitada.", (id) => executeSupervisedAction(id));
-  const cancel = useSupervisedActionMutation(currentId, "Acción cancelada.", (id) => cancelSupervisedAction(id));
-  const busy = validate.isPending || approve.isPending || reject.isPending || execute.isPending || cancel.isPending;
+  // Idempotencia por intención lógica: la clave se conserva entre
+  // reintentos y solo rota tras éxito definitivo (ver use-action-mutations).
+  // La aprobación legacy no tiene camino interactivo: PR-A sigue sin
+  // capacidad server-authoritative que la habilite.
+  const { validate, reject, cancel, busy } = useSupervisedActionMutations(currentId);
 
   const summary = useMemo(() => {
     const pending = rows.filter((row) => ["prepared", "proposed", "pending", "requires_approval", "awaiting_approval"].includes(String(row.status || row.state || ""))).length;
@@ -139,7 +128,7 @@ export default function SupervisedActionsPage() {
             <p className="text-xs font-semibold uppercase text-primary">OMEGA</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Acciones Supervisadas</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Validación, aprobación y ejecución controlada de acciones preparadas por la consola.
+              Validación y seguimiento de acciones preparadas por la consola.
             </p>
           </div>
           <button
@@ -165,12 +154,12 @@ export default function SupervisedActionsPage() {
               <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">{rows.length}</span>
             </div>
             {actions.isLoading ? (
-              <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
+              <div role="status" className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
                 <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
                 Cargando
               </div>
             ) : actions.error ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 No se pudieron cargar las acciones.
               </div>
             ) : rows.length === 0 ? (
@@ -218,30 +207,34 @@ export default function SupervisedActionsPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <ActionButton label="Validar" icon={ClipboardCheck} disabled={busy || !currentId} onClick={() => validate.mutate()} />
-                    <ActionButton label="Aprobar" icon={CheckCircle2} disabled={busy || !currentId} onClick={() => approve.mutate()} />
-                    <ActionButton label="Rechazar" icon={XCircle} disabled={busy || !currentId} onClick={() => reject.mutate()} />
-                    <ActionButton label="Ejecutar" icon={Play} disabled={busy || !currentId} onClick={() => execute.mutate()} primary />
-                    <ActionButton label="Cancelar" icon={Ban} disabled={busy || !currentId} onClick={() => cancel.mutate()} />
+                    <ActionButton label="Validar" icon={ClipboardCheck} disabled={busy || !currentId || terminal} onClick={validate.run} />
+                    <ActionButton label="Rechazar" icon={XCircle} disabled={busy || !currentId || terminal} onClick={reject.run} />
+                    <ActionButton label="Cancelar" icon={Ban} disabled={busy || !currentId || terminal} onClick={cancel.run} />
                   </div>
                 </div>
 
+                <p role="note" className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
+                  <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  La ejecución y la aprobación no están disponibles desde esta consola: las acciones operan en modo supervisado de solo preparación (preview).
+                </p>
+
                 {selected.isLoading ? (
-                  <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <div role="status" className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
                     Cargando detalle
                   </div>
                 ) : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <DetailBox label="Fuente" value={String(activeAction.source_type || "operativa")} />
-                  <DetailBox label="Tipo" value={String(activeAction.action_type || "acción")} />
+                  {/* Procedencia veraz: lo ausente se declara, nunca se inventa. */}
+                  <DetailBox label="Fuente" value={activeAction.source_type ? String(activeAction.source_type) : "Fuente no informada"} />
+                  <DetailBox label="Tipo" value={activeAction.action_type ? String(activeAction.action_type) : "Tipo no informado"} />
                   <DetailBox label="Creada" value={shortDate(activeAction.created_at)} />
                   <DetailBox label="Vence" value={shortDate(activeAction.expires_at)} />
                 </div>
 
                 {activeAction.last_error ? (
-                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                     {activeAction.last_error}
                   </div>
                 ) : null}

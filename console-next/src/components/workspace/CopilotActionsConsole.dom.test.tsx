@@ -15,6 +15,7 @@ const clientBoundary = vi.hoisted(() => ({
 const snapshotEndpoint = vi.mocked(getCopilotContextSnapshot);
 
 let accessPermissions: string[] = [];
+let queriesLoading = false;
 let container: HTMLDivElement;
 let root: Root;
 
@@ -50,7 +51,7 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return {
       data: name.includes("recommendations") ? [] : undefined,
-      isLoading: false,
+      isLoading: queriesLoading,
       refetch: name === "copilot:actions:live-context" ? queryFn : vi.fn(),
     };
   },
@@ -68,6 +69,7 @@ async function renderAndClickRefresh(permissions: string[]) {
 
 beforeEach(() => {
   snapshotEndpoint.mockClear();
+  queriesLoading = false;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -89,5 +91,40 @@ describe("CopilotActionsConsole refresh interaction", () => {
     await renderAndClickRefresh(["operations.read"]);
 
     expect(snapshotEndpoint).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CopilotActionsConsole loading accessibility", () => {
+  it("announces loading skeletons via role=status, sr-only text and aria-busy sections", async () => {
+    accessPermissions = ["operations.read"];
+    queriesLoading = true;
+    await act(async () => root.render(<CopilotActionsConsole />));
+
+    const statuses = [...container.querySelectorAll('[role="status"]')];
+    expect(statuses.length).toBeGreaterThan(0);
+    for (const status of statuses) {
+      expect(status.querySelector(".sr-only")?.textContent).toBe("Cargando");
+    }
+
+    const busySections = [...container.querySelectorAll('section[aria-busy="true"]')];
+    expect(busySections.length).toBeGreaterThan(0);
+
+    // El contador "..." tiene alternativa accesible.
+    const hiddenDots = [...container.querySelectorAll('span[aria-hidden="true"]')].filter(
+      (node) => node.textContent === "...",
+    );
+    expect(hiddenDots.length).toBeGreaterThan(0);
+    for (const dots of hiddenDots) {
+      expect(dots.parentElement?.querySelector(".sr-only")?.textContent).toBe("Cargando");
+    }
+  });
+
+  it("keeps sections not busy and skeleton-free once data resolves", async () => {
+    accessPermissions = ["operations.read"];
+    queriesLoading = false;
+    await act(async () => root.render(<CopilotActionsConsole />));
+
+    expect(container.querySelector('section[aria-busy="true"]')).toBeNull();
+    expect(container.querySelector(".animate-pulse")).toBeNull();
   });
 });

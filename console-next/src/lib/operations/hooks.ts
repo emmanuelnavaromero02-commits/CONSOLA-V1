@@ -22,10 +22,10 @@ import {
   listUsers,
   listVaultConnections,
   listVaultSecrets,
+  planOperationWorkflow,
   revealVaultConnection,
   revealVaultSecret,
   sendPasswordReset,
-  triggerOperationWorkflow,
   updateUser,
   upsertVaultConnection,
   upsertVaultSecret,
@@ -260,10 +260,11 @@ export function useOperationWorkflow(id: string | null) {
   });
 }
 
-export function useTriggerOperationWorkflow() {
+// Preview-only: la UI solo puede planificar workflows, nunca ejecutarlos.
+export function usePlanOperationWorkflow() {
   const qc = useQueryClient();
   return useMutation<OperationWorkflowActionResponse, Error, OperationWorkflow>({
-    mutationFn: triggerOperationWorkflow,
+    mutationFn: planOperationWorkflow,
     onSuccess: (_data, workflow) => {
       qc.invalidateQueries({ queryKey: ["operations", "workflows"] });
       qc.invalidateQueries({ queryKey: ["operations", "workflow", workflow.id] });
