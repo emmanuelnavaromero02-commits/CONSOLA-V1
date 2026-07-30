@@ -2020,6 +2020,17 @@ async def test_select_item_option_persists_metadata_and_records_audit_event():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))[
         "anomalies"
     ][0]
+    anomaly["intelligence"] = {
+        "options": [
+            {
+                "id": "exception",
+                "label": "Review the source exception",
+                "action_kind": "review_source_exception",
+                "score": 0.75,
+            }
+        ]
+    }
+    anomaly["omega"]["options"] = [{"id": "exception"}]
     mock_pool = AsyncMock()
     _enable_successful_writes(mock_pool)
     mock_pool.fetch.return_value = []
