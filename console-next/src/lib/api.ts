@@ -37,7 +37,7 @@ function csrfToken(): string | null {
   return readCookie("csrf_token");
 }
 
-function toApiError(message: string, status?: number, data?: unknown, requestId?: string): ApiError {
+export function toApiError(message: string, status?: number, data?: unknown, requestId?: string): ApiError {
   const error = new Error(message) as ApiError;
   error.status = status;
   error.data = data;
@@ -151,7 +151,10 @@ function isSafeUserDetail(detail: string): boolean {
   return !UNSAFE_DETAIL_MARKERS.some((marker) => marker.test(trimmed));
 }
 
-function errorMessage(status: number, payload: unknown, requestId?: string): string {
+// Política ÚNICA de saneamiento de errores del backend para toda la
+// consola (fetch JSON y streaming SSE comparten esta misma función; no
+// deben existir denylists divergentes).
+export function publicErrorMessage(status: number, payload: unknown, requestId?: string): string {
   // Solo 4xx puede exponer `detail` de JSON, y solo si pasa el filtro.
   // Cuerpos string crudos (p. ej. HTML de un proxy) nunca se muestran.
   if (status < 500 && payload && typeof payload === "object" && "detail" in payload) {
@@ -193,7 +196,7 @@ async function request<T>(
   const responseRequestId = response.headers.get("x-request-id") || requestId;
   const parsed = await parsePayload(response);
   if (!response.ok) {
-    throw toApiError(errorMessage(response.status, parsed, responseRequestId), response.status, parsed, responseRequestId);
+    throw toApiError(publicErrorMessage(response.status, parsed, responseRequestId), response.status, parsed, responseRequestId);
   }
 
   return {
