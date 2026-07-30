@@ -29,14 +29,14 @@ async def reserve_scheduled_run(
 ) -> dict[str, Any]:
     """Reserve a scheduled agent fire-time exactly once.
 
-    Fresh databases get the backing table through migration. Older local
-    databases may not have it yet; in that case we stay permissive so scheduled
-    agents continue to run while migrations catch up.
+    The durable reservation is a safety boundary. A database without it must
+    not execute a scheduled monitor because a retry could duplicate alerts or
+    decisions.
     """
 
     pool = await auth.pool()
     if not await _table_exists(pool):
-        return {"reserved": True, "duplicate": False, "missing_table": True}
+        raise RuntimeError("scheduled-run idempotency storage unavailable")
 
     fire_at = _to_utc(scheduled_fire_at)
     clean_key = str(schedule_key or "default").strip()[:120] or "default"
@@ -93,6 +93,8 @@ async def reserve_scheduled_run(
                 clean_key,
                 fire_at,
             )
+            if existing is None:
+                raise RuntimeError("scheduled-run reservation is not visible")
     return {
         "reserved": False,
         "duplicate": True,
@@ -100,8 +102,12 @@ async def reserve_scheduled_run(
         "status": existing["status"] if existing else "unknown",
         "agent_run_id": existing["agent_run_id"] if existing else None,
         "error_message": existing["error_message"] if existing else None,
-        "started_at": existing["started_at"].isoformat() if existing and existing["started_at"] else None,
-        "finished_at": existing["finished_at"].isoformat() if existing and existing["finished_at"] else None,
+        "started_at": existing["started_at"].isoformat()
+        if existing and existing["started_at"]
+        else None,
+        "finished_at": existing["finished_at"].isoformat()
+        if existing and existing["finished_at"]
+        else None,
     }
 
 
@@ -119,8 +125,10 @@ async def finish_scheduled_run(
         return
     pool = await auth.pool()
     if not await _table_exists(pool):
-        return
-    clean_status = status if status in {"ok", "error", "cancelled", "skipped"} else "error"
+        raise RuntimeError("scheduled-run idempotency storage unavailable")
+    clean_status = (
+        status if status in {"ok", "error", "cancelled", "skipped"} else "error"
+    )
     async with pool.acquire() as conn:
         async with conn.transaction():
             if tenant_id and workspace_id:
@@ -130,7 +138,7 @@ async def finish_scheduled_run(
                     tenant_id,
                     workspace_id,
                 )
-            await conn.execute(
+            outcome = await conn.execute(
                 """
                 UPDATE agent_schedule_runs
                    SET status = $2,
@@ -146,3 +154,5 @@ async def finish_scheduled_run(
                 error_message,
                 json.dumps(metadata or {}, default=str),
             )
+            if outcome != "UPDATE 1":
+                raise RuntimeError("scheduled-run reservation is not available")
