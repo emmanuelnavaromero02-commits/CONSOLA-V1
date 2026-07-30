@@ -1,5 +1,5 @@
 1:"$Sreact.fragment"
-2:I[75985,["/static/console-next/_next/static/chunks/05-c3ty_6dwfk.js","/static/console-next/_next/static/chunks/031d4hdncmqdj.js","/static/console-next/_next/static/chunks/106ug6pxxhlcm.js","/static/console-next/_next/static/chunks/2fry8jjo92-l_.js","/static/console-next/_next/static/chunks/0qecdxs04t85u.js","/static/console-next/_next/static/chunks/2g9urhcyrakl7.js"],"MarketplaceConsole"]
+2:I[75985,["/static/console-next/_next/static/chunks/05-c3ty_6dwfk.js","/static/console-next/_next/static/chunks/031d4hdncmqdj.js","/static/console-next/_next/static/chunks/2c5y5q8gtgoua.js","/static/console-next/_next/static/chunks/2fry8jjo92-l_.js","/static/console-next/_next/static/chunks/0qecdxs04t85u.js","/static/console-next/_next/static/chunks/2g9urhcyrakl7.js"],"MarketplaceConsole"]
 3:I[97367,["/static/console-next/_next/static/chunks/05-c3ty_6dwfk.js","/static/console-next/_next/static/chunks/031d4hdncmqdj.js"],"OutletBoundary"]
 4:"$Sreact.suspense"
 0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"mode":"customer"}],[["$","script","script-0",{"src":"/static/console-next/_next/static/chunks/2g9urhcyrakl7.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"console-next-static"}
