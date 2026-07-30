@@ -82,6 +82,12 @@ def validate_for_output(
         )
     for name, spec in variables.items():
         rule = VARIABLES[name]
+        if (
+            spec["type"] == "normal"
+            and float(spec["stddev"]) > 0
+            and (rule.minimum is not None or rule.maximum is not None)
+        ):
+            raise ValueError(f"bounded variable {name} cannot use normal stddev > 0")
         for value in _declared_values(spec):
             if rule.minimum is not None and value < rule.minimum:
                 raise ValueError(f"{name} must be >= {rule.minimum:g}")

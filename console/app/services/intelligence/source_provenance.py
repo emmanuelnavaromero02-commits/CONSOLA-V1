@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from app.services.control_room.business_orchestrator import eligible_orchestrator_source
 from app.services.intelligence.wisdom_source import durable_wisdom_exists
+from app.services.intelligence.source_provenance_policy import (
+    backtest_policy,
+    manual_marker as _manual,
+    metadata as _metadata,
+    observed_signal as _observed_signal,
+    prediction_outcome_observed,
+)
 
 
-MANUAL_MARKERS = ("fixture", "manual", "mock", "synthetic")
 MAX_PROVENANCE_DEPTH = 12
 
 
@@ -18,44 +22,6 @@ class ProvenanceResult:
     trusted: bool
     reason: str
     depth: int
-
-
-def _metadata(value: Any) -> dict[str, Any]:
-    if isinstance(value, Mapping):
-        return dict(value)
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except (TypeError, ValueError):
-            return {}
-        return dict(parsed) if isinstance(parsed, dict) else {}
-    return {}
-
-
-def _manual(value: Any) -> bool:
-    normalized = str(value or "").strip().lower()
-    return any(marker in normalized for marker in MANUAL_MARKERS)
-
-
-def _observed_signal(row: Any) -> bool:
-    if not row:
-        return False
-    data = dict(row)
-    metadata = _metadata(data.get("metadata"))
-    source_system = data.get("source_system") or metadata.get("source_system")
-    source_dataset = data.get("source_dataset") or metadata.get("source_dataset")
-    evidence_pack = data.get("evidence_pack_id") or metadata.get("evidence_pack_id")
-    return bool(
-        data.get("signal_subtype") == "observed"
-        and source_system
-        and source_dataset
-        and evidence_pack
-        and not _manual(source_system)
-        and not _manual(source_dataset)
-        and not _manual(metadata.get("source_type"))
-        and metadata.get("input_classification") != "scenario_assumption"
-        and metadata.get("observed") is not False
-    )
 
 
 async def _resolve(
@@ -176,19 +142,11 @@ async def _resolve(
             visited=visited,
             depth=depth + 1,
         )
-    if source_type in {"monte_carlo_simulation", "calibration_observation"}:
-        table = (
-            "monte_carlo_simulations"
-            if source_type.startswith("monte")
-            else "calibration_observations"
-        )
-        id_clause = (
-            "simulation_id = $2"
-            if source_type.startswith("monte")
-            else "(observation_id = $2 OR id::text = $2)"
-        )
+    if source_type == "monte_carlo_simulation":
+        return ProvenanceResult(False, "scenario_assumption", depth)
+    if source_type == "calibration_observation":
         row = await conn.fetchrow(
-            f"SELECT source_type, source_id FROM {table} WHERE workspace_id = $1 AND {id_clause} LIMIT 1",
+            "SELECT source_type, source_id FROM calibration_observations WHERE workspace_id = $1 AND (observation_id = $2 OR id::text = $2) LIMIT 1",
             workspace_id,
             source_id,
         )
@@ -204,14 +162,27 @@ async def _resolve(
         )
     if source_type == "prediction_outcome":
         row = await conn.fetchrow(
-            "SELECT signal_id, metadata FROM prediction_outcomes WHERE workspace_id = $1 AND id::text = $2 LIMIT 1",
+            """SELECT signal_id, option_id, action_taken, actual_value,
+                      outcome_summary, owner_user_id, metadata, created_at
+                 FROM prediction_outcomes
+                WHERE workspace_id = $1 AND id::text = $2 LIMIT 1""",
             workspace_id,
             source_id,
         )
         data = dict(row) if row else {}
-        metadata = _metadata(data.get("metadata"))
-        if _manual(metadata.get("source_type")):
-            return ProvenanceResult(False, "manual_ancestor", depth)
+        if not prediction_outcome_observed(data):
+            return ProvenanceResult(
+                False, "prediction_outcome_provenance_incomplete", depth
+            )
+        if data.get("option_id") and not await conn.fetchval(
+            """SELECT EXISTS(SELECT 1 FROM decision_options
+                 WHERE workspace_id=$1 AND (id::text=$2 OR option_id=$2)
+                   AND signal_id=$3)""",
+            workspace_id,
+            str(data["option_id"]),
+            str(data["signal_id"]),
+        ):
+            return ProvenanceResult(False, "prediction_outcome_signal_mismatch", depth)
         return await _resolve(
             conn,
             workspace_id,
@@ -227,8 +198,10 @@ async def _resolve(
             return ProvenanceResult(False, "backtest_table_missing", depth)
         row = await conn.fetchrow(
             """
-            SELECT result.label_source, run.run_mode, run.status, run.completed_at,
-                   run.source_system, run.source_dataset
+            SELECT result.label_source, result.actual_label, result.result,
+                   run.run_mode, run.status, run.completed_at,
+                   run.source_system, run.source_dataset, run.labels_available,
+                   run.labels_required, run.insufficient_labeled_data
               FROM backtest_results result JOIN backtest_runs run
                 ON run.workspace_id = result.workspace_id AND run.id = result.backtest_run_id
              WHERE result.workspace_id = $1 AND result.id::text = $2 LIMIT 1
@@ -237,16 +210,18 @@ async def _resolve(
             source_id,
         )
         data = dict(row) if row else {}
-        trusted = bool(
-            data.get("label_source") not in {None, "fixture", "unavailable"}
-            and data.get("run_mode") in {"historical_replay", "outcome_linked"}
-            and data.get("status") in {"ok", "insufficient_labeled_data"}
-            and data.get("completed_at") is not None
-            and data.get("source_system")
-            and data.get("source_dataset")
-            and not _manual(data.get("source_system"))
-            and not _manual(data.get("source_dataset"))
-        )
+        policy, outcome_id = backtest_policy(data)
+        if policy == "outcome":
+            return await _resolve(
+                conn,
+                workspace_id,
+                "prediction_outcome",
+                str(outcome_id or ""),
+                allow_manual=allow_manual,
+                visited=visited,
+                depth=depth + 1,
+            )
+        trusted = policy == "historical"
         return ProvenanceResult(
             trusted,
             "observed_backtest" if trusted else "backtest_provenance_incomplete",

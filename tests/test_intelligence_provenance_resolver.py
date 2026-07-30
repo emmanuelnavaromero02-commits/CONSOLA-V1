@@ -46,12 +46,17 @@ class GraphConnection:
             if ("backtest_case", source_id) not in self.graph:
                 return None
             return {
-                "label_source": "historical_outcome",
+                "label_source": "historical_rule",
+                "actual_label": True,
+                "result": {"label_rule": "closed_period_outcome"},
                 "run_mode": "historical_replay",
                 "status": "ok",
                 "completed_at": "2026-01-01T00:00:00Z",
                 "source_system": "replicon",
                 "source_dataset": "observed_outcomes",
+                "labels_available": 10,
+                "labels_required": 10,
+                "insufficient_labeled_data": False,
             }
         raise AssertionError(sql)
 
@@ -84,34 +89,34 @@ async def test_manual_fixture_is_rejected_through_multiple_ancestors() -> None:
         source_id="mc-outer",
     )
     assert result.trusted is False
-    assert result.reason == "manual_ancestor"
-    assert result.depth == 3
+    assert result.reason == "scenario_assumption"
+    assert result.depth == 0
 
 
 @pytest.mark.asyncio
 async def test_cycle_and_missing_lineage_fail_closed() -> None:
     cycle = GraphConnection(
         {
-            ("monte_carlo_simulation", "mc-a"): (
+            ("calibration_observation", "obs-a"): (
+                "calibration_observation",
+                "obs-b",
+            ),
+            ("calibration_observation", "obs-b"): (
                 "calibration_observation",
                 "obs-a",
-            ),
-            ("calibration_observation", "obs-a"): (
-                "monte_carlo_simulation",
-                "mc-a",
             ),
         }
     )
     cycled = await resolve_source_provenance(
         cycle,
         workspace_id="ws-a",
-        source_type="monte_carlo_simulation",
-        source_id="mc-a",
+        source_type="calibration_observation",
+        source_id="obs-a",
     )
     missing = await resolve_source_provenance(
         GraphConnection({}),
         workspace_id="ws-a",
-        source_type="monte_carlo_simulation",
+        source_type="calibration_observation",
         source_id="missing",
     )
     assert (cycled.trusted, cycled.reason) == (False, "provenance_cycle")
@@ -119,7 +124,7 @@ async def test_cycle_and_missing_lineage_fail_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_option_outcome_and_signal_lineage_is_observed() -> None:
+async def test_option_is_observed_but_unattested_outcome_fails_closed() -> None:
     conn = GraphConnection(
         {
             ("decision_option", "option-a"): ("signal", "signal-a"),
@@ -127,18 +132,20 @@ async def test_option_outcome_and_signal_lineage_is_observed() -> None:
             ("signal", "signal-a"): ("observed", "terminal"),
         }
     )
-    for source_type, source_id in (
-        ("decision_option", "option-a"),
-        ("prediction_outcome", "outcome-a"),
-    ):
-        result = await resolve_source_provenance(
-            conn,
-            workspace_id="ws-a",
-            source_type=source_type,
-            source_id=source_id,
-        )
-        assert result.trusted is True
-        assert result.reason == "observed_signal"
+    option = await resolve_source_provenance(
+        conn, workspace_id="ws-a", source_type="decision_option", source_id="option-a"
+    )
+    outcome = await resolve_source_provenance(
+        conn,
+        workspace_id="ws-a",
+        source_type="prediction_outcome",
+        source_id="outcome-a",
+    )
+    assert (option.trusted, option.reason) == (True, "observed_signal")
+    assert (outcome.trusted, outcome.reason) == (
+        False,
+        "prediction_outcome_provenance_incomplete",
+    )
 
 
 @pytest.mark.asyncio
@@ -166,17 +173,14 @@ async def test_backtest_provenance_requires_completed_observed_run() -> None:
 async def test_provenance_depth_limit_fails_closed() -> None:
     graph = {}
     for index in range(14):
-        source_type = (
-            "monte_carlo_simulation" if index % 2 == 0 else "calibration_observation"
+        graph[("calibration_observation", f"node-{index}")] = (
+            "calibration_observation",
+            f"node-{index + 1}",
         )
-        next_type = (
-            "calibration_observation" if index % 2 == 0 else "monte_carlo_simulation"
-        )
-        graph[(source_type, f"node-{index}")] = (next_type, f"node-{index + 1}")
     result = await resolve_source_provenance(
         GraphConnection(graph),
         workspace_id="ws-a",
-        source_type="monte_carlo_simulation",
+        source_type="calibration_observation",
         source_id="node-0",
     )
     assert (result.trusted, result.reason) == (False, "provenance_depth_exceeded")

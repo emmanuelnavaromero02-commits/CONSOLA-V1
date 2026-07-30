@@ -9,7 +9,9 @@ def _risk_adjusted_score(summary: dict[str, Any]) -> float:
     expected = float(summary["expected_value"])
     spread = float(summary["p90"]) - float(summary["p10"])
     breach = float(summary.get("probability_breach_threshold") or 0)
-    return expected - (spread * 0.25) - (breach * abs(expected if expected else 1.0))
+    penalty = (spread * 0.25) + (breach * abs(expected if expected else 1.0))
+    direction = -1.0 if summary.get("output_metric") in {"cost", "delay_days"} else 1.0
+    return (direction * expected) - penalty
 
 
 def compare_options(

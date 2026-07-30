@@ -123,7 +123,7 @@ def test_equivalent_options_are_ambiguous_in_any_order():
 def test_variable_sampling_is_independent_of_mapping_order():
     variables = {
         "baseline_value": {"type": "normal", "mean": 100, "stddev": 4},
-        "revenue_growth": {"type": "normal", "mean": 0.1, "stddev": 0.01},
+        "expected_delta": {"type": "normal", "mean": 0.1, "stddev": 0.01},
     }
     first = monte_carlo.run_monte_carlo(_payload(input_variables=variables))
     second = monte_carlo.run_monte_carlo(
@@ -220,3 +220,65 @@ def test_monte_carlo_compares_options_without_extra_dependencies():
         comparison["ranking"][0]["risk_adjusted_score"]
         > comparison["ranking"][1]["risk_adjusted_score"]
     )
+
+
+@pytest.mark.parametrize(
+    ("output_metric", "variable", "better", "worse"),
+    [
+        ("cost", "fixed_cost", 10, 100),
+        ("delay_days", "delay_days", 1, 10),
+    ],
+)
+def test_cost_and_delay_option_rankings_minimize(
+    output_metric, variable, better, worse
+):
+    result = monte_carlo.run_monte_carlo(
+        _payload(
+            output_metric=output_metric,
+            breach_threshold=None,
+            input_variables={variable: {"type": "fixed", "value": better}},
+            options=[
+                {
+                    "option_id": "better",
+                    "input_variables": {variable: {"type": "fixed", "value": better}},
+                },
+                {
+                    "option_id": "worse",
+                    "input_variables": {variable: {"type": "fixed", "value": worse}},
+                },
+            ],
+        )
+    )
+    comparison = result["option_comparison"]
+    assert comparison["selected_option_id"] == "better"
+    assert comparison["ranking"][0]["option_id"] == "better"
+    assert (
+        result["distribution_summary"]
+        == comparison["options"][0]["distribution_summary"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "mean", "stddev"),
+    [
+        ("probability_of_delay", 0.5, 2),
+        ("delay_days", 1, 10),
+        ("revenue_growth", 0, 20),
+    ],
+)
+def test_bounded_variables_reject_non_degenerate_normal(name, mean, stddev):
+    with pytest.raises(monte_carlo.MonteCarloValidationError, match="bounded"):
+        monte_carlo.run_monte_carlo(
+            _payload(
+                input_variables={
+                    name: {"type": "normal", "mean": mean, "stddev": stddev}
+                }
+            )
+        )
+
+
+def test_unbounded_normal_remains_reproducible():
+    payload = _payload(
+        input_variables={"expected_delta": {"type": "normal", "mean": 3, "stddev": 2}}
+    )
+    assert monte_carlo.run_monte_carlo(payload) == monte_carlo.run_monte_carlo(payload)
