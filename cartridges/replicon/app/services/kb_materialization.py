@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from app.core.pg_client import get_connection
+from app.services.base_currency_frame import base_currency_frame
 
 
 MANAGED_WIP_IDS = {"kb_wip_mensual", "kb_wip_resumen"}
@@ -65,16 +66,7 @@ def load_base_currency_config(
             ]
     finally:
         conn.close()
-    frame = pd.DataFrame(
-        rows,
-        columns=[
-            "effective_from",
-            "effective_to",
-            "currency",
-            "authority_source",
-            "verified_at",
-        ],
-    )
+    frame = base_currency_frame(rows)
     return frame, _input_digest(rows)
 
 

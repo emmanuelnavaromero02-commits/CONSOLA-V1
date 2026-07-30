@@ -13,11 +13,9 @@ CURRENT_PACKAGE_VERSIONS = {
 LEGACY_PACKAGE_SQL_DIGESTS = {
     "kb_wip_mensual": {
         "2bf0d0456874fd068c7885e6c0397d3e54241922e67b8cd3cb8a34fa1ab7f558",
-        "f8d85d8ed732a2b7ea9ca7734be8577b9acb164c597f7ccb6fda30c0201fd530",
     },
     "kb_wip_resumen": {
         "39af8cd6ffe21ef63e1373377ef7903b82b64992066cf8b30617d6af5978439d",
-        "a62f247a810d57c700e42645220c17c7e63a1bbc51ade66f0970cb23393422ad",
     },
 }
 

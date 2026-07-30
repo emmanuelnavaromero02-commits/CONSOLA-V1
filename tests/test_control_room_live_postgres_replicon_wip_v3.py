@@ -14,7 +14,6 @@ import asyncpg
 import duckdb
 import pandas as pd
 import pytest
-import yaml
 from tests.test_operational_rls_console_refinement import (
     postgres_with_real_init_schema,
 )
@@ -25,6 +24,8 @@ from tests.test_replicon_wip_v3_currency import _resolved_sql, _write_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "infra/init/99zp_replicon_wip_materialization_v3.sql"
+LEGACY_WIP = ROOT / "tests/fixtures/replicon_wip_mensual_legacy_v1.sql"
+LEGACY_WIP_DIGEST = "2bf0d0456874fd068c7885e6c0397d3e54241922e67b8cd3cb8a34fa1ab7f558"
 
 
 async def _wait_for_migration(conn: asyncpg.Connection) -> None:
@@ -42,21 +43,8 @@ async def _wait_for_migration(conn: asyncpg.Connection) -> None:
 
 
 def _legacy_packaged_sql() -> str:
-    raw = subprocess.check_output(
-        [
-            "git",
-            "show",
-            "49f792eedcf1177d8e7681478c5efecdc43e908b:cartridges/replicon/app/config/knowledge_bits.yaml",
-        ],
-        cwd=ROOT,
-        text=True,
-    )
-    payload = yaml.safe_load(raw)
-    sql = next(
-        item["sql"]
-        for item in payload["knowledge_bits"]
-        if item.get("id") == "kb_wip_mensual"
-    )
+    sql = LEGACY_WIP.read_text(encoding="utf-8")
+    assert hashlib.sha256(sql.encode()).hexdigest() == LEGACY_WIP_DIGEST
     assert "COALESCE(fx.mxn_to_usd, 0.05)" in sql
     return sql
 

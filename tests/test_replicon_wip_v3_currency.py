@@ -5,6 +5,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
+from cartridges.replicon.app.services.base_currency_frame import base_currency_frame
 from tests.test_operational_truth_data_kb_config import _packaged
 
 
@@ -21,6 +22,10 @@ def _write_inputs(tmp_path: Path) -> dict[str, Path]:
         ("2026-01-15", "invoice-nonfinite", 100.0, "USD"),
         ("2026-01-15", "billing-hours-nonfinite", 100.0, "USD"),
         ("2026-01-15", "billable-flag-missing", 100.0, "USD"),
+        ("2026-07-15", "usd-zero-rate", 0.0, "USD"),
+        ("2026-08-15", "usd-negative-rate", -100.0, "USD"),
+        ("2026-09-15", "mxn-zero-rate", 0.0, "MXN"),
+        ("2026-10-15", "mxn-negative-rate", -1000.0, "MXN"),
     ]
     billing = pd.DataFrame(
         [
@@ -84,7 +89,13 @@ def _write_inputs(tmp_path: Path) -> dict[str, Path]:
         **invoices.loc[invoices["project_id"] == "invoice-nonfinite"].iloc[0],
         "billed_amount": float("inf"),
     }
-    fx = pd.DataFrame([{"year_month": "2026-02-01", "avg_rate": 0.05}])
+    fx = pd.DataFrame(
+        [
+            {"year_month": "2026-02-01", "avg_rate": 0.05},
+            {"year_month": "2026-09-01", "avg_rate": 0.05},
+            {"year_month": "2026-10-01", "avg_rate": 0.05},
+        ]
+    )
     frames = {
         "billing": billing,
         "time": time_entries,
@@ -121,14 +132,18 @@ def test_wip_v3_uses_authoritative_currency_by_period_and_real_fx(
     tmp_path: Path,
 ) -> None:
     paths = _write_inputs(tmp_path)
-    config = pd.DataFrame(
+    config = base_currency_frame(
         [
-            ("2026-01-01", "2026-02-01", "USD"),
-            ("2026-02-01", "2026-04-01", "MXN"),
-            ("2026-04-01", "2026-05-01", "EUR"),
-            ("2026-06-01", None, "ZZZ"),
-        ],
-        columns=["effective_from", "effective_to", "currency"],
+            {"effective_from": start, "effective_to": end, "currency": currency}
+            for start, end, currency in (
+                ("2026-01-01", "2026-02-01", "USD"),
+                ("2026-02-01", "2026-04-01", "MXN"),
+                ("2026-04-01", "2026-05-01", "EUR"),
+                ("2026-06-01", "2026-07-01", "ZZZ"),
+                ("2026-07-01", "2026-09-01", "USD"),
+                ("2026-09-01", None, "MXN"),
+            )
+        ]
     )
     conn = duckdb.connect()
     try:
@@ -156,6 +171,10 @@ def test_wip_v3_uses_authoritative_currency_by_period_and_real_fx(
         "invoice-nonfinite": "insufficient_data",
         "billing-hours-nonfinite": "insufficient_data",
         "billable-flag-missing": "insufficient_data",
+        "usd-zero-rate": "insufficient_data",
+        "usd-negative-rate": "insufficient_data",
+        "mxn-zero-rate": "insufficient_data",
+        "mxn-negative-rate": "insufficient_data",
     }
     by_project = monthly.set_index("projectid")
     assert by_project.loc["usd", "billing_rate_usd"] == 10.0
@@ -174,6 +193,10 @@ def test_wip_v3_uses_authoritative_currency_by_period_and_real_fx(
         "invoice-nonfinite",
         "billing-hours-nonfinite",
         "billable-flag-missing",
+        "usd-zero-rate",
+        "usd-negative-rate",
+        "mxn-zero-rate",
+        "mxn-negative-rate",
     ):
         assert pd.isna(by_project.loc[project, "billable_amount_usd"])
         assert pd.isna(by_project.loc[project, "wip_amount_usd"])
@@ -187,6 +210,10 @@ def test_wip_v3_uses_authoritative_currency_by_period_and_real_fx(
         "time-nonfinite",
         "billing-hours-nonfinite",
         "billable-flag-missing",
+        "usd-zero-rate",
+        "usd-negative-rate",
+        "mxn-zero-rate",
+        "mxn-negative-rate",
     ):
         assert pd.isna(by_project.loc[project, "billing_rate_usd"])
     assert (

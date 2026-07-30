@@ -73,6 +73,10 @@ def _load_replicon_runtime(monkeypatch):
     service_root = ROOT / "cartridges/replicon/app/services"
     catalog = load("app.services.catalog_service", service_root / "catalog_service.py")
     load(
+        "app.services.base_currency_frame",
+        service_root / "base_currency_frame.py",
+    )
+    load(
         "app.services.kb_materialization",
         service_root / "kb_materialization.py",
     )

@@ -1426,7 +1426,7 @@ def cartridge_query_kb(
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     limit = validate_bounded_int(limit, "limit", lo=1, hi=5000)
-    blocked_reason = replicon_generic_query_block_reason(sql, cartridge_id=cartridge_id, connection_factory=_conn)
+    blocked_reason = replicon_generic_query_block_reason(sql, cartridge_id=cartridge_id, connection_factory=_conn, security_context=security_context)
     if blocked_reason:
         return {"cartridge_id": cartridge_id, "status": "partial", "data_status": "unavailable", "reason": blocked_reason}
     resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)

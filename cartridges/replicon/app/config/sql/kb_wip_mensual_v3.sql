@@ -26,8 +26,10 @@ WITH fx_raw AS (
            CASE
              WHEN TRY_CAST(item.billabledurationhours AS DOUBLE) IS NULL
                   OR NOT isfinite(TRY_CAST(item.billabledurationhours AS DOUBLE))
+                  OR TRY_CAST(item.billabledurationhours AS DOUBLE) <= 0
                   OR TRY_CAST(item.billableamountbasecurrency AS DOUBLE) IS NULL
                   OR NOT isfinite(TRY_CAST(item.billableamountbasecurrency AS DOUBLE))
+                  OR TRY_CAST(item.billableamountbasecurrency AS DOUBLE) <= 0
                THEN 'insufficient_data'
              WHEN cfg.currency IS NULL THEN 'missing_base_currency'
              WHEN cfg.currency = 'USD' THEN 'ready'
@@ -37,10 +39,14 @@ WITH fx_raw AS (
            CASE
              WHEN isfinite(TRY_CAST(item.billabledurationhours AS DOUBLE))
                   AND isfinite(TRY_CAST(item.billableamountbasecurrency AS DOUBLE))
+                  AND TRY_CAST(item.billabledurationhours AS DOUBLE) > 0
+                  AND TRY_CAST(item.billableamountbasecurrency AS DOUBLE) > 0
                   AND cfg.currency = 'USD'
                THEN TRY_CAST(item.billableamountbasecurrency AS DOUBLE)
              WHEN isfinite(TRY_CAST(item.billabledurationhours AS DOUBLE))
                   AND isfinite(TRY_CAST(item.billableamountbasecurrency AS DOUBLE))
+                  AND TRY_CAST(item.billabledurationhours AS DOUBLE) > 0
+                  AND TRY_CAST(item.billableamountbasecurrency AS DOUBLE) > 0
                   AND cfg.currency = 'MXN' AND fx.mxn_to_usd IS NOT NULL
                THEN TRY_CAST(item.billableamountbasecurrency AS DOUBLE) * fx.mxn_to_usd
            END AS amount_usd
@@ -52,19 +58,26 @@ WITH fx_raw AS (
              AND (effective_to IS NULL OR TRY_CAST(item.entrydate AS DATE) < effective_to)
       ) cfg ON TRUE
       LEFT JOIN fx ON DATE_TRUNC('month', TRY_CAST(item.entrydate AS DATE)) = fx.month
-     WHERE TRY_CAST(item.billabledurationhours AS DOUBLE) IS NULL
-        OR NOT isfinite(TRY_CAST(item.billabledurationhours AS DOUBLE))
-        OR TRY_CAST(item.billabledurationhours AS DOUBLE) > 0
 ), project_rate AS (
     SELECT month, projectid,
            CASE WHEN COUNT(DISTINCT currency) = 1 THEN MAX(currency) END AS rate_currency,
-           SUM(amount_original) / NULLIF(SUM(hours), 0) AS rate_original,
-           SUM(amount_usd) / NULLIF(SUM(hours), 0) AS rate_usd,
+           CASE WHEN isfinite(SUM(amount_original) / NULLIF(SUM(hours), 0))
+                       AND SUM(amount_original) / NULLIF(SUM(hours), 0) > 0
+                THEN SUM(amount_original) / NULLIF(SUM(hours), 0) END AS rate_original,
+           CASE WHEN isfinite(SUM(amount_usd) / NULLIF(SUM(hours), 0))
+                       AND SUM(amount_usd) / NULLIF(SUM(hours), 0) > 0
+                THEN SUM(amount_usd) / NULLIF(SUM(hours), 0) END AS rate_usd,
            CASE
              WHEN COUNT(*) FILTER (WHERE item_status = 'missing_base_currency') > 0
                   OR COUNT(DISTINCT currency) != 1 THEN 'missing_base_currency'
              WHEN COUNT(*) FILTER (WHERE item_status = 'missing_fx') > 0 THEN 'missing_fx'
              WHEN COUNT(*) FILTER (WHERE item_status = 'insufficient_data') > 0
+               THEN 'insufficient_data'
+             WHEN NOT isfinite(SUM(amount_original) / NULLIF(SUM(hours), 0))
+                  OR SUM(amount_original) / NULLIF(SUM(hours), 0) <= 0
+               THEN 'insufficient_data'
+             WHEN NOT isfinite(SUM(amount_usd) / NULLIF(SUM(hours), 0))
+                  OR SUM(amount_usd) / NULLIF(SUM(hours), 0) <= 0
                THEN 'insufficient_data'
              ELSE 'ready'
            END AS rate_status
