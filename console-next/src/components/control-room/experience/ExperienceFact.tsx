@@ -53,10 +53,17 @@ export function ExperienceFact({
             </p>
           ) : null}
         </div>
-        {fact.stale ? (
+        {fact.stale === true ? (
           <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-warning">
             <Clock3 aria-hidden className="h-4 w-4" />
             Información anterior
+          </span>
+        ) : fact.stale == null ? (
+          // El backend no informó la frescura: se declara desconocida en
+          // lugar de asumir vigencia (nunca "vigente" por omisión).
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Clock3 aria-hidden className="h-4 w-4" />
+            Frescura no informada
           </span>
         ) : null}
       </div>
