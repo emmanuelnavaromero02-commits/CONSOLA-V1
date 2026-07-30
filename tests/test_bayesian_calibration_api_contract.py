@@ -105,15 +105,14 @@ class _FakePool:
 
 def _payload():
     return {
-        "source_type": "monte_carlo_simulation",
-        "source_id": "mc-a",
+        "source_type": "manual_fixture",
+        "source_id": "fixture-a",
         "predicted_metric": "net_value",
         "predicted_probability": 0.8,
         "predicted_value": 100.0,
         "predicted_interval": {"low": 80.0, "high": 120.0},
         "actual_value": 110.0,
         "actual_status": "hit",
-        "model_version": "cal.test.v1",
         "calibration_group": "monte_carlo",
     }
 
@@ -150,7 +149,7 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
             "calibration_observation_service.py",
             "calibration_state_repository.py",
             "calibration_source_validation.py",
-            *"source_provenance.py calibration_recompute_batch.py".split(),
+            *"source_provenance.py source_provenance_policy.py calibration_recompute_batch.py".split(),
             "calibration_recompute_service.py",
             "calibration_validation_service.py",
         )
@@ -162,7 +161,7 @@ def test_calibration_service_uses_scoped_db_and_blocks_scope_payloads():
     assert "tenant_id" in service
     assert "workspace_id" in service
     assert "security_context" in service
-    assert '"monte_carlo_simulations"' in service
+    assert '"scenario_assumption"' in service
     assert "FROM backtest_results" in service
 
     with pytest.raises(HTTPException):
@@ -241,10 +240,7 @@ async def test_observe_sets_scope_validates_source_and_persists(monkeypatch):
     assert result["state"]["state_id"].startswith("cal-state-")
     assert fake.conn.calls[0][0] == "execute"
     assert "set_config('app.tenant_id'" in fake.conn.calls[0][1]
-    assert any(
-        call[0] == "fetchrow" and "monte_carlo_simulations" in call[1]
-        for call in fake.conn.calls
-    )
+    assert not any("monte_carlo_simulations" in call[1] for call in fake.conn.calls)
     assert any(
         call[0] == "fetchrow" and "INSERT INTO calibration_observations" in call[1]
         for call in fake.conn.calls

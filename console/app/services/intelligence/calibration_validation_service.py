@@ -105,6 +105,8 @@ def _calibration_group(source_type: str, value: Any) -> str:
 
 def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     clean = dict(payload or {})
+    if "model_version" in clean:
+        raise HTTPException(422, "model_version is server-owned")
     forbidden = _forbidden_path(clean)
     if forbidden:
         raise HTTPException(422, f"scope fields are not accepted: {forbidden}")
@@ -116,11 +118,7 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if source_type == "manual_fixture" and not _synthetic_allowed():
         raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
     source_id = _short_text(clean.get("source_id"), field="source_id", max_length=256)
-    model_version = _short_text(
-        clean.get("model_version") or DEFAULT_MODEL_VERSION,
-        field="model_version",
-        max_length=120,
-    )
+    model_version = DEFAULT_MODEL_VERSION
     observed_at = _observed_at(clean.get("observed_at"))
     horizon_days = clean.get("horizon_days", 30)
     try:

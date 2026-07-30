@@ -48,17 +48,15 @@ def _observation_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     clean = dict(payload or {})
+    if "model_version" in clean:
+        raise HTTPException(422, "model_version is server-owned")
     forbidden = _forbidden_path(clean)
     if forbidden:
         raise HTTPException(422, f"scope fields are not accepted: {forbidden}")
     group = _short_text(
         clean.get("calibration_group"), field="calibration_group", max_length=80
     )
-    model_version = _short_text(
-        clean.get("model_version") or DEFAULT_MODEL_VERSION,
-        field="model_version",
-        max_length=120,
-    )
+    model_version = DEFAULT_MODEL_VERSION
     parent_group = (
         _short_text(
             clean.get("parent_calibration_group"),
@@ -108,6 +106,11 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
                     "complete": False,
                 },
             ) from exc
+        if not row_dicts:
+            raise HTTPException(
+                409,
+                {"status": "insufficient_data", **batch_metrics},
+            )
         observations = [_observation_from_row(row) for row in row_dicts]
         prior = await _derived_prior_for_group(
             conn,

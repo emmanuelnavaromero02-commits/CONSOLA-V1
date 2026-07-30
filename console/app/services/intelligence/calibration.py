@@ -250,7 +250,7 @@ def normalize_observation(payload: dict[str, Any]) -> dict[str, Any]:
 def apply_observation(state: dict[str, Any] | None, payload: dict[str, Any]) -> dict[str, Any]:
     observation = normalize_observation(payload)
     calibration_group = str(payload.get("calibration_group") or "global")
-    model_version = str(payload.get("model_version") or MODEL_VERSION)
+    model_version = MODEL_VERSION
     current = deepcopy(state) if state else empty_state(
         calibration_group=calibration_group,
         model_version=model_version,

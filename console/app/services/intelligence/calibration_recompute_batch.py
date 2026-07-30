@@ -126,9 +126,11 @@ async def load_complete_batch(
         "processed_total": len(trusted),
         "skipped_total": sum(skipped.values()),
         "skipped_by_reason": dict(sorted(skipped.items())),
-        "complete": True,
+        "complete": bool(trusted),
         "provenance_complete": True,
     }
+    if not trusted:
+        metrics["reason"] = "no_trusted_observations"
     if metrics["processed_total"] + metrics["skipped_total"] != eligible_total:
         raise BatchFailure(
             "batch_accounting_mismatch", eligible_total, operational_limit

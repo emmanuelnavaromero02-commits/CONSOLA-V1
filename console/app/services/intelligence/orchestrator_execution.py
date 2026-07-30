@@ -214,6 +214,7 @@ def _clean_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     engine_inputs = body.get("engine_inputs") or {}
     if not isinstance(engine_inputs, dict):
         raise OrchestratorExecutionError(422, "engine_inputs must be an object")
+    truth.reject_client_bayesian_version(engine_inputs, OrchestratorExecutionError)
     if any(key in engine_inputs for key in ("orchestrator", "decision_orchestrator")):
         raise OrchestratorExecutionError(422, "recursive orchestration is not accepted")
     body["engine_inputs"] = engine_inputs
@@ -530,15 +531,14 @@ async def _run_bayesian_lookup(
         raise OrchestratorExecutionError(
             422, "engine_inputs.bayesian_calibration must be an object"
         )
-    source_group, source_version = await _bayes_state_from_source(
+    source_group, _source_version = await _bayes_state_from_source(
         conn,
         workspace_id=workspace_id,
         run=run,
     )
+    truth.reject_client_bayesian_version(engine_inputs, OrchestratorExecutionError)
     group = str(raw.get("calibration_group") or source_group or "").strip()
-    model_version = str(
-        raw.get("model_version") or source_version or calibration.MODEL_VERSION
-    ).strip()
+    model_version = calibration.MODEL_VERSION
     if not group:
         return (
             "skipped",

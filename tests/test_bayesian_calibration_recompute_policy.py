@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from app.services.intelligence import calibration_service
+from app.services.intelligence import calibration, calibration_service
 
 
 NONLOCAL_ENVS = [None, "", "production", "unknown"]
@@ -31,7 +31,7 @@ def _row(*, row_id: int, source_type: str, source_id: str) -> dict:
         "predicted_interval": {"low": 80.0, "high": 120.0},
         "actual_value": 110.0,
         "calibration_group": "monte_carlo",
-        "model_version": "cal.test.v1",
+        "model_version": calibration.MODEL_VERSION,
         "evidence_refs": [],
     }
 
@@ -40,7 +40,7 @@ class _Connection:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, tuple]] = []
         self.observation_rows = [
-            _row(row_id=1, source_type="monte_carlo_simulation", source_id="mc-real"),
+            _row(row_id=1, source_type="backtest_case", source_id="case-real"),
             _row(row_id=2, source_type="manual_fixture", source_id="fixture-history"),
             _row(
                 row_id=3,
@@ -72,10 +72,26 @@ class _Connection:
         self.calls.append(("fetchval", sql, params))
         if "COUNT(*) FROM calibration_observations" in sql:
             return len(self.observation_rows)
+        if "to_regclass('public.backtest_results')" in sql:
+            return "backtest_results"
         raise AssertionError(f"unexpected fetchval: {sql[:80]}")
 
     async def fetchrow(self, sql: str, *params):
         self.calls.append(("fetchrow", sql, params))
+        if "FROM backtest_results" in sql:
+            return {
+                "label_source": "historical_rule",
+                "actual_label": True,
+                "result": {"label_rule": "closed_period_outcome"},
+                "run_mode": "historical_replay",
+                "status": "ok",
+                "completed_at": "2026-01-31T00:00:00Z",
+                "source_system": "replicon",
+                "source_dataset": "observed_outcomes",
+                "labels_available": 10,
+                "labels_required": 10,
+                "insufficient_labeled_data": False,
+            }
         if "SELECT 1 AS trusted FROM control_room_items" in sql:
             return {"trusted": 1}
         if "FROM monte_carlo_simulations" in sql:
@@ -113,7 +129,6 @@ class _Pool:
 def _payload(**extra) -> dict:
     return {
         "calibration_group": "monte_carlo",
-        "model_version": "cal.test.v1",
         **extra,
     }
 
@@ -210,4 +225,4 @@ async def test_historical_simulation_requires_observed_nested_provenance():
         source_id="mc-real",
     )
 
-    assert exists is True
+    assert exists is False
