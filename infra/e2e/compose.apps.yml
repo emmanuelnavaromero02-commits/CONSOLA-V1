@@ -1,0 +1,143 @@
+services:
+  refinement:
+    build:
+      context: ../..
+      dockerfile: refinement/Dockerfile
+    environment:
+      APP_ENV: production
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?required}
+      SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?required}
+      INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:?required}
+      INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:?required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?required}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:?required}
+      INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:?required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT: ${INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT:?required}
+      DATABASE_URL: postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?required}@postgres:5432/modecissions
+      GOLD_DATABASE_URL: postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}@postgres_gold:5433/modecissions_gold
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+      MINIO_BUCKET: lakehouse
+      MINIO_SECURE: "false"
+      DUCKDB_MEMORY_LIMIT: 256MB
+      DUCKDB_THREADS: "2"
+      MCP_INFRA_URL: http://mcp-infra:8010
+    depends_on:
+      postgres: {condition: service_healthy}
+      postgres_gold: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8500/healthz',timeout=3).status==200"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    mem_limit: 320m
+    cpus: 1.25
+    pids_limit: 160
+    restart: "no"
+
+  mcp-infra:
+    build:
+      context: ../..
+      dockerfile: mcp-infra/Dockerfile
+    environment:
+      APP_ENV: production
+      ALLOW_RCE_TOOLS: "false"
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?required}
+      SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?required}
+      INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:?required}
+      INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:?required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?required}
+      INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:?required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE: ${INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT: ${INTERNAL_API_KEY_MCP_INFRA_TO_REFINEMENT:?required}
+      AIRFLOW_URL: http://airflow:8080
+      AIRFLOW_USER: ${AIRFLOW_ADMIN_USER:?required}
+      AIRFLOW_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?required}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+      MINIO_BUCKET: lakehouse
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: modecissions
+      PG_USER: omega_mcp_infra
+      PG_PASSWORD: ${OMEGA_MCP_INFRA_PASSWORD:?required}
+      PG_GOLD_HOST: postgres_gold
+      PG_GOLD_PORT: "5433"
+      PG_GOLD_DB: modecissions_gold
+      PG_GOLD_USER: omega_refinement_gold
+      PG_GOLD_PASSWORD: ${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}
+      SUPERSET_USER: disabled-e2e
+      SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?required}
+      REFINEMENT_URL: http://refinement:8500
+      RAG_LOCAL_EMBEDDING_FALLBACK: "false"
+    depends_on:
+      postgres: {condition: service_healthy}
+      postgres_gold: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8010/healthz',timeout=3).status==200"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    mem_limit: 224m
+    cpus: 1.0
+    pids_limit: 128
+    restart: "no"
+
+  console:
+    build:
+      context: ../..
+      dockerfile: console/Dockerfile
+    environment:
+      APP_ENV: production
+      ALLOWED_ORIGINS: http://e2e.invalid.local
+      ALLOW_RCE_TOOLS: "false"
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?required}
+      SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?required}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?required}
+      CONTROL_ROOM_EVIDENCE_SIGNING_KEY_ID: e2e-v1
+      CONTROL_ROOM_EVIDENCE_SIGNING_KEY: ${CONTROL_ROOM_EVIDENCE_SIGNING_KEY:?required}
+      CONTROL_ROOM_EVIDENCE_SIGNING_PREVIOUS_KEYS: '{}'
+      DATABASE_URL: postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?required}@postgres:5432/modecissions
+      GOLD_DATABASE_URL: postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?required}@postgres_gold:5433/modecissions_gold
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+      MINIO_BUCKET: lakehouse
+      REDIS_URL: redis://redis:6379/0
+      REFINEMENT_URL: http://refinement:8500
+      MCP_INFRA_URL: http://mcp-infra:8010
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE: ${INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: ${INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE:?required}
+      INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:?required}
+      INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:?required}
+      INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:?required}
+    volumes:
+      - ../../cartridges:/registry/cartridges:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      postgres_gold: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mcp-infra: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3).status==200"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    mem_limit: 224m
+    cpus: 1.25
+    pids_limit: 192
+    restart: "no"

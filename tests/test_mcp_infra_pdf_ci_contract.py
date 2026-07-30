@@ -25,8 +25,7 @@ SCRIPT = assert_gate_shape(
 def test_pdf_security_workflow_runs_real_functional_tests_on_every_pr() -> None:
     workflow = load_workflow("mcp-infra-pdf-security.yml")
     events = workflow[True]
-    assert events["pull_request"] == {"branches": ["main"]}
-    assert "paths" not in events["pull_request"]
+    assert events["pull_request"] is None
     assert events["push"] == {"branches": ["main"]}
     assert workflow["permissions"] == {"contents": "read"}
 

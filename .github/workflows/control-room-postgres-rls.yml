@@ -2,7 +2,6 @@ name: Control Room PostgreSQL RLS
 
 on:
   pull_request:
-    branches: ["main"]
   push:
     branches: ["main"]
 
@@ -107,7 +106,8 @@ jobs:
           pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
-            tests/test_control_room_live_postgres*.py
+            tests/test_control_room_live_postgres*.py \
+            tests/test_silver_lineage_scope_postgres.py
 
       - name: Verify focal and live PostgreSQL/RLS reports
         if: always()
@@ -137,7 +137,7 @@ jobs:
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
           verify_junit("/tmp/control-room-focal.xml", minimum=8987, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=171, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=175, label="Live PostgreSQL/RLS")
           PY
 
   no-control-room-needed:
@@ -148,12 +148,35 @@ jobs:
     steps:
       - run: echo "No Control Room changes detected"
 
+  operational-truth-e2e:
+    needs: changes
+    if: needs.changes.outputs.control_room == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Run isolated operational truth E2E
+        env:
+          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/operational-truth-e2e
+        run: bash scripts/run_operational_truth_e2e.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operational-truth-e2e-evidence
+          path: ${{ runner.temp }}/operational-truth-e2e
+          if-no-files-found: error
+
   control-room-gate:
     name: control-room-gate
     needs:
       - changes
       - control-room-postgres-rls
       - no-control-room-needed
+      - operational-truth-e2e
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -165,6 +188,7 @@ jobs:
           CONTROL_ROOM: ${{ needs.changes.outputs.control_room }}
           CONTROL_ROOM_TESTS_RESULT: ${{ needs['control-room-postgres-rls'].result }}
           NO_CONTROL_ROOM_NEEDED_RESULT: ${{ needs['no-control-room-needed'].result }}
+          OPERATIONAL_TRUTH_E2E_RESULT: ${{ needs['operational-truth-e2e'].result }}
         run: |
           set -euo pipefail
 
@@ -172,6 +196,7 @@ jobs:
           control_room="${CONTROL_ROOM-}"
           tests="${CONTROL_ROOM_TESTS_RESULT-}"
           noop="${NO_CONTROL_ROOM_NEEDED_RESULT-}"
+          e2e="${OPERATIONAL_TRUTH_E2E_RESULT-}"
 
           if [[ "$changes" != "success" ]]; then
             echo "::error::changes must be success; got '${changes:-<missing>}'"
@@ -180,14 +205,14 @@ jobs:
 
           case "$control_room" in
             true)
-              if [[ "$tests" != "success" || "$noop" != "skipped" ]]; then
-                echo "::error::relevant changes require tests=success and noop=skipped; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+              if [[ "$tests" != "success" || "$e2e" != "success" || "$noop" != "skipped" ]]; then
+                echo "::error::relevant changes require tests=success, e2e=success and noop=skipped; got tests='${tests:-<missing>}' e2e='${e2e:-<missing>}' noop='${noop:-<missing>}'"
                 exit 1
               fi
               ;;
             false)
-              if [[ "$tests" != "skipped" || "$noop" != "success" ]]; then
-                echo "::error::irrelevant changes require tests=skipped and noop=success; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+              if [[ "$tests" != "skipped" || "$e2e" != "skipped" || "$noop" != "success" ]]; then
+                echo "::error::irrelevant changes require tests=e2e=skipped and noop=success; got tests='${tests:-<missing>}' e2e='${e2e:-<missing>}' noop='${noop:-<missing>}'"
                 exit 1
               fi
               ;;

@@ -1,6 +1,6 @@
 # Multi-stage: compile wheels in a builder image so gcc + libpq-dev never
 # ship to the runtime image. Keeps the production attack surface small.
-FROM python:3.12-slim AS builder
+FROM python:3.12.11-slim-bookworm AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -16,7 +16,7 @@ COPY mcp-infra/requirements.txt .
 RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 
 
-FROM python:3.12-slim
+FROM python:3.12.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

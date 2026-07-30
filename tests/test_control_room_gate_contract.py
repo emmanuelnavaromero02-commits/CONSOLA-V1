@@ -24,21 +24,29 @@ ENV_BINDINGS = {
     "CHANGES_RESULT": "${{ needs.changes.result }}",
     "CONTROL_ROOM": "${{ needs.changes.outputs.control_room }}",
     "CONTROL_ROOM_TESTS_RESULT": "${{ needs['control-room-postgres-rls'].result }}",
+    "OPERATIONAL_TRUTH_E2E_RESULT": "${{ needs['operational-truth-e2e'].result }}",
     "NO_CONTROL_ROOM_NEEDED_RESULT": "${{ needs['no-control-room-needed'].result }}",
 }
 GATE_SCRIPT = assert_gate_shape(
     GATE,
     name="control-room-gate",
-    needs=["changes", "control-room-postgres-rls", "no-control-room-needed"],
+    needs=[
+        "changes",
+        "control-room-postgres-rls",
+        "no-control-room-needed",
+        "operational-truth-e2e",
+    ],
     env=ENV_BINDINGS,
 )
 NON_SUCCESS = ("failure", "cancelled", "skipped", "neutral", "")
 NON_SKIPPED = ("success", "failure", "cancelled", "neutral", "")
 WRONG_JOB_MATRICES = [
-    *((True, result, "skipped") for result in NON_SUCCESS),
-    *((True, "success", result) for result in NON_SKIPPED),
-    *((False, result, "success") for result in NON_SKIPPED),
-    *((False, "skipped", result) for result in NON_SUCCESS),
+    *((True, result, "success", "skipped") for result in NON_SUCCESS),
+    *((True, "success", result, "skipped") for result in NON_SUCCESS),
+    *((True, "success", "success", result) for result in NON_SKIPPED),
+    *((False, result, "skipped", "success") for result in NON_SKIPPED),
+    *((False, "skipped", result, "success") for result in NON_SKIPPED),
+    *((False, "skipped", "skipped", result) for result in NON_SUCCESS),
 ]
 
 
@@ -47,14 +55,15 @@ def _valid_env(*, relevant: bool) -> dict[str, str]:
         "CHANGES_RESULT": "success",
         "CONTROL_ROOM": "true" if relevant else "false",
         "CONTROL_ROOM_TESTS_RESULT": "success" if relevant else "skipped",
+        "OPERATIONAL_TRUTH_E2E_RESULT": "success" if relevant else "skipped",
         "NO_CONTROL_ROOM_NEEDED_RESULT": "skipped" if relevant else "success",
     }
 
 
-def test_workflow_runs_once_on_main_without_path_filters() -> None:
+def test_workflow_runs_once_on_stacked_prs_and_main_without_path_filters() -> None:
     events = WORKFLOW[True]
     assert events == {
-        "pull_request": {"branches": ["main"]},
+        "pull_request": None,
         "push": {"branches": ["main"]},
     }
     assert WORKFLOW["permissions"] == {"contents": "read"}
@@ -74,9 +83,12 @@ def test_changes_and_conditional_jobs_have_exact_contract() -> None:
     assert checkout == {"uses": "actions/checkout@v4", "with": {"fetch-depth": 0}}
 
     tests = WORKFLOW["jobs"]["control-room-postgres-rls"]
+    e2e = WORKFLOW["jobs"]["operational-truth-e2e"]
     noop = WORKFLOW["jobs"]["no-control-room-needed"]
     assert tests["needs"] == "changes"
     assert tests["if"] == "needs.changes.outputs.control_room == 'true'"
+    assert e2e["needs"] == "changes"
+    assert e2e["if"] == "needs.changes.outputs.control_room == 'true'"
     assert noop["needs"] == "changes"
     assert noop["if"] == "needs.changes.outputs.control_room == 'false'"
 
@@ -112,14 +124,19 @@ def test_gate_rejects_noncanonical_boolean(value: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("relevant", "tests_result", "noop_result"),
+    ("relevant", "tests_result", "e2e_result", "noop_result"),
     WRONG_JOB_MATRICES,
 )
 def test_gate_rejects_wrong_job_matrix(
-    relevant: bool, tests_result: str, noop_result: str, tmp_path: Path
+    relevant: bool,
+    tests_result: str,
+    e2e_result: str,
+    noop_result: str,
+    tmp_path: Path,
 ) -> None:
     env = _valid_env(relevant=relevant)
     env["CONTROL_ROOM_TESTS_RESULT"] = tests_result
+    env["OPERATIONAL_TRUTH_E2E_RESULT"] = e2e_result
     env["NO_CONTROL_ROOM_NEEDED_RESULT"] = noop_result
     assert_gate_rejects(run_gate(GATE_SCRIPT, env, tmp_path))
 
