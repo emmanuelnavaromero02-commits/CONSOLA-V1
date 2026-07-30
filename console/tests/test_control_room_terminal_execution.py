@@ -109,6 +109,7 @@ async def finance_fetcher(dataset: str, user: dict | None, _limit: int) -> list[
             "costo_total": 95000,
             "margen_bruto_usd": 5000,
             "margen_bruto_pct": 5,
+            "financial_status": "ready",
         }
     ]
     context = user or USER

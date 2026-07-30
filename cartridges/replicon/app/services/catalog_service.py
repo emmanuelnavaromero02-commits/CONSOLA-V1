@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 
 from app.core.config import settings
 from app.services.kb_config_reconciliation import (
+    CURRENT_PACKAGE_VERSIONS,
     is_kb_runtime_safe,
     reconcile_packaged_kbs,
 )
@@ -45,7 +46,25 @@ def _yaml_kbs() -> list[dict[str, Any]]:
     if not KBS_PATH.exists():
         return []
     with KBS_PATH.open(encoding="utf-8") as f:
-        return (yaml.safe_load(f) or {}).get("knowledge_bits", [])
+        definitions = (yaml.safe_load(f) or {}).get("knowledge_bits", [])
+    for definition in definitions:
+        kb_id = str(definition.get("id") or "")
+        sql_file = definition.get("sql_file")
+        if sql_file:
+            sql_path = BASE_DIR / "config" / str(sql_file)
+            sql = sql_path.read_text(encoding="utf-8").strip()
+            if "__WIP_MENSUAL_V3__" in sql:
+                monthly = (
+                    (BASE_DIR / "config/sql/kb_wip_mensual_v3.sql")
+                    .read_text(encoding="utf-8")
+                    .strip()
+                    .removesuffix(";")
+                )
+                sql = sql.replace("__WIP_MENSUAL_V3__", monthly)
+            definition["sql"] = sql
+        if kb_id in CURRENT_PACKAGE_VERSIONS:
+            definition["package_version"] = CURRENT_PACKAGE_VERSIONS[kb_id]
+    return definitions
 
 
 # ── Seed on startup ───────────────────────────────────────────────────────────
@@ -173,7 +192,11 @@ def get_all_kbs() -> list[dict[str, Any]]:
             )
         ]
     except Exception:
-        return _yaml_kbs()
+        return [
+            kb
+            for kb in _yaml_kbs()
+            if str(kb.get("id") or "") not in CURRENT_PACKAGE_VERSIONS
+        ]
 
 
 def get_kb_config(kb_id: str) -> dict[str, Any] | None:
@@ -210,5 +233,12 @@ def get_kb_config(kb_id: str) -> dict[str, Any] | None:
     except Exception:
         for kb in _yaml_kbs():
             if kb.get("id") == kb_id:
+                if kb_id in CURRENT_PACKAGE_VERSIONS:
+                    return {
+                        **kb,
+                        "enabled": False,
+                        "runtime_status": "unavailable",
+                        "blocked_reason": "kb_catalog_provenance_unavailable",
+                    }
                 return kb
         return None

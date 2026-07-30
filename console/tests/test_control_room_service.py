@@ -1292,7 +1292,7 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
                 "wip_usd": 24000,
                 "costo_total": 70000,
                 "margen_bruto_usd": 30000,
-                "margen_bruto_pct": 30,
+                **dict(margen_bruto_pct=30, financial_status="ready"),
             },
             {
                 "mes": "2026-05-01",
@@ -1304,7 +1304,7 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
                 "wip_usd": -6000,
                 "costo_total": 25000,
                 "margen_bruto_usd": -5000,
-                "margen_bruto_pct": -25,
+                **dict(margen_bruto_pct=-25, financial_status="ready"),
             },
         ]
         rows["revenue_by_customer"] = [{"customer_code": "C-1", "revenue": 50000}]
@@ -1372,7 +1372,7 @@ async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list
             "wip_usd": 6000,
             "costo_total": 95000,
             "margen_bruto_usd": 5000,
-            "margen_bruto_pct": 5,
+            **dict(margen_bruto_pct=5, financial_status="ready"),
         }
     ]
     return _scoped_rows(dataset, rows[dataset], _user)
@@ -1393,7 +1393,7 @@ async def threshold_margin_fetcher(
             "wip_usd": 0,
             "costo_total": 85000,
             "margen_bruto_usd": 15000,
-            "margen_bruto_pct": 15,
+            **dict(margen_bruto_pct=15, financial_status="ready"),
         }
     ]
     return _scoped_rows(dataset, rows[dataset], _user)

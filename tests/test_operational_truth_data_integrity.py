@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import importlib.util
+import runpy
 from pathlib import Path
 
 import yaml
@@ -29,15 +31,27 @@ BENCHMARK_INIT_PATHS = (
 )
 REPLICON_KBS = ROOT / "cartridges/replicon/app/config/knowledge_bits.yaml"
 WIP_IDS = {"kb_wip_mensual", "kb_wip_resumen"}
+MCP_GUARD = ROOT / "mcp-infra/app/operational_truth.py"
 
 
 def _wip_sql() -> dict[str, str]:
     payload = yaml.safe_load(REPLICON_KBS.read_text(encoding="utf-8"))
-    return {
-        str(item["id"]): str(item["sql"])
-        for item in payload["knowledge_bits"]
-        if item.get("id") in WIP_IDS
-    }
+    configs = {}
+    for item in payload["knowledge_bits"]:
+        kb_id = str(item.get("id") or "")
+        if kb_id not in WIP_IDS:
+            continue
+        sql = (REPLICON_KBS.parent / item["sql_file"]).read_text(encoding="utf-8")
+        if "__WIP_MENSUAL_V3__" in sql:
+            monthly = (
+                (REPLICON_KBS.parent / "sql/kb_wip_mensual_v3.sql")
+                .read_text(encoding="utf-8")
+                .strip()
+                .removesuffix(";")
+            )
+            sql = sql.replace("__WIP_MENSUAL_V3__", monthly)
+        configs[kb_id] = sql
+    return configs
 
 
 def test_packaged_talent_benchmark_is_unreviewed_system_default() -> None:
@@ -163,10 +177,7 @@ def test_replicon_wip_only_emits_financial_signals_with_usable_inputs() -> None:
     for sql in configs.values():
         lowered = sql.lower()
         assert "as converted_billed_amount_usd" in lowered
-        assert (
-            "when billing_data_status = 'ready' then converted_billed_amount_usd"
-            in lowered
-        )
+        assert "then converted_billed_amount_usd end as billed_amount_usd" in lowered
         assert "when financial_status = 'ready'" in lowered
         assert "billable_amount_usd - converted_billed_amount_usd" in lowered
         assert "converted_billed_amount_usd / nullif(billable_amount_usd, 0)" in lowered
@@ -182,3 +193,65 @@ def test_replicon_wip_only_emits_financial_signals_with_usable_inputs() -> None:
 
 def test_replicon_knowledge_bits_stays_within_file_size_contract() -> None:
     assert len(REPLICON_KBS.read_text(encoding="utf-8").splitlines()) <= 300
+
+
+def test_generic_readers_block_noncurrent_replicon_wip_artifacts() -> None:
+    spec = importlib.util.spec_from_file_location("mcp_operational_truth", MCP_GUARD)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    reason = module.replicon_artifact_block_reason
+
+    assert reason(
+        "SELECT * FROM read_parquet('s3://bucket/knowledge_bits/replicon/wip_mensual/x.parquet')",
+        cartridge_id="replicon",
+    )
+    assert reason(
+        "SELECT * FROM knowledge_bits_quarantine.replicon_wip_resumen",
+        postgres=True,
+    )
+    assert reason(
+        "SELECT * FROM knowledge_bits_history.replicon_wip_mensual",
+        postgres=True,
+    )
+    assert not reason(
+        "SELECT * FROM knowledge_bits.replicon_wip_mensual",
+        postgres=True,
+    )
+
+
+def test_generic_replicon_reader_resolves_custom_reserved_paths_fail_closed() -> None:
+    module = runpy.run_path(str(MCP_GUARD))
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _sql):
+            return None
+
+        def fetchall(self):
+            return [("customer_table", "customer/path")]
+
+    class Connection(Cursor):
+        def cursor(self):
+            return Cursor()
+
+    block = module["replicon_generic_query_block_reason"]
+    reason = block(
+        "SELECT * FROM read_parquet('s3://bucket/customer/path/legacy.parquet')",
+        cartridge_id="replicon",
+        connection_factory=Connection,
+    )
+    assert reason == "noncurrent_replicon_wip_artifact"
+    assert (
+        block(
+            "SELECT 1",
+            cartridge_id="replicon",
+            connection_factory=lambda: (_ for _ in ()).throw(RuntimeError("db down")),
+        )
+        == "replicon_wip_provenance_unavailable"
+    )

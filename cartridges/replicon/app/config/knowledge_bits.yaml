@@ -205,65 +205,19 @@ knowledge_bits:
     ORDER BY a.month DESC, supervisor_name, user_name
 
 - id: kb_wip_mensual
-  package_version: replicon.wip_mensual.v2
+  sql_file: sql/kb_wip_mensual_v3.sql
   name: WIP Mensual
   description: WIP mensual por proyecto y usuario. Conserva facturación original por moneda; sólo calcula USD con FX real y publica missing_fx/insufficient_data cuando faltan insumos.
   source_entities: [TimeEntry, BillingItem, Project, User]
   output_path: knowledge_bits/replicon/wip_mensual
   pg_table: replicon_wip_mensual
-  sql: |
-    WITH fx AS (
-      SELECT DATE_TRUNC('month', TRY_CAST(year_month AS DATE)) AS month, CASE WHEN isfinite(TRY_CAST(avg_rate AS DOUBLE)) AND TRY_CAST(avg_rate AS DOUBLE) > 0 THEN TRY_CAST(avg_rate AS DOUBLE) END AS mxn_to_usd FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')
-    ), project_rate_monthly AS (
-      SELECT projectid, DATE_TRUNC('month', TRY_CAST(entrydate AS DATE)) AS month, CASE WHEN isfinite(TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE)) AND TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) > 0 THEN TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) END AS rate_usd FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet') WHERE billabledurationhours > 0 GROUP BY 1, 2
-    ), project_rate_default AS (
-      SELECT projectid, CASE WHEN isfinite(TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE)) AND TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) > 0 THEN TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) END AS rate_usd FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet') WHERE billabledurationhours > 0 GROUP BY 1
-    ), time_worked AS (
-      SELECT DATE_TRUNC('month', TRY_CAST(entrydate AS DATE)) AS month, projectid, projectname, clientname, userid, username, SUM(durationhours) AS worked_hours, SUM(CASE WHEN isbillable THEN durationhours ELSE 0 END) AS billable_hours FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet') WHERE entrydate IS NOT NULL GROUP BY 1, 2, 3, 4, 5, 6
-    ), billable AS (
-      SELECT t.*, COALESCE(rm.rate_usd, rd.rate_usd) AS rate_usd, ROUND(t.billable_hours * COALESCE(rm.rate_usd, rd.rate_usd), 2) AS billable_amount_usd FROM time_worked t LEFT JOIN project_rate_monthly rm ON t.projectid = rm.projectid AND t.month = rm.month LEFT JOIN project_rate_default rd ON t.projectid = rd.projectid
-    ), invoice_rows AS (
-      SELECT DATE_TRUNC('month', TRY_CAST(invoice_date AS DATE)) AS month, project_id AS projectid, UPPER(TRIM(CAST(currency AS VARCHAR))) AS currency, CASE WHEN isfinite(TRY_CAST(billed_amount AS DOUBLE)) THEN TRY_CAST(billed_amount AS DOUBLE) END AS billed_amount, fx.mxn_to_usd FROM read_parquet('s3://{bucket}/raw/excel_billing/invoices/load_date=*/*.parquet') inv LEFT JOIN fx ON DATE_TRUNC('month', TRY_CAST(inv.invoice_date AS DATE)) = fx.month WHERE invoice_date IS NOT NULL AND invoice_status != 'Cancelada' AND project_id IS NOT NULL AND project_id != '0'
-    ), billed_aggregated AS (
-      SELECT month, projectid, SUM(CASE WHEN currency = 'USD' THEN billed_amount END) AS original_billed_usd, SUM(CASE WHEN currency = 'MXN' THEN billed_amount END) AS original_billed_mxn, SUM(CASE WHEN currency = 'USD' THEN billed_amount WHEN currency = 'MXN' AND mxn_to_usd IS NOT NULL THEN billed_amount * mxn_to_usd END) AS converted_candidate, SUM(CASE WHEN currency = 'MXN' AND mxn_to_usd IS NULL THEN 1 ELSE 0 END) AS missing_fx_count, SUM(CASE WHEN currency IS NULL OR currency NOT IN ('USD', 'MXN') OR billed_amount IS NULL THEN 1 ELSE 0 END) AS invalid_invoice_count FROM invoice_rows GROUP BY 1, 2
-    ), billed AS (
-      SELECT *, CASE WHEN missing_fx_count > 0 THEN 'missing_fx' WHEN invalid_invoice_count > 0 THEN 'insufficient_data' ELSE 'ready' END AS billing_data_status, CASE WHEN missing_fx_count = 0 AND invalid_invoice_count = 0 THEN converted_candidate END AS converted_billed_amount_usd FROM billed_aggregated
-    ), project_billable_totals AS (
-      SELECT month, projectid, SUM(billable_hours) AS total_billable FROM billable GROUP BY 1, 2
-    ), billed_per_user AS (
-      SELECT b.month, b.projectid, bl.userid, ROUND(b.original_billed_usd * bl.billable_hours / NULLIF(pt.total_billable, 0), 2) AS original_billed_usd, ROUND(b.original_billed_mxn * bl.billable_hours / NULLIF(pt.total_billable, 0), 2) AS original_billed_mxn, b.billing_data_status, ROUND(b.converted_billed_amount_usd * bl.billable_hours / NULLIF(pt.total_billable, 0), 2) AS converted_billed_amount_usd FROM billed b JOIN billable bl ON b.month = bl.month AND b.projectid = bl.projectid JOIN project_billable_totals pt ON b.month = pt.month AND b.projectid = pt.projectid
-    ), combined AS (
-      SELECT bl.*, bu.original_billed_usd, bu.original_billed_mxn, COALESCE(bu.billing_data_status, 'insufficient_data') AS billing_data_status, bu.converted_billed_amount_usd, CASE WHEN bu.billing_data_status = 'missing_fx' THEN 'missing_fx' WHEN bl.rate_usd IS NULL OR bu.billing_data_status IS NULL OR bu.billing_data_status != 'ready' THEN 'insufficient_data' ELSE 'ready' END AS financial_status FROM billable bl LEFT JOIN billed_per_user bu ON bl.month = bu.month AND bl.projectid = bu.projectid AND bl.userid = bu.userid WHERE bl.billable_hours > 0
-    )
-    SELECT month, projectid, projectname, clientname, userid, username, worked_hours, billable_hours, rate_usd AS billing_rate_usd, billable_amount_usd, original_billed_usd, original_billed_mxn, billing_data_status, financial_status, CASE WHEN billing_data_status = 'ready' THEN converted_billed_amount_usd END AS billed_amount_usd, CASE WHEN financial_status = 'ready' THEN ROUND(billable_amount_usd - converted_billed_amount_usd, 2) END AS wip_amount_usd, CASE WHEN financial_status = 'ready' THEN ROUND(converted_billed_amount_usd / NULLIF(billable_amount_usd, 0) * 100, 1) END AS billing_completion_pct FROM combined ORDER BY month DESC, wip_amount_usd DESC
 - id: kb_wip_resumen
-  package_version: replicon.wip_resumen.v2
+  sql_file: sql/kb_wip_resumen_v3.sql
   name: WIP Resumen por Proyecto
   description: WIP mensual ejecutivo. Mantiene USD/MXN originales separados y no emite monto convertido, porcentaje ni semáforo sin FX y tarifa reales.
   source_entities: [TimeEntry, BillingItem]
   output_path: knowledge_bits/replicon/wip_resumen
   pg_table: replicon_wip_resumen
-  sql: |
-    WITH fx AS (
-      SELECT DATE_TRUNC('month', TRY_CAST(year_month AS DATE)) AS month, CASE WHEN isfinite(TRY_CAST(avg_rate AS DOUBLE)) AND TRY_CAST(avg_rate AS DOUBLE) > 0 THEN TRY_CAST(avg_rate AS DOUBLE) END AS mxn_to_usd FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')
-    ), project_rate_monthly AS (
-      SELECT projectid, DATE_TRUNC('month', TRY_CAST(entrydate AS DATE)) AS month, CASE WHEN isfinite(TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE)) AND TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) > 0 THEN TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) END AS rate_usd FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet') WHERE billabledurationhours > 0 GROUP BY 1, 2
-    ), project_rate_default AS (
-      SELECT projectid, CASE WHEN isfinite(TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE)) AND TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) > 0 THEN TRY_CAST(SUM(billableamountbasecurrency) / NULLIF(SUM(billabledurationhours), 0) AS DOUBLE) END AS rate_usd FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet') WHERE billabledurationhours > 0 GROUP BY 1
-    ), time_worked AS (
-      SELECT DATE_TRUNC('month', TRY_CAST(entrydate AS DATE)) AS month, projectid, projectname, clientname, SUM(durationhours) AS worked_hours, SUM(CASE WHEN isbillable THEN durationhours ELSE 0 END) AS billable_hours, COUNT(DISTINCT userid) AS contributors FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet') WHERE entrydate IS NOT NULL GROUP BY 1, 2, 3, 4
-    ), billable AS (
-      SELECT t.*, COALESCE(rm.rate_usd, rd.rate_usd) AS rate_usd, ROUND(t.billable_hours * COALESCE(rm.rate_usd, rd.rate_usd), 2) AS billable_amount_usd FROM time_worked t LEFT JOIN project_rate_monthly rm ON t.projectid = rm.projectid AND t.month = rm.month LEFT JOIN project_rate_default rd ON t.projectid = rd.projectid
-    ), invoice_rows AS (
-      SELECT DATE_TRUNC('month', TRY_CAST(invoice_date AS DATE)) AS month, project_id AS projectid, UPPER(TRIM(CAST(currency AS VARCHAR))) AS currency, CASE WHEN isfinite(TRY_CAST(billed_amount AS DOUBLE)) THEN TRY_CAST(billed_amount AS DOUBLE) END AS billed_amount, fx.mxn_to_usd FROM read_parquet('s3://{bucket}/raw/excel_billing/invoices/load_date=*/*.parquet') inv LEFT JOIN fx ON DATE_TRUNC('month', TRY_CAST(inv.invoice_date AS DATE)) = fx.month WHERE invoice_date IS NOT NULL AND invoice_status != 'Cancelada' AND project_id IS NOT NULL AND project_id != '0'
-    ), billed_aggregated AS (
-      SELECT month, projectid, SUM(CASE WHEN currency = 'USD' THEN billed_amount END) AS original_billed_usd, SUM(CASE WHEN currency = 'MXN' THEN billed_amount END) AS original_billed_mxn, SUM(CASE WHEN currency = 'USD' THEN billed_amount WHEN currency = 'MXN' AND mxn_to_usd IS NOT NULL THEN billed_amount * mxn_to_usd END) AS converted_candidate, SUM(CASE WHEN currency = 'MXN' AND mxn_to_usd IS NULL THEN 1 ELSE 0 END) AS missing_fx_count, SUM(CASE WHEN currency IS NULL OR currency NOT IN ('USD', 'MXN') OR billed_amount IS NULL THEN 1 ELSE 0 END) AS invalid_invoice_count FROM invoice_rows GROUP BY 1, 2
-    ), billed AS (
-      SELECT *, CASE WHEN missing_fx_count > 0 THEN 'missing_fx' WHEN invalid_invoice_count > 0 THEN 'insufficient_data' ELSE 'ready' END AS billing_data_status, CASE WHEN missing_fx_count = 0 AND invalid_invoice_count = 0 THEN converted_candidate END AS converted_billed_amount_usd FROM billed_aggregated
-    ), combined AS (
-      SELECT bl.*, b.original_billed_usd, b.original_billed_mxn, COALESCE(b.billing_data_status, 'insufficient_data') AS billing_data_status, b.converted_billed_amount_usd, CASE WHEN b.billing_data_status = 'missing_fx' THEN 'missing_fx' WHEN bl.rate_usd IS NULL OR b.billing_data_status IS NULL OR b.billing_data_status != 'ready' THEN 'insufficient_data' ELSE 'ready' END AS financial_status FROM billable bl LEFT JOIN billed b ON bl.month = b.month AND bl.projectid = b.projectid WHERE bl.billable_hours > 0
-    )
-    SELECT month, projectid, projectname, clientname, contributors, worked_hours, billable_hours, rate_usd AS billing_rate_usd, billable_amount_usd, original_billed_usd, original_billed_mxn, billing_data_status, financial_status, CASE WHEN billing_data_status = 'ready' THEN converted_billed_amount_usd END AS billed_amount_usd, CASE WHEN financial_status = 'ready' THEN ROUND(billable_amount_usd - converted_billed_amount_usd, 2) END AS wip_amount_usd, CASE WHEN financial_status = 'ready' THEN ROUND(converted_billed_amount_usd / NULLIF(billable_amount_usd, 0) * 100, 1) END AS billing_completion_pct, CASE WHEN financial_status != 'ready' THEN financial_status WHEN billable_amount_usd = 0 THEN 'sin_monto' WHEN converted_billed_amount_usd / NULLIF(billable_amount_usd, 0) >= 0.9 THEN 'facturado' WHEN converted_billed_amount_usd / NULLIF(billable_amount_usd, 0) >= 0.5 THEN 'parcial' ELSE 'pendiente' END AS wip_status FROM combined ORDER BY month DESC, wip_amount_usd DESC
 - id: kb_project_status
   name: Project Status Overview
   description: 'All projects with team size, hours logged, and completion metrics.

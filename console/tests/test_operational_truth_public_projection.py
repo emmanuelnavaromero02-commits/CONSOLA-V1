@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from app.services.intelligence import gold_fetcher
+from app.services.control_room.business_impact_rules import calculate_item_impact
 
 
 READINESS = "sap_successfactors_talent_readiness"
@@ -208,3 +209,26 @@ def test_benchmark_rejects_non_server_actor_identifiers(actor) -> None:
     assert projected["approved_by"] is None
     assert projected["approval_valid"] is False
     assert projected["approval_status"] == "unreviewed"
+
+
+def test_replicon_financial_alert_requires_ready_currency_provenance() -> None:
+    def number(value):
+        return float(value) if value is not None else None
+
+    def payload(**values):
+        return values
+
+    item = {
+        "cartridge": "replicon",
+        "anomaly_type": "low_margin",
+        "impact_estimate": 9000,
+        "details": {"revenue_usd": 10000, "margen_bruto_usd": 100},
+    }
+    blocked = calculate_item_impact(item, number=number, payload=payload)
+    item["details"]["financial_status"] = "ready"
+    ready = calculate_item_impact(item, number=number, payload=payload)
+
+    assert blocked["status"] == "unavailable"
+    assert blocked["estimate"] is None
+    assert ready["status"] == "ok"
+    assert ready["estimate"] == 9000

@@ -15,6 +15,23 @@ def calculate_item_impact(
     payload: ImpactPayload,
 ) -> dict[str, Any]:
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    anomaly_type = str(item.get("anomaly_type") or "")
+    cartridge = str(item.get("cartridge") or "")
+    replicon_financial = cartridge == "replicon" and anomaly_type in {
+        "low_margin",
+        "wip_variance",
+        "non_billable_ratio",
+    }
+    if replicon_financial and details.get("financial_status") != "ready":
+        return payload(
+            item=item,
+            estimate=None,
+            status="unavailable",
+            confidence=0.25,
+            drivers=[],
+            formula="FX/base currency provenance required.",
+            explanation="La fuente Replicon no acredita moneda base y FX publicables.",
+        )
 
     stored = number(item.get("impact_estimate"))
     if stored is not None and stored > 0:
@@ -34,9 +51,6 @@ def calculate_item_impact(
             explanation="Estimacion recuperada del estado operativo persistido.",
             currency=str(item.get("impact_currency") or "USD"),
         )
-
-    anomaly_type = str(item.get("anomaly_type") or "")
-    cartridge = str(item.get("cartridge") or "")
 
     if cartridge == "replicon" and anomaly_type in {"low_margin", "wip_variance"}:
         revenue = number(details.get("revenue_usd"))

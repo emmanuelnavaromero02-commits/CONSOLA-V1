@@ -2681,14 +2681,14 @@ def _normalize_replicon_pnl(
     row: dict[str, Any],
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
+    if row.get("financial_status") != "ready":
+        return None
     margin = _num(row.get("margen_bruto_pct"))
     wip = _num(row.get("wip_usd")) or 0
     state = _replicon_pnl_state(margin, wip, _replicon_pnl_thresholds(thresholds))
     if state is None:
         return None
-    proyecto = str(
-        row.get("proyecto") or row.get("project_name") or "Sin proyecto"
-    ).strip()
+    proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
     manager = str(row.get("revenue_manager") or "Sin RM").strip()
     item = _base_item(
         source,

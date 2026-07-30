@@ -26,6 +26,7 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.middleware.request_id import request_id_var
+from app.operational_truth import replicon_generic_query_block_reason
 from app.registry import tool
 from app.tools._validators import validate_bounded_int, validate_identifier
 from app.tools.postgres import _conn
@@ -1198,9 +1199,6 @@ def cartridge_list_jobs(
     ]
 
 
-# ── Tool 9 · list_kbs ─────────────────────────────────────────────────────────
-
-
 @tool(
     name="cartridge_list_kbs",
     description="List Knowledge Bits defined for a cartridge.",
@@ -1215,6 +1213,7 @@ def cartridge_list_kbs(
     security_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     _scope_values(security_context)
+    reserved = {"kb_wip_mensual", "kb_wip_resumen"} if cartridge_id == "replicon" else set()
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT kb_id, name, description, pg_table, output_path "
@@ -1231,10 +1230,8 @@ def cartridge_list_kbs(
             "output_path": r[4],
         }
         for r in rows
+        if r[0] not in reserved
     ]
-
-
-# ── Tool 10 · run_kb ──────────────────────────────────────────────────────────
 
 
 @tool(
@@ -1260,6 +1257,8 @@ def cartridge_run_kb(
     kb_id: str,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if cartridge_id == "replicon" and kb_id in {"kb_wip_mensual", "kb_wip_resumen"}:
+        return {"kb_id": kb_id, "status": "partial", "data_status": "unavailable", "error": "reserved Replicon WIP requires its provenance-aware runtime"}
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT sql, pg_table, output_path FROM kb_config "
@@ -1397,9 +1396,6 @@ def cartridge_run_kb(
     }
 
 
-# ── Tool 11 · query_kb ────────────────────────────────────────────────────────
-
-
 @tool(
     name="cartridge_query_kb",
     description=(
@@ -1429,9 +1425,10 @@ def cartridge_query_kb(
     limit: int = 100,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # Sprint v1.35 (audit B3 P0): force ``limit`` to a bounded int so a
-    # string payload can't ride the LIMIT clause into the f-string.
     limit = validate_bounded_int(limit, "limit", lo=1, hi=5000)
+    blocked_reason = replicon_generic_query_block_reason(sql, cartridge_id=cartridge_id, connection_factory=_conn)
+    if blocked_reason:
+        return {"cartridge_id": cartridge_id, "status": "partial", "data_status": "unavailable", "reason": blocked_reason}
     resolved = _scope_cartridge_sql(sql, cartridge_id, security_context)
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"

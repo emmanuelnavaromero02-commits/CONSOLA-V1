@@ -7,15 +7,17 @@ from sqlalchemy import text
 
 
 CURRENT_PACKAGE_VERSIONS = {
-    "kb_wip_mensual": "replicon.wip_mensual.v2",
-    "kb_wip_resumen": "replicon.wip_resumen.v2",
+    "kb_wip_mensual": "replicon.wip_mensual.v3",
+    "kb_wip_resumen": "replicon.wip_resumen.v3",
 }
 LEGACY_PACKAGE_SQL_DIGESTS = {
     "kb_wip_mensual": {
-        "2bf0d0456874fd068c7885e6c0397d3e54241922e67b8cd3cb8a34fa1ab7f558"
+        "2bf0d0456874fd068c7885e6c0397d3e54241922e67b8cd3cb8a34fa1ab7f558",
+        "f8d85d8ed732a2b7ea9ca7734be8577b9acb164c597f7ccb6fda30c0201fd530",
     },
     "kb_wip_resumen": {
-        "39af8cd6ffe21ef63e1373377ef7903b82b64992066cf8b30617d6af5978439d"
+        "39af8cd6ffe21ef63e1373377ef7903b82b64992066cf8b30617d6af5978439d",
+        "a62f247a810d57c700e42645220c17c7e63a1bbc51ade66f0970cb23393422ad",
     },
 }
 
@@ -54,6 +56,8 @@ def _values(kb: dict[str, Any], cartridge_id: str) -> dict[str, Any]:
         "sql": kb.get("sql", ""),
         "pg": kb.get("pg_table", kb.get("id")),
         "out": kb.get("output_path", ""),
+        "version": kb.get("package_version"),
+        "digest": _digest(str(kb.get("sql") or "")),
     }
 
 
@@ -66,13 +70,16 @@ def reconcile_packaged_kbs(
 
     rows = (
         conn.execute(
-            text("SELECT kb_id, sql FROM kb_config WHERE cartridge_id = :cid"),
+            text(
+                "SELECT kb_id, sql, enabled, name, description, pg_table, output_path "
+                "FROM kb_config WHERE cartridge_id = :cid FOR UPDATE"
+            ),
             {"cid": cartridge_id},
         )
         .mappings()
         .all()
     )
-    existing = {str(row["kb_id"]): str(row.get("sql") or "") for row in rows}
+    existing = {str(row["kb_id"]): dict(row) for row in rows}
     counts = {"inserted": 0, "upgraded": 0, "blocked": 0, "unchanged": 0}
 
     for kb in packaged_kbs:
@@ -86,7 +93,10 @@ def reconcile_packaged_kbs(
                     """INSERT INTO kb_config (
                            cartridge_id, kb_id, name, description, sql,
                            pg_table, output_path, enabled
-                       ) VALUES (:cid, :kid, :name, :desc, :sql, :pg, :out, TRUE)
+                           , package_version, package_sql_digest,
+                           materialization_status, invalid_reason
+                       ) VALUES (:cid, :kid, :name, :desc, :sql, :pg, :out, TRUE,
+                                 :version, :digest, 'quarantined', 'rerun_required')
                        ON CONFLICT (cartridge_id, kb_id) DO NOTHING"""
                 ),
                 values,
@@ -94,18 +104,28 @@ def reconcile_packaged_kbs(
             counts["inserted"] += 1
             continue
 
-        action = classify_managed_kb(kb_id, existing[kb_id], str(values["sql"]))
+        observed = existing[kb_id]
+        action = classify_managed_kb(
+            kb_id, str(observed.get("sql") or ""), str(values["sql"])
+        )
         if action == "upgrade":
-            conn.execute(
+            updated = conn.execute(
                 text(
                     """UPDATE kb_config
-                          SET name = :name, description = :desc, sql = :sql,
-                              pg_table = :pg, output_path = :out, enabled = TRUE
-                        WHERE cartridge_id = :cid AND kb_id = :kid"""
+                          SET sql = :sql, package_version = :version,
+                              package_sql_digest = :digest,
+                              materialization_status = 'quarantined',
+                              current_run_id = NULL,
+                              invalid_reason = 'invalid_legacy_fx'
+                        WHERE cartridge_id = :cid AND kb_id = :kid
+                          AND sql = :observed_sql"""
                 ),
-                values,
+                {**values, "observed_sql": observed.get("sql")},
             )
-            counts["upgraded"] += 1
+            if getattr(updated, "rowcount", 1) == 0:
+                counts["blocked"] += 1
+            else:
+                counts["upgraded"] += 1
         elif action == "block_unknown":
             counts["blocked"] += 1
         else:

@@ -22,20 +22,37 @@ MANAGED_IDS = {"kb_wip_mensual", "kb_wip_resumen"}
 
 def _packaged() -> dict[str, dict]:
     payload = yaml.safe_load(KBS_PATH.read_text(encoding="utf-8"))
-    return {
-        str(item["id"]): item
-        for item in payload["knowledge_bits"]
-        if item.get("id") in MANAGED_IDS
-    }
+    definitions = {}
+    for item in payload["knowledge_bits"]:
+        kb_id = str(item.get("id") or "")
+        if kb_id not in MANAGED_IDS:
+            continue
+        sql = (KBS_PATH.parent / item["sql_file"]).read_text(encoding="utf-8").strip()
+        if "__WIP_MENSUAL_V3__" in sql:
+            monthly = (
+                (KBS_PATH.parent / "sql/kb_wip_mensual_v3.sql")
+                .read_text(encoding="utf-8")
+                .strip()
+                .removesuffix(";")
+            )
+            sql = sql.replace("__WIP_MENSUAL_V3__", monthly)
+        definitions[kb_id] = {
+            **item,
+            "sql": sql,
+            "package_version": CURRENT_PACKAGE_VERSIONS[kb_id],
+        }
+    return definitions
 
 
 def test_only_exact_legacy_wip_digests_are_package_owned() -> None:
     assert LEGACY_PACKAGE_SQL_DIGESTS == {
         "kb_wip_mensual": {
-            "2bf0d0456874fd068c7885e6c0397d3e54241922e67b8cd3cb8a34fa1ab7f558"
+            "2bf0d0456874fd068c7885e6c0397d3e54241922e67b8cd3cb8a34fa1ab7f558",
+            "f8d85d8ed732a2b7ea9ca7734be8577b9acb164c597f7ccb6fda30c0201fd530",
         },
         "kb_wip_resumen": {
-            "39af8cd6ffe21ef63e1373377ef7903b82b64992066cf8b30617d6af5978439d"
+            "39af8cd6ffe21ef63e1373377ef7903b82b64992066cf8b30617d6af5978439d",
+            "a62f247a810d57c700e42645220c17c7e63a1bbc51ade66f0970cb23393422ad",
         },
     }
 
@@ -115,7 +132,7 @@ class _Connection:
         kb_id = str(values["kid"])
         if sql.startswith("INSERT"):
             self.rows[kb_id] = {"kb_id": kb_id, "sql": values["sql"]}
-        elif "SET name" in sql:
+        elif "SET sql" in sql:
             self.rows[kb_id]["sql"] = values["sql"]
         return _Rows([])
 
@@ -152,6 +169,50 @@ def test_reconciliation_harness_upgrades_only_owned_legacy(monkeypatch) -> None:
     assert second == {"inserted": 0, "upgraded": 0, "blocked": 0, "unchanged": 1}
     assert connection.rows["kb_wip_mensual"]["sql"] == packaged["sql"]
     assert len(connection.writes) == writes_after_upgrade
+
+
+def test_legacy_upgrade_preserves_customer_metadata_destinations_and_disabled_state(
+    monkeypatch,
+) -> None:
+    from cartridges.replicon.app.services import kb_config_reconciliation as module
+
+    legacy_sql = "SELECT 'legacy-owned'"
+    monkeypatch.setitem(
+        module.LEGACY_PACKAGE_SQL_DIGESTS,
+        "kb_wip_mensual",
+        {hashlib.sha256(legacy_sql.encode()).hexdigest()},
+    )
+    original = {
+        "kb_id": "kb_wip_mensual",
+        "sql": legacy_sql,
+        "name": "Nombre del cliente",
+        "description": "Descripción preservada",
+        "pg_table": "customer_destination",
+        "output_path": "customer/output",
+        "enabled": False,
+    }
+    connection = _Connection({"kb_wip_mensual": dict(original)})
+    packaged = {
+        "id": "kb_wip_mensual",
+        "package_version": CURRENT_PACKAGE_VERSIONS["kb_wip_mensual"],
+        "sql": "SELECT 'v3'",
+        "name": "Package name",
+        "description": "Package description",
+        "pg_table": "package_destination",
+        "output_path": "package/output",
+    }
+
+    assert reconcile_packaged_kbs(connection, [packaged], "replicon")["upgraded"] == 1
+    upgraded = connection.rows["kb_wip_mensual"]
+    assert upgraded["sql"] == packaged["sql"]
+    for key in ("name", "description", "pg_table", "output_path", "enabled"):
+        assert upgraded[key] == original[key]
+    update_sql = connection.writes[-1]
+    assert "enabled = TRUE" not in update_sql
+    assert "name =" not in update_sql
+    assert "description =" not in update_sql
+    assert "pg_table =" not in update_sql
+    assert "output_path =" not in update_sql
 
 
 def test_unknown_reserved_row_is_byte_stable_and_blocked_before_execution() -> None:
