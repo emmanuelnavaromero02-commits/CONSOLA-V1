@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,12 +9,17 @@ import yaml
 from sqlalchemy import create_engine, text
 
 from app.core.config import settings
+from app.services.kb_config_reconciliation import (
+    is_kb_runtime_safe,
+    reconcile_packaged_kbs,
+)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 ENTITIES_PATH = BASE_DIR / "config" / "entities.yaml"
 KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 
 CARTRIDGE_ID = "replicon"
+logger = logging.getLogger(__name__)
 
 _engine = None
 
@@ -26,6 +32,7 @@ def _get_engine():
 
 
 # ── YAML fallbacks ────────────────────────────────────────────────────────────
+
 
 def _yaml_entities() -> list[dict[str, Any]]:
     if not ENTITIES_PATH.exists():
@@ -43,6 +50,7 @@ def _yaml_kbs() -> list[dict[str, Any]]:
 
 # ── Seed on startup ───────────────────────────────────────────────────────────
 
+
 def _seed_if_empty() -> None:
     """If entity_config has no rows for this cartridge, import from YAML."""
     try:
@@ -54,7 +62,8 @@ def _seed_if_empty() -> None:
             ).scalar()
             if count == 0:
                 for e in _yaml_entities():
-                    conn.execute(text("""
+                    conn.execute(
+                        text("""
                         INSERT INTO entity_config (
                             cartridge_id, entity, mode, watermark_field, watermark_format,
                             page_size, select_fields, protection,
@@ -65,59 +74,48 @@ def _seed_if_empty() -> None:
                             :ed, :df, :fwd, :desc, TRUE
                         )
                         ON CONFLICT (cartridge_id, entity) DO NOTHING
-                    """), {
-                        "cid": CARTRIDGE_ID,
-                        "entity": e.get("entity"),
-                        "mode": e.get("mode", "full"),
-                        "wf": e.get("watermark_field"),
-                        "wfmt": e.get("watermark_format"),
-                        "ps": e.get("page_size", 1000),
-                        "sel": e.get("select"),
-                        "prot": json.dumps(e.get("protection", {})),
-                        "ed": bool(e.get("effective_dated", False)),
-                        "df": e.get("date_field"),
-                        "fwd": e.get("future_window_days"),
-                        "desc": e.get("description", ""),
-                    })
+                    """),
+                        {
+                            "cid": CARTRIDGE_ID,
+                            "entity": e.get("entity"),
+                            "mode": e.get("mode", "full"),
+                            "wf": e.get("watermark_field"),
+                            "wfmt": e.get("watermark_format"),
+                            "ps": e.get("page_size", 1000),
+                            "sel": e.get("select"),
+                            "prot": json.dumps(e.get("protection", {})),
+                            "ed": bool(e.get("effective_dated", False)),
+                            "df": e.get("date_field"),
+                            "fwd": e.get("future_window_days"),
+                            "desc": e.get("description", ""),
+                        },
+                    )
 
-            kb_count = conn.execute(
-                text("SELECT COUNT(*) FROM kb_config WHERE cartridge_id = :cid"),
-                {"cid": CARTRIDGE_ID},
-            ).scalar()
-            if kb_count == 0:
-                for kb in _yaml_kbs():
-                    conn.execute(text("""
-                        INSERT INTO kb_config (
-                            cartridge_id, kb_id, name, description, sql, pg_table, output_path, enabled
-                        ) VALUES (
-                            :cid, :kid, :name, :desc, :sql, :pg, :out, TRUE
-                        )
-                        ON CONFLICT (cartridge_id, kb_id) DO NOTHING
-                    """), {
-                        "cid": CARTRIDGE_ID,
-                        "kid": kb.get("id"),
-                        "name": kb.get("name", kb.get("id")),
-                        "desc": kb.get("description", ""),
-                        "sql": kb.get("sql", ""),
-                        "pg": kb.get("pg_table", kb.get("id")),
-                        "out": kb.get("output_path", ""),
-                    })
-    except Exception:
-        pass  # DB unavailable — callers fall back to YAML
+            reconcile_packaged_kbs(conn, _yaml_kbs(), CARTRIDGE_ID)
+    except Exception as exc:
+        logger.warning("Replicon catalog reconciliation unavailable: %s", exc)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def get_all_entities() -> list[dict[str, Any]]:
     try:
         _seed_if_empty()
         engine = _get_engine()
         with engine.connect() as conn:
-            rows = conn.execute(text("""
+            rows = (
+                conn.execute(
+                    text("""
                 SELECT * FROM entity_config
                 WHERE cartridge_id = :cid AND enabled = TRUE
                 ORDER BY entity
-            """), {"cid": CARTRIDGE_ID}).mappings().all()
+            """),
+                    {"cid": CARTRIDGE_ID},
+                )
+                .mappings()
+                .all()
+            )
         return [dict(r) for r in rows]
     except Exception:
         return _yaml_entities()
@@ -127,10 +125,17 @@ def get_entity_config(entity_name: str) -> dict[str, Any] | None:
     try:
         engine = _get_engine()
         with engine.connect() as conn:
-            row = conn.execute(text("""
+            row = (
+                conn.execute(
+                    text("""
                 SELECT * FROM entity_config
                 WHERE cartridge_id = :cid AND entity = :e
-            """), {"cid": CARTRIDGE_ID, "e": entity_name}).mappings().first()
+            """),
+                    {"cid": CARTRIDGE_ID, "e": entity_name},
+                )
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
     except Exception:
         for e in _yaml_entities():
@@ -144,25 +149,64 @@ def get_all_kbs() -> list[dict[str, Any]]:
         _seed_if_empty()
         engine = _get_engine()
         with engine.connect() as conn:
-            rows = conn.execute(text("""
+            rows = (
+                conn.execute(
+                    text("""
                 SELECT * FROM kb_config
                 WHERE cartridge_id = :cid AND enabled = TRUE
                 ORDER BY kb_id
-            """), {"cid": CARTRIDGE_ID}).mappings().all()
-        return [dict(r) for r in rows]
+            """),
+                    {"cid": CARTRIDGE_ID},
+                )
+                .mappings()
+                .all()
+            )
+        configs = [dict(r) for r in rows]
+        packaged = _yaml_kbs()
+        return [
+            config
+            for config in configs
+            if is_kb_runtime_safe(
+                str(config.get("kb_id") or ""),
+                str(config.get("sql") or ""),
+                packaged,
+            )
+        ]
     except Exception:
         return _yaml_kbs()
 
 
 def get_kb_config(kb_id: str) -> dict[str, Any] | None:
     try:
+        _seed_if_empty()
         engine = _get_engine()
         with engine.connect() as conn:
-            row = conn.execute(text("""
+            row = (
+                conn.execute(
+                    text("""
                 SELECT * FROM kb_config
-                WHERE cartridge_id = :cid AND kb_id = :kid
-            """), {"cid": CARTRIDGE_ID, "kid": kb_id}).mappings().first()
-        return dict(row) if row else None
+                WHERE cartridge_id = :cid AND kb_id = :kid AND enabled = TRUE
+            """),
+                    {"cid": CARTRIDGE_ID, "kid": kb_id},
+                )
+                .mappings()
+                .first()
+            )
+        if not row:
+            return None
+        config = dict(row)
+        if not is_kb_runtime_safe(
+            kb_id,
+            str(config.get("sql") or ""),
+            _yaml_kbs(),
+        ):
+            return {
+                **config,
+                "enabled": False,
+                "runtime_status": "insufficient_data",
+                "blocked_reason": "reserved_kb_package_digest_unknown",
+            }
+        return config
     except Exception:
         for kb in _yaml_kbs():
             if kb.get("id") == kb_id:

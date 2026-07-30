@@ -15,6 +15,7 @@ from app.core.request_context import (
 )
 from app.core.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_kbs, get_kb_config
+from app.services.kb_config_reconciliation import blocked_kb_runtime_result
 from app.services.duckdb_service import (
     run_kb_sql,
     write_kb_parquet,
@@ -39,13 +40,19 @@ def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> s
     def _scope_path(match: re.Match[str]) -> str:
         base, rest = match.group(1), match.group(2)
         if not rest:
-            raise SecurityContextError("KB storage path must include an entity or dataset segment")
+            raise SecurityContextError(
+                "KB storage path must include an entity or dataset segment"
+            )
         head, sep, tail = rest.partition("/")
         if not sep or not head:
-            raise SecurityContextError("KB storage path must include an entity or dataset segment")
+            raise SecurityContextError(
+                "KB storage path must include an entity or dataset segment"
+            )
         if "tenant_id=" in rest or "workspace_id=" in rest:
             if not rest.startswith(f"{head}/{scope}"):
-                raise SecurityContextError("KB storage path is outside the active tenant/workspace scope")
+                raise SecurityContextError(
+                    "KB storage path is outside the active tenant/workspace scope"
+                )
             return match.group(0)
         return f"{base}{head}/{scope}{tail}"
 
@@ -77,7 +84,9 @@ def get_all_knowledge_bits() -> list[dict]:
     ]
 
 
-def _create_kb_run(kb_id: str, started_at: datetime, security_context: dict[str, Any]) -> str:
+def _create_kb_run(
+    kb_id: str, started_at: datetime, security_context: dict[str, Any]
+) -> str:
     run_id = str(uuid.uuid4())
     conn = get_connection()
     try:
@@ -141,6 +150,9 @@ def run_knowledge_bit(
     config = get_kb_config(kb_id)
     if not config:
         return {"status": "error", "error": f"Knowledge Bit not found: {kb_id}"}
+    blocked = blocked_kb_runtime_result(config)
+    if blocked is not None:
+        return blocked
 
     sql = config.get("sql", "")
     output_path = config.get("output_path", "")
@@ -151,7 +163,9 @@ def run_knowledge_bit(
 
     try:
         security_context = require_tenant_workspace_scope(
-            security_context if isinstance(security_context, dict) else get_security_context()
+            security_context
+            if isinstance(security_context, dict)
+            else get_security_context()
         )
         resolved_sql = _scope_kb_sql(sql, security_context)
     except SecurityContextError as exc:

@@ -205,6 +205,7 @@ knowledge_bits:
     ORDER BY a.month DESC, supervisor_name, user_name
 
 - id: kb_wip_mensual
+  package_version: replicon.wip_mensual.v2
   name: WIP Mensual
   description: WIP mensual por proyecto y usuario. Conserva facturación original por moneda; sólo calcula USD con FX real y publica missing_fx/insufficient_data cuando faltan insumos.
   source_entities: [TimeEntry, BillingItem, Project, User]
@@ -236,6 +237,7 @@ knowledge_bits:
     )
     SELECT month, projectid, projectname, clientname, userid, username, worked_hours, billable_hours, rate_usd AS billing_rate_usd, billable_amount_usd, original_billed_usd, original_billed_mxn, billing_data_status, financial_status, CASE WHEN billing_data_status = 'ready' THEN converted_billed_amount_usd END AS billed_amount_usd, CASE WHEN financial_status = 'ready' THEN ROUND(billable_amount_usd - converted_billed_amount_usd, 2) END AS wip_amount_usd, CASE WHEN financial_status = 'ready' THEN ROUND(converted_billed_amount_usd / NULLIF(billable_amount_usd, 0) * 100, 1) END AS billing_completion_pct FROM combined ORDER BY month DESC, wip_amount_usd DESC
 - id: kb_wip_resumen
+  package_version: replicon.wip_resumen.v2
   name: WIP Resumen por Proyecto
   description: WIP mensual ejecutivo. Mantiene USD/MXN originales separados y no emite monto convertido, porcentaje ni semáforo sin FX y tarifa reales.
   source_entities: [TimeEntry, BillingItem]
