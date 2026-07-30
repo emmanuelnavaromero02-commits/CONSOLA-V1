@@ -96,6 +96,18 @@ jobs:
             tests/test_market_decision_validation_e2e.py \
             tests/test_mcp_infra_pdf_ci_contract.py \
             tests/test_mcp_control_room_read_permissions.py \
+            console/tests/test_operational_truth_statistical_fallbacks.py \
+            console/tests/test_operational_truth_public_projection.py \
+            tests/test_operational_truth_data_integrity.py \
+            tests/test_operational_truth_data_kb_config.py \
+            tests/test_operational_truth_data_kb_runtime.py \
+            tests/test_operational_truth_data_historical_repair.py \
+            tests/test_sap_successfactors_talent_migration.py \
+            tests/test_monte_carlo_api_contract.py \
+            tests/test_monte_carlo_operational_truth.py \
+            tests/test_monte_carlo_persistence_contract.py \
+            tests/test_bayesian_calibration_api_contract.py \
+            tests/test_bayesian_calibration_recompute_policy.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests

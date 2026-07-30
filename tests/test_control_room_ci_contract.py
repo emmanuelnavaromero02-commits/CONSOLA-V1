@@ -1,3 +1,4 @@
+import shlex
 from pathlib import Path
 
 from scripts.ci_control_room_paths import control_room_changed
@@ -123,9 +124,34 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_control_room_live_postgres*.py",
 )
 
+OPERATIONAL_TRUTH_TESTS = (
+    "console/tests/test_operational_truth_statistical_fallbacks.py",
+    "console/tests/test_operational_truth_public_projection.py",
+    "tests/test_operational_truth_data_integrity.py",
+    "tests/test_operational_truth_data_kb_config.py",
+    "tests/test_operational_truth_data_kb_runtime.py",
+    "tests/test_operational_truth_data_historical_repair.py",
+    "tests/test_sap_successfactors_talent_migration.py",
+    "tests/test_monte_carlo_api_contract.py",
+    "tests/test_monte_carlo_operational_truth.py",
+    "tests/test_monte_carlo_persistence_contract.py",
+    "tests/test_bayesian_calibration_api_contract.py",
+    "tests/test_bayesian_calibration_recompute_policy.py",
+)
+
 
 def _workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _focal_pytest_argv() -> list[str]:
+    focal_step = (
+        _workflow_text()
+        .split("- name: Run focal", 1)[1]
+        .split("- name: Run live", 1)[0]
+    )
+    command = focal_step.split("run: |", 1)[1].replace("\\\n", " ")
+    return shlex.split(command)
 
 
 def test_p11_paths_activate_the_fail_closed_detector():
@@ -141,6 +167,14 @@ def test_control_room_workflow_runs_all_related_contract_suites():
     )
     for test_path in FOCAL_TESTS:
         assert test_path in focal_step
+
+
+def test_operational_truth_suites_are_pytest_arguments_in_focal_gate():
+    argv = _focal_pytest_argv()
+    assert argv[0] == "pytest"
+    assert "--junitxml=/tmp/control-room-focal.xml" in argv
+    for test_path in OPERATIONAL_TRUTH_TESTS:
+        assert test_path in argv
 
 
 def test_control_room_workflow_runs_all_live_postgres_suites():
