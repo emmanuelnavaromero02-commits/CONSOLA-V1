@@ -127,6 +127,17 @@ describe("SupervisedActionsPage en modo preview-only", () => {
     expect(validateKey).not.toBe(rejectKey);
   });
 
+  it("una fuente ausente se declara no informada, nunca se inventa 'operativa'", async () => {
+    clientBoundary.listSupervisedActions.mockResolvedValue({
+      actions: [makeAction({ source_type: undefined, action_type: undefined })],
+    });
+    await renderPage();
+
+    expect(container.textContent).toContain("Fuente no informada");
+    expect(container.textContent).not.toContain("operativa");
+    expect(container.textContent).toContain("Tipo no informado");
+  });
+
   it("expone la carga de la cola con role=status", async () => {
     clientBoundary.listSupervisedActions.mockReturnValue(new Promise(() => {}));
     await renderPage();

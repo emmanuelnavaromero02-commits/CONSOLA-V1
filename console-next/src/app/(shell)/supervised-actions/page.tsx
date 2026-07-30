@@ -128,7 +128,7 @@ export default function SupervisedActionsPage() {
             <p className="text-xs font-semibold uppercase text-primary">OMEGA</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Acciones Supervisadas</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Validación, aprobación y seguimiento de acciones preparadas por la consola.
+              Validación y seguimiento de acciones preparadas por la consola.
             </p>
           </div>
           <button
@@ -226,8 +226,9 @@ export default function SupervisedActionsPage() {
                 ) : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <DetailBox label="Fuente" value={String(activeAction.source_type || "operativa")} />
-                  <DetailBox label="Tipo" value={String(activeAction.action_type || "acción")} />
+                  {/* Procedencia veraz: lo ausente se declara, nunca se inventa. */}
+                  <DetailBox label="Fuente" value={activeAction.source_type ? String(activeAction.source_type) : "Fuente no informada"} />
+                  <DetailBox label="Tipo" value={activeAction.action_type ? String(activeAction.action_type) : "Tipo no informado"} />
                   <DetailBox label="Creada" value={shortDate(activeAction.created_at)} />
                   <DetailBox label="Vence" value={shortDate(activeAction.expires_at)} />
                 </div>
