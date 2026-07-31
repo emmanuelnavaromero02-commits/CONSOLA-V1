@@ -4,7 +4,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.intelligence.source_provenance import resolve_source_provenance
+from fastapi import HTTPException
+
+from app.services.intelligence.calibration_authoritative_evidence import (
+    resolve_authoritative_observation,
+)
 
 
 PAGE_SIZE = 500
@@ -25,7 +29,12 @@ def _filters(
     source_id: str | None,
 ) -> tuple[list[str], list[Any]]:
     params: list[Any] = [workspace_id, group, model_version]
-    where = ["workspace_id = $1", "calibration_group = $2", "model_version = $3"]
+    where = [
+        "workspace_id = $1",
+        "calibration_group = $2",
+        "model_version = $3",
+        "provenance_status = 'verified'",
+    ]
     for value, column in ((source_type, "source_type"), (source_id, "source_id")):
         if value:
             params.append(value)
@@ -43,6 +52,7 @@ async def load_complete_batch(
     source_id: str | None,
     operational_limit: int,
     allow_manual: bool,
+    tenant_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     where, base_params = _filters(
         workspace_id, group, model_version, source_type, source_id
@@ -110,17 +120,33 @@ async def load_complete_batch(
     trusted: list[dict[str, Any]] = []
     skipped: Counter[str] = Counter()
     for row in candidates:
-        result = await resolve_source_provenance(
-            conn,
-            workspace_id=workspace_id,
-            source_type=str(row.get("source_type") or ""),
-            source_id=str(row.get("source_id") or ""),
-            allow_manual=allow_manual,
-        )
-        if result.trusted:
-            trusted.append(row)
-        else:
-            skipped[result.reason] += 1
+        try:
+            rebuilt = await resolve_authoritative_observation(
+                conn,
+                workspace_id=workspace_id,
+                tenant_id=tenant_id,
+                payload={
+                    "source_type": str(row.get("source_type") or ""),
+                    "source_id": str(row.get("source_id") or ""),
+                },
+                allow_manual=allow_manual,
+            )
+        except HTTPException as exc:
+            detail = exc.detail
+            if isinstance(detail, dict):
+                reason = str(detail.get("reason") or "authoritative_evidence_invalid")
+            elif str(row.get("source_type") or "") == "manual_fixture":
+                reason = "manual_ancestor"
+            else:
+                reason = "authoritative_evidence_invalid"
+            skipped[reason] += 1
+            continue
+        if rebuilt.get("calibration_group") != group or row.get(
+            "authoritative_calibration_group"
+        ) not in (None, group):
+            skipped["authoritative_group_mismatch"] += 1
+            continue
+        trusted.append(rebuilt)
     metrics = {
         "eligible_total": eligible_total,
         "processed_total": len(trusted),
@@ -128,6 +154,8 @@ async def load_complete_batch(
         "skipped_by_reason": dict(sorted(skipped.items())),
         "complete": bool(trusted),
         "provenance_complete": True,
+        "binary_evaluation_complete": bool(trusted)
+        and all(row.get("actual_status") in {"hit", "miss"} for row in trusted),
     }
     if not trusted:
         metrics["reason"] = "no_trusted_observations"

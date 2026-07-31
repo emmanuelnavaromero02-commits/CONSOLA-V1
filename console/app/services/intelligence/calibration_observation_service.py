@@ -12,6 +12,7 @@ from app.services.intelligence.calibration_authoritative_evidence import (
 )
 from app.services.intelligence.calibration_lock import lock_calibration_group
 from app.services.intelligence.calibration_state_repository import (
+    _derived_prior_for_group,
     _observation_identity,
     _row_state,
     _state_id,
@@ -50,8 +51,9 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         replay = await conn.fetchrow(
             """
             SELECT *
-              FROM calibration_observations
+             FROM calibration_observations
              WHERE workspace_id = $1 AND idempotency_key = $2
+               AND provenance_status = 'verified'
              LIMIT 1
             """,
             workspace_id,
@@ -77,14 +79,24 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             clean["calibration_group"],
             clean["model_version"],
         )
-        result = calibration.apply_observation(
-            _row_state(
-                existing,
+        current_state = _row_state(
+            existing,
+            group=clean["calibration_group"],
+            model_version=clean["model_version"],
+        )
+        if current_state is None:
+            prior = await _derived_prior_for_group(
+                conn,
+                workspace_id=workspace_id,
                 group=clean["calibration_group"],
                 model_version=clean["model_version"],
-            ),
-            clean,
-        )
+            )
+            current_state = calibration.empty_state(
+                calibration_group=clean["calibration_group"],
+                model_version=clean["model_version"],
+                prior=prior,
+            )
+        result = calibration.apply_observation(current_state, clean)
         state_id = _state_id(
             workspace_id=workspace_id,
             group=clean["calibration_group"],
@@ -106,6 +118,7 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             skipped_by_reason={},
             complete=True,
             provenance_complete=True,
+            binary_evaluation_complete=clean["actual_status"] in {"hit", "miss"},
         )
         observation_row = await conn.fetchrow(
             """
@@ -159,6 +172,7 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
                 SELECT *
                   FROM calibration_observations
                  WHERE workspace_id = $1 AND idempotency_key = $2
+                   AND provenance_status = 'verified'
                  LIMIT 1
                 """,
                 workspace_id,

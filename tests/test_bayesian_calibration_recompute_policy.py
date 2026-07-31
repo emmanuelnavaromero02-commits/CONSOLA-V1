@@ -142,10 +142,11 @@ async def test_recompute_excludes_historical_manual_fixtures_by_default(
     pool = _Pool()
     monkeypatch.setattr(calibration_service.auth, "pool", AsyncMock(return_value=pool))
 
-    result = await calibration_service.recompute(
-        {"id": 42, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
-        _payload(),
-    )
+    with pytest.raises(HTTPException) as exc:
+        await calibration_service.recompute(
+            {"id": 42, "tenant_id": "tenant-a", "active_workspace_id": "ws-a"},
+            _payload(),
+        )
 
     selection = next(
         call
@@ -154,12 +155,17 @@ async def test_recompute_excludes_historical_manual_fixtures_by_default(
         and "ORDER BY observed_at ASC" in call[1]
     )
     assert "ORDER BY observed_at ASC, id ASC" in selection[1]
-    assert result["observations_recomputed"] == 1
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "no_trusted_observations"
+    assert exc.value.detail["processed_total"] == 0
     assert len(pool.conn.observation_rows) == 3
     assert not any(
         "DELETE FROM calibration_observations" in call[1]
         or "UPDATE calibration_observations" in call[1]
         for call in pool.conn.calls
+    )
+    assert not any(
+        "INSERT INTO calibration_states" in call[1] for call in pool.conn.calls
     )
 
 

@@ -28,7 +28,7 @@ def _client_payload(**overrides) -> dict:
         "predicted_metric": "margin",
         "predicted_value": 10,
         "actual_value": 12,
-        "actual_status": "unknown",
+        "actual_status": "hit",
     }
     payload.update(overrides)
     return payload
@@ -63,6 +63,10 @@ class _Connection:
             "actual_value": 12,
             "outcome_metadata": {"reported_by": "operator@example.com"},
             "outcome_created_at": datetime(2026, 7, 30, tzinfo=timezone.utc),
+            "evaluation_status": "hit",
+            "evaluation_rule_version": "margin-evaluation.v1",
+            "evaluated_at": datetime(2026, 7, 31, tzinfo=timezone.utc),
+            "evaluated_by": "evaluation-engine",
             "metric": "margin",
             "signal_predicted_value": 10,
             "signal_subtype": "observed",
@@ -128,7 +132,8 @@ async def test_normal_durable_outcome_resolves_server_owned_values() -> None:
     assert resolved["predicted_metric"] == "margin"
     assert resolved["predicted_value"] == 10
     assert resolved["actual_value"] == 12
-    assert resolved["actual_status"] == "unknown"
+    assert resolved["actual_status"] == "hit"
+    assert resolved["evaluation_rule_version"] == "margin-evaluation.v1"
     assert resolved["model_version"] == calibration.MODEL_VERSION
     assert resolved["input_classification"] == "observed"
 
@@ -139,11 +144,43 @@ async def test_forged_client_claim_is_rejected_before_calibration() -> None:
         await resolve_authoritative_observation(
             _Connection(),
             workspace_id=WORKSPACE,
-            payload=_client_payload(actual_status="hit", actual_value=-999999),
+            payload=_client_payload(actual_status="miss", actual_value=-999999),
             allow_manual=False,
         )
     assert exc.value.status_code == 422
     assert exc.value.detail == "calibration claims do not match authoritative outcome"
+
+
+@pytest.mark.asyncio
+async def test_outcome_without_server_evaluation_is_explicitly_insufficient() -> None:
+    conn = _Connection()
+    original = conn.fetchrow
+
+    async def fetchrow(sql: str, *params):
+        row = await original(sql, *params)
+        return {
+            **row,
+            "evaluation_status": None,
+            "evaluation_rule_version": None,
+            "evaluated_at": None,
+            "evaluated_by": None,
+        }
+
+    conn.fetchrow = fetchrow
+    with pytest.raises(HTTPException) as exc:
+        await resolve_authoritative_observation(
+            conn,
+            workspace_id=WORKSPACE,
+            payload=_client_payload(),
+            allow_manual=False,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "status": "insufficient_data",
+        "reason": "authoritative_evaluation_unavailable",
+        "complete": False,
+        "calibratable_sample_count": 0,
+    }
 
 
 @pytest.mark.asyncio

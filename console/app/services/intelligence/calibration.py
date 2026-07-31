@@ -536,7 +536,8 @@ def live_calibration_groups(*, source_system: Any, metric_id: Any) -> list[str]:
 
 
 def _update_counts(metrics: dict[str, Any], status: str) -> None:
-    metrics["sample_count"] = int(metrics.get("sample_count") or 0) + 1
+    if status != "unknown":
+        metrics["sample_count"] = int(metrics.get("sample_count") or 0) + 1
     key = f"{status}_count"
     metrics[key] = int(metrics.get(key) or 0) + 1
 

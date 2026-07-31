@@ -83,7 +83,7 @@ def _payload(outcome_id: str, actual_value: float = 12) -> dict:
         "predicted_metric": "margin",
         "predicted_value": 10,
         "actual_value": actual_value,
-        "actual_status": "unknown",
+        "actual_status": "hit",
         "horizon_days": 30,
     }
 
@@ -124,12 +124,42 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
             },
         )
         outcome = str(recorded["outcome"]["id"])
+        with pytest.raises(HTTPException) as unevaluated:
+            await calibration_service.observe(user, _payload(outcome))
+        assert unevaluated.value.detail["reason"] == (
+            "authoritative_evaluation_unavailable"
+        )
+        admin = await asyncpg.connect(postgres_with_real_init_schema)
+        try:
+            assert (
+                await admin.fetchval(
+                    "SELECT COUNT(*) FROM calibration_observations "
+                    "WHERE workspace_id=$1 AND source_id=$2",
+                    workspace,
+                    outcome,
+                )
+                == 0
+            )
+            await admin.execute(
+                """
+                UPDATE prediction_outcomes
+                   SET evaluation_status='hit',
+                       evaluation_rule_version='margin-evaluation.v1',
+                       evaluated_at='2026-07-31T00:00:00Z',
+                       evaluated_by='evaluation-engine'
+                 WHERE id=$1
+                """,
+                int(outcome),
+            )
+        finally:
+            await admin.close()
         left, right = await asyncio.gather(
             calibration_service.observe(user, _payload(outcome)),
             calibration_service.observe(user, _payload(outcome)),
         )
         retry = await calibration_service.observe(user, _payload(outcome))
         assert left == right == retry
+        online_state = left["state"]
 
         cross_tenant = {
             "active_tenant_id": other_tenant,
@@ -167,18 +197,33 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
                 """
             )
             await check.execute(
-                "UPDATE prediction_outcomes SET actual_value=13 WHERE id=$1",
-                int(outcome),
+                "DELETE FROM calibration_states WHERE workspace_id=$1",
+                workspace,
             )
         finally:
             await check.close()
         assert observation_count == 1
-        assert dict(state) == {"sample_count": 1, "unknown_count": 1}
+        assert dict(state) == {"sample_count": 1, "unknown_count": 0}
         assert dict(update_privileges) == {
             "observation_update": False,
             "outcome_update": False,
         }
 
+        recomputed = await calibration_service.recompute(
+            user,
+            {"calibration_group": online_state["calibration_group"]},
+        )
+        for key in ("posterior", "metrics", "reproducibility_hash"):
+            assert recomputed["state"][key] == online_state[key]
+
+        check = await asyncpg.connect(postgres_with_real_init_schema)
+        try:
+            await check.execute(
+                "UPDATE prediction_outcomes SET actual_value=13 WHERE id=$1",
+                int(outcome),
+            )
+        finally:
+            await check.close()
         with pytest.raises(HTTPException) as changed:
             await calibration_service.observe(
                 user,

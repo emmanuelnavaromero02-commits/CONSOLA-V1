@@ -61,6 +61,7 @@ async def test_batch_pages_every_row_and_accounts_for_every_skip() -> None:
         "skipped_by_reason": {"manual_ancestor": 701},
         "complete": False,
         "provenance_complete": True,
+        "binary_evaluation_complete": False,
         "reason": "no_trusted_observations",
     }
     assert sum("ORDER BY observed_at ASC, id ASC" in call for call in conn.calls) == 2

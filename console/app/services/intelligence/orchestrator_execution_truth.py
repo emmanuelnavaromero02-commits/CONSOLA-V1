@@ -19,7 +19,11 @@ def incomplete_calibration_result(
     if int(metrics.get("sample_count") or metrics.get("processed_total") or 0) <= 0:
         reason = "no_trusted_observations"
         return "skipped", {"status": "skipped", "reason": reason}, [], reason, None
-    if metrics.get("complete") is True and metrics.get("provenance_complete") is True:
+    if (
+        metrics.get("complete") is True
+        and metrics.get("provenance_complete") is True
+        and metrics.get("binary_evaluation_complete") is True
+    ):
         return None
     reason = "incomplete_calibration_provenance"
     return "skipped", {"status": "skipped", "reason": reason}, [], reason, None

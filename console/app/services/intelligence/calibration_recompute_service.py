@@ -94,6 +94,7 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
                 source_id=source_id,
                 operational_limit=limit,
                 allow_manual=allow_manual,
+                tenant_id=tenant_id,
             )
         except BatchFailure as exc:
             raise HTTPException(
@@ -128,7 +129,10 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         evidence_refs: list[dict[str, str]] = []
         for row in row_dicts:
             evidence_refs.extend(
-                normalize_evidence_refs(_json_obj(row.get("evidence_refs"), []))
+                normalize_evidence_refs(
+                    _json_obj(row.get("evidence_refs"), []),
+                    allow_server_dataset_rows=True,
+                )
             )
         state["metrics"] = attach_external_evidence_metadata(
             state.get("metrics") or {},
@@ -151,7 +155,8 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             metrics=state["metrics"],
             reproducibility_hash=state.get("reproducibility_hash")
             or calibration.reproducibility_hash(state),
-            last_observed_at=None,
+            last_observed_at=max(str(row.get("observed_at") or "") for row in row_dicts)
+            or None,
         )
     return {
         "state": public_json(dict(state_row)),

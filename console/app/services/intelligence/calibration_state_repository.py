@@ -32,6 +32,8 @@ def _row_state(
     if (
         metrics.get("complete") is not True
         or metrics.get("provenance_complete") is not True
+        or metrics.get("binary_evaluation_complete") is not True
+        or int(metrics.get("sample_count") or 0) <= 0
     ):
         return None
     return {
@@ -158,6 +160,9 @@ def _observation_identity(
             "calibration_group",
             "evidence_refs",
             "input_classification",
+            "evaluation_rule_version",
+            "evaluated_at",
+            "evaluated_by",
         )
     }
     key = "cal-obs-" + calibration.reproducibility_hash(identity_payload)[:32]

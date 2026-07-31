@@ -25,6 +25,12 @@ _CLAIM_FIELDS = (
     "actual_status",
 )
 _MISMATCH = "calibration claims do not match authoritative outcome"
+_MISSING_EVALUATION = {
+    "status": "insufficient_data",
+    "reason": "authoritative_evaluation_unavailable",
+    "complete": False,
+    "calibratable_sample_count": 0,
+}
 
 
 def _number(value: Any) -> float | None:
@@ -133,6 +139,10 @@ async def resolve_authoritative_observation(
                outcome.tenant_id::text AS outcome_tenant_id,
                outcome.signal_id, outcome.option_id, outcome.action_taken,
                outcome.actual_value,
+               outcome.evaluation_status,
+               outcome.evaluation_rule_version,
+               outcome.evaluated_at,
+               outcome.evaluated_by,
                outcome.metadata AS outcome_metadata,
                outcome.created_at AS outcome_created_at,
                signal.metric,
@@ -141,7 +151,7 @@ async def resolve_authoritative_observation(
                signal.metadata->>'source_system' AS source_system,
                signal.metadata->>'source_dataset' AS source_dataset,
                signal.metadata->>'evidence_pack_id' AS evidence_pack_id,
-               signal.metadata->>'prediction_horizon_days' AS prediction_horizon_days,
+               signal.prediction_horizon_days AS prediction_horizon_days,
                signal.metadata AS signal_metadata,
                CASE WHEN outcome.option_id IS NULL THEN TRUE ELSE EXISTS (
                    SELECT 1 FROM decision_options option
@@ -180,7 +190,24 @@ async def resolve_authoritative_observation(
     source_system = str(data.get("source_system") or "").strip()
     if actual_value is None or not metric or not action or not source_system:
         raise HTTPException(409, "authoritative outcome is incomplete")
-    horizon = int(data.get("prediction_horizon_days") or 30)
+    horizon_raw = data.get("prediction_horizon_days")
+    try:
+        horizon = int(horizon_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(409, "authoritative outcome is incomplete") from exc
+    if horizon < 1 or horizon > 3650:
+        raise HTTPException(409, "authoritative outcome is incomplete")
+    evaluation_status = str(data.get("evaluation_status") or "").strip().lower()
+    evaluation_rule = str(data.get("evaluation_rule_version") or "").strip()
+    evaluated_by = str(data.get("evaluated_by") or "").strip()
+    evaluated_at = data.get("evaluated_at")
+    if (
+        evaluation_status not in {"hit", "miss"}
+        or not evaluation_rule
+        or not evaluated_by
+        or evaluated_at is None
+    ):
+        raise HTTPException(409, dict(_MISSING_EVALUATION))
     authoritative = {
         "source_type": "prediction_outcome",
         "source_id": str(data["outcome_id"]),
@@ -189,7 +216,7 @@ async def resolve_authoritative_observation(
         "predicted_value": predicted_value,
         "predicted_interval": {},
         "actual_value": actual_value,
-        "actual_status": "unknown",
+        "actual_status": evaluation_status,
         "observed_at": _timestamp(data.get("outcome_created_at")),
         "horizon_days": horizon,
         "model_version": calibration.MODEL_VERSION,
@@ -198,6 +225,9 @@ async def resolve_authoritative_observation(
         ),
         "evidence_refs": _verified_refs(data),
         "input_classification": "observed",
+        "evaluation_rule_version": evaluation_rule,
+        "evaluated_at": _timestamp(evaluated_at),
+        "evaluated_by": evaluated_by,
     }
     _assert_client_claims(payload, authoritative)
     return authoritative

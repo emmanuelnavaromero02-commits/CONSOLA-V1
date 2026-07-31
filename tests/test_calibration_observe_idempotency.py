@@ -30,7 +30,7 @@ def _payload(outcome_id: str = "41", **overrides: Any) -> dict[str, Any]:
         "predicted_metric": "margin",
         "predicted_value": 10,
         "actual_value": 12 if outcome_id == "41" else 14,
-        "actual_status": "unknown",
+        "actual_status": "hit",
         "horizon_days": 30,
     }
     payload.update(overrides)
@@ -43,6 +43,7 @@ class _Store:
         self.observations: dict[str, dict[str, Any]] = {}
         self.state: dict[str, Any] | None = None
         self.outcomes = {"41": 12.0, "42": 14.0}
+        self.evaluated = True
         self.observation_inserts = 0
         self.state_upserts = 0
 
@@ -87,6 +88,16 @@ class _Connection:
                 "outcome_created_at": datetime(
                     2026, 7, 30, int(outcome_id) - 40, tzinfo=timezone.utc
                 ),
+                "evaluation_status": "hit" if self.store.evaluated else None,
+                "evaluation_rule_version": (
+                    "margin-evaluation.v1" if self.store.evaluated else None
+                ),
+                "evaluated_at": (
+                    datetime(2026, 7, 31, int(outcome_id) - 40, tzinfo=timezone.utc)
+                    if self.store.evaluated
+                    else None
+                ),
+                "evaluated_by": ("evaluation-engine" if self.store.evaluated else None),
                 "metric": "margin",
                 "signal_predicted_value": 10,
                 "signal_subtype": "observed",
@@ -229,7 +240,7 @@ async def test_changed_evidence_same_identity_conflicts_without_state_change(
 @pytest.mark.parametrize(
     "payload",
     [
-        _payload(actual_status="hit", actual_value=-999999),
+        _payload(actual_status="miss", actual_value=-999999),
         _payload(source_type="decision_option", source_id="option-a"),
     ],
 )
@@ -261,3 +272,20 @@ def test_two_identical_http_posts_return_same_observation(monkeypatch) -> None:
     assert (first.status_code, second.status_code) == (200, 200)
     assert first.json() == second.json()
     assert (store.observation_inserts, store.state_upserts) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_ten_unevaluated_outcomes_never_write_or_publish_state(
+    monkeypatch,
+) -> None:
+    store = _Store()
+    store.evaluated = False
+    _patch_pool(monkeypatch, store)
+    for _ in range(10):
+        with pytest.raises(HTTPException) as exc:
+            await calibration_service.observe(USER, _payload())
+        assert exc.value.detail["reason"] == "authoritative_evaluation_unavailable"
+        assert exc.value.detail["calibratable_sample_count"] == 0
+    assert store.observations == {}
+    assert store.state is None
+    assert (store.observation_inserts, store.state_upserts) == (0, 0)
