@@ -119,7 +119,11 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
     source_id = _short_text(clean.get("source_id"), field="source_id", max_length=256)
     model_version = DEFAULT_MODEL_VERSION
-    observed_at = _observed_at(clean.get("observed_at"))
+    observed_at = (
+        _observed_at(clean.get("observed_at"))
+        if clean.get("observed_at") not in (None, "")
+        else None
+    )
     horizon_days = clean.get("horizon_days", 30)
     try:
         horizon_days = int(horizon_days)
@@ -134,8 +138,10 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "predicted_value": clean.get("predicted_value"),
         "predicted_interval": clean.get("predicted_interval") or {},
         "actual_value": clean.get("actual_value"),
-        "calibration_group": _calibration_group(
-            source_type, clean.get("calibration_group")
+        "calibration_group": (
+            _calibration_group(source_type, clean.get("calibration_group"))
+            if source_type == "manual_fixture" or clean.get("calibration_group")
+            else None
         ),
         "model_version": model_version,
     }

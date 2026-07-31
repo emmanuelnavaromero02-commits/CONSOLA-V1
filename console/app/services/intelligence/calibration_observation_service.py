@@ -7,11 +7,13 @@ from fastapi import HTTPException
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
 from app.services.intelligence import calibration
+from app.services.intelligence.calibration_authoritative_evidence import (
+    resolve_authoritative_observation,
+)
 from app.services.intelligence.calibration_lock import lock_calibration_group
 from app.services.intelligence.calibration_state_repository import (
-    _observation_id,
+    _observation_identity,
     _row_state,
-    _source_exists,
     _state_id,
     _upsert_state,
 )
@@ -25,23 +27,44 @@ from app.services.intelligence.utils import json_dumps, public_json
 
 
 async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
-    clean = _validate_payload(payload)
+    client_claims = _validate_payload(payload)
     pool = await auth.pool()
     async with scoped_db_for_user(pool, user) as (conn, tenant_id, workspace_id):
+        clean = await resolve_authoritative_observation(
+            conn,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            payload=client_claims,
+            allow_manual=_synthetic_allowed(),
+        )
         await lock_calibration_group(
             conn,
             workspace_id=workspace_id,
             group=clean["calibration_group"],
             model_version=clean["model_version"],
         )
-        if not await _source_exists(
-            conn,
+        identity = _observation_identity(
             workspace_id=workspace_id,
-            source_type=clean["source_type"],
-            source_id=clean["source_id"],
-            allow_manual=_synthetic_allowed(),
-        ):
-            raise HTTPException(404, "calibration source not found")
+            payload=clean,
+        )
+        replay = await conn.fetchrow(
+            """
+            SELECT *
+              FROM calibration_observations
+             WHERE workspace_id = $1 AND idempotency_key = $2
+             LIMIT 1
+            """,
+            workspace_id,
+            identity.idempotency_key,
+        )
+        if replay:
+            return await _replay_response(
+                conn,
+                replay=dict(replay),
+                workspace_id=workspace_id,
+                clean=clean,
+                evidence_digest=identity.evidence_digest,
+            )
         existing = await conn.fetchrow(
             """
             SELECT *
@@ -61,11 +84,6 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
                 model_version=clean["model_version"],
             ),
             clean,
-        )
-        obs_id = _observation_id(
-            workspace_id=workspace_id,
-            payload=clean,
-            result_hash=result["reproducibility_hash"],
         )
         state_id = _state_id(
             workspace_id=workspace_id,
@@ -92,28 +110,27 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         observation_row = await conn.fetchrow(
             """
             INSERT INTO calibration_observations (
-                observation_id, tenant_id, workspace_id, source_type, source_id,
+                observation_id, idempotency_key, evidence_digest,
+                tenant_id, workspace_id, source_type, source_id,
                 predicted_metric, predicted_value, predicted_interval,
                 predicted_probability, actual_value, actual_status, observed_at,
                 horizon_days, model_version, calibration_group, prior, posterior,
                 metrics, evidence_refs, explanation, reproducibility_hash, created_by
             )
             VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8::jsonb,
-                $9, $10, $11, $12::timestamptz,
-                $13, $14, $15, $16::jsonb, $17::jsonb,
-                $18::jsonb, $19::jsonb, $20, $21, $22
+                $1, $2, $3,
+                $4, $5, $6, $7,
+                $8, $9, $10::jsonb,
+                $11, $12, $13, ($14::text)::timestamptz,
+                $15, $16, $17, $18::jsonb, $19::jsonb,
+                $20::jsonb, $21::jsonb, $22, $23, $24
             )
-            ON CONFLICT (workspace_id, observation_id) DO UPDATE
-            SET metrics = EXCLUDED.metrics,
-                posterior = EXCLUDED.posterior,
-                evidence_refs = EXCLUDED.evidence_refs,
-                explanation = EXCLUDED.explanation,
-                reproducibility_hash = EXCLUDED.reproducibility_hash
+            ON CONFLICT DO NOTHING
             RETURNING *
             """,
-            obs_id,
+            identity.observation_id,
+            identity.idempotency_key,
+            identity.evidence_digest,
             tenant_id,
             workspace_id,
             clean["source_type"],
@@ -136,6 +153,26 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             result["reproducibility_hash"],
             _actor_id(user),
         )
+        if not observation_row:
+            replay = await conn.fetchrow(
+                """
+                SELECT *
+                  FROM calibration_observations
+                 WHERE workspace_id = $1 AND idempotency_key = $2
+                 LIMIT 1
+                """,
+                workspace_id,
+                identity.idempotency_key,
+            )
+            if not replay:
+                raise HTTPException(409, "calibration observation conflict")
+            return await _replay_response(
+                conn,
+                replay=dict(replay),
+                workspace_id=workspace_id,
+                clean=clean,
+                evidence_digest=identity.evidence_digest,
+            )
         state_row = await _upsert_state(
             conn,
             tenant_id=tenant_id,
@@ -152,6 +189,36 @@ async def observe(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "observation": public_json(dict(observation_row)),
         "state": public_json(dict(state_row)),
+    }
+
+
+async def _replay_response(
+    conn: Any,
+    *,
+    replay: dict[str, Any],
+    workspace_id: str,
+    clean: dict[str, Any],
+    evidence_digest: str,
+) -> dict[str, Any]:
+    if replay.get("evidence_digest") != evidence_digest:
+        raise HTTPException(409, "calibration evidence conflict")
+    state = await conn.fetchrow(
+        """
+        SELECT *
+          FROM calibration_states
+         WHERE workspace_id = $1
+           AND calibration_group = $2
+           AND model_version = $3
+        """,
+        workspace_id,
+        clean["calibration_group"],
+        clean["model_version"],
+    )
+    if not state:
+        raise HTTPException(409, "calibration state unavailable")
+    return {
+        "observation": public_json(replay),
+        "state": public_json(dict(state)),
     }
 
 

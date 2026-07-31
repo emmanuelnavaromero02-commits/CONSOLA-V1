@@ -273,10 +273,8 @@ def test_calibration_migration_is_scoped_and_does_not_relax_rls():
     assert "current_setting('app.workspace_id', true)" in sql
     assert "USING (true)" not in sql
     assert "WITH CHECK (true)" not in sql
-    assert (
-        "GRANT SELECT, INSERT, UPDATE ON calibration_observations TO omega_console"
-        in sql
-    )
+    assert "REVOKE UPDATE, DELETE ON calibration_observations" in sql
+    assert "GRANT SELECT, INSERT ON calibration_observations TO omega_console" in sql
     assert "GRANT SELECT, INSERT, UPDATE ON calibration_states TO omega_console" in sql
 
 

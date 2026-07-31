@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.intelligence import calibration
@@ -121,13 +122,57 @@ def _state_id(*, workspace_id: str, group: str, model_version: str) -> str:
     return "cal-state-" + digest[:32]
 
 
-def _observation_id(
-    *, workspace_id: str, payload: dict[str, Any], result_hash: str
-) -> str:
-    digest = calibration.reproducibility_hash(
-        {"workspace_id": workspace_id, "payload": payload, "result_hash": result_hash}
+@dataclass(frozen=True)
+class ObservationIdentity:
+    observation_id: str
+    idempotency_key: str
+    evidence_digest: str
+    identity_payload: dict[str, Any]
+
+
+def _observation_identity(
+    *, workspace_id: str, payload: dict[str, Any]
+) -> ObservationIdentity:
+    identity_payload = {
+        "workspace_id": workspace_id,
+        "source_type": payload["source_type"],
+        "source_id": payload["source_id"],
+        "model_version": payload["model_version"],
+        "calibration_group": payload["calibration_group"],
+        "predicted_metric": payload["predicted_metric"],
+    }
+    evidence_payload = {
+        key: payload.get(key)
+        for key in (
+            "source_type",
+            "source_id",
+            "predicted_metric",
+            "predicted_probability",
+            "predicted_value",
+            "predicted_interval",
+            "actual_value",
+            "actual_status",
+            "observed_at",
+            "horizon_days",
+            "model_version",
+            "calibration_group",
+            "evidence_refs",
+            "input_classification",
+        )
+    }
+    key = "cal-obs-" + calibration.reproducibility_hash(identity_payload)[:32]
+    return ObservationIdentity(
+        observation_id=key,
+        idempotency_key=key,
+        evidence_digest=calibration.reproducibility_hash(evidence_payload),
+        identity_payload=identity_payload,
     )
-    return "cal-obs-" + digest[:32]
+
+
+def _observation_id(*, workspace_id: str, payload: dict[str, Any]) -> str:
+    return _observation_identity(
+        workspace_id=workspace_id, payload=payload
+    ).observation_id
 
 
 async def _source_exists(
@@ -175,7 +220,7 @@ async def _upsert_state(
             $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11,
             $12, $13, $14, $15, $16,
             $17, $18, $19,
-            $20::timestamptz, $21
+            ($20::text)::timestamptz, $21
         )
         ON CONFLICT (workspace_id, calibration_group, model_version) DO UPDATE
         SET prior = EXCLUDED.prior,
@@ -224,7 +269,9 @@ async def _upsert_state(
 __all__ = (
     "_derived_prior_for_group",
     "_json_obj",
+    "_observation_identity",
     "_observation_id",
+    "ObservationIdentity",
     "_row_state",
     "_source_exists",
     "_state_id",
