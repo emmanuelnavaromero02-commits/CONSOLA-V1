@@ -18,6 +18,26 @@ REPLICON = ROOT / "cartridges/replicon"
 PUBLIC_ERROR = "DuckDB remote source unavailable"
 
 
+@pytest.fixture(autouse=True)
+def _restore_process_import_state():
+    original_env = dict(os.environ)
+    original_path = list(sys.path)
+    original_app_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "app" or name.startswith("app.")
+    }
+    yield
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            sys.modules.pop(name)
+    sys.modules.update(original_app_modules)
+    sys.path[:] = original_path
+    for name in set(os.environ) - set(original_env):
+        os.environ.pop(name)
+    os.environ.update(original_env)
+
+
 def _requirement(path: Path) -> list[str]:
     return [
         line.strip()
