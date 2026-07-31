@@ -49,6 +49,27 @@ def _owner_user_id(user: dict) -> int | None:
     return _actor_id(user.get("id"))
 
 
+def _declared_money(expected_impact: dict[str, Any]) -> tuple[float | None, str]:
+    """The monetary impact the engine actually declared, or none at all.
+
+    `_expected_impact()` resolves a non-monetary metric's unit_value to 0.0 and
+    the resulting MoneyEstimate carries value=None and currency=None: the
+    engine is refusing to put a price on the signal. That refusal has to
+    survive persistence. A deviation is expressed in the metric's own unit --
+    frequently headcount, days or percentage points -- so it is not an amount
+    of money, and a number without its unit is not one either.
+
+    Returns the amount (None when nothing interpretable was declared) and a
+    currency for the NOT NULL column, which is only meaningful alongside an
+    amount.
+    """
+    declared_value = num(expected_impact.get("value"))
+    declared_currency = str(expected_impact.get("currency") or "").strip().upper()
+    if not declared_currency:
+        return None, "USD"
+    return declared_value, declared_currency
+
+
 async def persist_artifacts(
     tenant_id: str | None,
     workspace_id: str,
@@ -511,10 +532,11 @@ async def publish_control_room_item(
         if isinstance(time_series.get("seasonality"), dict)
         else {}
     )
-    impact_estimate = num(expected_impact.get("value"))
-    if impact_estimate is None:
-        impact_estimate = abs(float(signal["deviation_value"]))
-    impact_currency = str(expected_impact.get("currency") or "USD")
+    # Persisting abs(deviation_value) here used to resurrect the very figure
+    # the engine had refused to publish, and stamp a currency on it. It also
+    # short-circuited calculate_item_impact(), whose `stored > 0` branch then
+    # ran ahead of the real cost-basis rules and of its "unavailable" fallback.
+    impact_estimate, impact_currency = _declared_money(expected_impact)
     metadata = {
         "tenant_id": tenant_id,
         "workspace_id": workspace_id,

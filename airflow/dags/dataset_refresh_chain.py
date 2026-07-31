@@ -456,6 +456,29 @@ def _skip_intelligence_for_cartridge(cartridge_id: str) -> bool:
         return True
     return False
 
+def _chain_status(invocation: dict, *, materialize_failed: bool) -> str:
+    """Status of one refresh chain run, decided fail-closed.
+
+    `record_run` runs under ALL_DONE, so it is reached even when
+    `materialize_in_order` died. The failure signals are therefore read
+    *before* the counters: `total == materialized == 0` is not evidence of a
+    clean run, it is also exactly what a hard failure before the XCom push
+    looks like. Only an empty plan published by a task that ended clean is
+    allowed to report success.
+    """
+    if not invocation:
+        # materialize_in_order never published a result. Whether or not its
+        # state could be read, there is no evidence any work happened.
+        return "failed"
+    materialized = int(invocation.get("materialized") or 0)
+    total = len(invocation.get("results") or [])
+    if materialize_failed or invocation.get("error"):
+        return "partial" if materialized else "failed"
+    if total == 0 or materialized == total:
+        return "success"
+    return "partial" if materialized else "failed"
+
+
 def record_run(**ctx):
     conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
     allow_partial = bool(conf.get("allow_partial"))
@@ -481,12 +504,8 @@ def record_run(**ctx):
         or str(conf.get("cartridge_id") or CARTRIDGE_ID)
     )
     tenant_id, workspace_id = _require_run_scope(conf, str(run_cartridge))
-    materialized = int(inv.get("materialized") or 0)
     results = inv.get("results") or []
-    total = len(results)
-    status = "success" if total == materialized else "partial" if materialized else "failed"
-    if total == 0 and not materialize_failed and not inv.get("error"):
-        status = "success"
+    status = _chain_status(inv, materialize_failed=materialize_failed)
     pipeline_run_id = f"dataset_refresh_chain:{ctx['run_id']}"
     try:
         r = requests.post(

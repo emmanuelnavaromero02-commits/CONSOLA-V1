@@ -109,6 +109,67 @@ def _pg():
     return conn
 
 
+_AGENTS_VISIBILITY_SQL = """
+SELECT current_user,
+       c.relrowsecurity,
+       c.relforcerowsecurity,
+       COALESCE((SELECT r.rolbypassrls FROM pg_roles r
+                  WHERE r.rolname = current_user), false),
+       EXISTS (
+           SELECT 1
+             FROM pg_policies p
+            WHERE p.schemaname = 'public'
+              AND p.tablename  = 'agents'
+              AND (p.roles @> ARRAY['public']::name[]
+                   OR EXISTS (
+                       SELECT 1
+                         FROM unnest(p.roles) AS policy_role
+                        WHERE policy_role <> 'public'
+                          AND EXISTS (SELECT 1 FROM pg_roles
+                                       WHERE rolname = policy_role)
+                          AND pg_has_role(current_user, policy_role, 'USAGE')))
+       )
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND c.relname = 'agents'
+"""
+
+
+def _agents_visibility(cur) -> dict:
+    """Explain a zero-row read of `agents`: empty table, or RLS hiding it?
+
+    This DAG connects as `omega_airflow_dag`, a NOBYPASSRLS role, and
+    `public.agents` runs with FORCE ROW LEVEL SECURITY. A role with SELECT
+    granted but no *applicable policy* gets zero rows and no error, which at
+    the query level is indistinguishable from a table that simply has no
+    scheduled agents in it. Only the catalog can tell the two apart, so ask
+    it before letting the run claim it had nothing to do.
+    """
+    try:
+        cur.execute(_AGENTS_VISIBILITY_SQL)
+        row = cur.fetchone()
+    except Exception as exc:                                       # noqa: BLE001
+        # Never let the diagnosis itself break the run, but never let an
+        # unanswered question count as "all clear" either.
+        return {"blind": True, "reason": f"visibility probe failed: {exc}"}
+    if not row:
+        return {"blind": True, "reason": "relation public.agents is not visible"}
+    role, rls_enabled, rls_forced, bypasses_rls, has_policy = row
+    blind = bool(rls_enabled) and not bool(bypasses_rls) and not bool(has_policy)
+    return {
+        "blind":                 blind,
+        "role":                  str(role),
+        "rls_enabled":           bool(rls_enabled),
+        "rls_forced":            bool(rls_forced),
+        "bypasses_rls":          bool(bypasses_rls),
+        "has_applicable_policy": bool(has_policy),
+        "reason": (
+            f"role {role} has no row level security policy on public.agents; "
+            "every SELECT returns zero rows silently"
+        ) if blind else "",
+    }
+
+
 def _mcp_headers() -> dict[str, str]:
     return {
         "x-api-key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"),
@@ -169,8 +230,18 @@ def find_due_agents(**context):
                 "FROM agents WHERE is_active = TRUE AND extra ? 'schedule'"
             )
             rows = cur.fetchall()
+            # Zero scheduled agents is a normal window; zero *visible* rows
+            # because RLS filtered them out is a severed loop that would
+            # otherwise report success forever.
+            scan = {"scanned": len(rows), "blind": False, "reason": ""}
+            if not rows:
+                scan = {**scan, **_agents_visibility(cur)}
     finally:
         conn.close()
+
+    if scan.get("blind"):
+        print(f"[agent_runner] BLIND: {scan.get('reason')}")
+    context["ti"].xcom_push(key="scan", value=scan)
 
     due = []
     for agent_id, cartridge_id, slug, name, extra, tenant_id, workspace_id in rows:
@@ -212,12 +283,14 @@ def find_due_agents(**context):
 
 def invoke_each(**context):
     due = context["ti"].xcom_pull(task_ids="find_due_agents", key="due") or []
+    scan = context["ti"].xcom_pull(task_ids="find_due_agents", key="scan") or {}
     if not due:
         print("[agent_runner] nothing to invoke")
-        return {"invoked": 0, "results": []}
+        return {"invoked": 0, "results": [], "scan": scan}
     if not RUNNER_TOKEN:
         print("[agent_runner] AGENT_RUNNER_TOKEN is empty — refusing to call console")
-        return {"invoked": 0, "error": "no_token", "candidates": [d["slug"] for d in due]}
+        return {"invoked": 0, "error": "no_token", "scan": scan,
+                "candidates": [d["slug"] for d in due]}
 
     results = []
     for agent in due:
@@ -250,13 +323,18 @@ def invoke_each(**context):
 
     ok = sum(1 for r in results if isinstance(r.get("status"), int) and r["status"] < 400)
     print(f"[agent_runner] invoked {ok}/{len(results)}: {results}")
-    return {"invoked": ok, "results": results}
+    return {"invoked": ok, "results": results, "scan": scan}
 
 
 # ── Task 3 · record_run ──────────────────────────────────────────────────────
 
 def _pipeline_status(inv: dict) -> str:
     if inv.get("error"):
+        return "failed"
+    if (inv.get("scan") or {}).get("blind"):
+        # Invoking nothing because no agent was due is a successful idle
+        # window. Invoking nothing because the agents table could not be read
+        # is a severed loop, and reporting it green is how it stayed hidden.
         return "failed"
     results = inv.get("results") or []
     if not results:
