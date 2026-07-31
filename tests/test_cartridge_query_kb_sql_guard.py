@@ -73,7 +73,9 @@ def test_query_kb_blocks_file_read_before_duckdb(cartridge, monkeypatch):
 
 @pytest.mark.parametrize("cartridge", CARTRIDGES)
 @pytest.mark.parametrize("sql", P0_EXFIL_SQL)
-def test_query_kb_blocks_duckdb_metadata_exfil_before_duckdb(cartridge, sql, monkeypatch):
+def test_query_kb_blocks_duckdb_metadata_exfil_before_duckdb(
+    cartridge, sql, monkeypatch
+):
     load_cartridge_app(cartridge)
     from app import mcp_server
 
@@ -109,7 +111,9 @@ def test_validate_kb_sql_blocks_duckdb_metadata_exfil(cartridge, sql):
     "cartridge,entity",
     [("replicon", "TimeEntry"), ("hubspot", "deals")],
 )
-def test_query_kb_error_response_does_not_leak_sql_or_paths(cartridge, entity, monkeypatch):
+def test_query_kb_error_response_does_not_leak_sql_or_paths(
+    cartridge, entity, monkeypatch
+):
     load_cartridge_app(cartridge)
     from app import mcp_server
 
@@ -120,7 +124,9 @@ def test_query_kb_error_response_does_not_leak_sql_or_paths(cartridge, entity, m
         def close(self):
             pass
 
-    monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda *_: LeakyConnection())
+    monkeypatch.setattr(
+        mcp_server, "_get_duckdb_connection", lambda *_: LeakyConnection()
+    )
 
     with _signed_context():
         result = mcp_server.query_kb(
@@ -191,7 +197,9 @@ def test_preview_reads_forwarded_tenant_workspace_scope(cartridge, entity, monke
         def close(self):
             pass
 
-    monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda *_: FakeConnection())
+    monkeypatch.setattr(
+        mcp_server, "_get_duckdb_connection", lambda *_: FakeConnection()
+    )
 
     token = request_context.set_security_context(
         request_context._sign_security_context(
@@ -230,4 +238,6 @@ def test_duckdb_service_locks_configuration_after_s3_credentials(cartridge):
     src = service_path.read_text(encoding="utf-8")
 
     assert "SET lock_configuration=true;" in src
-    assert src.index("SET s3_secret_access_key") < src.index("SET lock_configuration=true;")
+    assert src.index("SET s3_secret_access_key") < src.index(
+        "SET lock_configuration=true;"
+    )

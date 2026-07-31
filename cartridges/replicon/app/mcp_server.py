@@ -172,9 +172,16 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     try:
         ctx = require_tenant_workspace_scope()
     except SecurityContextError as exc:
-        return {"error": "security_context_denied", "reason": str(exc), "rows": [], "columns": []}
+        return {
+            "error": "security_context_denied",
+            "reason": str(exc),
+            "rows": [],
+            "columns": [],
+        }
     scope = scoped_prefix(ctx)
-    path = f"s3://{bucket}/raw/replicon/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
+    path = (
+        f"s3://{bucket}/raw/replicon/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
+    )
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _get_duckdb_connection(sql)
@@ -234,7 +241,9 @@ async def extract(
 
 
 @mcp.tool()
-async def extract_all(mode: str = "incremental", conn_id: str | None = None) -> dict[str, Any]:
+async def extract_all(
+    mode: str = "incremental", conn_id: str | None = None
+) -> dict[str, Any]:
     """
     [BATCH — async] Extrae TODAS las entidades de Replicon en paralelo (máx 4 simultáneas).
 

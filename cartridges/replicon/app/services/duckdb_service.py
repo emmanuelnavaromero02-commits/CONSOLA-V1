@@ -167,9 +167,15 @@ def write_kb_to_postgres(
                     if_exists="append",
                     index=False,
                 )
-                conn.execute(text(f"ALTER TABLE {history_table} ENABLE ROW LEVEL SECURITY"))
-                conn.execute(text(f"ALTER TABLE {history_table} FORCE ROW LEVEL SECURITY"))
-                conn.execute(text(f"DROP POLICY IF EXISTS workspace_scope ON {history_table}"))
+                conn.execute(
+                    text(f"ALTER TABLE {history_table} ENABLE ROW LEVEL SECURITY")
+                )
+                conn.execute(
+                    text(f"ALTER TABLE {history_table} FORCE ROW LEVEL SECURITY")
+                )
+                conn.execute(
+                    text(f"DROP POLICY IF EXISTS workspace_scope ON {history_table}")
+                )
                 conn.execute(
                     text(
                         f"""CREATE POLICY workspace_scope ON {history_table}
