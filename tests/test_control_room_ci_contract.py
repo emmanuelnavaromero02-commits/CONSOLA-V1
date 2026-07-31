@@ -183,3 +183,28 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
         assert field in verifier
     assert "report missing" in verifier.lower()
     assert "if any(bad.values())" in verifier
+    prepare = text.index("- name: Prepare hermetic Refinement DuckDB artifact")
+    focal = text.index("- name: Run focal Control Room tests")
+    live = text.index("- name: Run live PostgreSQL/RLS tests")
+    assert prepare < text.index("pytest", prepare) == text.index("pytest")
+    assert prepare < focal < live
+    assert "docker build . -f refinement/Dockerfile" in text[prepare:focal]
+    assert "run_refinement_duckdb_offline_smoke.sh" in text[prepare:focal]
+    assert "docker cp" in text[prepare:focal]
+    assert "DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home" in text
+    assert 'test ! -e "$DUCKDB_TEST_HOME"' in text
+    scoped_home_lines = [
+        line for line in text.splitlines() if line.strip().startswith("HOME:")
+    ]
+    assert scoped_home_lines == [
+        "          HOME: /tmp/refinement-duckdb-home",
+        "          HOME: /tmp/refinement-duckdb-home",
+    ]
+    assert text.count("DOCKER_HOST: unix:///var/run/docker.sock") == 2
+    assert "INSTALL httpfs" not in text
+    assert "INSTALL postgres" not in text
+    assert '"autoinstall_known_extensions": "false"' in text
+    assert '"autoload_known_extensions": "false"' in text
+    assert "refinement-duckdb-extensions.before" in text
+    assert "refinement-duckdb-extensions.after" in text
+    assert "cmp /tmp/refinement-duckdb-extensions.before" in text

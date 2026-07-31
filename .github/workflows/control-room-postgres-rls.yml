@@ -56,9 +56,85 @@ jobs:
             -r tests/requirements.txt \
             -r console/requirements.txt
 
+      - name: Prepare hermetic Refinement DuckDB artifact
+        shell: bash
+        env:
+          DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
+          REFINEMENT_IMAGE: refinement:offline-smoke
+        run: |
+          set -euo pipefail
+          test ! -e "$DUCKDB_TEST_HOME"
+          docker build . -f refinement/Dockerfile -t "$REFINEMENT_IMAGE"
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+            "$REFINEMENT_IMAGE" sh -eu -c '
+              test "$(id -un)" = appuser
+              python - <<"PY"
+          import duckdb
+          from app.duckdb_runtime import (
+              connect_duckdb_runtime,
+              require_loaded_extensions,
+          )
+
+          assert duckdb.__version__ == "1.2.2"
+          connection = connect_duckdb_runtime()
+          try:
+              require_loaded_extensions(connection)
+              settings = dict(
+                  connection.execute(
+                      "SELECT name, value FROM duckdb_settings() "
+                      "WHERE name IN ("
+                      "'"'"'autoinstall_known_extensions'"'"',"
+                      "'"'"'autoload_known_extensions'"'"')"
+                  ).fetchall()
+              )
+              assert settings == {
+                  "autoinstall_known_extensions": "false",
+                  "autoload_known_extensions": "false",
+              }
+          finally:
+              connection.close()
+          PY
+            '
+          scripts/run_refinement_duckdb_offline_smoke.sh "$REFINEMENT_IMAGE"
+
+          mkdir -p "$DUCKDB_TEST_HOME/.duckdb"
+          container_id="$(docker create "$REFINEMENT_IMAGE")"
+          cleanup() {
+            docker rm -f "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker cp \
+            "$container_id:/home/appuser/.duckdb/." \
+            "$DUCKDB_TEST_HOME/.duckdb/"
+          docker rm "$container_id" >/dev/null
+          trap - EXIT
+
+          for extension in httpfs postgres_scanner; do
+            find "$DUCKDB_TEST_HOME/.duckdb" \
+              -type f -name "$extension.duckdb_extension" | grep -q .
+          done
+          HOME="$DUCKDB_TEST_HOME" python - <<'PY'
+          from refinement.app.duckdb_runtime import (
+              connect_duckdb_runtime,
+              require_loaded_extensions,
+          )
+
+          connection = connect_duckdb_runtime()
+          try:
+              require_loaded_extensions(connection)
+          finally:
+              connection.close()
+          PY
+          find "$DUCKDB_TEST_HOME/.duckdb" -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum \
+            > /tmp/refinement-duckdb-extensions.before
+
       - name: Run focal Control Room tests
         continue-on-error: true
         env:
+          HOME: /tmp/refinement-duckdb-home
+          DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
           PUBLIC_SQL_POSTGRES_DB: sql_oracle
           PUBLIC_SQL_POSTGRES_HOST: 127.0.0.1
@@ -102,12 +178,28 @@ jobs:
         if: always()
         continue-on-error: true
         env:
+          HOME: /tmp/refinement-duckdb-home
+          DOCKER_HOST: unix:///var/run/docker.sock
           PYTHONPATH: .:console
         run: |
           pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
             tests/test_control_room_live_postgres*.py
+
+      - name: Verify hermetic DuckDB extension cache
+        if: always()
+        shell: bash
+        env:
+          DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
+        run: |
+          set -euo pipefail
+          test -s /tmp/refinement-duckdb-extensions.before
+          find "$DUCKDB_TEST_HOME/.duckdb" -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum \
+            > /tmp/refinement-duckdb-extensions.after
+          cmp /tmp/refinement-duckdb-extensions.before \
+            /tmp/refinement-duckdb-extensions.after
 
       - name: Verify focal and live PostgreSQL/RLS reports
         if: always()
@@ -139,11 +231,6 @@ jobs:
           verify_junit("/tmp/control-room-focal.xml", minimum=8987, label="Focal Control Room")
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=171, label="Live PostgreSQL/RLS")
           PY
-
-      - name: Verify Refinement DuckDB extensions without external egress
-        run: |
-          docker build . -f refinement/Dockerfile -t refinement:offline-smoke
-          scripts/run_refinement_duckdb_offline_smoke.sh refinement:offline-smoke
 
   no-control-room-needed:
     needs: changes

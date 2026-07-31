@@ -46,6 +46,7 @@ def test_readiness_and_ci_enforce_offline_extensions() -> None:
     assert "require_loaded_extensions(engine._conn())" in main
     assert "run_refinement_duckdb_offline_smoke.sh" in workflow
     assert "--network none" in runner and "network create --internal" in runner
+    assert 'test "$(id -u)" -ne 0' in runner
     assert "python -m scripts.duckdb_offline_smoke" in runner
 
 
