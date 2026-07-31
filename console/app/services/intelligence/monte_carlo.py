@@ -14,6 +14,8 @@ from app.services.intelligence import monte_carlo_options
 MODEL_VERSION = "monte_carlo.v1"
 DEFAULT_ITERATIONS = 1000
 MAX_ITERATIONS = 10_000
+MAX_SEED = 9_223_372_036_854_775_807
+MAX_DISCRETE_VALUES = 1_000
 SUPPORTED_DISTRIBUTIONS = {"fixed", "normal", "triangular", "uniform", "discrete"}
 SUPPORTED_OUTPUT_METRICS = {"net_value", "delta", "cost", "delay_days"}
 
@@ -66,6 +68,18 @@ def _clean_iterations(value: Any) -> int:
     return parsed
 
 
+def _clean_seed(value: Any) -> int:
+    if isinstance(value, bool):
+        raise MonteCarloValidationError("seed must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise MonteCarloValidationError("seed must be an integer") from exc
+    if parsed < 0 or parsed > MAX_SEED:
+        raise MonteCarloValidationError(f"seed must be between 0 and {MAX_SEED}")
+    return parsed
+
+
 def _validate_distribution(name: str, spec: Any) -> dict[str, Any]:
     if not isinstance(spec, dict):
         raise MonteCarloValidationError(f"{name} distribution must be an object")
@@ -106,6 +120,10 @@ def _validate_distribution(name: str, spec: Any) -> dict[str, Any]:
     raw_values = spec.get("values")
     if not isinstance(raw_values, list) or not raw_values:
         raise MonteCarloValidationError(f"{name}.values must be a non-empty list")
+    if len(raw_values) > MAX_DISCRETE_VALUES:
+        raise MonteCarloValidationError(
+            f"{name}.values cannot contain more than {MAX_DISCRETE_VALUES} entries"
+        )
     values: list[dict[str, float]] = []
     for idx, item in enumerate(raw_values):
         if isinstance(item, dict):
@@ -188,7 +206,7 @@ def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
     except ValueError as exc:
         raise MonteCarloValidationError(str(exc)) from exc
     iterations = _clean_iterations(payload.get("iterations"))
-    seed = int(payload.get("seed", 0))
+    seed = _clean_seed(payload.get("seed", 0))
     threshold_raw = payload.get("breach_threshold")
     threshold = (
         _finite_number(threshold_raw, "breach_threshold")

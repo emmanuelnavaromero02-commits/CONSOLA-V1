@@ -40,13 +40,8 @@ SUCCESSFACTORS_GOLD_FALLBACK_SOURCES: dict[str, list[str]] = {
     "sap_successfactors_talent_cpa_scores": [
         "gold/sap_successfactors/sap_successfactors_talent_employee_profile",
     ],
-    "sap_successfactors_talent_readiness": [
-        "gold/sap_successfactors/sap_successfactors_talent_cpa_scores",
-        "gold/sap_successfactors/sap_successfactors_talent_benchmark_internal",
-    ],
-    "sap_successfactors_talent_9box": [
-        "gold/sap_successfactors/sap_successfactors_talent_readiness",
-    ],
+    "sap_successfactors_talent_readiness": [],
+    "sap_successfactors_talent_9box": [],
 }
 
 SUCCESSFACTORS_GOLD_FALLBACK_SQL: dict[str, str] = {

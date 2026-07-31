@@ -1,4 +1,5 @@
 """Control Room advisory tools for monitor agents."""
+
 from __future__ import annotations
 
 import hashlib
@@ -53,7 +54,10 @@ _ANALYSIS_ENGINES = {
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _console_headers() -> dict[str, str]:
@@ -70,9 +74,13 @@ def _console_headers() -> dict[str, str]:
     return {"x-api-key": key, "x-internal-service": "mcp-infra"}
 
 
-async def _call_console(path: str, payload: dict[str, Any], *, timeout: float = 60.0) -> dict[str, Any]:
+async def _call_console(
+    path: str, payload: dict[str, Any], *, timeout: float = 60.0
+) -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=timeout, headers=_console_headers()) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, headers=_console_headers()
+        ) as client:
             response = await client.post(f"{_CONSOLE_URL}{path}", json=payload)
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"Console internal request failed: {exc}") from exc
@@ -89,7 +97,9 @@ async def _call_console(path: str, payload: dict[str, Any], *, timeout: float = 
     return data
 
 
-def _as_text(value: Any, label: str, *, max_len: int = _MAX_TEXT, required: bool = True) -> str | None:
+def _as_text(
+    value: Any, label: str, *, max_len: int = _MAX_TEXT, required: bool = True
+) -> str | None:
     if value is None:
         if required:
             raise HTTPException(400, f"{label} is required")
@@ -147,7 +157,10 @@ def _redact_sensitive(value: Any) -> Any:
         out: dict[str, Any] = {}
         for key, item in value.items():
             lowered = str(key).lower()
-            if any(token in lowered for token in ("password", "secret", "token", "api_key", "authorization")):
+            if any(
+                token in lowered
+                for token in ("password", "secret", "token", "api_key", "authorization")
+            ):
                 out[str(key)] = "***"
             else:
                 out[str(key)] = _redact_sensitive(item)
@@ -178,7 +191,9 @@ def _evidence_refs(value: Any) -> list[Any]:
     return refs
 
 
-def _bounded_payload(value: Any, label: str, *, max_bytes: int = _MAX_ANALYSIS_BYTES) -> Any:
+def _bounded_payload(
+    value: Any, label: str, *, max_bytes: int = _MAX_ANALYSIS_BYTES
+) -> Any:
     clean = _redact_sensitive(value if value is not None else {})
     raw = json.dumps(clean, sort_keys=True, default=str, ensure_ascii=False)
     if len(raw.encode("utf-8")) > max_bytes:
@@ -202,16 +217,23 @@ def _analysis_evidence(
 ) -> dict[str, Any]:
     engine = _as_safe_key(engine, "engine")
     if engine not in _ANALYSIS_ENGINES:
-        raise HTTPException(400, "engine must be one of monte_carlo, bayesian_calibration, wisdom_bit, decision_orchestrator")
+        raise HTTPException(
+            400,
+            "engine must be one of monte_carlo, bayesian_calibration, wisdom_bit, decision_orchestrator",
+        )
     evidence = {
         "analysis_type": _as_safe_key(analysis_type, "analysis_type"),
         "engine": engine,
         "engine_run_id": _as_text(engine_run_id, "engine_run_id", max_len=240),
         "confidence": _as_confidence(confidence),
         "quantiles": {"p10": p10, "p50": p50, "p90": p90},
-        "recommended_option": _bounded_payload(recommended_option, "recommended_option"),
+        "recommended_option": _bounded_payload(
+            recommended_option, "recommended_option"
+        ),
         "metrics": _bounded_payload(metrics, "metrics"),
-        "blockers": _bounded_payload(blockers if blockers is not None else [], "blockers"),
+        "blockers": _bounded_payload(
+            blockers if blockers is not None else [], "blockers"
+        ),
         "distribution": _bounded_payload(distribution, "distribution"),
     }
     return _bounded_payload(evidence, "analysis_evidence")
@@ -534,7 +556,14 @@ async def calibration__bayesian_state(
     }
 
 
-def _dedup_item_id(*, agent_id: str, workspace_id: str, alert_type: str, entity_key: str, source_dataset: str) -> str:
+def _dedup_item_id(
+    *,
+    agent_id: str,
+    workspace_id: str,
+    alert_type: str,
+    entity_key: str,
+    source_dataset: str,
+) -> str:
     raw = json.dumps(
         {
             "agent_id": agent_id,
@@ -579,7 +608,11 @@ def _set_rls_scope(cur, tenant_id: str, workspace_id: str) -> None:
             "source_id": {"type": "string"},
             "horizon_days": {"type": "integer", "minimum": 1, "maximum": 365},
             "iterations": {"type": "integer", "minimum": 1, "maximum": 10000},
-            "seed": {"type": "integer", "minimum": 0},
+            "seed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807,
+            },
             "input_variables": {"type": "object"},
             "assumptions": {"type": "object"},
             "use_external_market_context": {"type": "boolean", "default": False},
@@ -783,7 +816,10 @@ async def wisdom_bits__run(
             "entity_label": {"type": "string"},
             "title": {"type": "string"},
             "message": {"type": "string"},
-            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+            },
             "confidence": {"type": "number"},
             "recommendation": {"type": "string"},
             "impact_estimate": {"type": "number"},
@@ -836,14 +872,20 @@ def control_room__raise_alert(
     domain = _as_text(domain, "domain", max_len=_MAX_SHORT_TEXT)
     source_dataset = _as_safe_key(source_dataset, "source_dataset")
     entity_key = _as_safe_key(entity_key, "entity_key")
-    entity_label = _as_text(entity_label, "entity_label", max_len=_MAX_SHORT_TEXT, required=False)
+    entity_label = _as_text(
+        entity_label, "entity_label", max_len=_MAX_SHORT_TEXT, required=False
+    )
     title = _as_text(title, "title", max_len=_MAX_SHORT_TEXT)
     message = _as_text(message, "message", max_len=_MAX_TEXT)
     severity = _as_severity(severity)
     confidence = _as_confidence(confidence)
-    recommendation = _as_text(recommendation, "recommendation", max_len=_MAX_TEXT, required=False)
+    recommendation = _as_text(
+        recommendation, "recommendation", max_len=_MAX_TEXT, required=False
+    )
     hypothesis = _as_text(hypothesis, "hypothesis", max_len=_MAX_TEXT, required=False)
-    expected_outcome = _as_text(expected_outcome, "expected_outcome", max_len=_MAX_TEXT, required=False)
+    expected_outcome = _as_text(
+        expected_outcome, "expected_outcome", max_len=_MAX_TEXT, required=False
+    )
     impact = _as_impact(impact_estimate)
     impact_currency = _as_text(impact_currency or "USD", "impact_currency", max_len=8)
     evidence = _evidence_refs(evidence_refs)
@@ -864,7 +906,8 @@ def control_room__raise_alert(
         "agent_run_id": scope["agent_run_id"],
         "alert_type": alert_type,
         "description": message,
-        "recommendation": recommendation or "Revisar evidencia y decidir accion supervisada.",
+        "recommendation": recommendation
+        or "Revisar evidencia y decidir accion supervisada.",
         "hypothesis": hypothesis,
         "expected_outcome": expected_outcome,
         "evidence_refs": evidence,
@@ -885,7 +928,9 @@ def control_room__raise_alert(
             (scope["workspace_id"], item_id),
         )
         existing = cur.fetchone()
-        previous_metadata = existing[1] if existing and isinstance(existing[1], dict) else {}
+        previous_metadata = (
+            existing[1] if existing and isinstance(existing[1], dict) else {}
+        )
         occurrence_count = int(previous_metadata.get("occurrence_count") or 0) + 1
         metadata["occurrence_count"] = occurrence_count
         deduped = existing is not None
@@ -967,15 +1012,17 @@ def control_room__raise_alert(
                 item_id,
                 event_type,
                 scope["email"],
-                Json({
-                    "source": "agent",
-                    "advisory": True,
-                    "agent_id": scope["agent_id"],
-                    "agent_run_id": scope["agent_run_id"],
-                    "deduped": deduped,
-                    "terminal_preserved": terminal,
-                    "occurrence_count": occurrence_count,
-                }),
+                Json(
+                    {
+                        "source": "agent",
+                        "advisory": True,
+                        "agent_id": scope["agent_id"],
+                        "agent_run_id": scope["agent_run_id"],
+                        "deduped": deduped,
+                        "terminal_preserved": terminal,
+                        "occurrence_count": occurrence_count,
+                    }
+                ),
             ),
         )
         conn.commit()
@@ -1021,7 +1068,10 @@ def control_room__raise_alert(
             "entity_label": {"type": "string"},
             "title": {"type": "string"},
             "message": {"type": "string"},
-            "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+            },
             "confidence": {"type": "number"},
             "recommendation": {"type": "string"},
             "impact_estimate": {"type": "number"},
@@ -1086,7 +1136,9 @@ def control_room__raise_analysis_alert(
 ) -> dict[str, Any]:
     unexpected = sorted(set(extra) | (set(extra) & _FORBIDDEN_ARGS))
     if unexpected:
-        raise HTTPException(400, f"unsupported analysis alert args: {', '.join(unexpected)}")
+        raise HTTPException(
+            400, f"unsupported analysis alert args: {', '.join(unexpected)}"
+        )
     scope = _trusted_agent_scope(security_context)
     analysis = _analysis_evidence(
         analysis_type=analysis_type,
@@ -1102,11 +1154,13 @@ def control_room__raise_analysis_alert(
         distribution=distribution,
     )
     augmented_refs = list(evidence_refs or [])
-    augmented_refs.append({
-        "kind": "analysis_evidence",
-        "engine": analysis["engine"],
-        "engine_run_id": analysis["engine_run_id"],
-    })
+    augmented_refs.append(
+        {
+            "kind": "analysis_evidence",
+            "engine": analysis["engine"],
+            "engine_run_id": analysis["engine_run_id"],
+        }
+    )
     result = control_room__raise_alert(
         alert_type=alert_type,
         cartridge_id=cartridge_id,
@@ -1127,7 +1181,11 @@ def control_room__raise_analysis_alert(
         security_context=security_context,
     )
     item_id = str(result["item_id"])
-    event_type = "agent_analysis_alert_deduped" if result.get("deduped") else "agent_analysis_alert_created"
+    event_type = (
+        "agent_analysis_alert_deduped"
+        if result.get("deduped")
+        else "agent_analysis_alert_created"
+    )
     metadata_patch = {
         "origin": analysis["engine"],
         "analysis_type": analysis["analysis_type"],
@@ -1160,15 +1218,17 @@ def control_room__raise_analysis_alert(
                 item_id,
                 event_type,
                 scope["email"],
-                Json({
-                    "source": "agent",
-                    "advisory": True,
-                    "agent_id": scope["agent_id"],
-                    "agent_run_id": scope["agent_run_id"],
-                    "engine": analysis["engine"],
-                    "engine_run_id": analysis["engine_run_id"],
-                    "deduped": bool(result.get("deduped")),
-                }),
+                Json(
+                    {
+                        "source": "agent",
+                        "advisory": True,
+                        "agent_id": scope["agent_id"],
+                        "agent_run_id": scope["agent_run_id"],
+                        "engine": analysis["engine"],
+                        "engine_run_id": analysis["engine_run_id"],
+                        "deduped": bool(result.get("deduped")),
+                    }
+                ),
             ),
         )
         conn.commit()
