@@ -54,62 +54,7 @@ jobs:
             --file cartridges/replicon/Dockerfile \
             --tag "$image"
           test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "appuser"
-          docker run --rm -i \
-            --network none \
-            --read-only \
-            --cap-drop ALL \
-            --security-opt no-new-privileges \
-            --user appuser \
-            --env MINIO_ENDPOINT=ci-minio.invalid:9000 \
-            --env MINIO_ACCESS_KEY=ci-access \
-            --env MINIO_SECRET_KEY=ci-secret \
-            --env MINIO_BUCKET=ci-bucket \
-            --env PG_USER=ci-user \
-            --env PG_PASSWORD=ci-password \
-            --entrypoint python \
-            "$image" - <<'PY'
-          import getpass
-          import inspect
-          import os
-
-          import duckdb
-          from app.services import duckdb_service
-
-          assert os.geteuid() != 0
-          assert getpass.getuser() == "appuser"
-          assert duckdb.__version__ == "1.2.2"
-          source = inspect.getsource(duckdb_service._get_duckdb_connection).upper()
-          assert "INSTALL" not in source
-          sql = (
-              "SELECT * FROM read_parquet("
-              "'s3://ci-bucket/raw/replicon/TimeEntry/load_date=*/data.parquet')"
-          )
-          conn = duckdb_service._get_duckdb_connection(sql)
-          try:
-              extension = conn.execute(
-                  """SELECT loaded, installed FROM duckdb_extensions()
-                     WHERE extension_name='httpfs'"""
-              ).fetchone()
-              assert extension == (True, True)
-              expected = {
-                  "autoinstall_known_extensions": False,
-                  "autoload_known_extensions": False,
-                  "s3_endpoint": "ci-minio.invalid:9000",
-                  "s3_access_key_id": "ci-access",
-                  "s3_secret_access_key": "ci-secret",
-                  "s3_use_ssl": False,
-                  "s3_url_style": "path",
-              }
-              actual = {
-                  key: conn.execute(
-                      "SELECT current_setting(?)", [key]
-                  ).fetchone()[0]
-                  for key in expected
-              }
-              assert actual == expected
-          finally:
-              conn.close()
-          PY
+          scripts/ci_replicon_minio_smoke.sh "$image"
 
       - uses: actions/setup-python@v5
         with:
@@ -183,6 +128,7 @@ jobs:
             tests/test_bayesian_calibration_api_contract.py \
             tests/test_bayesian_calibration_recompute_policy.py \
             tests/test_decision_operational_truth_duckdb_httpfs.py \
+            tests/test_replicon_minio_image_contract.py \
             tests/test_v1_router_mount.py
 
       - name: Run live PostgreSQL/RLS tests

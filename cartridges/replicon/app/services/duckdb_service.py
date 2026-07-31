@@ -65,13 +65,19 @@ def run_kb_sql(
     sql: str, *, runtime_tables: dict[str, pd.DataFrame] | None = None
 ) -> pd.DataFrame:
     resolved = sql.replace("{bucket}", settings.minio_bucket)
+    remote = _S3_READER_RE.search(resolved) is not None
     conn = _get_duckdb_connection(resolved)
     try:
         for name, frame in (runtime_tables or {}).items():
             if not _SAFE_IDENT_RE.match(name):
                 raise ValueError(f"Unsafe runtime table identifier: {name!r}")
             conn.register(name, frame)
-        return conn.execute(resolved).df()
+        try:
+            return conn.execute(resolved).df()
+        except duckdb.Error:
+            if remote:
+                raise DuckDBHTTPFSUnavailable(_REMOTE_SOURCE_UNAVAILABLE) from None
+            raise
     finally:
         conn.close()
 

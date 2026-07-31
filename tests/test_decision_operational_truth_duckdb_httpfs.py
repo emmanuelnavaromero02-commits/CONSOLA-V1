@@ -266,6 +266,8 @@ def test_control_room_gate_builds_and_smokes_real_replicon_image() -> None:
     workflow = (ROOT / ".github/workflows/control-room-postgres-rls.yml").read_text(
         encoding="utf-8"
     )
+    script = (ROOT / "scripts/ci_replicon_minio_smoke.sh").read_text(encoding="utf-8")
+    contract = workflow + script
     required = (
         "docker build cartridges/replicon",
         "--network none",
@@ -277,6 +279,6 @@ def test_control_room_gate_builds_and_smokes_real_replicon_image() -> None:
         "autoinstall_known_extensions",
         "autoload_known_extensions",
     )
-    assert all(token in workflow for token in required)
-    smoke = workflow.split("Build and smoke Replicon DuckDB/httpfs image", 1)[1]
+    assert all(token in contract for token in required)
+    smoke = contract.split("Build and smoke Replicon DuckDB/httpfs image", 1)[1]
     assert "INSTALL httpfs" not in smoke
