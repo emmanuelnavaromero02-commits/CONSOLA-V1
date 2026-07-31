@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from app.services import auth
 from app.services.db_scope import scoped_db_for_user
-from app.services.intelligence import market_context, monte_carlo
+from app.services.intelligence import market_context, monte_carlo, monte_carlo_finite
 from app.services.intelligence.monte_carlo_operational_truth import (
     _source_exists,
     bind_selected_result,
@@ -138,6 +138,8 @@ async def run_simulation(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             result = monte_carlo.run_monte_carlo(clean)
             result = bind_selected_result(clean, result)
+            monte_carlo_finite.assert_finite_tree(clean)
+            monte_carlo_finite.assert_finite_tree(result)
         except (monte_carlo.MonteCarloValidationError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
 

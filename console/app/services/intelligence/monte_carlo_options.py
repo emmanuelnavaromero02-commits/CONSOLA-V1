@@ -3,15 +3,27 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.services.intelligence import monte_carlo_contract
+from app.services.intelligence import monte_carlo_finite
 
 
 def _risk_adjusted_score(summary: dict[str, Any]) -> float:
-    expected = float(summary["expected_value"])
-    spread = float(summary["p90"]) - float(summary["p10"])
-    breach = float(summary.get("probability_breach_threshold") or 0)
-    penalty = (spread * 0.25) + (breach * abs(expected if expected else 1.0))
+    expected = monte_carlo_finite.finite(summary["expected_value"])
+    spread = monte_carlo_finite.finite(
+        monte_carlo_finite.finite(summary["p90"])
+        - monte_carlo_finite.finite(summary["p10"])
+    )
+    breach = monte_carlo_finite.finite(
+        summary.get("probability_breach_threshold") or 0
+    )
+    spread_penalty = monte_carlo_finite.finite(spread * 0.25)
+    breach_penalty = monte_carlo_finite.finite(
+        breach * abs(expected if expected else 1.0)
+    )
+    penalty = monte_carlo_finite.finite(spread_penalty + breach_penalty)
     direction = -1.0 if summary.get("output_metric") in {"cost", "delay_days"} else 1.0
-    return (direction * expected) - penalty
+    return monte_carlo_finite.finite(
+        monte_carlo_finite.finite(direction * expected) - penalty
+    )
 
 
 def compare_options(

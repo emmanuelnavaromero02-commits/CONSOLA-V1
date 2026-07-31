@@ -4,10 +4,10 @@ import hashlib
 import json
 import math
 import random
-from statistics import mean, median
 from typing import Any
 
 from app.services.intelligence import monte_carlo_contract
+from app.services.intelligence import monte_carlo_finite
 from app.services.intelligence import monte_carlo_options
 
 
@@ -27,6 +27,10 @@ def _json_default(value: Any) -> Any:
 
 
 def canonical_json(value: Any) -> str:
+    try:
+        monte_carlo_finite.assert_finite_tree(value)
+    except ValueError as exc:
+        raise MonteCarloValidationError(str(exc)) from exc
     return json.dumps(
         value,
         ensure_ascii=True,
@@ -168,103 +172,6 @@ def _sample_distribution(rng: random.Random, spec: dict[str, Any]) -> float:
     return float(values[-1]["value"])
 
 
-def _metric_value(samples: dict[str, float], output_metric: str) -> float:
-    def value(name: str) -> float:
-        return samples.get(name, monte_carlo_contract.default_value(name))
-    baseline = value("baseline_value")
-    expected_delta = value("expected_delta")
-    revenue_growth = value("revenue_growth")
-    delay_days = value("delay_days")
-    approval_lag_days = value("approval_lag_days")
-    cost_per_day = value("cost_per_day")
-    probability_of_delay = value("probability_of_delay")
-    adoption_rate = value("adoption_rate")
-    recovery_rate = value("recovery_rate")
-    manual_effort_hours = value("manual_effort_hours")
-    hourly_cost = value("hourly_cost")
-    fixed_cost = value("fixed_cost")
-
-    delay_total = delay_days + approval_lag_days
-    delay_cost = delay_total * cost_per_day * probability_of_delay
-    effort_cost = manual_effort_hours * hourly_cost
-    benefit = (revenue_growth * baseline) + (adoption_rate * recovery_rate * baseline)
-    cost = delay_cost + effort_cost + fixed_cost
-    delta = expected_delta + benefit - cost
-
-    if output_metric == "net_value":
-        return baseline + delta
-    if output_metric == "delta":
-        return delta
-    if output_metric == "cost":
-        return cost
-    if output_metric == "delay_days":
-        return delay_total
-    raise MonteCarloValidationError("unsupported output_metric")
-
-
-def _quantile(sorted_values: list[float], probability: float) -> float:
-    if not sorted_values:
-        raise MonteCarloValidationError("cannot summarize empty results")
-    if len(sorted_values) == 1:
-        return sorted_values[0]
-    pos = (len(sorted_values) - 1) * probability
-    lower = math.floor(pos)
-    upper = math.ceil(pos)
-    if lower == upper:
-        return sorted_values[int(pos)]
-    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * (
-        pos - lower
-    )
-
-
-def _rank(values: list[float]) -> list[float]:
-    ordered = sorted(enumerate(values), key=lambda item: item[1])
-    ranks = [0.0] * len(values)
-    idx = 0
-    while idx < len(ordered):
-        end = idx
-        while end + 1 < len(ordered) and ordered[end + 1][1] == ordered[idx][1]:
-            end += 1
-        avg_rank = (idx + end + 2) / 2.0
-        for pos in range(idx, end + 1):
-            ranks[ordered[pos][0]] = avg_rank
-        idx = end + 1
-    return ranks
-
-
-def _pearson(left: list[float], right: list[float]) -> float:
-    if len(left) != len(right) or len(left) < 2:
-        return 0.0
-    left_mean = mean(left)
-    right_mean = mean(right)
-    numerator = sum(
-        (a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True)
-    )
-    left_den = math.sqrt(sum((a - left_mean) ** 2 for a in left))
-    right_den = math.sqrt(sum((b - right_mean) ** 2 for b in right))
-    if left_den == 0 or right_den == 0:
-        return 0.0
-    return numerator / (left_den * right_den)
-
-
-def _sensitivity(
-    samples_by_variable: dict[str, list[float]], outputs: list[float]
-) -> list[dict[str, Any]]:
-    output_ranks = _rank(outputs)
-    drivers = []
-    for name, values in samples_by_variable.items():
-        coefficient = _pearson(_rank(values), output_ranks)
-        drivers.append(
-            {
-                "variable": name,
-                "method": "spearman_rank",
-                "coefficient": round(coefficient, 6),
-                "abs_coefficient": round(abs(coefficient), 6),
-            }
-        )
-    return sorted(drivers, key=lambda item: item["abs_coefficient"], reverse=True)
-
-
 def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
     output_metric = str(payload.get("output_metric") or "net_value").strip()
     if output_metric not in SUPPORTED_OUTPUT_METRICS:
@@ -294,56 +201,42 @@ def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
     outputs: list[float] = []
     samples_by_variable: dict[str, list[float]] = {name: [] for name in variables}
     for _ in range(iterations):
-        sample = {
-            name: _sample_distribution(rng_by_variable[name], spec) for name, spec in variables.items()
-        }
-        for name, value in sample.items():
-            samples_by_variable[name].append(value)
-        outputs.append(_metric_value(sample, output_metric))
-
-    sorted_outputs = sorted(outputs)
-    probability_breach = None
-    if threshold is not None:
-        if breach_direction == "above":
-            probability_breach = (
-                sum(1 for value in outputs if value >= threshold) / iterations
+        try:
+            sample = {
+                name: _sample_distribution(rng_by_variable[name], spec)
+                for name, spec in variables.items()
+            }
+            for name, value in sample.items():
+                samples_by_variable[name].append(
+                    monte_carlo_finite.finite(value)
+                )
+            outputs.append(
+                monte_carlo_finite.metric_value(
+                    sample,
+                    output_metric,
+                    default_value=monte_carlo_contract.default_value,
+                )
             )
-        else:
-            probability_breach = (
-                sum(1 for value in outputs if value <= threshold) / iterations
-            )
-
-    summary = {
-        "iterations": iterations,
-        "output_metric": output_metric,
-        "mean": round(mean(outputs), 6),
-        "median": round(median(outputs), 6),
-        "p10": round(_quantile(sorted_outputs, 0.10), 6),
-        "p50": round(_quantile(sorted_outputs, 0.50), 6),
-        "p90": round(_quantile(sorted_outputs, 0.90), 6),
-        "min": round(sorted_outputs[0], 6),
-        "max": round(sorted_outputs[-1], 6),
-        "probability_loss": round(
-            sum(1 for value in outputs if value < 0) / iterations, 6
-        ),
-        "probability_breach_threshold": None
-        if probability_breach is None
-        else round(probability_breach, 6),
-        "breach_threshold": threshold,
-        "breach_direction": breach_direction,
-        "expected_value": round(mean(outputs), 6),
-        "worst_case_band": [
-            round(_quantile(sorted_outputs, 0.01), 6),
-            round(_quantile(sorted_outputs, 0.10), 6),
-        ],
-        "confidence_band": [
-            round(_quantile(sorted_outputs, 0.10), 6),
-            round(_quantile(sorted_outputs, 0.90), 6),
-        ],
-    }
+        except ArithmeticError as exc:
+            raise MonteCarloValidationError(monte_carlo_finite.ERROR) from exc
+        except ValueError as exc:
+            raise MonteCarloValidationError(str(exc)) from exc
+    try:
+        summary = monte_carlo_finite.summary(
+            outputs,
+            iterations=iterations,
+            output_metric=output_metric,
+            threshold=threshold,
+            breach_direction=breach_direction,
+        )
+        sensitivity = monte_carlo_finite.sensitivity(samples_by_variable, outputs)
+    except ArithmeticError as exc:
+        raise MonteCarloValidationError(monte_carlo_finite.ERROR) from exc
+    except ValueError as exc:
+        raise MonteCarloValidationError(str(exc)) from exc
     return {
         "distribution_summary": summary,
-        "sensitivity": _sensitivity(samples_by_variable, outputs),
+        "sensitivity": sensitivity,
         "normalized_input_variables": variables,
     }
 
@@ -353,13 +246,22 @@ def run_monte_carlo(payload: dict[str, Any]) -> dict[str, Any]:
     server_payload = {
         key: value for key, value in payload.items() if key != "model_version"
     }
+    try:
+        monte_carlo_finite.assert_finite_tree(server_payload)
+    except ValueError as exc:
+        raise MonteCarloValidationError(str(exc)) from exc
     single = run_single_simulation(server_payload)
-    option_comparison = monte_carlo_options.compare_options(
-        server_payload,
-        run_single=run_single_simulation,
-        validation_error=MonteCarloValidationError,
-        canonical_json=canonical_json,
-    )
+    try:
+        option_comparison = monte_carlo_options.compare_options(
+            server_payload,
+            run_single=run_single_simulation,
+            validation_error=MonteCarloValidationError,
+            canonical_json=canonical_json,
+        )
+    except MonteCarloValidationError:
+        raise
+    except ValueError as exc:
+        raise MonteCarloValidationError(str(exc)) from exc
     if option_comparison and option_comparison["status"] == "ranked":
         single["distribution_summary"] = option_comparison["options"][0][
             "distribution_summary"
@@ -373,6 +275,10 @@ def run_monte_carlo(payload: dict[str, Any]) -> dict[str, Any]:
         "option_comparison": option_comparison,
         "normalized_input_variables": single["normalized_input_variables"],
     }
+    try:
+        monte_carlo_finite.assert_finite_tree(response)
+    except ValueError as exc:
+        raise MonteCarloValidationError(str(exc)) from exc
     response["reproducibility_hash"] = reproducibility_hash(
         {
             "model_version": model_version,
