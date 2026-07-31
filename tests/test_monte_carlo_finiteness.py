@@ -40,9 +40,7 @@ def test_material_overflow_fails_typed_and_sanitized(value: float) -> None:
 
 
 def test_valid_extreme_control_remains_finite() -> None:
-    result = monte_carlo.run_monte_carlo(
-        _payload(1e100)
-    )
+    result = monte_carlo.run_monte_carlo(_payload(1e100))
     summary = result["distribution_summary"]
     assert all(
         math.isfinite(float(summary[key]))
@@ -140,7 +138,5 @@ def test_real_http_boundary_returns_sanitized_422(monkeypatch) -> None:
 
     response = TestClient(app).post("/monte-carlo/run", json=_payload(1e308))
     assert response.status_code == 422
-    assert response.json() == {
-        "detail": "monte carlo produced a non-finite result"
-    }
+    assert response.json() == {"detail": "monte carlo produced a non-finite result"}
     assert all(token not in response.text for token in ("Infinity", "NaN", "1e+308"))

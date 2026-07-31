@@ -97,9 +97,7 @@ def _assert_client_claims(
 def _manual_observation(payload: dict[str, Any]) -> dict[str, Any]:
     clean = dict(payload)
     clean["model_version"] = calibration.MODEL_VERSION
-    clean["calibration_group"] = str(
-        clean.get("calibration_group") or "global"
-    )
+    clean["calibration_group"] = str(clean.get("calibration_group") or "global")
     clean["observed_at"] = (
         _timestamp(clean["observed_at"])
         if clean.get("observed_at")
@@ -122,7 +120,9 @@ async def resolve_authoritative_observation(
     source_type = str(payload.get("source_type") or "").strip()
     if source_type == "manual_fixture":
         if not allow_manual:
-            raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
+            raise HTTPException(
+                403, "manual_fixture requires an explicit local APP_ENV"
+            )
         return _manual_observation(payload)
     if source_type != "prediction_outcome":
         raise HTTPException(404, "calibration source not found")

@@ -263,9 +263,9 @@ def test_httpfs_failure_cannot_publish_materialization(monkeypatch) -> None:
 
 
 def test_control_room_gate_builds_and_smokes_real_replicon_image() -> None:
-    workflow = (
-        ROOT / ".github/workflows/control-room-postgres-rls.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/control-room-postgres-rls.yml").read_text(
+        encoding="utf-8"
+    )
     required = (
         "docker build cartridges/replicon",
         "--network none",

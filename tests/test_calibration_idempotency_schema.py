@@ -7,9 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_fresh_schema_has_durable_idempotency_and_evidence_digest() -> None:
-    sql = (ROOT / "infra/init/99r_bayesian_calibration.sql").read_text(
-        encoding="utf-8"
-    )
+    sql = (ROOT / "infra/init/99r_bayesian_calibration.sql").read_text(encoding="utf-8")
     assert "idempotency_key" in sql
     assert "evidence_digest" in sql
     assert "UNIQUE (workspace_id, idempotency_key)" in sql

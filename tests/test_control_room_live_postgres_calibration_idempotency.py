@@ -94,9 +94,7 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
     omega_console_live_dsn: str,
     monkeypatch,
 ) -> None:
-    tenant, other_tenant, workspace = await _seed(
-        postgres_with_real_init_schema
-    )
+    tenant, other_tenant, workspace = await _seed(postgres_with_real_init_schema)
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=4)
     monkeypatch.setattr(
         calibration_service.auth,

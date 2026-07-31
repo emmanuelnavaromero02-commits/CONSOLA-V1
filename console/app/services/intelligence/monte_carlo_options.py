@@ -12,9 +12,7 @@ def _risk_adjusted_score(summary: dict[str, Any]) -> float:
         monte_carlo_finite.finite(summary["p90"])
         - monte_carlo_finite.finite(summary["p10"])
     )
-    breach = monte_carlo_finite.finite(
-        summary.get("probability_breach_threshold") or 0
-    )
+    breach = monte_carlo_finite.finite(summary.get("probability_breach_threshold") or 0)
     spread_penalty = monte_carlo_finite.finite(spread * 0.25)
     breach_penalty = monte_carlo_finite.finite(
         breach * abs(expected if expected else 1.0)

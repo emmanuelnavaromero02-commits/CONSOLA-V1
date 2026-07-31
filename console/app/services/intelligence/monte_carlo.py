@@ -207,9 +207,7 @@ def run_single_simulation(payload: dict[str, Any]) -> dict[str, Any]:
                 for name, spec in variables.items()
             }
             for name, value in sample.items():
-                samples_by_variable[name].append(
-                    monte_carlo_finite.finite(value)
-                )
+                samples_by_variable[name].append(monte_carlo_finite.finite(value))
             outputs.append(
                 monte_carlo_finite.metric_value(
                     sample,
