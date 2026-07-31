@@ -59,10 +59,10 @@ def _contract_failure(
     return None
 
 
-def _active_headcount_sql(table: str) -> str:
+def _active_headcount_sql(relation_sql: str) -> str:
     return f"""
         SELECT COUNT(*)::bigint AS active_headcount
-          FROM public."{table}"
+          FROM {relation_sql}
          WHERE workspace_id::text = $1
            AND tenant_id::text = $2
            AND is_active IS TRUE
@@ -74,6 +74,7 @@ async def query_exact_active_headcount(
     *,
     columns: Mapping[str, Mapping[str, str]],
     table: str,
+    relation_sql: str | None = None,
     tenant_id: str,
     workspace_id: str,
 ) -> ActiveHeadcountResult:
@@ -81,7 +82,7 @@ async def query_exact_active_headcount(
     if failure := _contract_failure(columns, table=table):
         return failure
     rows = await conn.fetch(
-        _active_headcount_sql(table),
+        _active_headcount_sql(relation_sql or f'public."{table}"'),
         workspace_id,
         tenant_id,
     )

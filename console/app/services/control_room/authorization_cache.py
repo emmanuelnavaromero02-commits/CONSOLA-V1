@@ -7,12 +7,15 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.services.control_room.cache_identity import (
     AuthorizationCacheIdentity,
     authorization_cache_identity,
 )
+from app.services.publication_heads import publication_epoch
 
-CacheKey = tuple[str, AuthorizationCacheIdentity]
+CacheKey = tuple[str, AuthorizationCacheIdentity, str]
 Loader = Callable[[], Awaitable[Any]]
 
 READ_CACHE: dict[CacheKey, tuple[float, Any]] = {}
@@ -28,8 +31,8 @@ def cache_ttl() -> float:
     return max(0.0, min(value, 300.0))
 
 
-def cache_key(namespace: str, user: dict | None) -> CacheKey:
-    return namespace, authorization_cache_identity(user)
+def cache_key(namespace: str, user: dict | None, epoch: str = "sync") -> CacheKey:
+    return namespace, authorization_cache_identity(user), epoch
 
 
 def _cache_get_key(key: CacheKey) -> Any | None:
@@ -71,7 +74,10 @@ async def cache_get_or_set(
     ttl = cache_ttl()
     if ttl <= 0:
         return await loader()
-    key = cache_key(namespace, user)
+    epoch = await publication_epoch(user)
+    if epoch is None:
+        raise HTTPException(503, "published Control Room state is unavailable")
+    key = cache_key(namespace, user, epoch)
     cached = _cache_get_key(key)
     if cached is not None:
         return cached

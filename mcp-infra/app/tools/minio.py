@@ -1,6 +1,7 @@
 """
 MinIO MCP tools — browse the lakehouse, inspect Parquet schemas, upload specs.
 """
+
 from __future__ import annotations
 
 import io
@@ -8,11 +9,18 @@ import os
 import re
 
 from app.config import settings
+from app.publication_heads import (
+    materialized_object,
+    published_object,
+    published_objects,
+)
 from app.registry import tool
 from omega_lakehouse import storage_from_env
 
 
-MAX_PARQUET_READ_BYTES = int(os.environ.get("MINIO_TOOL_MAX_READ_BYTES", str(25 * 1024 * 1024)))
+MAX_PARQUET_READ_BYTES = int(
+    os.environ.get("MINIO_TOOL_MAX_READ_BYTES", str(25 * 1024 * 1024))
+)
 MAX_SPEC_BYTES = int(os.environ.get("MINIO_SPEC_MAX_BYTES", str(2 * 1024 * 1024)))
 MAX_SPEC_LIST = int(os.environ.get("MINIO_SPEC_LIST_MAX", "200"))
 _SAFE_CARTRIDGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
@@ -28,7 +36,12 @@ def _safe_cartridge_id(cartridge_id: str) -> str:
 
 def _safe_filename(filename: str) -> str:
     value = (filename or "").strip()
-    if not _SAFE_FILENAME_RE.fullmatch(value) or ".." in value or "/" in value or "\\" in value:
+    if (
+        not _SAFE_FILENAME_RE.fullmatch(value)
+        or ".." in value
+        or "/" in value
+        or "\\" in value
+    ):
         raise ValueError("invalid filename")
     return value
 
@@ -41,7 +54,9 @@ def _storage(bucket: str | None = None):
     return storage_from_env(bucket=bucket or settings.minio_bucket)
 
 
-def _read_bounded_object(storage, object_path: str, *, max_bytes: int = MAX_PARQUET_READ_BYTES) -> bytes:
+def _read_bounded_object(
+    storage, object_path: str, *, max_bytes: int = MAX_PARQUET_READ_BYTES
+) -> bytes:
     stat = storage.stat(object_path)
     size = int(getattr(stat, "size", 0) or 0)
     if size > max_bytes:
@@ -60,18 +75,26 @@ def _read_bounded_object(storage, object_path: str, *, max_bytes: int = MAX_PARQ
     input_schema={
         "type": "object",
         "properties": {
-            "prefix": {"type": "string", "description": "Path prefix, e.g. 'raw/replicon/User/'"},
+            "prefix": {
+                "type": "string",
+                "description": "Path prefix, e.g. 'raw/replicon/User/'",
+            },
             "bucket": {"type": "string", "description": "Bucket (default: lakehouse)"},
         },
         "required": [],
     },
 )
-def minio_list_objects(prefix: str = "", bucket: str | None = None) -> dict:
+def minio_list_objects(
+    prefix: str = "", bucket: str | None = None, security_context: dict | None = None
+) -> dict:
     bkt = bucket or settings.minio_bucket
     storage = _storage(bkt)
+    allowed = published_objects(security_context, bkt)
     objs = []
     truncated = False
     for obj in storage.iter_list(prefix):
+        if materialized_object(obj.key) and obj.key not in allowed:
+            continue
         if len(objs) >= 200:
             truncated = True
             break
@@ -79,8 +102,8 @@ def minio_list_objects(prefix: str = "", bucket: str | None = None) -> dict:
     return {
         "objects": [
             {
-                "name":          o.key,
-                "size_bytes":    o.size,
+                "name": o.key,
+                "size_bytes": o.size,
                 "last_modified": str(o.updated_at),
             }
             for o in objs
@@ -98,22 +121,30 @@ def minio_list_objects(prefix: str = "", bucket: str | None = None) -> dict:
     input_schema={
         "type": "object",
         "properties": {
-            "object_path": {"type": "string", "description": "Full object key in MinIO"},
-            "bucket":      {"type": "string"},
+            "object_path": {
+                "type": "string",
+                "description": "Full object key in MinIO",
+            },
+            "bucket": {"type": "string"},
         },
         "required": ["object_path"],
     },
 )
-def minio_get_parquet_schema(object_path: str, bucket: str | None = None) -> dict:
+def minio_get_parquet_schema(
+    object_path: str, bucket: str | None = None, security_context: dict | None = None
+) -> dict:
     import pyarrow.parquet as pq
+
     bkt = bucket or settings.minio_bucket
+    if not published_object(object_path, security_context, bkt):
+        raise PermissionError("materialized object is not published")
     raw = _read_bounded_object(_storage(bkt), object_path)
-    pf  = pq.ParquetFile(io.BytesIO(raw))
+    pf = pq.ParquetFile(io.BytesIO(raw))
     schema = pf.schema_arrow
     return {
         "object_path": object_path,
-        "num_rows":    pf.metadata.num_rows,
-        "columns":     [{"name": f.name, "type": str(f.type)} for f in schema],
+        "num_rows": pf.metadata.num_rows,
+        "columns": [{"name": f.name, "type": str(f.type)} for f in schema],
     }
 
 
@@ -124,22 +155,30 @@ def minio_get_parquet_schema(object_path: str, bucket: str | None = None) -> dic
         "type": "object",
         "properties": {
             "object_path": {"type": "string"},
-            "n":           {"type": "integer", "description": "Rows to return (default 10)"},
-            "bucket":      {"type": "string"},
+            "n": {"type": "integer", "description": "Rows to return (default 10)"},
+            "bucket": {"type": "string"},
         },
         "required": ["object_path"],
     },
 )
-def minio_get_sample_rows(object_path: str, n: int = 10, bucket: str | None = None) -> dict:
+def minio_get_sample_rows(
+    object_path: str,
+    n: int = 10,
+    bucket: str | None = None,
+    security_context: dict | None = None,
+) -> dict:
     import pyarrow.parquet as pq
+
     bkt = bucket or settings.minio_bucket
+    if not published_object(object_path, security_context, bkt):
+        raise PermissionError("materialized object is not published")
     n = min(max(int(n or 10), 1), 100)
     raw = _read_bounded_object(_storage(bkt), object_path)
-    df  = pq.read_table(io.BytesIO(raw)).to_pandas().head(n)
+    df = pq.read_table(io.BytesIO(raw)).to_pandas().head(n)
     return {
-        "rows":    df.to_dict(orient="records"),
+        "rows": df.to_dict(orient="records"),
         "columns": list(df.columns),
-        "count":   len(df),
+        "count": len(df),
     }
 
 
@@ -152,9 +191,15 @@ def minio_get_sample_rows(object_path: str, n: int = 10, bucket: str | None = No
     input_schema={
         "type": "object",
         "properties": {
-            "cartridge_id": {"type": "string", "description": "Cartridge identifier, e.g. 'replicon'"},
-            "filename":     {"type": "string", "description": "File name, e.g. 'openapi.yaml'"},
-            "content":      {"type": "string", "description": "File content as plain text"},
+            "cartridge_id": {
+                "type": "string",
+                "description": "Cartridge identifier, e.g. 'replicon'",
+            },
+            "filename": {
+                "type": "string",
+                "description": "File name, e.g. 'openapi.yaml'",
+            },
+            "content": {"type": "string", "description": "File content as plain text"},
         },
         "required": ["cartridge_id", "filename", "content"],
     },
@@ -183,7 +228,7 @@ def minio_upload_spec(cartridge_id: str, filename: str, content: str) -> dict:
     },
 )
 def minio_list_cartridge_specs(cartridge_id: str) -> dict:
-    bkt    = settings.minio_bucket
+    bkt = settings.minio_bucket
     storage = _storage(bkt)
     cartridge_id = _safe_cartridge_id(cartridge_id)
     prefix = f"cartridges/{cartridge_id}/specs/"
@@ -195,8 +240,7 @@ def minio_list_cartridge_specs(cartridge_id: str) -> dict:
     return {
         "cartridge_id": cartridge_id,
         "specs": [
-            {"name": o.key.replace(prefix, ""), "size_bytes": o.size}
-            for o in objs
+            {"name": o.key.replace(prefix, ""), "size_bytes": o.size} for o in objs
         ],
     }
 
@@ -208,7 +252,7 @@ def minio_list_cartridge_specs(cartridge_id: str) -> dict:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "filename":     {"type": "string"},
+            "filename": {"type": "string"},
         },
         "required": ["cartridge_id", "filename"],
     },
@@ -226,7 +270,7 @@ def minio_read_spec(cartridge_id: str, filename: str) -> dict:
     raw = _read_bounded_object(storage, key, max_bytes=MAX_SPEC_BYTES)
     return {
         "cartridge_id": cartridge_id,
-        "filename":     filename,
-        "content":      raw.decode("utf-8"),
-        "size_bytes":   len(raw),
+        "filename": filename,
+        "content": raw.decode("utf-8"),
+        "size_bytes": len(raw),
     }

@@ -2658,6 +2658,7 @@ async def api_explorer_list(
     continuation_token: str | None = None,
     user: dict = Depends(require_authenticated),
 ):
+    from app.services import publication_heads as _publication
     s3 = _s3_client()
     bucket_name = _resolve_explorer_bucket(bucket, user)
     if not _explorer_path_allowed(prefix, user):
@@ -2671,17 +2672,20 @@ async def api_explorer_list(
     try:
         resp = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
     except Exception as exc:
-        raise HTTPException(502, f"object storage list failed: {exc}") from exc
+        raise HTTPException(502, "object storage list failed") from exc
+    published = await _publication.published_object_keys(user, bucket_name)
     objects = [
         _explorer_object_row(o)
         for o in resp.get("Contents", [])
         if o.get("Key") != prefix
         and _explorer_path_allowed(o.get("Key", ""), user, object_access=True)
+        and _publication.visible_materialized_object(o.get("Key", ""), published)
     ]
     folders = [
         p["Prefix"]
         for p in resp.get("CommonPrefixes", [])
         if _explorer_path_allowed(p.get("Prefix", ""), user)
+        and _publication.visible_materialized_prefix(p.get("Prefix", ""), published)
     ]
     return _explorer_list_response(
         bucket_name=bucket_name,
@@ -2703,9 +2707,12 @@ async def api_explorer_download(
     expires: int = 300,
     user: dict = Depends(require_authenticated),
 ):
+    from app.services import publication_heads as _publication
     s3 = _s3_client()
     bucket_name = _resolve_explorer_bucket(bucket, user)
-    if not _explorer_path_allowed(key, user, object_access=True):
+    if not _explorer_path_allowed(
+        key, user, object_access=True
+    ) or not await _publication.published_object(key, user, bucket_name):
         raise HTTPException(403, "object not allowed")
     expires_in = min(max(int(expires), 60), 3600)
     try:
@@ -2716,7 +2723,7 @@ async def api_explorer_download(
             ExpiresIn=expires_in,
         )
     except Exception as exc:
-        raise HTTPException(502, f"object storage download failed: {exc}") from exc
+        raise HTTPException(502, "object storage download failed") from exc
     await _audit.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -2744,6 +2751,9 @@ async def api_explorer_delete(
     confirm: str = Query(...),
     user: dict = Depends(require_authenticated),
 ):
+    from app.services import publication_heads as _publication
+    if _publication.materialized_object_key(key):
+        raise HTTPException(409, "published objects require staged retirement")
     s3 = _s3_client()
     bucket_name = _resolve_explorer_bucket(bucket, user)
     if not _explorer_path_allowed(key, user, object_access=True):
@@ -2753,7 +2763,7 @@ async def api_explorer_delete(
     try:
         await asyncio.to_thread(s3.delete_object, Bucket=bucket_name, Key=key)
     except Exception as exc:
-        raise HTTPException(502, f"object storage delete failed: {exc}") from exc
+        raise HTTPException(502, "object storage delete failed") from exc
     await _audit.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -3085,27 +3095,9 @@ async def api_data(
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
 
-    # Prefer already-materialized, workspace-scoped Gold tables. This keeps
-    # production reads on the same path as the intelligence readiness gate and
-    # avoids failing analytic views when the legacy S3 parquet dependency is
-    # unavailable but the scoped Gold table is present.
-    try:
-        from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+    from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
 
-        return await query_gold_dataset_rows(dataset, user, limit)
-    except HTTPException as exc:
-        if exc.status_code not in {404, 503}:
-            raise
-    except Exception:
-        pass
-
-    data = await _refinement_invoke(
-        "query_dataset",
-        {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
-        timeout=60,
-        user=user,
-    )
-    return data.get("data", data)
+    return await query_gold_dataset_rows(dataset, user, limit)
 
 
 @app.get("/api/data/{dataset}/options", dependencies=[Depends(require_permission("datasets.read"))])

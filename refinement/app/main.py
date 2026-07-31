@@ -31,14 +31,20 @@ from app.logging_config import setup_logging
 setup_logging(service_name="refinement")
 logger = logging.getLogger(__name__)
 
-from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
+from app.duckdb_runtime import require_loaded_extensions
 from app.llm_sql import GeneratedSQLValidationError, generate_sql
+from app.publication_public import (
+    published_catalog,
+    published_dataset_metadata,
+    published_lineage,
+)
 from app.security import get_internal_api_key
+from app.staged_publication_engine import StagedPublicationEngine
 from app.successfactors_fallbacks import annotate_operational_fallback, fallback_dataset_for_successfactors
 
 DATASETS_DIR = Path("/app/datasets")
-engine = DuckDBEngine()
+engine = StagedPublicationEngine()
 store  = DatasetStore(DATASETS_DIR)
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _SECURITY_CONTEXT_SIGNATURE_FIELD = "_signature"
@@ -181,7 +187,6 @@ async def lifespan(app: FastAPI):
     # (data_catalog, data_relationships) and infra/init/08_workspace_ownership.sql
     # (analytic_apps), with the v1.20 GRANTs in 25_service_roles.sql.
     _migrate_yaml_datasets()
-    _seed_catalog_from_existing()
     _seed_relationships()
     yield
 
@@ -1154,7 +1159,7 @@ async def _readiness_checks() -> dict[str, str]:
 
     try:
         with engine._duckdb_lock:
-            engine._conn().execute("SELECT 1").fetchone()
+            require_loaded_extensions(engine._conn())
         checks["duckdb"] = "up"
     except Exception:
         logger.exception("refinement readyz duckdb check failed")
@@ -1694,6 +1699,10 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                 }
         except Exception:
             logger.exception("failed checking analytic app blockers before deleting dataset %s", ds_name)
+        if str(ds_existing.get("layer") or "").lower() in {"silver", "gold"}:
+            raise HTTPException(
+                409, "published datasets require a staged retirement operation"
+            )
         info = store.delete_dataset(ds_name, **store_scope)
         if not info.get("deleted"):
             raise HTTPException(404, info.get("error", "not found"))
@@ -1766,17 +1775,19 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         except (duckdb.Error, ValueError) as exc:
             status_code, detail = _friendly_duckdb_error(exc, args["name"])
             raise HTTPException(status_code=status_code, detail=detail) from exc
-        store.update_refresh(args["name"], result["row_count"], **store_scope)
-        _reindex_dataset_best_effort(args["name"], body)
+        if not engine.consume_publication_replay():
+            store.update_refresh(args["name"], result["row_count"], **store_scope)
+            _reindex_dataset_best_effort(args["name"], body)
         return result
 
     if tool == "list_datasets":
         sec = _require_security_permission(body, "datasets.read")
         return {
             "datasets": [
-                _sanitize_dataset_for_scope(sec, ds)
+                _sanitize_dataset_for_scope(sec, published)
                 for ds in store.list_datasets(**_dataset_store_scope(sec))
                 if _dataset_allowed(sec, ds)
+                and (published := published_dataset_metadata(ds, sec)) is not None
             ]
         }
 
@@ -1786,7 +1797,10 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
-        return _sanitize_dataset_for_scope(sec, ds)
+        published = published_dataset_metadata(ds, sec)
+        if published is None:
+            raise HTTPException(404, f"Dataset '{args['name']}' is not published")
+        return _sanitize_dataset_for_scope(sec, published)
 
     if tool == "get_schema":
         sec = _require_security_permission(body, "datasets.read")
@@ -1984,71 +1998,12 @@ def _sanitize_lineage_row_for_scope(sec: dict | None, row: dict) -> dict:
 
 
 def _get_lineage(name: str, limit: int, security_context: dict | None = None) -> dict:
-    if (
-        isinstance(security_context, dict)
-        and not _is_unscoped_admin_security_context(security_context)
-        and not str(security_context.get("workspace_id") or "").strip()
-    ):
-        return {"name": name, "lineage": []}
+    del limit
     try:
-        import psycopg2
-        conn = psycopg2.connect(_postgres_dsn())
-        with conn.cursor() as cur:
-            _pg_set_scope(cur, security_context)
-            cur.execute(
-                """
-                SELECT column_name
-                  FROM information_schema.columns
-                 WHERE table_schema = 'public'
-                   AND table_name = 'silver_lineage'
-                """
-            )
-            columns = {str(row[0]) for row in cur.fetchall()}
-            conditions = ["silver_name = %s"]
-            params: list = [name]
-            scoped = (
-                isinstance(security_context, dict)
-                and not _is_unscoped_admin_security_context(security_context)
-            )
-            if scoped:
-                workspace = str(security_context.get("workspace_id") or "").strip()
-                tenant = str(security_context.get("tenant_id") or "").strip()
-                if "workspace_id" in columns:
-                    conditions.append("workspace_id = %s::uuid")
-                    params.append(workspace)
-                    if tenant and "tenant_id" in columns:
-                        conditions.append("(tenant_id IS NULL OR tenant_id = %s::uuid)")
-                        params.append(tenant)
-            where = " AND ".join(conditions)
-            params.append(min(limit, 50))
-            cur.execute(f"""
-                SELECT silver_name, cartridge_id, source_entity,
-                       source_load_date, source_batch_id, layer,
-                       row_count, storage_uri, created_by, created_at
-                FROM silver_lineage
-                WHERE {where}
-                ORDER BY created_at DESC LIMIT %s
-            """, params)
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        conn.close()
-        if (
-            isinstance(security_context, dict)
-            and not _is_unscoped_admin_security_context(security_context)
-            and "workspace_id" not in columns
-        ):
-            rows = [
-                row
-                for row in rows
-                if _lineage_row_visible_for_scope(security_context, row)
-            ]
-        for r in rows:
-            if r.get("created_at"):
-                r["created_at"] = r["created_at"].isoformat()
-            if r.get("source_load_date"):
-                r["source_load_date"] = str(r["source_load_date"])
-        rows = [_sanitize_lineage_row_for_scope(security_context, row) for row in rows]
-        return {"name": name, "lineage": rows}
+        ds = store.get_dataset(name, **_dataset_store_scope(security_context or {}))
+        if not ds:
+            return {"name": name, "lineage": []}
+        return published_lineage(ds, security_context)
     except Exception as exc:
         request_id = _log_internal_error(exc, "dataset lineage lookup failed")
         return {"name": name, "error": "Internal Error", "request_id": request_id}
@@ -2128,6 +2083,21 @@ def _get_data_catalog(
     datasets: list[str] | None = None,
     security_context: dict | None = None,
 ) -> dict:
+    store_scope = _dataset_store_scope(security_context) if security_context else {}
+    metadata = [
+        ds
+        for ds in store.list_datasets(**store_scope)
+        if not security_context or _dataset_allowed(security_context, ds)
+    ]
+    return published_catalog(
+        metadata,
+        security_context,
+        layer=layer,
+        cartridge=cartridge,
+        tags=tags,
+        datasets=datasets,
+    )
+
     import json as _json
     store_scope = _dataset_store_scope(security_context) if security_context else {}
     conditions = ["1=1"]
@@ -2687,9 +2657,10 @@ async def list_datasets(
     body = _body_from_security_header(internal_service, x_security_context)
     sec = _require_security_permission(body, "datasets.read")
     datasets = [
-        _sanitize_dataset_for_scope(sec, d)
+        _sanitize_dataset_for_scope(sec, published)
         for d in store.list_datasets(**_dataset_store_scope(sec))
         if _dataset_allowed(sec, d)
+        and (published := published_dataset_metadata(d, sec)) is not None
     ]
     _annotate_staleness(datasets, sec)
     return {"datasets": datasets}
@@ -2789,7 +2760,10 @@ async def dataset_definition(
     if not ds:
         raise HTTPException(404)
     _require_dataset_scope(body, ds)
-    return _sanitize_dataset_for_scope(sec, ds)
+    published = published_dataset_metadata(ds, sec)
+    if published is None:
+        raise HTTPException(404)
+    return _sanitize_dataset_for_scope(sec, published)
 
 
 @app.get("/datasets/{name}/schema")
@@ -2833,8 +2807,9 @@ async def refresh_dataset(
         raise HTTPException(404)
     _require_dataset_scope(auth_body, ds, "datasets.write")
     result = _materialize_with_operational_fallback(ds, _trusted_user_context(auth_body, {}))
-    store.update_refresh(name, result["row_count"], **store_scope)
-    _reindex_dataset_best_effort(name, auth_body)
+    if not engine.consume_publication_replay():
+        store.update_refresh(name, result["row_count"], **store_scope)
+        _reindex_dataset_best_effort(name, auth_body)
     return result
 
 
@@ -2888,11 +2863,11 @@ async def refresh_by_source(
             continue
         try:
             result = engine.materialize(ds, ctx)
-            store.update_refresh(meta["name"], result["row_count"], **store_scope)
-            _reindex_dataset_best_effort(meta["name"], auth_body)
+            if not engine.consume_publication_replay():
+                store.update_refresh(meta["name"], result["row_count"], **store_scope)
+                _reindex_dataset_best_effort(meta["name"], auth_body)
             results.append({"name": meta["name"], "status": "ok",
-                             "row_count": result["row_count"],
-                             "storage_uri": result["storage_uri"]})
+                            "row_count": result["row_count"]})
         except Exception as exc:
             request_id = _log_internal_error(exc, "dataset materialize_all item failed")
             results.append({

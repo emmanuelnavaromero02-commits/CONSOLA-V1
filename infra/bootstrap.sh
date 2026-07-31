@@ -30,7 +30,6 @@ SUPERSET_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 SUPERSET_SERVICE_PASSWORD="$(openssl rand -hex 16)"
 AIRFLOW_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 AGENT_RUNNER_TOKEN="$(openssl rand -hex 32)"
-
 # Sprint v1.19: per-service Postgres roles (least-privilege). Each
 # service gets its own login role and its own password so a compromise
 # of one service can't reach the other tables — most importantly,
@@ -39,10 +38,10 @@ AGENT_RUNNER_TOKEN="$(openssl rand -hex 32)"
 OMEGA_CONSOLE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_REFINEMENT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_REFINEMENT_GOLD_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_GOLD_PUBLISHER_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_VAULT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_WORKSPACE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_MCP_INFRA_PASSWORD="$(openssl rand -hex 16)"
-
 # Sprint v1.38 (audit B5+B6 P0.5): least-privilege roles for the
 # SAP cartridges, the two Airflow surfaces (metastore + DAG runtime),
 # and the Superset metastore. Created by
@@ -53,7 +52,6 @@ OMEGA_CARTRIDGE_SAP_SF_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_AIRFLOW_DAG_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_AIRFLOW_META_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_SUPERSET_META_PASSWORD="$(openssl rand -hex 16)"
-
 # Sprint v1.40 (replicon cartridge restored): DB role + 3 pair keys
 # (replicon -> console / mcp-infra / refinement). Created by
 # infra/init/37_replicon_role_and_tables.sql.
@@ -134,6 +132,7 @@ AGENT_RUNNER_TOKEN=${AGENT_RUNNER_TOKEN}
 OMEGA_CONSOLE_PASSWORD=${OMEGA_CONSOLE_PASSWORD}
 OMEGA_REFINEMENT_PASSWORD=${OMEGA_REFINEMENT_PASSWORD}
 OMEGA_REFINEMENT_GOLD_PASSWORD=${OMEGA_REFINEMENT_GOLD_PASSWORD}
+OMEGA_GOLD_PUBLISHER_PASSWORD=${OMEGA_GOLD_PUBLISHER_PASSWORD}
 OMEGA_VAULT_PASSWORD=${OMEGA_VAULT_PASSWORD}
 OMEGA_WORKSPACE_PASSWORD=${OMEGA_WORKSPACE_PASSWORD}
 OMEGA_MCP_INFRA_PASSWORD=${OMEGA_MCP_INFRA_PASSWORD}
@@ -229,6 +228,7 @@ SUPERSET_PUBLIC_URL=http://localhost:8088
 # === Internal service URLs / DSNs ===
 DATABASE_URL=postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD}@postgres:5432/modecissions
 GOLD_DATABASE_URL=postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD}@postgres_gold:5433/modecissions_gold
+GOLD_PUBLISHER_DATABASE_URL=postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD}@postgres_gold:5433/modecissions_gold
 REFINEMENT_URL=http://refinement:8500
 MCP_INFRA_URL=http://mcp-infra:8010
 AIRFLOW_URL=http://airflow:8080

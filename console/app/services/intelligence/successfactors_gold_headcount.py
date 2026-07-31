@@ -6,6 +6,10 @@ from typing import Any
 import asyncpg
 from fastapi import HTTPException
 
+from app.services.gold_publication_relation import (
+    published_relation_column_types,
+    resolve_published_gold_relation,
+)
 from app.services.public_text_sensitivity import public_business_label
 from app.services.intelligence.gold_fetcher import _gold_dsn, _gold_table
 from app.services.intelligence.successfactors_active_headcount import (
@@ -37,12 +41,12 @@ _INTEGER_TYPES = frozenset({"smallint", "integer", "bigint"})
 _TEXT_TYPES = frozenset({"character", "character varying", "text"})
 
 
-def _aggregate_sql(table: str, name_key: str) -> str:
+def _aggregate_sql(relation_sql: str, name_key: str) -> str:
     return f"""
         WITH scoped AS MATERIALIZED (
             SELECT "{name_key}"::text AS raw_business_name,
                    headcount
-              FROM public."{table}"
+              FROM {relation_sql}
              WHERE workspace_id::text = $1
                AND tenant_id::text = $2
                AND "{name_key}"::text = ANY($3::text[])
@@ -75,17 +79,6 @@ def _aggregate_sql(table: str, name_key: str) -> str:
           LEFT JOIN top_rows ON TRUE
          ORDER BY headcount DESC NULLS LAST, business_name
     """
-
-
-def _column_contract(rows: list[Mapping[str, Any]]) -> dict[str, dict[str, str]]:
-    columns: dict[str, dict[str, str]] = {}
-    for row in rows:
-        table = str(row.get("table_name") or "")
-        column = str(row.get("column_name") or "")
-        data_type = str(row.get("data_type") or "")
-        if table and column:
-            columns.setdefault(table, {})[column] = data_type
-    return columns
 
 
 def _contract_error(
@@ -177,12 +170,12 @@ async def _query_dimension(
     tenant_id: str,
     workspace_id: str,
     limit: int,
+    relation_sql: str,
 ) -> dict[str, Any]:
-    table = _gold_table(dataset)
     label_cursor = conn.cursor(
         f"""
         SELECT "{name_key}"::text AS business_name
-          FROM public."{table}"
+          FROM {relation_sql}
          WHERE workspace_id::text = $1 AND tenant_id::text = $2
         """,
         workspace_id,
@@ -198,7 +191,7 @@ async def _query_dimension(
     if not accepted_labels:
         return {"rows": [], "total": None, "status": "empty", "error": None}
     rows = await conn.fetch(
-        _aggregate_sql(table, name_key),
+        _aggregate_sql(relation_sql, name_key),
         workspace_id,
         tenant_id,
         accepted_labels,
@@ -220,10 +213,6 @@ async def query_successfactors_headcount_summaries(
         )
     safe_limit = max(1, min(limit if type(limit) is int else 5, 20))
     active_table = _gold_table(ACTIVE_HEADCOUNT_DATASET)
-    tables = [
-        active_table,
-        *[_gold_table(dataset) for _key, dataset, _name_key in _DIMENSIONS],
-    ]
     conn = await asyncpg.connect(dsn, command_timeout=10)
     results: dict[str, dict[str, Any]] = {}
     try:
@@ -233,17 +222,22 @@ async def query_successfactors_headcount_summaries(
                 tenant_id,
                 workspace_id,
             )
-            column_rows = await conn.fetch(
-                """
-                SELECT table_name, column_name, data_type
-                  FROM information_schema.columns
-                 WHERE table_schema = 'public'
-                   AND table_name = ANY($1::text[])
-                """,
-                tables,
-            )
-            columns = _column_contract([dict(row) for row in column_rows])
+            relations, columns, unavailable = {}, {}, {}
+            datasets = [ACTIVE_HEADCOUNT_DATASET, *[item[1] for item in _DIMENSIONS]]
+            for dataset in datasets:
+                try:
+                    relation = await resolve_published_gold_relation(
+                        conn, tenant_id, workspace_id, dataset
+                    )
+                    relations[dataset] = relation
+                    columns[
+                        _gold_table(dataset)
+                    ] = await published_relation_column_types(conn, relation)
+                except Exception as exc:
+                    unavailable[dataset] = exc
             try:
+                if ACTIVE_HEADCOUNT_DATASET in unavailable:
+                    raise unavailable[ACTIVE_HEADCOUNT_DATASET]
                 async with conn.transaction():
                     results[
                         ACTIVE_HEADCOUNT_DATASET
@@ -251,12 +245,16 @@ async def query_successfactors_headcount_summaries(
                         conn,
                         columns=columns,
                         table=active_table,
+                        relation_sql=relations[ACTIVE_HEADCOUNT_DATASET].sql,
                         tenant_id=tenant_id,
                         workspace_id=workspace_id,
                     )
             except Exception as exc:
                 results[ACTIVE_HEADCOUNT_DATASET] = unavailable_active_headcount(exc)
             for _key, dataset, name_key in _DIMENSIONS:
+                if dataset in unavailable:
+                    results[dataset] = _failure(unavailable[dataset])
+                    continue
                 if error := _contract_error(columns, dataset, name_key):
                     results[dataset] = _failure(error)
                     continue
@@ -269,6 +267,7 @@ async def query_successfactors_headcount_summaries(
                             tenant_id=tenant_id,
                             workspace_id=workspace_id,
                             limit=safe_limit,
+                            relation_sql=relations[dataset].sql,
                         )
                 except Exception as exc:
                     results[dataset] = _failure(exc)

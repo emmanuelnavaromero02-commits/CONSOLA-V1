@@ -1,5 +1,4 @@
 services:
-
   # ── Infrastructure ────────────────────────────────────────────────────────────
 
   postgres:
@@ -60,7 +59,7 @@ services:
       POSTGRES_DB: modecissions_gold
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-} -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD:-}"
     ports:
       - "15433:5433"
     command:
@@ -349,6 +348,7 @@ services:
       # and master_* tables but must not use the postgres superuser.
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:-}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
+      GOLD_PUBLISHER_DATABASE_URL: "postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
       MINIO_SECRET_KEY:  ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -374,7 +374,7 @@ services:
       # Sprint v1.21 (F2): liveness probe so dependent services can
       # wait on `condition: service_healthy`. The image is
       # python:3.12-slim (no wget/curl), hence python3 -c.
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/healthz', timeout=3).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/readyz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5

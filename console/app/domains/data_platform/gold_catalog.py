@@ -9,8 +9,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.dependencies import ROLE_ADMIN
 from app.services.security_context import build_security_context
+from app.services.gold_publication_relation import published_relation_column_types
+from app.services.gold_publication_relation import resolve_published_gold_relation
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +35,6 @@ def gold_dataset_from_source(source: str) -> str:
     return ""
 
 
-def gold_table_for_dataset(dataset: str) -> str:
-    if not DATASET_NAME_RE.fullmatch(dataset or ""):
-        raise HTTPException(400, "Invalid dataset name")
-    return f"gold_{dataset}"
-
-
-def quote_pg_ident(identifier: str) -> str:
-    if not DATASET_NAME_RE.fullmatch(identifier or ""):
-        raise HTTPException(400, "Invalid identifier")
-    return '"' + identifier.replace('"', '""') + '"'
-
-
 def gold_schema_dsn() -> str:
     return (os.environ.get("GOLD_DATABASE_URL") or "").replace(
         "postgresql+psycopg2://", "postgresql://"
@@ -64,6 +53,36 @@ def gold_source_visible_in_viewers(cartridge: str, dataset: str) -> bool:
     if dataset.startswith("sim_dataset_"):
         return False
     return True
+
+
+async def _published_gold_heads(tenant_id: str, workspace_id: str) -> dict[str, int]:
+    dsn = gold_schema_dsn()
+    if not dsn or not tenant_id or not workspace_id:
+        return {}
+    import asyncpg as _asyncpg
+
+    conn = await _asyncpg.connect(dsn, command_timeout=10)
+    try:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            await conn.execute(
+                "SELECT set_config('app.tenant_id',$1,true),"
+                "set_config('app.workspace_id',$2,true)",
+                tenant_id,
+                workspace_id,
+            )
+            rows = await conn.fetch(
+                """SELECT h.dataset,COALESCE(r.row_count,0) AS row_count
+                     FROM omega_publication.dataset_publication_heads h
+                     JOIN omega_publication.materialization_runs r
+                       ON r.materialization_run_id=h.materialization_run_id
+                    WHERE h.tenant_id=$1 AND h.workspace_id=$2 AND h.layer='gold'
+                      AND r.status IN ('published','legacy_unverified')""",
+                tenant_id,
+                workspace_id,
+            )
+            return {str(row["dataset"]): int(row["row_count"] or 0) for row in rows}
+    finally:
+        await conn.close()
 
 
 @dataclass(frozen=True)
@@ -105,37 +124,12 @@ class GoldCatalogRuntime:
                         exc_info=True,
                     )
             return tenant_id, workspace_id
-        if str((user or {}).get("role") or "").lower() not in {
-            "owner",
-            "super_admin",
-            ROLE_ADMIN,
-        }:
-            return "", ""
-        pool = await self.get_db_pool()
-        row = await pool.fetchrow(
-            """
-            SELECT d.workspace_id::text AS workspace_id, w.tenant_id::text AS tenant_id
-              FROM datasets d
-              JOIN workspaces w ON w.id = d.workspace_id
-             WHERE d.name = $1
-               AND d.layer = 'gold'
-               AND d.workspace_id IS NOT NULL
-               AND COALESCE(d.row_count, 0) > 0
-             ORDER BY d.updated_at DESC NULLS LAST,
-                      d.last_refresh DESC NULLS LAST,
-                      d.created_at DESC NULLS LAST
-             LIMIT 1
-            """,
-            dataset,
-        )
-        if not row:
-            return "", ""
-        return str(row["tenant_id"] or "").strip(), str(row["workspace_id"] or "").strip()
+        return "", ""
 
     async def sources_from_catalog(self, user: dict | None) -> list[str]:
         try:
             pool = await self.get_db_pool()
-            _tenant_id, workspace_id = await self.workspace_scope_for_apps_filter(user)
+            tenant_id, workspace_id = await self.workspace_scope_for_apps_filter(user)
         except Exception:
             logger.debug("Gold source catalog fallback unavailable", exc_info=True)
             return []
@@ -144,35 +138,25 @@ class GoldCatalogRuntime:
             rows = await pool.fetch(
                 """
                 SELECT DISTINCT name, cartridge
-                  FROM datasets
+                 FROM datasets
                  WHERE layer = 'gold'
                    AND workspace_id = $1::uuid
-                   AND COALESCE(row_count, 0) > 0
                  ORDER BY name
                 """,
                 workspace_id,
             )
-        elif str((user or {}).get("role") or "").lower() in {
-            "owner",
-            "super_admin",
-            ROLE_ADMIN,
-        }:
-            rows = await pool.fetch(
-                """
-                SELECT DISTINCT name, cartridge
-                  FROM datasets
-                 WHERE layer = 'gold'
-                   AND workspace_id IS NOT NULL
-                   AND COALESCE(row_count, 0) > 0
-                 ORDER BY name
-                """
-            )
         else:
-            rows = []
+            return []
+        try:
+            heads = await _published_gold_heads(tenant_id, workspace_id)
+        except Exception:
+            return []
         sources: list[str] = []
         for row in rows:
             cartridge = str(row["cartridge"] or "").strip()
             name = str(row["name"] or "").strip()
+            if name not in heads:
+                continue
             if not gold_source_visible_in_viewers(cartridge, name):
                 continue
             if allowed is not None and cartridge and cartridge not in allowed:
@@ -184,13 +168,12 @@ class GoldCatalogRuntime:
     async def semantic_entities_from_catalog(
         self, cartridge: str, user: dict | None
     ) -> list[dict[str, Any]]:
-        """Build Semantic viewer cards from real Gold datasets."""
         cartridge = (cartridge or "").strip()
         if not cartridge or cartridge in HIDDEN_GOLD_SOURCE_CARTRIDGES:
             return []
         try:
             pool = await self.get_db_pool()
-            _tenant_id, workspace_id = await self.workspace_scope_for_apps_filter(user)
+            tenant_id, workspace_id = await self.workspace_scope_for_apps_filter(user)
         except Exception:
             logger.debug("Gold semantic catalog fallback unavailable", exc_info=True)
             return []
@@ -203,40 +186,27 @@ class GoldCatalogRuntime:
                  WHERE layer = 'gold'
                    AND cartridge = $1
                    AND workspace_id = $2::uuid
-                   AND COALESCE(row_count, 0) > 0
                  ORDER BY name
                  LIMIT 24
                 """,
                 cartridge,
                 workspace_id,
             )
-        elif str((user or {}).get("role") or "").lower() in {
-            "owner",
-            "super_admin",
-            ROLE_ADMIN,
-        }:
-            rows = await pool.fetch(
-                """
-                SELECT DISTINCT name, row_count
-                  FROM datasets
-                 WHERE layer = 'gold'
-                   AND cartridge = $1
-                   AND workspace_id IS NOT NULL
-                   AND COALESCE(row_count, 0) > 0
-                 ORDER BY name
-                 LIMIT 24
-                """,
-                cartridge,
-            )
         else:
-            rows = []
+            return []
+        try:
+            heads = await _published_gold_heads(tenant_id, workspace_id)
+        except Exception:
+            return []
 
         entities: list[dict[str, Any]] = []
         for row in rows:
             dataset = str(row["name"] or "").strip()
-            if not DATASET_NAME_RE.fullmatch(dataset) or not gold_source_visible_in_viewers(
-                cartridge, dataset
-            ):
+            if dataset not in heads:
+                continue
+            if not DATASET_NAME_RE.fullmatch(
+                dataset
+            ) or not gold_source_visible_in_viewers(cartridge, dataset):
                 continue
             try:
                 payload = await self.schema_payload(f"gold/{dataset}", user)
@@ -261,7 +231,7 @@ class GoldCatalogRuntime:
                     "modes": ["gold"],
                     "fields": fields,
                     "columns": fields,
-                    "row_count": row["row_count"],
+                    "row_count": heads[dataset],
                     "source": "gold_catalog",
                 }
             )
@@ -283,53 +253,27 @@ class GoldCatalogRuntime:
             conn = await _asyncpg.connect(dsn, command_timeout=10)
         except Exception as exc:
             raise HTTPException(503, "Gold database unavailable") from exc
-        table = gold_table_for_dataset(dataset)
         try:
-            async with conn.transaction():
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
                 await conn.execute(
                     "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
                     tenant_id or "",
                     workspace_id,
                 )
-                exists = bool(
-                    await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
+                relation = await resolve_published_gold_relation(
+                    conn, tenant_id, workspace_id, dataset
                 )
-                if not exists:
-                    raise HTTPException(
-                        404, f"No se encontró el conjunto de datos '{dataset}'"
-                    )
-                column_rows = await conn.fetch(
-                    """
-                    SELECT column_name, data_type
-                      FROM information_schema.columns
-                     WHERE table_schema = 'public'
-                       AND table_name = $1
-                     ORDER BY ordinal_position
-                    """,
-                    table,
-                )
+                column_types = await published_relation_column_types(conn, relation)
                 columns = [
-                    {"name": str(row["column_name"]), "type": str(row["data_type"])}
-                    for row in column_rows
+                    {"name": name, "type": data_type}
+                    for name, data_type in column_types.items()
                 ]
                 names = {col["name"] for col in columns}
                 if "workspace_id" not in names:
                     raise HTTPException(
                         404, f"No se encontró el conjunto de datos '{dataset}'"
                     )
-                values: list[Any] = [workspace_id]
-                clauses = ["workspace_id::text = $1"]
-                if "tenant_id" in names and tenant_id:
-                    values.append(tenant_id)
-                    clauses.append(f"tenant_id::text = ${len(values)}")
-                values.append(5)
-                rows = await conn.fetch(
-                    (
-                        f"SELECT * FROM public.{quote_pg_ident(table)} "
-                        f"WHERE {' AND '.join(clauses)} LIMIT ${len(values)}"
-                    ),
-                    *values,
-                )
+                rows = await conn.fetch(f"SELECT * FROM {relation.sql} LIMIT 5")
         finally:
             await conn.close()
         preview_rows = [dict(row) for row in rows]

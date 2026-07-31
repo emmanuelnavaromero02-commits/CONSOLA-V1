@@ -1,8 +1,4 @@
-"""Scoped data-platform read helpers.
-
-These helpers keep Bronze/Silver/Gold read surfaces tenant/workspace aware and
-provide the small singleflight cache used by viewer/catalog endpoints.
-"""
+"""Tenant/workspace-scoped data-platform reads and singleflight caches."""
 
 from __future__ import annotations
 
@@ -15,8 +11,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.services.publication_heads import publication_epoch
 from app.services.security_context import build_security_context
-
 
 BRONZE_LOGICAL_READ_PARQUET_CALL_RE = re.compile(
     r"\bread_parquet\s*\(\s*(['\"])(raw/[A-Za-z0-9_./=-]+)\1\s*\)",
@@ -207,19 +203,23 @@ def scoped_read_cache_set(
 async def scoped_read_cache_get_or_set(
     namespace: str, user: dict | None, parts: tuple[Any, ...], loader
 ) -> Any:
-    cached = scoped_read_cache_get(namespace, user, *parts)
-    if cached is not None:
-        return cached
     ttl = scoped_read_cache_ttl()
     if ttl <= 0:
         return await loader()
-    key = scoped_read_cache_key(namespace, user, *parts)
+    epoch = await publication_epoch(user)
+    if epoch is None:
+        raise HTTPException(503, "published dataset state is unavailable")
+    versioned_parts = (*parts, epoch)
+    cached = scoped_read_cache_get(namespace, user, *versioned_parts)
+    if cached is not None:
+        return cached
+    key = scoped_read_cache_key(namespace, user, *versioned_parts)
     lock = SCOPED_READ_CACHE_LOCKS.setdefault(key, asyncio.Lock())
     async with lock:
-        cached = scoped_read_cache_get(namespace, user, *parts)
+        cached = scoped_read_cache_get(namespace, user, *versioned_parts)
         if cached is not None:
             return cached
-        return scoped_read_cache_set(namespace, user, await loader(), *parts)
+        return scoped_read_cache_set(namespace, user, await loader(), *versioned_parts)
 
 
 def scoped_read_cache_invalidate(namespace: str, user: dict | None = None) -> None:

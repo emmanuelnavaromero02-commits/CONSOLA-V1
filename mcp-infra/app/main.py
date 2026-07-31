@@ -35,10 +35,8 @@ from app.rag.ingest import (
 )
 from app.security import get_internal_api_key
 from app.config import settings
-# Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
 from app.response_redaction import redact_response_value  # noqa: E402
-
 setup_logging(service_name="mcp-infra")
 logger = logging.getLogger(__name__)
 
@@ -1008,6 +1006,7 @@ def _postgres_mentioned_tables(sql: str, table: str = "") -> set[str]:
 
 
 _RAG_SCOPE_SUFFIX_RE = re.compile(r":tenant:([^:]+):workspace:([^:]+)$")
+_RAG_HEAD_SUFFIX_RE = re.compile(r":head:([0-9a-f]{64})$")
 
 
 def _rag_scope_suffix(ctx: dict[str, Any]) -> str:
@@ -1037,6 +1036,15 @@ def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
     name, scope_ok = _rag_base_name_for_context(ctx, name)
     if not scope_ok:
         return False
+    head = _RAG_HEAD_SUFFIX_RE.search(name)
+    if name.startswith("_semantic_"):
+        if not head:
+            return False
+        from app.publication_heads import publication_epoch
+
+        if head.group(1) != publication_epoch(ctx):
+            return False
+        name = name[: head.start()]
     if name.startswith("raw:"):
         parts = name.split(":", 2)
         return len(parts) > 1 and _prefix_allowed(ctx, f"raw/{parts[1]}/")
@@ -1348,6 +1356,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             )
 
     if tool.startswith("minio_"):
+        if tool in _DATA_READ_TOOLS:
+            args["security_context"] = ctx
         bucket = args.get("bucket")
         allowed_buckets = set(ctx.get("allowed_buckets") or [])
         if bucket and allowed_buckets and bucket not in allowed_buckets:
@@ -1836,12 +1846,17 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
     import psycopg2
     from datetime import datetime, timezone
     from app.config import settings as s
+    from app.publication_heads import publication_epoch, published_heads
 
     bucket = os.environ.get("MINIO_BUCKET", "")
     cartridge = _safe_rag_segment(cartridge, "cartridge")
     endpoint = os.environ.get("MINIO_ENDPOINT", "")
     region = os.environ.get("AWS_REGION", "us-east-1")
     ctx = ctx or {}
+    try:
+        heads = published_heads(ctx)
+    except (PermissionError, RuntimeError) as exc:
+        raise HTTPException(503, "published catalog is unavailable") from exc
     scope_suffix = _rag_scope_suffix(ctx)
     scoped_raw_glob = ""
     scoped_raw_read = ""
@@ -1882,28 +1897,13 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
             dataset_params.append(str(ctx.get("workspace_id") or ""))
         dataset_sql += " ORDER BY layer, name"
         cur.execute(dataset_sql, tuple(dataset_params))
-        datasets = cur.fetchall()
-        lineage_sql = """
-            SELECT DISTINCT ON (silver_name) silver_name, storage_uri
-              FROM silver_lineage
-             WHERE cartridge_id = %s
-               AND storage_uri IS NOT NULL
-               AND storage_uri <> ''
-        """
-        lineage_params: list[Any] = [cartridge]
-        if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
-            lineage_sql += " AND storage_uri LIKE %s"
-            lineage_params.append(
-                "%/"
-                f"tenant_id={str(ctx.get('tenant_id') or '')}/"
-                f"workspace_id={str(ctx.get('workspace_id') or '')}/%"
-            )
-        lineage_sql += " ORDER BY silver_name, created_at DESC"
-        cur.execute(lineage_sql, tuple(lineage_params))
+        datasets = [
+            row for row in cur.fetchall() if (str(row[0]), str(row[1])) in heads
+        ]
         lineage_by_name = {
-            str(row[0]): str(row[1])
-            for row in cur.fetchall()
-            if row[0] and row[1]
+            dataset: str(value.get("object_uri") or "")
+            for (dataset, layer), value in heads.items()
+            if layer == "silver" and value.get("object_uri")
         }
         cur.execute("""
             SELECT dataset, column_name, COALESCE(description,''), COALESCE(tags, '{}')
@@ -1915,6 +1915,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
     desc_by = {
         (r[0], r[1]): {"description": r[2], "tags": r[3] or []}
         for r in desc_rows
+        if any(dataset == str(r[0]) for dataset, _layer in heads)
     }
 
     con = duckdb.connect()
@@ -1934,12 +1935,11 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
 
     def catalog_fields(dataset: str) -> list[tuple[str, str]]:
         return [
-            (column, "catalog")
-            for (catalog_dataset, column), _meta in sorted(desc_by.items())
-            if catalog_dataset == dataset
+            (str(field.get("name") or ""), str(field.get("type") or ""))
+            for field in heads.get((dataset, "gold"), {}).get("catalog", [])
+            if isinstance(field, dict) and field.get("name") and field.get("type")
         ]
 
-    # IMPORTANT: when the caller is scoped, the glob() pattern must already
     # restrict file discovery to their tenant/workspace partition. Otherwise
     # the entity list would include entities that only exist in other tenants'
     # data — leaking their presence even if their rows aren't read.
@@ -2010,7 +2010,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
             out.append("\n")
 
     content = "".join(out)
-    source_name = f"_semantic_{cartridge}{scope_suffix}"
+    source_name = f"_semantic_{cartridge}:head:{publication_epoch(ctx)}{scope_suffix}"
     ingest = await _rag_do_ingest(
         name=source_name,
         content=content,

@@ -228,54 +228,9 @@ def _mcp_payload(tool: str, args: dict[str, Any], user: dict | None) -> dict[str
 async def query_dataset_rows(
     dataset: str, user: dict | None, limit: int = 1000
 ) -> list[dict[str, Any]]:
-    try:
-        from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+    from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
 
-        return await query_gold_dataset_rows(dataset, user, limit)
-    except HTTPException as exc:
-        if exc.status_code not in {404, 503}:
-            raise
-    except Exception:
-        pass
-
-    async with httpx.AsyncClient(
-        headers=_internal_headers("REFINEMENT"), timeout=45
-    ) as client:
-        response = await client.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "query_dataset",
-                {
-                    "name": dataset,
-                    "limit": limit,
-                    "user_context": rls_user_context(user),
-                },
-                user,
-            ),
-        )
-    if response.status_code >= 400:
-        raise HTTPException(response.status_code, f"dataset unavailable: {dataset}")
-    payload = response.json()
-    if isinstance(payload, dict) and payload.get("error") and "data" not in payload:
-        detail = (
-            payload.get("error")
-            or payload.get("code")
-            or f"dataset unavailable: {dataset}"
-        )
-        raise HTTPException(503, str(detail))
-    data = payload.get("data", payload.get("result", payload))
-    if isinstance(data, dict):
-        if data.get("error") and "data" not in data:
-            detail = (
-                data.get("error")
-                or data.get("code")
-                or f"dataset unavailable: {dataset}"
-            )
-            raise HTTPException(503, str(detail))
-        data = data.get("data", [])
-    if not isinstance(data, list):
-        return []
-    return [dict(row) for row in data if isinstance(row, dict)]
+    return await query_gold_dataset_rows(dataset, user, limit)
 
 
 @_bind_to_core

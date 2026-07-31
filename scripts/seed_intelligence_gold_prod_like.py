@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Seed prod-like Gold datasets for the operational intelligence demo.
-
-This is a local/prod-like fixture, not provider data. It creates the four
-Gold tables used by the default intelligence readiness gate and scopes every
-row to one tenant/workspace so cross-tenant tests can assert isolation.
-"""
+"""Seed scoped, prod-like Gold fixtures for the operational intelligence demo."""
 
 from __future__ import annotations
 
@@ -14,6 +9,7 @@ from typing import Any
 
 import psycopg2
 from psycopg2 import sql
+from staged_publication_guard import require_legacy_gold_writer
 
 
 DATASETS: dict[str, dict[str, Any]] = {
@@ -379,6 +375,7 @@ def main() -> None:
     conn = _gold_conn()
     try:
         with conn.cursor() as cur:
+            require_legacy_gold_writer(cur)
             cur.execute(
                 "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
                 (tenant or "", workspace),

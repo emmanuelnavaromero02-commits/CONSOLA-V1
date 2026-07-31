@@ -18,7 +18,6 @@ networks:
     driver: bridge
 
 services:
-
   # ── Infrastructure (Postgres en contenedor, igual que local) ──────────────
 
   postgres:
@@ -58,7 +57,7 @@ services:
       POSTGRES_DB:       modecissions_gold
       POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}"
+      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required} -c app.omega_gold_publisher_password=${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}"
     command: -p 5433
     volumes:
       - postgres_gold_data:/var/lib/postgresql/data
@@ -243,6 +242,7 @@ services:
       APP_ENV:            ${APP_ENV:-production}
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
+      GOLD_PUBLISHER_DATABASE_URL: "postgresql+psycopg2://omega_gold_publisher:${OMEGA_GOLD_PUBLISHER_PASSWORD:?OMEGA_GOLD_PUBLISHER_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       MINIO_BUCKET:       ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:     "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY:   ${AWS_ACCESS_KEY_ID:-}
@@ -267,7 +267,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/healthz', timeout=3).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8500/readyz', timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5

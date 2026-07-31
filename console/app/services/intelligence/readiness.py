@@ -9,8 +9,9 @@ import asyncpg
 from app.services.intelligence.contracts import load_contracts
 from app.services.intelligence.utils import allowed_cartridges
 
-
-_SAFE_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_PUBLISHED_RELATION_RE = re.compile(
+    r"^(omega_publication_gold\.run_[0-9a-f]{32}|public\.gold_[A-Za-z_][A-Za-z0-9_]{0,127})$"
+)
 
 
 def _normalize_dsn(raw: str) -> str:
@@ -18,7 +19,9 @@ def _normalize_dsn(raw: str) -> str:
 
 
 def _gold_dsn() -> str:
-    return _normalize_dsn(os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
+    return _normalize_dsn(
+        os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
+    )
 
 
 def _operational_dsn() -> str:
@@ -30,7 +33,9 @@ def _workspace_scope(user: dict | None) -> tuple[str | None, str | None]:
         return None, None
     tenant_id = user.get("active_tenant_id") or user.get("tenant_id")
     workspace_id = user.get("active_workspace_id") or user.get("workspace_id")
-    return (str(tenant_id) if tenant_id else None), (str(workspace_id) if workspace_id else None)
+    return (str(tenant_id) if tenant_id else None), (
+        str(workspace_id) if workspace_id else None
+    )
 
 
 async def _default_workspace_scope() -> tuple[str | None, str | None]:
@@ -55,14 +60,18 @@ async def _default_workspace_scope() -> tuple[str | None, str | None]:
         )
         if not row:
             return None, None
-        return str(row["tenant_id"]) if row["tenant_id"] else None, str(row["workspace_id"])
+        return str(row["tenant_id"]) if row["tenant_id"] else None, str(
+            row["workspace_id"]
+        )
     except Exception:
         return None, None
     finally:
         await conn.close()
 
 
-async def _effective_readiness_scope(user: dict | None) -> tuple[str | None, str | None]:
+async def _effective_readiness_scope(
+    user: dict | None,
+) -> tuple[str | None, str | None]:
     tenant_id, workspace_id = _workspace_scope(user)
     if workspace_id:
         return tenant_id, workspace_id
@@ -106,81 +115,19 @@ def required_datasets(user: dict | None = None) -> list[dict[str, Any]]:
     return sorted(grouped.values(), key=lambda item: item["dataset"])
 
 
-async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
-    rows = await conn.fetch(
-        """
-        SELECT column_name
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = $1
-        """,
-        table,
-    )
-    return {str(row["column_name"]) for row in rows}
-
-
-async def _lineage_gold_counts(
-    requirements: list[dict[str, Any]],
-    user: dict | None,
-    scope: tuple[str | None, str | None] | None = None,
-) -> dict[str, int]:
-    dsn = _operational_dsn()
-    datasets = [str(req.get("dataset") or "") for req in requirements if req.get("dataset")]
-    if not dsn or not datasets:
-        return {}
-    tenant_id, workspace_id = scope or _workspace_scope(user)
-    conn = await asyncpg.connect(dsn, command_timeout=5)
-    try:
-        if workspace_id:
-            scope_pattern = f"%tenant_id={tenant_id or ''}/workspace_id={workspace_id}/%"
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT ON (silver_name)
-                       silver_name,
-                       COALESCE(row_count, 0)::bigint AS row_count
-                  FROM silver_lineage
-                 WHERE layer = 'gold'
-                   AND silver_name = ANY($1::text[])
-                   AND COALESCE(row_count, 0) > 0
-                   AND storage_uri LIKE $2
-                 ORDER BY silver_name, created_at DESC
-                """,
-                datasets,
-                scope_pattern,
-            )
-        else:
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT ON (silver_name)
-                       silver_name,
-                       COALESCE(row_count, 0)::bigint AS row_count
-                  FROM silver_lineage
-                 WHERE layer = 'gold'
-                   AND silver_name = ANY($1::text[])
-                   AND COALESCE(row_count, 0) > 0
-                 ORDER BY silver_name, created_at DESC
-                """,
-                datasets,
-            )
-        return {str(row["silver_name"]): int(row["row_count"] or 0) for row in rows}
-    except Exception:
-        return {}
-    finally:
-        await conn.close()
-
-
-async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) -> list[dict[str, Any]]:
+async def _gold_counts(
+    requirements: list[dict[str, Any]], user: dict | None
+) -> list[dict[str, Any]]:
     tenant_id, workspace_id = await _effective_readiness_scope(user)
-    lineage_counts = await _lineage_gold_counts(requirements, user, (tenant_id, workspace_id))
     dsn = _gold_dsn()
-    if not dsn:
+    if not dsn or not tenant_id or not workspace_id:
         return [
             {
                 **req,
-                "status": "ready" if lineage_counts.get(str(req.get("dataset"))) else "unavailable",
-                "row_count": lineage_counts.get(str(req.get("dataset")), 0),
-                "reason": "" if lineage_counts.get(str(req.get("dataset"))) else "gold_database_url_missing",
-                "source": "silver_lineage" if lineage_counts.get(str(req.get("dataset"))) else "pggold",
+                "status": "unavailable",
+                "row_count": 0,
+                "reason": "published_gold_scope_unavailable",
+                "source": "publication_head",
             }
             for req in requirements
         ]
@@ -188,52 +135,67 @@ async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) ->
     try:
         results: list[dict[str, Any]] = []
         async with conn.transaction():
-            if workspace_id:
-                await conn.execute(
-                    "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-                    tenant_id or "",
-                    workspace_id,
-                )
+            await conn.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+            )
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
+            )
             for req in requirements:
                 dataset = str(req["dataset"])
-                table = str(req["table"])
-                if not _SAFE_DATASET_RE.fullmatch(dataset):
-                    results.append({**req, "status": "invalid", "row_count": 0, "reason": "invalid_dataset_name"})
+                try:
+                    relation = str(
+                        await conn.fetchval(
+                            """SELECT to_regclass(CASE
+                                   WHEN r.status='published' AND r.gold_table ~ '^run_[0-9a-f]{32}$'
+                                     THEN 'omega_publication_gold.'||r.gold_table
+                                   WHEN r.status='legacy_unverified' AND r.gold_table ~ '^gold_[A-Za-z0-9_]+$'
+                                     THEN 'public.'||r.gold_table END)::text
+                                 FROM omega_publication.dataset_publication_heads h
+                                 JOIN omega_publication.materialization_runs r
+                                   ON r.materialization_run_id=h.materialization_run_id
+                                WHERE h.tenant_id=$1 AND h.workspace_id=$2
+                                  AND h.dataset=$3 AND h.layer='gold'""",
+                            tenant_id,
+                            workspace_id,
+                            dataset,
+                        )
+                        or ""
+                    )
+                    if not _PUBLISHED_RELATION_RE.fullmatch(relation):
+                        raise RuntimeError("published relation unavailable")
+                    row_count = int(
+                        await conn.fetchval(
+                            f"SELECT COUNT(*) FROM {relation} "
+                            "WHERE tenant_id::text = $1 AND workspace_id::text = $2",
+                            tenant_id,
+                            workspace_id,
+                        )
+                        or 0
+                    )
+                except Exception:
+                    results.append(
+                        {
+                            **req,
+                            "status": "missing",
+                            "row_count": 0,
+                            "reason": "published_head_missing",
+                            "source": "publication_head",
+                        }
+                    )
                     continue
-                exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
-                if not exists:
-                    results.append({**req, "status": "missing", "row_count": 0, "reason": "gold_table_missing"})
-                    continue
-                columns = await _table_columns(conn, table)
-                if workspace_id and {"tenant_id", "workspace_id"}.issubset(columns):
-                    row_count = int(await conn.fetchval(
-                        f'SELECT COUNT(*) FROM public."{table}" WHERE tenant_id::text = $1 AND workspace_id::text = $2',
-                        tenant_id,
-                        workspace_id,
-                    ) or 0)
-                    scoped = True
-                else:
-                    row_count = int(await conn.fetchval(f'SELECT COUNT(*) FROM public."{table}"') or 0)
-                    scoped = False
-                lineage_row_count = lineage_counts.get(dataset, 0)
-                if row_count <= 0 and lineage_row_count > 0:
-                    results.append({
+                results.append(
+                    {
                         **req,
-                        "status": "ready",
-                        "row_count": lineage_row_count,
-                        "scoped": scoped,
-                        "source": "silver_lineage",
-                        "reason": "",
-                    })
-                    continue
-                results.append({
-                    **req,
-                    "status": "ready" if row_count > 0 else "empty",
-                    "row_count": row_count,
-                    "scoped": scoped,
-                    "source": "pggold",
-                    "reason": "" if row_count > 0 else "gold_table_empty",
-                })
+                        "status": "ready" if row_count > 0 else "empty",
+                        "row_count": row_count,
+                        "scoped": True,
+                        "source": "publication_head",
+                        "reason": "" if row_count > 0 else "published_gold_empty",
+                    }
+                )
         return results
     finally:
         await conn.close()
@@ -242,7 +204,11 @@ async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) ->
 async def _signal_stats(user: dict | None) -> dict[str, Any]:
     dsn = _operational_dsn()
     if not dsn:
-        return {"signal_count": 0, "last_signal_at": None, "error": "database_url_missing"}
+        return {
+            "signal_count": 0,
+            "last_signal_at": None,
+            "error": "database_url_missing",
+        }
     tenant_id, workspace_id = _workspace_scope(user)
     try:
         conn = await asyncpg.connect(dsn, command_timeout=5)
@@ -275,7 +241,9 @@ async def _signal_stats(user: dict | None) -> dict[str, Any]:
             )
         return {
             "signal_count": int(row["count"] or 0) if row else 0,
-            "last_signal_at": row["last_signal_at"].isoformat() if row and row["last_signal_at"] else None,
+            "last_signal_at": row["last_signal_at"].isoformat()
+            if row and row["last_signal_at"]
+            else None,
         }
     except Exception as exc:  # noqa: BLE001
         return {"signal_count": 0, "last_signal_at": None, "error": type(exc).__name__}
@@ -303,11 +271,7 @@ async def intelligence_readiness(
         }
 
     dataset_rows = await _gold_counts(requirements, user)
-    missing = [
-        row
-        for row in dataset_rows
-        if row.get("status") not in {"ready"}
-    ]
+    missing = [row for row in dataset_rows if row.get("status") not in {"ready"}]
     stats = await _signal_stats(user)
     ok = not requirements or not missing
     if require_data and not requirements:

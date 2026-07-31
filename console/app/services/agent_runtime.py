@@ -26,6 +26,10 @@ from app.services import audit_service, llm_client
 from app.services.security_context import build_security_context, rls_user_context, sign_security_context
 from app.services import tool_policy
 from app.services.db_scope import scoped_db
+from app.services.gold_publication_relation import (
+    published_relation_columns,
+    resolve_published_gold_relation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -572,23 +576,13 @@ async def _monitor_latest_gold_row(agent: Agent, dataset: str) -> dict[str, Any]
     tenant_id, workspace_id = _agent_scope(agent)
     if not workspace_id:
         return None
-    table = f"gold_{dataset}"
     pool = await _get_gold_pool()
 
     async def _load(conn):
-        exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
-        if not exists:
-            return None
-        columns_rows = await conn.fetch(
-            """
-            SELECT column_name
-              FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name = $1
-            """,
-            table,
+        relation = await resolve_published_gold_relation(
+            conn, tenant_id, workspace_id, dataset
         )
-        columns = {str(row["column_name"]) for row in columns_rows}
+        columns = await published_relation_columns(conn, relation)
         if "workspace_id" not in columns:
             return None
         order_col = (
@@ -608,7 +602,7 @@ async def _monitor_latest_gold_row(agent: Agent, dataset: str) -> dict[str, Any]
         row = await conn.fetchrow(
             f"""
             SELECT *
-              FROM public.{_pg_ident(table)}
+              FROM {relation.sql}
              WHERE workspace_id::text = $1
                {tenant_filter}
              {order_sql}
