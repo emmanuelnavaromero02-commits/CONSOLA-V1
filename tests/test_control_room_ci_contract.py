@@ -135,12 +135,17 @@ OPERATIONAL_TRUTH_TESTS = (
     "tests/test_sap_successfactors_talent_migration.py",
     "tests/test_intelligence_provenance_resolver.py",
     "tests/test_calibration_recompute_complete_batch.py",
+    "tests/test_calibration_authoritative_observation.py",
+    "tests/test_calibration_idempotency_schema.py",
+    "tests/test_calibration_observe_idempotency.py",
     "tests/test_monte_carlo_engine.py",
     "tests/test_monte_carlo_api_contract.py",
+    "tests/test_monte_carlo_finiteness.py",
     "tests/test_monte_carlo_operational_truth.py",
     "tests/test_monte_carlo_persistence_contract.py",
     "tests/test_bayesian_calibration_api_contract.py",
     "tests/test_bayesian_calibration_recompute_policy.py",
+    "tests/test_decision_operational_truth_duckdb_httpfs.py",
 )
 
 

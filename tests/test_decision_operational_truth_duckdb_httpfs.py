@@ -260,3 +260,23 @@ def test_httpfs_failure_cannot_publish_materialization(monkeypatch) -> None:
         "error": PUBLIC_ERROR,
     }
     assert calls == {"parquet": 0, "gold": 0, "finish": 0, "fail": 1}
+
+
+def test_control_room_gate_builds_and_smokes_real_replicon_image() -> None:
+    workflow = (
+        ROOT / ".github/workflows/control-room-postgres-rls.yml"
+    ).read_text(encoding="utf-8")
+    required = (
+        "docker build cartridges/replicon",
+        "--network none",
+        "--read-only",
+        "--user appuser",
+        "duckdb.__version__",
+        "_get_duckdb_connection",
+        "s3://ci-bucket/raw/replicon/TimeEntry",
+        "autoinstall_known_extensions",
+        "autoload_known_extensions",
+    )
+    assert all(token in workflow for token in required)
+    smoke = workflow.split("Build and smoke Replicon DuckDB/httpfs image", 1)[1]
+    assert "INSTALL httpfs" not in smoke
