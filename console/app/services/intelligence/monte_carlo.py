@@ -22,10 +22,6 @@ class MonteCarloValidationError(ValueError):
     pass
 
 
-def _json_default(value: Any) -> Any:
-    return str(value)
-
-
 def canonical_json(value: Any) -> str:
     try:
         monte_carlo_finite.assert_finite_tree(value)
@@ -36,7 +32,7 @@ def canonical_json(value: Any) -> str:
         ensure_ascii=True,
         sort_keys=True,
         separators=(",", ":"),
-        default=_json_default,
+        default=str,
     )
 
 
@@ -52,7 +48,7 @@ def _finite_number(value: Any, field: str) -> float:
     except (TypeError, ValueError) as exc:
         raise MonteCarloValidationError(f"{field} must be numeric") from exc
     if math.isnan(parsed) or math.isinf(parsed):
-        raise MonteCarloValidationError(f"{field} must be finite")
+        raise MonteCarloValidationError(monte_carlo_finite.ERROR)
     return parsed
 
 
@@ -123,7 +119,18 @@ def _validate_distribution(name: str, spec: Any) -> dict[str, Any]:
         if weight <= 0:
             raise MonteCarloValidationError(f"{name}.values[{idx}].weight must be > 0")
         values.append({"value": val, "weight": weight})
-    return {"type": dist_type, "values": values}
+    maximum = max(item["weight"] for item in values)
+    scaled = [item["weight"] / maximum for item in values]
+    total = math.fsum(scaled)
+    if not math.isfinite(total) or total <= 0:
+        raise MonteCarloValidationError(monte_carlo_finite.ERROR)
+    normalized = [
+        {"value": item["value"], "weight": weight / total}
+        for item, weight in zip(values, scaled, strict=True)
+    ]
+    if not math.isfinite(math.fsum(item["weight"] for item in normalized)):
+        raise MonteCarloValidationError(monte_carlo_finite.ERROR)
+    return {"type": dist_type, "values": normalized}
 
 
 def validate_variables(input_variables: Any) -> dict[str, dict[str, Any]]:
@@ -162,12 +169,11 @@ def _sample_distribution(rng: random.Random, spec: dict[str, Any]) -> float:
         return float(rng.uniform(float(spec["low"]), float(spec["high"])))
 
     values = spec["values"]
-    total = sum(float(item["weight"]) for item in values)
-    pick = rng.uniform(0, total)
+    pick = rng.random()
     cumulative = 0.0
     for item in values:
-        cumulative += float(item["weight"])
-        if pick <= cumulative:
+        cumulative = math.fsum((cumulative, float(item["weight"])))
+        if pick < cumulative:
             return float(item["value"])
     return float(values[-1]["value"])
 
