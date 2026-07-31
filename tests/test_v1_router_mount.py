@@ -26,9 +26,7 @@ V1_ROUTE_INVENTORY = {
 
 def test_v1_router_paths_are_covered_by_runtime_app_without_duplicates():
     os.environ.setdefault("APP_ENV", "test")
-    os.environ.setdefault(
-        "INTERNAL_API_KEY", "v1routercoverageinternal1234567890abcdef"
-    )
+    os.environ["INTERNAL_API_KEY"] = "v1routercoverageinternal1234567890abcdef"
     if str(REPO / "console") not in sys.path:
         sys.path.insert(0, str(REPO / "console"))
 
