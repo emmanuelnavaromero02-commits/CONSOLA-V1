@@ -48,9 +48,12 @@ async def _seed(
             VALUES(
                 'signal-calibration', $1, $2, 'replicon', 'gold_margin',
                 'Operacion', 'project', 'P-1', 'Project 1', 'margin', '2026-07',
-                12, 10, 10, 30, 'observed', 'Observed margin',
+                12, 10, 12, 30, 'future_opportunity', 'Predicted margin',
                 '{"source_system":"replicon","source_dataset":"gold_margin",'
-                '"evidence_pack_id":"evidence-real","observed":true}'::jsonb
+                '"evidence_pack_id":"evidence-real","input_classification":"observed",'
+                '"observed":true,"evidence_refs":[{"source_system":"replicon",'
+                '"source_dataset":"gold_margin","source_record_id":"P-1",'
+                '"source_field":"margin","observed_value":12}]}'::jsonb
             )
             """,
             tenant,
@@ -76,15 +79,10 @@ async def _seed(
         await conn.close()
 
 
-def _payload(outcome_id: str, actual_value: float = 12) -> dict:
+def _payload(outcome_id: str) -> dict:
     return {
         "source_type": "prediction_outcome",
         "source_id": outcome_id,
-        "predicted_metric": "margin",
-        "predicted_value": 10,
-        "actual_value": actual_value,
-        "actual_status": "hit",
-        "horizon_days": 30,
     }
 
 
@@ -124,11 +122,22 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
             },
         )
         outcome = str(recorded["outcome"]["id"])
-        with pytest.raises(HTTPException) as unevaluated:
-            await calibration_service.observe(user, _payload(outcome))
-        assert unevaluated.value.detail["reason"] == (
-            "authoritative_evaluation_unavailable"
+        assert recorded["outcome"]["evaluation_status"] == "hit"
+        assert recorded["outcome"]["evaluation_rule_version"]
+        assert recorded["outcome"]["evaluated_at"]
+        assert recorded["outcome"]["evaluated_by"] == "omega_outcome_evaluator.v1"
+
+        duplicate = await persistence.record_outcome(
+            user,
+            "signal-calibration",
+            {
+                "action_taken": "duplicate retry",
+                "actual_value": 12,
+                "outcome_summary": "Same realized outcome",
+            },
         )
+        assert duplicate["outcome"]["id"] == recorded["outcome"]["id"]
+
         admin = await asyncpg.connect(postgres_with_real_init_schema)
         try:
             assert (
@@ -140,17 +149,11 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
                 )
                 == 0
             )
-            await admin.execute(
-                """
-                UPDATE prediction_outcomes
-                   SET evaluation_status='hit',
-                       evaluation_rule_version='margin-evaluation.v1',
-                       evaluated_at='2026-07-31T00:00:00Z',
-                       evaluated_by='evaluation-engine'
-                 WHERE id=$1
-                """,
-                int(outcome),
-            )
+            assert await admin.fetchval(
+                "SELECT COUNT(*) FROM prediction_outcomes "
+                "WHERE workspace_id=$1 AND signal_id='signal-calibration'",
+                workspace,
+            ) == 1
         finally:
             await admin.close()
         left, right = await asyncio.gather(
@@ -160,6 +163,12 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
         retry = await calibration_service.observe(user, _payload(outcome))
         assert left == right == retry
         online_state = left["state"]
+        assert online_state["metrics"]["complete"] is False
+        assert online_state["metrics"]["provenance_complete"] is False
+        assert online_state["metrics"]["skipped_total"] == 1
+        assert online_state["metrics"]["reason"] == (
+            "authoritative_recompute_required"
+        )
 
         cross_tenant = {
             "active_tenant_id": other_tenant,
@@ -213,8 +222,11 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
             user,
             {"calibration_group": online_state["calibration_group"]},
         )
-        for key in ("posterior", "metrics", "reproducibility_hash"):
-            assert recomputed["state"][key] == online_state[key]
+        assert recomputed["observations_recomputed"] == 1
+        assert recomputed["state"]["metrics"]["complete"] is True
+        assert recomputed["state"]["metrics"]["provenance_complete"] is True
+        assert recomputed["state"]["metrics"]["binary_evaluation_complete"] is True
+        assert recomputed["state"]["sample_count"] == 1
 
         check = await asyncpg.connect(postgres_with_real_init_schema)
         try:
@@ -224,14 +236,7 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
             )
         finally:
             await check.close()
-        with pytest.raises(HTTPException) as changed:
-            await calibration_service.observe(
-                user,
-                _payload(outcome, actual_value=13),
-            )
-        assert (changed.value.status_code, changed.value.detail) == (
-            409,
-            "calibration evidence conflict",
-        )
+        repeated = await calibration_service.observe(user, _payload(outcome))
+        assert repeated["state"]["sample_count"] == 1
     finally:
         await pool.close()
