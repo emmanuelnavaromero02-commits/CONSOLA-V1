@@ -143,12 +143,16 @@ async def test_real_legacy_parquet_is_quarantined_and_only_v3_run_is_public(
     )
     artifact_path = tmp_path / "current.parquet"
     result_path = tmp_path / "runtime-result.json"
+    duckdb_home = tmp_path / "duckdb-home"
+    duckdb_home.mkdir()
+    assert not (duckdb_home / ".duckdb/extensions").exists()
     role_dsn = postgres_with_real_init_schema.replace(
         "postgres:test_postgres_password",
         "omega_cartridge_replicon:test_omega_cartridge_replicon_password",
     )
     env = {
         **os.environ,
+        "HOME": str(duckdb_home),
         "PYTHONPATH": f"{ROOT / 'cartridges/replicon'}:{ROOT}",
         "DATABASE_URL": role_dsn,
         "MINIO_ACCESS_KEY": "live-test",
@@ -164,6 +168,7 @@ async def test_real_legacy_parquet_is_quarantined_and_only_v3_run_is_public(
     subprocess.run(
         [sys.executable, "-c", RUNTIME_SCRIPT], cwd=ROOT, env=env, check=True
     )
+    assert not (duckdb_home / ".duckdb/extensions").exists()
     result = json.loads(result_path.read_text())
     assert duckdb.connect().execute(
         "SELECT COUNT(*) FROM read_parquet(?)", [str(artifact_path)]
