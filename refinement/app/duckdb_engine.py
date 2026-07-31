@@ -35,6 +35,11 @@ from sqlglot import exp as _sqlglot_exp
 
 from omega_lakehouse import ObjectAlreadyExists, storage_from_env
 
+try:
+    from app.duckdb_runtime import connect_duckdb_runtime
+except ModuleNotFoundError:
+    from refinement.app.duckdb_runtime import connect_duckdb_runtime
+
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
 S3_LITERAL_RE = re.compile(r"(['\"])((?:s3|gs)://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
@@ -267,50 +272,45 @@ class DuckDBEngine:
         endpoint = (self.minio_endpoint or "").lower()
         return "vhost" if "amazonaws.com" in endpoint else "path"
 
-    # ── DuckDB connection ─────────────────────────────────────────────────────
-
     def _conn(self) -> duckdb.DuckDBPyConnection:
         if self._con is None:
-            self._con = duckdb.connect()
-            if self.duckdb_memory_limit:
-                self._con.execute(f"SET memory_limit={_sql_quote(self.duckdb_memory_limit)};")
-            if self.duckdb_threads is not None:
-                self._con.execute(f"SET threads={self.duckdb_threads};")
-            self._con.execute("INSTALL httpfs; LOAD httpfs;")
-            self._con.execute("INSTALL postgres; LOAD postgres;")
-            # SET ... requires the literal inline, so we escape single
-            # quotes ourselves. Without escaping, a MinIO secret containing
-            # a quote would terminate the literal early and the rest of
-            # the credential would be parsed as SQL.
-            if self._uses_gcs_lakehouse():
-                self._configure_duckdb_gcs(self._con)
-            else:
-                self._con.execute(
-                    f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
-                    f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
-                    f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
-                )
-            if not self._uses_gcs_lakehouse() and self._uses_aws_s3_credential_chain():
-                region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
-                self._con.execute(
-                    "CREATE OR REPLACE SECRET omega_s3_role ("
-                    "TYPE S3, PROVIDER credential_chain, "
-                    f"REGION {_sql_quote(region)}"
-                    ");"
-                )
-            elif not self._uses_gcs_lakehouse():
-                self._con.execute(
-                    f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
-                    f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
-                )
+            try:
+                self._con = connect_duckdb_runtime()
+                if self.duckdb_memory_limit:
+                    self._con.execute(f"SET memory_limit={_sql_quote(self.duckdb_memory_limit)};")
+                if self.duckdb_threads is not None:
+                    self._con.execute(f"SET threads={self.duckdb_threads};")
+                if self._uses_gcs_lakehouse():
+                    self._configure_duckdb_gcs(self._con)
+                else:
+                    self._con.execute(
+                        f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
+                        f"SET s3_url_style={_sql_quote(self._s3_url_style())};"
+                        f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
+                    )
+                if not self._uses_gcs_lakehouse() and self._uses_aws_s3_credential_chain():
+                    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+                    self._con.execute(
+                        "CREATE OR REPLACE SECRET omega_s3_role ("
+                        "TYPE S3, PROVIDER credential_chain, "
+                        f"REGION {_sql_quote(region)}"
+                        ");"
+                    )
+                elif not self._uses_gcs_lakehouse():
+                    self._con.execute(
+                        f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
+                        f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
+                    )
+            except Exception:
+                if self._con is not None:
+                    getattr(self._con, "close", lambda: None)()
+                self._con = None
+                raise
         return self._con
 
     def setup(self):
         with self._duckdb_lock:
             con = self._conn()
-            # Attach both Postgres instances at startup so read paths (preview_sql,
-            # query_dataset) can reference pgdb.<table> / pggold.<table> without
-            # depending on a prior materialization call.
             try:
                 self._pg_attach(con)
             except Exception:
