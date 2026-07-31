@@ -1,4 +1,5 @@
 from __future__ import annotations
+# fmt: off
 
 import io
 from collections.abc import Iterator, Mapping
@@ -85,6 +86,20 @@ class S3Storage:
         if not overwrite and self.exists(key):
             raise ObjectAlreadyExists("object already exists", provider=self.config.provider, bucket=self.config.bucket, key=key)
 
+    def _put_object(self, key: str, body: Any, metadata: Mapping[str, str], *, overwrite: bool) -> None:
+        kwargs = {"Bucket": self.config.bucket, "Key": key, "Body": body,
+                  "Metadata": metadata, "ContentType": "application/octet-stream"}
+        if not overwrite:
+            kwargs["IfNoneMatch"] = "*"
+        try:
+            self._client_or_create().put_object(**kwargs)
+        except Exception as exc:
+            code = str((getattr(exc, "response", {}) or {}).get("Error", {}).get("Code", ""))
+            if code in {"409", "412", "ConditionalRequestConflict", "PreconditionFailed"}:
+                raise ObjectAlreadyExists("object already exists", provider=self.config.provider,
+                                          bucket=self.config.bucket, key=key) from exc
+            self._raise(exc, "object write failed", key)
+
     def put_bytes(
         self,
         key: str,
@@ -100,13 +115,7 @@ class S3Storage:
         if checksum != sha256_bytes(data):
             raise ChecksumMismatch("provided checksum does not match payload", provider=self.config.provider, bucket=self.config.bucket, key=key)
         self._check_write_allowed(key, overwrite, expected_version)
-        self._call("object write failed", key, self._client_or_create().put_object,
-            Bucket=self.config.bucket,
-            Key=key,
-            Body=data,
-            Metadata=metadata_with_checksum(metadata, checksum),
-            ContentType="application/octet-stream",
-        )
+        self._put_object(key, data, metadata_with_checksum(metadata, checksum), overwrite=overwrite)
         return self._put_result(key, len(data), checksum, metadata)
 
     def put_file(
@@ -126,13 +135,7 @@ class S3Storage:
             raise ChecksumMismatch("provided checksum does not match file", provider=self.config.provider, bucket=self.config.bucket, key=key)
         self._check_write_allowed(key, overwrite, expected_version)
         with path.open("rb") as fh:
-            self._call("object write failed", key, self._client_or_create().put_object,
-                Bucket=self.config.bucket,
-                Key=key,
-                Body=fh,
-                Metadata=metadata_with_checksum(metadata, checksum),
-                ContentType="application/octet-stream",
-            )
+            self._put_object(key, fh, metadata_with_checksum(metadata, checksum), overwrite=overwrite)
         return self._put_result(key, path.stat().st_size, checksum, metadata)
 
     def _put_result(self, key: str, size: int, checksum: str, metadata: Mapping[str, str] | None) -> PutResult:
