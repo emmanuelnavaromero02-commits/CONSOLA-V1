@@ -16,7 +16,7 @@
  *   - getWorkflow returns ``{workflow, steps}`` (NOT a flat
  *     Workflow); the typed wrapper preserves both.
  */
-import { api, apiFetch } from "@/lib/api";
+import { api, apiFetch, publicErrorMessage, toApiError } from "@/lib/api";
 import type {
   Conversation,
   ConversationDetailResponse,
@@ -125,9 +125,26 @@ export async function streamMessage(
     },
   );
 
+  const requestId = response.headers.get("x-request-id") || undefined;
+
   if (!response.ok || !response.body) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(detail || `HTTP ${response.status}`);
+    // Misma política de saneamiento que api.ts: un cuerpo no-JSON (HTML de
+    // proxy, texto crudo) jamás se muestra; solo un `detail` JSON user-safe
+    // de 4xx puede llegar al usuario. Estado y payload quedan en el error
+    // para diagnóstico, nunca en el mensaje.
+    const raw = await response.text().catch(() => "");
+    let payload: unknown = null;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
+    throw toApiError(
+      publicErrorMessage(response.status, payload, requestId),
+      response.status,
+      payload,
+      requestId,
+    );
   }
 
   const reader = response.body.getReader();
@@ -163,9 +180,13 @@ export async function streamMessage(
     }
 
     if (parsed.event === "error") {
-      const detail =
-        typeof data?.detail === "string" ? data.detail : "Copilot stream error";
-      throw new Error(detail);
+      // El contrato del stream no marca ningún detail como user-safe
+      // (no existe `user_message`), así que el detail crudo nunca se
+      // muestra: copy genérico + referencia segura vía la política única
+      // de api.ts. El código de error se conserva en el objeto para la
+      // lógica de llamada, sin exponerlo en el mensaje.
+      const code = typeof data?.code === "string" ? data.code : undefined;
+      throw toApiError(publicErrorMessage(502, null, requestId), 502, { code }, requestId);
     }
   }
 

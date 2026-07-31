@@ -8,6 +8,7 @@ interface CartridgeCardProps {
   name:        string;
   description: string;
   status:      ConnectionStatus;
+  ageHours?:   number | null;
   activating?: boolean;
   onActivate?: (id: string) => void;
 }
@@ -33,6 +34,7 @@ export function CartridgeCard({
   name,
   description,
   status,
+  ageHours = null,
   activating = false,
   onActivate,
 }: CartridgeCardProps) {
@@ -56,7 +58,7 @@ export function CartridgeCard({
         >
           <Icon aria-hidden className="h-5 w-5" />
         </span>
-        <StatusBadge status={status} />
+        <StatusBadge status={status} ageHours={ageHours} />
       </header>
 
       <div className="pointer-events-none relative z-10 space-y-1">

@@ -98,6 +98,10 @@ function MetricCard({
   value: number;
   tone?: "neutral" | "success" | "warning";
 }) {
+  // La semántica warning/success no puede depender solo del color del
+  // icono (aria-hidden): se acompaña de texto sr-only equivalente.
+  const toneText =
+    tone === "warning" ? "requiere atención" : tone === "success" ? "sin incidencias" : null;
   return (
     <article className="rounded-lg border bg-card p-4 shadow-sm">
       <div className="flex items-center justify-between gap-3">
@@ -108,6 +112,7 @@ function MetricCard({
         />
       </div>
       <strong className="mt-2 block text-3xl font-semibold tracking-tight">{value}</strong>
+      {toneText ? <span className="sr-only">{toneText}</span> : null}
     </article>
   );
 }
@@ -129,7 +134,7 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
 
 function SkeletonRows() {
   return (
-    <div aria-busy="true" className="space-y-2">
+    <div role="status" aria-busy="true" aria-label="Cargando ejecuciones" className="space-y-2">
       {Array.from({ length: 5 }).map((_, index) => (
         <span key={index} className="block h-12 animate-pulse rounded bg-muted" aria-hidden />
       ))}

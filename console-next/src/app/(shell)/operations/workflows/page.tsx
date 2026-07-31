@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { Ban, GitBranch, Loader2, Play, RefreshCw, Search, Workflow } from "lucide-react";
+import { Ban, ClipboardList, GitBranch, Info, Loader2, RefreshCw, Search, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -9,19 +9,20 @@ import {
   useCancelOperationWorkflow,
   useOperationWorkflow,
   useOperationWorkflows,
-  useTriggerOperationWorkflow,
+  usePlanOperationWorkflow,
 } from "@/lib/operations/hooks";
 import type { OperationWorkflow, OperationWorkflowStep } from "@/lib/operations/types";
 import { cn } from "@/lib/utils";
 
 const ACTIVE_STATUSES = new Set(["planning", "running", "waiting_approval"]);
+const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"]);
 
 export default function OperationsWorkflowsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const workflows = useOperationWorkflows();
   const selected = useOperationWorkflow(selectedId);
-  const trigger = useTriggerOperationWorkflow();
+  const plan = usePlanOperationWorkflow();
   const cancel = useCancelOperationWorkflow();
 
   const rows = useMemo(() => {
@@ -44,15 +45,15 @@ export default function OperationsWorkflowsPage() {
     };
   }, [workflows.data]);
   const metricsUnavailable = workflows.isLoading || (workflows.isError && !workflows.data);
-  const actionPending = trigger.isPending || cancel.isPending;
+  const actionPending = plan.isPending || cancel.isPending;
 
-  async function triggerWorkflow(workflow: OperationWorkflow) {
+  async function planWorkflow(workflow: OperationWorkflow) {
     try {
-      await trigger.mutateAsync(workflow);
-      toast.success("Workflow ejecutado.");
+      await plan.mutateAsync(workflow);
+      toast.success("Planificación solicitada.");
       setSelectedId(workflow.id);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo ejecutar el workflow.");
+      toast.error(error instanceof Error ? error.message : "No se pudo planificar el workflow.");
     }
   }
 
@@ -72,7 +73,7 @@ export default function OperationsWorkflowsPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Workflows</h1>
           <p className="text-sm text-muted-foreground">
-            Flujos operativos del Copiloto con ejecución y cancelación controlada.
+            Flujos operativos del Copiloto con planificación y cancelación controlada.
           </p>
         </div>
         <button
@@ -84,6 +85,11 @@ export default function OperationsWorkflowsPage() {
           Refrescar
         </button>
       </header>
+
+      <p role="note" className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
+        <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        La ejecución de workflows no está disponible desde esta consola: solo se permite planificar y revisar en modo preview.
+      </p>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-label="Resumen de workflows">
         <MetricCard icon={Workflow} label="Total" value={metrics.total} loading={metricsUnavailable} />
@@ -119,11 +125,11 @@ export default function OperationsWorkflowsPage() {
             <WorkflowsTable
               rows={rows}
               selectedId={selectedId}
-              triggerPendingId={trigger.variables?.id}
+              planPendingId={plan.variables?.id}
               cancelPendingId={cancel.variables}
               actionPending={actionPending}
               onSelect={setSelectedId}
-              onTrigger={triggerWorkflow}
+              onPlan={planWorkflow}
               onCancel={cancelWorkflow}
             />
           )}
@@ -145,20 +151,20 @@ export default function OperationsWorkflowsPage() {
 function WorkflowsTable({
   rows,
   selectedId,
-  triggerPendingId,
+  planPendingId,
   cancelPendingId,
   actionPending,
   onSelect,
-  onTrigger,
+  onPlan,
   onCancel,
 }: {
   rows: OperationWorkflow[];
   selectedId: string | null;
-  triggerPendingId?: string;
+  planPendingId?: string;
   cancelPendingId?: string;
   actionPending: boolean;
   onSelect: (id: string) => void;
-  onTrigger: (workflow: OperationWorkflow) => void;
+  onPlan: (workflow: OperationWorkflow) => void;
   onCancel: (workflow: OperationWorkflow) => void;
 }) {
   if (rows.length === 0) return <EmptyState label="Sin workflows visibles." />;
@@ -178,7 +184,9 @@ function WorkflowsTable({
           {rows.map((workflow) => {
             const active = selectedId === workflow.id;
             const canCancel = ACTIVE_STATUSES.has(workflow.status);
-            const canTrigger = !["completed", "cancelled", "failed"].includes(workflow.status);
+            // Solo se planifica un workflow que no está en un estado terminal
+            // ni ya activo (planning/running/waiting_approval).
+            const canPlan = !TERMINAL_STATUSES.has(workflow.status) && !ACTIVE_STATUSES.has(workflow.status);
             return (
               <tr key={workflow.id} className={cn("align-top", active && "bg-primary/5")}>
                 <td className="max-w-md px-4 py-3">
@@ -198,12 +206,12 @@ function WorkflowsTable({
                   <div className="flex justify-end gap-2">
                     <button
                       type="button"
-                      onClick={() => onTrigger(workflow)}
-                      disabled={!canTrigger || actionPending}
+                      onClick={() => onPlan(workflow)}
+                      disabled={!canPlan || actionPending}
                       className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {triggerPendingId === workflow.id ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> : <Play aria-hidden className="h-3.5 w-3.5" />}
-                      Ejecutar
+                      {planPendingId === workflow.id ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList aria-hidden className="h-3.5 w-3.5" />}
+                      Planificar
                     </button>
                     <button
                       type="button"
@@ -311,7 +319,14 @@ function MetricCard({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
-          <p className="mt-1 text-2xl font-semibold">{loading ? "..." : value}</p>
+          <p className="mt-1 text-2xl font-semibold" aria-busy={loading ? true : undefined}>
+            {loading ? (
+              <>
+                <span aria-hidden>...</span>
+                <span className="sr-only">Cargando</span>
+              </>
+            ) : value}
+          </p>
         </div>
         <span className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
           <Icon aria-hidden className="h-5 w-5" />
@@ -340,7 +355,7 @@ function statusTone(status: string): string {
 
 function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="m-4 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+    <div role="alert" className="m-4 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span>{message}</span>
         <button type="button" onClick={onRetry} className="inline-flex min-h-[40px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent/5">
@@ -357,7 +372,8 @@ function EmptyState({ label }: { label: string }) {
 
 function SkeletonRows({ rows }: { rows: number }) {
   return (
-    <div className="divide-y">
+    <div role="status" className="divide-y">
+      <span className="sr-only">Cargando</span>
       {Array.from({ length: rows }).map((_, index) => (
         <div key={index} className="grid grid-cols-4 gap-4 px-4 py-4">
           <div className="h-4 rounded bg-muted" />

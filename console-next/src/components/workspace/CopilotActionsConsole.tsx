@@ -338,7 +338,7 @@ export function CopilotActionsConsole() {
             ) : null}
 
             {contextAnswer ? (
-              <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <div role="status" aria-live="polite" className="rounded-md border bg-muted/30 p-3 text-sm">
                 <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
                   Respuesta con contexto
                 </div>
@@ -448,7 +448,7 @@ function LiveContextPanel({
   const lastRead = shortDate(snapshot?.generated_at || snapshot?.materialized_at || null);
   const readySources = sources.filter((source) => ["ready", "success", "ok"].includes(String(source.status || ""))).length;
   return (
-    <section className="rounded-md border bg-card p-4">
+    <section aria-busy={loading} className="rounded-md border bg-card p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xs font-semibold uppercase text-muted-foreground">
@@ -473,7 +473,9 @@ function LiveContextPanel({
         ) : null}
       </div>
       {loading ? (
-        <div className="h-16 animate-pulse rounded-md bg-muted" />
+        <div role="status" className="h-16 animate-pulse rounded-md bg-muted">
+          <span className="sr-only">Cargando</span>
+        </div>
       ) : (
         <div className="space-y-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
@@ -546,16 +548,23 @@ function MiniPanel({
 }) {
   const hasChildren = value > 0;
   return (
-    <section className="rounded-md border bg-card p-4">
+    <section aria-busy={loading} className="rounded-md border bg-card p-4">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h2 className="text-xs font-semibold uppercase text-muted-foreground">{title}</h2>
         <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-          {loading ? "..." : value}
+          {loading ? (
+            <>
+              <span aria-hidden>...</span>
+              <span className="sr-only">Cargando</span>
+            </>
+          ) : value}
         </span>
       </div>
       <div className="space-y-2">
         {loading ? (
-          <div className="h-12 animate-pulse rounded-md bg-muted" />
+          <div role="status" className="h-12 animate-pulse rounded-md bg-muted">
+            <span className="sr-only">Cargando</span>
+          </div>
         ) : hasChildren ? children : (
           <p className="text-sm text-muted-foreground">{empty}</p>
         )}

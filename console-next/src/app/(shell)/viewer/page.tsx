@@ -828,7 +828,7 @@ export function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefi
   );
 }
 
-function DatasetTable({ rows }: { rows: DatasetSummary[] }) {
+export function DatasetTable({ rows }: { rows: DatasetSummary[] }) {
   if (!rows.length) {
     return <EmptyPanel icon={Table2} title="Sin datasets" detail="No hay datasets visibles con los filtros actuales." />;
   }
@@ -855,7 +855,7 @@ function DatasetTable({ rows }: { rows: DatasetSummary[] }) {
               <td className="px-3 py-2 align-top text-xs">{row.source_entity || (row.sources ?? [])[0] || "-"}</td>
               <td className="px-3 py-2 align-top text-xs">{row.column_count ?? (Object.keys(row.column_mapping ?? {}).length || "-")}</td>
               <td className="px-3 py-2 align-top">
-                <StatusPill status={row.is_stale ? "stale" : "fresh"} />
+                <StatusPill status={row.is_stale == null ? "unknown" : row.is_stale ? "stale" : "fresh"} />
                 {row.staleness_reason ? <div className="mt-1 text-xs text-muted-foreground">{row.staleness_reason}</div> : null}
               </td>
               <td className="px-3 py-2 align-top">
@@ -1159,7 +1159,7 @@ function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEd
                   <h3 className="break-words text-lg font-semibold">{selectedNode.label || selectedNode.id}</h3>
                   <p className="font-mono text-xs text-muted-foreground">{selectedNode.id}</p>
                 </div>
-                <StatusPill status={selectedNode.is_stale ? "stale" : "fresh"} />
+                <StatusPill status={selectedNode.is_stale == null ? "unknown" : selectedNode.is_stale ? "stale" : "fresh"} />
               </div>
               <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                 <DetailItem label="Capa" value={normaliseLayer(selectedNode.type)} />
