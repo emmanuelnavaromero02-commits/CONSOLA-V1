@@ -45,10 +45,12 @@ const META: Record<
  *
  * The page derives ConnectionStatus from the dashboard KPI payload
  * (data_freshness) so it doesn't need a second endpoint per
- * cartridge. The mapping is:
- *   fresh / stale  → connected   (recent successful run)
- *   very_stale     → failed      (last run too old)
- *   never          → unconfigured (no successful run on record)
+ * cartridge. The mapping is honest — freshness is reported as
+ * freshness, never collapsed into connection success/failure:
+ *   fresh      → connected    (recent successful run)
+ *   stale      → stale        ("Datos antiguos", ámbar)
+ *   very_stale → very_stale   ("Datos muy antiguos"; antigüedad ≠ fallo)
+ *   never      → unconfigured (no successful run on record)
  *
  * "untested" — credentials saved but not yet probed — needs a
  * separate vault-read endpoint that v1.44.3 doesn't yet expose;
@@ -64,7 +66,8 @@ export default function CartridgesPage() {
     const info = kpis.data?.data_freshness?.[id];
     if (!info) return "unconfigured";
     if (info.status === "never") return "unconfigured";
-    if (info.status === "very_stale") return "failed";
+    if (info.status === "very_stale") return "very_stale";
+    if (info.status === "stale") return "stale";
     return "connected";
   };
 
@@ -109,6 +112,7 @@ export default function CartridgesPage() {
 
       <section
         aria-label="Listado de cartuchos"
+        aria-busy={list.isLoading}
         className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
       >
         {list.isLoading
@@ -126,6 +130,7 @@ export default function CartridgesPage() {
                 name={META[id]?.name ?? id}
                 description={META[id]?.description ?? ""}
                 status={statusFor(id)}
+                ageHours={kpis.data?.data_freshness?.[id]?.age_hours ?? null}
                 activating={activate.isPending && activate.variables === id}
                 onActivate={activateOne}
               />

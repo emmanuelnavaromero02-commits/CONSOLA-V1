@@ -27,6 +27,7 @@ import {
 import type {
   SfTalentAnomaliesPayload,
   SfTalentAnomaly,
+  SfTalentBlocker,
   SfTalentDesempenoCohort,
   SfTalentNineBoxCell,
   SfTalentNineBoxPayload,
@@ -38,11 +39,17 @@ import { cn } from "@/lib/utils";
 
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge } from "../StatusBadge";
 import type { ControlRoomStatus } from "../StatusBadge";
+import { normalizeReadinessStatus, TalentPayloadMeta } from "./TalentPayloadMeta";
 
 type Collar = "confianza" | "sindicalizado";
 
-function formatNumber(value: number | null | undefined): string {
-  return new Intl.NumberFormat("es-MX").format(value ?? 0);
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("es-MX").format(value);
+}
+
+// Ausencia honesta: si el contrato no entrega el valor, se dice "N/D" (nunca un 0 fabricado).
+function formatCount(value: number | null | undefined): string {
+  return value == null ? "N/D" : formatNumber(value);
 }
 
 function bandLabel(value?: string | null): string {
@@ -75,39 +82,6 @@ function cellTone(cell: SfTalentNineBoxCell): string {
   return "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200";
 }
 
-function normalizeReadinessStatus(status?: string | null): ControlRoomStatus {
-  const normalized = String(status || "missing").trim();
-  if (
-    normalized === "ready" ||
-    normalized === "ok" ||
-    normalized === "available" ||
-    normalized === "partial" ||
-    normalized === "stub" ||
-    normalized === "empty" ||
-    normalized === "missing" ||
-    normalized === "unavailable" ||
-    normalized === "invalid_schema" ||
-    normalized === "blocked" ||
-    normalized === "no_permission" ||
-    normalized === "attention" ||
-    normalized === "inactive" ||
-    normalized === "no_sources" ||
-    normalized === "benchmark_internal" ||
-    normalized === "insufficient_data" ||
-    normalized === "blocked_by_sap" ||
-    normalized === "blocked_by_permission" ||
-    normalized === "pending_approval" ||
-    normalized === "partial_fields" ||
-    normalized === "error"
-  ) {
-    return normalized;
-  }
-  if (normalized === "metadata_ready" || normalized === "ready_to_extract") return "partial";
-  if (normalized === "entity_not_exposed_in_sap") return "blocked_by_sap";
-  if (normalized === "permission_denied") return "blocked_by_permission";
-  return "missing";
-}
-
 function readinessSummaryCopy(overview: SfTalentOverviewPayload | null, nineBox: SfTalentNineBoxPayload | null) {
   const referenceCount = nineBox?.totals.reference ?? 0;
   if (referenceCount > 0) {
@@ -125,41 +99,42 @@ export function TalentOverviewPanel({
   nineBox: SfTalentNineBoxPayload | null;
   anomalies: SfTalentAnomaliesPayload | null;
 }) {
-  const profiled = overview?.readiness?.profiled_employees ?? 0;
-  const calculable = overview?.readiness?.calculable_employees ?? 0;
-  const classified = nineBox?.totals?.ready ?? overview?.nine_box?.totals?.ready ?? 0;
-  const activeSignals = anomalies?.summary?.total ?? overview?.anomalies?.summary?.total ?? 0;
+  // Sin overview o sin readiness todavía no hay dato: "—" honesto, nunca un 0 fabricado.
+  const profiled = overview?.readiness?.profiled_employees ?? null;
+  const calculable = overview?.readiness?.calculable_employees ?? null;
+  const classified = nineBox?.totals?.ready ?? overview?.nine_box?.totals?.ready ?? null;
+  const activeSignals = anomalies?.summary?.total ?? overview?.anomalies?.summary?.total ?? null;
   const readinessCopy = readinessSummaryCopy(overview, nineBox);
 
   return (
     <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Resumen Talento">
       <CommandMetric
         label="Perfilados"
-        value={formatNumber(profiled)}
-        detail="colaboradores con perfil Talent"
+        value={profiled == null ? "—" : formatNumber(profiled)}
+        detail={profiled == null ? "sin dato disponible" : "colaboradores con perfil Talent"}
         icon={Users}
-        tone={profiled ? "good" : "warning"}
+        tone={profiled == null ? "neutral" : profiled ? "good" : "warning"}
       />
       <CommandMetric
         label={readinessCopy.label}
-        value={`${formatNumber(calculable)}/${formatNumber(profiled)}`}
-        detail={readinessCopy.detail}
+        value={calculable == null || profiled == null ? "—" : `${formatNumber(calculable)}/${formatNumber(profiled)}`}
+        detail={calculable == null || profiled == null ? "sin dato disponible" : readinessCopy.detail}
         icon={ShieldCheck}
-        tone={calculable ? "good" : "warning"}
+        tone={calculable == null ? "neutral" : calculable ? "good" : "warning"}
       />
       <CommandMetric
         label="9-box clasificado"
-        value={formatNumber(classified)}
-        detail="sin nombres ni IDs crudos"
+        value={classified == null ? "—" : formatNumber(classified)}
+        detail={classified == null ? "sin dato disponible" : "sin nombres ni IDs crudos"}
         icon={Grid3X3}
-        tone={classified ? "good" : "warning"}
+        tone={classified == null ? "neutral" : classified ? "good" : "warning"}
       />
       <CommandMetric
         label="Senales activas"
-        value={formatNumber(activeSignals)}
-        detail="señales empresariales para revisión"
+        value={activeSignals == null ? "—" : formatNumber(activeSignals)}
+        detail={activeSignals == null ? "sin dato disponible" : "señales empresariales para revisión"}
         icon={AlertTriangle}
-        tone={activeSignals ? "warning" : "neutral"}
+        tone={activeSignals == null ? "neutral" : activeSignals ? "warning" : "neutral"}
       />
     </section>
   );
@@ -206,11 +181,17 @@ export function NineBoxMatrix({
   selectedBoxId,
   onSelect,
   disabled = false,
+  status,
+  blockers,
+  generatedAt,
 }: {
   cells: SfTalentNineBoxCell[];
   selectedBoxId?: string | null;
   onSelect: (boxId: string) => void;
   disabled?: boolean;
+  status?: string | null;
+  blockers?: SfTalentBlocker[] | null;
+  generatedAt?: string | null;
 }) {
   const ordered = [...cells].sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
   return (
@@ -272,6 +253,7 @@ export function NineBoxMatrix({
           );
         })}
       </div>
+      <TalentPayloadMeta status={status} blockers={blockers} generatedAt={generatedAt} className="mt-4" />
     </section>
   );
 }
@@ -279,9 +261,13 @@ export function NineBoxMatrix({
 export function MaskedTalentRoster({
   payload,
   loading,
+  error = false,
+  onRetry,
 }: {
   payload: SfTalentRosterPayload | null;
   loading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
 }) {
   const rows = payload?.roster ?? [];
   return (
@@ -293,12 +279,31 @@ export function MaskedTalentRoster({
             {payload?.box?.box_label || "Selecciona una caja"}
           </h3>
         </div>
-        <ReadinessBadge status={payload?.status || "missing"} compact />
+        <ReadinessBadge status={error && !loading ? "error" : normalizeReadinessStatus(payload?.status)} compact />
       </div>
       {loading ? (
-        <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div role="status" className="flex min-h-[220px] items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
           Cargando roster seguro
+        </div>
+      ) : error ? (
+        <div
+          role="alert"
+          className="min-h-[220px] rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive"
+        >
+          <AlertTriangle aria-hidden className="mb-3 h-5 w-5" />
+          <p className="font-medium">No se pudo cargar el roster de esta caja.</p>
+          <p className="mt-1 text-xs text-destructive/85">La caja puede tener empleados: es la consulta la que falló, no el dato.</p>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-3 inline-flex min-h-[36px] items-center gap-2 rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-xs font-semibold text-destructive shadow-sm transition hover:bg-destructive/10"
+            >
+              <RefreshCcw aria-hidden className="h-3.5 w-3.5" />
+              Reintentar
+            </button>
+          ) : null}
         </div>
       ) : rows.length ? (
         <div className="overflow-x-auto">
@@ -319,6 +324,9 @@ export function MaskedTalentRoster({
                   <td className="py-2 pr-3">
                     <span className="font-medium text-foreground dark:text-white">{row.display_name || "Colaborador enmascarado"}</span>
                     {row.employee_key ? <span className="block text-xs text-muted-foreground">{row.employee_key}</span> : null}
+                    {row.data_status && row.data_status !== "ready" ? (
+                      <ReadinessBadge status={normalizeReadinessStatus(row.data_status)} compact className="mt-1" />
+                    ) : null}
                   </td>
                   <td className="py-2 pr-3 text-muted-foreground">{row.role || "N/D"}</td>
                   <td className="py-2 pr-3 text-muted-foreground">{row.unit || "N/D"}</td>
@@ -338,6 +346,9 @@ export function MaskedTalentRoster({
           Selecciona una caja con empleados clasificados. Si no hay empleados, esta caja esta vacia para la corrida actual.
         </div>
       )}
+      {!loading && !error ? (
+        <TalentPayloadMeta blockers={payload?.blockers} generatedAt={payload?.generated_at} className="mt-3" />
+      ) : null}
     </section>
   );
 }
@@ -346,10 +357,16 @@ export function TalentAnomalyList({
   anomalies,
   selectedId,
   onSelect,
+  status,
+  blockers,
+  generatedAt,
 }: {
   anomalies: SfTalentAnomaly[];
   selectedId?: string | null;
   onSelect: (item: SfTalentAnomaly) => void;
+  status?: string | null;
+  blockers?: SfTalentBlocker[] | null;
+  generatedAt?: string | null;
 }) {
   return (
     <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-amber-400/20 dark:bg-[#081423]">
@@ -379,7 +396,7 @@ export function TalentAnomalyList({
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{item.recommendation || "Revisar la señal antes de decidir."}</p>
             <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-              {formatNumber(item.affected_count)} afectados · solo lectura
+              {formatCount(item.affected_count)} afectados · solo lectura
             </p>
           </button>
         ))}
@@ -389,6 +406,7 @@ export function TalentAnomalyList({
           </div>
         ) : null}
       </div>
+      <TalentPayloadMeta status={status} blockers={blockers} generatedAt={generatedAt} className="mt-4" />
     </section>
   );
 }
@@ -638,7 +656,12 @@ export function TalentControlRoom() {
   const [selectedAnomaly, setSelectedAnomaly] = useState<SfTalentAnomaly | null>(null);
   const [loading, setLoading] = useState(true);
   const [rosterLoading, setRosterLoading] = useState(false);
+  // Error de roster separado del vacío real: fallo de consulta != caja sin empleados.
+  const [rosterError, setRosterError] = useState(false);
+  const [rosterAttempt, setRosterAttempt] = useState(0);
   const [error, setError] = useState("");
+
+  const retryRoster = useCallback(() => setRosterAttempt((attempt) => attempt + 1), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -676,7 +699,10 @@ export function TalentControlRoom() {
     let cancelled = false;
     if (!selectedBox || collar !== "confianza") {
       const timer = window.setTimeout(() => {
-        if (!cancelled) setRoster(null);
+        if (!cancelled) {
+          setRoster(null);
+          setRosterError(false);
+        }
       }, 0);
       return () => {
         cancelled = true;
@@ -686,12 +712,16 @@ export function TalentControlRoom() {
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       setRosterLoading(true);
+      setRosterError(false);
       getSuccessFactorsTalentBoxRoster(selectedBox)
         .then((payload) => {
           if (!cancelled) setRoster(payload);
         })
         .catch(() => {
-          if (!cancelled) setRoster(null);
+          if (!cancelled) {
+            setRoster(null);
+            setRosterError(true);
+          }
         })
         .finally(() => {
           if (!cancelled) setRosterLoading(false);
@@ -701,7 +731,7 @@ export function TalentControlRoom() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [collar, selectedBox]);
+  }, [collar, selectedBox, rosterAttempt]);
 
   const cells = useMemo(() => nineBox?.cells ?? overview?.nine_box?.cells ?? [], [nineBox, overview]);
   const anomalyItems = anomalies?.items ?? overview?.anomalies?.items ?? [];
@@ -757,8 +787,11 @@ export function TalentControlRoom() {
             selectedBoxId={selectedBox}
             onSelect={setSelectedBox}
             disabled={collar !== "confianza"}
+            status={nineBox?.status ?? overview?.nine_box?.status}
+            blockers={nineBox?.blockers ?? overview?.nine_box?.blockers}
+            generatedAt={nineBox?.generated_at}
           />
-          <MaskedTalentRoster payload={roster} loading={rosterLoading} />
+          <MaskedTalentRoster payload={roster} loading={rosterLoading} error={rosterError} onRetry={retryRoster} />
         </div>
 
         {collar === "confianza" ? (
@@ -770,6 +803,9 @@ export function TalentControlRoom() {
             anomalies={anomalyItems}
             selectedId={selectedAnomaly?.id}
             onSelect={setSelectedAnomaly}
+            status={anomalies?.status ?? overview?.anomalies?.status}
+            blockers={anomalies?.blockers}
+            generatedAt={anomalies?.generated_at}
           />
         </div>
 

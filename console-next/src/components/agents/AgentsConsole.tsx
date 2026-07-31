@@ -19,6 +19,7 @@ import {
   type AgentRecord,
   type AgentRunRecord,
 } from "@/lib/admin-surfaces";
+import { isApiError } from "@/lib/api";
 import { KNOWN_CARTRIDGES } from "@/lib/cartridges";
 import { cn } from "@/lib/utils";
 
@@ -341,7 +342,11 @@ export function AgentsConsole() {
         setTab("runs");
       }
     },
-    onError: (error) => setTestOutput(error instanceof Error ? error.message : "No se pudo invocar el agente."),
+    // No exponer error.message crudo como output de prueba: solo copy seguro + Ref.
+    onError: (error) => {
+      const requestId = isApiError(error) ? error.requestId : undefined;
+      setTestOutput(requestId ? `No se pudo invocar el agente. Ref: ${requestId}` : "No se pudo invocar el agente.");
+    },
   });
 
   const cartridgeIds = new Set<string>(KNOWN_CARTRIDGES);

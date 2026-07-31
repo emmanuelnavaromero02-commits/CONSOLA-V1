@@ -84,7 +84,13 @@ export function ApprovalGateDialog({
   error,
 }: Props) {
   const cancelRef     = useRef<HTMLButtonElement | null>(null);
+  const dialogRef     = useRef<HTMLDivElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const submittingRef = useRef(Boolean(submitting));
+
+  useEffect(() => {
+    submittingRef.current = Boolean(submitting);
+  }, [submitting]);
 
   useEffect(() => {
     if (!open) return;
@@ -95,8 +101,33 @@ export function ApprovalGateDialog({
 
     cancelRef.current?.focus();
 
+    // Trampa de foco + guardas durante submit (mismo patrón que
+    // ExperiencePreviewFlow): Escape no cierra mientras se ejecuta y
+    // Tab siempre cicla dentro del diálogo.
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") {
+        if (!submittingRef.current) onCancel();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      if (submittingRef.current) {
+        e.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ) ?? [])];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => {
@@ -104,6 +135,10 @@ export function ApprovalGateDialog({
       previousFocus.current?.focus();
     };
   }, [open, onCancel]);
+
+  useEffect(() => {
+    if (open && submitting) dialogRef.current?.focus();
+  }, [open, submitting]);
 
   if (!open) return null;
 
@@ -116,10 +151,16 @@ export function ApprovalGateDialog({
     >
       <div
         className="absolute inset-0 bg-black/50"
-        onClick={onCancel}
+        onClick={() => {
+          if (!submitting) onCancel();
+        }}
         aria-hidden
       />
-      <div className="relative w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="relative w-full max-w-md rounded-lg border bg-card p-6 shadow-lg focus-visible:outline-none"
+      >
         <h2
           id="approval-gate-title"
           className="text-lg font-semibold tracking-tight"

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, DatabaseZap, ExternalLink, Loader2, Plug, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, DatabaseZap, ExternalLink, Loader2, Plug, ShieldCheck, XCircle } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -257,7 +257,9 @@ function SyncRunStatusCard({
           </p>
         </div>
         <span className={`inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs font-medium ${tone}`}>
-          {loading ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> : payload.status === "failed" ? <XCircle aria-hidden className="h-3.5 w-3.5" /> : <CheckCircle2 aria-hidden className="h-3.5 w-3.5" />}
+          {/* "partial" (y otros estados no exitosos) no llevan glifo de
+              éxito: CheckCircle2 queda reservado para "success". */}
+          {loading || !isSyncTerminal(payload.status) ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> : payload.status === "failed" ? <XCircle aria-hidden className="h-3.5 w-3.5" /> : payload.status === "success" ? <CheckCircle2 aria-hidden className="h-3.5 w-3.5" /> : <AlertTriangle aria-hidden className="h-3.5 w-3.5" />}
           {payload.status}
         </span>
       </div>
