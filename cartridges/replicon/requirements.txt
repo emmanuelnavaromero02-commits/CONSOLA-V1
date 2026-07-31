@@ -20,7 +20,7 @@ pandas
 pyarrow
 pyyaml
 cryptography
-duckdb
+duckdb==1.2.2
 # v1.43.4 — Replicon was unpinned, which worked by accident
 # (pulled fastmcp 3.x naturally) but left the cartridge exposed
 # to a future fastmcp 4.x breaking change with no version gate.

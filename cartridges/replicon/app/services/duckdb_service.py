@@ -21,6 +21,19 @@ from app.core.request_context import (
 from app.services.kb_materialization import MaterializationRun
 
 _SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+_S3_READER_RE = re.compile(
+    r"\b(?:read_parquet|read_csv(?:_auto)?)\s*\(\s*(['\"])s3://[^'\"]+\1",
+    re.IGNORECASE,
+)
+_DUCKDB_EXTENSION_CONFIG = {
+    "autoinstall_known_extensions": "false",
+    "autoload_known_extensions": "false",
+}
+_REMOTE_SOURCE_UNAVAILABLE = "DuckDB remote source unavailable"
+
+
+class DuckDBHTTPFSUnavailable(RuntimeError):
+    """Raised when an admitted remote source cannot be opened hermetically."""
 
 
 def _path_has_scope(path: str, scope: str) -> bool:
@@ -31,14 +44,19 @@ def _path_has_scope(path: str, scope: str) -> bool:
     )
 
 
-def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect()
-    conn.execute("LOAD httpfs;")
-    conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
-    conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
-    conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")
-    conn.execute(f"SET s3_use_ssl={'true' if settings.minio_secure else 'false'};")
-    conn.execute("SET s3_url_style='path';")
+def _get_duckdb_connection(resolved_sql: str) -> duckdb.DuckDBPyConnection:
+    conn = duckdb.connect(config=_DUCKDB_EXTENSION_CONFIG)
+    if _S3_READER_RE.search(resolved_sql):
+        try:
+            conn.execute("LOAD httpfs;")
+            conn.execute("SET s3_endpoint=?;", [settings.minio_endpoint])
+            conn.execute("SET s3_access_key_id=?;", [settings.minio_access_key])
+            conn.execute("SET s3_secret_access_key=?;", [settings.minio_secret_key])
+            conn.execute("SET s3_use_ssl=?;", [settings.minio_secure])
+            conn.execute("SET s3_url_style='path';")
+        except duckdb.Error:
+            conn.close()
+            raise DuckDBHTTPFSUnavailable(_REMOTE_SOURCE_UNAVAILABLE) from None
     conn.execute("SET lock_configuration=true;")
     return conn
 
@@ -47,7 +65,7 @@ def run_kb_sql(
     sql: str, *, runtime_tables: dict[str, pd.DataFrame] | None = None
 ) -> pd.DataFrame:
     resolved = sql.replace("{bucket}", settings.minio_bucket)
-    conn = _get_duckdb_connection()
+    conn = _get_duckdb_connection(resolved)
     try:
         for name, frame in (runtime_tables or {}).items():
             if not _SAFE_IDENT_RE.match(name):
