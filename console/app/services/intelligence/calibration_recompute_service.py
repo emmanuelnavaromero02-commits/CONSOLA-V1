@@ -16,6 +16,7 @@ from app.services.intelligence.calibration_state_repository import (
     _derived_prior_for_group,
     _json_obj,
     _row_state,
+    _state_payload,
     _state_id,
     _upsert_state,
 )
@@ -50,6 +51,15 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
     clean = dict(payload or {})
     if "model_version" in clean:
         raise HTTPException(422, "model_version is server-owned")
+    if "parent_calibration_group" in clean:
+        raise HTTPException(422, "parent_calibration_group is server-owned")
+    if (
+        str(clean.get("source_type") or "").strip() == "manual_fixture"
+        and not _synthetic_allowed()
+    ):
+        raise HTTPException(403, "manual_fixture recompute requires a local APP_ENV")
+    if "source_type" in clean or "source_id" in clean:
+        raise HTTPException(422, "filtered recompute is not accepted")
     forbidden = _forbidden_path(clean)
     if forbidden:
         raise HTTPException(422, f"scope fields are not accepted: {forbidden}")
@@ -57,19 +67,8 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         clean.get("calibration_group"), field="calibration_group", max_length=80
     )
     model_version = DEFAULT_MODEL_VERSION
-    parent_group = (
-        _short_text(
-            clean.get("parent_calibration_group"),
-            field="parent_calibration_group",
-            max_length=80,
-            required=False,
-        )
-        or None
-    )
-    source_type = str(clean.get("source_type") or "").strip() or None
-    source_id = str(clean.get("source_id") or "").strip() or None
-    if source_type and source_type not in SOURCE_TYPES:
-        raise HTTPException(422, "unsupported source_type")
+    source_type = None
+    source_id = None
     allow_manual = _synthetic_allowed()
     if source_type == "manual_fixture" and not allow_manual:
         raise HTTPException(403, "manual_fixture recompute requires a local APP_ENV")
@@ -115,10 +114,10 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
         observations = [_observation_from_row(row) for row in row_dicts]
         prior = await _derived_prior_for_group(
             conn,
+            tenant_id=tenant_id,
             workspace_id=workspace_id,
             group=group,
             model_version=model_version,
-            explicit_parent_group=parent_group,
         )
         state = calibration.recompute_state(
             observations,
@@ -159,7 +158,7 @@ async def recompute(user: dict, payload: dict[str, Any]) -> dict[str, Any]:
             or None,
         )
     return {
-        "state": public_json(dict(state_row)),
+        "state": public_json(_state_payload(state_row)),
         "observations_recomputed": len(observations),
     }
 
@@ -232,7 +231,7 @@ async def get_state(
             """,
             *params,
         )
-    return {"states": [public_json(dict(row)) for row in rows]}
+    return {"states": [public_json(_state_payload(row)) for row in rows]}
 
 
 async def list_observations(

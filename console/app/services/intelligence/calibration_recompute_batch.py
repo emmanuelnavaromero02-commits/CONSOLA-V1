@@ -34,6 +34,8 @@ def _filters(
         "calibration_group = $2",
         "model_version = $3",
         "provenance_status = 'verified'",
+        "provenance_reason = 'durable_binary_evaluation'",
+        "authoritative_calibration_group = calibration_group",
     ]
     for value, column in ((source_type, "source_type"), (source_id, "source_id")):
         if value:
@@ -147,18 +149,27 @@ async def load_complete_batch(
             skipped["authoritative_group_mismatch"] += 1
             continue
         trusted.append(rebuilt)
+    processed_total = len(trusted)
+    skipped_total = sum(skipped.values())
+    coverage_complete = (
+        processed_total > 0 and processed_total == eligible_total and skipped_total == 0
+    )
     metrics = {
         "eligible_total": eligible_total,
-        "processed_total": len(trusted),
-        "skipped_total": sum(skipped.values()),
+        "processed_total": processed_total,
+        "skipped_total": skipped_total,
         "skipped_by_reason": dict(sorted(skipped.items())),
-        "complete": bool(trusted),
-        "provenance_complete": True,
-        "binary_evaluation_complete": bool(trusted)
+        "complete": coverage_complete,
+        "provenance_complete": coverage_complete,
+        "binary_evaluation_complete": coverage_complete
         and all(row.get("actual_status") in {"hit", "miss"} for row in trusted),
     }
-    if not trusted:
-        metrics["reason"] = "no_trusted_observations"
+    if not coverage_complete:
+        metrics["reason"] = (
+            "no_trusted_observations"
+            if not trusted
+            else "authoritative_recompute_incomplete"
+        )
     if metrics["processed_total"] + metrics["skipped_total"] != eligible_total:
         raise BatchFailure(
             "batch_accounting_mismatch", eligible_total, operational_limit

@@ -29,11 +29,18 @@ def _row_state(
         return None
     data = dict(row)
     metrics = _json_obj(data.get("metrics"), {})
+    sample_count = int(metrics.get("sample_count") or data.get("sample_count") or 0)
+    processed_total = int(metrics.get("processed_total") or 0)
+    eligible_total = int(metrics.get("eligible_total") or 0)
+    skipped_total = int(metrics.get("skipped_total") or 0)
     if (
         metrics.get("complete") is not True
         or metrics.get("provenance_complete") is not True
         or metrics.get("binary_evaluation_complete") is not True
-        or int(metrics.get("sample_count") or 0) <= 0
+        or sample_count <= 0
+        or processed_total != sample_count
+        or eligible_total != processed_total
+        or skipped_total != 0
     ):
         return None
     return {
@@ -45,6 +52,13 @@ def _row_state(
     }
 
 
+def _state_payload(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    for field in ("prior", "posterior", "metrics"):
+        data[field] = _json_obj(data.get(field), {})
+    return data
+
+
 def _parent_prior_source(group: str) -> str:
     if group.startswith("source_type:"):
         return "source_type"
@@ -53,21 +67,10 @@ def _parent_prior_source(group: str) -> str:
     return "fixed"
 
 
-def _parent_group_candidates(group: str) -> list[str]:
-    parts = group.split(":")
-    if len(parts) >= 5 and parts[0] == "specific":
-        return [
-            calibration.source_type_calibration_group(parts[1], parts[-2]),
-            calibration.global_calibration_group(parts[-2]),
-        ]
-    if len(parts) >= 4 and parts[0] == "source_type":
-        return [calibration.global_calibration_group(parts[-2])]
-    return []
-
-
 async def _fetch_state(
     conn: Any,
     *,
+    tenant_id: str | None,
     workspace_id: str,
     group: str,
     model_version: str,
@@ -79,10 +82,12 @@ async def _fetch_state(
          WHERE workspace_id = $1
            AND calibration_group = $2
            AND model_version = $3
+           AND tenant_id IS NOT DISTINCT FROM $4::uuid
         """,
         workspace_id,
         group,
         model_version,
+        tenant_id,
     )
     return _row_state(row, group=group, model_version=model_version)
 
@@ -90,19 +95,29 @@ async def _fetch_state(
 async def _derived_prior_for_group(
     conn: Any,
     *,
+    tenant_id: str | None = None,
     workspace_id: str,
     group: str,
     model_version: str,
-    explicit_parent_group: str | None = None,
 ) -> dict[str, Any]:
-    candidates = (
-        [explicit_parent_group]
-        if explicit_parent_group
-        else _parent_group_candidates(group)
+    parent_group = await conn.fetchval(
+        """
+        SELECT parent_group
+          FROM calibration_group_hierarchy
+         WHERE workspace_id = $1
+           AND tenant_id IS NOT DISTINCT FROM $2::uuid
+           AND child_group = $3
+           AND model_version = $4
+        """,
+        workspace_id,
+        tenant_id,
+        group,
+        model_version,
     )
-    for parent_group in [item for item in candidates if item]:
+    if parent_group:
         parent_state = await _fetch_state(
             conn,
+            tenant_id=tenant_id,
             workspace_id=workspace_id,
             group=parent_group,
             model_version=model_version,
@@ -211,63 +226,19 @@ async def _upsert_state(
     reproducibility_hash: str,
     last_observed_at: str | None = None,
 ) -> Any:
+    payload = {
+        "state_id": state_id,
+        "calibration_group": group,
+        "model_version": model_version,
+        "prior": prior,
+        "posterior": posterior,
+        "metrics": metrics,
+        "reproducibility_hash": reproducibility_hash,
+        "last_observed_at": last_observed_at,
+    }
     return await conn.fetchrow(
-        """
-        INSERT INTO calibration_states (
-            state_id, tenant_id, workspace_id, calibration_group, model_version,
-            prior, posterior, metrics, sample_count, hit_count, miss_count,
-            partial_count, unknown_count, brier_score, mae, rmse,
-            coverage_p10_p90, calibration_error, confidence_score,
-            last_observed_at, reproducibility_hash
-        )
-        VALUES (
-            $1, $2, $3, $4, $5,
-            $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11,
-            $12, $13, $14, $15, $16,
-            $17, $18, $19,
-            ($20::text)::timestamptz, $21
-        )
-        ON CONFLICT (workspace_id, calibration_group, model_version) DO UPDATE
-        SET prior = EXCLUDED.prior,
-            posterior = EXCLUDED.posterior,
-            metrics = EXCLUDED.metrics,
-            sample_count = EXCLUDED.sample_count,
-            hit_count = EXCLUDED.hit_count,
-            miss_count = EXCLUDED.miss_count,
-            partial_count = EXCLUDED.partial_count,
-            unknown_count = EXCLUDED.unknown_count,
-            brier_score = EXCLUDED.brier_score,
-            mae = EXCLUDED.mae,
-            rmse = EXCLUDED.rmse,
-            coverage_p10_p90 = EXCLUDED.coverage_p10_p90,
-            calibration_error = EXCLUDED.calibration_error,
-            confidence_score = EXCLUDED.confidence_score,
-            last_observed_at = COALESCE(EXCLUDED.last_observed_at, calibration_states.last_observed_at),
-            reproducibility_hash = EXCLUDED.reproducibility_hash,
-            updated_at = NOW()
-        RETURNING *
-        """,
-        state_id,
-        tenant_id,
-        workspace_id,
-        group,
-        model_version,
-        json_dumps(prior),
-        json_dumps(posterior),
-        json_dumps(metrics),
-        int(metrics.get("sample_count") or 0),
-        int(metrics.get("hit_count") or 0),
-        int(metrics.get("miss_count") or 0),
-        int(metrics.get("partial_count") or 0),
-        int(metrics.get("unknown_count") or 0),
-        metrics.get("brier_score"),
-        metrics.get("mae"),
-        metrics.get("rmse"),
-        metrics.get("coverage_p10_p90"),
-        metrics.get("calibration_error"),
-        metrics.get("confidence_score"),
-        last_observed_at,
-        reproducibility_hash,
+        "SELECT * FROM public.upsert_calibration_state($1::jsonb)",
+        json_dumps(payload),
     )
 
 

@@ -53,12 +53,20 @@ class ConcurrentMetadataConnection:
         if "FROM control_room_items" in sql and "FOR UPDATE" in sql:
             self.lock_count += 1
             return {"metadata": self.metadata}
-        if "INSERT INTO prediction_outcomes" in sql:
+        if "record_prediction_outcome" in sql:
             return {
-                "id": 81,
-                "signal_id": "lesson-race-1",
-                "learned_rule": "Outcome adds a current rule.",
-                "metadata": {},
+                "outcome": {
+                    "id": 81,
+                    "signal_id": "lesson-race-1",
+                    "predicted_value": None,
+                    "prediction_error": None,
+                    "learned_rule": "Outcome adds a current rule.",
+                    "metadata": {"input_classification": "observed"},
+                    "evaluation_status": "hit",
+                    "evaluated_by": "omega_outcome_evaluator.v1",
+                    "evaluated_at": "2026-07-31T00:00:00Z",
+                },
+                "inserted": True,
             }
         raise AssertionError(f"unexpected fetchrow: {sql}")
 

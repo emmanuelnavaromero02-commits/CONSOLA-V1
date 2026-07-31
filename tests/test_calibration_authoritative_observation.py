@@ -6,6 +6,9 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.intelligence import calibration
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.intelligence.calibration_authoritative_evidence import (
     resolve_authoritative_observation,
 )
@@ -18,7 +21,37 @@ from app.services.intelligence.calibration_source_validation import (
 
 
 OUTCOME_ID = "41"
+TENANT = "11111111-1111-1111-1111-111111111111"
 WORKSPACE = "22222222-2222-2222-2222-222222222222"
+EVALUATED_AT = datetime(2026, 7, 31, tzinfo=timezone.utc)
+
+
+def _outcome_metadata(*, tenant: str, workspace: str) -> dict:
+    observed = {
+        "signal_id": "signal-observed-a",
+        "metric": "margin",
+        "actual_value": 12,
+    }
+    evidence = runtime_row_evidence_fields(
+        source_dataset="gold_margin",
+        source_system="replicon",
+        cartridge="replicon",
+        tenant_id=tenant,
+        workspace_id=workspace,
+        source_row=observed,
+        locator_field="signal_id",
+        locator_relation="intelligence_signals",
+        observed_at=EVALUATED_AT.isoformat(),
+        business_observation={
+            **observed,
+            "kind": "signal",
+            "metric_type": "scalar",
+            "observed_value": 12,
+            "observed_at": EVALUATED_AT.isoformat(),
+        },
+    )
+    assert evidence
+    return {"observed_signal_id": observed["signal_id"], **evidence}
 
 
 def _client_payload(**overrides) -> dict:
@@ -39,7 +72,7 @@ class _Connection:
         self,
         *,
         workspace: str = WORKSPACE,
-        tenant: str | None = None,
+        tenant: str = TENANT,
         outcome: bool = True,
     ) -> None:
         self.workspace = workspace
@@ -51,25 +84,33 @@ class _Connection:
         self.calls.append((sql, params))
         if "FROM prediction_outcomes" not in sql or not self.outcome:
             return None
-        if params != (self.workspace, OUTCOME_ID, self.tenant):
+        requested_workspace, requested_outcome, requested_tenant = params
+        if (
+            requested_workspace != self.workspace
+            or requested_outcome != OUTCOME_ID
+            or (requested_tenant is not None and requested_tenant != self.tenant)
+        ):
             return None
         return {
             "outcome_id": OUTCOME_ID,
+            "outcome_tenant_id": self.tenant,
             "signal_id": "signal-a",
             "option_id": "option-a",
             "option_matches": True,
             "action_taken": "review",
             "outcome_predicted_value": 999999,
             "actual_value": 12,
-            "outcome_metadata": {"reported_by": "operator@example.com"},
+            "outcome_metadata": _outcome_metadata(
+                tenant=self.tenant, workspace=self.workspace
+            ),
             "outcome_created_at": datetime(2026, 7, 30, tzinfo=timezone.utc),
             "evaluation_status": "hit",
             "evaluation_rule_version": "margin-evaluation.v1",
-            "evaluated_at": datetime(2026, 7, 31, tzinfo=timezone.utc),
-            "evaluated_by": "evaluation-engine",
+            "evaluated_at": EVALUATED_AT,
+            "evaluated_by": "omega_outcome_evaluator.v1",
             "metric": "margin",
             "signal_predicted_value": 10,
-            "signal_subtype": "observed",
+            "signal_subtype": "future_opportunity",
             "source_system": "replicon",
             "source_dataset": "gold_margin",
             "evidence_pack_id": "evidence-real",

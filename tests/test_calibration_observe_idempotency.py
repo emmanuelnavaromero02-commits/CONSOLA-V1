@@ -11,6 +11,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.routers import intelligence as intelligence_router
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.intelligence import calibration_service
 
 
@@ -21,6 +24,35 @@ USER = {
     "active_tenant_id": TENANT,
     "active_workspace_id": WORKSPACE,
 }
+
+
+def _outcome_metadata(outcome_id: str, value: float) -> dict[str, Any]:
+    observed_at = datetime(2026, 7, 31, int(outcome_id) - 40, tzinfo=timezone.utc)
+    observed = {
+        "signal_id": f"signal-observed-{outcome_id}",
+        "metric": "margin",
+        "actual_value": value,
+    }
+    evidence = runtime_row_evidence_fields(
+        source_dataset="gold_margin",
+        source_system="replicon",
+        cartridge="replicon",
+        tenant_id=TENANT,
+        workspace_id=WORKSPACE,
+        source_row=observed,
+        locator_field="signal_id",
+        locator_relation="intelligence_signals",
+        observed_at=observed_at.isoformat(),
+        business_observation={
+            **observed,
+            "kind": "signal",
+            "metric_type": "scalar",
+            "observed_value": value,
+            "observed_at": observed_at.isoformat(),
+        },
+    )
+    assert evidence
+    return {"observed_signal_id": observed["signal_id"], **evidence}
 
 
 def _payload(outcome_id: str = "41", **overrides: Any) -> dict[str, Any]:
@@ -71,6 +103,11 @@ class _Connection:
         if "pg_advisory_xact_lock" in sql:
             await self.store.lock.acquire()
 
+    async def fetchval(self, sql: str, *_params):
+        if "FROM calibration_group_hierarchy" in sql:
+            return None
+        raise AssertionError(sql)
+
     async def fetchrow(self, sql: str, *params):
         if "FROM prediction_outcomes outcome" in sql:
             workspace, outcome_id, tenant = params
@@ -85,6 +122,7 @@ class _Connection:
                 "option_matches": True,
                 "action_taken": "review",
                 "actual_value": value,
+                "outcome_metadata": _outcome_metadata(outcome_id, value),
                 "outcome_created_at": datetime(
                     2026, 7, 30, int(outcome_id) - 40, tzinfo=timezone.utc
                 ),
@@ -97,10 +135,12 @@ class _Connection:
                     if self.store.evaluated
                     else None
                 ),
-                "evaluated_by": ("evaluation-engine" if self.store.evaluated else None),
+                "evaluated_by": (
+                    "omega_outcome_evaluator.v1" if self.store.evaluated else None
+                ),
                 "metric": "margin",
                 "signal_predicted_value": 10,
-                "signal_subtype": "observed",
+                "signal_subtype": "future_opportunity",
                 "source_system": "replicon",
                 "source_dataset": "gold_margin",
                 "evidence_pack_id": "evidence-real",
@@ -111,47 +151,32 @@ class _Connection:
             return self.store.observations.get(params[1])
         if "SELECT *" in sql and "FROM calibration_states" in sql:
             return self.store.state
-        if "INSERT INTO calibration_observations" in sql:
-            key = params[1]
+        if "record_calibration_observation" in sql:
+            payload = json.loads(params[0])
+            key = payload["idempotency_key"]
             if key in self.store.observations:
                 return None
             self.store.observation_inserts += 1
             row = {
                 "id": self.store.observation_inserts,
-                "observation_id": params[0],
+                **payload,
+                "tenant_id": TENANT,
+                "workspace_id": WORKSPACE,
                 "idempotency_key": key,
-                "evidence_digest": params[2],
-                "tenant_id": params[3],
-                "workspace_id": params[4],
-                "source_type": params[5],
-                "source_id": params[6],
-                "predicted_metric": params[7],
-                "predicted_value": params[8],
-                "actual_value": params[11],
-                "actual_status": params[12],
-                "observed_at": params[13],
-                "model_version": params[15],
-                "calibration_group": params[16],
-                "metrics": json.loads(params[19]),
-                "reproducibility_hash": params[22],
             }
             self.store.observations[key] = row
             return row
-        if "INSERT INTO calibration_states" in sql:
+        if "upsert_calibration_state" in sql:
+            payload = json.loads(params[0])
+            metrics = payload["metrics"]
             self.store.state_upserts += 1
             self.store.state = {
                 "id": 1,
-                "state_id": params[0],
-                "tenant_id": params[1],
-                "workspace_id": params[2],
-                "calibration_group": params[3],
-                "model_version": params[4],
-                "prior": json.loads(params[5]),
-                "posterior": json.loads(params[6]),
-                "metrics": json.loads(params[7]),
-                "sample_count": params[8],
-                "unknown_count": params[12],
-                "reproducibility_hash": params[20],
+                **payload,
+                "tenant_id": TENANT,
+                "workspace_id": WORKSPACE,
+                "sample_count": int(metrics.get("sample_count") or 0),
+                "unknown_count": int(metrics.get("unknown_count") or 0),
             }
             return self.store.state
         raise AssertionError(sql)
@@ -214,7 +239,9 @@ async def test_distinct_evidence_creates_distinct_observation(monkeypatch) -> No
     await calibration_service.observe(USER, _payload("41"))
     second = await calibration_service.observe(USER, _payload("42"))
     assert len(store.observations) == 2
-    assert second["state"]["sample_count"] == 2
+    assert second["state"]["metrics"]["complete"] is False
+    assert second["state"]["metrics"]["provenance_complete"] is False
+    assert second["state"]["metrics"]["reason"] == "authoritative_recompute_required"
 
 
 @pytest.mark.asyncio

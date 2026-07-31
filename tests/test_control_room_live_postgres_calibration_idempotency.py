@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
+import json
 from unittest.mock import AsyncMock
 
 import asyncpg
@@ -10,73 +10,14 @@ from fastapi import HTTPException
 
 from app.services.intelligence import calibration_service
 from app.services.intelligence import persistence
+from tests.pr552_calibration_live_helpers import (
+    assert_calibration_writer_privileges,
+    seed_real_signals,
+)
 from tests.test_operational_rls_console_refinement import (
     omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
-
-
-async def _seed(
-    dsn: str,
-) -> tuple[str, str, str]:
-    conn = await asyncpg.connect(dsn)
-    suffix = uuid.uuid4().hex[:12]
-    try:
-        tenant = await conn.fetchval(
-            "INSERT INTO tenants(name, slug) VALUES($1, $2) RETURNING id",
-            f"Calibration tenant {suffix}",
-            f"calibration-{suffix}",
-        )
-        other_tenant = await conn.fetchval(
-            "INSERT INTO tenants(name, slug) VALUES($1, $2) RETURNING id",
-            f"Other tenant {suffix}",
-            f"calibration-other-{suffix}",
-        )
-        workspace = await conn.fetchval(
-            "INSERT INTO workspaces(tenant_id, name) VALUES($1, $2) RETURNING id",
-            tenant,
-            f"Calibration workspace {suffix}",
-        )
-        await conn.execute(
-            """
-            INSERT INTO intelligence_signals(
-                signal_id, tenant_id, workspace_id, cartridge_id, dataset,
-                domain, entity_kind, entity_id, entity_label, metric, period_key,
-                actual_value, expected_value, predicted_value,
-                prediction_horizon_days, signal_subtype, summary, metadata
-            )
-            VALUES(
-                'signal-calibration', $1, $2, 'replicon', 'gold_margin',
-                'Operacion', 'project', 'P-1', 'Project 1', 'margin', '2026-07',
-                12, 10, 12, 30, 'future_opportunity', 'Predicted margin',
-                '{"source_system":"replicon","source_dataset":"gold_margin",'
-                '"evidence_pack_id":"evidence-real","input_classification":"observed",'
-                '"observed":true,"evidence_refs":[{"source_system":"replicon",'
-                '"source_dataset":"gold_margin","source_record_id":"P-1",'
-                '"source_field":"margin","observed_value":12}]}'::jsonb
-            )
-            """,
-            tenant,
-            workspace,
-        )
-        privileges = await conn.fetchrow(
-            """
-            SELECT
-              has_table_privilege(
-                'omega_console', 'prediction_outcomes', 'SELECT'
-              ) AS outcome_select,
-              has_table_privilege(
-                'omega_console', 'calibration_observations', 'SELECT'
-              ) AS observation_select
-            """
-        )
-        assert dict(privileges) == {
-            "outcome_select": True,
-            "observation_select": True,
-        }
-        return str(tenant), str(other_tenant), str(workspace)
-    finally:
-        await conn.close()
 
 
 def _payload(outcome_id: str) -> dict:
@@ -92,7 +33,9 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
     omega_console_live_dsn: str,
     monkeypatch,
 ) -> None:
-    tenant, other_tenant, workspace = await _seed(postgres_with_real_init_schema)
+    tenant, other_tenant, workspace = await seed_real_signals(
+        postgres_with_real_init_schema
+    )
     pool = await asyncpg.create_pool(omega_console_live_dsn, min_size=1, max_size=4)
     monkeypatch.setattr(
         calibration_service.auth,
@@ -137,6 +80,21 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
             },
         )
         assert duplicate["outcome"]["id"] == recorded["outcome"]["id"]
+        reported = await persistence.record_outcome(
+            user,
+            "signal-calibration-unobserved",
+            {
+                "action_taken": "reported before maturity",
+                "actual_value": 15,
+                "learned_rule": "client-supplied rule must not publish",
+            },
+        )
+        assert reported["outcome"]["prediction_error"] is None
+        assert reported["outcome"]["learned_rule"] is None
+        assert reported["outcome"]["evaluation_status"] is None
+        assert reported["outcome"]["metadata"]["input_classification"] == (
+            "reported_outcome"
+        )
 
         admin = await asyncpg.connect(postgres_with_real_init_schema)
         try:
@@ -149,11 +107,23 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
                 )
                 == 0
             )
-            assert await admin.fetchval(
-                "SELECT COUNT(*) FROM prediction_outcomes "
-                "WHERE workspace_id=$1 AND signal_id='signal-calibration'",
-                workspace,
-            ) == 1
+            assert (
+                await admin.fetchval(
+                    "SELECT COUNT(*) FROM prediction_outcomes "
+                    "WHERE workspace_id=$1 AND signal_id='signal-calibration'",
+                    workspace,
+                )
+                == 1
+            )
+            assert (
+                await admin.fetchval(
+                    "SELECT COUNT(*) FROM control_room_lessons "
+                    "WHERE workspace_id=$1 "
+                    "AND item_id='signal-calibration-unobserved'",
+                    workspace,
+                )
+                == 0
+            )
         finally:
             await admin.close()
         left, right = await asyncio.gather(
@@ -166,9 +136,22 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
         assert online_state["metrics"]["complete"] is False
         assert online_state["metrics"]["provenance_complete"] is False
         assert online_state["metrics"]["skipped_total"] == 1
-        assert online_state["metrics"]["reason"] == (
-            "authoritative_recompute_required"
-        )
+        assert online_state["metrics"]["reason"] == ("authoritative_recompute_required")
+        for index in range(2, 6):
+            extra = await persistence.record_outcome(
+                user,
+                f"signal-calibration-{index}",
+                {
+                    "action_taken": "review",
+                    "actual_value": 12,
+                    "outcome_summary": "Additional durable observed outcome",
+                },
+            )
+            observed = await calibration_service.observe(
+                user,
+                _payload(str(extra["outcome"]["id"])),
+            )
+            assert observed["state"]["metrics"]["complete"] is False
 
         cross_tenant = {
             "active_tenant_id": other_tenant,
@@ -194,17 +177,6 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
                 "WHERE workspace_id=$1",
                 workspace,
             )
-            update_privileges = await check.fetchrow(
-                """
-                SELECT
-                  has_table_privilege(
-                    'omega_console', 'calibration_observations', 'UPDATE'
-                  ) AS observation_update,
-                  has_table_privilege(
-                    'omega_console', 'prediction_outcomes', 'UPDATE'
-                  ) AS outcome_update
-                """
-            )
             await check.execute(
                 "DELETE FROM calibration_states WHERE workspace_id=$1",
                 workspace,
@@ -212,21 +184,64 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
         finally:
             await check.close()
         assert observation_count == 1
-        assert dict(state) == {"sample_count": 1, "unknown_count": 0}
-        assert dict(update_privileges) == {
-            "observation_update": False,
-            "outcome_update": False,
-        }
+        assert dict(state) == {"sample_count": 5, "unknown_count": 0}
+        await assert_calibration_writer_privileges(postgres_with_real_init_schema)
 
         recomputed = await calibration_service.recompute(
             user,
             {"calibration_group": online_state["calibration_group"]},
         )
-        assert recomputed["observations_recomputed"] == 1
+        assert recomputed["observations_recomputed"] == 5
         assert recomputed["state"]["metrics"]["complete"] is True
         assert recomputed["state"]["metrics"]["provenance_complete"] is True
         assert recomputed["state"]["metrics"]["binary_evaluation_complete"] is True
-        assert recomputed["state"]["sample_count"] == 1
+        assert recomputed["state"]["sample_count"] == 5
+        assert recomputed["state"]["prior"]["partial_pooling_applied"] is True
+
+        async with pool.acquire() as scoped:
+            async with scoped.transaction():
+                await scoped.execute(
+                    """
+                    SELECT set_config('app.tenant_id', $1, true),
+                           set_config('app.workspace_id', $2, true)
+                    """,
+                    tenant,
+                    workspace,
+                )
+                server_state = await scoped.fetchrow(
+                    "SELECT * FROM public.upsert_calibration_state($1::jsonb)",
+                    json.dumps(
+                        {
+                            "calibration_group": online_state["calibration_group"],
+                            "model_version": "bayesian_calibration.v1",
+                            "posterior": {"alpha": 999, "beta": 1, "mean": 0.999},
+                            "metrics": {
+                                "complete": True,
+                                "confidence_score": 1,
+                            },
+                        }
+                    ),
+                )
+        check = await asyncpg.connect(postgres_with_real_init_schema)
+        try:
+            parent_evidence = await check.fetchrow(
+                """
+                SELECT *
+                  FROM public.authoritative_calibration_parent_evidence(
+                      $1::uuid, $2::uuid, $3, 'bayesian_calibration.v1'
+                  )
+                """,
+                workspace,
+                tenant,
+                online_state["calibration_group"],
+            )
+        finally:
+            await check.close()
+        assert parent_evidence["parent_group"].startswith("global:")
+        assert parent_evidence["parent_sample_count"] == 5
+        server_posterior = json.loads(server_state["posterior"])
+        assert float(server_posterior["alpha"]) != 999
+        assert float(server_state["confidence_score"]) != 1
 
         check = await asyncpg.connect(postgres_with_real_init_schema)
         try:
@@ -236,7 +251,11 @@ async def test_real_postgres_observation_is_atomic_idempotent_and_rls_scoped(
             )
         finally:
             await check.close()
-        repeated = await calibration_service.observe(user, _payload(outcome))
-        assert repeated["state"]["sample_count"] == 1
+        with pytest.raises(HTTPException) as tampered:
+            await calibration_service.observe(user, _payload(outcome))
+        assert tampered.value.status_code == 409
+        assert tampered.value.detail["reason"] == (
+            "authoritative_evaluation_unavailable"
+        )
     finally:
         await pool.close()

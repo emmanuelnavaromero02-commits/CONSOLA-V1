@@ -8,11 +8,15 @@ from fastapi import HTTPException
 
 from app.services.control_room.business_runtime_evidence import (
     canonical_runtime_row_reference,
+    runtime_scope_binding,
+)
+from app.services.control_room.business_evidence_binding import (
+    runtime_reference_matches_item,
 )
 from app.services.intelligence import calibration
 from app.services.intelligence.source_provenance_policy import (
+    calibratable_prediction_signal,
     metadata,
-    observed_signal,
 )
 
 
@@ -59,17 +63,34 @@ def _timestamp(value: Any) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _verified_refs(row: Mapping[str, Any]) -> list[dict[str, Any]]:
-    signal_metadata = metadata(row.get("signal_metadata"))
+def _verified_refs(
+    row: Mapping[str, Any], *, workspace_id: str
+) -> list[dict[str, Any]]:
+    outcome_metadata = metadata(row.get("outcome_metadata"))
+    tenant_id = str(row.get("outcome_tenant_id") or "").strip()
+    if not tenant_id:
+        return []
+    expected_scope = runtime_scope_binding(tenant_id, workspace_id)
+    item = {
+        "signal_id": outcome_metadata.get("observed_signal_id"),
+        "kind": "signal",
+        "metric_name": row.get("metric"),
+        "metric_type": "scalar",
+        "actual_value": row.get("actual_value"),
+        "observed_at": row.get("evaluated_at"),
+    }
     refs: list[dict[str, Any]] = []
-    for item in signal_metadata.get("evidence_refs") or []:
-        if isinstance(item, Mapping):
-            canonical = canonical_runtime_row_reference(item)
-            if canonical is not None:
+    for reference in outcome_metadata.get("evidence_refs") or []:
+        if isinstance(reference, Mapping):
+            canonical = canonical_runtime_row_reference(reference)
+            if (
+                canonical is not None
+                and canonical.get("scope_binding") == expected_scope
+                and canonical.get("source_system") == row.get("source_system")
+                and canonical.get("source_dataset") == row.get("source_dataset")
+                and runtime_reference_matches_item(canonical, item)
+            ):
                 refs.append({**canonical, "id": canonical["source_record_id"]})
-    evidence_pack_id = str(row.get("evidence_pack_id") or "").strip()
-    if evidence_pack_id:
-        refs.append({"type": "evidence_pack", "id": evidence_pack_id})
     return refs
 
 
@@ -181,7 +202,7 @@ async def resolve_authoritative_observation(
     data = dict(row) if row else {}
     if not data:
         raise HTTPException(404, "calibration source not found")
-    if not data.get("option_matches") or not observed_signal(data):
+    if not data.get("option_matches") or not calibratable_prediction_signal(data):
         raise HTTPException(404, "calibration source not found")
     actual_value = _number(data.get("actual_value"))
     predicted_value = _number(data.get("signal_predicted_value"))
@@ -204,9 +225,12 @@ async def resolve_authoritative_observation(
     if (
         evaluation_status not in {"hit", "miss"}
         or not evaluation_rule
-        or not evaluated_by
+        or evaluated_by != "omega_outcome_evaluator.v1"
         or evaluated_at is None
     ):
+        raise HTTPException(409, dict(_MISSING_EVALUATION))
+    verified_refs = _verified_refs(data, workspace_id=workspace_id)
+    if not verified_refs:
         raise HTTPException(409, dict(_MISSING_EVALUATION))
     authoritative = {
         "source_type": "prediction_outcome",
@@ -217,13 +241,13 @@ async def resolve_authoritative_observation(
         "predicted_interval": {},
         "actual_value": actual_value,
         "actual_status": evaluation_status,
-        "observed_at": _timestamp(data.get("outcome_created_at")),
+        "observed_at": _timestamp(evaluated_at),
         "horizon_days": horizon,
         "model_version": calibration.MODEL_VERSION,
         "calibration_group": calibration.source_type_calibration_group(
             source_system, metric
         ),
-        "evidence_refs": _verified_refs(data),
+        "evidence_refs": verified_refs,
         "input_classification": "observed",
         "evaluation_rule_version": evaluation_rule,
         "evaluated_at": _timestamp(evaluated_at),

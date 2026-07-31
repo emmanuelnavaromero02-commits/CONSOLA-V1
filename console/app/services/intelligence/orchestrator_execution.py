@@ -505,6 +505,9 @@ async def _bayes_state_from_source(
           FROM calibration_observations
          WHERE workspace_id = $1
            AND (observation_id = $2 OR id::text = $2)
+           AND provenance_status = 'verified'
+           AND provenance_reason = 'durable_binary_evaluation'
+           AND authoritative_calibration_group = calibration_group
          LIMIT 1
         """,
         workspace_id,
@@ -536,8 +539,15 @@ async def _run_bayesian_lookup(
         workspace_id=workspace_id,
         run=run,
     )
+    if run.get("source_type") == "calibration_observation" and not source_group:
+        reason = "untrusted_calibration_observation"
+        return "skipped", {"status": "skipped", "reason": reason}, [], reason, None
     truth.reject_client_bayesian_version(engine_inputs, OrchestratorExecutionError)
-    group = str(raw.get("calibration_group") or source_group or "").strip()
+    requested_group = str(raw.get("calibration_group") or "").strip()
+    if source_group and requested_group and requested_group != source_group:
+        reason = "calibration_group_mismatch"
+        return "skipped", {"status": "skipped", "reason": reason}, [], reason, None
+    group = str(source_group or requested_group).strip()
     model_version = calibration.MODEL_VERSION
     if not group:
         return (
@@ -554,6 +564,27 @@ async def _run_bayesian_lookup(
          WHERE workspace_id = $1
            AND calibration_group = $2
            AND model_version = $3
+           AND metrics->>'complete' = 'true'
+           AND metrics->>'provenance_complete' = 'true'
+           AND metrics->>'binary_evaluation_complete' = 'true'
+           AND COALESCE((metrics->>'skipped_total')::integer, -1) = 0
+           AND COALESCE((metrics->>'processed_total')::integer, 0) > 0
+           AND (metrics->>'processed_total')::integer =
+               (metrics->>'eligible_total')::integer
+           AND (metrics->>'processed_total')::integer = sample_count
+           AND EXISTS (
+               SELECT 1
+                 FROM calibration_observations observation
+                WHERE observation.workspace_id = calibration_states.workspace_id
+                  AND observation.calibration_group =
+                      calibration_states.calibration_group
+                  AND observation.model_version = calibration_states.model_version
+                  AND observation.provenance_status = 'verified'
+                  AND observation.provenance_reason =
+                      'durable_binary_evaluation'
+                  AND observation.authoritative_calibration_group =
+                      observation.calibration_group
+           )
          LIMIT 1
         """,
         workspace_id,

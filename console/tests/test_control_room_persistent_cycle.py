@@ -41,7 +41,14 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
         "prediction_error": -2500,
         "outcome_summary": "Seguimiento redujo el riesgo",
         "learned_rule": "Cuando WIP sube, abrir seguimiento financiero semanal.",
-        "metadata": {"source": "control_room", "reported_by": "ops@example.com"},
+        "metadata": {
+            "source": "control_room",
+            "reported_by": "ops@example.com",
+            "input_classification": "observed",
+        },
+        "evaluation_status": "hit",
+        "evaluated_by": "omega_outcome_evaluator.v1",
+        "evaluated_at": datetime(2026, 6, 12, 10, 4, 0),
         "created_at": datetime(2026, 6, 12, 10, 4, 0),
     }
     mock_pool = AsyncMock()
@@ -61,7 +68,7 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
                 _legacy_execution(
                     item, row_id=201, mode="execute_live", status="executed"
                 ),
-                outcome_row,
+                {"outcome": outcome_row, "inserted": True},
                 {"id": 9001},
             ],
         )
@@ -133,7 +140,7 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
     assert "INSERT INTO action_runs" in fetchval_sql
     assert "INSERT INTO action_run_events" in execute_sql
     assert "INSERT INTO decision_actions" in fetchrow_sql
-    assert "INSERT INTO prediction_outcomes" in fetchrow_sql
+    assert "record_prediction_outcome" in fetchrow_sql
     assert "INSERT INTO control_room_lessons" in execute_sql
     assert "INSERT INTO audit_events" in execute_sql
     assert "set_config('app.tenant_id'" in execute_sql

@@ -50,6 +50,28 @@ def observed_signal(row: Any) -> bool:
     )
 
 
+def calibratable_prediction_signal(row: Any) -> bool:
+    if not row:
+        return False
+    data = dict(row)
+    meta = metadata(data.get("metadata"))
+    source_system = data.get("source_system") or meta.get("source_system")
+    source_dataset = data.get("source_dataset") or meta.get("source_dataset")
+    evidence_pack = data.get("evidence_pack_id") or meta.get("evidence_pack_id")
+    return bool(
+        data.get("signal_subtype") in {"future_risk", "future_opportunity"}
+        and 1 <= int(data.get("prediction_horizon_days") or 0) <= 3650
+        and source_system
+        and source_dataset
+        and evidence_pack
+        and not manual_marker(source_system)
+        and not manual_marker(source_dataset)
+        and not manual_marker(meta.get("source_type"))
+        and meta.get("input_classification") != "scenario_assumption"
+        and meta.get("observed") is not False
+    )
+
+
 def prediction_outcome_observed(data: dict[str, Any]) -> bool:
     meta = metadata(data.get("metadata"))
     required = (
@@ -122,6 +144,7 @@ def backtest_policy(data: dict[str, Any]) -> tuple[str, str | None]:
 
 __all__ = (
     "backtest_policy",
+    "calibratable_prediction_signal",
     "manual_marker",
     "metadata",
     "observed_signal",

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
+from app.services.intelligence import calibration_recompute_batch
 from app.services.intelligence import calibration_service
 from app.services.intelligence.calibration_recompute_batch import load_complete_batch
 
@@ -60,11 +61,53 @@ async def test_batch_pages_every_row_and_accounts_for_every_skip() -> None:
         "skipped_total": 701,
         "skipped_by_reason": {"manual_ancestor": 701},
         "complete": False,
-        "provenance_complete": True,
+        "provenance_complete": False,
         "binary_evaluation_complete": False,
         "reason": "no_trusted_observations",
     }
     assert sum("ORDER BY observed_at ASC, id ASC" in call for call in conn.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_one_invalid_row_keeps_authoritative_recompute_incomplete(
+    monkeypatch,
+) -> None:
+    conn = BatchConnection([_row(1), _row(2)])
+
+    async def resolve(_conn, **kwargs):
+        source_id = kwargs["payload"]["source_id"]
+        if source_id == "fixture-2":
+            raise HTTPException(409, "invalid evidence")
+        return {
+            "source_type": "prediction_outcome",
+            "source_id": source_id,
+            "actual_status": "hit",
+            "calibration_group": "global",
+        }
+
+    monkeypatch.setattr(
+        calibration_recompute_batch,
+        "resolve_authoritative_observation",
+        resolve,
+    )
+    trusted, metrics = await load_complete_batch(
+        conn,
+        workspace_id="ws-a",
+        group="global",
+        model_version="bayesian_calibration.v1",
+        source_type=None,
+        source_id=None,
+        operational_limit=1000,
+        allow_manual=False,
+    )
+
+    assert len(trusted) == 1
+    assert metrics["processed_total"] == 1
+    assert metrics["skipped_total"] == 1
+    assert metrics["complete"] is False
+    assert metrics["provenance_complete"] is False
+    assert metrics["binary_evaluation_complete"] is False
+    assert metrics["reason"] == "authoritative_recompute_incomplete"
 
 
 class _ScopedConnection(BatchConnection):

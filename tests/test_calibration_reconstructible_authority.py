@@ -6,6 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.routers.intelligence import OutcomeRequest
+from app.services.control_room.business_runtime_evidence import (
+    runtime_row_evidence_fields,
+)
 from app.services.intelligence import calibration
 from app.services.intelligence.calibration_authoritative_evidence import (
     resolve_authoritative_observation,
@@ -16,6 +19,35 @@ from app.services.intelligence.calibration_recompute_batch import load_complete_
 WORKSPACE = "22222222-2222-2222-2222-222222222222"
 TENANT = "11111111-1111-1111-1111-111111111111"
 GROUP = "source_type:replicon:margin:v1"
+EVALUATED_AT = datetime(2026, 7, 31, tzinfo=timezone.utc)
+
+
+def _outcome_metadata() -> dict:
+    observed = {
+        "signal_id": "signal-observed-a",
+        "metric": "margin",
+        "actual_value": 12,
+    }
+    evidence = runtime_row_evidence_fields(
+        source_dataset="gold_margin",
+        source_system="replicon",
+        cartridge="replicon",
+        tenant_id=TENANT,
+        workspace_id=WORKSPACE,
+        source_row=observed,
+        locator_field="signal_id",
+        locator_relation="intelligence_signals",
+        observed_at=EVALUATED_AT.isoformat(),
+        business_observation={
+            **observed,
+            "kind": "signal",
+            "metric_type": "scalar",
+            "observed_value": 12,
+            "observed_at": EVALUATED_AT.isoformat(),
+        },
+    )
+    assert evidence
+    return {"observed_signal_id": observed["signal_id"], **evidence}
 
 
 def _authoritative_row(*, evaluated: bool = True) -> dict:
@@ -30,13 +62,12 @@ def _authoritative_row(*, evaluated: bool = True) -> dict:
         "outcome_created_at": datetime(2026, 7, 30, tzinfo=timezone.utc),
         "evaluation_status": "hit" if evaluated else None,
         "evaluation_rule_version": "margin-evaluation.v1" if evaluated else None,
-        "evaluated_at": (
-            datetime(2026, 7, 31, tzinfo=timezone.utc) if evaluated else None
-        ),
-        "evaluated_by": "evaluation-engine" if evaluated else None,
+        "evaluated_at": EVALUATED_AT if evaluated else None,
+        "evaluated_by": "omega_outcome_evaluator.v1" if evaluated else None,
+        "outcome_metadata": _outcome_metadata(),
         "metric": "margin",
         "signal_predicted_value": 10,
-        "signal_subtype": "observed",
+        "signal_subtype": "future_opportunity",
         "source_system": "replicon",
         "source_dataset": "gold_margin",
         "evidence_pack_id": "evidence-real",

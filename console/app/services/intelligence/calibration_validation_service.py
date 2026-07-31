@@ -119,6 +119,14 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(403, "manual_fixture requires an explicit local APP_ENV")
     source_id = _short_text(clean.get("source_id"), field="source_id", max_length=256)
     model_version = DEFAULT_MODEL_VERSION
+    if source_type == "prediction_outcome":
+        return {
+            **clean,
+            "source_type": source_type,
+            "source_id": source_id,
+            "model_version": model_version,
+            "evidence_refs": _validate_evidence_refs(clean.get("evidence_refs")),
+        }
     observed_at = (
         _observed_at(clean.get("observed_at"))
         if clean.get("observed_at") not in (None, "")

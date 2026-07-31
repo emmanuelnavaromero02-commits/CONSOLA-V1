@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import types
 
 from app.services.control_room import core as _core
@@ -94,6 +95,10 @@ from app.services.control_room.business_dismiss_reopen_with_audit import (
     dismiss_with_audit as _dismiss_with_audit,
     reopen_with_audit as _reopen_with_audit,
 )
+from app.services.intelligence.outcome_writer import record_server_owned_outcome
+
+_core.__dict__.setdefault("math", math)
+_core.__dict__.setdefault("record_server_owned_outcome", record_server_owned_outcome)
 from app.services.control_room.business_action_reservation import (
     ActionReservation,
     ReservationState,
@@ -1727,9 +1732,10 @@ def _outcome_num(value: Any) -> float | None:
     try:
         if value is None or value == "":
             return None
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 @_bind_to_core
@@ -1754,7 +1760,8 @@ async def list_item_outcomes(
             """
             SELECT id, tenant_id, workspace_id, signal_id, option_id, action_taken,
                    predicted_value, actual_value, prediction_error, outcome_summary,
-                   learned_rule, metadata, created_at
+                   learned_rule, metadata, evaluation_status,
+                   evaluation_rule_version, evaluated_at, evaluated_by, created_at
               FROM prediction_outcomes
              WHERE workspace_id = $1
                AND signal_id = $2
@@ -1790,18 +1797,11 @@ async def record_item_outcome(
         str(body.get("option_id") or item.get("selected_option_id") or "").strip()
         or None
     )
-    predicted_value = _outcome_num(body.get("predicted_value"))
-    if predicted_value is None:
-        predicted_value = _outcome_num(
-            item.get("impact_estimate") or _impact_for_item(item).get("estimate")
-        )
+    predicted_value = _outcome_num(
+        item.get("impact_estimate") or _impact_for_item(item).get("estimate")
+    )
     actual_value = _outcome_num(body.get("actual_value"))
-    prediction_error = None
-    if actual_value is not None and predicted_value is not None:
-        prediction_error = round(actual_value - predicted_value, 4)
     learned_rule = str(body.get("learned_rule") or "").strip() or None
-    if not learned_rule and prediction_error is not None:
-        learned_rule = f"Resultado medido con error {prediction_error:.2f} para {item.get('anomaly_type') or item.get('title')}."
     outcome_summary = str(
         body.get("outcome_summary")
         or body.get("summary")
@@ -1844,55 +1844,66 @@ async def record_item_outcome(
                 operational_metadata,
                 rule=learned_rule,
             )
-        row = await conn.fetchrow(
-            """
-            INSERT INTO prediction_outcomes (
-                tenant_id, workspace_id, signal_id, option_id, action_taken,
-                predicted_value, actual_value, prediction_error, outcome_summary,
-                learned_rule, owner_user_id, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-            RETURNING *
-            """,
-            tenant_id,
-            workspace_id,
-            item["id"],
-            option_id,
-            action_taken,
-            predicted_value,
-            actual_value,
-            prediction_error,
-            outcome_summary,
-            learned_rule,
-            user.get("id"),
-            json.dumps(metadata),
+        write = await record_server_owned_outcome(
+            conn,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            signal_id=item["id"],
+            option_id=option_id,
+            action_taken=action_taken,
+            actual_value=actual_value,
+            outcome_summary=outcome_summary,
+            learned_rule=learned_rule,
+            owner_user_id=user.get("id"),
+            metadata=metadata,
         )
+        row = write.row
+        from app.services.intelligence.outcome_writer import (
+            is_authoritatively_evaluated_outcome,
+        )
+
+        authoritative = is_authoritatively_evaluated_outcome(row)
+        prediction_error = (
+            _outcome_num(row.get("prediction_error")) if authoritative else None
+        )
+        published_rule = (
+            str(row.get("learned_rule") or "").strip() or None
+            if authoritative
+            else None
+        )
+        if authoritative and not published_rule and prediction_error is not None:
+            label = item.get("anomaly_type") or item.get("title")
+            published_rule = (
+                f"Resultado medido con error {prediction_error:.2f} para {label}."
+            )
+        if not write.inserted:
+            return row, tenant_id, workspace_id, False
         await link_outcome_to_snapshot(
             conn,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             signal_id=item["id"],
             outcome_row=row,
-            body=body,
+            body={**body, "predicted_value": row["predicted_value"]},
         )
-        if learned_rule:
+        if published_rule:
             await _persist_lessons(
                 conn,
                 user=user,
                 item=item,
                 decision_id=item.get("decision_id"),
-                lessons=[learned_rule],
+                lessons=[published_rule],
             )
         metadata_patch = {
             "last_outcome": {
                 "action_taken": action_taken,
-                "actual_value": actual_value,
+                "actual_value": row.get("actual_value"),
                 "prediction_error": prediction_error,
                 "outcome_summary": outcome_summary,
-                "learned_rule": learned_rule,
+                "learned_rule": published_rule,
             }
         }
-        if learned_rules is not None:
+        if learned_rules is not None and published_rule:
             metadata_patch["learned_rules"] = learned_rules
         update_result = await conn.execute(
             """
@@ -1920,15 +1931,17 @@ async def record_item_outcome(
                 "action_taken": action_taken,
                 "option_id": option_id,
                 "prediction_error": prediction_error,
-                "learned_rule": learned_rule,
+                "learned_rule": published_rule,
                 "measured_impact": body.get("measured_impact"),
                 "action_run_id": body.get("action_run_id"),
             },
             critical=True,
         )
-        return row, tenant_id, workspace_id
+        return row, tenant_id, workspace_id, bool(published_rule)
 
-    row, tenant_id, workspace_id = await _run_with_db_scope(pool, user, _write)
+    row, tenant_id, workspace_id, lesson_recorded = await _run_with_db_scope(
+        pool, user, _write
+    )
     outcome = _outcome_public(row)
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -1945,7 +1958,7 @@ async def record_item_outcome(
             "outcome_id": outcome.get("id"),
             "action_taken": action_taken,
             "option_id": option_id,
-            "learned_rule": learned_rule,
+            "learned_rule": outcome.get("learned_rule"),
             "measured_impact": body.get("measured_impact"),
             "action_run_id": body.get("action_run_id"),
         },
@@ -1954,7 +1967,7 @@ async def record_item_outcome(
     return {
         "recorded": True,
         "outcome": outcome,
-        "lesson_recorded": bool(learned_rule),
+        "lesson_recorded": lesson_recorded,
         "item": _project_public_item(item, _with_omega, last_outcome=outcome),
     }
 

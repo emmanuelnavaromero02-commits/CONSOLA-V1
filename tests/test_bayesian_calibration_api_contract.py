@@ -52,30 +52,22 @@ class _FakeConnection:
             return {"source_type": "wisdom_bit", "source_id": "WB-TALENTO"}
         if "SELECT *" in sql and "FROM calibration_states" in sql:
             return None
-        if "INSERT INTO calibration_observations" in sql:
+        if "record_calibration_observation" in sql:
+            payload = __import__("json").loads(params[0])
             return {
                 "id": 1,
-                "observation_id": params[0],
-                "tenant_id": params[1],
-                "workspace_id": params[2],
-                "source_type": params[3],
-                "source_id": params[4],
-                "predicted_metric": params[5],
-                "actual_status": params[10],
-                "reproducibility_hash": params[20],
+                **payload,
+                "tenant_id": "tenant-a",
+                "workspace_id": "ws-a",
             }
-        if "INSERT INTO calibration_states" in sql:
+        if "upsert_calibration_state" in sql:
+            payload = __import__("json").loads(params[0])
             return {
                 "id": 1,
-                "state_id": params[0],
-                "tenant_id": params[1],
-                "workspace_id": params[2],
-                "calibration_group": params[3],
-                "model_version": params[4],
-                "sample_count": params[8],
-                "hit_count": params[9],
-                "confidence_score": params[18],
-                "reproducibility_hash": params[20],
+                **payload,
+                "tenant_id": "tenant-a",
+                "workspace_id": "ws-a",
+                "sample_count": payload["metrics"]["sample_count"],
             }
         return None
 
@@ -132,7 +124,7 @@ def test_calibration_router_adds_new_endpoints_without_replacing_legacy_report()
         '_internal_mcp_user(body, internal_service, permission="datasets.read")'
         in router
     )
-    assert "parent_calibration_group" in router
+    assert "parent_calibration_group" not in router
     assert "await intelligence_history.calibration_report" in router
     assert "await calibration_service.observe" in router
     assert "await calibration_service.recompute" in router
@@ -242,11 +234,11 @@ async def test_observe_sets_scope_validates_source_and_persists(monkeypatch):
     assert "set_config('app.tenant_id'" in fake.conn.calls[0][1]
     assert not any("monte_carlo_simulations" in call[1] for call in fake.conn.calls)
     assert any(
-        call[0] == "fetchrow" and "INSERT INTO calibration_observations" in call[1]
+        call[0] == "fetchrow" and "record_calibration_observation" in call[1]
         for call in fake.conn.calls
     )
     assert any(
-        call[0] == "fetchrow" and "INSERT INTO calibration_states" in call[1]
+        call[0] == "fetchrow" and "upsert_calibration_state" in call[1]
         for call in fake.conn.calls
     )
 
