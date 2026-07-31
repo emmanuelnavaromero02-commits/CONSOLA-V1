@@ -12,11 +12,11 @@ import pytest
 
 from refinement.app.duckdb_engine import DuckDBEngine, _duckdb_type_to_pg_type
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_IMAGE = os.getenv("GOLD_RLS_TEST_POSTGRES_IMAGE", "postgres:15")
 POSTGRES_PASSWORD = "test_gold_postgres_password"
 GOLD_ROLE_PASSWORD = "test_omega_refinement_gold_password"
+GOLD_PUBLISHER_PASSWORD = "test_omega_gold_publisher_password"
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -105,7 +105,7 @@ def postgres_gold_with_native_rls() -> str:
         "-e",
         f"POSTGRES_PASSWORD={POSTGRES_PASSWORD}",
         "-e",
-        f"PGOPTIONS=-c app.omega_refinement_gold_password={GOLD_ROLE_PASSWORD}",
+        f"PGOPTIONS=-c app.omega_refinement_gold_password={GOLD_ROLE_PASSWORD} -c app.omega_gold_publisher_password={GOLD_PUBLISHER_PASSWORD}",
         "-v",
         f"{init_dir}:/docker-entrypoint-initdb.d:ro",
         "-P",

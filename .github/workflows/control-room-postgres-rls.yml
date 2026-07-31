@@ -140,6 +140,11 @@ jobs:
           verify_junit("/tmp/control-room-postgres-rls.xml", minimum=171, label="Live PostgreSQL/RLS")
           PY
 
+      - name: Verify Refinement DuckDB extensions without external egress
+        run: |
+          docker build . -f refinement/Dockerfile -t refinement:offline-smoke
+          scripts/run_refinement_duckdb_offline_smoke.sh refinement:offline-smoke
+
   no-control-room-needed:
     needs: changes
     if: needs.changes.outputs.control_room == 'false'

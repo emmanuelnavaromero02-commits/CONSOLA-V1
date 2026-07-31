@@ -19,6 +19,10 @@ class _GeneratedSQLValidationError(ValueError):
     pass
 
 
+class _DuckDBEngineStub:
+    pass
+
+
 @pytest.fixture()
 def anyio_backend():
     return "asyncio"
@@ -26,9 +30,15 @@ def anyio_backend():
 
 @pytest.fixture()
 def refinement_main(monkeypatch):
-    monkeypatch.setenv("INTERNAL_API_KEY", "test_internal_api_key_with_more_than_32_chars")
-    monkeypatch.setitem(sys.modules, "app.duckdb_engine", _module(DuckDBEngine=lambda: object()))
-    monkeypatch.setitem(sys.modules, "app.dataset_store", _module(DatasetStore=lambda path: object()))
+    monkeypatch.setenv(
+        "INTERNAL_API_KEY", "test_internal_api_key_with_more_than_32_chars"
+    )
+    monkeypatch.setitem(
+        sys.modules, "app.duckdb_engine", _module(DuckDBEngine=_DuckDBEngineStub)
+    )
+    monkeypatch.setitem(
+        sys.modules, "app.dataset_store", _module(DatasetStore=lambda path: object())
+    )
 
     async def generate_sql(*args, **kwargs):
         return "", ""
@@ -44,7 +54,9 @@ def refinement_main(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "app.security",
-        _module(get_internal_api_key=lambda: "test_internal_api_key_with_more_than_32_chars"),
+        _module(
+            get_internal_api_key=lambda: "test_internal_api_key_with_more_than_32_chars"
+        ),
     )
     sys.modules.pop("app.main", None)
     main = importlib.import_module("app.main")
@@ -64,7 +76,9 @@ def test_postgres_dsn_keeps_native_postgres_url(refinement_main, monkeypatch):
     assert refinement_main._postgres_dsn() == "postgresql://user:pass@host/db"
 
 
-def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(refinement_main):
+def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(
+    refinement_main,
+):
     base_sec = {
         "trusted": True,
         "source": "console",
@@ -82,8 +96,16 @@ def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(refineme
         "workspace_id": "workspace-a",
         "created_by_id": 10,
     }
-    other_employee_dataset = {**own_dataset, "name": "deals_estancados", "created_by_id": 11}
-    legacy_workspace_dataset = {**own_dataset, "name": "legacy_shared", "created_by_id": None}
+    other_employee_dataset = {
+        **own_dataset,
+        "name": "deals_estancados",
+        "created_by_id": 11,
+    }
+    legacy_workspace_dataset = {
+        **own_dataset,
+        "name": "legacy_shared",
+        "created_by_id": None,
+    }
     workspace_admin_sec = {**base_sec, "workspace_role": "tenant_admin", "user_id": 99}
     wildcard_admin_sec = {**workspace_admin_sec, "allowed_cartridges": ["*"]}
 
@@ -97,7 +119,9 @@ def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(refineme
 @pytest.mark.anyio
 async def test_delete_dataset_rejects_invalid_name(refinement_main):
     with pytest.raises(HTTPException) as exc:
-        await refinement_main.mcp_invoke({"tool": "delete_dataset", "args": {"name": "bad-name"}})
+        await refinement_main.mcp_invoke(
+            {"tool": "delete_dataset", "args": {"name": "bad-name"}}
+        )
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid dataset name"
@@ -106,7 +130,9 @@ async def test_delete_dataset_rejects_invalid_name(refinement_main):
 @pytest.mark.anyio
 async def test_describe_silver_rejects_invalid_name_before_path_build(refinement_main):
     with pytest.raises(HTTPException) as exc:
-        await refinement_main.mcp_invoke({"tool": "describe_silver", "args": {"name": "../secret"}})
+        await refinement_main.mcp_invoke(
+            {"tool": "describe_silver", "args": {"name": "../secret"}}
+        )
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid dataset name"

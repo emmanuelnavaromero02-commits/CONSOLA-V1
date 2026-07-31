@@ -27,12 +27,14 @@ def test_reconcile_db_passwords_script_rotates_all_service_roles():
         "omega_cartridge_salesforce",
         "omega_cartridge_hubspot",
         "omega_refinement_gold",
+        "omega_gold_publisher",
     ):
         assert role in src
     assert "ALTER ROLE %I LOGIN PASSWORD %L" in src
     assert "current_setting('app.postgres_password', true)" in src
     assert "current_setting('app.omega_refinement_password', true)" in src
     assert "current_setting('app.omega_refinement_gold_password', true)" in src
+    assert "current_setting('app.omega_gold_publisher_password', true)" in src
 
 
 def test_reconcile_db_passwords_script_does_not_print_secret_values():

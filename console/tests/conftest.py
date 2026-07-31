@@ -13,6 +13,7 @@ if str(CONSOLE_ROOT) not in sys.path:
     sys.path.insert(0, str(CONSOLE_ROOT))
 
 os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "0")
 os.environ.setdefault(
     "INTERNAL_API_KEY", "test_internal_api_key_with_more_than_32_chars"
 )
@@ -63,7 +64,13 @@ _restore_real_auth_module()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_console_auth_stubs():
+def _isolate_console_auth_stubs(monkeypatch):
     _restore_real_auth_module()
+    scoped_reads = import_module("app.domains.data_platform.scoped_reads")
+
+    async def stable_publication_epoch(_user):
+        return "test-publication-head"
+
+    monkeypatch.setattr(scoped_reads, "publication_epoch", stable_publication_epoch)
     yield
     _restore_real_auth_module()

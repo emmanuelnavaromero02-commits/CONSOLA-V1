@@ -35,17 +35,22 @@ class _OperationalConn:
     async def fetchval(self, *_args):
         return self.values.pop(0)
 
+    async def fetchrow(self, *_args):
+        return {"tenant_id": "t", "workspace_id": "w"}
+
 
 class _GoldConn:
-    def __init__(self, tables: list[str], counts: list[int]):
-        self.tables = tables
-        self.counts = list(counts)
+    def __init__(self, row: dict):
+        self.row = row
 
-    async def fetch(self, *_args):
-        return [{"tablename": table} for table in self.tables]
+    def transaction(self, **_kwargs):
+        return _Acquire(self)
 
-    async def fetchval(self, *_args):
-        return self.counts.pop(0)
+    async def execute(self, *_args):
+        return None
+
+    async def fetchrow(self, *_args):
+        return self.row
 
 
 @pytest.mark.asyncio
@@ -91,7 +96,7 @@ async def test_control_room_data_check_counts_safe_gold_tables_only():
         return _Pool(_OperationalConn([0, 0]))
 
     async def _gold_pool(_dsn: str):
-        return _Pool(_GoldConn(["gold_safe", "bad_table"], [7]))
+        return _Pool(_GoldConn({"gold_tables": 2, "gold_rows": 7, "silver_rows": 0}))
 
     result = await readyz_data.control_room_data_check(
         require_data=True,

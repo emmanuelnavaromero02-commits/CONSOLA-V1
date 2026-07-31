@@ -15,34 +15,13 @@ from app.services.intelligence.gold_fetcher import (
     query_gold_dataset_rows,
 )
 from app.services.monitor_alert_policy import monitor_should_alert
-from refinement.app.duckdb_engine import DuckDBEngine
-from tests.test_gold_native_rls_contract import (
-    GOLD_ROLE_PASSWORD,
-    POSTGRES_PASSWORD as GOLD_POSTGRES_PASSWORD,
-    postgres_gold_with_native_rls,
-)
+from refinement.app.staged_publication_engine import StagedPublicationEngine
+from tests.operational_truth_inputs import pnl_dataset, seed_pnl_input
+from tests.test_staged_publication_live import staged_publication_live_stack
 from tests.test_operational_rls_console_refinement import (
     omega_console_live_dsn,
     postgres_with_real_init_schema,
 )
-
-
-class _TestGoldEngine(DuckDBEngine):
-    """Keep the real SQL/PostgreSQL materializer; replace external object I/O."""
-
-    def _copy_scoped_gold_table_snapshot(
-        self, _con, table, _path, _tenant, _workspace, _context
-    ):
-        return f"postgres_gold:{table}"
-
-    def _write_lineage(self, **_kwargs):
-        return None
-
-    def _update_catalog(self, **_kwargs):
-        return None
-
-    def _prune_snapshots(self, *_args, **_kwargs):
-        return None
 
 
 def _user(scope: dict[str, str]) -> dict:
@@ -114,22 +93,6 @@ async def _seed_scope(conn: asyncpg.Connection, label: str) -> dict[str, str]:
     }
 
 
-def _dataset(sql_rows: str) -> dict:
-    return {
-        "name": "pnl_mensual",
-        "layer": "gold",
-        "cartridge": "replicon",
-        "sources": [],
-        "sql_def": (
-            "SELECT proyecto, project_name, mes, margen_bruto_usd, "
-            "margen_bruto_pct, wip_usd, revenue_usd, revenue_manager "
-            f"FROM (VALUES {sql_rows}) AS extracted"
-            "(proyecto, project_name, mes, margen_bruto_usd, "
-            "margen_bruto_pct, wip_usd, revenue_usd, revenue_manager)"
-        ),
-    }
-
-
 def _context(scope: dict[str, str]) -> dict[str, str]:
     return {
         "tenant_id": scope["tenant_id"],
@@ -142,7 +105,7 @@ def _context(scope: dict[str, str]) -> dict[str, str]:
 async def test_live_two_workspace_materialize_intelligence_projection_and_replay(
     postgres_with_real_init_schema: str,
     omega_console_live_dsn: str,
-    postgres_gold_with_native_rls: str,
+    staged_publication_live_stack,
     monkeypatch,
 ):
     setup = await asyncpg.connect(postgres_with_real_init_schema)
@@ -152,32 +115,32 @@ async def test_live_two_workspace_materialize_intelligence_projection_and_replay
     finally:
         await setup.close()
 
-    gold_dsn = postgres_gold_with_native_rls.replace(
-        f"postgres:{GOLD_POSTGRES_PASSWORD}",
-        f"omega_refinement_gold:{GOLD_ROLE_PASSWORD}",
+    stack = staged_publication_live_stack
+    seed_pnl_input(
+        stack,
+        scope_a,
+        [
+            ("project-a", "Proyecto A", "2026-01-01", 100.0),
+            ("project-a", "Proyecto A", "2026-02-01", 100.0),
+            ("project-a", "Proyecto A", "2026-03-01", 10.0),
+        ],
     )
-    monkeypatch.setenv("GOLD_DATABASE_URL", gold_dsn)
+    seed_pnl_input(stack, scope_b, [("project-b", "Proyecto B", "2026-03-01", 50.0)])
+    for name, value in {
+        "GOLD_DATABASE_URL": stack.reader_dsn,
+        "GOLD_PUBLISHER_DATABASE_URL": stack.publisher_dsn,
+        "MINIO_ENDPOINT": stack.minio_endpoint.removeprefix("http://"),
+        "MINIO_ACCESS_KEY": "minio",
+        "MINIO_SECRET_KEY": "minio-secret",
+        "MINIO_BUCKET": "lakehouse",
+        "MINIO_SECURE": "false",
+    }.items():
+        monkeypatch.setenv(name, value)
     monkeypatch.setenv("OMEGA_GOLD_ROW_CACHE_TTL_SECONDS", "0")
-    engine = _TestGoldEngine()
+    engine = StagedPublicationEngine()
     try:
-        result_a = engine.materialize(
-            _dataset(
-                "('project-a', 'Proyecto A', DATE '2026-01-01', 100.0, "
-                "100.0, 0.0, 100.0, 'RM A'),"
-                "('project-a', 'Proyecto A', DATE '2026-02-01', 100.0, "
-                "100.0, 0.0, 100.0, 'RM A'),"
-                "('project-a', 'Proyecto A', DATE '2026-03-01', 10.0, "
-                "10.0, 0.0, 100.0, 'RM A')"
-            ),
-            _context(scope_a),
-        )
-        result_b = engine.materialize(
-            _dataset(
-                "('project-b', 'Proyecto B', DATE '2026-03-01', 50.0, "
-                "50.0, 0.0, 100.0, 'RM B')"
-            ),
-            _context(scope_b),
-        )
+        result_a = engine.materialize(pnl_dataset(), _context(scope_a))
+        result_b = engine.materialize(pnl_dataset(), _context(scope_b))
     finally:
         if engine._con is not None:
             engine._con.close()
