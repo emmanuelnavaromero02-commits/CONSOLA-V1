@@ -6,6 +6,7 @@ import pytest
 
 from app.services.intelligence import gold_fetcher
 from app.services.control_room.business_impact_rules import calculate_item_impact
+from app.services.control_room import api as control_room_api
 
 
 READINESS = "sap_successfactors_talent_readiness"
@@ -225,10 +226,98 @@ def test_replicon_financial_alert_requires_ready_currency_provenance() -> None:
         "details": {"revenue_usd": 10000, "margen_bruto_usd": 100},
     }
     blocked = calculate_item_impact(item, number=number, payload=payload)
-    item["details"]["financial_status"] = "ready"
+    item["details"].update(
+        financial_status="ready",
+        base_currency="USD",
+        original_currency="USD",
+    )
     ready = calculate_item_impact(item, number=number, payload=payload)
 
     assert blocked["status"] == "unavailable"
     assert blocked["estimate"] is None
     assert ready["status"] == "ok"
     assert ready["estimate"] == 9000
+
+
+def test_replicon_wip_impact_does_not_treat_missing_wip_as_zero() -> None:
+    item = {
+        "cartridge": "replicon",
+        "anomaly_type": "wip_variance",
+        "details": {
+            "financial_status": "ready",
+            "base_currency": "USD",
+            "original_currency": "USD",
+            "revenue_usd": 10000,
+            "margen_bruto_usd": 100,
+            "wip_usd": None,
+        },
+    }
+    result = calculate_item_impact(
+        item,
+        number=lambda value: float(value) if value is not None else None,
+        payload=lambda **values: values,
+    )
+
+    assert result["status"] == "unavailable"
+    assert result["estimate"] is None
+
+
+def test_financial_summary_does_not_publish_null_fx_as_zero() -> None:
+    sources = [
+        {
+            "dataset": "pnl_mensual",
+            "status": "ok",
+            "count": 1,
+            "domain": "financial",
+            "cartridge": "replicon",
+        }
+    ]
+    rows = {
+        "pnl_mensual": [
+            {
+                "financial_status": "missing_fx",
+                "revenue_usd": None,
+                "facturacion_mes_usd": None,
+                "wip_usd": None,
+                "costo_total": None,
+                "margen_bruto_usd": None,
+            }
+        ]
+    }
+    metrics = control_room_api._financial_metrics(sources, rows)
+
+    assert metrics["status"] == "missing_fx"
+    for field in (
+        "revenue_usd",
+        "billed_usd",
+        "wip_usd",
+        "cost_usd",
+        "margin_usd",
+        "margin_pct",
+    ):
+        assert metrics[field] is None
+    assert metrics["risk_projects"] == []
+
+    unproven = dict(rows["pnl_mensual"][0])
+    unproven.update(
+        financial_status="ready",
+        revenue_usd=100,
+        facturacion_mes_usd=50,
+        wip_usd=50,
+        costo_total=25,
+        margen_bruto_usd=75,
+    )
+    metrics = control_room_api._financial_metrics(
+        sources,
+        {"pnl_mensual": [unproven]},
+    )
+    assert metrics["status"] == "insufficient_data"
+    assert metrics["revenue_usd"] is None
+    assert metrics["risk_projects"] == []
+
+    unknown = dict(rows["pnl_mensual"][0], financial_status="unavailable")
+    metrics = control_room_api._financial_metrics(
+        sources,
+        {"pnl_mensual": [unknown]},
+    )
+    assert metrics["status"] == "unavailable"

@@ -1292,6 +1292,8 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
                 "wip_usd": 24000,
                 "costo_total": 70000,
                 "margen_bruto_usd": 30000,
+                "base_currency": "USD",
+                "original_currency": "USD",
                 **dict(margen_bruto_pct=30, financial_status="ready"),
             },
             {
@@ -1304,6 +1306,8 @@ async def test_dashboard_exposes_real_financial_metrics_from_available_sources()
                 "wip_usd": -6000,
                 "costo_total": 25000,
                 "margen_bruto_usd": -5000,
+                "base_currency": "USD",
+                "original_currency": "USD",
                 **dict(margen_bruto_pct=-25, financial_status="ready"),
             },
         ]
@@ -1372,6 +1376,8 @@ async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list
             "wip_usd": 6000,
             "costo_total": 95000,
             "margen_bruto_usd": 5000,
+            "base_currency": "USD",
+            "original_currency": "USD",
             **dict(margen_bruto_pct=5, financial_status="ready"),
         }
     ]
@@ -1393,6 +1399,8 @@ async def threshold_margin_fetcher(
             "wip_usd": 0,
             "costo_total": 85000,
             "margen_bruto_usd": 15000,
+            "base_currency": "USD",
+            "original_currency": "USD",
             **dict(margen_bruto_pct=15, financial_status="ready"),
         }
     ]

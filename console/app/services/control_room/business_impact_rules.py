@@ -8,6 +8,18 @@ ImpactPayload = Callable[..., dict[str, Any]]
 NumberParser = Callable[[Any], float | None]
 
 
+def _financial_row_ready(details: dict[str, Any]) -> bool:
+    if str(details.get("financial_status") or "") != "ready":
+        return False
+    base_currency = str(details.get("base_currency") or "").strip().upper()
+    original_currency = str(details.get("original_currency") or "").strip().upper()
+    if not base_currency or not original_currency:
+        return False
+    if base_currency != original_currency:
+        return bool(details.get("fx_source") and details.get("fx_observed_at"))
+    return True
+
+
 def calculate_item_impact(
     item: dict[str, Any],
     *,
@@ -22,7 +34,7 @@ def calculate_item_impact(
         "wip_variance",
         "non_billable_ratio",
     }
-    if replicon_financial and details.get("financial_status") != "ready":
+    if replicon_financial and not _financial_row_ready(details):
         return payload(
             item=item,
             estimate=None,
@@ -55,29 +67,44 @@ def calculate_item_impact(
     if cartridge == "replicon" and anomaly_type in {"low_margin", "wip_variance"}:
         revenue = number(details.get("revenue_usd"))
         margin_usd = number(details.get("margen_bruto_usd"))
-        wip = number(details.get("wip_usd")) or 0
+        wip = number(details.get("wip_usd"))
+        if anomaly_type == "wip_variance" and wip is None:
+            return payload(
+                item=item,
+                estimate=None,
+                status="unavailable",
+                confidence=0.25,
+                drivers=[],
+                formula="WIP observado requerido.",
+                explanation="La fila no contiene WIP monetario publicable.",
+            )
         margin_gap = 0.0
         if revenue is not None and margin_usd is not None:
             margin_gap = max(0.0, revenue * 0.20 - margin_usd)
-        exposure = margin_gap + (abs(wip) if abs(wip) >= 5000 else 0)
+        wip_exposure = abs(wip) if wip is not None and abs(wip) >= 5000 else None
+        exposure = margin_gap + (wip_exposure or 0)
         if exposure > 0:
+            drivers = [
+                {
+                    "label": "Brecha margen objetivo 20%",
+                    "value": round(margin_gap, 2),
+                    "currency": "USD",
+                }
+            ]
+            if wip_exposure is not None:
+                drivers.append(
+                    {
+                        "label": "WIP bajo revision",
+                        "value": round(wip_exposure, 2),
+                        "currency": "USD",
+                    }
+                )
             return payload(
                 item=item,
                 estimate=exposure,
                 status="ok",
                 confidence=0.78,
-                drivers=[
-                    {
-                        "label": "Brecha margen objetivo 20%",
-                        "value": round(margin_gap, 2),
-                        "currency": "USD",
-                    },
-                    {
-                        "label": "WIP bajo revision",
-                        "value": round(abs(wip), 2),
-                        "currency": "USD",
-                    },
-                ],
+                drivers=drivers,
                 formula="max(0, revenue_usd * 20% - margen_bruto_usd) + abs(wip_usd si >= 5000)",
                 explanation="Usa P&L Replicon materializado; no escribe en Replicon.",
             )
