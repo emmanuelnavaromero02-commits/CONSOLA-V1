@@ -9,6 +9,7 @@ import pytest
 
 from airflow.dags.dataset_refresh_idempotency import (
     finish_materialization,
+    heartbeat_materialization,
     reserve_materialization,
 )
 from airflow.dags.runtime_security_context import build_materialize_context
@@ -140,6 +141,15 @@ async def test_expired_leases_reclaim_and_old_fencing_cannot_finish(
             "UPDATE agent_schedule_runs SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE id=$1",
             first["id"],
         )
+        with pytest.raises(RuntimeError, match="reservation"):
+            await agent_scheduler.finish_scheduled_run(
+                schedule_run_id=first["id"],
+                agent_run_id=None,
+                status="error",
+                tenant_id=scope["tenant_id"],
+                workspace_id=scope["workspace_id"],
+                fencing_token=first["fencing_token"],
+            )
         reclaimed = await agent_scheduler.reserve_scheduled_run(
             agent_id=agent_id,
             tenant_id=scope["tenant_id"],
@@ -178,6 +188,15 @@ async def test_expired_leases_reclaim_and_old_fencing_cannot_finish(
                     "UPDATE pipeline_runs SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE run_id=%s",
                     (slot["slot_id"],),
                 )
+        with pytest.raises(RuntimeError, match="slot"):
+            finish_materialization(
+                omega_console_live_dsn,
+                slot_id=slot["slot_id"],
+                tenant_id=scope["tenant_id"],
+                workspace_id=scope["workspace_id"],
+                lease_token=slot["lease_token"],
+                success=False,
+            )
         next_slot = reserve_materialization(
             omega_console_live_dsn,
             airflow_run_id="lease-run",
@@ -201,6 +220,53 @@ async def test_expired_leases_reclaim_and_old_fencing_cannot_finish(
             tenant_id=scope["tenant_id"],
             workspace_id=scope["workspace_id"],
             lease_token=next_slot["lease_token"],
+            success=True,
+            result={"name": "employees", "row_count": 1},
+        )
+
+        healthy_fire = fire.replace(minute=1)
+        healthy_run = await agent_scheduler.reserve_scheduled_run(
+            agent_id=agent_id,
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            scheduled_fire_at=healthy_fire,
+        )
+        await agent_scheduler.heartbeat_scheduled_run(
+            schedule_run_id=healthy_run["id"],
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            fencing_token=healthy_run["fencing_token"],
+        )
+        await agent_scheduler.finish_scheduled_run(
+            schedule_run_id=healthy_run["id"],
+            agent_run_id=None,
+            status="ok",
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            fencing_token=healthy_run["fencing_token"],
+        )
+
+        healthy_slot = reserve_materialization(
+            omega_console_live_dsn,
+            airflow_run_id="lease-run-heartbeat",
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            cartridge_id="replicon",
+            dataset="employees",
+        )
+        heartbeat_materialization(
+            omega_console_live_dsn,
+            slot_id=healthy_slot["slot_id"],
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            lease_token=healthy_slot["lease_token"],
+        )
+        finish_materialization(
+            omega_console_live_dsn,
+            slot_id=healthy_slot["slot_id"],
+            tenant_id=scope["tenant_id"],
+            workspace_id=scope["workspace_id"],
+            lease_token=healthy_slot["lease_token"],
             success=True,
             result={"name": "employees", "row_count": 1},
         )

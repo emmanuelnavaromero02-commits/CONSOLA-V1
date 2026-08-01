@@ -136,7 +136,7 @@ def test_refinement_accepts_console_context_forwarded_by_mcp_infra(monkeypatch):
     assert resolved["tenant_id"] == _trusted_ctx()["tenant_id"]
 
 
-def test_refinement_airflow_context_is_purpose_and_dataset_bound(monkeypatch):
+def test_refinement_rejects_legacy_airflow_context(monkeypatch):
     main = _load_service("refinement", monkeypatch)
     ctx = _signed(
         {
@@ -172,9 +172,55 @@ def test_refinement_airflow_context_is_purpose_and_dataset_bound(monkeypatch):
         "_verified_internal_service": "airflow",
     }
 
-    assert main._security_context(body)["dataset"] == "pnl_mensual"
     with pytest.raises(HTTPException) as exc:
-        main._security_context({**body, "args": {"name": "another_dataset"}})
+        main._security_context(body)
+    assert exc.value.status_code == 403
+
+
+def test_refinement_airflow_v2_is_bound_and_consumed(monkeypatch):
+    main = _load_service("refinement", monkeypatch)
+    runtime = importlib.import_module("app.runtime_security_context")
+    consumed: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "_consume_runtime_jti",
+        lambda context, _signed_at: consumed.append(str(context["jti"])),
+    )
+    from airflow.dags.runtime_security_context import build_materialize_context
+
+    context = build_materialize_context(
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+        cartridge_id="replicon",
+        dataset_name="pnl_mensual",
+        run_id="scheduled__2026-08-01T00:00:00Z",
+    )
+    body = {
+        "tool": "materialize",
+        "args": {"name": "pnl_mensual"},
+        "security_context": context,
+        "_verified_internal_service": "airflow",
+    }
+
+    assert main._security_context(body)["dataset"] == "pnl_mensual"
+    assert consumed == [context["jti"]]
+
+    tampered = build_materialize_context(
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        workspace_id="22222222-2222-2222-2222-222222222222",
+        cartridge_id="replicon",
+        dataset_name="pnl_mensual",
+        run_id="scheduled__2026-08-01T00:00:01Z",
+    )
+    with pytest.raises(HTTPException) as exc:
+        main._security_context(
+            {
+                "tool": "materialize",
+                "args": {"name": "another_dataset"},
+                "security_context": tampered,
+                "_verified_internal_service": "airflow",
+            }
+        )
     assert exc.value.status_code == 403
 
 

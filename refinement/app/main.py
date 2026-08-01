@@ -362,12 +362,11 @@ def _security_context(body: dict) -> dict:
     sec = body.get("security_context") or {}
     if not isinstance(sec, dict):
         return {}
-    runtime_v2 = (
-        sec.get("trusted")
-        and sec.get("source") == "airflow"
-        and sec.get("_signature_version") == "hmac-sha256-v2"
-    )
-    if runtime_v2 and body.get("_runtime_context_validated") is not _RUNTIME_CONTEXT_VALIDATED:
+    airflow_runtime = sec.get("trusted") and sec.get("source") == "airflow"
+    if (
+        airflow_runtime
+        and body.get("_runtime_context_validated") is not _RUNTIME_CONTEXT_VALIDATED
+    ):
         try:
             from app.runtime_security_context import validate_runtime_context
 
@@ -380,7 +379,7 @@ def _security_context(body: dict) -> dict:
             body["_runtime_context_validated"] = _RUNTIME_CONTEXT_VALIDATED
         except ValueError as exc:
             raise HTTPException(403, "Invalid signed security_context") from exc
-    if not runtime_v2 and not _security_context_signature_valid(sec):
+    if not airflow_runtime and not _security_context_signature_valid(sec):
         if sec.get("trusted"):
             raise HTTPException(403, "Invalid signed security_context")
         return {}

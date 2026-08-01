@@ -179,9 +179,11 @@ async def finish_scheduled_run(
                    SET status = $2,
                        agent_run_id = COALESCE($3, agent_run_id),
                        finished_at = NOW(),
+                       lease_expires_at = NULL,
                        error_message = $4,
                        metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb
                  WHERE id = $1 AND status='running' AND fencing_token=$6
+                   AND lease_expires_at > clock_timestamp()
                 """,
                 schedule_run_id,
                 clean_status,

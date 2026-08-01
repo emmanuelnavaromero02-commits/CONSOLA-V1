@@ -148,6 +148,7 @@ def finish_materialization(
                AND workspace_id = %s::uuid
                AND status = 'running'
                AND fencing_token = %s
+               AND lease_expires_at > clock_timestamp()
             """,
             (
                 "success" if success else "failed",
