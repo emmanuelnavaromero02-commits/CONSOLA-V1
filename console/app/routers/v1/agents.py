@@ -209,7 +209,16 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
         },
     )
     if reservation.get("duplicate"):
+        completed = reservation.get("status") == "ok" and isinstance(
+            reservation.get("agent_run_id"), int
+        )
         return {
+            "ok": completed,
+            "status": (
+                "completed"
+                if completed
+                else str(reservation.get("status") or "error")
+            ),
             "reply": "scheduled run already recorded",
             "viewer_urls": [],
             "messages": [],
@@ -225,6 +234,14 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
             message,
             scheduled_fire_at=scheduled_fire_at.isoformat(),
         )
+        if (
+            not isinstance(result, dict)
+            or isinstance(result.get("run_id"), bool)
+            or not isinstance(result.get("run_id"), int)
+            or result.get("deterministic_monitor") is not True
+            or not isinstance(result.get("monitor"), dict)
+        ):
+            raise RuntimeError("scheduled monitor returned an invalid outcome")
     except Exception as exc:
         await _agent_scheduler.finish_scheduled_run(
             schedule_run_id=reservation.get("id"),
@@ -251,8 +268,13 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
             ),
         },
     )
-    if isinstance(result, dict):
-        result["schedule_run"] = reservation
+    result["ok"] = True
+    result["status"] = "completed"
+    result["schedule_run"] = {
+        **reservation,
+        "status": "ok",
+        "agent_run_id": result["run_id"],
+    }
     return result
 
 # /api/agents/{agent_id}/invoke/stream

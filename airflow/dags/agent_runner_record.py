@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 import requests
 
+from agent_runner_outcome import require_registry_save
+
 
 def _status(invocation: dict[str, Any]) -> str:
     operational = str(invocation.get("operational_status") or "")
@@ -16,11 +18,7 @@ def _status(invocation: dict[str, Any]) -> str:
         invocation.get("results") if isinstance(invocation.get("results"), list) else []
     )
     failures = int(invocation.get("scope_failures") or 0)
-    ok = sum(
-        1
-        for item in results
-        if isinstance(item.get("status"), int) and int(item["status"]) < 400
-    )
+    ok = sum(1 for item in results if isinstance(item, dict) and item.get("ok") is True)
     if failures or (results and ok != len(results)):
         return "partial" if ok else "failed"
     return "success"
@@ -48,9 +46,7 @@ def record_agent_runner_run(
         "scope_failures": int(invocation.get("scope_failures") or 0),
         "candidate_count": len(results),
         "successful_count": sum(
-            1
-            for item in results
-            if isinstance(item.get("status"), int) and int(item["status"]) < 400
+            1 for item in results if isinstance(item, dict) and item.get("ok") is True
         ),
     }
     payload = {
@@ -76,9 +72,7 @@ def record_agent_runner_run(
             headers=headers(),
             timeout=15,
         )
-        body = response.json() if response.status_code < 400 else {}
-        if response.status_code >= 400 or body.get("error"):
-            raise RuntimeError("pipeline registry rejected agent runner result")
+        require_registry_save(response, expected_status=status)
     except Exception as exc:
         raise RuntimeError("agent runner result could not be recorded") from exc
     if status != "success":

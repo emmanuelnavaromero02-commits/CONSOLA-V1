@@ -15,6 +15,7 @@ from dataset_refresh_graph import _required_scope, resolve_chain as _resolve_cha
 from dataset_refresh_finalization import finalize_pipeline_status
 from dataset_refresh_materialize import materialize_in_order as _materialize_in_order
 from dataset_refresh_outcome import (
+    materialization_status,
     require_successful_intelligence_response,
     require_successful_registry_response,
 )
@@ -154,36 +155,30 @@ def _trigger_gold_refresh_intelligence(
         raise RuntimeError("Gold intelligence trigger unavailable") from exc
 
 
-def _materialization_result(ctx: dict[str, Any]) -> tuple[dict, bool]:
-    result = (
-        ctx["ti"].xcom_pull(task_ids="materialize_in_order", key="result")
-        or ctx["ti"].xcom_pull(task_ids="materialize_in_order")
-        or {}
-    )
+def _materialization_result(ctx: dict[str, Any]) -> tuple[object, str]:
+    result = ctx["ti"].xcom_pull(task_ids="materialize_in_order", key="result")
+    if result is None:
+        result = ctx["ti"].xcom_pull(task_ids="materialize_in_order")
     dag_run = ctx.get("dag_run")
     task = dag_run.get_task_instance("materialize_in_order") if dag_run else None
-    failed = bool(task and str(getattr(task, "state", "") or "") != "success")
-    if not result and failed:
-        return {"materialized": 0, "results": [], "error": "task_failed"}, True
-    return result, failed
+    state = str(getattr(task, "state", "") or "") if task else ""
+    return result, state
 
 
 def record_run(**ctx):
     conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
     allow_partial = bool(conf.get("allow_partial"))
-    invocation, task_failed = _materialization_result(ctx)
+    raw_invocation, task_state = _materialization_result(ctx)
+    status = materialization_status(raw_invocation, task_state=task_state)
+    invocation = dict(raw_invocation) if isinstance(raw_invocation, dict) else {}
     tenant_id, workspace_id = _required_scope(conf)
     cartridge = str(
         ctx["ti"].xcom_pull(task_ids="resolve_chain", key="cartridge_id")
         or conf.get("cartridge_id")
         or ""
     )
-    results = invocation.get("results") or []
-    completed = int(invocation.get("materialized") or 0)
-    total = len(results)
-    status = "success" if total == completed else "partial" if completed else "failed"
-    if invocation.get("status") == "no_downstream_datasets" and not task_failed:
-        status = "noop"
+    raw_results = invocation.get("results")
+    results = raw_results if isinstance(raw_results, list) else []
     finished_at = datetime.now(timezone.utc).isoformat()
     pipeline_run_id = f"dataset_refresh_chain:{ctx['run_id']}"
 
@@ -233,7 +228,7 @@ def record_run(**ctx):
         save_status=save_status,
         trigger_intelligence=trigger_intelligence,
     )
-    if status not in {"success", "noop"} and not allow_partial:
+    if status == "failed" or (status == "partial" and not allow_partial):
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 

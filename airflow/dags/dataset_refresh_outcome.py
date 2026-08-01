@@ -58,3 +58,42 @@ def require_successful_intelligence_response(response: Any) -> dict[str, Any]:
     if isinstance(signals, bool) or not isinstance(signals, int) or signals <= 0:
         raise RuntimeError("Gold intelligence trigger unavailable")
     return dict(payload)
+
+
+def materialization_status(invocation: object, *, task_state: str) -> str:
+    """Classify only complete, typed materialization evidence as successful."""
+    if task_state != "success" or not isinstance(invocation, Mapping):
+        return "failed"
+    if "error" in invocation:
+        return "failed"
+    results = invocation.get("results")
+    completed = invocation.get("materialized")
+    if (
+        not isinstance(results, list)
+        or isinstance(completed, bool)
+        or not isinstance(completed, int)
+        or completed < 0
+    ):
+        return "failed"
+    typed: list[Mapping[str, Any]] = []
+    for item in results:
+        if not isinstance(item, Mapping):
+            return "failed"
+        if not isinstance(item.get("ok"), bool):
+            return "failed"
+        if not str(item.get("name") or "").strip():
+            return "failed"
+        typed.append(item)
+    succeeded = sum(1 for item in typed if item.get("ok") is True)
+    if completed != succeeded:
+        return "failed"
+    reported = invocation.get("status")
+    if reported == "no_downstream_datasets":
+        return "noop" if completed == 0 and not typed else "failed"
+    if reported != "completed" or not typed:
+        return "failed"
+    if succeeded == len(typed):
+        return "success"
+    if 0 < succeeded < len(typed):
+        return "partial"
+    return "failed"

@@ -29,6 +29,7 @@ import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
+from agent_runner_outcome import require_scheduled_invocation
 from agent_runner_record import record_agent_runner_run
 
 
@@ -172,8 +173,9 @@ def invoke_each(**context):
     results = []
     for agent in due:
         url = f"{CONSOLE_URL}/api/agents/{agent['id']}/invoke/scheduled"
+        response = None
         try:
-            r = requests.post(
+            response = requests.post(
                 url,
                 json={
                     "message": agent["prompt"],
@@ -191,22 +193,20 @@ def invoke_each(**context):
                 },
                 timeout=600,
             )
-            results.append(
-                {
-                    "status": r.status_code,
-                    "duplicate": bool((r.json() or {}).get("duplicate"))
-                    if r.status_code < 400
-                    else False,
-                }
-            )
+            results.append(require_scheduled_invocation(response))
         except Exception as exc:  # noqa: BLE001
-            results.append({"status": "exception", "error_code": type(exc).__name__})
+            code = getattr(response, "status_code", "exception")
+            results.append(
+                {"ok": False, "status": code, "error_code": type(exc).__name__}
+            )
 
-    ok = sum(
-        1 for r in results if isinstance(r.get("status"), int) and r["status"] < 400
+    invoked = sum(
+        1
+        for item in results
+        if item.get("ok") is True and item.get("duplicate") is False
     )
     return {
-        "invoked": ok,
+        "invoked": invoked,
         "results": results,
         "operational_status": discovery.get("status") or "ready",
         "workspace_count": discovery.get("workspaces") or 0,
