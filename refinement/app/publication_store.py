@@ -70,7 +70,11 @@ class PublicationStore:
             try:
                 yield
             except Exception:
-                self.abandon(identity)
+                current = self.run(identity) or {}
+                status = str(current.get("status") or "")
+                if status == "prepared" or status == "published":
+                    raise
+                self._abandon_unprepared(identity)
                 raise
         finally:
             try:
@@ -82,6 +86,9 @@ class PublicationStore:
                 conn.commit()
             finally:
                 conn.close()
+
+    def _abandon_unprepared(self, identity: PublicationIdentity) -> None:
+        self.abandon(identity)
 
     def reserve(self, identity: PublicationIdentity) -> str:
         with psycopg2.connect(self._publisher_url()) as conn, conn.cursor() as cur:

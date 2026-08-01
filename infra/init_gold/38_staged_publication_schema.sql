@@ -94,6 +94,18 @@ CREATE TABLE IF NOT EXISTS omega_publication.materialization_evidence (
     UNIQUE (tenant_id, workspace_id, dataset, layer, materialization_run_id)
 );
 
+CREATE TABLE IF NOT EXISTS omega_publication.dataset_gold_relations (
+    tenant_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    dataset text NOT NULL CHECK (dataset ~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$'),
+    relation_name text NOT NULL CHECK (
+      relation_name ~ '^gold_[A-Za-z0-9_]+$' AND octet_length(relation_name) <= 63
+    ),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, workspace_id, dataset),
+    UNIQUE (tenant_id, workspace_id, relation_name)
+);
+
 ALTER TABLE omega_publication.materialization_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_runs FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.dataset_publication_heads ENABLE ROW LEVEL SECURITY;
@@ -102,6 +114,8 @@ ALTER TABLE omega_publication.materialization_receipts ENABLE ROW LEVEL SECURITY
 ALTER TABLE omega_publication.materialization_receipts FORCE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE omega_publication.materialization_evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.dataset_gold_relations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE omega_publication.dataset_gold_relations FORCE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
@@ -109,7 +123,7 @@ DECLARE
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'materialization_runs', 'dataset_publication_heads', 'materialization_receipts',
-    'materialization_evidence'
+    'materialization_evidence', 'dataset_gold_relations'
   ] LOOP
     EXECUTE format('DROP POLICY IF EXISTS %I ON omega_publication.%I', table_name || '_scope', table_name);
     EXECUTE format(
@@ -126,7 +140,10 @@ END $$;
 -- Legacy tables remain visible only while the scoped head still points at the
 -- backfilled legacy run. Publishing a staged run immediately retires those rows.
 DO $$
-DECLARE relation record;
+DECLARE
+  relation record;
+  owner_policy text;
+  reader_policy text;
 BEGIN
   FOR relation IN
     SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -137,13 +154,23 @@ BEGIN
        AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid
                     AND a.attname='workspace_id' AND NOT a.attisdropped)
   LOOP
+    owner_policy := CASE
+      WHEN octet_length(relation.relname || '_publication_owner') <= 63
+      THEN relation.relname || '_publication_owner'
+      ELSE 'publication_owner'
+    END;
+    reader_policy := CASE
+      WHEN octet_length(relation.relname || '_tenant_workspace_rls') <= 63
+      THEN relation.relname || '_tenant_workspace_rls'
+      ELSE 'tenant_workspace_rls'
+    END;
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
-                   relation.relname || '_tenant_workspace_rls', relation.relname);
+                   reader_policy, relation.relname);
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
-                   relation.relname || '_publication_owner', relation.relname);
+                   owner_policy, relation.relname);
     EXECUTE format(
       'CREATE POLICY %I ON public.%I TO omega_gold_owner USING (true) WITH CHECK (true)',
-      relation.relname || '_publication_owner', relation.relname
+      owner_policy, relation.relname
     );
     EXECUTE format(
       'CREATE POLICY %I ON public.%I FOR SELECT TO omega_refinement_gold USING ('
@@ -152,7 +179,7 @@ BEGIN
       'WHERE h.tenant_id::text=NULLIF(current_setting(''app.tenant_id'',true),'''') '
       'AND h.workspace_id::text=NULLIF(current_setting(''app.workspace_id'',true),'''') '
       'AND h.dataset=%L AND h.layer=''gold''))',
-      relation.relname || '_tenant_workspace_rls', relation.relname,
+      reader_policy, relation.relname,
       substr(relation.relname,6)
     );
   END LOOP;
@@ -162,6 +189,7 @@ ALTER TABLE omega_publication.materialization_runs OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.dataset_publication_heads OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_receipts OWNER TO omega_gold_owner;
 ALTER TABLE omega_publication.materialization_evidence OWNER TO omega_gold_owner;
+ALTER TABLE omega_publication.dataset_gold_relations OWNER TO omega_gold_owner;
 GRANT SELECT ON ALL TABLES IN SCHEMA omega_publication
   TO omega_refinement_gold, omega_gold_publisher;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA omega_publication
@@ -201,7 +229,10 @@ BEGIN
        AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped)
        AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='workspace_id' AND NOT a.attisdropped)
   LOOP
-    dataset_name := substr(relation.relname, 6);
+    SELECT min(dataset) INTO dataset_name
+      FROM omega_publication.dataset_gold_relations
+     WHERE relation_name=relation.relname;
+    dataset_name := COALESCE(dataset_name, substr(relation.relname, 6));
     EXECUTE format($sql$
       WITH scoped AS (
         SELECT tenant_id::uuid AS tenant_id, workspace_id::uuid AS workspace_id,
@@ -221,13 +252,26 @@ BEGIN
           (substr(h,1,8)||'-'||substr(h,9,4)||'-'||substr(h,13,4)||'-'||substr(h,17,4)||'-'||substr(h,21,12))::uuid,
           tenant_id, workspace_id, %L, 'gold', repeat('0',64), repeat('0',64), %L, row_count,
           'legacy_unverified'
-        FROM identified ON CONFLICT (materialization_run_id) DO NOTHING
+        FROM identified
+        WHERE NOT EXISTS (
+          SELECT 1 FROM omega_publication.dataset_publication_heads h
+           WHERE h.tenant_id=identified.tenant_id
+             AND h.workspace_id=identified.workspace_id
+             AND h.dataset=%L AND h.layer='gold'
+        )
+        ON CONFLICT (materialization_run_id) DO NOTHING
         RETURNING materialization_run_id, tenant_id, workspace_id
+      ), mappings AS (
+        INSERT INTO omega_publication.dataset_gold_relations (
+          tenant_id, workspace_id, dataset, relation_name
+        ) SELECT tenant_id, workspace_id, %L, %L FROM identified
+        ON CONFLICT (tenant_id, workspace_id, dataset) DO NOTHING
       )
       INSERT INTO omega_publication.dataset_publication_heads (
         tenant_id, workspace_id, dataset, layer, materialization_run_id, generation
       ) SELECT tenant_id, workspace_id, %L, 'gold', materialization_run_id, 1 FROM runs
       ON CONFLICT (tenant_id, workspace_id, dataset, layer) DO NOTHING
-    $sql$, relation.relname, dataset_name, dataset_name, relation.relname, dataset_name);
+    $sql$, relation.relname, dataset_name, dataset_name, relation.relname,
+            dataset_name, dataset_name, relation.relname, dataset_name);
   END LOOP;
 END $$;

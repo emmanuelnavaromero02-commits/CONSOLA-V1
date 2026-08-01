@@ -236,10 +236,16 @@ class LiveStack:
         )
 
     def compatibility_rows(self, dataset: str, scope=(TENANT_A, WORKSPACE_A)):
+        relation = self.sql(
+            self.reader_dsn,
+            scope,
+            "SELECT relation_name FROM omega_publication.dataset_gold_relations WHERE dataset=%s",
+            (dataset,),
+        )[0][0]
         return self.sql(
             self.reader_dsn,
             scope,
-            f'SELECT value FROM public."gold_{dataset}"',
+            f'SELECT value FROM public."{relation}"',
         )
 
     def published_state(self, dataset: str):

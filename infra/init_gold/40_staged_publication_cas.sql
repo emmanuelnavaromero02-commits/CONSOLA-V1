@@ -1,3 +1,22 @@
+CREATE OR REPLACE FUNCTION omega_publication.gold_compatibility_relation(
+    p_dataset text
+) RETURNS text
+LANGUAGE plpgsql IMMUTABLE STRICT
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  candidate text := 'gold_' || p_dataset;
+BEGIN
+  IF p_dataset !~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$' THEN
+    RAISE EXCEPTION 'invalid Gold dataset name' USING ERRCODE='22023';
+  END IF;
+  IF octet_length(candidate) <= 63 THEN
+    RETURN candidate;
+  END IF;
+  RETURN 'gold_' || substr(p_dataset,1,40) || '_' ||
+         substr(encode(public.digest(convert_to(p_dataset,'UTF8'),'sha256'),'hex'),1,16);
+END $$;
+
 CREATE OR REPLACE FUNCTION omega_publication.publish_materialization(
     p_run uuid, p_expected_head uuid DEFAULT NULL
 ) RETURNS TABLE(receipt_id uuid, generation bigint, replayed boolean)
@@ -64,7 +83,19 @@ BEGIN
     IF run_row.gold_table IS DISTINCT FROM run_row.staging_table THEN
       RAISE EXCEPTION 'prepared Gold relation identity mismatch' USING ERRCODE='23514';
     END IF;
-    legacy_name := 'gold_' || run_row.dataset;
+    INSERT INTO omega_publication.dataset_gold_relations (
+      tenant_id, workspace_id, dataset, relation_name
+    ) VALUES (
+      run_row.tenant_id, run_row.workspace_id, run_row.dataset,
+      omega_publication.gold_compatibility_relation(run_row.dataset)
+    ) ON CONFLICT (tenant_id, workspace_id, dataset) DO NOTHING;
+    SELECT relation_name INTO legacy_name
+      FROM omega_publication.dataset_gold_relations
+     WHERE tenant_id=run_row.tenant_id AND workspace_id=run_row.workspace_id
+       AND dataset=run_row.dataset;
+    IF legacy_name IS NULL THEN
+      RAISE EXCEPTION 'Gold relation mapping is unavailable' USING ERRCODE='23514';
+    END IF;
     IF to_regclass(format('public.%I',legacy_name)) IS NULL THEN
       EXECUTE format(
         'CREATE TABLE public.%I (LIKE omega_publication_stage.%I INCLUDING DEFAULTS)',
@@ -91,21 +122,21 @@ BEGIN
     END LOOP;
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',legacy_name);
     EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY',legacy_name);
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
-                   legacy_name || '_publication_owner',legacy_name);
-    EXECUTE format('CREATE POLICY %I ON public.%I TO omega_gold_owner '
+    EXECUTE format('DROP POLICY IF EXISTS publication_owner ON public.%I',
+                   legacy_name);
+    EXECUTE format('CREATE POLICY publication_owner ON public.%I TO omega_gold_owner '
                    'USING (true) WITH CHECK (true)',
-                   legacy_name || '_publication_owner',legacy_name);
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
-                   legacy_name || '_tenant_workspace_rls',legacy_name);
+                   legacy_name);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_workspace_rls ON public.%I',
+                   legacy_name);
     EXECUTE format(
-      'CREATE POLICY %I ON public.%I FOR SELECT TO omega_refinement_gold USING ('
+      'CREATE POLICY tenant_workspace_rls ON public.%I FOR SELECT TO omega_refinement_gold USING ('
       'public.omega_gold_workspace_matches(tenant_id::text,workspace_id::text) AND '
       'EXISTS (SELECT 1 FROM omega_publication.dataset_publication_heads h '
       'WHERE h.tenant_id::text=NULLIF(current_setting(''app.tenant_id'',true),'''') '
       'AND h.workspace_id::text=NULLIF(current_setting(''app.workspace_id'',true),'''') '
       'AND h.dataset=%L AND h.layer=''gold''))',
-      legacy_name || '_tenant_workspace_rls',legacy_name,run_row.dataset
+      legacy_name,run_row.dataset
     );
     EXECUTE format('GRANT SELECT ON public.%I TO omega_refinement_gold',legacy_name);
     EXECUTE format('REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON public.%I '
@@ -184,7 +215,11 @@ END $$;
 
 ALTER FUNCTION omega_publication.publish_materialization(uuid,uuid)
   OWNER TO omega_gold_owner;
+ALTER FUNCTION omega_publication.gold_compatibility_relation(text)
+  OWNER TO omega_gold_owner;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA omega_publication
   FROM PUBLIC, omega_refinement_gold;
 GRANT EXECUTE ON FUNCTION omega_publication.publish_materialization(uuid,uuid)
+  TO omega_gold_publisher;
+GRANT EXECUTE ON FUNCTION omega_publication.gold_compatibility_relation(text)
   TO omega_gold_publisher;
