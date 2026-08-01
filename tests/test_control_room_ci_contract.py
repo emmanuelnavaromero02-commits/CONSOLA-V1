@@ -5,8 +5,9 @@ from scripts.ci_control_room_paths import control_room_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
-FOCAL_MINIMUM = 8987
-POSTGRES_MINIMUM = 171
+PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
+FOCAL_MINIMUM = 8998
+POSTGRES_MINIMUM = 175
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -178,6 +179,7 @@ def test_postgres_junit_guard_requires_current_minimum_and_zero_bad_results():
 
 def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     text = _workflow_text()
+    prepare_script = PREPARE_SCRIPT.read_text(encoding="utf-8")
     verifier = text.split("python - <<'PY'", 1)[1]
     for field in ("skipped", "failures", "errors"):
         assert field in verifier
@@ -188,11 +190,12 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     live = text.index("- name: Run live PostgreSQL/RLS tests")
     assert prepare < text.index("pytest", prepare) == text.index("pytest")
     assert prepare < focal < live
-    assert "docker build . -f refinement/Dockerfile" in text[prepare:focal]
-    assert "run_refinement_duckdb_offline_smoke.sh" in text[prepare:focal]
-    assert "docker cp" in text[prepare:focal]
+    assert "run: scripts/prepare_refinement_duckdb_ci.sh" in text[prepare:focal]
+    assert "docker build . -f refinement/Dockerfile" in prepare_script
+    assert "run_refinement_duckdb_offline_smoke.sh" in prepare_script
+    assert "docker cp" in prepare_script
     assert "DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home" in text
-    assert 'test ! -e "$DUCKDB_TEST_HOME"' in text
+    assert 'test ! -e "$duckdb_home"' in prepare_script
     scoped_home_lines = [
         line for line in text.splitlines() if line.strip().startswith("HOME:")
     ]
@@ -203,8 +206,8 @@ def test_both_junit_reports_fail_closed_on_missing_or_bad_results():
     assert text.count("DOCKER_HOST: unix:///var/run/docker.sock") == 2
     assert "INSTALL httpfs" not in text
     assert "INSTALL postgres" not in text
-    assert '"autoinstall_known_extensions": "false"' in text
-    assert '"autoload_known_extensions": "false"' in text
+    assert '"autoinstall_known_extensions": "false"' in prepare_script
+    assert '"autoload_known_extensions": "false"' in prepare_script
     assert "refinement-duckdb-extensions.before" in text
     assert "refinement-duckdb-extensions.after" in text
     assert "cmp /tmp/refinement-duckdb-extensions.before" in text

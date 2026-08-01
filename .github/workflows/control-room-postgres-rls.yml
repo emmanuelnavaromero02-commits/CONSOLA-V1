@@ -61,74 +61,7 @@ jobs:
         env:
           DUCKDB_TEST_HOME: /tmp/refinement-duckdb-home
           REFINEMENT_IMAGE: refinement:offline-smoke
-        run: |
-          set -euo pipefail
-          test ! -e "$DUCKDB_TEST_HOME"
-          docker build . -f refinement/Dockerfile -t "$REFINEMENT_IMAGE"
-          docker run --rm --network none --read-only \
-            --tmpfs /tmp:rw,nosuid,noexec,size=64m \
-            "$REFINEMENT_IMAGE" sh -eu -c '
-              test "$(id -un)" = appuser
-              python - <<"PY"
-          import duckdb
-          from app.duckdb_runtime import (
-              connect_duckdb_runtime,
-              require_loaded_extensions,
-          )
-
-          assert duckdb.__version__ == "1.2.2"
-          connection = connect_duckdb_runtime()
-          try:
-              require_loaded_extensions(connection)
-              settings = dict(
-                  connection.execute(
-                      "SELECT name, value FROM duckdb_settings() "
-                      "WHERE name IN ("
-                      "'"'"'autoinstall_known_extensions'"'"',"
-                      "'"'"'autoload_known_extensions'"'"')"
-                  ).fetchall()
-              )
-              assert settings == {
-                  "autoinstall_known_extensions": "false",
-                  "autoload_known_extensions": "false",
-              }
-          finally:
-              connection.close()
-          PY
-            '
-          scripts/run_refinement_duckdb_offline_smoke.sh "$REFINEMENT_IMAGE"
-
-          mkdir -p "$DUCKDB_TEST_HOME/.duckdb"
-          container_id="$(docker create "$REFINEMENT_IMAGE")"
-          cleanup() {
-            docker rm -f "$container_id" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          docker cp \
-            "$container_id:/home/appuser/.duckdb/." \
-            "$DUCKDB_TEST_HOME/.duckdb/"
-          docker rm "$container_id" >/dev/null
-          trap - EXIT
-
-          for extension in httpfs postgres_scanner; do
-            find "$DUCKDB_TEST_HOME/.duckdb" \
-              -type f -name "$extension.duckdb_extension" | grep -q .
-          done
-          HOME="$DUCKDB_TEST_HOME" python - <<'PY'
-          from refinement.app.duckdb_runtime import (
-              connect_duckdb_runtime,
-              require_loaded_extensions,
-          )
-
-          connection = connect_duckdb_runtime()
-          try:
-              require_loaded_extensions(connection)
-          finally:
-              connection.close()
-          PY
-          find "$DUCKDB_TEST_HOME/.duckdb" -type f -print0 \
-            | LC_ALL=C sort -z | xargs -0 sha256sum \
-            > /tmp/refinement-duckdb-extensions.before
+        run: scripts/prepare_refinement_duckdb_ci.sh
 
       - name: Run focal Control Room tests
         continue-on-error: true
@@ -185,7 +118,8 @@ jobs:
           pytest -ra --junitxml=/tmp/control-room-postgres-rls.xml \
             tests/test_operational_rls_console_refinement.py \
             tests/test_operational_rls_policy_guard.py \
-            tests/test_control_room_live_postgres*.py
+            tests/test_control_room_live_postgres*.py \
+            tests/test_operational_truth_runtime_leases_live.py
 
       - name: Verify hermetic DuckDB extension cache
         if: always()
@@ -228,9 +162,31 @@ jobs:
               if any(bad.values()):
                   raise SystemExit(f"{label} JUnit is not clean: {bad}")
 
-          verify_junit("/tmp/control-room-focal.xml", minimum=8987, label="Focal Control Room")
-          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=171, label="Live PostgreSQL/RLS")
+          verify_junit("/tmp/control-room-focal.xml", minimum=8998, label="Focal Control Room")
+          verify_junit("/tmp/control-room-postgres-rls.xml", minimum=175, label="Live PostgreSQL/RLS")
           PY
+
+  operational-truth-e2e:
+    needs: changes
+    if: needs.changes.outputs.control_room == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run real operational truth E2E
+        env:
+          E2E_ARTIFACTS_DIR: /tmp/operational-truth-e2e
+          E2E_WAIT_TIMEOUT_SECONDS: "600"
+        run: scripts/run_operational_truth_e2e.sh
+
+      - name: Upload operational truth E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-truth-e2e
+          path: /tmp/operational-truth-e2e
+          if-no-files-found: error
 
   no-control-room-needed:
     needs: changes
@@ -245,6 +201,7 @@ jobs:
     needs:
       - changes
       - control-room-postgres-rls
+      - operational-truth-e2e
       - no-control-room-needed
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -256,6 +213,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTROL_ROOM: ${{ needs.changes.outputs.control_room }}
           CONTROL_ROOM_TESTS_RESULT: ${{ needs['control-room-postgres-rls'].result }}
+          OPERATIONAL_TRUTH_E2E_RESULT: ${{ needs['operational-truth-e2e'].result }}
           NO_CONTROL_ROOM_NEEDED_RESULT: ${{ needs['no-control-room-needed'].result }}
         run: |
           set -euo pipefail
@@ -263,6 +221,7 @@ jobs:
           changes="${CHANGES_RESULT-}"
           control_room="${CONTROL_ROOM-}"
           tests="${CONTROL_ROOM_TESTS_RESULT-}"
+          e2e="${OPERATIONAL_TRUTH_E2E_RESULT-}"
           noop="${NO_CONTROL_ROOM_NEEDED_RESULT-}"
 
           if [[ "$changes" != "success" ]]; then
@@ -272,14 +231,14 @@ jobs:
 
           case "$control_room" in
             true)
-              if [[ "$tests" != "success" || "$noop" != "skipped" ]]; then
-                echo "::error::relevant changes require tests=success and noop=skipped; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+              if [[ "$tests" != "success" || "$e2e" != "success" || "$noop" != "skipped" ]]; then
+                echo "::error::relevant changes require tests/e2e=success and noop=skipped; got tests='${tests:-<missing>}' e2e='${e2e:-<missing>}' noop='${noop:-<missing>}'"
                 exit 1
               fi
               ;;
             false)
-              if [[ "$tests" != "skipped" || "$noop" != "success" ]]; then
-                echo "::error::irrelevant changes require tests=skipped and noop=success; got tests='${tests:-<missing>}' noop='${noop:-<missing>}'"
+              if [[ "$tests" != "skipped" || "$e2e" != "skipped" || "$noop" != "success" ]]; then
+                echo "::error::irrelevant changes require tests/e2e=skipped and noop=success; got tests='${tests:-<missing>}' e2e='${e2e:-<missing>}' noop='${noop:-<missing>}'"
                 exit 1
               fi
               ;;
