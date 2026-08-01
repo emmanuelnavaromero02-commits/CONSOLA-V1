@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 import boto3
+import psycopg2
 import pytest
 from botocore.config import Config
 
@@ -14,11 +15,15 @@ from tests.staged_publication_live import (
     PUBLISHER_PASSWORD,
     READER_PASSWORD,
     TENANT_A,
+    TENANT_B,
     WORKSPACE_A,
+    WORKSPACE_B,
     LiveStack,
     _docker,
     _port,
     _wait,
+    valid_catalog,
+    valid_lineage,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +53,7 @@ def staged_publication_live_stack() -> LiveStack:
         "-v",
         f"{ROOT / 'infra/init_gold'}:/docker-entrypoint-initdb.d:ro",
         "-P",
-        "postgres:15",
+        "postgres:15.18",
     )
     _docker(
         "run",
@@ -195,3 +200,91 @@ def test_real_engine_publishes_gold_only_at_the_cas(
     assert replay["row_count"] == 1 and stack.head("engine_gold_probe")[1] == 1
     if engine._con is not None:
         engine._con.close()
+
+
+def _empty_gold_stage(stack: LiveStack, dataset: str, run: uuid.UUID) -> str:
+    stack.reserve(dataset, run)
+    columns = [
+        {"name": "tenant_id", "type": "TEXT"},
+        {"name": "workspace_id", "type": "TEXT"},
+        {"name": "value", "type": "INTEGER"},
+    ]
+    import json
+
+    return stack.sql(
+        stack.publisher_dsn,
+        (TENANT_A, WORKSPACE_A),
+        "SELECT omega_publication.create_gold_stage(%s,%s::jsonb)",
+        (str(run), json.dumps(columns)),
+    )[0][0]
+
+
+def test_gold_stage_scope_is_not_null_while_empty_dataset_remains_valid(
+    staged_publication_live_stack: LiveStack,
+) -> None:
+    stack = staged_publication_live_stack
+    run = uuid.uuid4()
+    stage = _empty_gold_stage(stack, "scope_not_null", run)
+    nullability = stack.sql(
+        stack.admin_dsn,
+        (TENANT_A, WORKSPACE_A),
+        "SELECT column_name,is_nullable FROM information_schema.columns "
+        "WHERE table_schema='omega_publication_stage' AND table_name=%s "
+        "AND column_name IN ('tenant_id','workspace_id') ORDER BY column_name",
+        (stage,),
+    )
+    assert nullability == [("tenant_id", "NO"), ("workspace_id", "NO")]
+    with pytest.raises(psycopg2.Error):
+        stack.sql(
+            stack.admin_dsn,
+            (TENANT_A, WORKSPACE_A),
+            f'INSERT INTO omega_publication_stage."{stage}" VALUES (NULL,%s,1)',
+            (WORKSPACE_A,),
+            fetch=False,
+        )
+
+    uri, checksum = stack.write_object("scope_not_null", run, 0)
+    stack.sql(
+        stack.publisher_dsn,
+        (TENANT_A, WORKSPACE_A),
+        "SELECT * FROM omega_publication.mark_prepared(%s,%s,%s,0,%s,%s,%s::jsonb,%s::jsonb)",
+        (
+            str(run),
+            uri,
+            checksum,
+            stage,
+            stage,
+            valid_lineage(),
+            valid_catalog(),
+        ),
+    )
+
+
+def test_gold_stage_is_bound_to_the_reserving_scope(
+    staged_publication_live_stack: LiveStack,
+) -> None:
+    stack = staged_publication_live_stack
+    run = uuid.uuid4()
+    stage = _empty_gold_stage(stack, "scope_binding", run)
+
+    with pytest.raises(psycopg2.Error):
+        stack.sql(
+            stack.publisher_dsn,
+            (TENANT_B, WORKSPACE_B),
+            f'INSERT INTO omega_publication_stage."{stage}" VALUES (%s,%s,1)',
+            (TENANT_B, WORKSPACE_B),
+            fetch=False,
+        )
+
+    stack.sql(
+        stack.publisher_dsn,
+        (TENANT_A, WORKSPACE_A),
+        f'INSERT INTO omega_publication_stage."{stage}" VALUES (%s,%s,1)',
+        (TENANT_A, WORKSPACE_A),
+        fetch=False,
+    )
+    assert stack.sql(
+        stack.publisher_dsn,
+        (TENANT_A, WORKSPACE_A),
+        f'SELECT count(*) FROM omega_publication_stage."{stage}"',
+    ) == [(1,)]

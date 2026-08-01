@@ -90,7 +90,8 @@ BEGIN
       RAISE EXCEPTION 'invalid Gold stage schema' USING ERRCODE='22023';
     END IF;
     definitions := definitions || CASE WHEN definitions = '' THEN '' ELSE ', ' END
-      || format('%I %s', column_name, column_type);
+      || format('%I %s%s', column_name, column_type,
+                CASE WHEN column_name IN ('tenant_id','workspace_id') THEN ' NOT NULL' ELSE '' END);
   END LOOP;
   IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p_columns) v WHERE v->>'name'='tenant_id')
      OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p_columns) v WHERE v->>'name'='workspace_id') THEN
@@ -108,11 +109,14 @@ BEGIN
   EXECUTE format(
     'CREATE POLICY publication_scope ON omega_publication_stage.%I '
     'TO omega_gold_owner, omega_gold_publisher, omega_refinement_gold '
-    'USING (tenant_id::text = NULLIF(current_setting(''app.tenant_id'', true), '''') '
+    'USING (tenant_id::text = %L AND workspace_id::text = %L '
+    'AND tenant_id::text = NULLIF(current_setting(''app.tenant_id'', true), '''') '
     'AND workspace_id::text = NULLIF(current_setting(''app.workspace_id'', true), '''')) '
-    'WITH CHECK (tenant_id::text = NULLIF(current_setting(''app.tenant_id'', true), '''') '
+    'WITH CHECK (tenant_id::text = %L AND workspace_id::text = %L '
+    'AND tenant_id::text = NULLIF(current_setting(''app.tenant_id'', true), '''') '
     'AND workspace_id::text = NULLIF(current_setting(''app.workspace_id'', true), ''''))',
-    stage_name
+    stage_name, run_row.tenant_id::text, run_row.workspace_id::text,
+    run_row.tenant_id::text, run_row.workspace_id::text
   );
   EXECUTE format('GRANT INSERT, SELECT ON omega_publication_stage.%I TO omega_gold_publisher', stage_name);
   UPDATE omega_publication.materialization_runs
@@ -134,7 +138,7 @@ AS $$
 DECLARE
   current_run omega_publication.materialization_runs%ROWTYPE;
   staged_count bigint;
-  staged_scope_ok boolean;
+  staged_scope_violations bigint;
   authoritative_catalog jsonb;
   derived_schema_digest text;
   derived_evidence_digest text;
@@ -174,11 +178,12 @@ BEGIN
       RAISE EXCEPTION 'Gold stage identity mismatch';
     END IF;
     EXECUTE format(
-      'SELECT count(*), COALESCE(bool_and(tenant_id::text=$1 AND workspace_id::text=$2), true) '
+      'SELECT count(*), count(*) FILTER (WHERE tenant_id IS NULL OR workspace_id IS NULL '
+      'OR tenant_id::text IS DISTINCT FROM $1 OR workspace_id::text IS DISTINCT FROM $2) '
       'FROM omega_publication_stage.%I', p_staging_table
-    ) INTO staged_count, staged_scope_ok
+    ) INTO staged_count, staged_scope_violations
       USING current_run.tenant_id::text, current_run.workspace_id::text;
-    IF staged_count <> p_row_count OR NOT staged_scope_ok THEN
+    IF staged_count <> p_row_count OR staged_scope_violations <> 0 THEN
       RAISE EXCEPTION 'Gold stage row count or scope mismatch' USING ERRCODE='23514';
     END IF;
     SELECT jsonb_agg(
