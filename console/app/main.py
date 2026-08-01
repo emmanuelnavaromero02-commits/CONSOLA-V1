@@ -5663,10 +5663,7 @@ def _scheduled_agent_run_params(agent: Any, body: dict) -> tuple[Any, str, str |
         from datetime import datetime as _dt, timezone as _tz
 
         scheduled_fire_at = _dt.now(_tz.utc).replace(second=0, microsecond=0)
-    schedule_key = (
-        str(body.get("schedule_key") or schedule.get("key") or "default").strip()
-        or "default"
-    )
+    schedule_key = str(schedule.get("key") or "default").strip() or "default"
     extra_role = str((extra or {}).get("role") or "").strip().lower()
     monitor_contract = extra.get("monitor") if isinstance(extra, dict) else None
     if (
@@ -5735,6 +5732,7 @@ async def _run_reserved_scheduled_agent(
             status="error",
             tenant_id=str(getattr(agent, "tenant_id", "")),
             workspace_id=str(getattr(agent, "workspace_id", "")),
+            fencing_token=int(reservation["fencing_token"]),
             error_message=f"{type(exc).__name__}: {exc}",
             metadata={"airflow_dag_run_id": airflow_dag_run_id},
         )
@@ -5745,6 +5743,7 @@ async def _run_reserved_scheduled_agent(
         status="ok",
         tenant_id=str(getattr(agent, "tenant_id", "")),
         workspace_id=str(getattr(agent, "workspace_id", "")),
+        fencing_token=int(reservation["fencing_token"]),
         metadata={
             "airflow_dag_run_id": airflow_dag_run_id,
             "deterministic_monitor": bool(

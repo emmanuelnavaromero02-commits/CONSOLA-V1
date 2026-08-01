@@ -76,7 +76,7 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
 
     async def reserve_scheduled_run(**kwargs):
         reserve_calls.append(kwargs)
-        return {"id": "reservation-1", "status": "reserved"}
+        return {"id": "reservation-1", "status": "reserved", "fencing_token": 1}
 
     async def run_scheduled_monitor(agent_arg, message, **kwargs):
         run_calls.append((agent_arg, message, kwargs))
@@ -116,6 +116,7 @@ async def test_run_sync_agentops_monitors_executes_and_finishes_monitor():
             "status": "ok",
             "tenant_id": "tenant-1",
             "workspace_id": "workspace-1",
+            "fencing_token": 1,
             "metadata": {
                 "sync_run_id": "sync-now-1",
                 "checked_at": payload["checked_at"],

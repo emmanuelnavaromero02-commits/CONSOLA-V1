@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 
 MATERIALIZE_PURPOSE = "refinement.mcp.materialize"
 SIGNATURE_VERSION = "hmac-sha256-v1"
+MATERIALIZE_SIGNATURE_VERSION = "hmac-sha256-v2"
 _MIN_KEY_LENGTH = 32
 _TTL_SECONDS = 300
 _FUTURE_SKEW_SECONDS = 30
@@ -56,6 +58,7 @@ def build_materialize_context(
     workspace_id: str,
     cartridge_id: str,
     dataset_name: str,
+    run_id: str,
     now: int | None = None,
 ) -> dict[str, Any]:
     """Build a fresh context tied to one exact materialize request."""
@@ -63,6 +66,7 @@ def build_materialize_context(
     workspace = _required(workspace_id, "workspace_id")
     cartridge = _required(cartridge_id, "cartridge_id")
     dataset = _required(dataset_name, "dataset_name")
+    runtime_run = _required(run_id, "run_id")
     scope = f"tenant_id={tenant}/workspace_id={workspace}/"
     context: dict[str, Any] = {
         "trusted": True,
@@ -71,6 +75,15 @@ def build_materialize_context(
         "purpose": MATERIALIZE_PURPOSE,
         "tool": "materialize",
         "dataset": dataset,
+        "run_id": runtime_run,
+        "jti": secrets.token_hex(32),
+        "body_digest": hashlib.sha256(
+            json.dumps(
+                {"args": {"name": dataset}, "tool": "materialize"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
         "user_id": "airflow:dataset_refresh_chain",
         "role": "admin",
         "workspace_role": "service",
@@ -86,7 +99,25 @@ def build_materialize_context(
             f"cartridges/{cartridge}/",
         ],
     }
-    return sign_runtime_context(context, now=now)
+    return _sign_context(context, version=MATERIALIZE_SIGNATURE_VERSION, now=now)
+
+
+def _sign_context(
+    payload: Mapping[str, Any], *, version: str, now: int | None = None
+) -> dict[str, Any]:
+    context = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"_signature", "_signed_at", "_signature_version"}
+    }
+    context["_signed_at"] = int(time.time() if now is None else now)
+    context["_signature_version"] = version
+    context["_signature"] = hmac.new(
+        _signing_key().encode("utf-8"),
+        _canonical(context),
+        hashlib.sha256,
+    ).hexdigest()
+    return context
 
 
 def sign_runtime_context(
@@ -95,19 +126,7 @@ def sign_runtime_context(
     now: int | None = None,
 ) -> dict[str, Any]:
     """Sign one reduced server-owned context with the shared primitive."""
-    context = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"_signature", "_signed_at", "_signature_version"}
-    }
-    context["_signed_at"] = int(time.time() if now is None else now)
-    context["_signature_version"] = SIGNATURE_VERSION
-    context["_signature"] = hmac.new(
-        _signing_key().encode("utf-8"),
-        _canonical(context),
-        hashlib.sha256,
-    ).hexdigest()
-    return context
+    return _sign_context(payload, version=SIGNATURE_VERSION, now=now)
 
 
 def verify_runtime_signature(

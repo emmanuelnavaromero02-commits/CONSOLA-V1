@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -30,6 +31,7 @@ def reserve_materialization(
     workspace_id: str,
     cartridge_id: str,
     dataset: str,
+    lease_seconds: int = 900,
 ) -> dict[str, Any]:
     import psycopg2
 
@@ -39,9 +41,10 @@ def reserve_materialization(
         cur.execute("SELECT to_regclass('public.pipeline_runs')")
         if not cur.fetchone()[0]:
             raise RuntimeError("materialization idempotency storage unavailable")
+        lease_seconds = max(30, min(int(lease_seconds), 3600))
         cur.execute(
             """
-            SELECT status, extra
+            SELECT status, extra, lease_expires_at, fencing_token
               FROM pipeline_runs
              WHERE run_id = %s
                AND tenant_id = %s::uuid
@@ -58,34 +61,62 @@ def reserve_materialization(
                 "completed": True,
                 "result": extra.get("result") or {},
             }
-        if existing and str(existing[0]) == "running":
+        if (
+            existing
+            and str(existing[0]) == "running"
+            and existing[2] is not None
+            and existing[2] > datetime.now(timezone.utc)
+        ):
             raise RuntimeError("materialization idempotency slot is already active")
         if existing:
             cur.execute(
                 """
                 UPDATE pipeline_runs
                    SET status = 'running', started_at = NOW(), finished_at = NULL,
-                       error_message = NULL
+                       error_message = NULL, heartbeat_at = NOW(),
+                       lease_expires_at = NOW() + %s * INTERVAL '1 second',
+                       fencing_token = fencing_token + 1
                  WHERE run_id = %s
                    AND tenant_id = %s::uuid
                    AND workspace_id = %s::uuid
                 """,
-                (slot, tenant_id, workspace_id),
+                (lease_seconds, slot, tenant_id, workspace_id),
             )
         else:
             cur.execute(
                 """
                 INSERT INTO pipeline_runs (
                     run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                    mode, status, started_at, tenant_id, workspace_id, extra
+                    mode, status, started_at, tenant_id, workspace_id, extra,
+                    heartbeat_at, lease_expires_at, fencing_token
                 )
                 VALUES (%s, 'dataset_refresh_chain', %s, %s, %s,
-                        'materialize', 'running', NOW(), %s::uuid, %s::uuid, '{}'::jsonb)
+                        'materialize', 'running', NOW(), %s::uuid, %s::uuid, '{}'::jsonb,
+                        NOW(), NOW() + %s * INTERVAL '1 second', 1)
                 """,
-                (slot, cartridge_id, dataset, airflow_run_id, tenant_id, workspace_id),
+                (
+                    slot,
+                    cartridge_id,
+                    dataset,
+                    airflow_run_id,
+                    tenant_id,
+                    workspace_id,
+                    lease_seconds,
+                ),
             )
+        cur.execute(
+            """SELECT fencing_token FROM pipeline_runs
+                 WHERE run_id=%s AND tenant_id=%s::uuid AND workspace_id=%s::uuid""",
+            (slot, tenant_id, workspace_id),
+        )
+        lease_token = int(cur.fetchone()[0])
         conn.commit()
-    return {"reserved": True, "completed": False, "slot_id": slot}
+    return {
+        "reserved": True,
+        "completed": False,
+        "slot_id": slot,
+        "lease_token": lease_token,
+    }
 
 
 def finish_materialization(
@@ -94,6 +125,7 @@ def finish_materialization(
     slot_id: str,
     tenant_id: str,
     workspace_id: str,
+    lease_token: int,
     success: bool,
     result: dict[str, Any] | None = None,
 ) -> None:
@@ -110,10 +142,12 @@ def finish_materialization(
             UPDATE pipeline_runs
                SET status = %s, finished_at = NOW(),
                    error_message = %s,
-                   extra = %s::jsonb
+                   extra = %s::jsonb, lease_expires_at = NULL
              WHERE run_id = %s
                AND tenant_id = %s::uuid
                AND workspace_id = %s::uuid
+               AND status = 'running'
+               AND fencing_token = %s
             """,
             (
                 "success" if success else "failed",
@@ -122,8 +156,36 @@ def finish_materialization(
                 slot_id,
                 tenant_id,
                 workspace_id,
+                lease_token,
             ),
         )
         if cur.rowcount != 1:
             raise RuntimeError("materialization idempotency slot unavailable")
         conn.commit()
+
+
+def heartbeat_materialization(
+    dsn: str,
+    *,
+    slot_id: str,
+    tenant_id: str,
+    workspace_id: str,
+    lease_token: int,
+    lease_seconds: int = 900,
+) -> None:
+    import psycopg2
+
+    lease_seconds = max(30, min(int(lease_seconds), 3600))
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        _scope(cur, tenant_id, workspace_id)
+        cur.execute(
+            """UPDATE pipeline_runs
+                  SET heartbeat_at=NOW(),
+                      lease_expires_at=NOW() + %s * INTERVAL '1 second'
+                WHERE run_id=%s AND tenant_id=%s::uuid AND workspace_id=%s::uuid
+                  AND status='running' AND fencing_token=%s
+                  AND lease_expires_at > NOW()""",
+            (lease_seconds, slot_id, tenant_id, workspace_id, lease_token),
+        )
+        if cur.rowcount != 1:
+            raise RuntimeError("materialization lease is unavailable")

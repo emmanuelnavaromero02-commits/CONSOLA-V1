@@ -12,7 +12,12 @@ from airflow.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
 
 from dataset_refresh_graph import _required_scope, resolve_chain as _resolve_chain
+from dataset_refresh_finalization import finalize_pipeline_status
 from dataset_refresh_materialize import materialize_in_order as _materialize_in_order
+from dataset_refresh_outcome import (
+    require_successful_intelligence_response,
+    require_successful_registry_response,
+)
 
 
 CARTRIDGE_ID = "platform"
@@ -144,8 +149,7 @@ def _trigger_gold_refresh_intelligence(
             json=payload,
             timeout=45,
         )
-        if response.status_code >= 400:
-            raise RuntimeError("Gold intelligence trigger rejected")
+        require_successful_intelligence_response(response)
     except Exception as exc:
         raise RuntimeError("Gold intelligence trigger unavailable") from exc
 
@@ -178,37 +182,38 @@ def record_run(**ctx):
     completed = int(invocation.get("materialized") or 0)
     total = len(results)
     status = "success" if total == completed else "partial" if completed else "failed"
-    if total == 0 and not task_failed and not invocation.get("error"):
-        status = "success"
+    if invocation.get("status") == "no_downstream_datasets" and not task_failed:
+        status = "noop"
     finished_at = datetime.now(timezone.utc).isoformat()
     pipeline_run_id = f"dataset_refresh_chain:{ctx['run_id']}"
-    response = requests.post(
-        f"{MCP_INFRA_URL}/mcp/invoke",
-        headers=_internal_headers("MCP_INFRA", ctx),
-        json={
-            "tool": "pipeline_run_save",
-            "args": {
-                "dag_id": "dataset_refresh_chain",
-                "cartridge_id": cartridge,
-                "entity": ENTITY,
-                "run_id": pipeline_run_id,
-                "airflow_dag_run_id": ctx["run_id"],
-                "mode": "refresh",
-                "status": status,
-                "started_at": ctx["logical_date"].isoformat(),
-                "finished_at": finished_at,
-                "tenant_id": tenant_id,
-                "workspace_id": workspace_id,
-                "project_id": conf.get("project_id"),
-                "extra": invocation,
+
+    def save_status(selected_status: str) -> None:
+        response = requests.post(
+            f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers("MCP_INFRA", ctx),
+            json={
+                "tool": "pipeline_run_save",
+                "args": {
+                    "dag_id": "dataset_refresh_chain",
+                    "cartridge_id": cartridge,
+                    "entity": ENTITY,
+                    "run_id": pipeline_run_id,
+                    "airflow_dag_run_id": ctx["run_id"],
+                    "mode": "refresh",
+                    "status": selected_status,
+                    "started_at": ctx["logical_date"].isoformat(),
+                    "finished_at": finished_at,
+                    "tenant_id": tenant_id,
+                    "workspace_id": workspace_id,
+                    "project_id": conf.get("project_id"),
+                    "extra": invocation,
+                },
             },
-        },
-        timeout=15,
-    )
-    body = response.json() if response.status_code < 400 else {}
-    if response.status_code >= 400 or body.get("error"):
-        raise RuntimeError("pipeline run registry unavailable")
-    if status == "success" or (status == "partial" and allow_partial):
+            timeout=15,
+        )
+        require_successful_registry_response(response, expected_status=selected_status)
+
+    def trigger_intelligence() -> None:
         _trigger_gold_refresh_intelligence(
             ctx=ctx,
             tenant_id=tenant_id,
@@ -219,7 +224,16 @@ def record_run(**ctx):
             datasets=_successful_materialized_datasets(results),
             finished_at=finished_at,
         )
-    if status != "success" and not allow_partial:
+
+    finalize_pipeline_status(
+        final_status=status,
+        should_trigger_intelligence=(
+            status == "success" or (status == "partial" and allow_partial)
+        ),
+        save_status=save_status,
+        trigger_intelligence=trigger_intelligence,
+    )
+    if status not in {"success", "noop"} and not allow_partial:
         raise RuntimeError("dataset_refresh_chain recorded a failed run")
 
 

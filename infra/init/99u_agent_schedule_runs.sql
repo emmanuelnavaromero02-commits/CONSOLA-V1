@@ -18,9 +18,17 @@ CREATE TABLE IF NOT EXISTS agent_schedule_runs (
     finished_at         TIMESTAMPTZ,
     error_message       TEXT,
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    heartbeat_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    lease_expires_at    TIMESTAMPTZ,
+    fencing_token       BIGINT NOT NULL DEFAULT 1,
     CONSTRAINT agent_schedule_runs_status_chk
       CHECK (status IN ('running', 'ok', 'error', 'cancelled', 'skipped'))
 );
+
+ALTER TABLE agent_schedule_runs
+  ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS agent_schedule_runs_fire_uidx
   ON agent_schedule_runs (agent_id, schedule_key, scheduled_fire_at);
@@ -30,6 +38,10 @@ CREATE INDEX IF NOT EXISTS agent_schedule_runs_workspace_idx
 
 CREATE INDEX IF NOT EXISTS agent_schedule_runs_agent_idx
   ON agent_schedule_runs (agent_id, scheduled_fire_at DESC);
+
+CREATE INDEX IF NOT EXISTS agent_schedule_runs_active_lease_idx
+  ON agent_schedule_runs (lease_expires_at)
+  WHERE status = 'running';
 
 GRANT SELECT, INSERT, UPDATE ON agent_schedule_runs TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE agent_schedule_runs_id_seq TO omega_console;

@@ -50,6 +50,8 @@ def test_ready_payload_with_real_signal_can_alert():
         {"threshold": {"min_signal_count": 1}},
         {
             "status": "ready",
+            "tenant_id": "tenant-a",
+            "workspace_id": "workspace-a",
             "signals": {"count": 1, "items": [{"kind": "observed"}]},
             "blockers": [],
             "evidence": {"dataset": "gold"},

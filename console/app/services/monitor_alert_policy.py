@@ -19,14 +19,26 @@ _INSUFFICIENT_STATUSES = {
 
 def _signal_count(payload: dict[str, Any]) -> int:
     signals = payload.get("signals")
+    items: object = None
     if isinstance(signals, list):
-        return len(signals)
-    if isinstance(signals, dict):
+        items = signals
+    elif isinstance(signals, dict):
+        items = signals.get("items")
+        if not isinstance(items, list):
+            return 0
         try:
-            return int(signals.get("count") or len(signals.get("items") or []))
+            declared = int(signals.get("count"))
         except (TypeError, ValueError):
             return 0
-    return 0
+        if isinstance(signals.get("count"), bool) or declared != len(items):
+            return 0
+    if not isinstance(items, list) or not items:
+        return 0
+    if not all(isinstance(item, dict) and bool(item) for item in items):
+        return 0
+    if not payload.get("tenant_id") or not payload.get("workspace_id"):
+        return 0
+    return len(items)
 
 
 def _blockers(payload: dict[str, Any]) -> list[Any]:

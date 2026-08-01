@@ -1761,6 +1761,11 @@ async def run_scheduled_monitor(
             )
 
         payload_with_engines = _monitor_with_engine_results(payload, engine_results)
+        payload_with_engines = {
+            **payload_with_engines,
+            "tenant_id": str(agent.tenant_id),
+            "workspace_id": str(agent.workspace_id),
+        }
         should_alert = _monitor_should_alert(contract, payload_with_engines)
         alert_result = None
         if should_alert:

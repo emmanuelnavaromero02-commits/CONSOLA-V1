@@ -459,20 +459,29 @@ async def intelligence_gold_refresh_internal(
     try:
         result = await intelligence_engine.run_intelligence(user, payload, persist=True)
     except Exception as exc:
-        return {
-            "ok": False,
-            "run_ref": run_ref,
-            "error": str(getattr(exc, "detail", exc)),
-        }
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        ) from exc
+    status = result.get("status") or (
+        "completed" if result.get("signals") else "not_ready"
+    )
+    signal_count = (
+        int(result.get("signals_generated") or 0)
+        if result.get("idempotent")
+        else len(result.get("signals") or [])
+    )
+    if status != "completed" or signal_count <= 0:
+        raise HTTPException(
+            status_code=503, detail="Gold intelligence outcome unavailable"
+        )
     _invalidate_control_room_cache(user)
     return {
         "ok": True,
         "run_ref": result.get("run_ref") or run_ref,
         "intelligence_run_id": result.get("intelligence_run_id"),
-        "status": result.get("status")
-        or ("completed" if result.get("signals") else "not_ready"),
+        "status": status,
         "idempotent": bool(result.get("idempotent")),
-        "signals": len(result.get("signals") or []),
+        "signals": signal_count,
         "skipped": len(result.get("skipped") or []),
         "dataset_unavailable_count": result.get("dataset_unavailable_count", 0),
         "insufficient_history_count": result.get("insufficient_history_count", 0),

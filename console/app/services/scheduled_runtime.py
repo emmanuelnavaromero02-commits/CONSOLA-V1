@@ -67,19 +67,24 @@ def _fire_in_window(
     expression = str(
         schedule.get("cron") or schedule.get("cron_expression") or ""
     ).strip()
-    if not expression or schedule.get("enabled") is False:
+    if schedule.get("enabled") is False:
         return None
+    if not expression:
+        raise ValueError("schedule cron is invalid")
     try:
         from zoneinfo import ZoneInfo
 
         zone = ZoneInfo(str(schedule.get("tz") or "UTC"))
+    except Exception as exc:
+        raise ValueError("schedule timezone is invalid") from exc
+    try:
         iterator = croniter(expression, start.astimezone(zone) - timedelta(seconds=1))
         fire = iterator.get_next(datetime)
         if fire.tzinfo is None:
             fire = fire.replace(tzinfo=zone)
         fire_utc = fire.astimezone(timezone.utc)
-    except Exception:
-        return None
+    except Exception as exc:
+        raise ValueError("schedule cron is invalid") from exc
     return fire_utc if start <= fire_utc < end else None
 
 

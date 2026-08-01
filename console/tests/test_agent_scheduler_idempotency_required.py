@@ -81,6 +81,7 @@ async def test_finish_fails_closed_when_durable_table_is_missing(monkeypatch):
             status="error",
             tenant_id="tenant-a",
             workspace_id="workspace-a",
+            fencing_token=1,
         )
 
 
@@ -112,4 +113,5 @@ async def test_finish_fails_if_reserved_row_is_not_updated(monkeypatch):
             status="error",
             tenant_id="00000000-0000-0000-0000-000000000002",
             workspace_id="00000000-0000-0000-0000-000000000003",
+            fencing_token=1,
         )

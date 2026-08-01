@@ -113,6 +113,65 @@ def _validate_plan(plan: list[dict[str, Any]], cartridge: str) -> None:
         raise ValueError("dataset_refresh_chain crossed a cartridge boundary")
 
 
+def _build_plan(
+    graph: dict[str, dict[str, Any]],
+    *,
+    seed_raw: str,
+    seed_dataset: str,
+    maximum_depth: int,
+) -> list[dict[str, Any]]:
+    reverse = _reverse_index(graph)
+    if seed_raw:
+        raw_key = seed_raw.strip().strip("/").lower()
+        if raw_key not in reverse:
+            raise ValueError("raw seed does not exist in the active workspace graph")
+        roots = list(reverse[raw_key])
+        ranks: dict[str, int] = {}
+        root_depth = 1
+    else:
+        if seed_dataset not in graph:
+            raise ValueError("seed dataset does not exist in the active workspace")
+        roots = [seed_dataset]
+        ranks = {seed_dataset: 0}
+        root_depth = 0
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            raise ValueError("dataset dependency cycle detected")
+        if name in visited:
+            return
+        visiting.add(name)
+        for child in reverse.get(name, []):
+            visit(child)
+        visiting.remove(name)
+        visited.add(name)
+
+    for root in roots:
+        visit(root)
+
+    frontier = [(name, root_depth) for name in roots]
+    while frontier:
+        name, depth = frontier.pop(0)
+        if depth > maximum_depth:
+            raise ValueError("dataset dependency plan exceeded max_depth")
+        ranks[name] = max(ranks.get(name, -1), depth)
+        for child in reverse.get(name, []):
+            frontier.append((child, depth + 1))
+
+    return [
+        {
+            "name": name,
+            "layer": graph[name]["layer"],
+            "cartridge": graph[name]["cartridge"],
+            "rank": rank,
+        }
+        for name, rank in sorted(ranks.items(), key=lambda item: (item[1], item[0]))
+    ]
+
+
 def resolve_chain(context: dict[str, Any], *, postgres_dsn: str) -> int:
     conf = (context.get("dag_run").conf if context.get("dag_run") else {}) or {}
     tenant_id, workspace_id = _required_scope(conf)
@@ -126,39 +185,17 @@ def resolve_chain(context: dict[str, Any], *, postgres_dsn: str) -> int:
         workspace_id=workspace_id,
     )
     cartridge = _resolve_cartridge(conf, graph, seed_raw, seed_dataset)
-    reverse = _reverse_index(graph)
     maximum_depth = max(1, min(int(conf.get("max_depth") or 10), 50))
-    ranks: dict[str, int] = {}
-    if seed_raw:
-        frontier = list(reverse.get(seed_raw.lower(), []))
-    else:
-        if seed_dataset not in graph:
-            raise ValueError("seed dataset does not exist in the active workspace")
-        ranks[seed_dataset] = 0
-        frontier = list(reverse.get(seed_dataset, []))
-    depth = 1
-    while frontier and depth <= maximum_depth:
-        following: list[str] = []
-        for dataset in frontier:
-            ranks[dataset] = max(ranks.get(dataset, -1), depth)
-            following.extend(
-                child for child in reverse.get(dataset, []) if child != dataset
-            )
-        frontier = following
-        depth += 1
-    plan = [
-        {
-            "name": name,
-            "layer": graph[name]["layer"],
-            "cartridge": graph[name]["cartridge"],
-            "rank": rank,
-        }
-        for name, rank in sorted(ranks.items(), key=lambda item: (item[1], item[0]))
-    ]
+    plan = _build_plan(
+        graph,
+        seed_raw=seed_raw,
+        seed_dataset=seed_dataset,
+        maximum_depth=maximum_depth,
+    )
     _validate_plan(plan, cartridge)
     context["ti"].xcom_push(key="plan", value=plan)
     context["ti"].xcom_push(key="cartridge_id", value=cartridge)
     return len(plan)
 
 
-__all__ = ["_required_scope", "_validate_plan", "resolve_chain"]
+__all__ = ["_build_plan", "_required_scope", "_validate_plan", "resolve_chain"]

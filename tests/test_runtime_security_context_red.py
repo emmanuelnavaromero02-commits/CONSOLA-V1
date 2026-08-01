@@ -7,9 +7,10 @@ from pathlib import Path
 import pytest
 
 from airflow.dags.runtime_security_context import (
+    MATERIALIZE_SIGNATURE_VERSION,
     MATERIALIZE_PURPOSE,
+    _sign_context,
     build_materialize_context,
-    sign_runtime_context,
 )
 from refinement.app.runtime_security_context import validate_runtime_context
 
@@ -29,6 +30,7 @@ def _context(monkeypatch):
         workspace_id="workspace-a",
         cartridge_id="sap_successfactors",
         dataset_name="employee_360",
+        run_id="scheduled__2026-07-30T12:00:00Z",
         now=1000,
     )
 
@@ -41,7 +43,7 @@ def test_materialize_context_is_fresh_signed_and_request_bound(monkeypatch):
     assert context["purpose"] == MATERIALIZE_PURPOSE
     assert context["tool"] == "materialize"
     assert context["dataset"] == "employee_360"
-    assert context["_signature_version"] == "hmac-sha256-v1"
+    assert context["_signature_version"] == "hmac-sha256-v2"
     assert context["_signature"]
     validate_runtime_context(
         context,
@@ -90,6 +92,24 @@ def test_context_cannot_be_replayed_for_other_tool_or_dataset(monkeypatch):
             )
 
 
+def test_context_rejects_unsigned_top_level_request_fields(monkeypatch):
+    context = _context(monkeypatch)
+    body = {
+        "tool": "materialize",
+        "args": {"name": "employee_360"},
+        "security_context": context,
+        "allow_partial": True,
+    }
+
+    with pytest.raises(ValueError, match="request fields"):
+        validate_runtime_context(
+            context,
+            body=body,
+            internal_service="airflow",
+            now=1000,
+        )
+
+
 def test_fresh_signature_cannot_authorize_broader_prefixes(monkeypatch):
     context = _context(monkeypatch)
     payload = {
@@ -98,7 +118,11 @@ def test_fresh_signature_cannot_authorize_broader_prefixes(monkeypatch):
         if key not in {"_signature", "_signed_at", "_signature_version"}
     }
     payload["allowed_prefixes"] = ["raw/sap_successfactors/"]
-    broadened = sign_runtime_context(payload, now=1000)
+    broadened = _sign_context(
+        payload,
+        version=MATERIALIZE_SIGNATURE_VERSION,
+        now=1000,
+    )
 
     with pytest.raises(ValueError, match="prefixes"):
         validate_runtime_context(
@@ -137,6 +161,7 @@ def test_signing_key_must_not_reuse_transport_key(monkeypatch):
             workspace_id="workspace-a",
             cartridge_id="sap_successfactors",
             dataset_name="employee_360",
+            run_id="scheduled__2026-07-30T12:00:00Z",
         )
 
 
@@ -189,6 +214,7 @@ def test_allow_partial_never_absorbs_runtime_authority_failure(monkeypatch):
             "reserved": True,
             "completed": False,
             "slot_id": "slot-a",
+            "lease_token": 1,
         },
     )
     monkeypatch.setattr(
@@ -222,6 +248,7 @@ def test_allow_partial_never_absorbs_runtime_authority_failure(monkeypatch):
             "slot_id": "slot-a",
             "tenant_id": "tenant-a",
             "workspace_id": "workspace-a",
+            "lease_token": 1,
             "success": False,
         }
     ]

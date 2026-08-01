@@ -54,6 +54,7 @@ _SECURITY_CONTEXT_SIGNATURE_VERSION = "hmac-sha256-v1"
 _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS = 300
 _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
+_RUNTIME_CONTEXT_VALIDATED = object()
 
 
 def _materialize_with_operational_fallback(ds: dict, user_context: dict) -> dict:
@@ -361,7 +362,12 @@ def _security_context(body: dict) -> dict:
     sec = body.get("security_context") or {}
     if not isinstance(sec, dict):
         return {}
-    if sec.get("trusted") and sec.get("source") == "airflow":
+    runtime_v2 = (
+        sec.get("trusted")
+        and sec.get("source") == "airflow"
+        and sec.get("_signature_version") == "hmac-sha256-v2"
+    )
+    if runtime_v2 and body.get("_runtime_context_validated") is not _RUNTIME_CONTEXT_VALIDATED:
         try:
             from app.runtime_security_context import validate_runtime_context
 
@@ -369,10 +375,12 @@ def _security_context(body: dict) -> dict:
                 sec,
                 body=body,
                 internal_service=str(body.get("_verified_internal_service") or ""),
+                consume=True,
             )
+            body["_runtime_context_validated"] = _RUNTIME_CONTEXT_VALIDATED
         except ValueError as exc:
             raise HTTPException(403, "Invalid signed security_context") from exc
-    if not _security_context_signature_valid(sec):
+    if not runtime_v2 and not _security_context_signature_valid(sec):
         if sec.get("trusted"):
             raise HTTPException(403, "Invalid signed security_context")
         return {}

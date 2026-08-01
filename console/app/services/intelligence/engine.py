@@ -190,6 +190,9 @@ async def run_intelligence(
                     "run_ref": existing_run.get("run_ref"),
                     "idempotent": True,
                     "status": existing_run.get("status"),
+                    "signals_generated": int(
+                        existing_run.get("signals_generated") or 0
+                    ),
                     "dataset_unavailable_count": existing_run.get(
                         "dataset_unavailable_count", 0
                     ),

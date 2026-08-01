@@ -11,6 +11,7 @@ from dataset_refresh_idempotency import (
     finish_materialization,
     reserve_materialization,
 )
+from dataset_refresh_outcome import require_successful_materialization_response
 from runtime_security_context import build_materialize_context
 
 
@@ -62,12 +63,14 @@ def materialize_in_order(
             )
             continue
         slot_id = str(reservation["slot_id"])
+        lease_token = int(reservation["lease_token"])
         try:
             security_context = build_materialize_context(
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
                 cartridge_id=cartridge_id,
                 dataset_name=name,
+                run_id=str(context["run_id"]),
             )
         except (RuntimeError, ValueError) as exc:
             finish_materialization(
@@ -75,6 +78,7 @@ def materialize_in_order(
                 slot_id=slot_id,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
+                lease_token=lease_token,
                 success=False,
             )
             raise RuntimeError(
@@ -93,15 +97,16 @@ def materialize_in_order(
             )
             if response.status_code in {401, 403}:
                 raise PermissionError("refinement rejected runtime authority")
-            payload = response.json() if response.status_code < 400 else {}
-            if response.status_code >= 400 or payload.get("error"):
-                raise RuntimeError("refinement materialization failed")
+            payload = require_successful_materialization_response(
+                response, expected_name=name
+            )
             safe = _safe_result(name, payload)
             finish_materialization(
                 postgres_dsn,
                 slot_id=slot_id,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
+                lease_token=lease_token,
                 success=True,
                 result=safe,
             )
@@ -112,6 +117,7 @@ def materialize_in_order(
                 slot_id=slot_id,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
+                lease_token=lease_token,
                 success=False,
             )
             if isinstance(exc, (PermissionError, ValueError)):

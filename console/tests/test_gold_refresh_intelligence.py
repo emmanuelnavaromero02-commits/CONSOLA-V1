@@ -60,6 +60,8 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
             "dataset_unavailable_count": 0,
             "insufficient_history_count": 0,
             "idempotent": idempotent,
+            "signals_generated": 1 if idempotent else 0,
+            "status": "completed",
         }
 
     def fake_invalidate(user: dict) -> None:
@@ -95,7 +97,7 @@ async def test_gold_refresh_internal_builds_scoped_idempotent_payload(monkeypatc
     assert response["skipped"] == 1
     assert response["idempotent"] is False
     assert retry_response["ok"] is True
-    assert retry_response["signals"] == 0
+    assert retry_response["signals"] == 1
     assert retry_response["skipped"] == 0
     assert retry_response["idempotent"] is True
     assert response["run_ref"] == (

@@ -102,6 +102,7 @@ async def run_sync_agentops_monitors(
                     status="error",
                     tenant_id=str(agent.tenant_id),
                     workspace_id=str(agent.workspace_id),
+                    fencing_token=int(reservation["fencing_token"]),
                     error_message=f"{type(exc).__name__}: {exc}",
                     metadata={"sync_run_id": sync_run_id, "checked_at": checked_at},
                 )
@@ -112,12 +113,12 @@ async def run_sync_agentops_monitors(
                 status="ok",
                 tenant_id=str(agent.tenant_id),
                 workspace_id=str(agent.workspace_id),
+                fencing_token=int(reservation["fencing_token"]),
                 metadata={
                     "sync_run_id": sync_run_id,
                     "checked_at": checked_at,
                     "deterministic_monitor": bool(
-                        isinstance(result, dict)
-                        and result.get("deterministic_monitor")
+                        isinstance(result, dict) and result.get("deterministic_monitor")
                     ),
                 },
             )

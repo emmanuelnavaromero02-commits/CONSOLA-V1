@@ -104,6 +104,7 @@ async def test_live_fanout_scopes_each_workspace_and_replay_is_durable(
             slot_id=materialize_a["slot_id"],
             tenant_id=scope_a["tenant_id"],
             workspace_id=scope_a["workspace_id"],
+            lease_token=materialize_a["lease_token"],
             success=True,
             result={"name": "pnl_mensual", "row_count": 3},
         )
