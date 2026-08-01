@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 import psycopg2
 
 from app.config import settings
+from app.storage_scope import canonical_storage_key, scoped_storage_allowed
 
 
 def _dsn() -> str:
@@ -105,16 +106,26 @@ def scoped_semantic_source_name(
 
 
 def published_object(key: str, context: dict[str, Any] | None, bucket: str) -> bool:
-    clean = str(key or "").lstrip("/")
+    try:
+        clean = canonical_storage_key(key)
+    except ValueError:
+        return False
+    if not scoped_storage_allowed(clean, context, bucket=bucket):
+        return False
     if not materialized_object(clean):
-        return True
+        return clean.split("/", 1)[0] == "raw"
     return clean in published_objects(context, bucket)
 
 
 def published_prefix(key: str, context: dict[str, Any] | None, bucket: str) -> bool:
-    clean = str(key or "").lstrip("/")
+    try:
+        clean = canonical_storage_key(key)
+    except ValueError:
+        return False
+    if not scoped_storage_allowed(clean, context, bucket=bucket):
+        return False
     if not materialized_object(clean):
-        return True
+        return clean.split("/", 1)[0] == "raw"
     return any(
         value == clean.rstrip("/") or value.startswith(clean)
         for value in published_objects(context, bucket)

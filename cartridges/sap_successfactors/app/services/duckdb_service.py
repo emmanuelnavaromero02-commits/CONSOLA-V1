@@ -25,11 +25,15 @@ _SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 def _path_has_scope(path: str, scope: str) -> bool:
     parts = [part for part in path.strip("/").split("/") if part]
     scope_parts = [part for part in scope.strip("/").split("/") if part]
-    return any(parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts)))
+    return any(
+        parts[idx : idx + len(scope_parts)] == scope_parts for idx in range(len(parts))
+    )
 
 
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
+    conn.execute("SET autoinstall_known_extensions=false;")
+    conn.execute("SET autoload_known_extensions=false;")
     conn.execute("LOAD httpfs;")
     conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
     conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
@@ -61,7 +65,9 @@ def write_kb_parquet(
     scope = scoped_prefix(security_context)
     if "tenant_id=" in output_path or "workspace_id=" in output_path:
         if not _path_has_scope(output_path, scope):
-            raise SecurityContextError("KB output path is outside the active tenant/workspace scope")
+            raise SecurityContextError(
+                "KB output path is outside the active tenant/workspace scope"
+            )
         scope = ""
     object_name = (
         f"{output_path}/{scope}load_date={load_date}/batch_id={run_id}/{kb_id}.parquet"

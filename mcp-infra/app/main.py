@@ -19,7 +19,6 @@ import secrets
 import time
 import uuid
 from typing import Any
-from urllib.parse import unquote
 
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
@@ -37,6 +36,7 @@ from app.security import get_internal_api_key
 from app.config import settings
 from app.logging_config import setup_logging  # noqa: E402
 from app.response_redaction import redact_response_value  # noqa: E402
+from app.storage_scope import canonical_storage_key, scoped_storage_key
 setup_logging(service_name="mcp-infra")
 logger = logging.getLogger(__name__)
 
@@ -507,23 +507,25 @@ def _prefix_allowed(ctx: dict[str, Any], value: str) -> bool:
 
 
 def _canonical_storage_key(value: str) -> str:
-    raw = str(value or "").strip().lstrip("/").replace("\\", "/")
-    for _ in range(3):
-        decoded = unquote(raw).replace("\\", "/")
-        if decoded == raw:
-            break
-        raw = decoded
-    parts = [part for part in raw.split("/") if part and part != "."]
-    if any(part == ".." for part in parts):
-        raise HTTPException(403, detail="storage path traversal is not allowed")
-    return "/".join(parts)
+    try:
+        return canonical_storage_key(value)
+    except ValueError as exc:
+        raise HTTPException(403, detail="storage path is not allowed") from exc
 
 
 def _key_has_exact_scope(value: str, tenant_id: str, workspace_id: str) -> bool:
-    key = _canonical_storage_key(value)
-    parts = key.split("/")
-    scope_parts = [f"tenant_id={tenant_id}", f"workspace_id={workspace_id}"]
-    return any(parts[idx : idx + 2] == scope_parts for idx in range(len(parts)))
+    try:
+        scoped_storage_key(
+            value,
+            {
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+                "allowed_cartridges": ["*"],
+            },
+        )
+        return True
+    except (PermissionError, ValueError):
+        return False
 
 
 def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
@@ -575,12 +577,11 @@ def _has_invalid_scoped_storage_path(ctx: dict[str, Any], key: str) -> bool:
 
 def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:
     """Prevent scoped callers from listing/downloading whole cartridge object trees."""
-    if _is_unscoped_admin_context(ctx) or not _has_tenant_workspace_scope(ctx):
-        return
-    value = str(value or "").strip().lstrip("/")
+    value = str(value or "").strip()
     if not value:
         return
-    parts = value.split("/")
+    key = _canonical_storage_key(value)
+    parts = key.split("/")
     if not parts:
         return
     root = parts[0]
@@ -588,10 +589,10 @@ def _require_scoped_object_path(ctx: dict[str, Any], value: str) -> None:
         return
     if root not in {"raw", "silver", "gold", "uploads"}:
         return
-    tenant_id = str(ctx.get("tenant_id") or "").strip()
-    workspace_id = str(ctx.get("workspace_id") or "").strip()
-    if not _key_has_exact_scope(value, tenant_id, workspace_id):
-        raise HTTPException(403, detail="tenant/workspace object scope required")
+    try:
+        scoped_storage_key(key, ctx)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(403, detail="tenant/workspace object scope required") from exc
 
 
 def _require_cartridge_scope(ctx: dict[str, Any], cartridge_id: str) -> None:
@@ -943,7 +944,10 @@ def _reader_storage_key(path: str) -> str:
     path = (path or "").strip()
     if not path.startswith("s3://"):
         raise HTTPException(403, detail="cartridge SQL readers must use s3:// paths")
-    rest = _canonical_storage_key(path[5:])
+    try:
+        rest = canonical_storage_key(path[5:], allow_glob=True)
+    except ValueError as exc:
+        raise HTTPException(403, detail="cartridge SQL path is not allowed") from exc
     key = rest.split("/", 1)[1] if "/" in rest else ""
     if not key:
         raise HTTPException(403, detail="cartridge SQL path is not allowed")
@@ -958,9 +962,10 @@ def _require_cartridge_sql_path(ctx: dict[str, Any], cartridge_id: str, path: st
         or key.startswith(f"gold/{cartridge_id}/")
     ):
         raise HTTPException(403, detail="cartridge SQL must stay inside its cartridge prefix")
-    if not _prefix_allowed(ctx, key):
-        raise HTTPException(403, detail="cartridge SQL path not allowed")
-    _require_scoped_object_path(ctx, key)
+    try:
+        scoped_storage_key(key, ctx, allow_glob=True)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(403, detail="cartridge SQL path not allowed") from exc
 
 
 def _validate_cartridge_query_sql(ctx: dict[str, Any], cartridge_id: str, sql: str) -> None:
@@ -1476,6 +1481,14 @@ def _postgres_ready(host: str, port: int, db: str, user: str, password: str) -> 
     return True
 
 
+def _duckdb_ready() -> bool:
+    from app.duckdb_runtime import connect_duckdb_runtime
+
+    connection = connect_duckdb_runtime()
+    connection.close()
+    return True
+
+
 def _readiness_checks() -> dict[str, str]:
     checks: dict[str, str] = {}
 
@@ -1513,6 +1526,12 @@ def _readiness_checks() -> dict[str, str]:
             checks["postgres_gold"] = "down"
     else:
         checks["postgres_gold"] = "degraded"
+
+    try:
+        checks["duckdb"] = "up" if _duckdb_ready() else "down"
+    except Exception:
+        logger.exception("mcp-infra readyz duckdb check failed")
+        checks["duckdb"] = "down"
 
     return checks
 
@@ -1796,15 +1815,6 @@ def _duckdb_s3_settings(con, endpoint: str, region: str) -> None:
 
     url_style = "vhost" if "amazonaws.com" in endpoint else "path"
     secure = (os.environ.get("MINIO_SECURE", "false").lower() in {"1", "true", "yes", "on"})
-    try:
-        con.execute("LOAD httpfs;")
-    except Exception:  # noqa: BLE001
-        try:
-            con.execute("INSTALL httpfs; LOAD httpfs;")
-        except Exception as install_exc:  # noqa: BLE001
-            raise RuntimeError(
-                "DuckDB httpfs extension unavailable; install httpfs in the mcp-infra image"
-            ) from install_exc
     access_key = os.environ.get("MINIO_ACCESS_KEY") or os.environ.get("AWS_ACCESS_KEY_ID") or ""
     secret_key = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY") or ""
     session_token = os.environ.get("AWS_SESSION_TOKEN") or ""
@@ -1918,7 +1928,9 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
         if any(dataset == str(r[0]) for dataset, _layer in heads)
     }
 
-    con = duckdb.connect()
+    from app.duckdb_runtime import connect_duckdb_runtime
+
+    con = connect_duckdb_runtime()
     _duckdb_s3_settings(con, endpoint, region)
     out: list[str] = [
         f"# Modelo Semántico — Cartucho `{cartridge}`\n",
@@ -2031,8 +2043,6 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
 
 def _build_raw_doc(cartridge: str, entity: str, ctx: dict[str, Any] | None = None) -> str:
     import os
-    import duckdb
-
     bucket = os.environ.get("MINIO_BUCKET", "")
     cartridge = _safe_rag_segment(cartridge, "cartridge")
     entity = _safe_rag_segment(entity, "entity")
@@ -2051,7 +2061,9 @@ def _build_raw_doc(cartridge: str, entity: str, ctx: dict[str, Any] | None = Non
         )
     else:
         path = f"s3://{bucket}/raw/{cartridge}/{entity}/**/*.parquet"
-    con = duckdb.connect()
+    from app.duckdb_runtime import connect_duckdb_runtime
+
+    con = connect_duckdb_runtime()
     _duckdb_s3_settings(con, endpoint, region)
     try:
         rows = con.execute(

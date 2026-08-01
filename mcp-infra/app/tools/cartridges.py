@@ -25,6 +25,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from app.config import settings
+from app.duckdb_runtime import connect_duckdb_runtime
 from app.middleware.request_id import request_id_var
 from app.publication_heads import published_dataset_names, scoped_semantic_source_name
 from app.registry import tool
@@ -38,8 +39,7 @@ _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 def _duckdb() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect()
-    conn.execute("LOAD httpfs;")
+    conn = connect_duckdb_runtime()
     conn.execute(f"SET s3_endpoint='{settings.minio_endpoint}';")
     conn.execute(f"SET s3_access_key_id='{settings.minio_access_key}';")
     conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")

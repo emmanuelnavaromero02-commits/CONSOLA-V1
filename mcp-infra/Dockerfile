@@ -19,7 +19,8 @@ RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/appuser
 
 WORKDIR /app
 
@@ -34,6 +35,8 @@ RUN useradd -m appuser
 COPY --chown=appuser:appuser omega_lakehouse/ omega_lakehouse/
 COPY --chown=appuser:appuser mcp-infra/ .
 USER appuser
+RUN python scripts/install_duckdb_extensions.py
+RUN python scripts/duckdb_offline_smoke.py
 
 EXPOSE 8010
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010", "--workers", "1"]

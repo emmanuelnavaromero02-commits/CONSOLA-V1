@@ -10,9 +10,8 @@ import re
 
 from app.config import settings
 from app.publication_heads import (
-    materialized_object,
     published_object,
-    published_objects,
+    published_prefix,
 )
 from app.registry import tool
 from omega_lakehouse import storage_from_env
@@ -89,11 +88,12 @@ def minio_list_objects(
 ) -> dict:
     bkt = bucket or settings.minio_bucket
     storage = _storage(bkt)
-    allowed = published_objects(security_context, bkt)
+    if not published_prefix(prefix, security_context, bkt):
+        raise PermissionError("object prefix is not available")
     objs = []
     truncated = False
     for obj in storage.iter_list(prefix):
-        if materialized_object(obj.key) and obj.key not in allowed:
+        if not published_object(obj.key, security_context, bkt):
             continue
         if len(objs) >= 200:
             truncated = True
