@@ -6,8 +6,8 @@ from scripts.ci_control_room_paths import control_room_changed
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/control-room-postgres-rls.yml"
 PREPARE_SCRIPT = ROOT / "scripts/prepare_refinement_duckdb_ci.sh"
-FOCAL_MINIMUM = 8998
-POSTGRES_MINIMUM = 175
+FOCAL_MINIMUM = 9066
+POSTGRES_MINIMUM = 238
 TENANT_EXECUTE_ISOLATION = ROOT / (
     "tests/test_control_room_live_postgres_tenant_execute_isolation.py"
 )
@@ -92,6 +92,13 @@ REQUIRED_RELATED_TESTS = (
     "tests/test_decision*.py",
     "tests/test_pipeline_control_room_refresh.py",
     "tests/test_agentops_scheduled_monitor_contract.py",
+    "tests/test_agent_runner_http_outcome.py",
+    "tests/test_dataset_refresh_chain_fail_closed.py",
+    "tests/test_operational_truth_e2e_gate_contract.py",
+    "tests/test_operational_truth_runtime_final_red.py",
+    "tests/test_operational_truth_runtime_red.py",
+    "tests/test_runtime_security_context_red.py",
+    "tests/test_security_context_verifiers.py",
     "tests/test_aws_beta_operations.py",
     "tests/test_aws_bootstrap_shared_env_boundary.py",
     "tests/test_aws_evidence_compose_isolation.py",
@@ -122,6 +129,14 @@ LIVE_POSTGRES_TESTS = (
     "tests/test_operational_rls_console_refinement.py",
     "tests/test_operational_rls_policy_guard.py",
     "tests/test_control_room_live_postgres*.py",
+    "tests/test_operational_truth_runtime_leases_live.py",
+    "tests/test_staged_publication_acceptance.py",
+    "tests/test_staged_publication_final_red.py",
+    "tests/test_staged_publication_integrity_live.py",
+    "tests/test_staged_publication_live.py",
+    "tests/test_staged_publication_public_projection.py",
+    "tests/test_staged_publication_reader_boundaries.py",
+    "tests/test_staged_publication_red.py",
 )
 
 

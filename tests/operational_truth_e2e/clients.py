@@ -115,6 +115,20 @@ def wait_dag_run(
     raise AssertionError(f"{dag_id}/{run_id} did not finish: {last}")
 
 
+def task_instance_states(dag_id: str, run_id: str) -> dict[str, str]:
+    response = _airflow("GET", f"/api/v1/dags/{dag_id}/dagRuns/{run_id}/taskInstances")
+    assert response.status_code == 200, response.text[:500]
+    instances = response.json().get("task_instances")
+    assert isinstance(instances, list)
+    states = {
+        str(item["task_id"]): str(item["state"])
+        for item in instances
+        if isinstance(item, dict) and item.get("task_id") and item.get("state")
+    }
+    assert states
+    return states
+
+
 def trigger_dataset_chain(
     scope: dict[str, str],
     *,

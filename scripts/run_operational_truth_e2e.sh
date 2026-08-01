@@ -7,6 +7,7 @@ project="omega-ot-${run_token//[^a-zA-Z0-9_-]/-}"
 env_file="$(mktemp "${TMPDIR:-/tmp}/omega-ot-env.XXXXXX")"
 artifacts="${E2E_ARTIFACTS_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/omega-ot-artifacts.XXXXXX")}"
 dag_dir="$(mktemp -d "$task_root/.omega-ot-dags.XXXXXX")"
+chmod 0755 "$dag_dir"
 wait_timeout="${E2E_WAIT_TIMEOUT_SECONDS:-420}"
 if [[ ! "$wait_timeout" =~ ^[0-9]+$ ]] || (( wait_timeout < 60 || wait_timeout > 1800 )); then
   echo "E2E_WAIT_TIMEOUT_SECONDS must be an integer from 60 to 1800" >&2
@@ -201,6 +202,25 @@ built="$(date +%s)"
 "${compose[@]}" up -d --wait --wait-timeout "$wait_timeout" airflow
 "${compose[@]}" up --no-deps -d --wait --wait-timeout "$wait_timeout" \
   airflow-scheduler
+"${compose[@]}" exec -T airflow-scheduler python - "${dag_modules[@]}" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+root = Path("/opt/airflow/dags")
+if os.geteuid() == 0:
+    raise SystemExit("Airflow DAG preflight must run as a non-root user")
+expected = set(sys.argv[1:])
+visible = {path.name for path in root.glob("*.py")}
+if visible != expected:
+    raise SystemExit(f"Airflow DAG bundle mismatch: expected={expected} visible={visible}")
+for name in expected:
+    path = root / name
+    if not path.is_file() or not os.access(path, os.R_OK):
+        raise SystemExit(f"Airflow DAG module is not readable: {name}")
+if os.access(root, os.W_OK):
+    raise SystemExit("Airflow DAG bundle must remain read-only")
+PY
 assert_no_oom
 healthy="$(date +%s)"
 test_id="$("${compose[@]}" ps --all --quiet e2e-test)"

@@ -5,6 +5,7 @@ import uuid
 from .clients import (
     assert_airflow_replay_rejected,
     login_and_control_room_diagnostics,
+    task_instance_states,
     trigger_dataset_chain,
     trigger_file_ingest,
     wait_chain_for_workspace,
@@ -124,6 +125,17 @@ def _assert_downstream_failure_never_green(scope: dict[str, str]) -> None:
     assert pipeline_status(scope, no_signal) == "failed"
 
 
+def _assert_pre_xcom_failure(scope: dict[str, str]) -> None:
+    before = intelligence_count(scope)
+    run_id = _run(scope, seed=f"missing_{uuid.uuid4().hex}")
+    wait_dag_run("dataset_refresh_chain", run_id, expected_state="failed")
+    states = task_instance_states("dataset_refresh_chain", run_id)
+    assert states["resolve_chain"] == "failed"
+    assert states["materialize_in_order"] == "upstream_failed"
+    assert pipeline_status(scope, run_id) == "failed"
+    assert intelligence_count(scope) == before
+
+
 def test_real_operational_truth_pipeline_two_workspaces() -> None:
     wait_for_airflow_contract()
     scopes = seed_two_workspaces()
@@ -162,6 +174,7 @@ def test_real_operational_truth_pipeline_two_workspaces() -> None:
     _assert_cas_race(scopes[0])
     _assert_expired_lease_recovery(scopes[0])
     _assert_downstream_failure_never_green(scopes[0])
+    _assert_pre_xcom_failure(scopes[0])
 
     unpublished = put_unpublished_object(scopes[0])
     assert_mcp_unpublished_object_hidden(scopes[0], unpublished)
